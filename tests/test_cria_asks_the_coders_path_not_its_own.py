@@ -11,7 +11,6 @@ Three call sites asked the wrong process a question about the world (#5b):
     cells ran no Rust tool at any gate; the empty result published as "the repo's own checks that
     ran reported no error-class problems" over a project with two compile errors. The coder replied
     "Let's compile mentally ... That's fine" and it did not compile for 45 calls.
-  * `execcheck.run` launched the live-execution probe in cria's environment, so the one check built
     to catch a green gate over a broken program reported "the delivered program was not run,
     because FileNotFoundError: [Errno 2] No such file or directory: 'node'".
   * `dirguard._tool_present` picks which install route to RECOMMEND to the coder — advice about a
@@ -21,6 +20,12 @@ Three call sites asked the wrong process a question about the world (#5b):
 so cria's PATH is the correct oracle there. Answering from the coder's path would advertise a
 backend that then fails at call time.
 """
+
+# The live-execution seat this file tested was REMOVED on 2026-08-18 (operator: "drop the
+# 'something needs to be ran' assertion altogether — it is more trouble than it is worth").
+# The classes that exercised it are gone with it; what remains below tests mechanisms that
+# outlived it. See docs/audits/finish-and-remeasure-progress.md for the reasoning.
+
 
 import os
 import shutil
@@ -126,31 +131,6 @@ class ProbeSelectionSeesTheCodersToolsTests(unittest.TestCase):
                 types.SimpleNamespace(command="./gradlew test", working_dir=d)))
             self.assertFalse(proberun.program_is_installed(
                 types.SimpleNamespace(command="./nope test", working_dir=d)))
-
-
-class TheLiveRunProbeUsesTheCodersEnvironmentTests(unittest.TestCase):
-    def setUp(self):
-        toolpath.reset_for_tests()
-        self.addCleanup(toolpath.reset_for_tests)
-
-    def test_run_passes_the_coder_path(self):
-        seen = {}
-
-        def fake(argv, **kw):
-            seen.update(kw)
-            return types.SimpleNamespace(returncode=0, stdout="ok", stderr="")
-
-        with mock.patch.object(execcheck.subprocess, "run", fake):
-            execcheck.run("/tmp", "node app.js")
-        self.assertEqual(seen["env"]["PATH"], toolpath.coder_path())
-
-    def test_a_program_only_the_coder_can_see_now_launches(self):
-        if not toolpath.which("node") or shutil.which("node", path=SERVICE_PATH):
-            self.skipTest("node is not a divergent case on this box")
-        with mock.patch.dict(os.environ, {"PATH": SERVICE_PATH}, clear=False):
-            code, out = execcheck.run("/tmp", "node --version")
-        self.assertEqual(code, 0, f"node still unreachable: {out!r}")
-        self.assertTrue(out.strip().startswith("v"), out)
 
 
 class InstallAdviceIsJudgedOnTheCodersPathTests(unittest.TestCase):

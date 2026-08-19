@@ -138,17 +138,16 @@ class NamesTheMissingDeliverableTests(unittest.TestCase):
         lp._ctx = self._Ctx()
         rlog = self._Rlog()
         saved = (loop.judge_satisfaction, loop._satisfaction_evidence,
-                 loop._gate_notes, loop.live_execution_marker)
+                 loop._gate_notes)
         loop.judge_satisfaction = lambda *a, **k: verdict
         loop._satisfaction_evidence = lambda *a, **k: "evidence"
         loop._gate_notes = lambda *a, **k: ""
-        loop.live_execution_marker = lambda *a, **k: ""
         try:
             out = lp._periodic_satisfaction(sess, {"messages": [{"role": "user", "content": "t"}]},
                                             rlog, plan_off=True, blocked=False)
         finally:
             (loop.judge_satisfaction, loop._satisfaction_evidence,
-             loop._gate_notes, loop.live_execution_marker) = saved
+             loop._gate_notes) = saved
         return out, rlog
 
     def test_the_named_gap_reaches_the_coder(self):

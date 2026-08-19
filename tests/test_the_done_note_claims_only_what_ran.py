@@ -13,7 +13,8 @@ every single time.
 #5b: every factual statement cria makes must be true now and backed by a live check. The answer is
 `last_gate_ran`, which every gate reader writes since `record_gate_state` became the one mirror —
 and the note is composed at RELEASE, when that answer exists, instead of a turn earlier when it does
-not. What is held across the turn is the pieces, because the exec_marker costs a reasoner call and
+not. What is held across the turn is the pieces (the live-execution marker that used to ride with
+them was removed on 2026-08-18) and
 must not be recomputed.
 
 Both wordings live in prompts/satisfaction_done.txt (#22). The unchecked one says what is true and
@@ -45,12 +46,6 @@ class TheClaimMatchesWhatHappenedTests(unittest.TestCase):
                               loop.satisfaction_done_note("The CLI resolves handles.",
                                                           checks_ran=ran))
 
-    def test_the_exec_marker_is_appended_both_ways(self):
-        for ran in (True, False):
-            with self.subTest(checks_ran=ran):
-                note = loop.satisfaction_done_note("done.", "⟦ctx:live-execution⟧ ran ok",
-                                                   checks_ran=ran)
-                self.assertTrue(note.endswith("⟦ctx:live-execution⟧ ran ok"))
 
     def test_both_wordings_are_in_a_prompt_file(self):
         self.assertEqual(set(WORDS), {"checked", "unchecked"})
@@ -88,7 +83,7 @@ class TheHeldNoteIsRecomposedAtReleaseTests(unittest.TestCase):
         """It costs a reasoner call; holding the pieces is what keeps it to one."""
         import inspect
         src = inspect.getsource(loop.Loop._periodic_satisfaction)
-        self.assertIn("sess.pending_done_parts = (reason, exec_marker)", src)
+        self.assertIn("sess.pending_done_parts = (reason,)", src)
 
     def test_a_coder_authored_done_is_untouched(self):
         """`pending_done` also carries the coder's OWN done text on another path; that is prose cria

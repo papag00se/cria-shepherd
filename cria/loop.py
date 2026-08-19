@@ -221,7 +221,6 @@ class GuardState:
     # this the unexecuted-write nudge says "your last message contained the file's contents" about a
     # message that is not there (nemotron-nano 1786243834 call 0073: told to resend content the frame
     # had dropped, the model re-read the spec a 7th time instead)
-    exec_finding: str = ""  # cria RAN the deliverable and it failed — ground truth, owed to the coder
     steer_source: str = ""  # human label of which guard produced the pending steer (for the ⟦cria⟧ note)
     coder_turns: int = 0  # acting coder turns since the last gate — drives the PERIODIC check-in
     research_checked_turn: int = -1  # the coder_turns tick the reading check last ran on (once per tick)
@@ -260,7 +259,7 @@ class GuardState:
     # Completion-gate-on-"done" state (plan-off path; the loop uses PlanSession's own fields):
     done_probe: bool = False  # a probe verifying a "done" claim is in flight
     pending_done: str = ""  # the coder's held "done" text, forwarded if the gate passes
-    # (reason, exec_marker) for a satisfaction-accepted 'done', held until the gate's result decides
+    # (reason,) for a satisfaction-accepted 'done', held until the gate's result decides
     # which claim the note may open with. Empty when the held text is the coder's own words.
     pending_done_parts: tuple = ()
     # The plan-ON completion backstop's OWN probe id. Deliberately NOT ``done_probe``: the plan-ON
@@ -1707,7 +1706,7 @@ def judge_satisfaction(task: str, evidence: str, reasoner_chat, reasoner_role, r
         str(retry.get("proposed_fix") or "").strip()
 
 
-def satisfaction_done_note(reason: str, exec_marker: str = "", *, checks_ran: bool = True) -> str:
+def satisfaction_done_note(reason: str, *, checks_ran: bool = True) -> str:
     """The completion text forwarded when the satisfaction check accepts a 'done'.
 
     `checks_ran` decides which claim it opens with, and it has to, because `guard_gate_verdict`
@@ -1718,103 +1717,20 @@ def satisfaction_done_note(reason: str, exec_marker: str = "", *, checks_ran: bo
     no-shell path, where no gate was even composed. Both wordings live in prompts/ (#22); the answer
     comes from `last_gate_ran`, which every gate reader now writes (see record_gate_state).
 
-    `exec_marker` is the LIVE EXECUTION result (cria/execcheck.py) and is APPENDED, never gating:
+    THE LIVE-EXECUTION MARKER USED TO RIDE HERE and was removed on 2026-08-18 (operator: "drop the
+    'something needs to be ran' assertion altogether — it is more trouble than it is worth"). It
+    asked a model whether finishing depended on running a program, and answered YES on 87% of a
+    corpus made entirely of build-me-a-CLI tasks — a prior about the suite, not about cria. On a real
+    repository that licenses cria to execute something a model picked: a server that binds a port, a
+    migration, a deploy script. The suite's own usefulness judge grades "does not build, does not
+    run, or produces wrong results" at 10-39, so the observation it existed for is still made — by
+    the verifier, after the run, where executing is appropriate. What follows is unchanged:
     the repo's own checks prove a workspace compiles, lints and passes its tests, and none of that
     can tell you the delivered program does anything. Measured across 51 archived runs: 13 (25%)
-    contained no entry point at all and not one of those ever scored full marks. The marker is empty
-    on a confirmed run and on a task that needs no run, so a clean signal stays silent."""
+    contained no entry point at all and not one of those ever scored full marks."""
     words = prompts.load_map("satisfaction_done")
     note = f"{words['checked' if checks_ran else 'unchecked']} {reason}".strip()
-    return f"{note}\n\n{exec_marker}".strip() if exec_marker else note
-
-
-def live_execution_marker(sess, body: dict, task: str, reasoner_chat, reasoner_role, rlog) -> str:
-    """Ask the model what to run, corroborate it against the README and the files on disk, run it if
-    all three agree, and return the marker. NEVER blocks — returns "" on anything unclear.
-
-    The whole call is skipped when there is no workspace to inspect, so a session with nothing on
-    disk pays nothing.
-    """
-    root = getattr(sess, "workspace_root", "") or ""
-    if not root or not task.strip():
-        return ""
-    try:
-        # The workspace listing rides along — see execcheck.intent_prompt. cria could always read it
-        # (the steer author and the step critic already get the same inventory); withholding it is
-        # what made this judge invent three filenames that never existed.
-        system, user = execcheck.intent_prompt(
-            task, files=workspace_inventory(root),
-            # …and what the project says about ITSELF. cria parses these already and
-            # uses them to veto this very answer; withholding them made the probe guess.
-            declared=execcheck.declared_listing(root))
-        # ONE ANSWER PER QUESTION. This runs on every completion attempt, and the question is built
-        # from the task, the workspace listing and the project's declared commands — so when none of
-        # those has moved, the prompt is byte-identical and so is the answer. Measured over five
-        # days: 240 exec-intent calls, 104 of them byte-identical repeats (43%), 82,221 completion
-        # tokens; one session asked the same question seven times. #9 spends a call to ground the
-        # next action and bounds it with exactly this: a call that does not move the plan must not
-        # repeat. Keyed on the prompt itself, so any real change re-asks.
-        key = hashlib.sha1((system + "\x00" + user).encode("utf-8", "replace")).hexdigest()
-        cached = getattr(sess, "exec_intent_reply", "") if getattr(sess, "exec_intent_key", "") == key else ""
-        # REASONING OFF, and a cut answer is no answer. This asks for three JSON fields and nothing
-        # else — there is nothing here to think about, and thinking is what killed it. Its first and
-        # only live firing, ada-handles_mellum2_codex_poff_1785714194 call 0032: `finish_reason=length`,
-        # empty content, all 8,192 tokens spent in reasoning_content, ending in a degenerate `5x5x5…`
-        # loop. No JSON, so parse_intent returned {} and the delivered program was never run — the one
-        # check built to catch a green gate over a broken program, 0 for 1. Every sibling judge already
-        # does one of these two things (force_think_off at _satisfaction_verdict, the truncation retry
-        # at the critic); this call did neither.
-        if cached:
-            rlog.emit("loop.exec_intent_reused", level="info", key=key[:8])
-            intent_text = cached
-        else:
-            comp = _judge_completion(reasoner_chat, reasoner_role, system, user, rlog,
-                                     phase="exec-intent", workspace_root="", force_think_off=True)
-            if massage.is_truncated(comp):
-                rlog.emit("loop.exec_intent_truncated", level="warn")
-                return ""   # a cut intent is not an intent; say nothing rather than guess a command
-            intent_text = _completion_text(comp) or ""
-            if intent_text.strip():
-                sess.exec_intent_key, sess.exec_intent_reply = key, intent_text
-        # The output-vs-expectation question is the reasoner's (see execcheck.evaluate). Reasoning
-        # OFF and temperature 0: it answers one word from a fixed set, like every other closed
-        # question cria asks. No reasoner configured → evaluate() falls back to today's silence.
-        off = replace(reasoner_role, reasoning="off") if reasoner_role is not None else None
-        match_ask = (lambda sysm: summarize(reasoner_chat, off, sysm, _ASK_USER_TURN, rlog,
-                                            phase="exec-output", temperature=0.0) or "") \
-            if reasoner_role is not None else None
-        result = execcheck.evaluate(root, execcheck.parse_intent(intent_text), ask=match_ask)
-        rlog.emit("loop.exec_check", verdict=result.verdict, command=_clip(result.command, 80),
-                  exit_code=result.exit_code)
-        # THE CODER GETS IT TOO. Walked on both 2026-08-07 runs, and it is the whole resolver_cli
-        # failure in each. cria ran `handle_resolver.py goose`, watched it exit 1, wrote the finding
-        # correctly — and put it in the satisfaction judge's evidence and nowhere else. All three
-        # call sites feed `ev`/`evidence`; none feeds the coder. So the one party that could fix the
-        # command-line entry point was never told cria had run it and it failed, while the judge —
-        # invited by the marker's own closing hedge to treat it as "evidence, not a verdict" —
-        # discounted it and ended the session. Twice, on two different models.
-        #
-        # NOT_OBSERVED only. That verdict is a defect in the coder's program, stated from an exit
-        # code cria observed itself; `inconclusive` is a gap in what CRIA could establish, and
-        # telling the coder "I could not work out how to run your program" is noise it cannot act on
-        # (principle 3). Still never a gate — the marker rides along with whatever cria was already
-        # going to say, and if cria was going to say nothing this changes nothing.
-        sess.exec_finding = result.marker if result.verdict == execcheck.NOT_OBSERVED else ""
-        return result.marker
-    except Exception as e:  # noqa: BLE001
-        rlog.emit("loop.exec_check_error", level="warn", error=f"{type(e).__name__}: {e}")
-        return ""   # a check that cannot run must never affect a completion
-
-
-def _exec_finding_line(sess) -> str:
-    """cria's own run of the deliverable, as a line for the coder — or "" when there is nothing to say.
-
-    Consumed once. The finding is true of the workspace as it stood when cria ran it; leaving it
-    parked would re-assert a failure the coder may have just fixed, which is the stale-ground-truth
-    fault this same walk found four times over."""
-    line = getattr(sess, "exec_finding", "") or ""
-    sess.exec_finding = ""
-    return f"\n\n{line}" if line else ""
+    return note
 
 
 # A briefing sentence DENYING that a named file exists: a filename token, a negation, a creation
@@ -2484,10 +2400,6 @@ class Loop:
         # every STEP verified, never ran what it was shipping. Judges twice wrote "Let me run it" into
         # their reasoning and structurally could not. The marker is EVIDENCE, never a gate, and is empty
         # on a confirmed run or a task that needs no run, so a clean signal stays silent.
-        exec_marker = live_execution_marker(sess, body, task, self._ctx.reasoner_chat,
-                                            self._ctx.reasoner_role, rlog)
-        if exec_marker:
-            ev += "\n\n" + exec_marker
         satisfied, reason, fix_action = judge_satisfaction(task, ev, self._ctx.reasoner_chat, self._ctx.reasoner_role,
                                                rlog, coder_tools=_coder_tools_summary(body.get("tools"), params=False),
                                                workspace_root=sess.workspace_root or "",
@@ -2535,7 +2447,7 @@ class Loop:
         sess.plan.status = "in_progress"
         sess.nudge_reason = prompts.render("done_incomplete", reason=reason,
                                            check_state=_check_state_words(sess),
-                                           exec_finding=_exec_finding_line(sess))
+)
         sess.steer_source = "completion critic (task not fully done)"
         self._persist_plan(sess.plan, rlog)
         return reason
@@ -3797,10 +3709,6 @@ class Loop:
         # 124 and used in main() at line 87 — while the unit tests pass and cria's own lint floor
         # reports "no problems reported". A green gate over a program that cannot run, and the one
         # mechanism built to catch exactly that was never asked.
-        exec_marker = live_execution_marker(sess, body, task, self._ctx.reasoner_chat,
-                                            self._ctx.reasoner_role, rlog)
-        if exec_marker:
-            evidence += "\n\n" + exec_marker
         satisfied, reason, _fix = judge_satisfaction(
             task, evidence, self._ctx.reasoner_chat, self._ctx.reasoner_role, rlog,
             coder_tools=_coder_tools_summary(body.get("tools"), params=False),
@@ -3848,9 +3756,8 @@ class Loop:
             sess.probe_call_id = probe_tc["id"]
             # Held as PIECES, not as prose: the note's opening claim depends on whether the gate
             # actually ran, and that is not known until its result comes back next turn. The
-            # exec_marker is what must not be recomputed (it costs a reasoner call).
-            sess.pending_done_parts = (reason, exec_marker)
-            sess.pending_done = satisfaction_done_note(reason, exec_marker)   # reuse; never run twice
+            sess.pending_done_parts = (reason,)
+            sess.pending_done = satisfaction_done_note(reason)
             sess.steer_source = "completion check (task satisfied)"
             return _completion_toolcalls([probe_tc],
                                          note="cria completion check: the task looks done — verifying the repo's checks")
@@ -3888,7 +3795,7 @@ class Loop:
                 # finishes the real work on its own; there is no "give up after one look".
                 sess.nudge_reason = prompts.render("done_incomplete", reason=critic_reason,
                                                    check_state=_check_state_words(sess),
-                                                   exec_finding=_exec_finding_line(sess))
+)
                 sess.steer_source = "completion critic (task not fully done)"
                 sess.pending_done = ""
             else:  # green + (satisfied / already critiqued / no reasoner) → trust the objective gate, END
@@ -4066,7 +3973,7 @@ class Loop:
             return self._renudge(sess, key, body, prompts.render(
                 "done_incomplete", reason=critic_reason,
                 check_state=prompts.load_map("done_check_state")["never_ran"],
-                exec_finding=_exec_finding_line(sess)), rlog)
+), rlog)
         return comp  # no reasoner AND no shell → can't verify at all; forward the 'done' (Tier-2 fail-open, left)
 
     def _done_critic_reason(self, sess: PlanSession, body: dict, rlog) -> str:
@@ -4092,10 +3999,6 @@ class Loop:
         # `NameError: name 'json' is not defined` in main(); the coder's own two attempts to run it were
         # blocked on a typo'd path and nothing else ever executed it. EVIDENCE, never a gate — empty on
         # a confirmed run or a task that needs no run, so a clean signal stays silent.
-        exec_marker = live_execution_marker(sess, body, task, self._ctx.reasoner_chat,
-                                            self._ctx.reasoner_role, rlog)
-        if exec_marker:
-            ev += "\n\n" + exec_marker
         satisfied, reason, _fix = judge_satisfaction(
             task, ev, self._ctx.reasoner_chat, self._ctx.reasoner_role, rlog,
             coder_tools=_coder_tools_summary(body.get("tools"), params=False),
@@ -7081,8 +6984,8 @@ def author_steer(reasoner_chat, reasoner_role, workspace_root, gs, body: dict, r
                                  workspace_root=workspace_root, transcript=transcript,
                                  answer_now=verifytools.ANSWER_NOW_STEER)
         # A CUT REPLY IS NOT A DIRECTIVE. Its toolless sibling `summarize()` has checked this since
-        # the truncation guard landed, and `live_execution_marker` says it outright — "a cut intent is
-        # not an intent". This branch never got it. Walked on
+        # the truncation guard landed, and the retired live-execution seat said it outright — "a cut
+        # intent is not an intent". This branch never got it. Walked on
         # ada-handles_fabliq_codex_pon_1785721353 call 0139: the author returned finish_reason=length
         # with 8,192 tokens of the coder's own pytest failures repeated ~9x, and cria delivered 27,000
         # characters of that to the coder, in cria's voice, under a prompt asking for "a SHORT

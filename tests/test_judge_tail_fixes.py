@@ -107,23 +107,5 @@ class ASteerMustNameSomethingTests(unittest.TestCase):
         self.assertIn("pyflakes: 2 problems", both)           # …with something to act on
 
 
-class TheExecProbeJudgesTheRequestNotTheFilesTests(unittest.TestCase):
-    """"a library, a set of functions imported by tests, or a document is false" put a CLI with argv
-    handling in the false bucket three times — `"nothing runnable has been written yet"` against five
-    files, one with a working main()."""
-
-    def test_the_false_bucket_no_longer_lists_a_set_of_functions(self):
-        t = prompts.load("exec_intent")
-        self.assertNotIn("a set of functions imported by tests", t)
-
-    def test_it_says_to_judge_the_request(self):
-        t = prompts.load("exec_intent")
-        self.assertIn("Judge the REQUEST, not the files", t)
-        self.assertIn("even when the program is small, unfinished", t)
-
-    def test_false_is_still_a_fine_answer(self):
-        self.assertIn("False is a fine answer", prompts.load("exec_intent"))
-
-
 if __name__ == "__main__":
     unittest.main()

@@ -16,32 +16,15 @@ Each is subtractive: cria says LESS, and what remains is true. None adds a mecha
 
 3. A DISCOVERY MISS REPORTED AS A REPO FACT — covered in test_probegate.py.
 """
+
+# The live-execution seat this file tested was REMOVED on 2026-08-18 (operator: "drop the
+# 'something needs to be ran' assertion altogether — it is more trouble than it is worth").
+# The classes that exercised it are gone with it; what remains below tests mechanisms that
+# outlived it. See docs/audits/finish-and-remeasure-progress.md for the reasoning.
+
 import unittest
 
 from cria import execcheck, prompts
-
-
-class AFilteredListMayNotSayCompleteTests(unittest.TestCase):
-    def setUp(self):
-        self.claim = execcheck._COMPLETENESS_CLAIM
-        self.assertTrue(self.claim, "the footer text could not be read from its prompt")
-
-    def _listing(self, *entries):
-        body = "\n".join(f"  {e}" for e in entries)
-        return f"WORKSPACE FILES in /w:\n{body}\n{self.claim}"
-
-    def test_the_claim_is_dropped_when_entries_were_removed(self):
-        out = execcheck.runnable_listing(self._listing("main.rs (100 B)", "Cargo.toml (50 B)"))
-        self.assertIn("main.rs", out)
-        self.assertNotIn(self.claim, out)
-
-    def test_the_claim_text_is_read_from_the_prompt_that_owns_it(self):
-        """A hardcoded copy would go stale the first time the sentence is reworded."""
-        self.assertEqual(self.claim,
-                         prompts.load_map("workspace_inventory")["complete"].strip())
-
-    def test_an_all_data_workspace_still_returns_nothing(self):
-        self.assertEqual(execcheck.runnable_listing(self._listing("Cargo.toml (50 B)")), "")
 
 
 class ARunnerIsNotBlamedForCriasCommandTests(unittest.TestCase):

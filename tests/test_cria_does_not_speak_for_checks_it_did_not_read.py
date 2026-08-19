@@ -50,19 +50,6 @@ class TheCheckStateSaysWhichHappenedTests(unittest.TestCase):
                          "a caller is asserting a pass it has no evidence for")
 
 
-class NoModuleSpeaksForChecksItNeverReadTests(unittest.TestCase):
-    def test_neither_live_execution_marker_claims_the_checks_passed(self):
-        marks = prompts.load_map("exec_markers")
-        for key in ("not_observed", "inconclusive"):
-            self.assertNotIn("checks cover passed", marks[key], key)
-            self.assertNotIn("Everything else", marks[key], key)
-
-    def test_they_still_say_what_they_DO_know(self):
-        marks = prompts.load_map("exec_markers")
-        self.assertIn("evidence about the program", marks["not_observed"])
-        self.assertIn("only that the run could not be established", marks["inconclusive"])
-
-
 class AJudgeNamesTheGapAndNotTheFixTests(unittest.TestCase):
     """The rule is about a class of prompt, so this checks every judge prompt that has the field —
     an instance test is how the first two of three sites survived."""

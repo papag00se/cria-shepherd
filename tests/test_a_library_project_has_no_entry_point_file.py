@@ -18,45 +18,18 @@ The manifest is consulted first now, and the file test only decides the case the
 not claim.
 """
 
+# The live-execution seat this file tested was REMOVED on 2026-08-18 (operator: "drop the
+# 'something needs to be ran' assertion altogether — it is more trouble than it is worth").
+# The classes that exercised it are gone with it; what remains below tests mechanisms that
+# outlived it. See docs/audits/finish-and-remeasure-progress.md for the reasoning.
+
+
 import unittest
 
 from cria import execcheck
 
 
 GO_MOD = "module cartsvc\n\ngo 1.22\n"
-
-
-class TheRunnerBranchAnswersFirstTests(unittest.TestCase):
-    def _go_project(self, tmp):
-        (tmp / "go.mod").write_text(GO_MOD)
-        (tmp / "cart.go").write_text("package cartsvc\n\nfunc Total() int { return 0 }\n")
-        return str(tmp)
-
-    def test_go_test_is_corroborated_with_no_entry_point_file(self):
-        import tempfile, pathlib
-        with tempfile.TemporaryDirectory() as d:
-            root = self._go_project(pathlib.Path(d))
-            ok, why = execcheck.corroborate("go test ./...", [], execcheck.entrypoints(root), root)
-            self.assertTrue(ok, why)
-            self.assertEqual(why, "")
-
-    def test_the_manifest_is_what_makes_it_true(self):
-        """No manifest declaring it → still refused, and the reason names the real problem."""
-        import tempfile, pathlib
-        with tempfile.TemporaryDirectory() as d:
-            root = str(pathlib.Path(d))
-            ok, why = execcheck.corroborate("go test ./...", [], [], root)
-            self.assertFalse(ok)
-            self.assertIn("declares", why)
-
-    def test_a_file_shaped_project_still_gets_the_file_answer(self):
-        """The file test is not deleted — it decides the case the runner branch does not claim."""
-        import tempfile, pathlib
-        with tempfile.TemporaryDirectory() as d:
-            root = str(pathlib.Path(d))
-            ok, why = execcheck.corroborate("python3 app.py", [], [], root)
-            self.assertFalse(ok)
-            self.assertIn("entry point", why)
 
 
 class TheRubyInstallRouteIsReachableTests(unittest.TestCase):

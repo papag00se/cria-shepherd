@@ -24,6 +24,12 @@ WHAT IS NOT WIDENED: this only decides whether the PROJECT declares a command. W
 execute one is still `_runnable` plus `_SHELL_META`, and neither moved.
 """
 
+# The live-execution seat this file tested was REMOVED on 2026-08-18 (operator: "drop the
+# 'something needs to be ran' assertion altogether — it is more trouble than it is worth").
+# The classes that exercised it are gone with it; what remains below tests mechanisms that
+# outlived it. See docs/audits/finish-and-remeasure-progress.md for the reasoning.
+
+
 import os
 import pathlib
 import tempfile
@@ -52,62 +58,6 @@ class _Workspace:
 
 CARGO = '[package]\nname = "toml-cli"\nversion = "0.1.0"\n'
 POM = "<project><artifactId>feed</artifactId></project>\n"
-
-
-class TheNestedManifestIsFoundTests(unittest.TestCase):
-    def test_cargo_new_subdir(self):
-        """THE CELL. `cargo new toml-cli` is the ordinary way to start, and it was invisible."""
-        with _Workspace({"toml-cli/Cargo.toml": CARGO,
-                         "toml-cli/src/main.rs": "fn main() {}\n"}) as root:
-            self.assertIn("cargo run", execcheck.manifest_commands(root))
-
-    def test_the_false_sentence_is_gone(self):
-        with _Workspace({"toml-cli/Cargo.toml": CARGO,
-                         "toml-cli/src/main.rs": "fn main() {}\n"}) as root:
-            ok, why = execcheck.corroborate("cargo run -- config.toml server.port", [],
-                                            ["toml-cli/src/main.rs"], root)
-            self.assertTrue(ok, why)
-            self.assertNotIn("no manifest in this workspace declares", why)
-
-    def test_other_languages_nest_the_same_way(self):
-        for files, want in (({"service/pom.xml": POM}, "mvn test"),
-                            ({"cmd/app/go.mod": "module x\n"}, "go run"),
-                            ({"web/package.json": '{"scripts": {"start": "node ."}}'}, "npm start")):
-            with self.subTest(layout=sorted(files)):
-                with _Workspace(files) as root:
-                    self.assertIn(want, execcheck.manifest_commands(root))
-
-    def test_a_root_manifest_still_works(self):
-        with _Workspace({"Cargo.toml": CARGO, "src/main.rs": "fn main() {}\n"}) as root:
-            self.assertIn("cargo run", execcheck.manifest_commands(root))
-
-    def test_a_manifest_at_both_levels_is_listed_once(self):
-        with _Workspace({"Cargo.toml": CARGO, "sub/Cargo.toml": CARGO}) as root:
-            cmds = execcheck.manifest_commands(root)
-            self.assertEqual(cmds.count("cargo run"), 1)
-
-
-class NothingIsInventedTests(unittest.TestCase):
-    def test_an_empty_workspace_declares_nothing(self):
-        with _Workspace({"notes.txt": "hello\n"}) as root:
-            self.assertEqual(execcheck.manifest_commands(root), [])
-
-    def test_a_missing_root(self):
-        self.assertEqual(execcheck.manifest_commands(""), [])
-        self.assertEqual(execcheck.manifest_commands(os.path.join(tempfile.gettempdir(), "nope-x")),
-                         [])
-
-    def test_a_vendor_copy_is_not_the_project(self):
-        """The walk skips vendored trees, which is why reusing it matters: a manifest inside
-        node_modules/ or vendor/ is a dependency's, not this project's."""
-        with _Workspace({"node_modules/dep/package.json": '{"scripts": {"start": "x"}}'}) as root:
-            self.assertEqual(execcheck.manifest_commands(root), [])
-
-    def test_what_cria_will_run_is_unchanged(self):
-        for cmd in ("curl http://example.com", "bash -c x"):
-            with self.subTest(command=cmd):
-                self.assertFalse(execcheck._runnable(cmd)[0])
-        self.assertFalse(execcheck._runnable("cargo run | tee /tmp/x")[0])
 
 
 class OneOwnerForWhereTheProjectIsTests(unittest.TestCase):

@@ -1,1 +1,0 @@
-BUILD FILES — not programs, and never the answer themselves. They name which build tool this project uses, so the run target below can be the right one:

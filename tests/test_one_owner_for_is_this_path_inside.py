@@ -25,6 +25,12 @@ base", which is false for the base itself — and the full 3,423-test suite stay
 had no test anywhere.
 """
 
+# The live-execution seat this file tested was REMOVED on 2026-08-18 (operator: "drop the
+# 'something needs to be ran' assertion altogether — it is more trouble than it is worth").
+# The classes that exercised it are gone with it; what remains below tests mechanisms that
+# outlived it. See docs/audits/finish-and-remeasure-progress.md for the reasoning.
+
+
 import os
 import tempfile
 import unittest
@@ -78,33 +84,6 @@ class TheOwnersContractTests(unittest.TestCase):
         """A path cria cannot place is a path cria must not act on (#13)."""
         self.assertTrue(dirguard.escapes_workspace("x", None))
         self.assertTrue(dirguard.escapes_workspace("", self.ws))
-
-
-class TheActingSitesUseItTests(unittest.TestCase):
-    def test_execcheck_refuses_a_program_argument_outside_the_workspace(self):
-        """It runs the coder's program in cria's own process, outside the harness sandbox, and until
-        now validated nothing at all."""
-        ws = tempfile.mkdtemp()
-        code, out = execcheck.run(ws, "python3 /etc/passwd")
-        self.assertIsNone(code)
-        self.assertIn("outside the workspace", out)
-
-    def test_execcheck_still_runs_an_ordinary_command(self):
-        self.assertEqual(execcheck.run(tempfile.mkdtemp(), "python3 -c pass")[0], 0)
-
-    def test_the_sweep_asks_the_owner(self):
-        import inspect
-        from cria import probegate
-        self.assertIn("dirguard.escapes_workspace", inspect.getsource(probegate.sweep_litter))
-
-    def test_the_gathers_containment_primitive_is_the_owners(self):
-        """Its POLICY is deliberately the inverse — scratchpad only, never the workspace — so only
-        the primitive converged."""
-        import inspect
-        self.assertIn("dirguard.escapes_workspace", inspect.getsource(planner_tools._within))
-        self.assertTrue(planner_tools._within("/tmp/x/y", "/tmp/x"))
-        self.assertTrue(planner_tools._within("/tmp/x", "/tmp/x"))
-        self.assertFalse(planner_tools._within("/tmp/xy", "/tmp/x"))
 
 
 if __name__ == "__main__":

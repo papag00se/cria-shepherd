@@ -25,6 +25,12 @@ exactly what makes `cargo run` a real thing to do. The head-first half landed wi
             the actual state of the workspace" — after it had run both, successfully.
 """
 
+# The live-execution seat this file tested was REMOVED on 2026-08-18 (operator: "drop the
+# 'something needs to be ran' assertion altogether — it is more trouble than it is worth").
+# The classes that exercised it are gone with it; what remains below tests mechanisms that
+# outlived it. See docs/audits/finish-and-remeasure-progress.md for the reasoning.
+
+
 import json
 import os
 import pathlib
@@ -56,112 +62,6 @@ RUST = {"Cargo.toml": "[package]\nname = \"toml-cli\"\n",
 NODE = {"package.json": json.dumps({"scripts": {"start": "node lookup.js", "test": "node --test"}}),
         "lookup.js": "#!/usr/bin/env node\nconsole.log('x')\n",
         "README.md": "# lookup\n\nRun it:\n\n    node lookup.js goose\n"}
-
-
-class AProjectRunnerIsNotAFileTests(unittest.TestCase):
-    def test_cargo_run_is_corroborated_by_the_manifest(self):
-        with ws(RUST) as d:
-            ok, why = execcheck.corroborate("cargo run", execcheck.readme_commands(d),
-                                            execcheck.entrypoints(d), d)
-        self.assertTrue(ok, why)
-        self.assertEqual(why, "")
-
-    def test_the_old_sentence_is_gone(self):
-        with ws(RUST) as d:
-            _, why = execcheck.corroborate("cargo run", execcheck.readme_commands(d),
-                                           execcheck.entrypoints(d), d)
-        self.assertNotIn("not an entry point on disk", why)
-
-    def test_a_runner_no_manifest_declares_is_still_refused(self):
-        """The veto is narrowed, not removed: no Cargo.toml means `cargo run` is not a thing here."""
-        with ws(NODE) as d:
-            ok, why = execcheck.corroborate("cargo run", execcheck.readme_commands(d),
-                                            execcheck.entrypoints(d), d)
-        self.assertFalse(ok)
-        self.assertIn("declares", why)
-
-    def test_a_plain_file_command_still_takes_the_on_disk_route(self):
-        with ws(NODE) as d:
-            ok, _ = execcheck.corroborate("node lookup.js goose", execcheck.readme_commands(d),
-                                          execcheck.entrypoints(d), d)
-            bad, why = execcheck.corroborate("node ghost.js", execcheck.readme_commands(d),
-                                             execcheck.entrypoints(d), d)
-        self.assertTrue(ok)
-        self.assertFalse(bad)
-        self.assertIn("not an entry point on disk", why)
-
-    def test_an_undocumented_but_real_entry_point_still_passes_weakly(self):
-        """Preserved: a missing README line is a documentation gap, not evidence of no run."""
-        with ws({"app.py": "if __name__ == '__main__':\n    print(1)\n"}) as d:
-            ok, why = execcheck.corroborate("python3 app.py", [], execcheck.entrypoints(d), d)
-        self.assertTrue(ok)
-        self.assertIn("no README or manifest documents", why)
-
-
-class TheDeclaredCommandsReachTheProbeAuthorTests(unittest.TestCase):
-    def test_the_readme_command_is_listed(self):
-        with ws(NODE) as d:
-            block = execcheck.declared_listing(d)
-        self.assertIn("node lookup.js goose", block)
-
-    def test_the_manifest_scripts_are_listed_EXCEPT_the_test_ones(self):
-        """`npm test` is gone from this list on purpose, since 2026-08-18.
-
-        The header calls these the commands the project "is run and tested with" and the prompt says
-        to prefer them verbatim — while `_runnable` refuses any test command outright, because
-        `proberun` owns that job and a third execution of the suite in the live workspace is what
-        broke `orders-api-py x nemotron-elastic`. cria was offering an answer it had already decided
-        to veto.
-
-        MEASURED over every captured run: 361 exec-intent calls, 205 `inconclusive`, and **120 of
-        those name a test runner** — one in three of every call this seat has ever made. A library
-        project makes it certain rather than likely: its manifest declares a test task and nothing
-        else, so the list held only commands cria would refuse."""
-        with ws(NODE) as d:
-            block = execcheck.declared_listing(d)
-        self.assertIn("npm start", block)
-        self.assertNotIn("npm test", block)
-
-    def test_a_library_project_gets_no_declared_block_at_all(self):
-        """Its manifest declares a test task and nothing else, so after the filter there is nothing
-        to show — and the prompt already names "nothing runnable has been written yet" as a correct
-        answer, so the question is still worth asking."""
-        rakefile = 'require "rake/testtask"\nRake::TestTask.new(:test)\ntask default: :test\n'
-        with ws({"Rakefile": rakefile}) as d:
-            self.assertEqual(execcheck.declared_listing(d), "")
-
-    def test_the_filter_and_the_refusal_are_the_same_predicate(self):
-        """They disagreed once; one owner now (#23)."""
-        import inspect
-        self.assertIn("_is_a_test_command", inspect.getsource(execcheck.declared_listing))
-
-    def test_a_project_that_declares_nothing_gets_no_section(self):
-        with ws({"a.py": "x = 1\n"}) as d:
-            self.assertEqual(execcheck.declared_listing(d), "")
-
-    def test_the_block_reaches_the_prompt(self):
-        with ws(NODE) as d:
-            _, user = execcheck.intent_prompt("build a cli", files="lookup.js (10 B)",
-                                              declared=execcheck.declared_listing(d))
-        self.assertIn("node lookup.js goose", user)
-        self.assertIn("COMMANDS THIS PROJECT DECLARES FOR ITSELF", user)
-        self.assertNotIn("{{", user)
-
-    def test_the_prompt_says_to_prefer_a_declared_command(self):
-        _, user = execcheck.intent_prompt("t", files="a.py", declared="X")
-        self.assertIn("prefer it verbatim", user)
-
-    def test_no_declared_block_leaves_the_prompt_clean(self):
-        _, user = execcheck.intent_prompt("t", files="a.py (1 B)")
-        self.assertNotIn("{{", user)
-        self.assertNotIn("COMMANDS THIS PROJECT DECLARES", user)
-
-    def test_the_loop_passes_it(self):
-        import inspect
-
-        from cria import loop
-        self.assertIn("declared=execcheck.declared_listing(root)",
-                      inspect.getsource(loop))
 
 
 class TheOfflineSentenceClaimsOnlyWhatTheNamespaceProvesTests(unittest.TestCase):

@@ -35,6 +35,12 @@ somebody renames it — and a prompt that points at a directory that no longer e
 with a new spelling.
 """
 
+# The live-execution seat this file tested was REMOVED on 2026-08-18 (operator: "drop the
+# 'something needs to be ran' assertion altogether — it is more trouble than it is worth").
+# The classes that exercised it are gone with it; what remains below tests mechanisms that
+# outlived it. See docs/audits/finish-and-remeasure-progress.md for the reasoning.
+
+
 import ast
 import pathlib
 import re
@@ -57,68 +63,6 @@ class TheNameHasNoAmbiguityTests(unittest.TestCase):
                 filled = "\n".join(prompts.fill(v, spill_dir=webfetch.SPILL_DIR)
                                    for v in prompts.load_map(name).values())
                 self.assertNotIn("read-only/", filled)
-
-
-class TheNameIsSpelledOnceTests(unittest.TestCase):
-    """#23. Four copies is four things to forget, and a prompt naming a dead directory is this same
-    bug wearing a different word."""
-
-    def _functional_strings(self, path):
-        """Every string literal in a module that is NOT a docstring — docstrings quote real past
-        output and must keep saying what that output said (#5b)."""
-        tree = ast.parse(path.read_text(encoding="utf-8"))
-        docs = set()
-        for n in ast.walk(tree):
-            if isinstance(n, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-                d = ast.get_docstring(n, clean=False)
-                if d is not None:
-                    docs.add(d)
-        return [n.value for n in ast.walk(tree)
-                if isinstance(n, ast.Constant) and isinstance(n.value, str) and n.value not in docs]
-
-    def test_no_module_but_webfetch_spells_the_directory(self):
-        leaf = webfetch.SPILL_DIR.rstrip("/").rsplit("/", 1)[-1]
-        for f in sorted(ROOT.joinpath("cria").rglob("*.py")):
-            if f.name == "webfetch.py":
-                continue
-            for s in self._functional_strings(f):
-                with self.subTest(module=f.name, text=s[:60]):
-                    self.assertNotIn(f"tmp/{leaf}", s)
-
-    def test_the_consumers_derive_it(self):
-        self.assertEqual(execcheck._SPILL_MARK, webfetch.SPILL_DIR.lstrip("./").rstrip("/") + "/")
-        self.assertIn(webfetch.SPILL_DIR.lstrip("./"), loop._SEARCH_FILE_RE.pattern.replace("\\", ""))
-
-    def test_the_prompt_carries_a_token_not_a_typed_path(self):
-        """Typed into the prompt, the path drifts silently at the next rename — and cria then sends
-        the coder to a directory that is not there, which is the whole incident above."""
-        raw = prompts.load_map("tool_descs")
-        self.assertIn("{{SPILL_DIR}}", raw["web_fetch"])
-        self.assertIn("{{SPILL_DIR}}", raw["web_search"])
-
-    def test_what_reaches_the_model_is_filled(self):
-        """A token that ships unfilled is worse than a typed path: the coder is told to grep
-        `{{SPILL_DIR}}/x`."""
-        desc = writeproxy._synthetic_tools()["web_fetch"]["function"]["description"]
-        self.assertNotIn("{{", desc)
-        self.assertIn(webfetch.SPILL_DIR, desc)
-
-
-class TheMachineryStillWorksTests(unittest.TestCase):
-    def test_a_spilled_search_file_is_still_recognised(self):
-        p = f"{webfetch.SPILL_DIR}/search-ruby_gem_check_if_country_is_in_eu.txt"
-        self.assertEqual(loop._SEARCH_FILE_RE.search(p).group(0), p)
-
-    def test_the_pointer_the_guard_prints_is_the_path_the_regex_reads(self):
-        """The refusal's own sentence must round-trip, or cria is again naming a file nobody can
-        open — the two are written in different modules."""
-        target = webfetch.search_spill_name("ruby gem check if country is in eu")
-        self.assertIsNotNone(loop._SEARCH_FILE_RE.search(target), target)
-
-    def test_the_probe_still_excludes_crias_own_reference_material(self):
-        """It listed the spill dir as the coder's workspace once, and the probe reported cria's 96 KB
-        fetched spec as the deliverable."""
-        self.assertIn(execcheck._SPILL_MARK, f"a/{webfetch.SPILL_DIR.lstrip('./')}/doc.txt")
 
 
 if __name__ == "__main__":
