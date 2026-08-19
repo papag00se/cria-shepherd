@@ -180,7 +180,28 @@ Plus: the exec-intent seat removed entirely, the judge handed its files instead 
 | 2 | cart-billing-go × gemma4 | **5/5** | exited on its own. |
 | 3 | orders-api-py × gemma4 | **4/4** | full marks, exited on its own, 97 calls |
 | 4 | feed-pipeline-java × gemma4 | **5/5** | full marks, exited on its own, 35 calls |
-| 5 | handles-cli-node × gemma4 | running | |
+| 5 | handles-cli-node × gemma4 | **4/4** | full marks, 29 calls |
+| 6 | rust-toml-cli × gemma4 | **4/4** | full marks, 33 calls |
+| 7 | shipping-rates-rb × qwen35 | **1/5** | killed at 30 min, 218 calls |
+| 8 | cart-billing-go × qwen35 | **5/5** | full marks |
+
+### The gemma4 arm, complete — and what it does and does not say
+
+**22 of 27, five of six cells at 100%.** The one failure is `shipping-rates-rb`, again.
+
+Against the previous complete gemma4 arms:
+
+| arm | total | cells at 100% |
+|---|---|---|
+| `1786924773` | 13/27 — 48% | 2 |
+| `1786979961` | 23/27 — 85% | 2 |
+| **now** `1787120221` | **22/27 — 81%** | **5** |
+
+**The total is flat** — 22 against 23 is well inside the noise. What changed is the distribution: three cells each gained exactly ONE check (`orders-api-py` 3→4, `handles-cli-node` 3→4, `rust-toml-cli` 3→4) and thereby maxed out. Each of those moves is inside the per-cell floor on its own. Three in the same direction is suggestive and **not** established — a fourth arm would settle it, and the remaining three arms of this pass are that test.
+
+`handles-cli-node` is the one to watch: its last six read 0, 3, 3, 3, 3, **4**. Five runs stuck on the same number and then a clear.
+
+The campaign's target is every cell at 100%, so cells-maxed is the metric that matters more than the total — but it is also the metric most sensitive to a single check, which is exactly why one arm cannot carry the claim.
 
 **Through the noise floor, four cells in:** three at 100%, one at 0, and **nothing has moved by more than one check** except `shipping-rates-rb`. That cell's last six runs read 1, 4, 0, 1, 4, 0 — comparing it against the immediately previous run means comparing against a cherry-picked high; against the run before that it is 1 → 0, which is inside the floor. Bimodal, not regressed.
 
