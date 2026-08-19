@@ -56,19 +56,20 @@ class TheJudgeGetsNamesNotSignatures(unittest.TestCase):
                 self.assertIn("runs ANY shell command", loop._coder_tools_summary(TOOLS, params=params))
 
     def test_every_judge_call_site_asks_for_names_only(self):
-        """Drive the real satisfaction-judge call sites (not their source text) and confirm none of
-        them hand the judge a coder tool menu carrying parameter names.
+        """Drive EVERY real satisfaction-judge call site (not their source text) and confirm none of
+        them hands the judge a coder tool menu carrying parameter names.
 
-        NB: ``Loop._replan_tail``'s ``judge_satisfaction`` call (loop.py, inside the 'all done'
-        confirmation branch) is NOT exercised here. It passes ``coder_tools=tools`` where ``tools``
-        is computed earlier in that same method as ``_coder_tools_summary(body.get("tools"))`` —
-        the DEFAULT ``params=True`` — reused from the replanner's own (legitimately full-parameter)
-        prompt. That is a live instance of the exact bug this file documents, found while converting
-        this test off source-text matching (the old version searched for the literal substring
-        ``"coder_tools=_coder_tools_summary"`` and silently skipped any site that instead passed a
-        variable, which is exactly this site's shape). Left unfixed and unasserted here per this
-        pass's scope — reported separately — rather than adding a test that fails against a known,
-        un-remediated defect."""
+        THE FOURTH SITE IS WHY THIS TEST IS NOW DRIVEN. ``Loop._replan_tail`` passed
+        ``coder_tools=tools``, reusing the summary it had built for the REPLANNER — which
+        legitimately carries parameters, because a re-derived step has to be something the coder can
+        actually do. The judge in the same method inherited it, and got the exact vocabulary this
+        file's incident is about. It was live for as long as that branch has existed.
+
+        The guard that should have caught it searched the source for the literal
+        ``"coder_tools=_coder_tools_summary"`` and silently skipped any site that passed a variable
+        instead — which is precisely this site's shape. A source-text scan with a silent skip reads
+        as "all sites checked" when it means "the sites I could see". Found by the test audit of
+        2026-08-19; fixed with it."""
         import unittest.mock
         from cria.loop import Loop, PlanSession
         from cria.plan import Plan, PlanItem
@@ -110,7 +111,18 @@ class TheJudgeGetsNamesNotSignatures(unittest.TestCase):
             lp3._ctx = _Ctx()
             lp3._done_critic_reason(PlanSession(plan=plan), body, _RLog())
 
-        self.assertEqual(len(calls), 3, "all three known call sites must reach the judge")
+            # THE FOURTH: the living re-derivation's "the tail is already done" confirmation. It
+            # only reaches the judge when the replanner returns an EMPTY tail, so that is scripted.
+            lp4 = Loop.__new__(Loop)
+            lp4._ctx = _Ctx()
+            tail_plan = Plan(id="y", task="build it", created="2026-01-01T00:00:00+00:00",
+                             items=[PlanItem(text="step one"), PlanItem(text="step two")])
+            tail_plan.items[0].done = True
+            sess4 = PlanSession(plan=tail_plan)
+            with unittest.mock.patch.object(loop, "reassess_remaining", lambda *a, **k: []):
+                lp4._replan_tail(sess4, body, 1, _RLog())
+
+        self.assertEqual(len(calls), 4, "all four known call sites must reach the judge")
         for i, coder_tools in enumerate(calls):
             with self.subTest(site=i):
                 for p in forbidden:

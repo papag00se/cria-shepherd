@@ -3097,7 +3097,17 @@ class Loop:
         # which needs a populated ledger and so cannot help here. Silent once any real route is known.
         if not known_routes(body.get("messages", []), sess):
             evidence = (evidence + "\n\n" + prompts.load_map("planner_steers")["fetch_no_structure"]).strip()
+        # THE REPLANNER GETS PARAMETERS; THE JUDGE BELOW DOES NOT. A re-derived step has to be
+        # something the coder can actually do, so the replanner is shown how each tool is called.
+        # A satisfaction judge is READ-ONLY and must not be: handed the parameter vocabulary
+        # (`justification`, `workdir`, `login`, …) it fabricates tool calls out of its own prompt,
+        # goes silent, and cria fail-closes — 12 consecutive times on a workspace already at 5/5
+        # (the incident in tests/test_judge_is_fenced_out_of_acting.py). The other three
+        # judge_satisfaction sites always passed params=False; this one reused the replanner's
+        # summary, and the guard that was supposed to catch it string-matched
+        # "coder_tools=_coder_tools_summary" and skipped every site that passes a variable.
         tools = _coder_tools_summary(body.get("tools"))
+        judge_tools = _coder_tools_summary(body.get("tools"), params=False)
         steps = reassess_remaining(
             self._ctx.reasoner_chat, self._ctx.reasoner_role, sess.plan.task,
             "\n".join(f"- {it.text}" for it in done_items),
@@ -3108,7 +3118,7 @@ class Loop:
             return
         if not steps:  # claims the re-derivable tail is done — confirm before dropping it
             satisfied, _, _fix = judge_satisfaction(sess.plan.task, evidence, self._ctx.reasoner_chat,
-                                              self._ctx.reasoner_role, rlog, coder_tools=tools,
+                                              self._ctx.reasoner_role, rlog, coder_tools=judge_tools,
                                               workspace_root=sess.workspace_root or "",
                                               routes=known_routes(body.get("messages", []), sess))
             if not satisfied:  # not actually done → keep the remaining steps, let them verify normally
