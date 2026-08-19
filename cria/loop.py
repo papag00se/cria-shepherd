@@ -7356,10 +7356,26 @@ _CODE_SHAPED = re.compile(
     r"```"                                              # a fenced block of any kind
     r"|^[ \t]*(?:def |class |import |from [.\w]+ import |return |with |@patch|assert )"   # python
     r"|^[ \t]*\S.*[;{}]\s*$"                            # a statement or brace line: java/rust/go/c/js
-    r"|^[ \t]*\w+(?:[.:]{1,2}\w+)*\s*\([^)\n]*\)"       # a call at the head of a line
+    r"|^[ \t]*\w+(?:[.:]{1,2}\w+)*[?!]?\s*\([^)\n]*\)"   # a call at the head of a line
     r"|^[ \t]*\$?\s*[\w./-]+(?:\s+[\w./=-]+)*\s+--?[\w-]+"  # a command with a flag: `mvn -q test`
-    r"|\b\w+(?:\.\w+)+\([^)\n]*\)",                    # an inline dotted CALL: `pkg.fn(arg)`
+    r"|\b\w+(?:\.\w+)+[?!]?\s*\([^)\n]*\)",             # an inline dotted CALL: `pkg.fn(arg)`
     re.M)
+# …AND THE `[?!]` IS NOT DECORATION. Without it this pattern cannot see `ZONE_BASE.key?(x)`,
+# `rec.save!(x)` or `println!("x")` — Ruby's predicate and bang methods, which are the ordinary way
+# Ruby is written, and Rust's macros. A detector whose entire job is to be language-agnostic (#20)
+# was blind to a whole language's most common call shape.
+#
+# What that cost, measured on `shipping-rates-rb x ternary-bonsai` 1787111689. cria's [REDIRECT]
+# steer shipped two paste-ready lines:
+#
+#     # Instead of: zone = zone_or_code.is_a?(String) && … ? zone_for(zone_or_code) : zone_or_code
+#     # Use this:   zone = ZONE_BASE.key?(zone_or_code) ? zone_or_code : zone_for(zone_or_code)
+#
+# `_dictates_code` returned False, so `_strip_invented_code` never ran and no
+# `loop.steer_dictated_code` event was emitted — the guard was silent because it could not see. The
+# model adopted the line verbatim and `test_unknown_zone_rejected`, a REPO test that had been green,
+# went red and stayed red: `"moon"` is not a ZONE_BASE key, so it falls through to `zone_for` and
+# returns `"international"` instead of raising. One of the run's three final failures.
 
 _DICTATES = "DICTATES"
 
