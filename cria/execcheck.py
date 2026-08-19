@@ -649,6 +649,23 @@ def declared_listing(root: str) -> str:
     `node lookup.js goose`, which is the command the verifier runs. The live-run check never ran the
     delivered program, and a green gate stood on the coder's own word."""
     cmds = list(dict.fromkeys(readme_commands(root) + manifest_commands(root)))
+    # …BUT NOT THE ONES THIS SEAT WILL REFUSE. The header calls these the commands the project "is
+    # run and tested with", and the prompt says to prefer them verbatim — while `_runnable` rejects
+    # any test command outright, because `proberun` owns that job and a third execution of the suite
+    # in the live workspace is what broke `orders-api-py x nemotron-elastic`. So cria offered an
+    # answer it had already decided to veto.
+    #
+    # MEASURED over every captured run: 361 exec-intent calls, 205 `inconclusive`, and **120 of those
+    # name a test runner** — one in three of every call this seat has ever made, spent arriving at
+    # the one answer that cannot be accepted. A library project makes it certain rather than likely:
+    # its manifest declares a test task and nothing else, so the list cria showed contained only
+    # commands cria would refuse.
+    #
+    # Filtered through `_is_a_test_command`, the same predicate that does the refusing, so the two
+    # cannot drift apart again (#23). When that empties the list the question still gets asked with
+    # no declared block — "nothing runnable has been written yet" is an answer the prompt already
+    # names as correct.
+    cmds = [c for c in cmds if not _is_a_test_command(shlex.split(c) or [""])]
     if not cmds:
         return ""
     return (prompts.load_map("exec_intent_declared")["header"] + "\n"

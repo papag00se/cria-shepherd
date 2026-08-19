@@ -104,11 +104,36 @@ class TheDeclaredCommandsReachTheProbeAuthorTests(unittest.TestCase):
             block = execcheck.declared_listing(d)
         self.assertIn("node lookup.js goose", block)
 
-    def test_the_manifest_scripts_are_listed(self):
+    def test_the_manifest_scripts_are_listed_EXCEPT_the_test_ones(self):
+        """`npm test` is gone from this list on purpose, since 2026-08-18.
+
+        The header calls these the commands the project "is run and tested with" and the prompt says
+        to prefer them verbatim — while `_runnable` refuses any test command outright, because
+        `proberun` owns that job and a third execution of the suite in the live workspace is what
+        broke `orders-api-py x nemotron-elastic`. cria was offering an answer it had already decided
+        to veto.
+
+        MEASURED over every captured run: 361 exec-intent calls, 205 `inconclusive`, and **120 of
+        those name a test runner** — one in three of every call this seat has ever made. A library
+        project makes it certain rather than likely: its manifest declares a test task and nothing
+        else, so the list held only commands cria would refuse."""
         with ws(NODE) as d:
             block = execcheck.declared_listing(d)
         self.assertIn("npm start", block)
-        self.assertIn("npm test", block)
+        self.assertNotIn("npm test", block)
+
+    def test_a_library_project_gets_no_declared_block_at_all(self):
+        """Its manifest declares a test task and nothing else, so after the filter there is nothing
+        to show — and the prompt already names "nothing runnable has been written yet" as a correct
+        answer, so the question is still worth asking."""
+        rakefile = 'require "rake/testtask"\nRake::TestTask.new(:test)\ntask default: :test\n'
+        with ws({"Rakefile": rakefile}) as d:
+            self.assertEqual(execcheck.declared_listing(d), "")
+
+    def test_the_filter_and_the_refusal_are_the_same_predicate(self):
+        """They disagreed once; one owner now (#23)."""
+        import inspect
+        self.assertIn("_is_a_test_command", inspect.getsource(execcheck.declared_listing))
 
     def test_a_project_that_declares_nothing_gets_no_section(self):
         with ws({"a.py": "x = 1\n"}) as d:
