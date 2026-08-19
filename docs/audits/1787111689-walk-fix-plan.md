@@ -132,7 +132,7 @@ cria's install advice names `bundler/setup` and `BUNDLE_GEMFILE`, never `bundle 
 | | |
 |---|---|
 | the judge stops being fed cria's spill as the coder's work | `fbed921` |
-| the seeded block names the root its paths are relative to | `2255c05` |
+| the seeded block names the root its paths are relative to | `ef9b4d3` |
 | the exec-intent seat and its self-vetoing command list | `1e0ac6e`, earlier |
 
 ## Order I would take it in
