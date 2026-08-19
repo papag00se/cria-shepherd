@@ -134,9 +134,14 @@ class ItIsTheSameRuleTheCompactorAlreadyHasTests(unittest.TestCase):
         self.assertIn("write_stub_superseded", prompts.load_map("compact_view"))
 
     def test_keyed_on_path_not_on_content(self):
-        import inspect
-        src = inspect.getsource(focustrim._stub_superseded_writes)
-        self.assertIn("last[path] = i", src)
+        """Two DIFFERENT paths written with the IDENTICAL content: a rule keyed on the content
+        (rather than the path) would read them as two copies of the same document and stub one —
+        both must survive whole, because each is a distinct file on disk."""
+        msgs = [write("1", "src/a.rs", BIG), result("1"),
+                write("2", "src/b.rs", BIG), result("2")]
+        out, _ = focustrim.trim(msgs)
+        self.assertEqual(bodies(out, "src/a.rs"), 1)
+        self.assertEqual(bodies(out, "src/b.rs"), 1)
 
 
 if __name__ == "__main__":

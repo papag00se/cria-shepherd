@@ -145,12 +145,45 @@ class QuietWhenThereIsNothingTests(unittest.TestCase):
             "I ran pytest and looked at the output.", "satisfied", _Rlog(), "x"))
 
 
+def _judge_reasoner(content, reasoning_content="", recover_answer=""):
+    """A reasoner stub for `_satisfaction_verdict`: the FIRST call answers as a judge normally
+    would (``content`` + ``reasoning_content``); any LATER call whose system turn carries "THE
+    JUDGE'S THINKING:" is the reasoning-recovery ask, answered with ``recover_answer`` instead —
+    the one marker `prompts/verdict_in_reasoning.txt` renders that no other call in this path
+    produces."""
+    import json
+
+    def chat(body, rlog):
+        sysm = body["messages"][0].get("content", "")
+        if "THE JUDGE'S THINKING:" in sysm:
+            return json.dumps({"choices": [{"message": {"content": recover_answer}}]}).encode()
+        return json.dumps({"choices": [{"message": {
+            "content": content, "reasoning_content": reasoning_content}}]}).encode()
+    return chat
+
+
 class WiringTests(unittest.TestCase):
+    """`_satisfaction_verdict` tries the judge's own JSON FIRST and only falls back to
+    ``verdict_from_reasoning`` when that fails — driven end to end so the claim is about what the
+    function actually returns for each shape of reply, not about which names its source spells."""
+
+    def test_a_parseable_verdict_is_returned_directly(self):
+        chat = _judge_reasoner('{"satisfied": true, "reason": "all done"}')
+        out = loop._satisfaction_verdict("sys", "user", chat, None, _Rlog(),
+                                         reasoning_off=False, workspace_root="")
+        self.assertEqual(out, {"satisfied": True, "reason": "all done"})
+
     def test_the_satisfaction_parser_falls_back_to_the_reasoning(self):
-        import inspect
-        src = inspect.getsource(loop._satisfaction_verdict)
-        self.assertIn("verdict_from_reasoning", src)
-        self.assertIn("extract_json_object", src)   # the normal path is still tried FIRST
+        from cria.config import Role
+        role = Role(name="reasoner", backend="local")
+        chat = _judge_reasoner("I looked at the workspace.",
+                              reasoning_content="The task is not done. The README is missing.",
+                              recover_answer="NOT_DONE: The README is missing.")
+        out = loop._satisfaction_verdict("sys", "user", chat, role, _Rlog(),
+                                         reasoning_off=False, workspace_root="")
+        self.assertIsNotNone(out)
+        self.assertIs(out["satisfied"], False)
+        self.assertIn("README is missing", out["reason"])
 
 
 class ProseVerdictTests(unittest.TestCase):
@@ -195,8 +228,17 @@ class PhantomToolTests(unittest.TestCase):
         self.assertEqual(loop.leaked_judge_tool(""), "")
 
     def test_the_parse_path_records_it_by_name(self):
-        import inspect
-        self.assertIn("loop.judge_phantom_tool", inspect.getsource(loop._satisfaction_verdict))
+        """Driven end to end: a reply naming a phantom tool with no opening brace (so massage's
+        own leaked-call recovery can't parse and silently promote it first, which a fully-formed
+        `<|tool_call>call:NAME{...}<tool_call|>` block always is) must still reach
+        `_satisfaction_verdict`'s OWN detection and be logged by name."""
+        rlog = _Rlog()
+        chat = _judge_reasoner("I should check. <|tool_call>call:Bash")
+        loop._satisfaction_verdict("sys", "user", chat, None, rlog,
+                                   reasoning_off=False, workspace_root="")
+        ev = next((kw for k, kw in rlog.events if k == "loop.judge_phantom_tool"), None)
+        self.assertIsNotNone(ev, "no phantom-tool event was recorded")
+        self.assertEqual(ev["tool"], "Bash")
 
 
 class TheReasonIsNeverCutTests(unittest.TestCase):

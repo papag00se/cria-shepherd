@@ -9,8 +9,9 @@ stays present exactly once, in the block labeled as the authority; each removed 
 one-line pointer. Nothing fuzzy, nothing paraphrased, identity when there is nothing to do."""
 
 import unittest
+from unittest import mock
 
-from cria import dedup
+from cria import dedup, loop
 
 _FIELD_LINE = ("  GET /handles/{handle} (replace in the URL path: {handle} = The Handle name) → "
                "hex(string), name(string, e.g. my.handle), handle_type(string), holder(string, "
@@ -108,20 +109,113 @@ class ElideMessagesTests(unittest.TestCase):
         self.assertEqual(n, 0)
 
 
+class _Rlog:
+    def emit(self, kind, **kw):
+        pass
+
+
+class _StopAfterCoderTurn(Exception):
+    """Raised from a patched ``_coder_turn`` once the framed view is captured — short-circuits the
+    driver before it needs a real coder/reasoner endpoint, gate, or verify machinery."""
+
+
 class WiringTests(unittest.TestCase):
     """The helper must guard both places the ledger is duplicated: the coder's outbound view (at
-    both anchor-injection sites) and the steer author's serialized session vs its fetch block."""
+    BOTH driver halves — the multi-item plan-on path and the single-item plan-off/synthetic path,
+    which route-unify made a second real caller of the SAME anchor-then-dedup shape) and the steer
+    author's serialized session vs its fetch block.
 
-    def test_the_coder_path_dedups_at_both_anchor_sites(self):
-        import inspect
-        from cria import loop
-        src = inspect.getsource(loop)
-        self.assertGreaterEqual(src.count("_elide_ledger_copies("), 2)
+    Driven end to end with a REAL duplicated ledger unit in the transcript, rather than counted in
+    the module's source text — a count can't tell two real call sites from one call site and a
+    comment that happens to repeat the helper's name (and the sibling test that used to strip
+    comments out of `author_steer`'s source for exactly this reason was the tell)."""
+
+    def _sess_with_ledger(self, **plan_kw):
+        item = loop.PlanItem("step 1")
+        plan = loop.Plan(id="20260101T000000-abcd1234", task="build it",
+                         created="2026-01-01T00:00:00+00:00", items=[item])
+        sess = loop.PlanSession(plan=plan, **plan_kw)
+        sess.fetched_pages = {
+            "https://api.handle.me/openapi.json":
+                ("HTTP 200", "/handles, /handles/{handle}, /stats", _FIELD_LINE, ""),
+        }
+        return sess, item
+
+    def _dup_unit(self, sess):
+        ledger = loop._fetch_ground_truth([], sess, header="PAGES YOU HAVE ALREADY FETCHED")
+        units = [u for u in dedup.ledger_units(ledger) if u == _FIELD_LINE]
+        self.assertTrue(units, "fixture must reproduce a real, dedup-able ledger unit")
+        return units[0]
+
+    def _dup_body(self, unit):
+        return {"messages": [{"role": "user", "content": "resolve a handle"},
+                             {"role": "tool", "content": "[response shape:\n" + unit + "\n]"}],
+               "tools": []}
+
+    def _framed_messages_for(self, drive_call):
+        captured = {}
+
+        def _fake_coder_turn(self_loop, sess_, framed, body_, *, step, rlog):
+            captured["messages"] = framed["messages"]
+            raise _StopAfterCoderTurn()
+
+        with mock.patch.object(loop.Loop, "_coder_turn", _fake_coder_turn):
+            try:
+                drive_call()
+            except _StopAfterCoderTurn:
+                pass
+        self.assertIn("messages", captured, "never reached the coder turn — a guard fired first")
+        return captured["messages"]
+
+    def test_the_multi_item_driver_dedups_the_anchor(self):
+        sess, item = self._sess_with_ledger()
+        unit = self._dup_unit(sess)
+        drv = loop.Loop(loop.LoopContext(planner=None, coder_chat=None, reasoner_chat=None, runs_dir=""))
+        body = self._dup_body(unit)
+        msgs = self._framed_messages_for(
+            lambda: drv._work_item(sess, "k", body, _Rlog(), item, 1))
+        whole = "\n".join(m.get("content", "") for m in msgs)
+        self.assertIn(unit, whole)                    # the anchor keeps ONE copy
+        self.assertEqual(whole.count(unit), 1)         # the tool-result duplicate collapsed
+
+    def test_the_single_item_driver_dedups_the_anchor(self):
+        sess, _item = self._sess_with_ledger(synthetic=True)
+        unit = self._dup_unit(sess)
+        drv = loop.Loop(loop.LoopContext(planner=None, coder_chat=None, reasoner_chat=None, runs_dir=""))
+        body = self._dup_body(unit)
+        msgs = self._framed_messages_for(
+            lambda: drv._drive_single_item(sess, body, "k", _Rlog()))
+        whole = "\n".join(m.get("content", "") for m in msgs)
+        self.assertIn(unit, whole)
+        self.assertEqual(whole.count(unit), 1)
 
     def test_the_steer_author_dedups_its_session_against_fetch_truth(self):
-        import inspect
-        from cria import loop
-        self.assertIn("dedup.elide_text", inspect.getsource(loop.author_steer))
+        """The steer author's SESSION transcript (the coder's own history) may still carry the
+        original fetched-page result with the same field lines the labeled fetch-truth block
+        re-states — that block is byte-identical because both are built from the SAME durable
+        ledger. Drive the real author end to end and read what it actually sent the reasoner: the
+        unit must appear exactly ONCE (from the labeled block), not the two copies it would carry
+        with no dedup."""
+        sess, _item = self._sess_with_ledger()
+        unit = self._dup_unit(sess)
+        sess.repeat_count, sess.repeat_action = 3, "exec_command {}"
+
+        sent = []
+
+        def reasoner(body, rlog):
+            sent.append(" ".join(str(m.get("content") or "") for m in body["messages"]))
+            return b'{"choices": [{"message": {"content": "ON_TRACK"}}]}'
+
+        # A "tool" turn, matching the real shape (the original fetched-page RESULT) — a defanged
+        # assistant/user turn collapses internal whitespace on the way in, which would break a
+        # byte-exact match on a unit that carries its own indentation, unrelated to dedup.
+        body = {"messages": [{"role": "user", "content": "build it"},
+                             {"role": "tool", "content": "Output:\n" + unit + "\n"}],
+               "tools": []}
+        loop.author_steer(reasoner, None, "", sess, body, _Rlog(), condition="refusal")
+        self.assertTrue(sent, "the steer author was never called")
+        self.assertEqual(sent[0].count(unit), 1,
+                        "the session's own copy must collapse against the labeled fetch-truth block")
 
 
 class VolatileKeyTests(unittest.TestCase):
@@ -223,9 +317,28 @@ class VolatileKeyTests(unittest.TestCase):
     def test_focustrim_and_probegate_share_the_one_owner(self):
         from cria import dedup, focustrim
         self.assertIs(focustrim._result_key, dedup.volatile_key)
-        import inspect
+
+    def test_probegate_collapses_two_volatile_renderings_of_one_finding(self):
+        """`clean_gate_results` must key its repeat-collapse on `dedup.volatile_key`, not the raw
+        payload — mellum2 1786051505 carried the SAME finding three times, differing only by a mock
+        object's address and a run's duration. Drive it with two byte-DIFFERENT renderings that
+        share one finding and confirm the earlier one still collapses, which a byte-keyed dedup
+        (or one silently swapped for a different key function) would miss entirely."""
         from cria import probegate
-        self.assertIn("dedup.volatile_key", inspect.getsource(probegate.clean_gate_results))
+
+        def _checks(text):
+            return {"role": "tool", "content": probegate.CHECKS_MARKER + " " + text}
+
+        a = _checks("x.py:92: undefined name 'pytest'\n"
+                   "url = <urllib.request.Request object at 0x7cd31c34ac60>, args = ()\n"
+                   "3 failed, 1 passed in 0.36s")
+        b = _checks("x.py:92: undefined name 'pytest'\n"
+                   "url = <urllib.request.Request object at 0x740a465deed0>, args = ()\n"
+                   "3 failed, 1 passed in 0.28s")
+        self.assertNotEqual(a["content"], b["content"])   # byte-different renderings...
+        out = probegate.clean_gate_results([a, b])
+        self.assertIn("omitted", out[0]["content"])       # ...of the same finding still collapse
+        self.assertIn("3 failed, 1 passed in 0.28s", out[1]["content"])  # last kept in full
 
 
 if __name__ == "__main__":

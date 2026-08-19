@@ -42,8 +42,14 @@ class HarnessCompactionInputTests(unittest.TestCase):
         self.assertIn("3 failed", self._transcript(self.REAL))
 
     def test_both_paths_use_the_same_rule(self):
-        # One owner. Reaching into a private name is how two copies of a rule drift apart.
-        import inspect
-        self.assertIn("selfcompact.has_anchor", inspect.getsource(server._compaction_transcript))
+        """One owner: `_compaction_transcript` must call `selfcompact.has_anchor` itself, never a
+        private copy of the anchor rule (two copies is how they drift apart). Proven by patching
+        the SHARED rule to disagree with its everyday answer and watching the filter follow it —
+        a private reimplementation would not move, because it never actually calls this function."""
+        from unittest import mock
+        with mock.patch.object(server.selfcompact, "has_anchor", lambda m: False):
+            out = self._transcript(self.REAL, self.BRIEFING)
+        self.assertIn("has a syntax error", out)   # the shared rule now says "nothing is an anchor"
+
         self.assertTrue(selfcompact.has_anchor({"content": self.BRIEFING}))
         self.assertFalse(selfcompact.has_anchor({"content": self.REAL}))
