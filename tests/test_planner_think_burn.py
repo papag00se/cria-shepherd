@@ -9,11 +9,12 @@ nothing usable at all, behind 26,337 / 28,936 / 31,248 / 31,475 and 106,829 char
 On zaya1 it is the dominant failure: run 20260801T221447 lost 2 of 7 planner rounds this way and
 never reached the coder inside its 15 minutes.
 """
-import inspect
+import json
 import unittest
 from dataclasses import dataclass
 
 from cria import planner
+from cria.config import Role
 
 
 @dataclass
@@ -78,11 +79,26 @@ class ThinkBurnTests(unittest.TestCase):
         self.assertIsNotNone(out, "a still-empty retry must not become None — the caller decides")
 
     def test_the_retry_does_not_mutate_the_configured_role(self):
-        src = inspect.getsource(planner.Planner._reason_once)
-        self.assertIn('replace(self._role, reasoning="off") if think_off else self._role', src)
+        """Drive the REAL `_reason_once` (not the stub the rest of this file uses) through a real
+        `Role` and provider: `think_off=True` must turn thinking off in THAT call's wire body, and
+        the role object itself must come out unchanged — a later call with `think_off=False` (or a
+        read of `p._role.reasoning`) must still see "on". A source-text grep for the `replace(...)`
+        expression can't tell "builds a fresh Role" from "mutates the shared one and forgets to
+        put it back"; only calling it twice can."""
+        class _Provider:
+            def __init__(self):
+                self.bodies = []
 
+            def chat(self, body, rlog):
+                self.bodies.append(body)
+                return json.dumps({"choices": [{"message": {"content": "1. step"},
+                                                "finish_reason": "stop"}]}).encode()
 
-class ParityTests(unittest.TestCase):
-    def test_the_planner_now_has_what_the_critic_had_all_along(self):
-        self.assertIn("think_off", inspect.getsource(planner.Planner._reason_once))
-        self.assertIn("plan.think_burn_retry", inspect.getsource(planner.Planner._reason))
+        prov = _Provider()
+        p = planner.Planner(prov, role=Role(name="reasoner", backend="local", reasoning="on"))
+        p._reason_once([], FakeLog(), think_off=True)
+        p._reason_once([], FakeLog(), think_off=False)
+        off_body, on_body = prov.bodies
+        self.assertFalse(off_body["chat_template_kwargs"]["enable_thinking"])
+        self.assertTrue(on_body["chat_template_kwargs"]["enable_thinking"])
+        self.assertEqual(p._role.reasoning, "on", "the configured role must survive the off-call")

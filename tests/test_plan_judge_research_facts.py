@@ -6,16 +6,23 @@ Measured over the recorded drops: 57% named a snake_case field, 17% named a URL 
 `GET /holders/{address} … extract the total_handles field`, where both names came out of the
 fetched spec.
 """
-import inspect
+import json
 import unittest
 
 from cria import groundtruth, loop, planner
+from cria.config import Role
+from cria.plan import Plan, PlanItem
 
 LEDGER = {"https://api.handle.me/openapi.json": (
     "HTTP 200 OK",
     "/handles/{handle} /holders/{address}",
     "/handles/{handle} → name(string), holder(string), resolved_addresses{ada(string)}",
     "")}
+
+
+class _Rlog:
+    def emit(self, *a, **k):
+        pass
 
 
 class RenderTests(unittest.TestCase):
@@ -67,27 +74,75 @@ class WiringTests(unittest.TestCase):
         planner.reasoned_noise_indices(ask, "the task", ["step one"])
         self.assertEqual(seen["user"], "TASK:\nthe task\n\nPLAN:\n1. step one")
 
-    def test_EVERY_call_site_supplies_them(self):
-        # 'Before shipping any fix, grep for its sibling.' There are three callers of this judge.
-        self.assertIn("facts=groundtruth.researched_facts",
-                      inspect.getsource(planner.Planner._reasoned_noise_indices))
-        self.assertIn("facts=facts", inspect.getsource(loop.reassess_remaining))
-        self.assertIn("facts=session_research_facts",
-                      inspect.getsource(loop.Loop._reopen_if_unsatisfied))
+    def test_the_planners_own_noise_judge_sees_the_gathered_facts(self):
+        """There are three callers of the shared noise judge; this is the planner's own
+        (Planner._reasoned_noise_indices), fed from the gather's research ledger
+        (self._gather_facts). Drive the REAL method — a fixture beats a source-text grep: it
+        would have caught a caller that kept the `facts=` spelling but stopped supplying real
+        data just as surely as one that dropped the kwarg outright."""
+        seen = {}
 
-    def test_the_living_replan_passes_the_sessions_ledger_through(self):
-        """No hasattr fallback. It used to widen to the WHOLE Loop class when the method could not be
-        found, which is a rename hiding behind a default — the assertion would still pass on some
-        OTHER call site's line and say nothing about this one (#4: a fallback that hides the failure
-        it was written to catch)."""
-        src = inspect.getsource(loop.Loop._replan_tail)
-        self.assertIn("facts=session_research_facts", src)
+        class _Provider:
+            def chat(self, body, rlog):
+                seen["user"] = body["messages"][-1]["content"]
+                return json.dumps({"choices": [{"message": {"content": "NONE"}}]}).encode()
 
-    def test_the_replan_reaches_the_judge_through_reassess(self):
-        """The link the source scan above cannot see: _replan_tail hands its facts to
-        reassess_remaining, which is what actually calls the judge."""
-        self.assertIn("reassess_remaining(", inspect.getsource(loop.Loop._replan_tail))
-        self.assertIn("reasoned_noise_indices(", inspect.getsource(loop.reassess_remaining))
+        p = planner.Planner(_Provider(), role=Role(name="reasoner", backend="local"))
+        p._gather_facts = LEDGER
+        p._reasoned_noise_indices("the task", ["step one"], _Rlog())
+        self.assertIn("resolved_addresses", seen["user"])
+
+    def test_the_completion_critics_noise_judge_sees_the_session_ledger(self):
+        """The second caller: Loop._reopen_if_unsatisfied scrubs its corrective step through the
+        same judge, fed the SESSION's research ledger (session_research_facts). Drive the whole
+        completion-critic path — satisfaction judge answers "not satisfied" with a fix, which is
+        what feeds the noise judge next."""
+        bodies = []
+
+        def reasoner(body, rlog):
+            bodies.append(body)
+            if len(bodies) == 1:
+                return json.dumps({"choices": [{"message": {"content": json.dumps(
+                    {"satisfied": False, "reason": "still broken", "proposed_fix": "fix it"})}}]}).encode()
+            return json.dumps({"choices": [{"message": {"content": "NONE"}}]}).encode()
+
+        ctx = loop.LoopContext(planner=None, coder_chat=lambda b, r: b"{}", reasoner_chat=reasoner,
+                               runs_dir="", workspace_root=None)
+        ctx.reasoner_role = Role(name="reasoner", backend="local")
+        plan = Plan(id="x", task="build a resolver", created="c",
+                    items=[PlanItem("step 1", done=True, note="verified")])
+        sess = loop.PlanSession(plan=plan)
+        sess.fetched_pages = dict(LEDGER)
+        loop.Loop(ctx)._reopen_if_unsatisfied(sess, {"messages": []}, _Rlog())
+        self.assertEqual(len(bodies), 2, "satisfaction judge, then the noise judge")
+        self.assertIn("resolved_addresses", bodies[1]["messages"][-1]["content"])
+
+    def test_the_living_replans_noise_judge_sees_the_session_ledger(self):
+        """The third caller, reached through two hops: Loop._replan_tail hands the session's
+        ledger to loop.reassess_remaining as `facts=`, and reassess_remaining is what actually
+        calls the shared judge with it. A source-text grep for each hop's spelling cannot tell
+        a real handoff from two calls that happen to use the same keyword; driving the real
+        chain end to end can."""
+        bodies = []
+
+        def reasoner(body, rlog):
+            bodies.append(body)
+            if len(bodies) == 1:
+                return json.dumps({"choices": [{"message": {"content": json.dumps(
+                    {"steps": ["step 3"]})}}]}).encode()
+            return json.dumps({"choices": [{"message": {"content": "NONE"}}]}).encode()
+
+        ctx = loop.LoopContext(planner=None, coder_chat=lambda b, r: b"{}", reasoner_chat=reasoner,
+                               runs_dir="", workspace_root=None)
+        ctx.reasoner_role = Role(name="reasoner", backend="local")
+        plan = Plan(id="x", task="build it", created="c",
+                    items=[PlanItem("step 1", done=True, note="verified"),
+                          PlanItem("step 2"), PlanItem("step 3")])
+        sess = loop.PlanSession(plan=plan)
+        sess.fetched_pages = dict(LEDGER)
+        loop.Loop(ctx)._replan_tail(sess, {"messages": []}, 1, _Rlog())
+        self.assertGreaterEqual(len(bodies), 2, "re-derivation, then the noise judge")
+        self.assertIn("resolved_addresses", bodies[1]["messages"][-1]["content"])
 
     def test_the_loop_reader_abstains_on_an_empty_session(self):
         self.assertEqual(loop.session_research_facts([], None), "")

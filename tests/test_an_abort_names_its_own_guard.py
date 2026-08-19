@@ -18,8 +18,10 @@ cell went into the stopped call. A header that misattributes it sends the next r
 second-guessing loop that never happened (#5b, #12).
 """
 
+import json
 import unittest
 
+from cria import bodykeys, loop
 from cria.upstream import _abort_footer, _abort_header
 
 WINDOW = {"window_exhausted": True, "room": 44523, "frames": 40961}
@@ -85,24 +87,59 @@ class TheLogEventNamesItTooTests(unittest.TestCase):
     the log is what gets read when someone asks why a call stopped. Found live mid-cycle-4 answering
     exactly that question: a 194-second degenerate abort logged `hits: None, reasoning_tokens: None`."""
 
-    def test_the_emit_selects_the_guards_own_counters(self):
-        import inspect
+    class _Rlog:
+        phase = "coder"
 
-        from cria import loop
-        src = inspect.getsource(loop.guard_rumination)
-        i = src.index('rlog.emit("loop.rumination"')
-        self.assertIn("guard=which", src[i:i + 220])
-        # the rumination counters must no longer be passed unconditionally
-        self.assertNotIn('hits=v.get("hits"), reasoning_tokens=v.get("reasoning_tokens")', src)
+        def __init__(self):
+            self.events = []
+
+        def emit(self, kind, **kw):
+            self.events.append((kind, kw))
+
+        def first(self, kind):
+            return next((kw for k, kw in self.events if k == kind), None)
+
+    @staticmethod
+    def _ruminating(marker):
+        comp = {"choices": [{"message": {"role": "assistant", "content": ""}, "finish_reason": "rumination"}]}
+        comp[bodykeys.RUMINATION] = marker
+        return comp
+
+    @staticmethod
+    def _chat(body, rlog):
+        return json.dumps({"choices": [{"message": {"role": "assistant", "content": "ok"},
+                                        "finish_reason": "stop"}]}).encode()
+
+    def test_the_emit_selects_the_guards_own_counters(self):
+        """Drive the real guard for each abort shape and read the LOG EVENT it actually wrote —
+        a source-text grep for `guard=which` and the retired unconditional-hits spelling can tell a
+        rename apart from a real fix; it cannot tell whether the event a caller actually reads
+        carries the right numbers. This is the whole incident: a window-exhausted abort must never
+        carry `hits`/`reasoning_tokens` (the rumination watcher's own, unset here) at all."""
+        rlog = self._Rlog()
+        loop.guard_rumination(self._ruminating(WINDOW), {"messages": [{"role": "user", "content": "t"}],
+                                                          "tools": []}, self._chat, rlog)
+        ev = rlog.first("loop.rumination")
+        self.assertEqual(ev["guard"], "window_exhausted")
+        self.assertEqual((ev["room"], ev["frames"]), (44523, 40961))
+        self.assertNotIn("hits", ev)
+        self.assertNotIn("reasoning_tokens", ev)
 
     def test_every_guard_has_a_counter_set(self):
-        import inspect
-
-        from cria import loop
-        src = inspect.getsource(loop.guard_rumination)
-        for g in ("degenerate", "window_exhausted", "dead_stream", "rumination"):
-            with self.subTest(guard=g):
-                self.assertIn(f'"{g}"', src)
+        cases = ((WINDOW, "window_exhausted", {"room": 44523, "frames": 40961}),
+                 (DEAD, "dead_stream", {"chunks": 900}),
+                 (DEGEN, "degenerate", {"chars": 2048}),
+                 (RUMIN, "rumination", {"hits": 10, "reasoning_tokens": 2048}))
+        for marker, guard, counts in cases:
+            with self.subTest(guard=guard):
+                rlog = self._Rlog()
+                loop.guard_rumination(self._ruminating(marker),
+                                      {"messages": [{"role": "user", "content": "t"}], "tools": []},
+                                      self._chat, rlog)
+                ev = rlog.first("loop.rumination")
+                self.assertEqual(ev["guard"], guard)
+                for k, v in counts.items():
+                    self.assertEqual(ev[k], v)
 
 
 if __name__ == "__main__":
