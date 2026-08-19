@@ -119,6 +119,40 @@ class ItCannotFireMoreOftenThanTheCadenceTests(unittest.TestCase):
         self.assertIsNone(out)
         self.assertEqual(sess.step_checked_drive, -1, "no open step: the opportunity is not spent")
 
+    def test_a_drive_where_the_check_was_not_DUE_does_not_move_the_stamp_either(self):
+        """The sibling of the test above, and the more dangerous one: if the stamp advances on a
+        drive where the cadence said "not yet", then `drive_count - step_checked_drive` never grows
+        and **the check never fires again at all**.
+
+        Not hypothetical — it is arithmetic. Replayed over 40 drives at the live cadence, a stamp
+        that moves only when the check RUNS fires at 12, 24 and 36; a stamp that moves on every
+        drive fires ZERO times. That is the exact silence this file was written about (21 events on
+        the box, every one at turn 12), reached by a different route, and nothing covered it until
+        the audit of 2026-08-19 went looking.
+
+        Driven rather than reasoned: eleven not-due drives in a row must leave the stamp where it
+        was, and the twelfth must still fire."""
+        sess = PlanSession(plan=_step_plan(1))
+        sess.step_checked_drive = -1
+        L = Loop(_ctx(None, _reasoner(), sess.plan))
+        for d in range(1, loop.STEP_CHECK_EVERY):        # 1..11 — none of these is due
+            sess.drive_count = d
+            L._periodic_step_check(sess, "k", {"messages": []}, 1, 1, _Rlog())
+            self.assertEqual(sess.step_checked_drive, -1,
+                             f"drive {d} was not due and must not spend the opportunity")
+        sess.drive_count = loop.STEP_CHECK_EVERY         # ...and the due one still arrives
+        L._periodic_step_check(sess, "k", {"messages": []}, 1, 1, _Rlog())
+        self.assertEqual(sess.step_checked_drive, loop.STEP_CHECK_EVERY)
+
+    def test_the_cadence_arithmetic_itself_never_starves(self):
+        """The claim above, isolated from the driver: over a long session the check keeps arriving."""
+        stamp, fires = -1, []
+        for d in range(1, 40):
+            if loop.periodic_check_due(d, loop.STEP_CHECK_EVERY, loop.STEP_CHECK_EVERY, stamp):
+                fires.append(d)
+                stamp = d
+        self.assertEqual(fires, [12, 24, 36])
+
 
 class OneNumberHasOneOwnerTests(unittest.TestCase):
     def test_the_step_check_no_longer_reads_the_gates_countdown_to_decide(self):
