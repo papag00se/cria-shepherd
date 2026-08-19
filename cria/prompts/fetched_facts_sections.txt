@@ -59,7 +59,13 @@ fields = fields each endpoint returns (use these EXACT names and nesting; do not
 # the model on each one that the API's routes were still undefined. There are no routes to define.
 # The narrow fact (this page yielded no endpoint definitions) is true and stays; the claim about what
 # the task still needs is now stated as the condition it always was.
-no_structure =  (this page answered, but no endpoint definitions were found in it — that status is a fact about the REQUEST, not about what the page contains; whatever it returned is in the transcript. If this task needs a machine-readable API definition, nothing read so far provides one.)
+no_structure =  (this page answered, but no endpoint definitions were found in it — that status is a fact about the REQUEST, not about what the page contains. If this task needs a machine-readable API definition, nothing read so far provides one.)
+# WHERE THE CONTENT IS, said rather than assumed. The clause above used to end "whatever it
+# returned is in the transcript", which is false for exactly the pages that most need reading:
+# an oversized document is SPILLED to a file, and the read of that file is then refused — so the
+# one place cria pointed at was the one place the content was not. See loop._format_fetches.
+body_inline =  Its body is in this conversation above.
+body_at =  Its full text is on disk at {{PATH}} — grep it or read a line range; it is not in this conversation.
 # Same case, but a DIFFERENT fetch this session DID yield routes — so "the defining source is still
 # unread" would be false. Say only the narrow true thing about this one URL. A plain data response
 # has no OpenAPI structure and that is not a defect in it; the old wording claimed no field names

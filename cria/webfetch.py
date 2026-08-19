@@ -478,6 +478,21 @@ def format_for_spill_path(path: str) -> str:
     return ""
 
 
+def spill_path_for(url: str) -> str:
+    """The spill file this url's document was written to, or "" when it was small enough to inline.
+
+    Asked so a ledger line can say WHERE the content is instead of assuming it is in the
+    conversation. The fetch record used to end "whatever it returned is in the transcript", which is
+    false for exactly the documents that most need reading — an oversized one is spilled here and the
+    read of that file is then refused, so the only place cria pointed at was the only place the
+    content was not. Same cache, same name function, same threshold as :func:`oversized_spill`, so
+    the two can never disagree about whether a spill happened (#23)."""
+    cached = _DOC_CACHE.get(url)
+    if not cached or len(cached[2]) <= OVERSIZE_CHARS:
+        return ""
+    return _spill_name(url)
+
+
 def oversized_spill(url: str) -> Optional[tuple[int, str, str, str]]:
     """If ``url``'s cached doc is bigger than one page, return (status, ./tmp target, greppable full
     content, model message); else None. Content is line-oriented for grep (pretty JSON/YAML, or a

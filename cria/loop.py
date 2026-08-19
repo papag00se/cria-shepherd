@@ -6476,6 +6476,19 @@ def _format_fetches(latest: dict, header: str = "PAGES YOU HAVE ALREADY FETCHED"
         if _fetch_succeeded(status) and not routes and not shapes.strip() and not catalog.strip():
             any_routes = any(_fetch_facts(e)[1] for e in latest.values())
             line += labels["no_spec_here" if any_routes else "no_structure"]
+            # …AND SAY WHERE THE CONTENT ACTUALLY IS. The sentence above used to end "whatever it
+            # returned is in the transcript", which is false for exactly the pages that most need
+            # reading: an oversized doc is SPILLED to a file and the read of that file is then
+            # refused, so the one place cria says to look is the one place it is not.
+            #
+            # Walked on `shipping-rates-rb x ternary-bonsai` 1787111689. cria fetched the rubydoc
+            # page for `ISO3166::Country`, spilled it, refused the read — and then told the coder on
+            # every later turn that the page held no definitions and its content was in the
+            # transcript. Both false: the page defines `in_eu?` with its source, and the content was
+            # on disk. The coder guessed `eu_member?`, which does not exist, and that guess is the
+            # `country_zone_mapping` failure. cria composed the spill, so it knows the path (#5b).
+            spilled = webfetch.spill_path_for(url)
+            line += prompts.fill(labels["body_at" if spilled else "body_inline"], path=spilled)
         # The REAL field names — the half the coder guesses once they scroll away. Keep only the
         # per-endpoint entry lines: the captured block opens with webfetch's OWN header, and emitting
         # that under cria's label prints the same instruction twice.
