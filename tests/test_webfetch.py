@@ -1240,11 +1240,33 @@ class OptionalFieldsAreMarkedTests(unittest.TestCase):
         self.assertEqual(sorted(shape["outer"]), ["kept", "maybe?"])
 
     def test_the_header_no_longer_promises_every_field_comes_back(self):
+        """Asserted on the RENDERED block, and on EVERY site that renders one.
+
+        The first version searched the module source for the old sentence. It passed while a third
+        render site still carried it — the search named the spelling with "endpoint" in it and the
+        survivor said "call". That is the whole failure mode of a source-text assertion: it pins a
+        string, not a promise. All three sites are one owner now (`_shape_block`), and this reads
+        what a coder would actually be handed."""
+        block = wf._shape_block(["GET /handles/{handle} → name, original_address?"])
+        self.assertIn("MAY return", block)
+        self.assertIn("`?` marks a field the spec does NOT", block)
+        self.assertNotIn("RETURNS (extract these", block)
+
+    def test_no_site_renders_its_own_shape_header(self):
+        """A structural claim, because it is one: three copies of a sentence is how a corrected fact
+        stays wrong in one place, and no input can exercise "there is only one copy".
+
+        Counted over CODE only. The module's comments quote the old wording deliberately, to record
+        what it said and why it changed — and a source search that cannot tell a comment from a
+        statement is the weak instrument this whole audit is about."""
         import inspect
-        src = inspect.getsource(wf)
-        self.assertNotIn("the fields each endpoint RETURNS (extract these", src)
-        self.assertIn("MAY return", src)
-        self.assertIn("`?` marks a field the spec does NOT", src)
+        code = [ln for ln in inspect.getsource(wf).splitlines()
+                if not ln.lstrip().startswith("#")]
+        builders = [ln for ln in code if "SHAPE_MARKER}" in ln]
+        self.assertEqual(len(builders), 1, f"a second site spells the shape header: {builders}")
+
+    def test_no_shapes_renders_nothing(self):
+        self.assertEqual(wf._shape_block([]), "")
 
     def test_the_marker_survives_into_the_rendered_block(self):
         out = wf.render_jsonc(wf._schema_json_shape(self.SPEC, {}, 30))

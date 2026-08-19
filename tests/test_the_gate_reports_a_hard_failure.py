@@ -74,16 +74,36 @@ class WhatMustStayFalseTests(unittest.TestCase):
 
 
 class TheExceptNoLongerHidesTheDefectTests(unittest.TestCase):
-    def test_type_error_is_not_swallowed(self):
-        """Catching TypeError is what let a field-called-as-a-method return False for months."""
-        import inspect
-        src = inspect.getsource(probegate._is_hard_failure)
-        self.assertIn("except (AttributeError, IndexError, ValueError)", src)
-        self.assertNotIn("TypeError", src.split("except")[1].split(":")[0])
+    """Asserted by RAISING one, not by reading the except clause.
+
+    The first version searched the source for the word `TypeError` inside the `except`. That passes
+    the moment the word is deleted, whatever the function then does with a real one — and the defect
+    it guards is precisely that a swallowed exception looks like a `False`."""
+
+    class _Exploding:
+        """A plan whose candidate access raises the exception that hid for months."""
+        @property
+        def candidates(self):
+            raise TypeError("kind is a field, not a method")
+
+    def test_a_type_error_propagates_instead_of_becoming_False(self):
+        with self.assertRaises(TypeError):
+            probegate._is_hard_failure(self._Exploding(), "probe-0")
+
+    def test_the_three_expected_shapes_are_still_absorbed(self):
+        """What the except is FOR: a malformed id, a short plan, a plan-shaped object with no
+        candidates. Each is a legitimate False, and none of them may start raising."""
+        class _NoCandidates:
+            pass
+        for bad, label in ((None, "no plan"), (_NoCandidates(), "no candidates attr"),
+                           (plan(ProbeKind.Test), "index past the plan")):
+            with self.subTest(case=label):
+                self.assertFalse(probegate._is_hard_failure(bad, "probe-9"))
 
     def test_it_reads_the_field_not_a_method(self):
-        import inspect
-        self.assertIn("].kind\n", inspect.getsource(probegate._is_hard_failure))
+        """The original defect, stated as behaviour: a Test candidate IS a hard failure. If `kind`
+        were called rather than read, this returns False — which is exactly what it did."""
+        self.assertTrue(probegate._is_hard_failure(plan(ProbeKind.Test), "probe-0"))
 
 
 class TheOtherFunctionOfThisNameIsUnrelatedTests(unittest.TestCase):

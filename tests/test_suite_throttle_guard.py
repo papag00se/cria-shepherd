@@ -97,12 +97,31 @@ class ProbeMustNotBlockEverything(unittest.TestCase):
     """
 
     def test_the_probe_sends_a_real_user_agent(self):
+        """Asserted on the REQUEST that goes out, not on the line that builds it. Reading the source
+        for the header proves it is written; it cannot prove it reaches the wire, which is the claim
+        — and urllib silently supplies its own default for anything not set."""
         import importlib
-        import inspect
+        from unittest import mock
         pf = importlib.import_module("preflight")
-        src = inspect.getsource(pf.live_services)
-        self.assertIn('headers={"User-Agent": PROBE_UA}', src)
-        self.assertNotIn("urlopen(url,", src)
+        seen = []
+
+        class _Resp:
+            status = 200
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+
+        def fake_urlopen(req, timeout=None):
+            seen.append(req)
+            return _Resp()
+
+        with mock.patch("urllib.request.urlopen", side_effect=fake_urlopen):
+            pf.live_services()
+        self.assertTrue(seen, "no task declares a live_probe — this test has nothing to check")
+        for req in seen:
+            with self.subTest(url=getattr(req, "full_url", req)):
+                ua = req.get_header("User-agent")
+                self.assertEqual(ua, pf.PROBE_UA)
+                self.assertNotIn("Python-urllib", ua or "")
 
     def test_the_ua_is_not_urllibs_default(self):
         import importlib

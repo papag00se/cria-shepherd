@@ -1028,6 +1028,27 @@ def _path_param_notes(op: dict, ops: dict, schemas: dict, max_len: int = 90) -> 
     return out
 
 
+def _shape_block(shapes) -> str:
+    """The response-shape section, from ONE owner (#23).
+
+    THE WORDING IS THE POINT, AND IT DRIFTED. Three sites rendered this header and two of them were
+    corrected on 2026-08-06 to say the fields MAY come back; the third went on promising "the fields
+    each call RETURNS (extract these...)" until the test audit of 2026-08-19 opened it. The
+    change-detector that was supposed to catch that searched the module for the exact old sentence
+    with the word "endpoint" in it — and the survivor said "call", so it passed. Three copies of a
+    sentence is how a corrected fact stays wrong in one place; one owner is the fix, and the test
+    now asserts the RENDERED block rather than the source.
+
+    `?` marks a field the spec does not guarantee, which is why the promise had to soften: telling a
+    coder a field comes back when the spec says it may is a false fact (#5b), and it is the kind
+    that shows up as a KeyError in the deliverable."""
+    if not shapes:
+        return ""
+    return (f"{SHAPE_MARKER} the fields each endpoint MAY return — `?` marks a field the spec does "
+            "NOT guarantee, so read it defensively; use these EXACT names and nesting, and do not "
+            "guess:\n" + "\n".join(f"  {s}" for s in shapes) + "]\n")
+
+
 def _spill_outline(parsed: Any, target: str) -> str:
     """A navigation outline for a SPILLED structured doc (JSON or YAML — both parse to ``parsed``): the
     API routes when it's spec-shaped, else the top-level keys — so the model greps straight to what it
@@ -1045,9 +1066,7 @@ def _spill_outline(parsed: Any, target: str) -> str:
     routes = _endpoint_routes(parsed)
     if routes:
         shapes = _endpoint_response_fields(parsed)
-        shape_block = (f"{SHAPE_MARKER} the fields each endpoint MAY return — `?` marks a field the spec does NOT "
-                       "guarantee, so read it defensively; use these EXACT names and nesting, "
-                       "and do not guess:\n" + "\n".join(f"  {s}" for s in shapes) + "]\n") if shapes else ""
+        shape_block = _shape_block(shapes)
         # The grep example is a REAL route as a FIXED string — and it must be the PATH alone.
         # Walked twice, on two different model families (finetune run 1785893473 call 0019, stock
         # run 1785948232 call 0005): the shape lines above read "GET /handles/{handle} → …", both
@@ -1327,8 +1346,7 @@ def _render_discovery(url: str, status: int, ct: Optional[str], found) -> str:
             # first compaction. Separated by "; " because an entry carries its own commas.
             f"{ROUTES_MARKER}{len(found.routes)}): {'; '.join(found.routes)}]\n")
     if found.shapes:
-        head += (f"{SHAPE_MARKER} the fields each call RETURNS (extract these; don't guess "
-                 "field names or nesting):\n" + "\n".join(f"  {s}" for s in found.shapes) + "]\n")
+        head += _shape_block(found.shapes)
     return head
 
 
@@ -1512,11 +1530,7 @@ def render_page(url: str, status: int, ct: Optional[str], reduced: str, parsed: 
             if routes:  # uncapped, like top_level_keys — the route the model needs may be #61
                 head += f"{ROUTES_MARKER}{len(routes)}): {', '.join(routes)}]\n"
                 shapes = _endpoint_response_fields(parsed)
-                if shapes:  # the response FIELDS (dereferenced) — real names, not guesses
-                    head += (f"{SHAPE_MARKER} the fields each endpoint MAY return — `?` marks a field the "
-                             "spec does NOT guarantee, so read it defensively; use these EXACT names "
-                             "and nesting, and do not guess:\n"
-                             + "\n".join(f"  {s}" for s in shapes) + "]\n")
+                head += _shape_block(shapes)  # the response FIELDS (dereferenced), real names
                 head += '[web_fetch find="<path>" for one endpoint\'s full request/response detail]\n'
         return head
 
