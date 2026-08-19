@@ -96,6 +96,31 @@ class TheBudgetIsBoundedByTheWorkTests(unittest.TestCase):
             self.assertNotIn("MINITEST_INTERNALS", out)
             self.assertNotIn("NODE_MODULES_INTERNALS", out)
 
+    def test_crias_own_spill_is_not_fed_back_as_the_coders_work(self):
+        """THE ASYMMETRY THIS CREATED, caught on its first live run. cria's spill directory holds
+        documents the coder fetched; it sits inside the workspace but it is not the coder's work.
+
+        `shipping-rates-rb x ternary-bonsai` 1787111689: the seeded block carried the spilled
+        rubydoc page for `ISO3166::Country` — 10,251 characters, half the budget, in place of the
+        model's own source — and with it `def in_eu?`, the method the task turned on. It reached the
+        JUDGE in 13 prompts. The CODER asked for that same file and was refused it by the oversize
+        read guard. cria withheld a page from the party that had to write the code and handed it to
+        the party that only had to grade it.
+
+        The listing still names these files. Only their contents are cria's to leave out here."""
+        with _WS({"app.rb": "puts 1\n",
+                  "tmp/reference/www.example.com_docs.txt": "SPILLED_DOC_BODY\n"}) as root:
+            out = groundtruth.files_for_a_judge(root)
+            self.assertIn("puts 1", out)
+            self.assertNotIn("SPILLED_DOC_BODY", out)
+            self.assertNotIn("tmp/reference", out)
+
+    def test_the_spill_filter_is_derived_from_the_one_owner(self):
+        """A rename of SPILL_DIR must not leave this filter pointing at the old name (#23)."""
+        from cria import webfetch
+        self.assertEqual(groundtruth._SPILL_REL,
+                         webfetch.SPILL_DIR.lstrip("./").rstrip("/") + "/")
+
     def test_a_binary_file_is_skipped_rather_than_mangled(self):
         with _WS({"ok.py": "print(1)\n"}) as root:
             pathlib.Path(root, "blob.bin").write_bytes(b"\x00\x01\x02\xff" * 100)

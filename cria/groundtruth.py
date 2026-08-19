@@ -275,6 +275,15 @@ def _fold_install_prefixes(entries):
 # go and read them. The tools stay available either way.
 JUDGE_FILE_BUDGET = 20_000
 
+# cria's own spill directory, workspace-relative. Derived from the one owner (webfetch.SPILL_DIR)
+# rather than restated, so a rename cannot leave this filter pointing at the old name.
+def _spill_rel() -> str:
+    from . import webfetch
+    return webfetch.SPILL_DIR.lstrip("./").rstrip("/") + "/"
+
+
+_SPILL_REL = _spill_rel()
+
 
 def files_for_a_judge(root: str | None, budget: int = JUDGE_FILE_BUDGET) -> str:
     """The newest files in the workspace, whole, up to ``budget`` — "" when there is no workspace.
@@ -296,6 +305,15 @@ def files_for_a_judge(root: str | None, budget: int = JUDGE_FILE_BUDGET) -> str:
                 continue
             entries.append((st.st_mtime, os.path.relpath(path, root), st.st_size))
     entries, _folded = _fold_install_prefixes(entries)
+    # NOT CRIA'S OWN SCRATCH. The spill directory is where cria writes documents the coder fetched;
+    # it is inside the workspace but it is not the coder's work. Seeding it back to a judge does two
+    # bad things, both measured on `shipping-rates-rb x ternary-bonsai` 1787111689: a 10,251-char
+    # rubydoc page ate half the budget that should have carried the model's source, and — far worse —
+    # `def in_eu?` reached the JUDGE in 13 prompts while the CODER was refused the same file by the
+    # oversize read guard. cria withheld a page from the party that had to write the code and handed
+    # it to the party that only had to grade it. The listing still names these files; only their
+    # CONTENTS are cria's to leave out here.
+    entries = [e for e in entries if not e[1].replace(os.sep, "/").startswith(_SPILL_REL)]
     entries.sort(key=lambda e: (-e[0], e[1]))
 
     shown: list[str] = []
