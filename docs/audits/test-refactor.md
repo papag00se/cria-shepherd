@@ -2,15 +2,18 @@
 
 Process: `~/.claude/processes/test-refactor.md`, Mode A (Test Audit). Live document; updated as each pass lands.
 
-**Status:** pass 1 (source-text change-detectors) — **five of six batches merged. 200 source-text sites → 62. Two live defects found and fixed, one coverage gap closed. ~110 deliberate code-breaks verified.**
+**Status:** pass 1 (source-text change-detectors) — **COMPLETE. Six batches, 86 files. 200 source-text sites → 33. Three live defects found and fixed. ~140 deliberate code-breaks verified.**
 
 | | before | after |
 |---|---:|---:|
-| source-text assertion sites | 200 | 62 |
-| `assertEqual` (output values) | 2,244 | 2,319 |
-| `assertIn` | 2,303 | 2,227 |
-| `assertNotIn` pointed at `src` | 23 | 8 |
-| tests passing | 3,997 | 4,009 |
+| source-text assertion sites | 200 | **33** |
+| `assertEqual` (checking actual values) | 2,244 | 2,333 |
+| `assertIn` | 2,303 | 2,216 |
+| `assertNotIn` pointed at `src` | 23 | **5** |
+| assertion-free tests | 3 | 3 (all legitimate) |
+| tests passing | 3,997 | **4,013** |
+
+**The 33 that remain were read and kept on purpose.** Every one is a claim no fixture can exercise: *"five sites hand-rolled this and there is one owner now"*, *"`delta_of` is the only place a difference is taken"*, *"the merge is the LAST message transform"*. Statement ordering and call-site counts are properties of the code's organisation, not of its behaviour.
 
 The shift from `assertIn` to `assertEqual` is the conversion showing up in the aggregate: "the source contains this string" became "the output equals this value".
 
@@ -158,7 +161,19 @@ It is arithmetic, not a hypothesis. Over 40 drives at the live cadence, a stamp 
 
 ## Still to do
 
-- 62 source-text sites (one batch still running).
 - Pass 2 — redundancy, starting with `loop` (427 imports across the suite). Confirmed by breaking code and counting what goes red, not by reading names.
 - Pass 3 — the inverse lens: the invariant nobody tests. Defect 3 above is one instance of what that pass is for.
 - One lens-1 candidate already flagged by a batch and deliberately out of scope: `test_the_unchanged_findings_guard_sees_every_trigger.py` reimplements the guard's logic inline instead of calling the real `author_steer` — a circular-expectation smell.
+
+
+---
+
+## Two more things the last batches found
+
+**A tautology.** `test_no_internal_key_reaches_the_wire.py` had a test named *"a body carrying every internal key ships none of them"* which popped the keys **itself** and then asserted its own pop had worked. It never called the code. Replaced with one test that drives the real `Upstream._prep` and reads the bytes actually sent — verified by disabling the strip loop and watching four real keys leak.
+
+**A narrower reachable input than a docstring implied.** `_satisfaction_verdict`'s phantom-tool detection can only fire on a *malformed* leaked call with no opening brace: the gemma-dialect parser upstream always converts a well-formed one first. Not a bug — the code is right in both cases — but the docstring reads wider than the reachable input, which is worth knowing before someone "fixes" the branch that looks dead.
+
+## The pass in one line
+
+The suite was never mostly junk. It had **200 places that looked like checks and were text searches**, and behind three of them sat live defects — a false fact in the model's ground truth, a judge handed the vocabulary it fabricates tool calls from, and a periodic check that can starve to silence.
