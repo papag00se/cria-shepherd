@@ -2,7 +2,17 @@
 
 Process: `~/.claude/processes/test-refactor.md`, Mode A (Test Audit). Live document; updated as each pass lands.
 
-**Status:** pass 1 (source-text change-detectors) — **9 files converted, 1 live defect found, 12 deliberate code-breaks verified.** 28 of the original 40 `assertNotIn`-on-source sites remain, plus the 121 `assertIn`-on-source sites.
+**Status:** pass 1 (source-text change-detectors) — **five of six batches merged. 200 source-text sites → 62. Two live defects found and fixed, one coverage gap closed. ~110 deliberate code-breaks verified.**
+
+| | before | after |
+|---|---:|---:|
+| source-text assertion sites | 200 | 62 |
+| `assertEqual` (output values) | 2,244 | 2,319 |
+| `assertIn` | 2,303 | 2,227 |
+| `assertNotIn` pointed at `src` | 23 | 8 |
+| tests passing | 3,997 | 4,009 |
+
+The shift from `assertIn` to `assertEqual` is the conversion showing up in the aggregate: "the source contains this string" became "the output equals this value".
 
 > ### The pass has already paid for itself
 >
@@ -106,3 +116,49 @@ Two things the process document should absorb from this pass:
 - 121 `assertIn(<expected code>, src)` sites — the same weakness, four times as common, and the likelier defect pool.
 - Pass 2: redundancy, starting with `loop` (427 imports across the suite). Confirmed by breaking code and counting what goes red, not by reading names.
 - Pass 3: the inverse lens — the invariant nobody tests.
+
+
+---
+
+## The three defects this pass has found
+
+None of them was the thing the pass set out to do. All three were found because converting a source-text assertion into a behaviour test forces you to learn what the code actually promises.
+
+### 1. A live false fact in the model's ground truth — `webfetch`
+
+Covered in the box at the top of this file. Three render sites, two corrected, one still promising the model that the listed API fields come back. The test that existed to prevent it searched for the sentence spelled with `endpoint`; the survivor said `call`.
+
+### 2. The living replan handed its satisfaction judge the coder's parameter names — `loop._replan_tail`
+
+`_replan_tail` builds one tool summary for the REPLANNER, which legitimately carries parameters: a re-derived step has to be something the coder can actually do. It then reused that summary for the `judge_satisfaction` call in the same method. The other three judge sites all pass `params=False`.
+
+So a read-only judge was shown `justification`, `workdir`, `max_output_tokens`, `login` — the exact vocabulary from the incident `tests/test_judge_is_fenced_out_of_acting.py` documents, where a judge fabricated tool calls out of its own prompt, went silent, and cria fail-closed twelve consecutive times on a workspace already at 5/5. Live for as long as that branch has existed.
+
+**The guard that should have caught it** searched `loop.py` for the literal `"coder_tools=_coder_tools_summary"` and silently `continue`d past any site that passed a variable instead — precisely this site's shape. *A source-text scan with a silent skip reads as "all sites checked" when it means "the sites I could see."* That sentence belongs in the process doc.
+
+### 3. The step check's cadence can starve, and nothing covered it
+
+Found by independently re-breaking a merged batch rather than trusting its verified-list. The suite pinned "a drive with no open step does not spend the opportunity" but not the sibling: a drive where the check was **not due**.
+
+It is arithmetic, not a hypothesis. Over 40 drives at the live cadence, a stamp that moves only when the check RUNS fires at 12, 24 and 36. A stamp that moves on every drive fires **zero** times — the exact silence this file was written about (21 events on the box, every one at turn 12), reached by a different route.
+
+---
+
+## What the batches taught that the process doc did not say
+
+1. **The wrong-instrument category is the most common finding, not the change-detector.** Many claims are legitimately structural — "this parameter must not come back", "only one place spells this" — but were checked by searching source text when the object model answers directly: `inspect.signature(f).parameters`, `dataclasses.fields(C)`, `f.__code__.co_names`, real dict keys, `ast.walk` for a specific call node. Those are rename-proof and comment-proof.
+
+2. **Needing to hide part of the file from your own assertion is the tell.** Several tests stripped comment lines out of the source before searching it, so that a deliberate explanatory comment would not fail them. One searched a function whose *docstring narrates the removed pattern* — the test had to dodge its own evidence.
+
+3. **A source scan that skips is worse than one that fails.** Defect 2 above. If a text scan cannot parse a site, it must fail loudly, never `continue`.
+
+4. **Some source-text tests are inert, not merely weak.** One asserted on a function name (`dirguard._INSTALL_REMEDY_FN`) that has never existed, so its `hasattr` guard always fell through to scanning the whole module. Another assumed prompt loading strips `#` lines — only one of the two loaders does.
+
+5. **Writing the fixture is where the learning is.** Converting the tool-leak test surfaced that `"web_fetch the spec"` is *deliberately allowed* (an instruction to the agent) and only `"mock web_fetch"` leaks. The first fixture asserted the wrong thing; the suite gained a control for the allowed form. No source-text test could have prompted that.
+
+## Still to do
+
+- 62 source-text sites (one batch still running).
+- Pass 2 — redundancy, starting with `loop` (427 imports across the suite). Confirmed by breaking code and counting what goes red, not by reading names.
+- Pass 3 — the inverse lens: the invariant nobody tests. Defect 3 above is one instance of what that pass is for.
+- One lens-1 candidate already flagged by a batch and deliberately out of scope: `test_the_unchanged_findings_guard_sees_every_trigger.py` reimplements the guard's logic inline instead of calling the real `author_steer` — a circular-expectation smell.
