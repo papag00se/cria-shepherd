@@ -150,7 +150,44 @@ One correction to a number I stated: `JUDGE_FILE_BUDGET` is 20,000 characters of
 
 Findings go to `docs/audits/finish-and-remeasure-walk.md`. Not started.
 
-## Step 4 — fix to 100%
+## Step 4 — fix to 100% — **THE OPEN ITEM**, and the cause is now isolated
+
+`shipping-rates-rb` has failed under all three models in this pass — 0/5, 1/5, 1/5 — and **every one of them dies on the same line**: `kernel_require.rb: cannot load such file`. It is the only cell that has never cleared.
+
+Reproduced by hand against cell 13's surviving workspace, in order:
+
+```
+# 1. as the verifier runs it — plain ruby, cwd = the workspace
+ruby -Ilib -e 'require "shipping/rates"'
+  -> cannot load such file -- eu_countries
+
+# 2. force the setup line and the FIRST failure goes away, revealing the second
+ruby -Ilib -e 'require "bundler/setup"; require "shipping/rates"'
+  -> cannot load such file -- iso3166
+     from vendor/bundle/ruby/3.2.0/gems/eu_countries-0.0.2/lib/eu_countries.rb:1
+
+# 3. the gem alone, under bundler
+bundle exec ruby -e 'require "eu_countries"'
+  -> cannot load such file -- iso3166
+```
+
+**Two independent blockers, and fixing the first alone changes nothing.**
+
+**(a) The setup line is guarded into a no-op.** The model wrote
+`require "bundler/setup" if defined?(Bundler) && !defined?(Bundler::SetupLoaded)`.
+Under plain `ruby` — the runner every check uses — `Bundler` is not defined, so the line never runs and the vendored gems are never on the load path. The guard is true only under `bundle exec`, which is the one case where the line is not needed. cria's install route says *"put `require "bundler/setup"` at the very top, before the gem require"*; it does not say "unguarded", and a model that knows the line can raise without a Gemfile has an obvious reason to wrap it.
+
+**(b) The gem is broken.** `eu_countries-0.0.2/lib/eu_countries.rb` line 1 is `require "iso3166"`, and nothing on this box provides that name — `countries` 8.1.0 provides `countries`. **`eu_countries` has now been chosen in three separate runs** (ternary twice, gemma4 once) and every one of them died on it.
+
+### What cria could truthfully say, and does not
+
+The failing require is **inside a vendored dependency**, not in the coder's code — the frame names `vendor/bundle/ruby/3.2.0/gems/eu_countries-0.0.2/lib/eu_countries.rb:1`. cria has that path. The dependency note currently reads the failure as a loading problem in the project, which is the wrong half: no arrangement of the load path fixes a gem that asks for a file nothing provides.
+
+The general, checkable sentence — *the require that failed is inside an installed dependency, not in your code* — is a fact off the stack frame, works in any ecosystem, and points at the only move that helps: choose a different library.
+
+**Held, not landed.** `suite/run.py` restarts `cria.service` per cell, so editing cria now would change the code state mid-pass and void the comparison. This lands when the suite finishes.
+
+## Step 4 — fix to 100% (original note)
 
 Nothing yet. A 100% needs a second run at the same commit to count — the noise floor at identical code is 25 points.
 
