@@ -76,15 +76,26 @@ class TheTableAnswersForEveryoneTests(unittest.TestCase):
 
 class ThereIsOnlyOneOfThemTests(unittest.TestCase):
     def test_execcheck_holds_no_private_regex(self):
-        import inspect
-        src = inspect.getsource(execcheck)
-        self.assertNotIn("_TEST_NAME", src)
+        """Structural: the retired `_TEST_NAME` regex must not come back as a second owner. A
+        namespace check rather than a source-text search — it survives a rename or reorganisation
+        of the module, and can't be fooled by the name surviving in a comment."""
+        self.assertFalse(hasattr(execcheck, "_TEST_NAME"))
 
-    def test_loop_does_not_re_walk_the_table(self):
-        import inspect
-        src = inspect.getsource(loop._looks_like_a_test_path)
-        self.assertIn("probediscovery.looks_like_a_test_path", src)
-        self.assertNotIn("TEST_CONVENTIONS", src)
+    def test_loop_delegates_to_the_real_table(self):
+        """Behavioural: a local re-implementation would get the JUnit/jest shapes wrong, exactly
+        as execcheck's old private regex did — WAS_MISSED is precisely the set that only the
+        table's convention list classifies correctly."""
+        for p in WAS_MISSED:
+            with self.subTest(path=p):
+                self.assertTrue(loop._looks_like_a_test_path(p))
+        for p in NOT_TESTS:
+            with self.subTest(path=p):
+                self.assertFalse(loop._looks_like_a_test_path(p))
+
+    def test_loop_holds_no_second_copy_of_the_table(self):
+        """Structural: the convention table has one owner (probediscovery.TEST_CONVENTIONS). A
+        namespace check beats a source-text search for the same reason as above."""
+        self.assertFalse(hasattr(loop, "TEST_CONVENTIONS"))
 
     def test_every_convention_row_is_reachable_through_it(self):
         """A row added to the table must take effect everywhere without a second edit."""

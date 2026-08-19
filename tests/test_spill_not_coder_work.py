@@ -11,10 +11,43 @@ BOTH branches of that section are covered. The first cut labelled only the works
 fallback while the PRIMARY source (_fresh_disk_facts) renders the same spilled file in a different
 shape and wins whenever it is non-empty.
 """
-import inspect
+import json
+import os
+import tempfile
 import unittest
 
 from cria import loop, prompts, webfetch
+
+
+class _Rlog:
+    phase = ""
+
+    def __init__(self):
+        self.events = []
+
+    def emit(self, kind, **kw):
+        self.events.append((kind, kw))
+
+
+def _spill_workspace():
+    """A real workspace holding the spilled reference file AND a real coder file — the shape of
+    the walked incident (nemotron-nano 1786243834)."""
+    root = tempfile.mkdtemp()
+    os.makedirs(os.path.join(root, "tmp", "reference"))
+    with open(os.path.join(root, "tmp", "reference", "api.handle.me_openapi.json"), "wb") as f:
+        f.write(b"x" * 96221)
+    with open(os.path.join(root, "resolver.py"), "wb") as f:
+        f.write(b"x" * 2582)
+    return root
+
+
+def _captured_chat():
+    calls = []
+
+    def chat(body, rlog):
+        calls.append(body)
+        return json.dumps({"choices": [{"message": {"content": "ON_TRACK"}}]}).encode()
+    return chat, calls
 
 # the fallback branch's shape (groundtruth.workspace_inventory)
 INVENTORY = ("WORKSPACE FILES in /tmp/ws (on-disk ground truth at judging time, newest first):\n"
@@ -40,9 +73,30 @@ class BothBranchesAreLabelledTests(unittest.TestCase):
         self.assertIn("not a deliverable", spill)
 
     def test_both_call_sites_pass_through_the_label(self):
-        src = inspect.getsource(loop.author_steer)
-        self.assertIn("_label_spill_entries(\n        _fresh_disk_facts(", src)
-        self.assertIn("_label_spill_entries(workspace_inventory(workspace_root))", src)
+        """Driven for real through `author_steer`, both branches: the FALLBACK
+        (`workspace_inventory`, when nothing was recently touched) and the PRIMARY
+        (`_fresh_disk_facts`, when the spinning file IS the spill copy) must both reach the
+        reasoner's prompt with the spill file labelled — the exact incident this guards."""
+        root = _spill_workspace()
+        body = {"messages": [{"role": "user", "content": "help"}]}
+
+        # FALLBACK: nothing touched (no spin_path, no tool_calls) -> workspace_inventory branch.
+        chat, calls = _captured_chat()
+        loop.author_steer(chat, None, root, loop.GuardState(), body, _Rlog(), condition="wheel_spin")
+        prompt = calls[0]["messages"][-1]["content"]
+        self.assertIn("api.handle.me_openapi.json (96221 B) — reference material saved into the "
+                     "read-only scratch directory for re-reading, not a deliverable", prompt)
+
+        # PRIMARY: the coder is spinning on rewriting the spill file itself -> _fresh_disk_facts.
+        chat2, calls2 = _captured_chat()
+        gs2 = loop.GuardState()
+        gs2.spin_path = "tmp/reference/api.handle.me_openapi.json"
+        loop.author_steer(chat2, None, root, gs2, body, _Rlog(), condition="wheel_spin")
+        prompt2 = calls2[0]["messages"][-1]["content"]
+        section = prompt2[prompt2.index("THE FILES IT HAS BEEN CHANGING"):]
+        self.assertIn("FILE tmp/reference/api.handle.me_openapi.json — 96,221 bytes, 1 line — "
+                     "reference material saved into the read-only scratch directory for "
+                     "re-reading, not a deliverable", section)
 
     def test_a_real_coder_file_is_untouched(self):
         self.assertIn("  resolver.py (2582 B)", loop._label_spill_entries(INVENTORY).splitlines())

@@ -7,10 +7,20 @@ against an unchanged workspace, and the only thing that differed between the thr
 rejected and the one that ended the run was which JSON key came back.
 """
 import inspect
+import json
 import re
+import tempfile
 import unittest
 
 from cria import loop, prompts, verifytools
+from cria.config import Role
+
+
+class _Rlog:
+    phase = ""
+
+    def emit(self, *a, **k):
+        pass
 
 
 class TheCloserAsksForTheSchemaTheJudgeDeclaresTests(unittest.TestCase):
@@ -19,10 +29,38 @@ class TheCloserAsksForTheSchemaTheJudgeDeclaresTests(unittest.TestCase):
     ask as `answer_now_simple`, but only the leaked-tool-call branch reached it; the ROUND CAP — the
     path a five-round inspection actually takes — sent the wrong template every time."""
 
+    class _RoundCapChat:
+        """Keeps inspecting (list_dir) until the round cap, then answers in prose."""
+
+        def __init__(self, n_before_cap):
+            self.bodies = []
+            self.n = n_before_cap
+
+        def __call__(self, body, rlog):
+            self.bodies.append(body)
+            if len(self.bodies) <= self.n:
+                comp = {"choices": [{"message": {"role": "assistant", "tool_calls": [
+                    {"id": f"c{len(self.bodies)}", "type": "function",
+                     "function": {"name": "list_dir", "arguments": '{"path": "."}'}}]}}]}
+            else:
+                comp = {"choices": [{"message": {"role": "assistant", "content": "done inspecting"}}]}
+            return json.dumps(comp).encode()
+
     def test_the_round_cap_prefers_the_judges_own_closer(self):
-        src = inspect.getsource(loop._judge_completion)
-        cap = src[src.index("if rounds == verifytools.VERIFY_MAX_ROUNDS"):]
-        self.assertIn("answer_now_simple or answer_now or verifytools.ANSWER_NOW", cap)
+        """Drive a judge that never volunteers a verdict tool call, all the way to the round cap.
+        The closer question the ROUND CAP sends (as opposed to the leaked-tool-call escalation,
+        covered by test_the_confirm_judge_has_a_closer_that_matches_its_prompt below) must be the
+        confirm judge's OWN one-word ask — not the generic {"done": …} closer."""
+        chat = self._RoundCapChat(verifytools.VERIFY_MAX_ROUNDS)
+        with tempfile.TemporaryDirectory() as root:
+            loop._judge_completion(chat, None, "sys", "user", _Rlog(), phase="test",
+                                    workspace_root=root, verdict_key="done",
+                                    answer_now_simple="SIMPLE_CLOSER_MARKER",
+                                    answer_now="GENERIC_CLOSER_MARKER")
+        self.assertEqual(len(chat.bodies), verifytools.VERIFY_MAX_ROUNDS + 1,
+                         "the round cap must be the one that ended the loop")
+        cap_request = chat.bodies[verifytools.VERIFY_MAX_ROUNDS]["messages"][-1]["content"]
+        self.assertEqual(cap_request, "SIMPLE_CLOSER_MARKER")
 
     def test_the_confirm_judge_has_a_closer_that_matches_its_prompt(self):
         self.assertIn("CONSISTENT", verifytools.ANSWER_NOW_CONSISTENT)
@@ -79,9 +117,24 @@ class ClosedQuestionsGoInTheUserTurnTests(unittest.TestCase):
         self.assertTrue(loop._ASK_USER_TURN.strip())
 
     def test_it_forces_reasoning_off_and_temperature_zero(self):
-        src = inspect.getsource(loop.ask_closed)
-        self.assertIn('reasoning="off"', src)
-        self.assertIn("temperature=0.0", src)
+        """The role handed in has reasoning ON and a nonzero temperature — ask_closed must force
+        both regardless of what the role otherwise carries, so a one-word verdict never spends the
+        role's own sampling on a closed question."""
+        class _Chat:
+            def __init__(self):
+                self.bodies = []
+
+            def __call__(self, body, rlog):
+                self.bodies.append(body)
+                return json.dumps({"choices": [{"message": {
+                    "role": "assistant", "content": "YES"}}]}).encode()
+
+        role = Role(name="reasoner", backend="b", reasoning="on", temperature=0.7)
+        chat = _Chat()
+        loop.ask_closed(chat, role, "Is the coder stuck?", _Rlog(), phase="test")
+        sent = chat.bodies[0]
+        self.assertEqual(sent["temperature"], 0.0)
+        self.assertFalse(sent["chat_template_kwargs"]["enable_thinking"])
 
 
 class ASteerMustNameSomethingTests(unittest.TestCase):

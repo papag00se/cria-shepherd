@@ -108,16 +108,28 @@ class EndToEndThroughTheGroundingGateTests(unittest.TestCase):
 
 class WiringTests(unittest.TestCase):
     def test_the_author_refuses_before_it_ever_reaches_the_dictates_check(self):
-        import inspect
-        src = inspect.getsource(loop._grounded_steer_or_none)
-        self.assertIn("_field_the_ledger_denies", src)
-        self.assertLess(src.index("_field_the_ledger_denies"), src.index("_dictates_code(directive"))
+        """A phantom-field directive must be refused WITHOUT ever spending a reasoner call on the
+        dictates-code question — `ask` is the dictates check's only way to reach the model, so an
+        `ask` that is never invoked is proof the phantom-field check short-circuited first."""
+        class S:
+            fetched_pages = LEDGER
+        asked = []
 
-    def test_it_reads_the_durable_ledger_not_just_the_window(self):
-        import inspect
-        src = inspect.getsource(loop._grounded_steer_or_none)
-        i = src.index("_field_the_ledger_denies")
-        self.assertIn("fetched_pages", src[i:i + 400])
+        def ask(*a):
+            asked.append(a)
+            return "DICTATES"
+
+        rlog = EndToEndThroughTheGroundingGateTests._Rlog()
+        out = loop._grounded_steer_or_none(MAPLE_BAD, "evidence", rlog, ask=ask,
+                                           sess=S(), messages=[], workspace_root=None)
+        self.assertIsNone(out)
+        self.assertEqual(asked, [], "the dictates-code reasoner must never even be called")
+
+    # test_it_reads_the_durable_ledger_not_just_the_window (formerly here) is redundant: it asserted
+    # the same fact EndToEndThroughTheGroundingGateTests.test_the_maple_directive_is_refused_and_logged
+    # already proves behaviourally — that test hands messages=[] (an EMPTY window) alongside
+    # sess.fetched_pages=LEDGER and gets the refusal anyway, which is only possible if the durable
+    # ledger (not the window) supplied the field names.
 
 
 if __name__ == "__main__":

@@ -25,9 +25,31 @@ across real runs that its own "WHAT FLIPS IT" note requires before it may ever a
 sample per session, all at the same tick, could never accumulate into that decision.
 """
 
+import dataclasses
+import json
 import unittest
 
 from cria import loop
+from cria.loop import Loop, PlanSession
+from cria.plan import Plan, PlanItem
+
+from test_loop import _ctx, _Rlog
+
+
+def _step_plan(n=1, *, all_done=False):
+    items = [PlanItem(f"step {i + 1}") for i in range(n)]
+    for it in items:
+        it.done = all_done
+    return Plan(id="x", task="t", created="c", items=items)
+
+
+def _reasoner(done=True):
+    """A step critic that always answers the same way — the fixture varies the SESSION state,
+    not the verdict, so what's under test is whether the check ran/stamped at all."""
+    def chat(body, rlog):
+        return json.dumps({"choices": [{"message": {"content": json.dumps(
+            {"done": done, "reason": "r", "proposed_fix": ""})}}]}).encode()
+    return chat
 
 
 class TheGatesResetNoLongerEndsTheCheckTests(unittest.TestCase):
@@ -87,45 +109,74 @@ class ItCannotFireMoreOftenThanTheCadenceTests(unittest.TestCase):
 
     def test_a_drive_with_no_open_step_does_not_spend_the_opportunity(self):
         """`sess.plan.current()` is None once every item is done. Stamping there would push the next
-        real check a whole interval out, which is the same class of loss as the one being fixed."""
-        import inspect
-        src = inspect.getsource(loop.Loop._periodic_step_check)
-        due = src.index("periodic_check_due")
-        item = src.index("item = sess.plan.current()")
-        stamp = src.index("sess.step_checked_drive = sess.drive_count")
-        self.assertLess(due, item, "the cadence is tested first")
-        self.assertLess(item, stamp, "the stamp must land after the open-step check, not before")
+        real check a whole interval out, which is the same class of loss as the one being fixed —
+        driven for real: a due drive with every step already done must leave the stamp untouched."""
+        sess = PlanSession(plan=_step_plan(1, all_done=True))
+        sess.drive_count = loop.STEP_CHECK_EVERY
+        sess.step_checked_drive = -1
+        L = Loop(_ctx(None, _reasoner(), sess.plan))
+        out = L._periodic_step_check(sess, "k", {"messages": []}, 1, 1, _Rlog())
+        self.assertIsNone(out)
+        self.assertEqual(sess.step_checked_drive, -1, "no open step: the opportunity is not spent")
 
 
 class OneNumberHasOneOwnerTests(unittest.TestCase):
     def test_the_step_check_no_longer_reads_the_gates_countdown_to_decide(self):
-        import inspect
-        src = inspect.getsource(loop.Loop._periodic_step_check)
-        head = src[:src.index("sess.step_checked_drive")]
-        self.assertNotIn("coder_turns %", head)
-        self.assertNotIn("step_checked_turn", src)
+        """Behavioural: `coder_turns` must not be part of the DUE decision any more — the old bug
+        was `step_checked_turn == coder_turns`, true forever once the gate's countdown first hit
+        12. Hold drive_count/step_checked_drive fixed at a due tick and sweep coder_turns across
+        the gate's own range and past it; the check must fire every time, unaffected."""
+        for turns in (0, 1, loop.GATE_EVERY_CODER_TURNS - 1, loop.GATE_EVERY_CODER_TURNS, 999):
+            with self.subTest(turns=turns):
+                sess = PlanSession(plan=_step_plan(1, all_done=False))
+                sess.drive_count = loop.STEP_CHECK_EVERY
+                sess.step_checked_drive = -1
+                sess.coder_turns = turns
+                L = Loop(_ctx(None, _reasoner(True), sess.plan))
+                L._periodic_step_check(sess, "k", {"messages": []}, 1, 1, _Rlog())
+                self.assertEqual(sess.step_checked_drive, loop.STEP_CHECK_EVERY,
+                                 "the check must fire on the drive cadence alone")
+
+    def test_the_removed_field_stays_removed(self):
+        """`step_checked_turn` was the second, colliding owner of the same fact. A namespace check
+        beats a source-text search — rename-proof and comment-proof."""
+        self.assertNotIn("step_checked_turn", {f.name for f in dataclasses.fields(PlanSession)})
 
     def test_both_periodic_checks_share_the_one_predicate(self):
-        import inspect
+        """Structural: no fixture exercises 'this function calls that one' directly, but the
+        function's own compiled bytecode names what it references — a namespace check on the
+        code object, immune to a comment merely mentioning the name."""
         for fn in (loop.Loop._periodic_step_check, loop.Loop._periodic_satisfaction):
             with self.subTest(fn=fn.__name__):
-                self.assertIn("periodic_check_due", inspect.getsource(fn))
+                self.assertIn("periodic_check_due", fn.__code__.co_names)
 
     def test_the_gate_still_owns_its_countdown(self):
-        """Nothing here takes the reset away — `coder_turns` is the gate's, and stays the gate's."""
-        import inspect
-        self.assertIn("gs.coder_turns = 0", inspect.getsource(loop.guard_periodic_gate))
+        """Nothing here takes the reset away — `coder_turns` is the gate's, and stays the gate's.
+        Behavioural: drive it past the threshold and read the state back."""
+        gs = loop.GuardState()
+        gs.coder_turns = loop.GATE_EVERY_CODER_TURNS
+        loop.guard_periodic_gate(gs, {"messages": []}, _Rlog(), workspace_root=None)
+        self.assertEqual(gs.coder_turns, 0)
 
 
 class TheEventCarriesBothClocksTests(unittest.TestCase):
     def test_the_ratio_of_drives_to_acting_turns_is_recorded_not_argued(self):
         """A drive is the same event or slightly more often than an acting turn, and the exact ratio
-        decides whether 12 is still far above the median of 5. #12: read it off the event."""
-        import inspect
-        src = inspect.getsource(loop.Loop._periodic_step_check)
-        emit = src[src.index('rlog.emit("loop.periodic_step_check"'):]
-        self.assertIn("drive=sess.drive_count", emit)
-        self.assertIn("turns=sess.coder_turns", emit)
+        decides whether 12 is still far above the median of 5. #12: read it off the event —
+        behaviourally, the emitted numbers must track the REAL session state, not a placeholder:
+        two different (drive, turns) pairs must show up as two different emitted pairs."""
+        seen = []
+        for drive, turns in ((loop.STEP_CHECK_EVERY, 3), (loop.STEP_CHECK_EVERY * 2, 47)):
+            sess = PlanSession(plan=_step_plan(1, all_done=False))
+            sess.drive_count = drive
+            sess.step_checked_drive = -1  # never checked yet → due once drive_count >= STEP_CHECK_EVERY
+            sess.coder_turns = turns
+            rlog = _Rlog()
+            L = Loop(_ctx(None, _reasoner(True), sess.plan))
+            L._periodic_step_check(sess, "k", {"messages": []}, 1, 1, rlog)
+            evt = next(kw for k, kw in rlog.events if k == "loop.periodic_step_check")
+            seen.append((evt["drive"], evt["turns"]))
+        self.assertEqual(seen, [(loop.STEP_CHECK_EVERY, 3), (loop.STEP_CHECK_EVERY * 2, 47)])
 
 
 if __name__ == "__main__":

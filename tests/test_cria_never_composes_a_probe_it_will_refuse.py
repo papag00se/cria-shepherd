@@ -34,11 +34,12 @@ class TheBudgetsCannotDisagreeTests(unittest.TestCase):
             content_reduce.INLINE_RESULT_MAX_BYTES)
 
     def test_the_cap_is_derived_not_typed(self):
-        """A literal here is how the two drifted apart in the first place."""
-        import inspect
-        src = inspect.getsource(proberun)
-        line = next(ln for ln in src.splitlines() if ln.startswith("PROBE_OUTPUT_CAP_BYTES"))
-        self.assertIn("INLINE_RESULT_MAX_BYTES", line)
+        """A literal here is how the two drifted apart in the first place. EXACT equality, not the
+        `<=` fit-check above: a hand-typed cap that merely happened to fit (e.g. forgetting to
+        subtract the envelope reserve) would still pass that one — this catches the arithmetic
+        itself, against the live constants, not a textual mention of the other constant's name."""
+        self.assertEqual(proberun.PROBE_OUTPUT_CAP_BYTES,
+                         content_reduce.INLINE_RESULT_MAX_BYTES - proberun.PROBE_ENVELOPE_RESERVE_BYTES)
 
     def test_the_reserve_covers_the_harness_envelope(self):
         envelope = ("Chunk ID: be2fc9\nWall time: 0.9s\nOriginal token count: 41\n"
