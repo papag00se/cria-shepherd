@@ -66,14 +66,61 @@ class TheRefusalIsSpokenTests(unittest.TestCase):
 
 class TheLoopTreatsItAsALostTurnTests(unittest.TestCase):
     def test_the_loop_pops_the_hint_before_reading_the_turn_as_done(self):
-        import inspect
-        from cria import loop
-        src = inspect.getsource(loop.Loop._drive_item) if hasattr(loop.Loop, "_drive_item") else \
-            inspect.getsource(loop.Loop)
-        self.assertIn("massage.LOST_CALL_KEY", src)
-        i_lost = src.index("massage.LOST_CALL_KEY")
-        i_leg0 = src.index("leg0_nudged")
-        self.assertLess(i_lost, i_leg0, "a lost turn must be caught before the completion legs")
+        """A lost call and an empty step ('no tools used') are the SAME shape at this point —
+        step_tool_calls stays 0 either way — so the ordering between the two checks IS the fix.
+        Drive the real coder pipeline with an off-menu call trapped in the reasoning channel (which
+        would ALSO satisfy the leg0 'did nothing' check) and confirm the lost-call note wins, not
+        the generic completion nudge."""
+        import json
+        import unittest.mock
+        from cria.loop import Loop, LoopContext, PlanSession
+        from cria.plan import Plan, PlanItem
+
+        class _RLog:
+            def __init__(self):
+                self.events = []
+
+            def emit(self, kind, **kw):
+                self.events.append((kind, kw))
+
+        class _Planner:
+            def __init__(self, plan):
+                self._plan = plan
+
+            def plan_for(self, messages, rlog, prior_work="", rewrite_summary=""):
+                return self._plan
+
+        plan = Plan(id="x", task="t", created="2026-01-01T00:00:00+00:00",
+                    items=[PlanItem("step 1"), PlanItem("step 2")])
+        shell = {"type": "function", "function": {"name": "shell",
+                 "parameters": {"type": "object", "properties": {"command": {"type": "array"}}}}}
+
+        def coder_chat(body, rlog):
+            return json.dumps({"choices": [{"finish_reason": "stop", "message": {
+                "role": "assistant", "content": "", "reasoning_content": OFF_MENU}}]}).encode()
+
+        notes = []
+
+        def fake_renudge(self, sess, key, body, note, rlog):
+            # Stub out the recursive re-drive so the pipeline runs exactly once and its FIRST
+            # decision is the one under test.
+            notes.append(note)
+            return {"choices": [{"message": {"content": str(note)}}]}
+
+        with unittest.mock.patch.object(Loop, "_renudge", fake_renudge):
+            ctx = LoopContext(planner=_Planner(plan), coder_chat=coder_chat, reasoner_chat=coder_chat,
+                              runs_dir="")
+            sess = PlanSession(plan=plan)
+            body = {"messages": [{"role": "user", "content": "resolve a handle"}],
+                    "tools": [shell], "stream": True}
+            rlog = _RLog()
+            Loop(ctx)._work_item(sess, "k", body, rlog, sess.plan.items[0], 1)
+
+        self.assertEqual(len(notes), 1, "the lost call must be caught before any other branch renudges")
+        self.assertIn("str_replace_editor", str(notes[0]))
+        self.assertTrue(any(k == "loop.lost_call_offmenu" for k, _ in rlog.events))
+        self.assertFalse(any(k == "loop.step_incomplete" for k, _ in rlog.events),
+                         "the leg0 'no tools used' branch must not fire when a call was actually lost")
 
     def test_the_note_names_the_tool_and_the_menu(self):
         from cria import prompts

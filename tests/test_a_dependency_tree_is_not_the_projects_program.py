@@ -80,8 +80,11 @@ class TheVendoredTreeIsNotOursTests(unittest.TestCase):
 
 class OneOwnerForWhatAnInstallLooksLikeTests(unittest.TestCase):
     def test_it_reuses_the_list_the_inventory_already_folds(self):
-        import inspect
-        self.assertIn("_SKIP_PREFIXES", inspect.getsource(execcheck.entrypoints))
+        # ONE owner, proven by identity, not by searching entrypoints' source for the name: a second
+        # copy of this list is exactly how the two drifted before (see groundtruth.BUILD_ARTIFACT_DIRS's
+        # own history). That entrypoints() actually CONSULTS the shared list — not just imports it
+        # unused — is covered by TheVendoredTreeIsNotOursTests above (test_the_measured_workspace and
+        # test_the_projects_own_program_still_survives both fail if the skip is removed).
         self.assertIs(execcheck._SKIP_PREFIXES, groundtruth.INSTALL_PREFIXES)
 
     def test_vendor_is_still_not_a_build_artifact_dir(self):

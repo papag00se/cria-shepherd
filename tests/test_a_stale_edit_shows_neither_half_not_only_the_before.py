@@ -45,6 +45,12 @@ def args_of(msg, i=0):
     return json.loads(msg["tool_calls"][i]["function"]["arguments"])
 
 
+def edit_key(path, key, value, cid="c1"):
+    return {"role": "assistant", "tool_calls": [{
+        "id": cid, "type": "function",
+        "function": {"name": "edit_file", "arguments": json.dumps({"path": path, key: value})}}]}
+
+
 class TheSupersededEditHidesBothHalvesTests(unittest.TestCase):
     def test_the_before_is_no_longer_the_only_half_kept(self):
         msgs = [edit("lib/x.rb", BIG_OLD, BIG_NEW, "a"), edit("lib/x.rb", BIG_NEW, BIG_OLD, "b")]
@@ -83,12 +89,18 @@ class TheCompactViewFoldsItTooTests(unittest.TestCase):
         self.assertIn("new_string", selfcompact._WRITE_ARG_KEYS)
 
     def test_the_two_stubbing_paths_agree_on_which_keys_are_payload(self):
-        """They drifted once already; a test is cheaper than the next walk (#23)."""
-        import inspect
-        src = inspect.getsource(focustrim._stub_superseded_writes)
+        """They drifted once already; a test is cheaper than the next walk (#23). Drive
+        focustrim's stubber with a real superseded payload under EACH key selfcompact treats as
+        write payload, and confirm it actually gets replaced — not just that the key's name
+        appears somewhere in the function's source."""
         for key in selfcompact._WRITE_ARG_KEYS:
             with self.subTest(key=key):
-                self.assertIn(f'"{key}"', src)
+                msgs = [edit_key("lib/x.rb", key, "x" * 500, "a"),
+                        edit_key("lib/x.rb", key, "y" * 500, "b")]
+                out, n = focustrim._stub_superseded_writes(msgs)
+                self.assertEqual(n, 1, f"{key} was not recognized as a stubbable write payload")
+                stale = args_of(out[0])
+                self.assertNotIn("x" * 500, stale[key])
 
 
 class TheWordingExistsTests(unittest.TestCase):

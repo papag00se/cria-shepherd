@@ -17,7 +17,6 @@ stall 2, 3 and 4 on one unchanged finding-set — three fresh diagnoses of one p
 The fix takes the finding-set from `last_gate_flag`, which is what every other seat reads (#12).
 """
 
-import inspect
 import unittest
 
 from cria import loop
@@ -35,6 +34,14 @@ class Gs:
 
 
 FINDINGS = "cart_test.go:18: cannot convert 9.72 to type decimal.Decimal"
+
+
+class _Rlog:
+    def __init__(self):
+        self.events = []
+
+    def emit(self, name, **kw):
+        self.events.append(name)
 
 
 class TheGuardTakesTheAuthoritativeFindingSetTests(unittest.TestCase):
@@ -64,10 +71,53 @@ class TheGuardTakesTheAuthoritativeFindingSetTests(unittest.TestCase):
     def test_no_guard_state_does_not_raise(self):
         self.assertEqual(self.select("x", None), "x")
 
-    def test_the_source_applies_this_rule(self):
-        src = inspect.getsource(loop.author_steer)
-        self.assertIn('getattr(gs, "last_gate_flag", "")', src)
-        self.assertIn("checks_now", src)
+    def test_a_trigger_with_no_check_text_still_reads_last_gate_flag(self):
+        """Drive the real author_steer, not the reimplemented `select` rule above. A repetition/
+        wheel-spin trigger passes no truth_text; if the guard only ever read truth_text (the
+        original bug), checks_now would stay empty, never match ``steered_checks_text``, and the
+        call would fall through to a fresh reasoner diagnosis — so "the reasoner was never asked"
+        is proof the guard found the findings via last_gate_flag instead."""
+        import json
+        gs = Gs()
+        gs.last_gate_flag = FINDINGS
+        gs.steered_checks_text = FINDINGS
+        gs.same_checks_relooked = True     # third+ ask -> reattach/silence, not a fresh diagnosis
+        body = {"messages": [{"role": "user", "content": "t"},
+                             {"role": "tool", "content": FINDINGS}], "tools": []}
+        reasoner_calls = []
+
+        def reasoner_chat(b, r):
+            reasoner_calls.append(b)
+            return json.dumps({"choices": [{"message": {"content": "ON_TRACK"}}]}).encode()
+
+        rlog = _Rlog()
+        out = loop.author_steer(reasoner_chat, None, None, gs, body, rlog, condition="wheel_spin")
+        self.assertIsNone(out)
+        self.assertIn("loop.steer_same_checks", rlog.events)
+        self.assertEqual(reasoner_calls, [], "checks_now never matched steered_checks_text — the "
+                                             "trigger's own gs.last_gate_flag was not read")
+
+    def test_a_caller_with_its_own_text_still_wins_for_real(self):
+        """The thrash caller's own truth_text must win over a DIFFERENT, stale last_gate_flag."""
+        import json
+        gs = Gs()
+        gs.last_gate_flag = FINDINGS               # stale — must not be what gets compared
+        gs.steered_checks_text = "fresher truth"
+        gs.same_checks_relooked = True
+        body = {"messages": [{"role": "user", "content": "t"},
+                             {"role": "tool", "content": "fresher truth"}], "tools": []}
+        reasoner_calls = []
+
+        def reasoner_chat(b, r):
+            reasoner_calls.append(b)
+            return json.dumps({"choices": [{"message": {"content": "ON_TRACK"}}]}).encode()
+
+        rlog = _Rlog()
+        out = loop.author_steer(reasoner_chat, None, None, gs, body, rlog,
+                                condition="thrash", truth_text="fresher truth")
+        self.assertIsNone(out)
+        self.assertIn("loop.steer_same_checks", rlog.events)
+        self.assertEqual(reasoner_calls, [])
 
 
 class TheStreakIsNotWipedByATriggerWithoutTextTests(unittest.TestCase):

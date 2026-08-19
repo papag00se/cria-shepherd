@@ -95,28 +95,19 @@ class TheAuthorActuallyDropsItTests(unittest.TestCase):
         out, events = self._run(cleared=True)
         self.assertIn("loop.steer_checks_stale", events)
         self.assertNotIn("unchanged since you were last shown", str(out))
+        # THE ACTUAL DROP, not just the detection: detecting staleness and then still comparing the
+        # STALE text against gs.steered_checks_text produces the exact same "loop.steer_same_checks"
+        # / "loop.steer_checks_reattached" events a genuinely-unchanged finding would — the emit call
+        # above fires either way, so it alone can't tell a real drop from a no-op one. Only a cleared
+        # checks_now skips that comparison branch entirely.
+        self.assertNotIn("loop.steer_same_checks", events)
+        self.assertNotIn("loop.steer_checks_reattached", events)
 
     def test_a_still_failing_suite_keeps_the_repeat_exactly_as_before(self):
         out, events = self._run(cleared=False)
         self.assertNotIn("loop.steer_checks_stale", events)
         self.assertTrue(any(k in ("loop.steer_checks_reattached", "loop.steer_same_checks")
                             for k in events), events)
-
-
-class WiringTests(unittest.TestCase):
-    def test_the_author_drops_the_stale_truth_before_using_it(self):
-        import inspect
-        src = inspect.getsource(loop.author_steer)
-        self.assertIn("_checks_superseded_by_coder_run", src)
-        # dropped BEFORE the same-checks branch that says "you have not cleared them yet"
-        self.assertLess(src.index("_checks_superseded_by_coder_run"),
-                        src.index("steered_checks_text"))
-
-    def test_it_clears_both_the_comparison_key_and_the_truth_text(self):
-        import inspect
-        src = inspect.getsource(loop.author_steer)
-        i = src.index("_checks_superseded_by_coder_run")
-        self.assertIn('checks_now, truth_text = "", ""', src[i:i + 600])
 
 
 if __name__ == "__main__":
