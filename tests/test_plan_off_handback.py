@@ -1,18 +1,24 @@
-"""Plan-off gets a READING STEP and nothing else of the plan machinery.
+"""Plan-off gets NO plan machinery: one item, the raw task, no step cage, no replans.
 
 Operator contract (2026-08-04): "All that was supposed to happen is a research step, on both
 plan-off and plan-on." What shipped on 08-03 (ef0b771) instead drove a 2-item plan-off session
 through the FULL multi-step machinery — "Do ONLY this step (k of n), then stop" framing, hidden
 later steps, and living replans that split the user's task into more steps. Audited: gemma4 at
-temperature 0 went ladder 4/4 → campaign 0/4 twice, both runs pinned on step 1 for ~86-89 coder
+temperature 0 went ladder 4/4 -> campaign 0/4 twice, both runs pinned on step 1 for ~86-89 coder
 calls with the README structurally unreachable.
 
-The contract now enforced here:
-- the reading step IS driven (framed, critic-gated) — that was 08-03's legitimate fix;
-- the moment the current item is the RAW TASK, the session flips to the synthetic single-item
-  drive (raw-task framing, plan-off off-ramps, no step cage);
-- the living re-derivation NEVER runs on a plan-off session — the tail is the user's own task,
-  not a planner guess to refine.
+**The reading step itself was removed on 2026-08-19**
+(`docs/audits/base-vs-cria-footgun-patterns.md`), which is what made a plan-off plan two items in
+the first place. So the contract simplifies to what it should always have been, and these tests hold
+the line against re-growing it:
+
+- a plan-off session is ALWAYS synthetic — one item, whose text is the user's own task;
+- its framing is the raw task, with no "Do ONLY this step (k of n)" cage;
+- the living re-derivation NEVER runs on it — the tail is the user's task, not a planner guess.
+
+A two-item plan-off session is constructed by hand below precisely because nothing builds one any
+more: if some future path starts to, the driver must still hand back to the raw task rather than
+cage it.
 """
 
 import json
@@ -71,27 +77,29 @@ def _two_item_sess():
 
 
 class PlanOffHandbackTests(unittest.TestCase):
-    def test_two_item_plan_off_session_is_marked(self):
+    def test_a_synthesized_plan_off_plan_has_exactly_one_item(self):
+        """The removal, asserted at its source: nothing cria synthesizes is more than the task."""
+        from cria.loop import _synthetic_plan
+        plan = _synthetic_plan(TASK)
+        self.assertEqual([it.text for it in plan.items], [TASK])
+        self.assertTrue(_plan_off_session(plan, "").synthetic)
+
+    def test_a_plan_off_session_is_synthetic_whatever_it_was_handed(self):
+        """Even a hand-built two-item plan drives as the raw task — the cage has no way back in."""
         sess = _two_item_sess()
         self.assertTrue(sess.plan_off)
-        self.assertFalse(sess.synthetic)          # the reading step IS driven by the step machinery
+        self.assertTrue(sess.synthetic)
 
-    def test_reading_step_cleared_hands_back_to_raw_task_drive(self):
-        # FAILS BEFORE THE FIX: the task item was framed "step 2 of 2 … then stop" by the
-        # multi-item driver; now the session flips to synthetic and the coder sees the raw task.
+    def test_the_coder_is_driven_once_through_the_synthetic_path(self):
         store = LoopStore()
         coder = _Scripted([_toolcall()])
         ctx = LoopContext(planner=_Planner(), coder_chat=coder, reasoner_chat=_Scripted([_toolcall()]),
                           runs_dir="")
         loop = Loop(ctx, store)
         sess = _two_item_sess()
-        sess.plan.items[0].done = True            # the reading step verified
         store.put("sid:k", sess)
-        rlog = _Rlog()
-        loop.drive(_body(), "sid:k", None, rlog)
-        self.assertTrue(sess.synthetic)           # handed back to the single-item drive
-        self.assertIn("loop.plan_off_handback", rlog.kinds())
-        sent = json.loads(json.dumps(coder.__dict__))  # coder was called via the synthetic path
+        loop.drive(_body(), "sid:k", None, _Rlog())
+        self.assertTrue(sess.synthetic)
         self.assertEqual(coder.calls, 1)
 
     def test_handback_framing_is_the_raw_task_not_a_step(self):
@@ -105,7 +113,6 @@ class PlanOffHandbackTests(unittest.TestCase):
                           runs_dir="")
         loop = Loop(ctx, store)
         sess = _two_item_sess()
-        sess.plan.items[0].done = True
         store.put("sid:k", sess)
         loop.drive(_body(), "sid:k", None, _Rlog())
         joined = " ".join(str(m.get("content") or "") for m in seen["msgs"])
@@ -134,56 +141,28 @@ class PlanOffHandbackTests(unittest.TestCase):
         self.assertTrue(sess.plan_off)
 
 
-class ReadingCheckClearsPlanOffStepTests(unittest.TestCase):
-    """The reading check may COMPLETE the plan-off reading step (and only that).
+class TheReadingCheckIsGoneTests(unittest.TestCase):
+    """It cleared the reading step, and there is no reading step. Walked run
+    ada-handles_gemma4_codex_poff_1785861503 is why it existed: the reading was ledger-complete by
+    call 12 and weak critics refused the step for 247 calls. Removing the step removes the trap the
+    check was built to escape, so the check goes with it — and the second-completion-authority
+    defect it was scoped against (run 1785812224) loses its last route in."""
 
-    Walked run ada-handles_gemma4_codex_poff_1785861503: the reading was ledger-complete by call
-    12, the repo went red on step-2 work, and weak critics refused the reading step for 247 calls
-    — the hand-back never fired. Scope guards keep 1785812224's second-completion-authority defect
-    dead: plan-off only, never the task item, DONE only (grounded sources required upstream)."""
+    def test_the_driver_no_longer_carries_a_reading_check(self):
+        self.assertFalse(hasattr(Loop, "_research_check"))
 
-    def _loop_with_verdict(self, verdict):
-        reasoner = _Scripted([{"choices": [{"message": {"content": json.dumps({"verdict": verdict})}}]}])
-        ctx = LoopContext(planner=_Planner(), coder_chat=_Scripted([_toolcall()]),
-                          reasoner_chat=reasoner, runs_dir="")
-        from cria.config import Role
-        ctx.reasoner_role = Role(name="reasoner", backend="local")
-        return Loop(ctx, LoopStore())
-
-    def _grounded(self):
-        # the deterministic gather, patched: the unit under test is the DONE branch, not the
-        # ledger parser (which has its own tests)
-        from unittest import mock
-        return mock.patch("cria.loop.research.sources_read",
-                          return_value=[("https://api.handle.me/openapi.json",
-                                         "/handles/{handle}", "holder, resolved_addresses.ada")])
-
-    def test_done_clears_the_reading_step_on_plan_off(self):
+    def test_nothing_asks_a_model_to_author_a_reading_step(self):
         import cria.research as research
-        loop = self._loop_with_verdict("DONE")
-        sess = _two_item_sess()
-        sess.coder_turns = research.RESEARCH_CHECK_EVERY   # the check's cadence tick
-        rlog = _Rlog()
-        with self._grounded():
-            out = loop._research_check(sess, "k", _body(), 1, 2, rlog)
-        self.assertTrue(sess.plan.items[0].done)           # the reading step is VERIFIED
-        self.assertIn("loop.reading_step_cleared", rlog.kinds())
-        self.assertIsNotNone(out)                          # the driven next turn came back
+        self.assertFalse(hasattr(research, "authored_research_step"))
+        self.assertFalse(hasattr(research, "step_reading_verdict"))
 
-    def test_done_on_planner_on_session_still_only_reports(self):
+    def test_the_facts_it_gathered_are_still_gathered(self):
+        """What survives is the deterministic half — judges and steers still get real sources."""
         import cria.research as research
-        loop = self._loop_with_verdict("DONE")
-        plan = Plan(id="x", task=TASK, created="c",
-                    items=[PlanItem(text="Read the spec to learn the shapes"), PlanItem(text="build it")])
-        sess = _plan_off_session(plan, "")
-        sess.plan_off = False                              # a genuine planner session
-        sess.coder_turns = research.RESEARCH_CHECK_EVERY
-        rlog = _Rlog()
-        with self._grounded():
-            out = loop._research_check(sess, "k", _body(), 1, 2, rlog)
-        self.assertFalse(sess.plan.items[0].done)          # 1785812224 regression guard: report only
-        self.assertIsNone(out)
-        self.assertIn("loop.research_satisfied", rlog.kinds())
+        self.assertTrue(callable(research.sources_read))
+        self.assertEqual(research.grounded_sources({"u": ("200", "/handles/{h}", "holder")}),
+                         [("u", "/handles/{h}", "holder")])
+        self.assertEqual(research.grounded_sources({"u": ("200", "", "")}), [])
 
 
 if __name__ == "__main__":

@@ -1,4 +1,0 @@
-THE TASK:
-{{TASK}}
-
-{{CONTEXT}}

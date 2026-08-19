@@ -218,7 +218,6 @@ class GuardState:
     # had dropped, the model re-read the spec a 7th time instead)
     steer_source: str = ""  # human label of which guard produced the pending steer (for the ⟦cria⟧ note)
     coder_turns: int = 0  # acting coder turns since the last gate — drives the PERIODIC check-in
-    research_checked_turn: int = -1  # the coder_turns tick the reading check last ran on (once per tick)
     # The set of sources the reading check last judged. It re-judges the moment new reading lands
     # instead of waiting out a ten-turn clock, and never judges the same evidence twice — a cadence
     # was gating a fact, and a step satisfied at turn 4 stayed pinned until turn 10.
@@ -2163,16 +2162,7 @@ class Loop:
                 # proxy it. A live synthetic session (loaded above) skips this entirely.
                 if classification is None or classification.task_type != "coding":
                     return None
-                # The reading step is written BY THE MODEL (research.authored_research_step) — cria
-                # only supplies the one fact it can establish on its own, that the task names an
-                # external source. cria does not write plan steps.
-                def _plan_ask(sysp, usr):
-                    return summarize(self._ctx.reasoner_chat, self._ctx.reasoner_role,
-                                     sysp, usr, rlog, phase="research-step")
-                sess = _plan_off_session(_synthetic_plan(latest_user_text(messages), ask=_plan_ask,
-                                                         files=workspace_inventory(_extract_cwd(messages)
-                                                                                   or self._ctx.workspace_root)),
-                                          briefing)
+                sess = _plan_off_session(_synthetic_plan(latest_user_text(messages)), briefing)
                 # PERSISTENCE (Invariant 3, load-bearing): a stable ``sid:`` key persists + resumes;
                 # an unstable ``task:`` key is EPHEMERAL — never ``put`` (re-synthesized each turn),
                 # exactly as the plan-off path handed unstable keys a fresh state, so a synthetic session
@@ -2231,13 +2221,7 @@ class Loop:
                         if getattr(self._ctx.planner, "_retriable_failure", False) \
                                 or classification is None or classification.task_type != "coding":
                             return None
-                        def _plan_ask(sysp, usr):
-                            return summarize(self._ctx.reasoner_chat, self._ctx.reasoner_role,
-                                             sysp, usr, rlog, phase="research-step")
-                        sess = _plan_off_session(_synthetic_plan(latest_user_text(messages), ask=_plan_ask,
-                                                                 files=workspace_inventory(_extract_cwd(messages)
-                                                                                           or self._ctx.workspace_root)),
-                                                 briefing)
+                        sess = _plan_off_session(_synthetic_plan(latest_user_text(messages)), briefing)
                         if _stable_session(session_key):
                             self._store.put(session_key, sess)
                         rlog.emit("loop.start", id=sess.plan.id, steps=len(sess.plan.items), synthetic=sess.synthetic,
@@ -2485,21 +2469,9 @@ class Loop:
             periodic = guard_periodic_gate(sess, body, rlog, workspace_root=sess.workspace_root)
             if periodic is not None:
                 return periodic
-        # PERIODIC READING CHECK. A step that asks for research has no way to declare itself finished
-        # except through the step critic reading the transcript, and when the step names a source that
-        # cannot be reached the critic is right to refuse it forever: run 1785804243 spent 114 of its
-        # 195 calls on "Research the Ada Handles API documentation by fetching the GitHub repo root
-        # directory" and never reached step 2. Every RESEARCH_CHECK_EVERY acting turns, ask one focused
-        # question against what cria has really parsed — and when the reading this step wanted is
-        # already in hand, complete it and move on. Grounded in the fetch ledger, so it cannot clear a
-        # step on a claim: with no parsed routes and no parsed fields it answers NOT_DONE without
-        # calling the model at all (cria.research).
-        advanced = self._research_check(sess, key, body, idx, total, rlog)
-        if advanced is not None:
-            return advanced
-        # PERIODIC STEP CHECK. The research check above can only clear a READING step; a build step
-        # still moves only when the coder volunteers "done". Ask the real critic on a cadence so a
-        # step cannot outlive the run (see the method — additive, fail-closed, same authority).
+        # PERIODIC STEP CHECK. A step moves only when the coder volunteers "done". Ask the real critic
+        # on a cadence so a step cannot outlive the run (see the method — additive, fail-closed, same
+        # authority).
         advanced = self._periodic_step_check(sess, key, body, idx, total, rlog)
         if advanced is not None:
             return advanced
@@ -2976,9 +2948,9 @@ class Loop:
         still on step 1; 1785888803 held step 6 from call 0174 past 0215 the same way. MEASURED
         box-wide: 74% of all coder calls sit inside a stretch of 30+ turns with no critic call at all.
 
-        THIS IS NOT A SECOND COMPLETION AUTHORITY — that mistake is documented in `_research_check`
-        below, where a workspace-blind judge marked six build steps done in three minutes and turned
-        a 1.0 into a 0.0. This calls the SAME `_verify` every completion claim goes through: the same
+        THIS IS NOT A SECOND COMPLETION AUTHORITY — that mistake was made once by the retired
+        reading check, where a workspace-blind judge marked six build steps done in three minutes and
+        turned a 1.0 into a 0.0. This calls the SAME `_verify` every completion claim goes through: the same
         critic, reading the same workspace inventory and the same check state, behind the same
         `_confirm_completion` brake. The only thing that changes is WHO asked — cria's own
         bookkeeping instead of the model's say-so.
@@ -3020,8 +2992,8 @@ class Loop:
             workspace_root=sess.workspace_root or "",
             red_findings=findings if sess.last_gate_red else "",
             gate_red=bool(sess.last_gate_red))
-        # SAY WHAT IT DID, always — the lesson _research_check records: a guard that is silent when it
-        # declines cannot be told apart from one that never ran.
+        # SAY WHAT IT DID, always — a guard that is silent when it declines cannot be told apart from
+        # one that never ran.
         rlog.emit("loop.periodic_step_check", step=idx, done=bool(ok), drive=sess.drive_count,
                   turns=sess.coder_turns, reason=_clip(reason or "", 160))
         # OBSERVE-ONLY (operator, 2026-08-05: "I'm not too comfortable with #16"). It ASKS and it
@@ -3040,8 +3012,8 @@ class Loop:
         # file and scored 1 of 5 on a workspace three edits from 4 of 5. That is one case, on the
         # plan-off path rather than the planner-ON runs the flip condition below asks for, and the
         # operator's discomfort was with the authority itself — so it is recorded here, not acted on.
-        # The step that caused it is refused upstream now (research.step_defect's bare-location arm),
-        # which removes this instance without granting the guard any new power.
+        # The step that caused it no longer exists — the authored reading step was removed on
+        # 2026-08-19 — which removes this instance without granting the guard any new power.
         #
         # WHAT FLIPS IT: `loop.periodic_step_check done=true` events across real planner-ON runs,
         # each read against what the workspace actually held at that turn. If the critic is right
@@ -3051,126 +3023,6 @@ class Loop:
         if ok:
             rlog.emit("loop.periodic_step_satisfied", level="warn", step=idx, drive=sess.drive_count,
                       turns=sess.coder_turns, observe_only=True, step_text=item.text[:160])
-        return None
-
-    def _research_check(self, sess: PlanSession, key: str, body: dict, idx: int, total: int, rlog):
-        """Every ``RESEARCH_CHECK_EVERY`` acting turns: has the reading THIS step asks for been done?
-        Returns the driven next turn when the step is complete, else None (the usual case).
-
-        THE FACTS ARE GATHERED, NOT ASKED FOR. :func:`research.grounded_sources` reads cria's own
-        fetch ledger and keeps only the documents that came back 2xx AND had routes or response
-        fields parsed out of them. An empty list short-circuits to NOT_DONE with no model call — the
-        guarantee that matters, because run 1785804243's ledger was five HTTP 200s that defined
-        nothing ("this page answered, but no endpoint definitions were found in it") and a judge
-        shown that could still have been talked into DONE.
-
-        MOST STEPS ARE NOT RESEARCH and the verdict says so (NOT_RESEARCH), which costs one reasoner
-        call per ten turns and changes nothing. That is the price of the one case it exists for; the
-        alternative was a run spending its entire window on a step it could never satisfy.
-
-        It only ever COMPLETES a step — it never fails one, never steers, and never speaks to the
-        coder. A step it declines to clear is left exactly as it was, for the ordinary critic to
-        judge (#13, and #2: the safe class of intervention is the additive one)."""
-        # ONCE PER TICK. The driver recurses into the next item without advancing coder_turns, so a
-        # modulo test alone re-fires for every remaining step inside one turn — that recursion is how
-        # run 1785812224 walked six steps in under three minutes.
-        if sess.coder_turns <= 0:
-            return None
-        if sess.research_checked_turn == sess.coder_turns:
-            return None
-        item = sess.plan.current()
-        if item is None or item.done:
-            return None
-        msgs = body.get("messages", [])
-        # A CADENCE WAS GATING A FACT. The trigger used to be `coder_turns % RESEARCH_CHECK_EVERY`
-        # alone, so a step whose reading finished at turn 4 stayed pinned until turn 10. What it is
-        # waiting for is deterministic and free — sources_read is a pure function of the ledger and
-        # the message list — so the EVIDENCE decides when to look, and the clock only covers the
-        # case where no new evidence ever arrives.
-        #
-        # Measured on ternary-bonsai's orders-api-py run: the step "read app.py and db.py" was
-        # satisfied at coder call 4 and stayed the LAST user turn for seven consecutive turns,
-        # telling a weak model to restart at "read and plan" after every finished piece of work.
-        # Four byte-identical db.py writes and two identical app.py writes followed; those tripped
-        # cria's own repetition detector, which fired six reasoner interventions, which
-        # produced the rabbit hole that cost the run. 3/4 unaided became 2/4 assisted.
-        #
-        # Strictly ADDITIVE (#2): this can only make the check fire MORE often than before, and the
-        # check only ever COMPLETES a step — it never fails one, never steers, never speaks to the
-        # coder. Bounded by the evidence itself: the same set of sources is never judged twice, so a
-        # step that reads nothing new costs nothing beyond the old cadence.
-        ledger = _merge_fetches(_extract_fetches(msgs), (getattr(sess, "fetched_pages", None) or {}))
-        sources = research.sources_read(ledger, msgs)
-        # A PAGE THAT ANSWERED COUNTS AS EVIDENCE TO RE-ASK ON, even when nothing parsed out of it —
-        # otherwise the fingerprint never moves for a docs-only reading step and the check declines
-        # on cadence forever. See research.step_reading_verdict for the run this cost.
-        fingerprint = tuple(sorted({s[0] for s in sources} | set(research.answered_sources(ledger))))
-        evidence_changed = fingerprint != sess.research_evidence
-        if not evidence_changed and sess.coder_turns % research.RESEARCH_CHECK_EVERY:
-            return None
-        sess.research_checked_turn = sess.coder_turns
-        sess.research_evidence = fingerprint
-        # THE DURABLE LEDGER, not just this window. `_extract_fetches` reads raw web_fetch TOOL
-        # RESULTS, and those are the first thing compaction drops — so from the first compaction on,
-        # this check saw zero sources and short-circuited to NOT_DONE with no model call, forever.
-        # The step it exists to clear could then never clear. Measured on maple-preview 1786053138:
-        # `research-check` ran 3 times across today's runs, every one `sources=0`, while the ledger
-        # in the very same prompt carried `api.handle.me/openapi.json → HTTP 200` with
-        # `resolved_addresses{ada}` parsed out of it — and the reading step stayed pinned for 27
-        # consecutive turns. Every OTHER consumer of the ledger already merges sess.fetched_pages
-        # (the steer author, the anchor composer, the judges); this one was the lone reader of the
-        # window alone. The exit that justifies re-adding a research step at all was inert.
-        # (`sources` is computed above, where the evidence also decides whether to look at all.)
-        verdict = research.step_reading_verdict(
-            lambda sysp, usr: summarize(self._ctx.reasoner_chat, self._ctx.reasoner_role,
-                                        sysp, usr, rlog, phase="research-check"),
-            sess.plan.task, item.text, sources, ledger_urls=ledger)
-        # SAY WHAT IT DID, always. A guard that is silent when it declines cannot be told apart from
-        # one that never ran — and on this check's first live run that is exactly what happened: zero
-        # events, and no way to know whether the cadence was never reached or the verdict was NOT_DONE
-        # every time. The same lesson the replan noise judge already carries: a count is not a reading.
-        rlog.emit("loop.research_check", step=idx, verdict=verdict, sources=len(sources),
-                  turns=sess.coder_turns)
-        # IT REPORTS. IT DOES NOT COMPLETE.
-        #
-        # This used to call _advance on a DONE, which made it a SECOND completion authority — one
-        # that never looks at the workspace. On its first planner-on run (1785812224) that bypass
-        # marked steps 1 through 6 verified in under three minutes, among them "Write a Python
-        # script…", "Implement unit tests…" and "Create a live test…", with two files on disk and
-        # nothing else built. The run scored 0.0 where the same task under plan-off scored 1.0: the
-        # guard was worse than its absence.
-        #
-        # Two things went wrong and only one of them was the model. fabliq answered DONE for plainly
-        # build-shaped steps, which NOT_RESEARCH exists to catch and did catch twice — a small model
-        # on a three-way judgement is simply not a completion gate. But the design handed it that
-        # power, and that is the defect: the step critic is the only thing here that reads the
-        # workspace, and #13 says completion fails CLOSED. A check that cannot see whether a file was
-        # written must never be what says a step producing a file is finished.
-        #
-        # What it is FOR survives intact: saying, in the log, whether the reading a step asked for has
-        # actually happened — which is the fact nobody had when run 1785804243 spent 114 calls on an
-        # unreachable research step. That fact now reaches the critic as EVIDENCE too (`_verify`'s
-        # `sources_read=`), so the one authority that checks the workspace can act on it; this
-        # comment used to call that "the next change", which it has not been for some time.
-        if verdict == research.DONE:
-            rlog.emit("loop.research_satisfied", step=idx, sources=len(sources),
-                      turns=sess.coder_turns, step_text=item.text[:160])
-            # PLAN-OFF HAND-BACK RIDER (operator contract 2026-08-04: plan-off gets a reading step
-            # and NOTHING else of the plan machinery). The plan-off reading step is the one step
-            # whose whole deliverable IS the ledger fact this check just verified — there is no
-            # workspace artifact for a critic to weigh, and walked run 1785861503 shows what the
-            # critic path costs instead: the reading was ledger-complete by call 12, the repo went
-            # red on step-2 work, and weak critics then refused the reading step for 247 calls —
-            # "Do ONLY this step (1 of 2)" recited ~30 times fed the very re-fetch compulsion the
-            # framing was supposed to prevent, and the hand-back never fired. This is NOT the
-            # 1785812224 second-completion-authority defect returning: that run marked BUILD steps
-            # done on a planner-ON plan. Here the scope is plan-off only, the READING step only
-            # (never the task item), on a DONE that structurally requires grounded sources — and
-            # everything that produces files still answers to the gates on the raw-task drive this
-            # advance hands back to.
-            if _is_reading_step(sess, item):
-                rlog.emit("loop.reading_step_cleared", step=idx, plan_off=True)
-                return self._advance(sess, key, body, idx, total, rlog)
         return None
 
     def _advance(self, sess: PlanSession, key: str, body: dict, idx: int, total: int, rlog) -> dict:
@@ -4162,58 +4014,44 @@ def _session_from_dict(d) -> PlanSession | None:
 
 
 def _plan_off_session(plan: Plan, briefing: str) -> PlanSession:
-    """The plan-off session, with ``synthetic`` meaning what it has always meant: DEGENERATE.
+    """The plan-off session. ``synthetic`` means what it has always meant: DEGENERATE — one item,
+    whose framing is the RAW TASK, driven by the single-item path (route-unify invariant 2).
 
-    ``synthetic`` selects the single-item driver, whose framing is deliberately the RAW TASK — it
-    ignores the plan's items (route-unify invariant 2). That is exactly right for the 1-item case it
-    was built for, and exactly wrong the moment the plan holds a model-authored reading step: run
-    20260803T211734 authored the step, the retry recovered it, ``loop.start`` reported ``steps=2`` —
-    and the step appeared in ZERO of the run's 56 coder prompts, because the single-item driver never
-    frames items. The feature was inert on the one path it was built for, and the run wrote four
-    files against an invented API having read nothing.
-
-    So: one item → synthetic, the degenerate raw-task drive, unchanged. Two items → an ordinary
-    plan session, driven by the multi-item machinery — the step is FRAMED ("Do ONLY this step
-    (1 of 2): Read…"), the step critic gates it with the sources_read evidence, the reading check
-    fires at its cadence, and the raw task follows as step 2."""
-    return PlanSession(plan=plan, synthetic=len(plan.items) == 1, plan_off=True, prior_work=briefing)
+    A synthesized plan used to be able to hold a SECOND item, a model-authored reading step. That
+    made plan-off a two-step plan, which framed the raw task as "Do ONLY this step (2 of 2)" and put
+    a cage around a mode that has no planner. The step is gone (2026-08-19,
+    `docs/audits/base-vs-cria-footgun-patterns.md`), so this is one item again, always."""
+    return PlanSession(plan=plan, synthetic=True, plan_off=True, prior_work=briefing)
 
 
-def _synthetic_plan(task: str, clock=None, ask=None, files: str = "") -> Plan:
+def _synthetic_plan(task: str, clock=None) -> Plan:
     """A degenerate 1-item 'plan' for PLAN-OFF mode: the whole task is ONE implicit step whose item
     text IS the raw task. The PlanSession carries the ``synthetic`` flag (which selects raw-task
     framing + the single-item off-ramps); the Plan itself is an ordinary 1-item Plan. id/created match
     the Planner's convention (clock + task-key) so a resumed synthetic session keeps a stable id. Never
-    mirrored to disk (no ``_persist_plan``) — it holds no decomposition, only the user's own words."""
+    mirrored to disk (no ``_persist_plan``) — it holds no decomposition, only the user's own words.
+
+    THE READING STEP IS GONE (2026-08-19). A reasoner was asked, on every plan-off coding task,
+    whether the task needed something read first, and its answer became a first plan item. Across 174
+    captured authorings it answered NONE 42 times, named an EXTERNAL source 30 times, and 102 times
+    said some version of "read the files already in the workspace" — the thing a coder does on its
+    first turn unprompted, and in several captures had already done inside the same reply. The
+    external case was already covered, and covered more generally, by `prompts/coder_system.txt`
+    ("RESEARCH & INVESTIGATE FIRST"), which predates the step by eighteen days, costs no model call,
+    and reaches every run in both arms.
+
+    What the step cost instead: a second plan item, which is what made plan-off drive through the
+    multi-item machinery and pin "Do ONLY this step (1 of 2)" to every coder turn. Measured in
+    `docs/audits/base-vs-cria-footgun-patterns.md`: a run whose research step never cleared averaged
+    24% (n=5) against 55% (n=55) for one that did — the failure mode is not the step firing, it is the
+    step never letting go.
+
+    The incident it was built for stands: run 1785805694 made ZERO web_fetch calls in 237 and wrote a
+    resolver, unit tests, a live test and a README against an API it invented whole. What that run
+    needed was the general instruction, which it now has."""
     now = (clock or (lambda: datetime.now(timezone.utc)))()
-    # A READING STEP FIRST when the task itself names an external source. Plan-off has no planner, so
-    # nothing ever told the coder to look anything up — and it didn't: run 1785805694 made ZERO
-    # web_fetch calls in 237, then wrote a resolver, unit tests, a live test and a README against
-    # `api.handle.me/v1/handle/` returning `address`/`holder`/`totalHandles`, an API it invented
-    # whole. It scored 1/4 and could not have scored more: the resolver cannot resolve.
-    #
-    # THIS IS A DELIBERATE RETURN, and the thing it returns to was retired for cause. The old
-    # research-first injection baked a PATH in (`https://<domain>/openapi.json`) and pinned the step
-    # so the re-derivation could not drop it — a possibly-wrong URL made an inescapable mandate, and
-    # one wrong "not satisfied" re-added it over and over (~275 churning turns). Two things are
-    # different now. It names only the DOMAIN THE TASK ITSELF NAMES, never a path, so there is no
-    # guess to be trapped by. And it has an EXIT that the retired version never had: the periodic
-    # reading check (Loop._research_check) clears it the moment the ledger holds what it asked for,
-    # grounded in parsed routes and fields rather than in anyone's claim. A step with an exit is a
-    # different object from a step without one.
-    #
-    # The step is an ordinary item — not pinned, not immutable. The living re-derivation may drop it
-    # like any other, and the step critic judges it like any other.
-    # ASK ON EVERY CODING TASK, not only when the task's words hold a domain — that quietly defined
-    # research as a web thing, and it is not: reading files already in the workspace, a schema on
-    # disk, a library's source or a tool's --help is the same act. cria contributes only what it can
-    # establish alone (a domain if the task names one, the workspace listing); the MODEL decides
-    # whether anything must be read and writes the step, and NONE is a first-class answer.
-    step = research.authored_research_step(ask, task, domain=first_domain_in(task) or "",
-                                           files=files) if ask else ""
-    items = ([PlanItem(text=step)] if step else []) + [PlanItem(text=task)]
     return Plan(id=f"{now.strftime('%Y%m%dT%H%M%S')}-{_task_key(task)[:8]}", task=task,
-                created=now.isoformat(timespec="seconds"), items=items)
+                created=now.isoformat(timespec="seconds"), items=[PlanItem(text=task)])
 
 
 def _history_root(messages: list[dict]) -> tuple[str, str]:
@@ -7698,25 +7536,31 @@ def _grounded_steer_or_none(directive: str | None, evidence: str, rlog, ask=None
 _AUTH_MARKER = re.compile(r"\b40[13]\b|\bunauthori[sz]ed\b|\bforbidden\b", re.I)
 
 
+# The shape a steer takes when it asserts an authentication requirement. It lived in cria.research
+# while the authored-step channel shared it; that channel was removed on 2026-08-19 and this is the
+# only reader left, so it lives where it is read (#23, one owner). It is a TRIGGER for spending one
+# reasoner call, never a verdict — see the function.
+AUTH_SHAPE = re.compile(r"(?i)\b(?:authenticated|authentication|auth token|api[- ]?key|bearer token)\b")
+
+
 def _steer_auth_refuted(directive: str, evidence: str, sess, ask, rlog) -> bool:
     """True when the steer asserts an authentication requirement the session's own record refutes.
 
     Walked on ada-handles_gemma4_codex_poff_1785866157 steer 0191: "don't add live network calls
     here, they will fail without your API key; keep tests mocked" — for a task that names no key,
     in a session whose every fetch returned HTTP 200 and which had ALREADY resolved handles live
-    without a credential. The steer countermanded a deliverable the task itself requires. Same
-    guess-shape disease `research._GUESS_SHAPES` refuses in the authored-step channel; here the
-    author HAS evidence, so a deterministic drop would misfire on a genuinely authenticated API —
-    the F2 pattern applies instead. DETERMINISTIC CODE GATHERS, THE REASONER JUDGES (principle 8):
+    without a credential. The steer countermanded a deliverable the task itself requires. The
+    author HAS evidence here, so a deterministic drop would misfire on a genuinely authenticated
+    API — the F2 pattern applies instead. DETERMINISTIC CODE GATHERS, THE REASONER JUDGES (principle 8):
     the auth shape is only the TRIGGER for spending one call, the network facts are gathered
     exactly (the fetch ledger's statuses, the evidence's own denial markers), and ONE focused
     question rules STANDS or REFUTED. Every failure direction DELIVERS: task mentions auth, no
     reasoner, an unreadable answer — the trigger alone is not proof, and the roleplay retune
     showed what unexamined drops cost. Only a clear REFUTED withholds."""
-    if not research.AUTH_SHAPE.search(directive) or ask is None:
+    if not AUTH_SHAPE.search(directive) or ask is None:
         return False
     task = getattr(getattr(sess, "plan", None), "task", "") or ""
-    if research.AUTH_SHAPE.search(task):
+    if AUTH_SHAPE.search(task):
         return False   # the user's own words raised auth — the claim has a source
     pages = getattr(sess, "fetched_pages", None) or {}
     statuses = {url: str(v[0]) if isinstance(v, (list, tuple)) and v else str(v)

@@ -139,3 +139,27 @@ The two need different remedies. A RELAY footgun is a question about what cria s
 2. The wheel-spin guard can now see a shell-native write in a **truncated** argument blob. The raw-tolerant scan lived only inside `_is_progress`; `_shell_write_target` returned None and the streak went uncounted — and a truncated write is exactly when a model is spiralling on one file.
 
 **One shape changes hands.** Five identical `write_file` calls in one completion used to trip the repetition redirect, which flushed the write window, so the wheel-spin guard never saw a shape that exactly met its own threshold. It reaches the spin guard now — a better-aimed intervention, since it names the file.
+
+### The authored research step, and the plan cage it dragged in (2026-08-19)
+
+On every plan-off coding task a reasoner was asked whether the task needed something read first. Its answer became the first item of a synthesized plan — which made that plan **two** items, which is what routed plan-off through the multi-item driver and pinned `Do ONLY this step (1 of 2), then stop:` to every coder turn.
+
+**What the assist actually produced.** 174 captured authorings from `~/.cria/calls`:
+
+| the answer | count |
+|---|---|
+| `NONE` — nothing needs reading | 42 |
+| names only files already in the workspace | 102 |
+| names an external source | 30 |
+
+So 77% of the guidance was "open the files you were handed" — the thing a coder does on its first turn unprompted, and in several captures had already done inside the same reply (`I'll start by reading the existing source files… cat cart.go`).
+
+**The other 23% already had a better home, eighteen days older.** `prompts/coder_system.txt` line 5: *"RESEARCH & INVESTIGATE FIRST: If the task depends on an external thing (an API, a library, a service, a file format), READ its real source/docs before writing code against it."* Landed `4929843`, 2026-07-16. The authored step landed `a0cf3ae`, 2026-08-03 — on top of a rule that already said it, generally, for free, in both arms. And the one fact the step contributed that the general rule cannot — *which* source — cria extracts deterministically with `first_domain_in(task)` and was passing **into** the reasoner's prompt.
+
+**And the failure mode was never the firing.** From the quantitative cut in this file: a run whose research step cleared averaged 55% (n=55, 18 at 100%); a run whose step never cleared averaged 24% (n=5, 1 at 100%). Presence discriminates nothing — 30% of successes, 29% of failures. What discriminates is whether the assist ever lets go.
+
+**Removed:** `research.authored_research_step` and the reasoner call behind it, `step_reading_verdict`, `step_defect` and its guess-shape vetting, `Loop._research_check` and `PlanSession.research_checked_turn`, seven prompt files, and the second plan item. `research.py` goes 447 → ~200 lines and keeps only what it always did honestly: read cria's own fetch/read ledger and report what was really read, for the judges and steers that ask.
+
+**What this fixes beyond the step.** `_plan_off_session` no longer computes `synthetic` from the item count — plan-off is synthetic, always. There is no path by which a synthesized plan grows a second item, so there is no path by which the step cage reaches a mode with no planner.
+
+**One thing moved rather than died.** `AUTH_SHAPE` was shared between the authored-step channel and `loop._steer_auth_refuted`. With one reader left it lives where it is read.

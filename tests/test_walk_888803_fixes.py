@@ -432,7 +432,9 @@ class AStepCannotOutliveTheRunTests(unittest.TestCase):
         test_the_step_check_outlives_its_first_fire."""
         self.assertEqual(loop.PlanSession.__dataclass_fields__["step_checked_drive"].default, -1)
         self.assertNotIn("step_checked_turn", loop.PlanSession.__dataclass_fields__)
-        self.assertIn("research_checked_turn", loop.PlanSession.__dataclass_fields__)
+        # The reading check had the same shape of stamp and was removed with its step on 2026-08-19;
+        # it must not come back by the side door of a leftover field.
+        self.assertNotIn("research_checked_turn", loop.PlanSession.__dataclass_fields__)
 
 
 class TheToolTestIsGroundedInTheUserAndTheCodeTests(unittest.TestCase):

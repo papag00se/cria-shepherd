@@ -1,4 +1,4 @@
-"""Has the reading a step asks for actually been done?
+"""What reading has actually been done — the FACTS, gathered from cria's own fetch ledger.
 
 WHY THIS EXISTS. Two fabliq runs of the same task, same code, same model, failed from opposite
 sides of the same hole:
@@ -6,31 +6,25 @@ sides of the same hole:
   * PLANNER-ON (run 1785804243). The plan's step 1 was "Research the Ada Handles API documentation
     by fetching the GitHub repo root directory". That fetch is denied, so the step could never be
     satisfied, and the step critic correctly refused it forever: 114 of 195 calls went to step 1 and
-    the run never reached step 2. Along the way the coder DID fetch `https://api.handle.me` and got
-    HTTP 200 — the answer was one hop away — then went back to guessing GitHub URLs, 27 of them at a
-    repository that does not exist.
+    the run never reached step 2.
   * PLANNER-OFF (run 1785805694). No plan step said "research", so nothing did. **Zero web_fetch
     calls in 237.** The coder wrote a resolver, unit tests, a live test and a README against
     `api.handle.me/v1/handle/` with fields `address`/`holder`/`totalHandles` — an API it invented
     whole. It scored 1/4 and the ceiling was structural: the resolver cannot resolve.
 
-So a research step with no exit traps the run, and no research step at all lets it code against an
-API nobody read. What was missing both times is the thing this module is: a way to ASK whether the
-reading happened, grounded in what cria actually holds.
+THE ANSWER TO THE SECOND ONE IS NOT A STEP. It is `prompts/coder_system.txt` — "RESEARCH &
+INVESTIGATE FIRST: if the task depends on an external thing, READ its real source/docs before
+writing code against it" — which predates the step this module used to author by eighteen days,
+costs no model call, and reaches every run. The authored step, the reasoner call that wrote it, and
+the periodic check that cleared it were removed on 2026-08-19; across 174 captured authorings, 102
+said some version of "read the files already in the workspace" and the run was already doing that.
+The reasoning is in `docs/audits/base-vs-cria-footgun-patterns.md`.
 
-WHAT MAKES THE ANSWER TRUSTWORTHY is that the expensive half is deterministic. cria already records
+WHAT REMAINS is the deterministic half, and it is the half that was always trustworthy: cria records
 every fetch that came back and what was parsed out of it (``loop._extract_fetches`` → url → status,
-routes, response shapes). :func:`grounded_sources` filters that to the fetches that actually DEFINED
-something. If nothing did, the verdict is NOT_DONE without a model call at all — no reasoner can
-talk cria into believing a spec was read when the ledger holds no routes and no fields. Only when
-real sources exist does a reasoner judge whether they answer THIS step (#8: deterministic code
-gathers the facts, the reasoner judges them).
-
-DIRECTION OF FAILURE. The one action this drives is CLEARING a research step, so an unparseable or
-missing verdict is NOT_DONE — the step stays open and the ordinary step critic still governs it
-(#13: fail closed on completion). The cost of that asymmetry is a few more turns; the cost of the
-other direction is a deliverable built on an invented API, which is exactly what run 1785805694
-shipped.
+routes, response shapes), and this module turns that into a list of sources actually read, with what
+each one defined. Judges and steers are given those facts; none of them is asked to take a claim
+about reading on trust (#8: deterministic code gathers the facts, the reasoner judges them).
 """
 from __future__ import annotations
 
@@ -39,12 +33,7 @@ import re
 from . import denial, jsontext, prompts
 from .jsontext import extract_json_object, strip_think
 
-# Coder turns between checks. A research step that is already satisfied should not burn a whole
-# window proving it (114 calls in run 1785804243), and one that is genuinely unfinished should not
-# pay a reasoner call every turn (#3 — silence over noise). Ten is the operator's cadence.
-RESEARCH_CHECK_EVERY = 10
 
-DONE, NOT_DONE, NOT_RESEARCH = "DONE", "NOT_DONE", "NOT_RESEARCH"
 
 
 def sources_read(ledger: dict, messages: list | None = None) -> list[tuple[str, str, str]]:
@@ -162,31 +151,24 @@ def fetch_succeeded(status) -> bool:
     return bool(m) and 200 <= int(m.group(0)) < 300
 
 
+
+
+
+
 def grounded_sources(ledger: dict) -> list[tuple[str, str, str]]:
     """``(url, routes, shapes)`` for the fetches that came back 2xx AND defined something.
 
     A page that answered but yielded no routes and no response fields is NOT a source here. That
     distinction is the whole point: in run 1785804243 the ledger was injected into all 115 coder
     prompts and every line of it read "this page answered, but no endpoint definitions were found in
-    it". Five HTTP 200s and nothing read. Counting those as research done would clear the step on the
-    strength of the coder having successfully loaded a home page."""
+    it". Five HTTP 200s and nothing read. Counting those as research done would report the coder
+    having successfully loaded a home page as reading having happened."""
     out = []
     for url, entry in (ledger or {}).items():
         status, routes, shapes = (tuple(entry) + ("", "", ""))[:3]
         if fetch_succeeded(status) and (str(routes).strip() or str(shapes).strip()):
             out.append((url, str(routes), str(shapes)))
     return out
-
-
-def answered_sources(ledger: dict) -> list[str]:
-    """URLs that came back 2xx, whatever cria could or could not parse out of them.
-
-    `grounded_sources` answers "what did cria PARSE"; this answers "what did the coder READ". They
-    differ exactly where cria's parsers do not reach — and #11b governs that gap: a mechanism that
-    cannot observe the thing it is asked about must say so, never convert its own blindness into a
-    verdict."""
-    return [url for url, entry in (ledger or {}).items()
-            if fetch_succeeded((tuple(entry) + ("", "", ""))[0])]
 
 
 def _sources_block(sources: list[tuple[str, str, str]]) -> str:
@@ -200,248 +182,7 @@ def _sources_block(sources: list[tuple[str, str, str]]) -> str:
     return "\n".join(lines)
 
 
-def step_reading_verdict(ask, task: str, step: str, sources: list[tuple[str, str, str]],
-                        ledger_urls: dict | None = None) -> str:
-    """``DONE`` / ``NOT_DONE`` / ``NOT_RESEARCH`` for one step against what has really been read.
-
-    THREE-VALUED ON PURPOSE, and the third value is what keeps this from being a second completion
-    judge. This runs on whatever step is in flight, and most steps are not asking for reading at all
-    — "write the unit tests" is finished by writing tests, not by fetching anything. A two-valued
-    question would force such a step into DONE or NOT_DONE and either answer would be cria ruling on
-    work it was not asked about. ``NOT_RESEARCH`` is the escape, and it is the common answer.
-
-    NO MODEL CALL when NOTHING CAME BACK. That guarantee is about an empty ledger: nothing was
-    fetched, so nothing was read, and there is nothing for a judge to weigh.
-
-    IT WAS NOT ABOUT A PAGE CRIA COULD NOT PARSE, and treating those the same way was #11b inverted —
-    converting cria's own blindness into "not done". Every marker that fills `routes`/`shapes` needs a
-    doc that parsed as a REST spec, so library documentation — docs.rs, rubydoc, godoc, javadoc,
-    pkg.go.dev, all HTML prose — yields nothing, and a "read the library's docs" step could never be
-    closed however completely the page answered it.
-
-    Walked on cycle 4 cell 18 (`rust-toml-cli x ternary-bonsai`, 5% useful): the coder fetched
-    docs.rs/toml and got 7,925 characters carrying the whole API the task needed — `pub enum Value`,
-    `Table`, `from_str`, `to_string`. cria recorded it as "this page answered, but no endpoint
-    definitions were found in it", short-circuited to NOT_DONE with no model call, and the step pin
-    *"Do ONLY this step (1 of 2): Visit crates.io…"* was then recited on **20 of the run's 21 coder
-    calls**, nine of them re-fetches of pages already fetched.
-
-    So a page that ANSWERED but yielded no structure goes to the judge, labelled as exactly that. The
-    guarantee the short-circuit was built for survives: the judge is told plainly that cria parsed
-    nothing from these, so a home page that defined nothing is still a home page that defined nothing
-    (run 1785804243's five HTTP 200s), and judging it is the reasoner's job, not a parser's (#8).
-
-    Unreadable answer → ``NOT_DONE``, the direction that leaves the step open."""
-    unparsed = [u for u in answered_sources(ledger_urls or {})
-                if u not in {s[0] for s in sources}]
-    if not sources and not unparsed:
-        return NOT_DONE
-    block = _sources_block(sources)
-    if unparsed:
-        block = (block + "\n" + prompts.render("research_unparsed",
-                                                urls="\n".join(f"- {u}" for u in unparsed))).strip()
-    ans = ask(prompts.load("research_done"),
-              prompts.render("research_done_user", task=task, step=step, sources=block))
-    obj = extract_json_object(strip_think(ans or ""))
-    if not isinstance(obj, dict):
-        return NOT_DONE
-    verdict = str(obj.get("verdict", "")).strip().upper()
-    return verdict if verdict in (DONE, NOT_DONE, NOT_RESEARCH) else NOT_DONE
 
 
-# A step longer than this is not a step — it is the model writing the plan, or the work, or prose
-# about both. Bounded rather than trimmed: an over-long answer is REFUSED (no step), never cut down
-# to size, because half a sentence is a different instruction from the one the model wrote.
-STEP_MAX_CHARS = 400
 
 
-def authored_research_step(ask, task: str, *, domain: str = "", files: str = "") -> str:
-    """ONE reading step for ``task``, written by the MODEL — "" when the task needs no reading.
-
-    THE AUTHORSHIP IS THE POINT. cria may gather the facts; it may not decide what reading a task
-    requires. The first version rendered this step from a cria template, which is cria writing plan
-    steps — the practice this repo retired, and the operator's correction: the model authors it.
-
-    AND THE MODEL DECIDES WHETHER THERE IS ONE. The version before this only asked when the task's
-    own words contained a DOMAIN, which quietly defined research as a web thing. Research is reading,
-    whatever the source: files already in the workspace, a schema on disk, a library's source, a data
-    set, a tool's `--help`. A domain is a fact cria can establish alone, so it is passed as context
-    when there is one — but the question is now "does this task need something read first?", and
-    ``NONE`` is a first-class answer that yields no step.
-
-    NO GUESSED LOCATIONS. The prompt forbids naming a path the task did not name, and this refuses an
-    answer that names one anyway — unless the task named it too, in which case it is the user's own
-    word and not a guess. That is the exact defect that cost run 1785804243 its whole window: its
-    step said "by fetching the GitHub repo root directory", which returns denied, so the step could
-    never be satisfied. A step naming WHAT to learn cannot be unsatisfiable that way; one naming
-    WHERE can.
-
-    A DEFECTIVE SENTENCE IS RE-ASKED ONCE, WITH THE DEFECT NAMED — the same courtesy every other
-    refusal in this codebase already pays. A malformed tool call is re-prompted with the parse error;
-    a missed edit is re-asked with the file's real text; this refusal used to just shrug, and on its
-    first live outing that shrug cost the run its research entirely: fabliq restated the whole task
-    ("Write a Python script that accepts an Ada Handle… includes unit tests… and adds a README"),
-    cria refused it, and the run coded an invented API having read nothing. Observed rate before the
-    retry: 2 usable steps in 4 asks. One retry, never more — a model that restates twice is answering
-    from its defaults and a third ask is the same coin flip again.
-
-    SAFE NULL, NOT A FALLBACK. NONE, an empty answer, or a retry that is still defective yields ""
-    and the caller builds the plan it would have built anyway. cria never substitutes a sentence of
-    its own."""
-    context = []
-    if domain:
-        context.append(f"A SOURCE THE TASK NAMES: {domain}")
-    if files:
-        context.append(f"FILES ALREADY IN THE WORKING DIRECTORY:\n{files}")
-    ctx_block = "\n\n".join(context)
-    # WHICH QUESTION depends on what cria can prove. A domain in the task's own words is a FACT — the
-    # task names an external source — so asking a small model to re-decide it invites the answer
-    # fabliq gave on the first live run: NONE, for a task whose own sentence says "using the Ada
-    # Handles API (api.handle.me)". cria settles what it can settle and asks only what it cannot
-    # (#8). With no domain, whether anything must be read is a genuine judgement — files on disk, a
-    # library's source, a data set — and the model makes it, NONE included.
-    system = prompts.load("research_step_known" if domain else "research_step")
-    text = " ".join((ask(system,
-                     prompts.render("research_step_user", task=task, context=ctx_block))
-                     or "").split())
-    if not text or _is_none(text):
-        return ""   # NONE is an ANSWER, not a defect; an empty reply leaves nothing to correct
-    defect = step_defect(text, task, instruction=system)
-    if defect is None:
-        return text
-    retry = " ".join((ask(system,
-                      prompts.render("research_step_retry", task=task, context=ctx_block,
-                                     answer=text, defect=defect))
-                      or "").split())
-    if not retry or _is_none(retry) or step_defect(retry, task, instruction=system) is not None:
-        return ""
-    return retry
-
-
-def step_defect(text: str, task: str, instruction: str = "") -> str | None:
-    """Why this sentence cannot be the reading step — a plain-words reason for the retry prompt to
-    quote — or None when it can. Each reason is the lesson of a run that paid for it:
-
-    * BUILD verb — fabliq, asked for a reading step, wrote back the entire task ("Write a Python
-      script… includes unit tests… and adds a README"). As a first plan item that is strictly worse
-      than none: two steps that both say "do the whole job". A reading step produces nothing.
-    * a LOCATION the task never named — run 1785804243's step said "by fetching the GitHub repo root
-      directory", which returns denied, so the step could never be satisfied and 114 of 195 calls
-      died against it. A step naming WHAT to learn cannot be unsatisfiable that way; WHERE can.
-    * over-LONG — a paragraph is the model writing the plan or the work, not one step.
-    * THIRD-PERSON "the coder" — nemotron-nano run 1786243834 echoed the authoring instruction back
-      as the step: "Read the external source … AND INSTRUCT THE CODER to identify …". The step is
-      handed TO the coder; a sentence about the coder tells the executing model it is NOT the coder,
-      and that run's coder spent 81 calls saying so ("it involves verifying the completion of a task
-      created by another model") and wrote nothing. Measured over all 106 authored steps on disk:
-      only the two echo steps contain the phrase.
-    * the INSTRUCTION'S OWN CLOSING CLAUSE — the same echo carried "Output nothing else." into the
-      step, an author-facing constraint that reads as a gag order to the coder executing it (that
-      run's coder went silent for seven straight calls). The clause is derived from the live prompt
-      text (`_instruction_tail`), so rewording the prompt file moves the matcher with it. Measured:
-      3 echoes carry it, 0 of the 103 legitimate steps do.
-
-    These are refusals of cria's OWN injected content, failing in the safe direction — no step, the
-    plan cria would have built anyway (a defective first answer still gets its one named retry).
-    Not a judgement about the coder's work, which is where a lexical rule would be out of place
-    (#9); "the coder" and the closing clause are both cria's own strings, compared against cria's
-    own prompt, and `tests/test_step_echo_defect.py` pins the sync so a prompt rename breaks loudly."""
-    if len(text) > STEP_MAX_CHARS:
-        return "it is far longer than one step"
-    if len(text.split()) == 1:
-        # ONLY A PLACE, NOTHING TO LEARN THERE. The prompt asks for "one sentence naming that source
-        # AND what task-specific names, structures, or behavior must be learned from it"; this
-        # refuses the half that answers only WHERE. ternary-bonsai/go answered the bare string
-        # `go.mod`, which every other arm passes — it is not a build verb, not third person, not
-        # over-long, and the task's own words contain `go.mod`, so the location arm exempts it. It
-        # became "Do ONLY this step (1 of 2), then stop: go.mod" in 43 of 43 coder prompts; the
-        # coder read that file 17 times, rewrote it 5 times, never once opened `cart_test.go`, and
-        # the cell scored 1 of 5 on a workspace that was three edits from 4 of 5.
-        #
-        # NOT "it named a file in the workspace" — that would revert this module's own decision that
-        # research is reading, whatever the source (see `sources_read`: counting web fetches alone
-        # made the check permanently NOT_DONE for every task whose reading is local). A workspace
-        # file is a legitimate source. A bare noun is not a step.
-        #
-        # Deliberately the crudest test of "is this a sentence at all": one token, no whitespace.
-        # A shape, not a threshold — nothing here to tune and no exception list to grow (#8).
-        return ("it names only a place to look and nothing to learn there — a step must say what "
-                "names, structures or behavior have to come out of the source")
-    lowered, task_l = text.lower(), (task or "").lower()
-    if re.search(r"(?i)\bthe coder\b", text) and "the coder" not in task_l:
-        # Silenced when the TASK's own words carry the phrase — the same exemption the location and
-        # guess-shape arms below already make, and for the same reason: a word the user wrote is a
-        # fact, not the model echoing cria. A task about a component literally named "the coder"
-        # ("update the coder to emit the new event fields") must still get its reading step.
-        return ("it speaks about the coder in the third person — this sentence is handed TO the "
-                "coder, who cannot execute an instruction addressed to someone else")
-    tail = _instruction_tail(instruction)
-    if tail and tail in " ".join(lowered.split()):
-        return (f"it restates the planning instructions ('{tail}') instead of authoring a step — "
-                "those words are addressed to the step's author, not to the coder")
-    for token in _LOCATION_TOKENS:
-        if token in lowered and token not in task_l:
-            return ("it names a location the task itself never named, which the coder may be "
-                    "unable to reach")
-    for pat, what in _GUESS_SHAPES:
-        m = pat.search(text)
-        if m and m.group(0).lower() not in task_l:
-            return (f"it bakes in {what} ('{m.group(0)}') that the task itself never named — a "
-                    "guessed route or requirement becomes an instruction the coder cannot satisfy")
-    if any(re.search(rf"\b{v}\b", lowered) for v in _PRODUCTION_VERBS):
-        return ("it is a build instruction — its verb tells the coder to produce something "
-                "rather than to read")
-    return None
-
-
-def _is_none(text: str) -> bool:
-    return text.strip().upper().rstrip(".") == "NONE"
-
-
-def _instruction_tail(instruction: str) -> str:
-    """The closing clause of the authoring instruction, normalized for containment matching.
-
-    By construction that clause is author-facing — both instruction prompts end on the output
-    constraint ("…and output nothing else." / "Output only that sentence or NONE.") and neither
-    ends on the step's content, which the instruction states mid-sentence. Deriving it from the
-    live prompt text keeps the matcher and the prompt from drifting apart: reword the prompt and
-    the matcher follows. Under 3 words → "" (no arm), so a radically restructured prompt fails
-    toward not-matching rather than matching prose it never contained."""
-    lines = [ln for ln in (instruction or "").splitlines() if ln.strip()]
-    if not lines:
-        return ""
-    norm = " ".join(lines[-1].lower().split())
-    tail = re.split(r"[;,:]", norm)[-1].strip(" .")
-    for lead in ("and ", "or "):
-        if tail.startswith(lead):
-            tail = tail[len(lead):]
-    return tail if len(tail.split()) >= 3 else ""
-
-
-# Verbs that make a sentence a BUILD instruction rather than a reading one. Refusing on these costs
-# nothing when wrong: the plan simply has no reading step, exactly as before this feature existed.
-_PRODUCTION_VERBS = ("write", "writes", "create", "creates", "add", "adds", "implement", "implements",
-                     "build", "builds", "generate", "generates", "produce", "produces", "modify")
-
-
-# Location-shaped tokens: naming one the TASK did not name is a guess, and a guessed location is what
-# makes a step unsatisfiable. Present in the task too → the user named it, so it is a fact, not a guess.
-_LOCATION_TOKENS = ("://", "openapi.json", "swagger", ".yml", ".yaml", ".json")
-
-# The auth arm is shared with the STEER channel (loop._steer_auth_refuted): the same disease was
-# walked there five runs later (1785866157 steer 0191 invented "your API key" and told the coder to
-# keep a task-required live test mocked), so both channels trigger off ONE shape definition.
-AUTH_SHAPE = re.compile(r"(?i)\b(?:authenticated|authentication|auth token|api[- ]?key|bearer token)\b")
-
-# Guess SHAPES the token list above cannot see — same refusal contract (cria vetting its OWN
-# authored step, fail-safe: no step = the plan cria would have built anyway), each arm silenced
-# when the task's own text carries the match. Walked 2026-08-04, run
-# ada-handles_gemma4_codex_poff_1785860144: the authored step read "the result of an AUTHENTICATED
-# GET request to api.handle.me/v1/handles/{handle}" for a task naming only the bare domain — the
-# run spent 38 of its 61 calls chasing the invented /v1/ route, a login endpoint that does not
-# exist, and the auth scheme the step asserted.
-_GUESS_SHAPES = (
-    (re.compile(r"\{\w+\}"), "a braced path template"),
-    (re.compile(r"/v\d+/"), "a versioned API path"),
-    (AUTH_SHAPE, "an authentication requirement"),
-)

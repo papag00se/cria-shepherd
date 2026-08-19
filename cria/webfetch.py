@@ -60,8 +60,8 @@ GUESS_STREAK_THRESHOLD = 3           # consecutive non-2xx before the stop-guess
 # cria-authored markers that lead a surfaced spec's real ROUTES / RESPONSE FIELDS. Emitted ONLY when a
 # fetched doc parsed as a spec-shaped object (real endpoint paths found) — so their presence in an
 # evidence log is GROUND TRUTH that the coder web_fetched a real API source and its actual endpoints +
-# field names are now in a `->` result. loop._research_facts_obtained keys the research-step fast-path
-# off these (a named constant, shared, so the two are never a magic string that drifts out of sync).
+# field names are now in a `->` result. research.sources_read reads them, so judges and steers are
+# told what was really read (named constants, shared, so the two never drift out of sync).
 ROUTES_MARKER = "[API endpoints ("   # ...N): /a, /b, ...]
 SHAPE_MARKER = "[response shape —"   # ...the fields each endpoint RETURNS: GET /x → f1, f2{a,b}, ...]
 # ...and where an API's machine-readable DESCRIPTION lives, when the fetched doc is a catalogue of

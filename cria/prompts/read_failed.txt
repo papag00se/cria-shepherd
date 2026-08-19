@@ -6,9 +6,10 @@
 # back bash's own two lines — "/bin/bash: line 2: x: No such file or directory / cat: x: No such
 # file or directory" — as the tool RESULT. That text is non-empty and carries no denied mark, so
 # research.files_read counted it: the ledger recorded "Importer.java — 261 chars read from disk"
-# for a 6,783-byte file at a path holding only directories, a judge read the ledger, and it ruled
-# the reading step DONE on a file nobody had opened. Measured across both battery arms: 4 distinct
-# failed reads recorded as successful ones.
+# for a 6,783-byte file at a path holding only directories, and a judge read the ledger and believed
+# it. (The judge in that incident was the reading check, removed 2026-08-19 — but the ledger it read
+# still feeds every other judge and steer, so the defect is unchanged in reach.) Measured across both
+# battery arms: 4 distinct failed reads recorded as successful ones.
 #
 # The fix is here rather than in the ledger. cria composes this command, so cria says what happened
 # (#5b), in its own voice, once — and every reader downstream inherits the truth for free.

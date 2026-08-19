@@ -1,1 +1,0 @@
-Plan exactly one step without using tools or doing the work: output one imperative sentence that says to read the external source (named below) and identify the task-specific names, structures, and requirements needed before coding; do not invent paths, files, URLs, or endpoints not named in the task, and output nothing else.

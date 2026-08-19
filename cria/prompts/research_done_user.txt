@@ -1,8 +1,0 @@
-THE TASK:
-{{TASK}}
-
-THE STEP BEING WORKED ON:
-{{STEP}}
-
-WHAT HAS REALLY BEEN READ THIS SESSION (parsed from the documents themselves):
-{{SOURCES}}

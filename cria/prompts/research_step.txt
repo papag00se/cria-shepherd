@@ -1,7 +1,0 @@
-Plan one step only; do not use tools, inspect sources, write code, or perform the task.
-
-If coding requires reading an external source first, output one sentence naming that source and what task-specific names, structures, or behavior must be learned from it. Do not invent paths, files, URLs, or endpoints not named in the task.
-
-Otherwise, output exactly: NONE
-
-Output only that sentence or NONE.

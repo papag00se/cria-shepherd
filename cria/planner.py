@@ -687,7 +687,7 @@ def _parse_step_numbers(ans: str, n_steps: int) -> set:
 
 # NB (scope, because this note has been misread): what follows is about the PLANNER's own retired,
 # cria-TEMPLATED, PINNED research step. A research step the MODEL drafts is ordinary and still
-# happens — cria only refuses a draft that names a build verb (research.step_defect) and takes the
+# happens — cria only refuses a draft that names a build verb and takes the
 # model's corrected sentence verbatim. Seeing "Read crates.io to identify the crate…" in a live run
 # is the model planning, not this mechanism returning.
 #
