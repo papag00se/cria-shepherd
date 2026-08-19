@@ -81,6 +81,7 @@ ENTRY_CONVENTIONS: tuple[EntryConvention, ...] = (
 # of sync and what it cost.
 from . import probediscovery  # noqa: E402
 from .groundtruth import BUILD_ARTIFACT_DIRS as _SKIP_DIRS  # noqa: E402
+from .groundtruth import INSTALL_PREFIXES as _SKIP_PREFIXES  # noqa: E402
 
 # A TEST file is not the program. Test files routinely carry their own runner block
 # (`if __name__ == "__main__": unittest.main()`), and counting it meant a workspace whose only
@@ -132,6 +133,24 @@ def entrypoints(root: str) -> list[str]:
     by_ext = {e: c for c in ENTRY_CONVENTIONS for e in c.exts}
     for dirpath, dirnames, filenames in os.walk(root):
         dirnames[:] = sorted(d for d in dirnames if d not in _SKIP_DIRS)
+        # …AND A DEPENDENCY TREE IS NOT THIS PROJECT'S PROGRAM. `_SKIP_DIRS` is keyed on directory
+        # NAMES and deliberately does not hold `vendor` — a PHP or vendored-Go repo keeps real
+        # deliverables there. An INSTALL destination is a relative PATH, which is exactly why
+        # `INSTALL_PREFIXES` exists and why the workspace inventory folds it; this walk was the one
+        # reader that did not.
+        #
+        # Measured on `shipping-rates-rb x gemma4` 1787037372, whose entire answer to "PROGRAMS THAT
+        # ACTUALLY EXIST IN THE PROJECT DIRECTORY RIGHT NOW" was two files of somebody else's gem:
+        #     vendor/bundle/ruby/3.2.0/gems/minitest-6.0.6/lib/minitest/complete.rb
+        #     vendor/bundle/ruby/3.2.0/gems/minitest-6.0.6/lib/minitest/find_minimal_combination.rb
+        # The exec-intent prompt hands that list to a judge under that heading and tells it the
+        # command "must run something this project actually has: a file from the list". So cria
+        # invited a model to run minitest's internals as the delivered program (#5b, #11b — a
+        # workspace reader cannot judge third-party source).
+        rel_dir = os.path.relpath(dirpath, root).replace(os.sep, "/")
+        if any(rel_dir == p or rel_dir.startswith(p + "/") for p in _SKIP_PREFIXES):
+            dirnames[:] = []
+            continue
         for name in filenames:
             rel = os.path.relpath(os.path.join(dirpath, name), root)
             if _is_test_file(rel):
