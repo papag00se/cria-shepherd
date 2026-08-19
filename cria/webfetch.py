@@ -884,45 +884,6 @@ def render_jsonc(shape: dict) -> str:
     return "```ts\n{\n" + body + "\n}\n```"
 
 
-def _lay_out_fields(fields: list[str]) -> str:
-    """The endpoint's fields, with NESTED GROUPS on their own lines and flat scalars run together.
-
-    THE FLAT LINE WAS TEACHING THE WRONG FIELD. Joined with ", " the Ada Handles response came out as
-    one unbroken 1,486-character run of ~40 fields in spec order. In it `name(string, e.g. my.handle)`
-    sat at character 91 — second field, clean plausible example — and
-    `resolved_addresses{ada(string, e.g. addr1e000000000…0001)}` at character 1,101, 74% of the way
-    through, nested in braces, its example a row of zeros because that is what the spec declares.
-
-    So a model asked for "the Cardano address" met a findable field that looks like an answer and a
-    buried one that does not. Every maple run today wrote
-    `resolved_address = handle_data.get('name', …)` and shipped a CLI printing `"address": "goose"`.
-    Three runs, two models, the same field — the operator's read was that a failure this consistent
-    is something in the context pushing it there, and it was: cria's own layout.
-
-    A nested group is the part a coder CANNOT guess — it is structure, and structure earns a line.
-    Scalars stay packed, because a wall of one-per-line is its own kind of unreadable. No field is
-    promoted or reordered: cria does not decide which field answers the task (that would be overfit
-    to this API), it just stops hiding the ones with shape."""
-    parents = {f.split(".", 1)[0] for f in fields if "." in f.split(":", 1)[0]}
-    if not parents:
-        return ", ".join(fields)
-
-    def _owner(f):
-        """The nested group this entry belongs to, or "" for a plain scalar. A cap disclosure
-        (`stats: …+3 more field(s)`) belongs with its own group, not stranded among the scalars."""
-        head = f.split(":", 1)[0]
-        if "." in head:
-            return head.split(".", 1)[0]
-        return head.strip() if head.strip() in parents else ""
-
-    out = [", ".join(f for f in fields if not _owner(f))]
-    # Siblings under one parent share a line — `resolved_addresses.*` is one thing to look at, and
-    # one leaf per line would bury it again under its own verbosity.
-    for parent in dict.fromkeys(_owner(f) for f in fields if _owner(f)):
-        out.append(", ".join(f for f in fields if _owner(f) == parent))
-    return ("\n" + " " * 6).join(x for x in out if x)
-
-
 def _endpoint_response_fields(parsed: Any, max_endpoints: int = 12, max_fields: int = FIELD_CAP) -> list[str]:
     """For an OpenAPI/Swagger-shaped spec: each endpoint's SUCCESS-response fields, dereferenced through
     the response schema's ``$ref`` (see :func:`_ref_map`) — so a coder knows WHAT an endpoint returns

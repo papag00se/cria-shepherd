@@ -296,5 +296,33 @@ class TheTriggerIsNotSpelledInPythonTests(unittest.TestCase):
                 self.assertTrue(self.fires(line))
 
 
+class ThePromptAndTheMatcherAgreeTests(unittest.TestCase):
+    """The one word this mechanism turns on, asserted in both places it lives.
+
+    The matcher fails CLOSED: anything that is not `DESCRIBES` is treated as a dictation and the
+    steer is dropped. So if the prompt's wording moved — a rename, a translation, a tidy-up — the
+    comparison would stop matching and EVERY steer would be delivered, silently, with no failure
+    anywhere. A named constant on the other word (`DICTATES`, which the code never tests for) was a
+    drift guard pointing away from the drift.
+
+    This is structural on purpose: the prompt is a data file and the matcher is code, so no input
+    exercises "these two agree"."""
+
+    def test_the_matchers_sentinel_is_offered_by_the_prompt(self):
+        from cria import prompts
+        self.assertIn(loop._DESCRIBES, prompts.load("steer_dictates_code"))
+
+    def test_the_other_verdict_is_offered_too(self):
+        """Both words have to be on the menu, or the model is being asked a question with one answer."""
+        from cria import prompts
+        self.assertIn("DICTATES", prompts.load("steer_dictates_code"))
+
+    def test_the_matcher_compares_against_the_named_constant(self):
+        import inspect
+        src = inspect.getsource(loop._dictates_code)
+        self.assertIn("_DESCRIBES", src)
+        self.assertNotIn('!= "DESCRIBES"', src)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -1167,39 +1167,9 @@ class NestedGroupsGetTheirOwnLineTests(unittest.TestCase):
     is something in the context pushing it there. It was cria's layout.
     """
 
-    def test_a_nested_group_is_broken_onto_its_own_line(self):
-        from cria.webfetch import _lay_out_fields
-        out = _lay_out_fields(["hex: string", "name: string (e.g. my.handle)", "holder: string",
-                               "resolved_addresses.ada: string", "resolved_addresses.eth: string"])
-        lines = out.split("\n")
-        self.assertEqual(len(lines), 2)
-        self.assertIn("name: string (e.g. my.handle)", lines[0])
-        self.assertTrue(lines[1].strip().startswith("resolved_addresses.ada: string"))
 
-    def test_every_nested_group_gets_a_line_of_its_own(self):
-        from cria.webfetch import _lay_out_fields
-        out = _lay_out_fields(["a: string", "virtual.x: number", "virtual.y: boolean",
-                               "resolved_addresses.ada: string"])
-        self.assertEqual(len([l for l in out.split("\n")
-                              if l.strip().startswith(("virtual.", "resolved_addresses."))]), 2,
-                         "siblings share a line; each PARENT gets its own")
 
-    def test_a_flat_shape_is_left_exactly_as_it_was(self):
-        from cria.webfetch import _lay_out_fields
-        flat = ["total_handles: integer", "address: string", "type: string"]
-        self.assertEqual(_lay_out_fields(flat), ", ".join(flat))
-        self.assertNotIn("\n", _lay_out_fields(flat))
 
-    def test_nothing_is_reordered_promoted_or_dropped(self):
-        """cria does not decide which field answers the task — that would overfit to this API. It
-        only stops hiding the ones with shape."""
-        from cria.webfetch import _lay_out_fields
-        fields = ["hex: string", "name: string", "v.a: int", "holder: string", "r.ada: string"]
-        out = _lay_out_fields(fields)
-        for f in fields:
-            self.assertIn(f, out)
-        self.assertLess(out.index("v.a: int"), out.index("r.ada: string"))   # spec order kept
-        self.assertLess(out.index("hex: string"), out.index("name: string"))
 
 
 class OptionalFieldsAreMarkedTests(unittest.TestCase):

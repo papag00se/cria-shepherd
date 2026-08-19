@@ -464,7 +464,7 @@ class LedgerShapeFormatTests(unittest.TestCase):
         shapes = facts["https://api.example.com/openapi.json"][2]
         self.assertIn("/holders/{address}", shapes)
         # ONE UNINDENTED LINE PER ENDPOINT. A nested group now gets its own INDENTED continuation
-        # line (see webfetch._lay_out_fields — the flat run was burying resolved_addresses 74% into
+        # line (see webfetch._schema_json_shape — the flat run was burying resolved_addresses 74% into
         # a 1,486-char line and every maple run read `name` as the address instead). The invariant
         # the original assertion was protecting — the planner must not smash all endpoints onto one
         # line — is unchanged and now stated directly, rather than as a raw line count that also

@@ -4615,34 +4615,6 @@ def _frame_for_item(messages: list[dict], item: str, summary: str, idx: int, tot
 _STEP_ARTIFACT = groundtruth._STEP_ARTIFACT   # defined one level down; see the note there
 
 
-# A step that AUTHORS a file, as opposed to one that merely mentions a path. `grep -n 'x' spec.json`
-# names a file and is exactly the bare-shell-command noise this judge SHOULD delete; "Write
-# live_test.py: ..." names one and is the deliverable.
-# The verb must GOVERN the filename, not merely co-occur with it in the same sentence.
-#
-# The looser "any authoring verb anywhere + any filename anywhere" version shipped and immediately
-# protected junk: run 20260802T024816 fired `replan_noise_refused` three times on
-#     "Commit the three files (resolve.py, resolve_test.py, README.md) to a new repo, add a
-#      .gitignore with __pycache__ and .pyc, push to a new GitHub repo."
-# — git plumbing the task never asked for, which the noise judge was right to delete and which my
-# rule kept alive. Intended firings across the whole ladder: 3. False firings in ONE run: 3. An
-# assist that fires on a clean signal is pure downside, so the rule is narrowed to the shape the
-# real cases actually have: the verb, then the file.
-def step_artifacts_named(step: str) -> list[str]:
-    """File artifacts a step NAMES — the plain token match, no disk access.
-
-    Distinct from :func:`step_artifacts_on_disk`, which asks whether they exist. Here the question is
-    only whether the step is about producing a file at all, which is what separates deliverable work
-    from the strategy/plumbing steps the noise judge is meant to delete."""
-    seen, out = set(), []
-    for m in _STEP_ARTIFACT.finditer(step or ""):
-        rel = m.group(1)
-        if rel not in seen:
-            seen.add(rel)
-            out.append(rel)
-    return out
-
-
 def step_artifacts_on_disk(step: str, root: str | None) -> list[str]:
     """Files the STEP NAMES that already exist. Deterministic — the filesystem, asked now."""
     if not step or not root:
@@ -5010,13 +4982,6 @@ def _shell_write_target(args) -> str | None:
     masked = _QUOTED_SPAN_RE.sub("", text)  # drop quoted spans so a `>` inside them isn't a redirect
     m = _REDIRECT_TARGET_RE.search(masked) or _TEE_TARGET_RE.search(masked)
     return m.group(1) if m else None
-
-
-def _write_paths(completion: dict) -> list:
-    """Paths of the files this completion WRITES, in call order."""
-    return [p for ch in completion.get("choices", [])
-            for tc in (ch.get("message") or {}).get("tool_calls") or []
-            if (p := _write_path(tc.get("function") or {}))]
 
 
 def guard_gate_op(gs: GuardState, body: dict, rlog, *, workspace_root=None) -> dict | None:
@@ -7097,7 +7062,12 @@ _CODE_SHAPED = re.compile(
 # went red and stayed red: `"moon"` is not a ZONE_BASE key, so it falls through to `zone_for` and
 # returns `"international"` instead of raising. One of the run's three final failures.
 
-_DICTATES = "DICTATES"
+# THE SENTINEL THE MATCHER ACTUALLY COMPARES AGAINST. The named constant used to be "DICTATES",
+# the answer the code never tests for — it fails CLOSED, so anything that is not DESCRIBES stands.
+# A constant for the unused half is a drift guard pointing away from the drift: if the prompt's
+# wording moved, `DESCRIBES` is the word that would silently stop matching and every steer would be
+# delivered. The name is on that one now, and a test ties it to the prompt file.
+_DESCRIBES = "DESCRIBES"
 
 # A line worth checking for provenance: a code line or a command line. Short fragments and ordinary
 # prose are left alone — the question is only ever about a line the coder could paste.
@@ -7202,7 +7172,7 @@ def _dictates_code(directive: str, ask=None) -> bool:
         return True
     ans = strip_think(ask(prompts.render("steer_dictates_code", directive=directive), "") or "").strip()
     head = ans.upper().split()[0].strip(".,:;`*") if ans.split() else ""
-    return head != "DESCRIBES"        # DICTATES, or anything unreadable → the pre-filter stands
+    return head != _DESCRIBES        # DICTATES, or anything unreadable → the pre-filter stands
 
 
 # A TRIGGER, deliberately over-firing: its only job is to decide whether one focused question is
