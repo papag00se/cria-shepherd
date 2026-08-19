@@ -23,11 +23,20 @@ died four times. That decision was measured and it stands. What is different her
 same 57K spec is skipped and pointed at rather than pasted.
 """
 
+import json
 import pathlib
 import tempfile
 import unittest
 
 from cria import groundtruth, loop
+
+
+class _Rlog:
+    def __init__(self):
+        self.events = []
+
+    def emit(self, kind, **kw):
+        self.events.append((kind, kw))
 
 
 class _WS:
@@ -143,30 +152,76 @@ class TheBudgetIsBoundedByTheWorkTests(unittest.TestCase):
 
 
 class ItGoesToTheJUDGES_AndNotToTheSteerAuthorTests(unittest.TestCase):
+    """Asserted on the PROMPT each seat is actually sent.
+
+    The first version of the last three read `loop`'s source for the argument spellings. That proves
+    a keyword is written; the claim is about what reaches the model, which is the only thing the
+    measured incidents were ever about — 1,511 inspection rounds on one side, a 57K spec inlined
+    twice on the other."""
+
+    FILE = "def resolve(handle):\n    return UNIQUE_MARKER_IN_THE_FILE\n"
+
+    def _prompt_of(self, seed_files):
+        """Drive the real judge and return every character it sent."""
+        sent = []
+
+        def chat(body, rlog):
+            sent.append(" ".join(str(m.get("content") or "") for m in body["messages"]))
+            return json.dumps({"choices": [{"message": {"content": '{"verdict": "DONE"}'}}]}).encode()
+
+        with _WS({"resolve_handle.py": self.FILE}) as root:
+            loop._judge_completion(chat, None, "system", "is it done?", _Rlog(),
+                                   phase="test", workspace_root=root, seed_files=seed_files)
+        return sent[0]
+
     def test_the_seeding_is_opt_in(self):
+        """The signature is the right instrument for this one — the claim IS about the parameter."""
         import inspect
         sig = inspect.signature(loop._judge_completion)
         self.assertIn("seed_files", sig.parameters)
         self.assertIs(sig.parameters["seed_files"].default, False)
 
-    def test_the_two_judges_that_inspect_opt_in(self):
-        import inspect
-        src = inspect.getsource(loop)
-        self.assertIn("capped=capped, seed_files=True", src)          # satisfaction verdict
-        self.assertIn("seed_files=True, force_think_off=reasoning_off", src)   # completion critic
+    def test_a_seeded_judge_is_handed_the_files(self):
+        self.assertIn("UNIQUE_MARKER_IN_THE_FILE", self._prompt_of(True))
 
-    def test_the_steer_author_does_not(self):
-        """`6726b8a`, and it was measured: 210K -> 89K chars, zero dead reasoner calls. Reverting it
-        here would put a 57K spec back into a two-message call the context floor cannot trim."""
-        import inspect
-        src = inspect.getsource(loop.author_steer)
-        self.assertNotIn("seed_files", src)
+    def test_an_unseeded_judge_is_not(self):
+        """The default must stay off: seeding every caller is what the measured cost was about."""
+        self.assertNotIn("UNIQUE_MARKER_IN_THE_FILE", self._prompt_of(False))
 
     def test_the_question_is_still_the_last_thing_read(self):
-        import inspect
-        src = inspect.getsource(loop._judge_completion)
-        self.assertIn("messages.insert(1,", src)
-        self.assertNotIn("messages.append({\"role\": \"user\", \"content\": seeded})", src)
+        """A model obeys the last instruction it reads. Seeding by appending put the files AFTER
+        the question, which is the ordering defect this repo has now fixed in four places."""
+        sent = []
+
+        def chat(body, rlog):
+            sent.append(body["messages"])
+            return json.dumps({"choices": [{"message": {"content": '{"verdict": "DONE"}'}}]}).encode()
+
+        with _WS({"resolve_handle.py": self.FILE}) as root:
+            loop._judge_completion(chat, None, "system", "IS-IT-DONE-QUESTION", _Rlog(),
+                                   phase="test", workspace_root=root, seed_files=True)
+        msgs = sent[0]
+        self.assertIn("UNIQUE_MARKER_IN_THE_FILE",
+                      " ".join(str(m.get("content") or "") for m in msgs))    # seeded at all...
+        self.assertIn("IS-IT-DONE-QUESTION", str(msgs[-1].get("content")))    # ...and still last
+
+    def test_the_steer_author_does_not_inline_the_files(self):
+        """`6726b8a`, measured: 210K -> 89K chars, zero dead reasoner calls. The steer author is a
+        composed two-message call — the context floor has no turns to drop from it."""
+        sent = []
+
+        def reasoner(body, rlog):
+            sent.append(" ".join(str(m.get("content") or "") for m in body["messages"]))
+            return json.dumps({"choices": [{"message": {"content": "ON_TRACK"}}]}).encode()
+
+        with _WS({"resolve_handle.py": self.FILE}) as root:
+            gs = loop.GuardState()
+            gs.repeat_count, gs.repeat_action = 3, "exec_command {}"
+            loop.author_steer(reasoner, None, root, gs,
+                              {"messages": [{"role": "user", "content": "build it"}], "tools": []},
+                              _Rlog(), condition="refusal")
+        self.assertTrue(sent, "the steer author was never called")
+        self.assertNotIn("UNIQUE_MARKER_IN_THE_FILE", sent[0])
 
 
 if __name__ == "__main__":

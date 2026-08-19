@@ -72,23 +72,79 @@ class ToolNameExtractionTests(unittest.TestCase):
             self.assertIn(n, names)
 
 
+class _Rlog:
+    def __init__(self):
+        self.events = []
+
+    def emit(self, kind, **kw):
+        self.events.append((kind, kw))
+
+
 class RefusalTests(unittest.TestCase):
     """The response is to REFUSE the re-derived tail, never to rewrite it — cria does not author
-    plan steps. Returning None leaves the plan that was already correct in place."""
+    plan steps. Returning None leaves the plan that was already correct in place.
 
-    def test_reassess_refuses_a_leaking_tail(self):
-        src = inspect.getsource(loop.reassess_remaining)
-        self.assertIn("urlgrounding.harness_tool_leaks", src)
-        self.assertIn("loop.replan_tool_leak", src)
-        i = src.index("leaked = urlgrounding.harness_tool_leaks")
-        self.assertIn("return None", src[i:i + 300], "a leaking tail must be refused, not repaired")
+    DRIVEN, not read. The first version searched a 300-character window of the source for
+    `return None` and for the absence of `.replace(` / `re.sub(`. Both assertions slide the moment
+    the function is edited above them, and neither can see what the function actually returns."""
+
+    def _reassess(self, steps):
+        """The real re-derivation, with a reasoner that proposes ``steps``."""
+        import json as _json
+        from cria.config import Role
+
+        def reasoner(body, rlog):
+            return _json.dumps({"choices": [{"message": {"content": _json.dumps(
+                {"remaining": steps})}}]}).encode()
+
+        tools = [{"type": "function", "function": {"name": n, "description": "d"}}
+                 for n in ("web_fetch", "write_file", "exec_command")]
+        return loop.reassess_remaining(
+            reasoner, Role(name="reasoner", backend="local"),
+            "build a handle resolver", "wrote resolve_handle.py", "write the README",
+            "evidence", _Rlog(), coder_tools=loop._coder_tools_summary(tools))
+
+    LEAKING = ("Write unit tests for resolve_handle with fixtures for a known handle "
+               "(mock web_fetch to return a successful response)")   # run 20260802T001204, verbatim
+
+    def test_a_leaking_tail_is_refused_whole(self):
+        """Not repaired, not partially kept: None, so the plan already in place survives."""
+        self.assertIsNone(self._reassess([self.LEAKING, "run the tests"]))
+
+    def test_the_allowed_form_is_still_allowed(self):
+        """"web_fetch the spec" is an INSTRUCTION TO THE AGENT and must survive; only a step
+        treating the tool as the deliverable's own code leaks. Refusing both would quietly delete
+        legitimate research steps, which is the more expensive mistake."""
+        kept = self._reassess(["web_fetch the spec, then write the README"])
+        self.assertEqual(kept, ["web_fetch the spec, then write the README"])
+
+    def test_a_clean_tail_is_taken(self):
+        """The control — without it, a refusal test passes on a function that refuses everything."""
+        self.assertEqual(self._reassess(["write the README", "run the tests"]),
+                         ["write the README", "run the tests"])
+
+    def test_the_refusal_is_recorded_with_the_tool_that_leaked(self):
+        import json as _json
+        from cria.config import Role
+        rlog = _Rlog()
+
+        def reasoner(body, _rlog):
+            return _json.dumps({"choices": [{"message": {"content": _json.dumps(
+                {"remaining": [self.LEAKING]})}}]}).encode()
+
+        tools = [{"type": "function", "function": {"name": "web_fetch", "description": "d"}}]
+        loop.reassess_remaining(reasoner, Role(name="reasoner", backend="local"),
+                                "build it", "done some", "write the README", "evidence", rlog,
+                                coder_tools=loop._coder_tools_summary(tools))
+        leaks = [kw for k, kw in rlog.events if k == "loop.replan_tool_leak"]
+        self.assertEqual(len(leaks), 1)
+        self.assertIn("web_fetch", leaks[0].get("tools", ""))
 
     def test_it_does_not_rewrite_the_step(self):
-        src = inspect.getsource(loop.reassess_remaining)
-        i = src.index("leaked = urlgrounding.harness_tool_leaks")
-        window = src[i:i + 300]
-        for bad in (".replace(", "re.sub("):
-            self.assertNotIn(bad, window, "cria must never author or edit a plan step")
+        """cria must never author or edit a plan step. Every step that survives is byte-identical to
+        what the reasoner proposed — a repaired step would come back scrubbed instead of refused."""
+        proposed = ["write the README exactly like this", "run the tests"]
+        self.assertEqual(self._reassess(proposed), proposed)
 
 
 class NoiseDropVisibilityTests(unittest.TestCase):

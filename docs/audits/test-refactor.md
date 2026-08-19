@@ -2,7 +2,7 @@
 
 Process: `~/.claude/processes/test-refactor.md`, Mode A (Test Audit). Live document; updated as each pass lands.
 
-**Status:** pass 1 (source-text change-detectors) in progress — 5 files converted, **1 live defect found**.
+**Status:** pass 1 (source-text change-detectors) — **9 files converted, 1 live defect found, 12 deliberate code-breaks verified.** 28 of the original 40 `assertNotIn`-on-source sites remain, plus the 121 `assertIn`-on-source sites.
 
 > ### The pass has already paid for itself
 >
@@ -87,6 +87,22 @@ Each was confirmed by opening **both** the test and the code it covers.
 | 11 | `test_flail.py` × 3 | **REWRITE (instrument)** | "the removed thing stays removed" is a legitimate structural claim. But one of them strips comment lines out of the source before searching, to stop a deliberate explanatory comment failing the test — the tell that source text is the wrong instrument. Use `inspect.signature` for the parameter and the real dict keys for the trigger. |
 | 12 | `test_judge_tail_fixes.py::test_no_closed_question_is_sent_with_an_empty_user_turn` | **KEEP (structural)** | a module-wide search for a call shape. The claim is "nobody bypasses the one asking primitive", which no fixture can exercise. Legitimate — the guard in the lens applies. |
 
-### Dispositions still to verify
+### What landed
 
-The remaining ~28 `assertNotIn` sites and the 121 `assertIn(<expected code>, src)` sites are unread as of this writing. The `assertIn` family is likely the larger defect pool: it has the same weakness and is four times as common.
+Nine files converted, each rewrite verified by breaking the code and watching the new test go red — twelve deliberate breaks in all. The rewrites are strictly stronger, and in three cases measurably so:
+
+- **The planner dedup.** Breaking it by making the lookup always miss leaves the old source test **green** (the dedup dict is still written) and the new behaviour test red. The old "behaviour" test beside it re-implemented the dedup *inside the test* and asserted on its own copy — it could not fail for the real reason at all.
+- **The hard-failure gate.** Restoring the original bug in full — calling the field as a method, with `TypeError` back in the `except` — now turns **four** tests red. Before, it turned none red: that is how it survived for months.
+- **The shape header.** The old test passed while a live render site still made the promise it claimed was removed. See the box at the top.
+
+Two things the process document should absorb from this pass:
+
+1. **The wrong-instrument category is the most common one here.** Several claims were legitimately structural — "this parameter must not come back", "this trigger has no entry" — but were checked by searching source text, when `inspect.signature` and the real dict keys answer directly, rename-proof and comment-proof. One of them had to strip comment lines out of the file first so that a deliberate explanatory comment would not fail it. **Needing to hide part of the file from your own assertion is the tell.**
+2. **A behaviour rewrite teaches you what the mechanism does; a source assertion never can.** Writing the tool-leak fixture surfaced that `"web_fetch the spec"` is *deliberately allowed* — it is an instruction to the agent — and only `"mock web_fetch"` leaks. The first fixture asserted the wrong thing and the code was right. A test that added a control for the allowed form came out of that, and the source test could not have prompted it.
+
+### Still to do
+
+- 28 `assertNotIn`-on-source sites.
+- 121 `assertIn(<expected code>, src)` sites — the same weakness, four times as common, and the likelier defect pool.
+- Pass 2: redundancy, starting with `loop` (427 imports across the suite). Confirmed by breaking code and counting what goes red, not by reading names.
+- Pass 3: the inverse lens — the invariant nobody tests.

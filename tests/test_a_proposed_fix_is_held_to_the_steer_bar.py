@@ -138,9 +138,23 @@ class EveryJudgeSiteIsWiredTests(unittest.TestCase):
                 self.assertIn("rlog=rlog", joined[i:i + 200])
 
     def test_no_reasoner_is_spent_on_it(self):
-        import inspect
-        src = inspect.getsource(loop._verdict_nudge)
-        self.assertNotIn("ask=", src)
+        """Asserted by handing it an `ask` that EXPLODES. The first version searched the source for
+        the string `ask=`, which passes the moment the keyword is renamed and says nothing about
+        whether a model is called by some other route — and "this costs no model call" is a claim
+        about behaviour on a hot path, not about a spelling."""
+        def must_not_be_called(*a, **k):
+            raise AssertionError("a reasoner was spent on a verdict nudge")
+
+        from unittest import mock
+        with mock.patch("cria.loop.summarize", side_effect=must_not_be_called), \
+             mock.patch("cria.loop.ask_closed", side_effect=must_not_be_called), \
+             mock.patch("cria.loop._judge_completion", side_effect=must_not_be_called):
+            out = loop._verdict_nudge(
+                {"reason": "the resolver returns nothing",
+                 "proposed_fix": "read https://github.com/guyp/decimal and copy its parser"},
+                False, evidence="", rlog=_Rlog())
+        self.assertIn("the resolver returns nothing", out)   # the REASON always survives
+        self.assertNotIn("github.com/guyp/decimal", out)     # ...and the ungrounded URL does not
 
 
 if __name__ == "__main__":

@@ -63,19 +63,33 @@ class TheWordListIsGoneTests(unittest.TestCase):
         The removal left a tail: `author_steer` kept a `reasoning_window=` parameter and a five-line
         prompt section fed by it, so every real steer carried the header, the authority-list entry
         telling the author how to weigh it, and the words "(not captured for this trigger)". No
-        production caller had passed one since the producer was deleted."""
-        self.assertNotIn("recent_reasoning", inspect.getsource(loop))
-        # CODE only — the comment above author_steer quotes the removed parameter on purpose, to
-        # record what it was and why it went.
-        code = [ln for ln in inspect.getsource(loop).splitlines()
-                if not ln.lstrip().startswith("#")]
-        self.assertFalse([ln for ln in code if "reasoning_window" in ln])
+        production caller had passed one since the producer was deleted.
+
+        ASKED OF THE OBJECTS, NOT THE SOURCE TEXT. The first version searched `loop`'s source for the
+        two names and had to strip comment lines out first, so that a deliberate explanatory comment
+        would not fail it. Needing to hide part of the file from your own assertion is the tell that
+        source text is the wrong instrument: a signature knows a parameter from a sentence about one.
+        """
+        import inspect
+        self.assertNotIn("reasoning_window", inspect.signature(loop.author_steer).parameters)
+        self.assertFalse(hasattr(loop.GuardState(), "recent_reasoning"))
         from cria import prompts
         self.assertNotIn("{{REASONING}}", prompts.load("steer_diagnose_user"))
 
+    def test_no_steer_prompt_mentions_a_reasoning_window(self):
+        """The rendered prompt is what the model reads — the section, its authority-list entry, and
+        the "(not captured for this trigger)" filler all have to be gone from it, not just from the
+        code that would have filled them."""
+        from cria import prompts
+        for name in ("steer_diagnose", "steer_diagnose_user"):
+            with self.subTest(prompt=name):
+                text = prompts.load(name).lower()
+                self.assertNotIn("reasoning window", text)
+                self.assertNotIn("not captured for this trigger", text)
+
     def test_the_trigger_has_no_prompt_line_left(self):
         """A condition with no trigger would render an empty steer preamble."""
-        self.assertNotIn('"flail"', inspect.getsource(loop))
+        self.assertNotIn("flail", loop._STEER_TRIGGER)
 
 
 class WhatSurvivesTests(unittest.TestCase):
