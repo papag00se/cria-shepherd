@@ -285,9 +285,18 @@ def _local_install_advice(command: str) -> str:
         for key, needs in options:
             found = {t: _resolved_tool(t) for t in needs}
             if all(found.values()) and routes.get(key):
-                return (_already_here(command, found, routes)
-                        + " " + prompts.fill(routes[key],
-                                             **{t.upper(): n for t, n in found.items()}))
+                # THE TWO ANSWER DIFFERENT QUESTIONS, so they must not be glued together. The route
+                # says how to add a DEPENDENCY to the project; `_already_here` fires only when the
+                # thing being installed is the route's own TOOL, and once cria has said the tool is
+                # already here there is no install left to route. Concatenating them produced, in one
+                # message on shipping-rates-rb x ternary-bonsai 1787102312: "You do not need to
+                # install it. Install it into the project instead: add the gem to a `Gemfile`…" —
+                # a contradiction, whose second half is about a different package (#5b, #3).
+                here = _already_here(command, found, routes)
+                if here:
+                    return here
+                return " " + prompts.fill(routes[key],
+                                          **{t.upper(): n for t, n in found.items()})
         return ""      # the ecosystem is refused, and nothing here can carry out the alternative
     return ""
 
