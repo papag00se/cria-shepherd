@@ -110,8 +110,14 @@ class TheJunkIsCutTests(unittest.TestCase):
         self.assertEqual(args["content"], POM_REAL)
 
     def test_the_writeproxy_keeps_no_second_copy_of_the_rule(self):
-        import inspect
-        self.assertNotIn("trim_fused_tail", inspect.getsource(writeproxy.translate_outbound))
+        """STRUCTURAL: the claim is "this call must not come back", which no fixture can exercise —
+        the trim already runs once, upstream, in massage.apply (see the boundary test above); a
+        SECOND copy inside translate_outbound would double-cut, or drift from it, without changing
+        cria's user-visible output on any input this file can construct. `co_names` (the function's
+        own compiled globals) is the stronger instrument: unlike a source-text grep it cannot be
+        tripped by a comment that merely mentions the retired name, only by translate_outbound
+        actually calling it again."""
+        self.assertNotIn("trim_fused_tail", writeproxy.translate_outbound.__code__.co_names)
 
 
 class RealFilesAreUntouchedTests(unittest.TestCase):

@@ -20,6 +20,7 @@ rather than a check — but the cell it happened in delivered almost nothing, an
 had left.
 """
 
+import json
 import unittest
 
 from cria import loop
@@ -68,18 +69,61 @@ class TheFindingSetReachesTheAuthorTests(unittest.TestCase):
 
 
 class TheSourceIsTheOneOtherSeatsUseTests(unittest.TestCase):
-    def test_the_coder_block_and_the_judge_read_the_same_field(self):
-        """If this field ever stops being the gate's finding-set, three seats move together."""
-        import inspect
-        src = inspect.getsource(loop)
-        self.assertIn("gate_findings=getattr(sess, \"last_gate_flag\", \"\") or \"\"", src)
-        self.assertIn('getattr(gs, "last_gate_flag", "") or ""', src)
+    """"If this field ever stops being the gate's finding-set, three seats move together" — driven
+    below on ONE session object, rather than grepped, so a rename that breaks the sync shows up as
+    a failed read instead of a surviving substring somewhere else in a 9,000-line module."""
+
+    FLAG = ("test/test_rates.rb:23 TestRates#test_oversize_surcharge_still_applies_to_free_shipping "
+            "Expected: 12.0 Actual: 0.0")
+
+    def test_the_coder_block_reads_it(self):
+        """`_gate_notes` builds the judge-facing checks block from the gate's own finding-set on a
+        RED gate — the exact case the walked incident was about."""
+        class _Sess:
+            last_gate_red = True
+            last_gate_flag = self.FLAG
+            last_gate_testless = False
+            last_gate_skipped = 0
+            last_gate_ran = False
+            gate_fresh = False
+
+        self.assertIn(self.FLAG, loop._gate_notes(_Sess()))
+
+    def test_the_judge_reads_it(self):
+        """`judge_satisfaction` takes it as `gate_findings=` and folds it into the fail-closed
+        (unparseable-verdict) reason — the fallback every one of its three call sites in loop.py
+        relies on to still name something concrete when the judge itself produced nothing."""
+        def unparseable(body, rlog):
+            return json.dumps({"choices": [{"message": {"content": "not a verdict"}}]}).encode()
+
+        satisfied, reason, _fix = loop.judge_satisfaction("do the thing", "evidence", unparseable, None,
+                                                          _Rlog(), gate_findings=self.FLAG)
+        self.assertFalse(satisfied)
+        self.assertIn(self.FLAG, reason)
 
     def test_the_author_consults_it(self):
-        import inspect
-        src = inspect.getsource(loop.author_steer)
-        self.assertIn("last_gate_flag", src)
-        self.assertIn("#12", src)
+        """Drive the real `author_steer`: with NO computed truth text and `gs.last_gate_flag` set,
+        the flag must reach the reasoner's own prompt — the actual bug (a re-render standing in for
+        this), not just the identifier `last_gate_flag` appearing somewhere in the function body."""
+        from cria.loop import GuardState, author_steer
+
+        seen = {}
+
+        def chat(body, rlog):
+            seen["user"] = body["messages"][1]["content"]
+            return json.dumps({"choices": [{"message": {"content": "ON_TRACK"}}]}).encode()
+
+        gs = GuardState(probe_call_id="p1", spin_path="x.py", repeat_action="write_file x.py",
+                        gate_stall=3)
+        gs.recent_writes = []
+        gs.last_gate_flag = self.FLAG
+        author_steer(chat, None, None, gs, {"messages": []}, _Rlog(), condition="thrash")
+        self.assertIn(self.FLAG, seen["user"])
+
+
+class _Rlog:
+    def emit(self, *a, **k):
+        pass
 
 
 if __name__ == "__main__":

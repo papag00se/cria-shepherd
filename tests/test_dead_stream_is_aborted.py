@@ -25,8 +25,9 @@ from __future__ import annotations
 
 import json
 import unittest
+from unittest import mock
 
-from cria import rumination, upstream
+from cria import bodykeys, loop, prompts, rumination, upstream
 
 
 class _Rlog:
@@ -34,6 +35,7 @@ class _Rlog:
     phase = "coder"
     def __init__(self): self.events = []
     def emit(self, kind, **kw): self.events.append((kind, kw))
+    def first(self, kind): return next((kw for k, kw in self.events if k == kind), None)
 
 
 def _sse(objs):
@@ -57,6 +59,35 @@ def _arg_delta(frag):
          "function": {"name": "write_file", "arguments": frag}}]}}]}
 
 
+class _SSEResp:
+    """A urllib response double good for one read: iterating its lines, then closeable."""
+
+    def __init__(self, frames):
+        self._lines = _sse(frames).splitlines(keepends=True)
+
+    def __iter__(self):
+        return iter(self._lines)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+    def close(self):
+        pass
+
+
+def _watched(frames, *, context_window=1_000_000):
+    """Drive the REAL streaming reader (`Upstream.chat_watched`) over a fake SSE response and
+    return ``(assembled completion dict, rlog)``."""
+    up = upstream.Upstream("http://x", context_window=context_window)
+    rlog = _Rlog()
+    with mock.patch("urllib.request.urlopen", return_value=_SSEResp(frames)):
+        out = up.chat_watched({"messages": [{"role": "user", "content": "hi"}], "model": "m"}, rlog)
+    return json.loads(out), rlog
+
+
 class TheThresholdIsSane(unittest.TestCase):
     def test_it_is_generous_enough_that_a_real_turn_never_reaches_it(self):
         """A turn that has streamed nothing readable after this many frames is not slow, it is dead."""
@@ -64,36 +95,37 @@ class TheThresholdIsSane(unittest.TestCase):
 
 
 class TheStreamLoopAborts(unittest.TestCase):
-    """Drives the real `_read_stream`-side logic through `chat_watched`'s parser via a fake body."""
+    """Drives the real streaming reader (`Upstream.chat_watched`) over a fake SSE response —
+    the rule stated directly ('many frames, zero readable characters') is only proven by making
+    the real counters count."""
 
-    def _run(self, frames):
-        up = upstream.Upstream.__new__(upstream.Upstream)
-        return _sse(frames), up
-
-    def test_a_dead_stream_is_detected_by_the_counters(self):
-        """The rule, stated directly: many frames, zero readable characters."""
-        chunks, streamed = 0, 0
-        for _ in range(rumination.DEAD_STREAM_CHUNKS + 5):
-            chunks += 1                       # a frame with a delta carrying nothing cria reads
-        self.assertTrue(streamed == 0 and chunks >= rumination.DEAD_STREAM_CHUNKS)
+    def test_a_dead_stream_is_detected_and_aborted(self):
+        comp, rlog = _watched([_empty_delta()] * (rumination.DEAD_STREAM_CHUNKS + 5))
+        abort = rlog.first("rumination.abort")
+        self.assertIsNotNone(abort, "many empty frames must trip the guard")
+        self.assertTrue(abort["dead_stream"])
+        self.assertEqual(comp["choices"][0]["finish_reason"], "rumination")
+        self.assertEqual(comp["cria_rumination"]["dead_stream"], True)
 
     def test_a_large_write_never_trips_it(self):
-        """The case principle 6 protects: a legitimate huge write_file accumulates from delta one."""
-        chunks, streamed = 0, 0
-        for _ in range(rumination.DEAD_STREAM_CHUNKS * 3):
-            chunks += 1
-            streamed += 40                    # tool-call argument fragments
-        self.assertFalse(streamed == 0 and chunks >= rumination.DEAD_STREAM_CHUNKS)
-
-    def test_the_guard_is_wired_into_the_streaming_reader(self):
-        import inspect
-        src = inspect.getsource(upstream.Upstream.chat_watched)
-        self.assertIn("DEAD_STREAM_CHUNKS", src)
-        self.assertIn("dead_stream", src)
-        self.assertIn("streamed_chars", src)
+        """The case principle 6 protects: a legitimate huge write_file accumulates from delta one
+        and must stream to completion untouched, however many frames it takes."""
+        frags = [_arg_delta(f"line{i} = compute_value({i})\n") for i in range(rumination.DEAD_STREAM_CHUNKS * 3)]
+        comp, rlog = _watched(frags)
+        self.assertIsNone(rlog.first("rumination.abort"))
+        self.assertEqual(comp["choices"][0]["finish_reason"], "tool_calls")
+        args = comp["choices"][0]["message"]["tool_calls"][0]["function"]["arguments"]
+        self.assertIn("line0 = compute_value(0)", args)
+        self.assertIn(f"line{len(frags) - 1} = compute_value({len(frags) - 1})", args)
 
     def test_it_is_checked_before_the_degenerate_backstop_and_the_watcher(self):
-        """Ordering matters only for which notice the coder gets; pin it so a refactor keeps it."""
+        """STRUCTURAL, deliberately not a behaviour test: `gen_tail`/`streamed_chars` update
+        together on every readable fragment (upstream.py, the frag loop right above these checks),
+        so `streamed_chars == 0` (dead-stream's own trigger) and a non-empty periodic tail
+        (degenerate-tail's trigger) can never both hold at the same evaluation — no fixture can
+        make the checks fire in the "wrong" order because the two conditions are mutually
+        exclusive by construction. What this guards is the source staying in the narrative order
+        the surrounding comments describe, which only `inspect.getsource` + position can see."""
         import inspect
         src = inspect.getsource(upstream.Upstream.chat_watched)
         self.assertLess(src.index("DEAD_STREAM_CHUNKS"), src.index("degenerate_tail"))
@@ -103,21 +135,28 @@ class TheCoderIsToldWhatActuallyHappened(unittest.TestCase):
     def test_a_third_notice_exists_for_it(self):
         """5b: telling it to 'stop re-examining' or 'stop repeating a passage' would name a behaviour
         that did not happen. It produced nothing."""
-        from cria import prompts
         text = prompts.load("rumination_guard_dead_stream")
         self.assertIn("produced nothing", text)
         self.assertNotIn("second-guessing", text)
         self.assertNotIn("repeating", text)
 
     def test_the_guard_selects_it(self):
-        import inspect
-        from cria import loop
-        src = inspect.getsource(loop.guard_rumination)
-        self.assertIn("rumination_guard_dead_stream", src)
-        self.assertIn('v.get("dead_stream")', src)
+        """Drive the real selection: a dead-stream-aborted completion must retry with THIS
+        prompt's text, not the generic rumination/window/degenerate notices."""
+        comp = {"choices": [{"message": {"role": "assistant", "content": ""}, "finish_reason": "rumination"}],
+               bodykeys.RUMINATION: {"dead_stream": True, "chunks": 400}}
+        sent = []
+
+        def chat(body, rlog):
+            sent.append(list(body.get("messages") or []))
+            return json.dumps({"choices": [{"message": {"role": "assistant", "content": "ok"},
+                                            "finish_reason": "stop"}]}).encode()
+
+        loop.guard_rumination(comp, {"messages": [{"role": "user", "content": "task"}], "tools": []},
+                              chat, _Rlog())
+        self.assertEqual(sent[0][-1]["content"], prompts.load("rumination_guard_dead_stream"))
 
     def test_it_never_names_the_shim_to_the_model(self):
-        from cria import prompts
         import re
         self.assertIsNone(re.search(r"\bcria\b", prompts.load("rumination_guard_dead_stream"), re.I))
 

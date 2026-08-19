@@ -8,9 +8,12 @@ search was effectively a null query and the results were noise" — and cria PER
 file. It held github.com/koralabs/handles-public-api (the API behind the host the task named) and
 the docs page on resolving handles to addresses. The model gave up in the same turn.
 """
+import os
+import tempfile
 import unittest
 
 from cria import loop
+from cria.config import Role
 
 
 class SearchKeyTests(unittest.TestCase):
@@ -46,10 +49,56 @@ class SearchKeyTests(unittest.TestCase):
         self.assertNotEqual(q_of.get(loop._search_key("/tmp/reference/search-r.txt"), ""), "")
 
     def test_every_call_site_uses_the_key(self):
-        import inspect
-        src = inspect.getsource(loop.Loop._judge_search_reads)
-        self.assertNotIn("q_of.get(f,", src)                  # the raw-path lookup is gone
-        self.assertEqual(src.count("_search_key("), 6)   # q_of key+lookup, judged x2, poisoned x2
+        """The whole incident, end to end: drive the REAL `Loop._judge_search_reads` with the
+        pointer written one spelling (`./tmp/reference/...`) and read with another
+        (`/tmp/reference/...`) — the exact mismatch from run 1785686596. A source-text count of
+        `_search_key(` call sites can drift out of sync with the code (the right count today isn't
+        necessarily the right count after an unrelated edit); actually running the lookup either
+        finds the query or it doesn't."""
+        ws = tempfile.mkdtemp()
+        os.makedirs(os.path.join(ws, "tmp", "reference"), exist_ok=True)
+        with open(os.path.join(ws, "tmp", "reference", "search-ada.txt"), "w") as f:
+            f.write("koralabs/handles-public-api\nhttps://api.handle.me/openapi.json\n")
+
+        captured = {}
+
+        def fake_judge_search(reasoner_chat, reasoner_role, task, query, results, rlog, coder_tools=""):
+            captured["query"] = query
+            captured["results"] = results
+            return True, True, ""
+
+        class _Ctx:
+            reasoner_chat = object()
+            reasoner_role = Role(name="reasoner", backend="local")
+
+        class _Rlog:
+            def emit(self, *a, **k):
+                pass
+
+        saved = loop.judge_search
+        loop.judge_search = fake_judge_search
+        try:
+            lp = loop.Loop.__new__(loop.Loop)
+            lp._ctx = _Ctx()
+            sess = loop.PlanSession(plan=None)
+            sess.workspace_root = ws
+            body = {"messages": [
+                {"role": "user", "content": "resolve an ada handle"},
+                {"role": "tool", "content": ('web_search "ada handles api" — results saved to '
+                                             './tmp/reference/search-ada.txt')},
+                {"role": "assistant", "tool_calls": [
+                    {"id": "c1", "type": "function", "function": {
+                        "name": "read_file",
+                        "arguments": '{"path": "/tmp/reference/search-ada.txt"}'}}]},
+                {"role": "tool", "tool_call_id": "c1",
+                 "content": "search-ada.txt is a large reference document — grep it instead"},
+            ], "tools": []}
+            lp._judge_search_reads(sess, body, _Rlog())
+        finally:
+            loop.judge_search = saved
+        self.assertEqual(captured.get("query"), "ada handles api",
+                         "the judge was handed a query it could not find — the exact walked defect")
+        self.assertTrue(captured.get("results"), "the judge must see the REAL on-disk results")
 
 
 if __name__ == "__main__":

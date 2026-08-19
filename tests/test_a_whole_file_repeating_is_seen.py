@@ -33,10 +33,13 @@ write to six piecemeal edits reconstructed from memory, and that is where the fa
 was too big must not say (#5b), the same rule as `anchor_noline` beside it.
 """
 
+import json
 import random
 import unittest
+from unittest import mock
 
 from cria import prompts, rumination
+from cria.upstream import Upstream
 
 
 def _nonrepeating(n: int, seed: int = 11) -> str:
@@ -99,12 +102,40 @@ class ItIsAffordableTests(unittest.TestCase):
         self.assertGreaterEqual(rumination.WIDE_EVAL_STRIDE, 1024)
 
     def test_it_runs_on_a_stride_not_per_chunk(self):
-        import inspect
+        """Drive the REAL streaming reader over thousands of small frames and count how many times
+        the (expensive) wide check actually runs — a source-text grep for the stride constant's
+        name cannot tell "wired to the stride" from "wired to fire every frame anyway"."""
+        text = _nonrepeating(60_000, seed=41)
+        frag_len = 12
+        frames = [{"choices": [{"index": 0, "delta": {"content": text[i:i + frag_len]}}]}
+                 for i in range(0, len(text), frag_len)]
+        lines = [b"data: " + json.dumps(f).encode() + b"\n" for f in frames] + [b"data: [DONE]\n"]
 
-        from cria import upstream
-        src = inspect.getsource(upstream.Upstream.chat_watched)
-        self.assertIn("wide_evaled", src)
-        self.assertIn("rumination.WIDE_EVAL_STRIDE", src)
+        class _Resp:
+            def __iter__(self): return iter(lines)
+            def __enter__(self): return self
+            def __exit__(self, *a): return False
+            def close(self): pass
+
+        calls = []
+        real = rumination.degenerate_wide
+        def counting(s):
+            calls.append(len(s))
+            return real(s)
+
+        class _Rlog:
+            phase = "coder"
+            live_chars = 0
+            def emit(self, *a, **k): pass
+
+        up = Upstream("http://x", context_window=10_000_000)
+        with mock.patch.object(rumination, "degenerate_wide", counting), \
+             mock.patch("urllib.request.urlopen", return_value=_Resp()):
+            out = up.chat_watched({"messages": [{"role": "user", "content": "hi"}], "model": "m"}, _Rlog())
+        self.assertEqual(json.loads(out)["choices"][0]["message"]["content"], text)   # nothing lost
+        self.assertGreater(len(calls), 0, "the wide check never ran at all")
+        self.assertLess(len(calls) * 20, len(frames),
+                        f"{len(calls)} evaluations over {len(frames)} frames is not a stride")
 
     def test_one_evaluation_is_cheap(self):
         import time

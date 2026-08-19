@@ -18,8 +18,10 @@ carried (15,044 and 33,638 est tokens), so skipping them drops the size risk alo
 import unittest
 
 from cria import loop, prompts
+from cria.plan import Plan, PlanItem
 
 FENCED = "Here is the file:\n\n```python\ndef resolve(handle):\n    return handle\n```\n"
+PASTED = ("Here is the script:\n\n```python\n" + "\n".join(f"line_{i} = {i}" for i in range(20)) + "\n```\n")
 
 
 def _completion(text, finish="stop"):
@@ -97,15 +99,84 @@ class TheTruncationGuardIsWiredAtBothSitesTests(unittest.TestCase):
         """Precondition: the guard is load-bearing because the nudge really does fire here."""
         self.assertTrue(loop.unexecuted_write(self.CUT_OFF, []))
 
-    def test_both_sites_consult_is_truncated(self):
-        import inspect
-        multi = inspect.getsource(loop.Loop)
-        i = multi.index('rlog.emit("loop.unexecuted_write", step=idx')
-        j = multi.index("return self._renudge(sess, key, body, prompts.load(\"unexecuted_write_nudge\")", i)
-        self.assertIn("massage.is_truncated(coder)", multi[i:j])
-        single = inspect.getsource(loop.Loop._gate_single_done)
-        k = single.index('rlog.emit("loop.unexecuted_write", plan_off=True')
-        self.assertIn("massage.is_truncated(comp)", single[k:single.index("conv =", k)])
+    def test_the_single_item_driver_does_not_carry_a_truncated_reply(self):
+        """Drive the REAL `_gate_single_done` (the plan-off half) with a paste that fires the
+        nudge, once whole and once cut off at the output cap — a source-text grep for
+        `massage.is_truncated(comp)` can tell the call is spelled somewhere in the function; it
+        cannot tell whether the frame the coder is re-driven with actually honours it."""
+        for finish, want_carried in (("stop", True), ("length", False)):
+            with self.subTest(finish=finish):
+                captured = {}
+
+                def fake_coder_turn(sess, framed, body, step, rlog):
+                    captured["messages"] = framed["messages"]
+                    return {"choices": [{"message": {"role": "assistant", "tool_calls": [
+                        {"id": "c1", "type": "function",
+                         "function": {"name": "write_file", "arguments": "{}"}}]}}]}
+
+                lp = loop.Loop.__new__(loop.Loop)
+                lp._coder_turn = fake_coder_turn
+                sess = loop.PlanSession(plan=Plan(id="x", task="t", created="c",
+                                                  items=[PlanItem("write the script")]))
+                comp = {"choices": [{"finish_reason": finish,
+                                     "message": {"role": "assistant", "content": PASTED}}]}
+                framed = {"messages": [{"role": "user", "content": "do it"}]}
+                lp._gate_single_done(sess, comp, framed, {"messages": []}, "k1", _RlogB())
+                msgs = captured["messages"]
+                carried = any(m["role"] == "assistant" and m.get("content") == PASTED for m in msgs)
+                self.assertEqual(carried, want_carried)
+
+    def test_the_multi_item_driver_does_not_carry_a_truncated_reply(self):
+        """Same claim, the plan-ON half (`_work_item`). `guard_intervene`/`guard_periodic_gate`
+        are stubbed to a no-op so the drive reaches the unexecuted-write branch directly."""
+        for finish, want_carried in (("stop", True), ("length", False)):
+            with self.subTest(finish=finish):
+                captured = {}
+                calls = []
+
+                def fake_coder_turn(sess, framed, body, step, rlog):
+                    calls.append(1)
+                    if len(calls) == 1:   # the pasted-file turn that trips the nudge
+                        return {"choices": [{"finish_reason": finish,
+                                             "message": {"role": "assistant", "content": PASTED}}]}
+                    # the re-driven attempt: capture its frame, then stop the recursion
+                    captured["messages"] = framed["messages"]
+                    return {"choices": [{"message": {"role": "assistant", "tool_calls": [
+                        {"id": "c1", "type": "function",
+                         "function": {"name": "write_file", "arguments": "{}"}}]}}]}
+
+                saved = (loop.guard_intervene, loop.guard_periodic_gate)
+                loop.guard_intervene = lambda *a, **k: None
+                loop.guard_periodic_gate = lambda *a, **k: None
+                try:
+                    lp = loop.Loop.__new__(loop.Loop)
+                    lp._ctx = _MultiCtx()
+                    lp._coder_turn = fake_coder_turn
+                    item = PlanItem("write the script")
+                    sess = loop.PlanSession(plan=Plan(id="x", task="t", created="c", items=[item]))
+                    body = {"messages": [{"role": "user", "content": "do it"}], "tools": []}
+                    lp._work_item(sess, "k1", body, _RlogB(), item, 1)
+                finally:
+                    loop.guard_intervene, loop.guard_periodic_gate = saved
+                msgs = captured["messages"]
+                carried = any(m["role"] == "assistant" and m.get("content") == PASTED for m in msgs)
+                self.assertEqual(carried, want_carried)
+
+
+class _RlogB:
+    def emit(self, *a, **k):
+        pass
+
+
+class _MultiCtx:
+    reasoner_chat = None
+    reasoner_role = None
+    coder_role = None
+    self_compact = False
+    focus_trim = False
+    satisfaction_check_start = 10 ** 9
+    satisfaction_check_every = 0
+    workspace_root = None
 
 
 class TheSessionFieldTests(unittest.TestCase):

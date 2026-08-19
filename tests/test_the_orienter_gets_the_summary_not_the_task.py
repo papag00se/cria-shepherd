@@ -30,7 +30,6 @@ The prompt now also forbids filling a gap IN the summary, since a summary that o
 puts the reasoner back in the same bind on a smaller scale.
 """
 
-import inspect
 import json
 import unittest
 
@@ -84,8 +83,20 @@ class TheOrienterReadsTheMarkedTurnTests(unittest.TestCase):
         self.assertNotIn("Build a feed parser", sent)
 
     def test_it_reads_the_newest_marked_turn(self):
-        """A long session compacts more than once; the stale summary must not win."""
-        self.assertIn("reversed(msgs)", inspect.getsource(loop.Loop._reasoned_reanchor))
+        """A long session compacts more than once; the stale summary must not win. Two marked turns
+        in one history — the reasoner must be shown the SECOND (newest), never the first."""
+        from tests.test_loop import _Scripted, _done, _Rlog, _single_loop
+        from cria.config import Role
+        chat = _Chat("Already built: X.")
+        msgs = [self.TASK, _summary_turn("built the parser (first compaction)"),
+               {"role": "assistant", "content": "did more work"},
+               _summary_turn("built the parser AND the tests (second compaction)")]
+        _single_loop(_Scripted([_done()]), reasoner_chat=chat,
+                     reasoner_role=Role(name="reasoner", backend="local"))._reasoned_reanchor(
+            {"messages": msgs}, _Rlog())
+        sent = repr(chat.seen)
+        self.assertIn("second compaction", sent)
+        self.assertNotIn("first compaction", sent)
 
 
 class ThePromptForbidsInventingTests(unittest.TestCase):

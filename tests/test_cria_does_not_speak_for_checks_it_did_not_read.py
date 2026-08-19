@@ -44,6 +44,11 @@ class TheCheckStateSaysWhichHappenedTests(unittest.TestCase):
         self.assertIn("could NOT", loop._check_state_words(Bare()))
 
     def test_no_caller_hardcodes_the_passing_wording(self):
+        """STRUCTURAL, deliberately: the claim is "no OTHER spot in this module reaches for the
+        passing wording directly" — there is no caller to drive, only an absence across the whole
+        file, which only a source scan can see. `_check_state_words` (tested above) is the one
+        legitimate reader; this guards that a second one never grows back beside it, the exact
+        shape of the original bug (two of three callers had their own copy)."""
         import inspect
         src = inspect.getsource(loop)
         self.assertNotIn('load_map("done_check_state")["passed"]', src,
