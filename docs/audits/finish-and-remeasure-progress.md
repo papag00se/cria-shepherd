@@ -154,9 +154,30 @@ Findings go to `docs/audits/finish-and-remeasure-walk.md`. Not started.
 
 Nothing yet. A 100% needs a second run at the same commit to count — the noise floor at identical code is 25 points.
 
-## Step 5 — full suite
+## Step 5 — full suite — **RUNNING**
 
-Not started.
+`python3 suite/cycle_run.py`, launched 23:17 at `2b2fe2e`, log `runs/cycle-postwalk.log`, cell order model-major (gemma4 → qwen35 → ternary-bonsai → nemotron-elastic × six tasks). ~8 h. The runner restarts `cria.service` per cell, so every cell picks up HEAD.
+
+Environment checked before launch: tree clean and pushed, nothing else running, GPU idle, `preflight.py` READY, `suite/tasks` clean, **no leaked gems**.
+
+**What is live for the first full pass.** Nineteen fixes since the goal opened, of which nine came out of the `1787111689` walk ([plan](1787111689-walk-fix-plan.md)) and five of those are about cria destroying or fabricating evidence:
+
+- an elision that spliced the head of one failure record onto the tail of another
+- a digest that deleted an empty line which was itself the answer
+- a stale edit that showed the before and hid the after
+- a compaction note that re-served the original file as current state
+- a ledger that said a document was in the transcript cria had refused to write it to
+
+Plus: the exec-intent seat removed entirely, the judge handed its files instead of fetching them one call at a time, the dictated-code detector able to see Ruby, and the read refusal now naming a range that fits.
+
+**How to read the result.** Compare against the previous pass **through the noise floor** — `battery_status.py` marks a delta smaller than one check as `~+20` and never bolds it. A `~` is not movement. Only a gap bigger than one check, or the same gap repeated, is a result.
+
+### Cells as they land
+
+| # | cell | score | note |
+|---|---|---|---|
+| 1 | shipping-rates-rb × gemma4 | running | |
+
 
 ## Log
 
