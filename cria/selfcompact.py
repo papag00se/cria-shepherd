@@ -272,7 +272,7 @@ def _defanged_line(m: dict) -> str:
         return " / ".join(bits)
     if role == "tool":
         exit_m = _EXIT.search(text)
-        body = _ENVELOPE.sub("", text).strip()
+        body = _program_output(text)
         head = f"→ exit {exit_m.group(1)}" if exit_m else "→ result"
         return f"{head}: {body}" if body else head
     if not text:
@@ -281,6 +281,43 @@ def _defanged_line(m: dict) -> str:
            "system": "the frame said"}.get(role, f"{role} said")
     flat = " ".join(text.split())
     return f"{who}: {flat}"
+
+
+# The harness prints the program's stdout after a line reading `Output:`. Everything past that
+# marker is the program speaking, byte for byte — INCLUDING its blank lines.
+_OUTPUT_MARKER = re.compile(r"(?im)^[ \t]*Output[ \t]*:[ \t]*\n")
+
+
+def _program_output(text: str) -> str:
+    """What the program actually printed, with its own blank lines intact — or the cleaned result
+    when there is no exec envelope to anchor on.
+
+    AN EMPTY LINE IN stdout IS A VALUE. This used to run the envelope regex over the whole result and
+    `.strip()` what was left, which deletes a leading blank line — and a leading blank line is what
+    `puts nil` prints.
+
+    Walked on `shipping-rates-rb x ternary-bonsai` 1787111689, the one probe in the run that answered
+    the question. The coder ran
+    `ruby -e "…; puts c.data[:eu_member]; puts c.name"` and the harness returned:
+
+        Chunk ID: 2abf9d
+        Process exited with code 0
+        Output:
+
+        France
+
+    The blank line before `France` IS the bug: `data` is string-keyed, so `[:eu_member]` is nil. The
+    digest handed to the steer author rendered that whole call as `→ exit 0: France`. The author then
+    reasoned "the country lookup works fine in isolation" — a conclusion the deleted line disproves —
+    and steered the coder at a different bug. The run ended 3/5 with that one untouched.
+
+    Anchored on the marker rather than on the regex, so the program's output is never re-processed:
+    once `Output:` is found, everything after it is passed through and only the envelope's own final
+    newline is dropped."""
+    m = _OUTPUT_MARKER.search(text or "")
+    if m:
+        return (text[m.end():]).rstrip("\n")
+    return _ENVELOPE.sub("", text or "").strip()
 
 
 def compaction_request(messages: list[dict], files_list: str = "", gate_plan=None) -> str:
