@@ -176,7 +176,11 @@ Plus: the exec-intent seat removed entirely, the judge handed its files instead 
 
 | # | cell | score | note |
 |---|---|---|---|
-| 1 | shipping-rates-rb × gemma4 | running | |
+| 1 | shipping-rates-rb × gemma4 | **0/5** | killed at 15 min. Chose `eu_countries` — the broken gem — so every check dies on one `require`. This cell's last six runs read 1, 4, 0, 1, 4, 0: it genuinely oscillates, and 0 is inside its own range. |
+| 2 | cart-billing-go × gemma4 | **5/5** | exited on its own. |
+| 3 | orders-api-py × gemma4 | running | |
+
+**No fault from the new code so far.** Zero tracebacks in the cycle log, zero error-level events, and every new mechanism is firing: `loop.judge_files_seeded` 5, `loop.gate_offline` 17, `loop.steer_dictated_code` **2** — that last one is the Ruby fix working, since the detector logged one event in the entire previous run and could not see a Ruby call at all.
 
 
 ## Log
