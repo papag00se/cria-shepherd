@@ -115,6 +115,37 @@ bundle exec ruby -e "require 'countries'; puts ISO3166::Country.new('DE').in_eu?
 
 That reframes what the walk is looking for on this cell. Not "can the model install a gem" — it can — but **whether anything cria says about the install is true**, since the previous ruby walk found cria describing an install that had never happened and ruling out the step that had failed.
 
+### `shipping-rates-rb × ternary-bonsai` at `0b6020b` — 3/5, the cell's best by 2 checks
+
+Run `1787111689`, 75 calls, 61 minutes, 29.9 tok/s, killed at the 60-minute floor needing 4.
+
+```
+15 min  2/5  floor 1  ok
+30 min  3/5  floor 2  ok
+45 min  3/5  floor 3  ok
+60 min  3/5  floor 4  MISS
+```
+
+The cell's five runs, oldest first: **0, 0, 1, 0, 3**. The noise floor at identical code is 25 points — 1.25 checks on a five-check task — so 1 → 3 is above it and 0 → 3 well above. That makes it a result rather than noise. It is still ONE run; the campaign's own rule is that a reading worth acting on gets repeated at the same commit.
+
+**Green:** `hidden_contract` 10/10 (the contract at inputs the model never saw), `express_zone` priced exactly `14.99 24.99` with its own tests, `readme_rate_table` 8/8.
+
+**Red, and both the model's own code:** three failures in its own test suite, and `zone_for` returning `international` for EU codes. The dependency is not the problem this time — `countries 3.1.0` is installed with its three real dependencies and exposes `in_eu?`.
+
+**What the two removals did, measured in the capture:**
+
+| | before | after |
+|---|---|---|
+| `exec-intent` calls | 1 | **0** |
+| satisfaction calls per check | 7 | ~4.3 |
+| inspection rounds per check | 6 | ~3.3 |
+
+The exec-intent seat is gone as designed. The judge seeding fired three times (20,555 / 14,964 / 16,627 chars) and roughly halved the inspection — **but it did not eliminate it: 4 of 10 rounds re-fetched a file that was already in the prompt** (`README.md`, `Gemfile`, `lib/shipping/rates.rb`, the spilled rubydoc page). The header tells the judge in as many words to judge against them rather than ask again, and it asked anyway. Why, is a walk question, not a guess.
+
+Also live and behaving: 2 `rumination.abort` (the wire guards), 5 `loop.gate_offline` with no gate refusals — so the read-only bind mount is still not being rejected by the sandbox.
+
+One correction to a number I stated: `JUDGE_FILE_BUDGET` is 20,000 characters of **file bodies**; the header, separators and skipped-file line ride on top, so a block measured 20,555.
+
 ## Step 3 — walk
 
 Findings go to `docs/audits/finish-and-remeasure-walk.md`. Not started.
