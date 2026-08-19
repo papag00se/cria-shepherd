@@ -115,6 +115,19 @@ class TheBudgetIsBoundedByTheWorkTests(unittest.TestCase):
             self.assertNotIn("SPILLED_DOC_BODY", out)
             self.assertNotIn("tmp/reference", out)
 
+    def test_it_says_where_the_paths_are_rooted(self):
+        """THE JUDGE TOLD US, in its own words, before re-reading a file it already had: "The paths I
+        was given in the log are different from where the actual files live." The block used bare
+        relative names; the coder log it is grading uses absolute paths under a long run-id
+        directory. It spent 5 of its 6 inspection rounds on that confusion, hit the cap, and its
+        verdict — which had named the run's exact bug, `in_eu?` — was withheld as an unfinished
+        look."""
+        with _WS({"lib/x.rb": "puts 1\n"}) as root:
+            head = groundtruth.files_for_a_judge(root).splitlines()[0]
+            import os
+            self.assertIn(os.path.abspath(root), head)
+            self.assertIn("relative to that directory", head)
+
     def test_the_spill_filter_is_derived_from_the_one_owner(self):
         """A rename of SPILL_DIR must not leave this filter pointing at the old name (#23)."""
         from cria import webfetch

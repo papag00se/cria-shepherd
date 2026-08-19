@@ -331,7 +331,8 @@ def files_for_a_judge(root: str | None, budget: int = JUDGE_FILE_BUDGET) -> str:
         shown.append(prompts.fill(labels["file"], path=rel, body=body))
     if not shown:
         return ""
-    out = prompts.fill(labels["header"], count=str(len(shown))) + "\n\n" + "\n\n".join(shown)
+    out = (prompts.fill(labels["header"], count=str(len(shown)), root=os.path.abspath(root))
+           + "\n\n" + "\n\n".join(shown))
     if skipped:
         out += "\n\n" + prompts.fill(labels["skipped"], paths=", ".join(sorted(skipped)))
     return out
