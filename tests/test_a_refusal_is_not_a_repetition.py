@@ -1,6 +1,6 @@
 """cria told its own steer author an action had been repeated three times. It had been taken once.
 
-`shipping-rates-rb × ternary-bonsai`, 2026-08-17. `guard_track_repetition` has two trigger routes —
+`shipping-rates-rb × ternary-bonsai`, 2026-08-17. `guard_track_repetition` had two trigger routes —
 the same action seen N times in the window, and cria REFUSING N calls — and both fell into one
 reporting site that emitted a hardcoded `REPEAT_FINGERPRINT_N` and set `repeat_action` to whatever
 call happened to be in flight. So the refusal route fired and cria wrote:
@@ -32,6 +32,12 @@ and reported the constant. The fix is not to soften the sentence; it is to say w
 
 "in a row" went too. The action route is windowed, not consecutive, so it was never true there
 either.
+
+**The action route was removed on 2026-08-19** (measured in
+`docs/audits/base-vs-cria-footgun-patterns.md`: BASE runs containing three or more identical
+consecutive calls averaged 51%, the CRIA runs this steer fired in averaged 48%). One route reaches
+the redirect now, so the two can no longer share a sentence. What is still tested here is that the
+surviving route says what it counted, and counts what it says.
 """
 
 import unittest
@@ -39,32 +45,30 @@ import unittest
 from cria import loop, prompts
 
 
-def _gs(kind, count, action="exec_command {\"cmd\":\"which bundler\"}"):
+def _gs(count, action="exec_command {\"cmd\":\"which bundler\"}"):
     gs = loop.GuardState()
-    gs.repeat_kind, gs.repeat_count, gs.repeat_action = kind, count, action
+    gs.repeat_count, gs.repeat_action = count, action
     return gs
 
 
 class TheSentenceDescribesTheTriggerThatFiredTests(unittest.TestCase):
     def test_a_refusal_is_reported_as_a_refusal(self):
-        said = loop._STEER_TRIGGER["repetition"](_gs("refusal", 3), 1)
+        said = loop._STEER_TRIGGER["refusal"](_gs(3), 1)
         self.assertIn("REFUSED 3", said)
         self.assertNotIn("repeating the SAME action", said)
 
-    def test_a_real_repetition_is_still_reported_as_one(self):
-        said = loop._STEER_TRIGGER["repetition"](_gs("repetition", 3), 1)
-        self.assertIn("SAME action 3", said)
-        self.assertNotIn("REFUSED", said)
-
     def test_the_number_is_the_one_measured_not_the_threshold(self):
         """The walked failure in one line: five refusals must not be reported as three."""
-        self.assertIn("5", loop._STEER_TRIGGER["repetition"](_gs("refusal", 5), 1))
-        self.assertIn("7", loop._STEER_TRIGGER["repetition"](_gs("repetition", 7), 1))
+        self.assertIn("5", loop._STEER_TRIGGER["refusal"](_gs(5), 1))
 
     def test_the_measured_action_is_still_named(self):
-        for kind in ("refusal", "repetition"):
-            with self.subTest(kind=kind):
-                self.assertIn("which bundler", loop._STEER_TRIGGER["repetition"](_gs(kind, 3), 1))
+        self.assertIn("which bundler", loop._STEER_TRIGGER["refusal"](_gs(3), 1))
+
+    def test_the_action_route_is_gone_from_the_sentence(self):
+        """No input may produce the retired route's wording — there is no route behind it."""
+        for n in (0, 1, 3, 9):
+            with self.subTest(n=n):
+                self.assertNotIn("SAME action", loop._STEER_TRIGGER["refusal"](_gs(n), 1))
 
 
 class TheCodersRedirectSaysTheSameThingTests(unittest.TestCase):
@@ -74,21 +78,17 @@ class TheCodersRedirectSaysTheSameThingTests(unittest.TestCase):
         return prompts.render("redirect_canned", ground_truth="", **loop._repeat_observation(gs))
 
     def test_a_refusal_says_the_calls_did_not_run(self):
-        said = self._canned(_gs("refusal", 3))
+        said = self._canned(_gs(3))
         self.assertIn("refused", said.lower())
-        self.assertIn("did not run", said.lower().replace("none of them ran", "did not run"))
-
-    def test_a_repetition_says_the_action_was_taken_again(self):
-        self.assertIn("same action 3 times", self._canned(_gs("repetition", 3)).lower())
+        self.assertIn("none of them ran", said.lower())
 
     def test_it_no_longer_claims_the_actions_were_consecutive(self):
-        """The action route is WINDOWED. "in a row" was false on both routes."""
-        for gs in (_gs("refusal", 3), _gs("repetition", 3)):
-            self.assertNotIn("in a row", self._canned(gs))
+        """The refusal window is WINDOWED. "in a row" was never true."""
+        self.assertNotIn("in a row", self._canned(_gs(3)))
 
-    def test_an_unset_route_states_no_number_at_all(self):
+    def test_an_unfired_trigger_states_no_number_at_all(self):
         """Saying less is allowed; saying a number cria did not count is not (#5b)."""
-        said = self._canned(_gs("", 0))
+        said = self._canned(_gs(0))
         self.assertNotIn("3", said)
         self.assertIn("not getting a new outcome", said)
 
@@ -104,15 +104,18 @@ class TheCodersRedirectSaysTheSameThingTests(unittest.TestCase):
 
 class TheCountComesFromTheEventTests(unittest.TestCase):
     def test_the_fire_site_records_what_it_observed(self):
-        """`matches + 1` and `blocked` are both in hand at that line; the constant was not."""
+        """`blocked` is in hand at that line; the constant was not."""
         import inspect
-        src = inspect.getsource(loop.guard_track_repetition)
-        self.assertIn("gs.repeat_count = blocked if blocked_fires else matches + 1", src)
+        src = inspect.getsource(loop.guard_track_refusals)
+        self.assertIn("gs.repeat_count = blocked", src)
         self.assertNotIn("count=REPEAT_FINGERPRINT_N", src)
 
-    def test_the_emitted_event_carries_the_route(self):
+    def test_the_quoted_call_is_one_that_was_actually_refused(self):
+        """The steer names "the most recent" refused call. It used to name whatever call was in
+        flight when the counter tripped — a call cria had not refused at all."""
         import inspect
-        self.assertIn("trigger=gs.repeat_kind", inspect.getsource(loop.guard_track_repetition))
+        src = inspect.getsource(loop.guard_track_refusals)
+        self.assertIn("gs.repeat_action = last_refused", src)
 
 
 if __name__ == "__main__":

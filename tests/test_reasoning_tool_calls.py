@@ -468,31 +468,52 @@ class TheRepeatGuardSeesTheRecoveredCall(unittest.TestCase):
     MEASURED on run 20260802T195958: 39 lost coder turns, 35 of them the byte-identical
     `web_fetch(url='https://api.handle.me/swagger.yml', find='swagger')`. The reason they are
     identical is not that the model was thrashing — the coder's PROMPT was byte-identical too, all
-    33,168 bytes of it, from call 0052 to call 0250. Every cycle was coder → critic →
-    critic-confirm → coder, three model calls, and none of them changed a byte of what the coder
+    33,168 bytes of it, from call 0052 to call 0250. Every cycle was coder -> critic ->
+    critic-confirm -> coder, three model calls, and none of them changed a byte of what the coder
     was asked. A constant input produced a constant output until the run hit the wall.
 
-    `guard_track_repetition` iterates FORWARDED tool calls, so today it sees nothing at all on
-    those turns and the count never starts. Recovery is what lets it count — and it trips on the
-    third, which is what ends the loop."""
+    The guard that used to end this loop counted identical actions; it was removed on 2026-08-19
+    (`docs/audits/base-vs-cria-footgun-patterns.md`). The loop is still caught, by a route that needs
+    no similarity judgement: a repeated identical fetch is REFUSED by the web_fetch visibility gate,
+    the refusal carries the denial marker, and three refusals in the window trip the same redirect.
+    Recovery is what makes the calls exist at all — that is what this class protects."""
 
-    def test_a_lost_turn_is_invisible_to_the_repetition_guard(self):
+    def test_a_lost_turn_carries_no_call_at_all(self):
         gs = loop.GuardState()
         for _ in range(6):
-            loop.guard_track_repetition(gs, _reply(REPEAT_VERBATIM), Rec())
-        self.assertFalse(gs.redirect_due, "the guard cannot count a turn that carries no call")
+            loop.guard_track_refusals(gs, _reply(REPEAT_VERBATIM), Rec())
+        self.assertFalse(gs.redirect_due, "a turn that carries no call cannot be counted")
+        self.assertEqual(gs.action_seq, 0)
 
-    def test_three_recovered_repeats_trip_the_redirect(self):
-        gs, fired = loop.GuardState(), []
-        for turn in range(1, 5):
+    def test_the_repeat_is_recovered_so_the_gate_can_refuse_it(self):
+        """Recovery is upstream of every guard: an unrecovered call is refused by nobody."""
+        comp = recover_reasoning_tool_calls(_reply(REPEAT_VERBATIM), MENU, Rec())
+        self.assertTrue(_calls(comp), "the repeat itself must still be recovered")
+        self.assertEqual(_calls(comp)[0][0], "web_fetch")
+
+    def test_three_refused_repeats_trip_the_redirect(self):
+        """What the web_fetch visibility gate does to the 2nd and 3rd identical fetch, and what the
+        surviving trigger does with those refusals."""
+        from cria import denial
+        msgs = []
+        for i in range(loop.REPEAT_FINGERPRINT_N):
             comp = recover_reasoning_tool_calls(_reply(REPEAT_VERBATIM), MENU, Rec())
-            self.assertTrue(_calls(comp), "the repeat itself must still be recovered")
-            loop.guard_track_repetition(gs, comp, Rec())
-            if gs.redirect_due:
-                fired.append(turn)
-                break
-        self.assertEqual(fired, [loop.REPEAT_FINGERPRINT_N])
+            tc = comp["choices"][0]["message"]["tool_calls"][0]
+            msgs.append({"role": "assistant", "tool_calls": [dict(tc, id=f"f{i}")]})
+            msgs.append({"role": "tool", "tool_call_id": f"f{i}",
+                         "content": denial.mark("you already fetched this page")})
+        gs = loop.GuardState()
+        loop.guard_track_refusals(gs, comp, Rec(), messages=msgs)
+        self.assertTrue(gs.redirect_due)
+        self.assertEqual(gs.repeat_count, loop.REPEAT_FINGERPRINT_N)
         self.assertIn("swagger.yml", gs.repeat_action)
+
+    def test_the_web_fetch_repeat_gate_really_marks_its_refusals(self):
+        """The link the class depends on: if these keys stopped being marked, the loop above would
+        run to the wall again and nothing else would notice."""
+        from cria import webfetch
+        for key in ("fetch_repeat", "fetch_repeat_failed", "fetch_repeat_spilled"):
+            self.assertIn(key, webfetch._REFUSAL_KEYS)
 
 
 class TheStripperIsStillTheStripper(unittest.TestCase):

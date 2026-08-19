@@ -109,12 +109,9 @@ REPEAT_WINDOW = 12
 # (round 5). Sparser revisits (3+ calls between edits) still age out and stay silent.
 WRITE_WINDOW = WHEEL_SPIN_WRITES * 3
 # The write class is ONE predicate (`_is_write_tool`, membership in _WRITE_TOOLS below) — shared by
-# the repetition signature AND the wheel-spin/truncation guards, so a route can't be a write to one
-# and not the other. (A loose substring regex was tried and split the two: it mis-classed `write_stdin`
-# as a file write and missed nothing the exact set doesn't.)
-# Shell-command words that mutate the workspace: a shell call carrying one of these, with no
-# match already in the window, is progress too (the apply_patch/tee equivalents of a write).
-_MUTATOR_WORDS = frozenset({"apply_patch", "tee", "mv", "cp", "touch", "mkdir", "rm"})
+# the wheel-spin and truncation guards, so a route can't be a write to one and not the other. (A
+# loose substring regex was tried and split the two: it mis-classed `write_stdin` as a file write and
+# missed nothing the exact set doesn't.)
 # Probe re-issues after a history rewrite erased the result. A harness compacting EVERY turn
 # would otherwise re-issue forever; past the cap the absent result falls back to fail-open (the
 # pre-existing don't-wedge behavior).
@@ -190,26 +187,24 @@ class GuardState:
     spin_path: str = ""  # the file whose windowed rewrite count tripped wheel-spinning
     spin_probe_due: bool = False  # wheel-spinning tripped → run the gate before the next coder turn
     spin_probe: bool = False  # the in-flight gate is a spin probe (insert results, don't judge)
-    recent_actions: list = None  # rolling window of (seq, nature-signature) per forwarded call
-    action_seq: int = 0  # forwarded-call counter — ages recent_actions entries out of the window
-    # WHEN THE REFUSAL TRIGGER LAST FIRED. Its evidence lives in the message history, which a
-    # fire cannot flush the way the signature trigger flushes `recent_actions` — so without
-    # this it re-fires on every call until the refusals age out. Replayed on cycle 4 cell 13:
-    # 14 redirects over 48 calls instead of one. One intervention consumes the evidence.
+    action_seq: int = 0  # forwarded-call counter — dates the refusal trigger's last fire
+    # WHEN THE REFUSAL TRIGGER LAST FIRED. Its evidence lives in the message history, and a fire
+    # cannot flush that — so without this it re-fires on every call until the refusals age out.
+    # Replayed on cycle 4 cell 13: 14 redirects over 48 calls instead of one. One intervention
+    # consumes the evidence.
     blocked_fired_seq: int = -10_000
-    repeat_action: str = ""  # human-readable description of the repeated action (for the reasoner)
-    # WHICH TRIGGER FIRED, AND WHAT IT COUNTED. Two routes reach the redirect — the same action
-    # seen N times, and cria REFUSING N calls — and they used to share one sentence and one
-    # hardcoded 3. Walked on shipping-rates-rb x ternary-bonsai: the refusal route fired, and cria
-    # told its own steer author "It keeps repeating the SAME action 3x without the outcome
-    # changing: exec_command {which bundler ...}" about a command the coder had issued ONCE. The
-    # author wrote that back as "you've already confirmed they're unavailable (three failed
-    # attempts)" and, on that premise, ordered the coder to hardcode data the task forbids
-    # hardcoding in those words. A count cria reports must be a count cria measured (#12), and a
-    # sentence must describe the trigger that actually fired (#5b).
-    repeat_kind: str = ""     # "repetition" | "refusal" — which route tripped
-    repeat_count: int = 0     # what that route actually observed
-    redirect_due: bool = False  # repetition tripped → gate + redirect before next coder turn
+    repeat_action: str = ""  # the most recent REFUSED call, as `name args` (for the reasoner)
+    # WHAT THE TRIGGER COUNTED. Two routes used to reach this redirect — the same action seen N
+    # times, and cria REFUSING N calls — sharing one sentence and one hardcoded 3. Walked on
+    # shipping-rates-rb x ternary-bonsai: the refusal route fired, and cria told its own steer author
+    # "It keeps repeating the SAME action 3x without the outcome changing: exec_command {which
+    # bundler ...}" about a command the coder had issued ONCE. The author wrote that back as "you've
+    # already confirmed they're unavailable (three failed attempts)" and, on that premise, ordered
+    # the coder to hardcode data the task forbids hardcoding in those words. A count cria reports
+    # must be a count cria measured (#12). The repetition route is now gone entirely, so there is one
+    # route and one meaning.
+    repeat_count: int = 0     # how many of the recent calls cria refused
+    redirect_due: bool = False  # refusals tripped → gate + redirect before next coder turn
     redirect_probe: bool = False  # the in-flight gate feeds a reasoner-authored redirect (loop only)
     nudge_reason: str = ""  # a steer to hand the coder on its next work turn
     # The last gap the PERIODIC completion check named to the coder. Its only job is to stop the
@@ -499,7 +494,6 @@ def track_gate_progress(gs: GuardState, finding: str) -> None:
     else:
         gs.gate_stall = 1
         gs.gate_sig = finding
-
 
 
 def _satisfaction_verdict(system: str, user: str, reasoner_chat, reasoner_role, rlog, *, reasoning_off: bool, workspace_root: str = "", capped: list | None = None) -> dict | None:
@@ -2302,9 +2296,9 @@ class Loop:
         # repetition/write-streak guards see what's actually FORWARDED.
         coder = guard_search_query(sess, coder, body, self._ctx.reasoner_chat, self._ctx.reasoner_role, rlog)
         _track_fetched_pages(sess, body.get("messages", []))  # durable fetch facts for later steers
-        if _has_tool_calls(coder):  # the coder ACTED → track the fingerprint for the repetition/spin guards
-            guard_track_repetition(sess, coder, rlog, step=step,
-                                   messages=body.get("messages"))
+        if _has_tool_calls(coder):  # the coder ACTED → track it for the refusal/spin guards
+            guard_track_refusals(sess, coder, rlog, step=step,
+                                 messages=body.get("messages"))
             guard_track_write_streak(sess, coder, rlog, step=step, messages=framed.get("messages"))
         return coder
 
@@ -3203,7 +3197,6 @@ class Loop:
         sess.leg0_nudged = False
         sess.recent_writes, sess.spin_path = [], ""
         sess.spin_probe_due = False
-        sess.recent_actions = []
         sess.redirect_due = False
         # Convergence tracking is per step — EXCEPT while the repo is still RED. This string is the
         # only carrier of the failing findings into cria's rolling briefing
@@ -3356,7 +3349,7 @@ class Loop:
         item = sess.plan.current()
         step_text = item.text if item is not None else sess.plan.task
         root = sess.workspace_root
-        if condition == "repetition":
+        if condition == "refusal":
             return author_redirect(self._ctx.reasoner_chat, self._ctx.reasoner_role,
                                    root, step_text, sess, outcome, body, rlog)
         return author_steer(self._ctx.reasoner_chat, self._ctx.reasoner_role, root, sess, body, rlog,
@@ -3854,7 +3847,7 @@ class Loop:
             # shared authors on the routed reasoner endpoint). CANNED only if there's no reasoner.
             def _author(condition, g, outcome, b, r):
                 root = sess.workspace_root or _extract_cwd(b.get("messages", []))
-                if condition == "repetition":
+                if condition == "refusal":
                     task = _history_root(b.get("messages", []))[0] or "the user's task"
                     return author_redirect(self._ctx.reasoner_chat, self._ctx.reasoner_role,
                                            root, task, g, outcome, b, r)
@@ -4166,7 +4159,6 @@ def _session_from_dict(d) -> PlanSession | None:
                            synthetic=bool(d.get("synthetic")))
     except Exception:  # noqa: BLE001
         return None
-
 
 
 def _plan_off_session(plan: Plan, briefing: str) -> PlanSession:
@@ -5163,12 +5155,20 @@ def _write_path(fn: dict) -> str | None:
 # over-fires), matching the streak guard's existing tolerance.
 _REDIRECT_TARGET_RE = re.compile(r'(?<![-=<>\d])>{1,2}\s*(?!/dev/|&)([\w./~$-]+)')
 _TEE_TARGET_RE = re.compile(r'\btee\b\s+(?:-a\s+)?(?!-)([\w./~$-]+)')
+# Raw-blob variants for UNPARSEABLE args (a truncated write is exactly when a model is spiralling on
+# one file, so the streak guard must still see the target). Quotes and newlines are still escaped
+# there, so tolerate a leading backslash-quote — and never quote-mask a raw blob: the JSON string
+# delimiters would mask the whole command away.
+_REDIRECT_TARGET_RAW_RE = re.compile(r'(?<![-=<>\d])>{1,2}\s*(?!/dev/|&)\\?["\']?([\w./~$-]+)')
+_TEE_TARGET_RAW_RE = re.compile(r'\btee\b\s+(?:-a\s+)?\\?["\']?(?!-)([\w./~$-]+)')
 
 
 def _shell_write_target(args) -> str | None:
     text = _command_text(args)
-    if text is None:
-        return None
+    if text is None:  # an undecodable JSON FRAGMENT — scan the raw blob, escape-tolerant
+        blob = args if isinstance(args, str) else ""
+        m = _REDIRECT_TARGET_RAW_RE.search(blob) or _TEE_TARGET_RAW_RE.search(blob)
+        return m.group(1) if m else None
     masked = _QUOTED_SPAN_RE.sub("", text)  # drop quoted spans so a `>` inside them isn't a redirect
     m = _REDIRECT_TARGET_RE.search(masked) or _TEE_TARGET_RE.search(masked)
     return m.group(1) if m else None
@@ -5214,217 +5214,103 @@ def guard_gate_op(gs: GuardState, body: dict, rlog, *, workspace_root=None) -> d
     }
 
 
-def _denied_signatures(messages: list[dict] | None) -> list[tuple]:
-    """Signatures of the calls cria itself REFUSED, newest last.
+def _refusals_in_window(messages: list[dict] | None) -> tuple[int, str]:
+    """How many of the last REPEAT_WINDOW forwarded calls cria itself refused, and the most recent
+    refused call's ``name args`` — bounded to REPEAT_ACTION_CHARS.
 
-    A refused call changed nothing — cria knows, because cria is what stopped it. `_is_progress`
-    reads the command TEXT and answers "this writes a Gemfile / makes a directory / installs a gem",
-    which is true of the words and false of the outcome, and every such answer FLUSHES the repetition
-    window. Walked on cycle 4 cell 13 (`shipping-rates-rb x ternary-bonsai`, 10% useful): the walk
-    replayed the run's real 53-call sequence through this guard and it fires **zero times** — six
-    identical refused `gem install` attempts across 25 calls, and each `write_file Gemfile` and
-    `mkdir -p vendor/bundle` between them reset the hunt. Writing a Gemfile and making vendor
-    directories is exactly what an install loop does between attempts, so the loop kept erasing the
-    evidence of itself. Call 0051 rewrote the Gemfile with bytes identical to call 0033 and still
-    counted as progress on new ground.
-
-    The protected case is untouched: a real edit→test→edit→test cycle resets, because those writes
-    really do change bytes and cria never refused them."""
-    out: list[tuple] = []
-    by_id: dict[str, str] = {m.get("tool_call_id"): _content_text(m.get("content"))
-                             for m in (messages or []) if m.get("role") == "tool"}
-    for m in messages or []:
-        if m.get("role") != "assistant":
-            continue
-        for tc in m.get("tool_calls") or []:
-            body = by_id.get(tc.get("id"))
-            if body and denial.is_denied(body):
-                fn = tc.get("function") or {}
-                args = fn.get("arguments") or ""
-                out.append(_action_signature(fn.get("name") or "?",
-                                             args if isinstance(args, str) else json.dumps(args)))
-    return out
-
-
-def _last_write_by_path(messages: list[dict] | None) -> dict:
-    """path -> content hash of the LAST write to it this session.
-
-    The most recent write is the only one that can answer "is this already what is on disk". An
-    earlier-but-superseded copy cannot: write A, edit it, write A's original bytes back IS a change,
-    and comparing against every historical write would call it a no-op."""
-    out: dict = {}
-    for m in messages or []:
-        if m.get("role") != "assistant":
-            continue
-        for tc in m.get("tool_calls") or []:
-            fn = tc.get("function") or {}
-            name = str(fn.get("name") or "")
-            if not _is_write_tool(name):
-                continue
-            args = fn.get("arguments") or ""
-            sig = _action_signature(name, args if isinstance(args, str) else json.dumps(args))
-            if sig[0] == "write" and sig[1]:
-                out[sig[1]] = sig[2]
-    return out
-
-
-def _rewrites_the_same_bytes(sig: tuple, last_write: dict) -> bool:
-    """This write puts back exactly what the last write to that path already put there.
-
-    `_is_progress` answers "does this action CHANGE the workspace" and says yes to every write. It is
-    right about the words and wrong here: re-writing identical bytes changes nothing, and a change on
-    new ground FLUSHES the repetition window. Walked on cycle 4 cell 13
-    (`shipping-rates-rb x ternary-bonsai`): call 0051 re-wrote `Gemfile` with bytes identical to call
-    0033 and counted as progress on new ground, flushing an install loop that had been running for
-    eighteen calls. The window's own age trim is why the earlier copy could not catch it — entries
-    expire after REPEAT_WINDOW forwarded calls, and 0033 to 0051 is eighteen.
-
-    Only the LAST write to the path is compared, so a write→edit→write-the-original cycle is still
-    the change it really is."""
-    return sig[0] == "write" and bool(sig[1]) and last_write.get(sig[1]) == sig[2]
-
-
-def _refusals_in_window(messages: list[dict] | None) -> int:
-    """How many of the last REPEAT_WINDOW forwarded calls cria itself refused.
-
-    A fact cria owns outright — it is what stopped them — so no similarity judgement is needed and
-    none is made. See the fire site for the replay that showed why the similarity rule cannot cover
-    this shape."""
-    seen = 0
-    for m in reversed(messages or []):
-        if m.get("role") != "assistant" or not m.get("tool_calls"):
-            continue
-        seen += 1
-        if seen > REPEAT_WINDOW:
-            break
-    tail, n = [], 0
-    for m in messages or []:
-        if m.get("role") == "assistant" and m.get("tool_calls"):
-            tail.append(m)
-    tail = tail[-REPEAT_WINDOW:]
-    ids = {tc.get("id") for m in tail for tc in (m.get("tool_calls") or [])}
+    A fact cria owns outright: it is what stopped them, so no similarity judgement is needed and none
+    is made. THE DESCRIPTION MUST COME FROM A REFUSED CALL. The steer says "cria REFUSED N of its
+    recent calls ... the most recent was: X", and X used to be whatever call the coder was making
+    when the counter tripped — a call that had not been refused at all. That is a false fact in the
+    one seat where a false fact does the most damage (#5b), so the count and the quote now come from
+    the same place."""
+    tail = [m for m in (messages or [])
+            if m.get("role") == "assistant" and m.get("tool_calls")][-REPEAT_WINDOW:]
     by_id = {m.get("tool_call_id"): _content_text(m.get("content"))
              for m in (messages or []) if m.get("role") == "tool"}
-    for cid in ids:
-        if cid is not None and denial.is_denied(by_id.get(cid) or ""):
+    n, last = 0, ""
+    for m in tail:
+        for tc in m.get("tool_calls") or []:
+            cid = tc.get("id")
+            if cid is None or not denial.is_denied(by_id.get(cid) or ""):
+                continue
             n += 1
-    return n
+            fn = tc.get("function") or {}
+            args = fn.get("arguments") or ""
+            last = _clip(f"{fn.get('name') or '?'} "
+                         f"{args if isinstance(args, str) else json.dumps(args)}",
+                         REPEAT_ACTION_CHARS)
+    return n, last
 
 
-def guard_track_repetition(gs: GuardState, coder: dict, rlog, *, step=None,
-                           messages: list[dict] | None = None) -> None:
-    """Repetition detection, by the NATURE of each forwarded tool call, not its bytes
-    (exact fingerprints were tried on the codex-local side and missed one-flag jitter).
-    REPEAT_FINGERPRINT_N nature-matches within the last REPEAT_WINDOW calls trips the
-    redirect. Windowed, not consecutive-only, so write→test→write→test loops with
-    byte-identical writes are caught (the canonical small-model spiral) — while PROGRESS
-    (a write/mutation matching nothing in the window, i.e. new ground changed) resets the
-    hunt, so a healthy edit→test→edit→test cycle never trips on its repeated test runs.
+def guard_track_refusals(gs: GuardState, coder: dict, rlog, *, step=None,
+                         messages: list[dict] | None = None) -> None:
+    """REFUSAL detection: cria has blocked REPEAT_FINGERPRINT_N of the last REPEAT_WINDOW forwarded
+    calls, so the coder is spending its turns on calls that never ran. Trips the same
+    probe -> reasoned-steer round-trip as the wheel-spin and thrash detectors.
+
+    THE SIBLING ROUTE — "the same action N times in this window" — WAS REMOVED (operator,
+    2026-08-19). It is measured in `docs/audits/base-vs-cria-footgun-patterns.md`: BASE runs (no
+    assists) that contained three or more identical consecutive calls averaged 51%; the CRIA runs the
+    steer actually fired in averaged 48%. Models self-correct out of a repeat on their own — one BASE
+    `cart-billing-go x ternary-bonsai` run wrote a byte-identical `cart.go` five times, stopped
+    without being told, and scored 100%. Principle 1's corollary decides it: an assist is re-measured
+    against the system it runs in NOW, and removing this one costs nothing measurable.
+
+    The refusal route is NOT the same mechanism wearing a different hat. It fires on a fact cria owns
+    outright (it refused the calls) rather than on a similarity judgement about the model's intent,
+    and the thing it reports — your calls are not running — is invisible to the model in a way a
+    repeat is not.
 
     Operates on GuardState so the plan loop and the plan-off path run ONE implementation."""
-    if gs.recent_actions is None:
-        gs.recent_actions = []
-    denied = _denied_signatures(messages)
-    last_write = _last_write_by_path(messages)
-    blocked = _refusals_in_window(messages)
+    blocked, last_refused = _refusals_in_window(messages)
     for ch in coder.get("choices", []):
         for tc in (ch.get("message") or {}).get("tool_calls") or []:
             if (gs.redirect_due or gs.redirect_probe
                     or gs.spin_probe_due or gs.spin_probe):
                 return  # an intervention is in flight — it consumed the evidence; nothing
                 # accrues until it's delivered (a fire mid-completion must not let the
-                # completion's REMAINING calls repopulate the just-flushed windows)
-            fn = tc.get("function") or {}
-            name = fn.get("name") or "?"
-            args = fn.get("arguments") or ""
-            args = args if isinstance(args, str) else json.dumps(args)
-            sig = _action_signature(name, args)
+                # completion's REMAINING calls repopulate the just-flushed window)
             gs.action_seq += 1
-            # AGE-based trim (entries are (seq, sig)): an entry expires REPEAT_WINDOW
-            # forwarded calls after it was seen — even across progress resets. A length
-            # trim alone made preserved write signatures immortal: identical writes 60
-            # calls apart counted as "3× in the last 12".
-            cutoff = gs.action_seq - REPEAT_WINDOW
-            gs.recent_actions = [e for e in gs.recent_actions if e[0] > cutoff]
-            matches = sum(1 for e in gs.recent_actions if _actions_match(sig, e[1]))
-            # …AND IT ACTUALLY HAPPENED. A call cria refused wrote nothing, whatever its words say,
-            # and a write whose bytes are already what is on disk changed nothing either.
-            refused = any(_actions_match(sig, d) for d in denied)
-            if not matches and _is_progress(sig, args) and not refused \
-                    and not _rewrites_the_same_bytes(sig, last_write):
-                # a real move — reset the hunt for ACTIONS, but keep (in-window) write
-                # signatures: the per-file rule ("same file, same content, 3× in the
-                # window") must survive interleaved progress on OTHER files
-                gs.recent_actions = [e for e in gs.recent_actions if e[1][0] == "write"]
-                gs.recent_actions.append((gs.action_seq, sig))
-                continue
-            gs.recent_actions.append((gs.action_seq, sig))
-            # …OR CRIA HAS SIMPLY BLOCKED IT, OVER AND OVER. The rule above asks whether the last
-            # three actions were the SAME action; an install loop is not that. Replayed over cycle 4
-            # cell 13's real 48 forwarded calls with their real tool results, the signature rule
-            # fires ZERO times against nine refusals — the three attempts inside one window score
-            # Jaccard 0.636 against a 0.7 bar, and cleaning the `tail -5` / `tail -10` noise lifts
-            # them to a match and still yields two, not three. The loop is twenty different attempts
-            # at ONE goal, which no similarity threshold can see.
-            #
-            # What cria has that needs no similarity judgement is its OWN refusals. It blocked 9 of
-            # 48 calls in that run and 6 of 45 in the sibling, and it knows it blocked them (#8: the
-            # deterministic half gathers a fact cria owns). Same threshold, same window, same
-            # redirect — this only makes the existing mechanism REACHABLE by a second route.
-            blocked_fires = (blocked >= REPEAT_FINGERPRINT_N
-                             and gs.action_seq - gs.blocked_fired_seq >= REPEAT_WINDOW)
-            if (matches + 1 >= REPEAT_FINGERPRINT_N or blocked_fires) \
-                    and not gs.redirect_due and not gs.redirect_probe \
-                    and not gs.spin_probe_due and not gs.spin_probe:
-                if blocked_fires:
-                    gs.blocked_fired_seq = gs.action_seq
+            # Replayed over cycle 4 cell 13's real 48 forwarded calls with their real tool results,
+            # the retired signature rule fired ZERO times against nine refusals — the three attempts
+            # inside one window scored Jaccard 0.636 against a 0.7 bar. The loop was twenty different
+            # attempts at ONE goal, which no similarity threshold can see. What cria has that needs no
+            # similarity judgement is its OWN refusals: 9 of 48 blocked in that run, 6 of 45 in the
+            # sibling, and it knows it blocked them (#8: the deterministic half gathers a fact cria
+            # owns).
+            if (blocked >= REPEAT_FINGERPRINT_N
+                    and gs.action_seq - gs.blocked_fired_seq >= REPEAT_WINDOW):
+                gs.blocked_fired_seq = gs.action_seq
                 gs.redirect_due = True
-                # flush BOTH windows: one intervention consumes the evidence — the writes
-                # that fired this redirect must not ALSO count toward a wheel-spin right
-                # after the coder complies (that steer would point away from the very file
-                # it just fixed).
-                gs.recent_actions = []
+                # flush the write window too: one intervention consumes the evidence — the writes in
+                # flight must not ALSO count toward a wheel-spin right after the coder complies (that
+                # steer would point away from the very file it just fixed).
                 gs.recent_writes = []
-                # BOUND IT. This string is pasted into the coder's redirect verbatim, and for a
-                # write it carried the WHOLE file body. Walked on
-                # ada-handles_fabliq_codex_pon_1785732102 call 0079: cria re-sent the exact 3.2 KB of
-                # handle_resolver.py it was telling the model to stop producing, under the words
-                # "Choose a DIFFERENT next action". The model satisfied that literally — same 3.2 KB,
-                # new filename — and did it again three calls later. That is where test_handle.py and
-                # resolver.py came from: cria handed over the content and asked for something
-                # different, so the only thing left to vary was the name.
-                #
-                # The line below already clips this same string to 120 chars for cria's OWN log. It
-                # was bounded for the record and unbounded for the model.
-                gs.repeat_action = _clip(f"{name} {args}", REPEAT_ACTION_CHARS)
-                # THE MEASURED NUMBER, NOT THE THRESHOLD. `matches + 1` is how many times this
-                # action was seen in the window; `blocked` is how many calls cria refused. Emitting
-                # the constant instead was rule 12's exact shape — a metric surfaced from the
-                # trigger rather than the event — and it is the same substitution that put a false
-                # "3x" in front of the steer author.
-                gs.repeat_kind = "refusal" if blocked_fires else "repetition"
-                gs.repeat_count = blocked if blocked_fires else matches + 1
-                rlog.emit("loop.repetition", step=step, tool=name, trigger=gs.repeat_kind,
-                          count=gs.repeat_count, args=_clip(args, 120))
+                # BOUND IT, and quote a call that was actually refused. Walked on
+                # ada-handles_fabliq_codex_pon_1785732102 call 0079: the retired route pasted the
+                # WHOLE 3.2 KB of handle_resolver.py back under the words "Choose a DIFFERENT next
+                # action". The model satisfied that literally — same 3.2 KB, new filename.
+                gs.repeat_action = last_refused
+                # THE MEASURED NUMBER, NOT THE THRESHOLD (#12). Emitting the constant instead is what
+                # put a false "3x" in front of the steer author.
+                gs.repeat_count = blocked
+                rlog.emit("loop.refusals", step=step, count=blocked,
+                          action=_clip(last_refused, 120))
 
 
 def _repeat_observation(gs: GuardState) -> dict:
     """The tokens the redirect needs to describe WHAT CRIA SAW — one owner, so the two render sites
     cannot drift and neither can invent a number.
 
-    `observed` is a whole clause rather than a count, because the two routes are not the same fact:
-    one saw an action repeated, the other saw cria refuse calls. "in a row" is dropped from both —
-    the repetition route is windowed, not consecutive, so it was never true there either.
-
-    A route that somehow set no kind gets the vaguest honest wording and no number at all. Saying
-    less is allowed; saying a number cria did not count is not (#5b)."""
-    n, kind = gs.repeat_count, gs.repeat_kind
-    if kind == "refusal" and n:
-        observed = (f"{n} of your recent calls were refused, so none of them ran"
-                    if n > 1 else "your last call was refused, so it did not run")
-    elif kind == "repetition" and n:
-        observed = (f"you have taken the same action {n} times in this window"
-                    if n > 1 else "you have taken this action before in this window")
+    `observed` is a whole clause rather than a bare count. A fire that somehow counted nothing gets
+    the vaguest honest wording and no number at all. Saying less is allowed; saying a number cria did
+    not count is not (#5b)."""
+    n = gs.repeat_count
+    if n > 1:
+        observed = f"{n} of your recent calls were refused, so none of them ran"
+    elif n:
+        observed = "your last call was refused, so it did not run"
     else:
         observed = "you are not getting a new outcome from these actions"
     return {"observed": observed, "repeat_action": gs.repeat_action}
@@ -5451,7 +5337,7 @@ def guard_track_write_streak(gs: GuardState, coder: dict, rlog, *, step=None, me
             if (gs.redirect_due or gs.redirect_probe
                     or gs.spin_probe_due or gs.spin_probe):
                 return  # intervention in flight — nothing accrues (this tracker runs AFTER
-                # guard_track_repetition on the SAME completion: without this check it would
+                # guard_track_refusals on the SAME completion: without this check it would
                 # repopulate the flushed window with the very writes that fired the redirect,
                 # and the coder's single compliance write would re-trip a spin probe steering
                 # it away from the file it just fixed)
@@ -5469,11 +5355,10 @@ def guard_track_write_streak(gs: GuardState, coder: dict, rlog, *, step=None, me
                     and not editrecovery.rewrite_sanctioned(messages or [], path)):
                 gs.spin_probe_due = True
                 gs.spin_path = path
-                # flush BOTH windows (one intervention at a time — a pending redirect's
+                # flush the write window (one intervention at a time — a pending redirect's
                 # gate would otherwise be hijacked and its reasoner-authored nudge
                 # overwritten by the spin renudge)
                 gs.recent_writes = []
-                gs.recent_actions = []
                 rlog.emit("loop.wheel_spinning", step=step, path=path, writes=WHEEL_SPIN_WRITES)
 
 
@@ -5497,7 +5382,7 @@ def guard_intervene(gs: GuardState, body: dict, rlog, *, step=None, workspace_ro
             return _completion_toolcalls([probe_tc], note="running the repo's checks (repeated action detected)")
         gs.nudge_reason = prompts.render(
             "redirect_canned", ground_truth="", **_repeat_observation(gs))
-        gs.steer_source = "repetition guard"
+        gs.steer_source = "refusal guard"
         rlog.emit("loop.redirect", step=step, canned=True, chars=len(gs.nudge_reason))
     if gs.spin_probe_due:  # wheel-spinning tripped last turn → ground truth BEFORE more digging
         gs.spin_probe_due = False
@@ -6183,12 +6068,9 @@ _STEER_TRIGGER = {
     # ONCE, the author wrote back "you've already confirmed they're unavailable (three failed
     # attempts)", and on that premise ordered a hardcode the task forbids. This seat is the one
     # place a false count does the most damage, because whatever it says arrives as evidence.
-    "repetition": lambda gs, step: (
+    "refusal": lambda gs, step: (
         f"cria REFUSED {gs.repeat_count} of its recent calls, so none of them ran — the most "
-        f"recent was: {gs.repeat_action}"
-        if gs.repeat_kind == "refusal" else
-        f"It has taken the SAME action {gs.repeat_count or REPEAT_FINGERPRINT_N}× in this window "
-        f"without the outcome changing: {gs.repeat_action}"),
+        f"recent was: {gs.repeat_action}"),
     "wheel_spin": lambda gs, step: (
         f"It has rewritten the file `{gs.spin_path}` at least {WHEEL_SPIN_WRITES} times with varying "
         f"content and it still is not converging."),
@@ -8074,7 +7956,7 @@ def author_redirect(reasoner_chat, reasoner_role, workspace_root, step_text: str
     to the canned redirect when the reasoner declines/yields nothing: the identical-repeat signal is
     strong, so a stuck repeater is never left without a steer."""
     return author_steer(reasoner_chat, reasoner_role, workspace_root, gs, body, rlog,
-                        condition="repetition", outcome=outcome, step_text=step_text) \
+                        condition="refusal", outcome=outcome, step_text=step_text) \
         or guard_canned_redirect(gs, outcome)
 
 
@@ -8346,9 +8228,9 @@ def guard_probe_steer(gs: GuardState, body: dict, rlog, *, author, step=None) ->
     record_gate_state(gs, outcome, gate_error_text(outcome))
     if gs.redirect_probe:  # repetition: a REASONED redirect (or the canned floor when no reasoner)
         gs.redirect_probe = False
-        gs.steer_source = "repetition guard"
+        gs.steer_source = "refusal guard"
         redirect = guard_canned_redirect(gs, outcome) if author is CANNED \
-            else author("repetition", gs, outcome, body, rlog)  # author_redirect keeps a canned floor → never None
+            else author("refusal", gs, outcome, body, rlog)  # author_redirect keeps a canned floor → never None
         rlog.emit("loop.redirect", step=step, chars=len(redirect))
         return f"[REDIRECT]\n{redirect}"
     # wheel-spin: the same file rewritten with varying content. A REASONER reads the file's real on-disk
@@ -8595,8 +8477,6 @@ def _read_tool_result(messages: list[dict], call_id: str) -> str:
     return ""
 
 
-
-
 def _touched_paths(messages, cap: int = 8) -> list[str]:
     """Paths the coder actually WROTE this session, recovered from the normalized history's
     assistant tool_calls — the durable record. GuardState's recent_writes window is consumed by
@@ -8688,57 +8568,6 @@ def _extend_summary(summary: str, idx: int, item: str) -> str:
     return f"{summary}\n{line}".strip() if summary else line
 
 
-# Shell wrapper boilerplate carries no intent: without stripping it, `bash -lc cat a.py` and
-# `bash -lc cat b.py` share {bash, -lc, cat} and false-match as "the same hunt" — three reads
-# of three DIFFERENT files would fire the redirect.
-# Shell boilerplate stripped from an action's word-set before repetition matching: the interpreter
-# invocation, PLUS output-plumbing that shapes a command's OUTPUT without changing what it
-# investigates — the `cd` prefix, output pagers/formatters (head/tail/cat/less/more/wc/nl), and the
-# `/dev/null` redirect noise. Incident (api.handle.me, 2026-07-21): the coder ran `git log --oneline
-# -5`, then `… 2>&1`, then `… 2>&1 | head -n 5` — same failing command, but the pipe/redirect added
-# ~5 jitter tokens, dropping Jaccard to 0.64 (jitter>2 AND <0.7), so the variants scattered into
-# separate signatures and the redirect fired ~16 calls late instead of at the 3rd. Stripping the
-# plumbing collapses the variants to their shared core (`git log --oneline`) so the spin trips on time,
-# while distinct commands (git log vs ls vs git rev-parse; cat a.py vs cat b.py) still don't match.
-_BOILERPLATE_WORDS = frozenset({
-    "bash", "sh", "zsh", "dash", "-lc", "-c", "-l", "-e", "env",
-    "cd", "head", "tail", "cat", "less", "more", "wc", "nl", "-n", "dev", "null"})
-
-# Navigation/read tools whose repeated use is usually PROGRESS, not a spiral: paging through a doc
-# (web_fetch cursor), drilling by key (find), reading further into a file (start_line), listing a new
-# dir. Their word-set signature is dominated by a constant host/path token ({http, api.handle.me}), so
-# three progressive fetches at different cursors falsely matched as "the same action" and tripped the
-# repetition redirect — aborting a legitimate paginated read. For these, the signature keys on the
-# DISTINGUISHING locator, so a changed url/path/cursor/find/offset reads as progress; only the SAME
-# target repeated (which the web_fetch visibility gate already refuses) matches.
-_NAV_TOOLS = frozenset({"web_fetch", "web_search", "read_file", "list_dir"})
-
-
-def _action_signature(name: str, args: str) -> tuple:
-    """The NATURE of a tool call, for repetition matching — not its bytes. A write is its
-    target + content (path, content-hash); a nav/read tool is its target + locator (so paging or
-    drilling to a new spot is progress, not a repeat); everything else is its tool name + a normalized
-    word-set of its argument values minus shell boilerplate (flag/word jitter survives, per
-    the codex-local lesson that exact fingerprints don't). Args that normalize to NOTHING
-    (symbol-only/non-ASCII) fall back to an exact-bytes hash — an empty set must not match
-    every other empty set of the same tool."""
-    parsed = parse_args(args)
-    if _is_write_tool(name):
-        path = _path_of_args(args, patch_ok=name == "apply_patch") or ""
-        body = str(parsed.get("content") or parsed.get("contents") or parsed.get("text")
-                   or parsed.get("input") or parsed.get("patch") or args)
-        return ("write", path, hashlib.sha1(body.encode("utf-8", "replace")).hexdigest()[:16])
-    if name in _NAV_TOOLS:
-        loc = (parsed.get("url") or parsed.get("path") or parsed.get("dir") or parsed.get("directory") or "",
-               parsed.get("cursor") or "", parsed.get("find") or parsed.get("query") or "",
-               parsed.get("start_line") or parsed.get("offset") or "")
-        return ("nav", name, tuple(str(x) for x in loc))
-    text = " ".join(str(v) for v in _flat_values(parsed)) or (args if isinstance(args, str) else "")
-    words = frozenset(normalize_search(text)) - _BOILERPLATE_WORDS
-    if not words:  # nothing survived normalization → exact bytes only (never a wildcard)
-        raw = args if isinstance(args, str) else json.dumps(args or {})
-        return ("act", name, hashlib.sha1(raw.encode("utf-8", "replace")).hexdigest()[:16])
-    return ("act", name, words)
 
 
 def _flat_values(obj) -> list:
@@ -8751,44 +8580,10 @@ def _flat_values(obj) -> list:
     return [obj]
 
 
-def _actions_match(a: tuple, b: tuple) -> bool:
-    """Same action by nature? Writes: exact target+content. Others: same tool, and the
-    word-sets are the same hunt — exact, or near-identical (≥2 shared, ≤2 words of jitter),
-    or heavily overlapping (Jaccard ≥ 0.7 with ≥3 shared)."""
-    if a[0] != b[0] or a[1] != b[1]:
-        return False
-    if a[0] in ("write", "nav"):  # exact target+content / target+locator — a changed spot is progress
-        return a[2] == b[2]
-    sa, sb = a[2], b[2]
-    if isinstance(sa, str) or isinstance(sb, str):  # exact-bytes fallback signatures
-        return sa == sb
-    if sa == sb:
-        return True
-    # NOTE (round 6): a "file-target veto" was tried here — treat commands naming DISJOINT
-    # files as different hunts, to spare `head a.py/b.py/c.py` exploration. It was removed: a
-    # token bag can't tell a file target from a version pin or a decimal, so it (a) still
-    # fired on any survey sharing one dotted token (python3.11, --cov=app.py) and (b) SILENCED
-    # the exact loops we exist to catch — `pip install ==1.0.1/1.0.2/1.0.3`, a parameter sweep,
-    # is "the same nature, one thing jittered". Missing that is the expensive failure; a survey
-    # false-positive is cheap (the reasoner sees 3 different files in the evidence and waves it
-    # through, and the gate confirms clean first). Bias to firing — the reasoner mediates.
-    shared = len(sa & sb)
-    jitter = len(sa ^ sb)
-    return (shared >= 2 and jitter <= 2) or (shared >= 3 and shared / len(sa | sb) >= 0.7)
-
-
-# A shell-native write: an output redirect (`> file`, `>> file`) or a heredoc (`<<EOF`).
-# Checked on the DECODED, quote-masked COMMAND text only: quoted spans hide comparison
-# operators (`awk '$3 > 100'`, `grep 'n > 0'`, `python -c "1 << 20"` are reads), `>/dev/null`,
-# `2>&1`, `->`, `>=` are not workspace writes — and prose sidecar fields (justification,
-# description) are excluded entirely, because one apostrophe there (don't) would unbalance the
-# quote masking in both directions.
 _QUOTED_SPAN_RE = re.compile(r"'[^']*'|\"[^\"]*\"")
-_SHELL_WRITE_RE = re.compile(r'(?<![-=<>])>{1,2}\s*(?!/dev/|&)[\w./~$-]|<<-?\s*\w')
 # Raw-blob variant for UNPARSEABLE args (truncated JSON): quotes/newlines are still escaped
 # there, so tolerate a leading backslash — and never quote-mask raw blobs (the JSON string
 # delimiters would mask the entire command away).
-_SHELL_WRITE_RAW_RE = re.compile(r'(?<![-=<>])>{1,2}\s*(?!/dev/|&)\\?["\']?[\w./~$-]|<<-?\s*\\?["\']?\w')
 # The shell tool's command fields, shared with shelltool.shell_args so they can't drift
 # (round 4: shell_command was missing here, blinding progress detection on such harnesses).
 # `script` is spliced BEFORE `input`: a script-runner tool carrying both means script=program,
@@ -8826,44 +8621,6 @@ def _command_text(args) -> str | None:
     return " ".join(str(x) for x in _flat_values(parsed))
 
 
-def _is_progress(sig: tuple, raw: str = "") -> bool:
-    """Does this action CHANGE the workspace? A write always; a shell call whose COMMAND
-    carries a known mutator (or a sed -i) or writes via redirect/heredoc. Mutator words and
-    the redirect scan both read the command text only — never prose sidecars ("don't touch
-    the config" in a justification is not a `touch`). Progress on new ground resets the
-    repetition hunt — a healthy edit→test→edit→test cycle must never trip on its repeated
-    test runs, whichever write route the model favors."""
-    if sig[0] == "write":
-        return True
-    text = _command_text(raw)
-    # AN INSTALL INTO A SHARED ENVIRONMENT IS NOT WORKSPACE PROGRESS, whatever mutator words ride
-    # along on the line. Walked on cycle 4 cell 13 (`shipping-rates-rb x ternary-bonsai`, 10% useful,
-    # 34 of 54 calls spent trying to obtain a gem): `mkdir -p vendor/bundle && gem install
-    # eu_countries` read as a change on new ground and flushed a repetition window that had been
-    # filling for eighteen calls. The walk replayed the run's real 53-call sequence through this
-    # guard with the live constants — it fires ZERO times. A local install (`--path vendor/bundle`, a
-    # venv, `npm install` with no `-g`) really does populate the project, and dirguard's own two
-    # patterns are what tell them apart.
-    from . import dirguard as _dg
-    if text and _dg.installs_outside_workspace(text):
-        return False
-    if text is None:  # undecodable fragment — escape-tolerant raw scan
-        blob = raw if isinstance(raw, str) else ""
-        words = frozenset(normalize_search(blob))
-        if words & _MUTATOR_WORDS or ("sed" in words and "-i" in words):
-            return True
-        return bool(_SHELL_WRITE_RAW_RE.search(blob))
-    words = frozenset(normalize_search(text))
-    if words & _MUTATOR_WORDS or ("sed" in words and "-i" in words):
-        return True
-    return bool(_SHELL_WRITE_RE.search(_QUOTED_SPAN_RE.sub(" q ", text)))
-
-
-# The mid-session rollup's OUTPUT bound. summarize's default 8192 is a runaway backstop sized for
-# fast models; on a 27B at ~7 tok/s it is an 18-MINUTE worst case, generated SYNCHRONOUSLY inside
-# the coder's turn (observed: a 13+ minute compactor call while the harness's SSE idle timer fired).
-# Median REAL rollup ≈ 500 tokens (295 measured; the p90 outliers were echo, now stripped) — 2048 is
-# 4× headroom, and a genuinely over-long pass fails safe exactly as before (truncated → "" → no fold).
 ROLLUP_MAX_TOKENS = 2048
 
 CODER_FETCH_HEADER = "PAGES THE CODER ALREADY FETCHED"

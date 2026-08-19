@@ -1264,7 +1264,7 @@ def recover_reasoning_tool_calls(completion: dict, tools=None, rlog=None) -> dic
     previous attempt returned a 404. That looks like a reason to recover only the first of a kind.
     It is the opposite. The repeats are identical because the coder's PROMPT was identical — the
     same 33,168 bytes for thirty-five consecutive cycles — and the reason cria could never change
-    that prompt is that :func:`loop.guard_track_repetition`, :func:`loop.guard_track_write_streak`,
+    that prompt is that :func:`loop.guard_track_refusals`, :func:`loop.guard_track_write_streak`,
     the search-loop matcher and the fetch ledger all iterate FORWARDED TOOL CALLS, and a lost turn
     forwards none. Recovering the call is what lets them see it: the third identical one trips
     ``redirect_due`` (``REPEAT_FINGERPRINT_N``), and a redirect changes the prompt. Suppressing the

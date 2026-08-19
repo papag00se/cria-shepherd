@@ -20,7 +20,7 @@ from .indicators import MARKER
 # 🛡 STEERS — model-FACING interventions the coder reads. Keyed on the DETECTION/trigger event, not
 # the shared `loop.redirect` delivery (which would double-count repetition + wheel-spin).
 _STEER_EVENTS = {
-    "loop.repetition": "repetition",
+    "loop.refusals": "refusals",
     "loop.wheel_spinning": "wheel-spin",
     "loop.periodic_gate": "periodic-gate",
     "loop.gate.blocked": "gate",          # only a BLOCKING gate (synthesized in events.py), not a pass

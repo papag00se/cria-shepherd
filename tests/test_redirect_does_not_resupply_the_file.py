@@ -1,5 +1,5 @@
-"""The repetition redirect quotes the repeated action back to the coder. For a write it carried the
-WHOLE file body.
+"""The redirect quotes the offending call back to the coder. For a write it carried the WHOLE
+file body.
 
 Walked on ada-handles_fabliq_codex_pon_1785732102 call 0079: cria re-sent the exact 3.2 KB of
 handle_resolver.py it was telling the model to stop producing, under the words "Choose a DIFFERENT
@@ -20,10 +20,11 @@ class RepeatActionIsBoundedTests(unittest.TestCase):
     def test_the_constant_exists_and_is_modest(self):
         self.assertTrue(0 < loop.REPEAT_ACTION_CHARS <= 400)
 
-    def test_the_repeated_action_is_clipped_where_it_is_set(self):
-        src = inspect.getsource(loop.guard_track_repetition)
-        self.assertIn("_clip(f\"{name} {args}\", REPEAT_ACTION_CHARS)", src)
-        self.assertNotIn('gs.repeat_action = f"{name} {args}"', src)
+    def test_the_quoted_action_is_clipped_where_it_is_set(self):
+        src = inspect.getsource(loop._refusals_in_window)
+        self.assertIn("REPEAT_ACTION_CHARS)", src)
+        self.assertIn("_clip(", src)
+        self.assertNotIn('last = f"{fn.get(', src)
 
     def test_a_3kb_write_cannot_be_re_supplied_through_the_redirect(self):
         body = "x" * 3200

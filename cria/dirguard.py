@@ -211,7 +211,7 @@ def installs_outside_workspace(command: str) -> bool:
 
     Read by the repetition tracker: `mkdir -p vendor/bundle && gem install eu_countries` carries a
     mutator word, so the word scan called it progress on new ground and FLUSHED the loop it was in
-    the middle of. See loop._is_progress."""
+    the middle of."""
     return bool(command and _GLOBAL_INSTALL.search(command)
                 and not _LOCAL_INSTALL_SCOPE.search(command))
 

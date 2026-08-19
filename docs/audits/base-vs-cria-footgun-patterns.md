@@ -116,3 +116,26 @@ The rows worth a second look are the ones that fire **early, before the outcome 
 **DIRECT made it stick.** `step_framing` re-appending the pin after every tool response and never releasing it. The repetition redirect asserting an outcome it had just been contradicted on. The probe that cannot see the coder's own command while claiming to be the repo's current state. And `steer-recover`, which takes a reasoner that answered `ON_TRACK` and manufactures a directive out of its private thinking — that is how the forbidden `int64` instruction reached the go coder a second time.
 
 The two need different remedies. A RELAY footgun is a question about what cria should be willing to pass through — every one above was already forbidden by the authoring prompt's own rules, so the gap is enforcement, not wording. A DIRECT footgun is a string or a code path in this repo, and it can simply be corrected.
+
+---
+
+## What was removed on the strength of this audit
+
+### The repetition trigger (2026-08-19)
+
+`guard_track_repetition` had two ways to reach the same redirect. One counted **identical actions** in a rolling window; the other counted **cria's own refusals**. The action route is gone; the refusal route stays, and the function is now `guard_track_refusals`.
+
+**The measurement.** BASE runs (all assists off) that contained three or more identical consecutive calls scored a mean of **51%** across 7 runs. CRIA runs the steer actually fired in scored **48%** across 55. The steer's whole premise is that a model cannot get itself out of a repeat, and the arm without it did no worse. One BASE `cart-billing-go × ternary-bonsai` run wrote a byte-identical `cart.go` five times, stopped on its own, and finished at 100%.
+
+**Why the refusal route is not the same thing wearing a hat.** It fires on a fact cria owns outright — it refused the calls, so they did not run — rather than on a similarity judgement about what the model meant. And the thing it reports is invisible to the model in a way a repeat is not: a coder can see it just wrote the same file twice; it cannot see that cria is the reason nothing happened.
+
+**The incident that motivated the action route is still covered.** Run `20260802T195958` spent 35 turns on a byte-identical `web_fetch` and ran to the wall. A repeated identical fetch is refused by the web_fetch visibility gate, and that refusal carries the denial marker (`webfetch._REFUSAL_KEYS`) — so three of them trip the surviving route. `tests/test_reasoning_tool_calls.py::TheRepeatGuardSeesTheRecoveredCall` asserts that link directly, including that the keys stay marked.
+
+**What went with it**, because nothing else read it: the word-set action signature and its two vocabularies (`_action_signature`, `_actions_match`, `_BOILERPLATE_WORDS`, `_NAV_TOOLS`), the progress predicate (`_is_progress`, `_MUTATOR_WORDS`), the no-op-write and refused-call filters that existed only to stop the window mis-flushing (`_rewrites_the_same_bytes`, `_denied_signatures`, `_last_write_by_path`), and `GuardState.recent_actions` / `repeat_kind`. Roughly 300 lines.
+
+**Two things that improved on the way out.**
+
+1. The steer quotes a call that was **actually refused**. It used to quote whatever call was in flight when the counter tripped — a call cria had not refused at all, printed under the words "cria REFUSED 3 of its recent calls … the most recent was". That is the same false-fact shape (#5b) this file's `step_framing` finding is about, in the seat where it does the most damage.
+2. The wheel-spin guard can now see a shell-native write in a **truncated** argument blob. The raw-tolerant scan lived only inside `_is_progress`; `_shell_write_target` returned None and the streak went uncounted — and a truncated write is exactly when a model is spiralling on one file.
+
+**One shape changes hands.** Five identical `write_file` calls in one completion used to trip the repetition redirect, which flushed the write window, so the wheel-spin guard never saw a shape that exactly met its own threshold. It reaches the spin guard now — a better-aimed intervention, since it names the file.

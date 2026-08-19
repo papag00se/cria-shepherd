@@ -1,1 +1,1 @@
-{{GROUND_TRUTH}}Continuing down this line will not change the outcome — {{OBSERVED}}, and the most recent of those actions was: {{REPEAT_ACTION}}. Choose a DIFFERENT next action and take it now via a tool call.
+{{GROUND_TRUTH}}Continuing down this line will not change the outcome — {{OBSERVED}}, and the most recent action of that kind was: {{REPEAT_ACTION}}. Choose a DIFFERENT next action and take it now via a tool call.

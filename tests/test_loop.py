@@ -829,6 +829,22 @@ def _body(tools=True):
     return {"messages": [{"role": "user", "content": "build an ada handle resolver"}], "tools": [_SHELL] if tools else [], "stream": True}
 
 
+def _body_with_refusals(n=3, cmd="gem install eu_countries"):
+    """A history in which cria REFUSED the last ``n`` forwarded calls — the surviving trigger.
+
+    The retired route tripped on three identical calls; this one trips on cria's own refusals, a
+    fact cria owns outright. Distinct commands on purpose: no similarity judgement is involved."""
+    from cria import denial
+    msgs = [{"role": "user", "content": "build an ada handle resolver"}]
+    for i in range(n):
+        msgs.append({"role": "assistant", "tool_calls": [{"id": f"r{i}", "type": "function",
+                     "function": {"name": "exec_command",
+                                  "arguments": json.dumps({"cmd": f"{cmd} --try{i}"})}}]})
+        msgs.append({"role": "tool", "tool_call_id": f"r{i}",
+                     "content": denial.mark("that command cannot run here")})
+    return {"messages": msgs, "tools": [_SHELL], "stream": True}
+
+
 def _body_with_probe(call_id, output):
     """Simulate the harness having run cria's ground-truth probe: its result is now in the stream."""
     b = _body()
@@ -1834,12 +1850,12 @@ class WheelSpinTests(unittest.TestCase):
         body = {"messages": [{"role": "tool", "tool_call_id": "p1", "content": "EXIT:0"}]}
         self.assertIsNotNone(guard_probe_steer(gs, body, rlog, author=CANNED))
         self.assertEqual(gs.steer_source, "wheel-spin guard")
-        # repetition redirect resolving (canned, no author) → labels "repetition guard"
+        # refusal redirect resolving (canned, no author) → labels "refusal guard"
         gs2 = GuardState(redirect_probe=True, probe_call_id="p2", repeat_action="write_file(h.py)")
         body2 = {"messages": [{"role": "tool", "tool_call_id": "p2", "content": "EXIT:0"}]}
         steer = guard_probe_steer(gs2, body2, rlog, author=CANNED)
         self.assertIn("[REDIRECT]", steer)
-        self.assertEqual(gs2.steer_source, "repetition guard")
+        self.assertEqual(gs2.steer_source, "refusal guard")
 
     def test_clean_gate_lets_the_reasoner_judge_without_canned_editorializing(self):
         # Round-6 lives on: a content-blind streak can't tell a spiral from honest edits (applying review
@@ -2293,9 +2309,13 @@ class FetchGroundTruthTests(unittest.TestCase):
         self.assertIn("/holders/{address}", out)
 
 
-class RepetitionRedirectTests(unittest.TestCase):
-    """Trigger 3: the SAME tool call (name+args) 3x within the window → gate for ground truth →
-    the REASONER authors the redirect → delivered as the coder's next nudge."""
+class RefusalRedirectTests(unittest.TestCase):
+    """Trigger 3: cria REFUSED REPEAT_FINGERPRINT_N of the last REPEAT_WINDOW forwarded calls → gate
+    for ground truth → the REASONER authors the redirect → delivered as the coder's next nudge.
+
+    The sibling trigger — the same tool call three times in the window — was removed on 2026-08-19
+    and measured out in `docs/audits/base-vs-cria-footgun-patterns.md`. Everything downstream of the
+    trigger is unchanged, which is what these tests cover."""
 
     def _ws(self):
         import tempfile, os
@@ -2304,7 +2324,7 @@ class RepetitionRedirectTests(unittest.TestCase):
             f.write("print(1)\n")
         return t
 
-    def test_identical_calls_trip_redirect_and_reasoner_authors_it(self):
+    def test_refused_calls_trip_redirect_and_reasoner_authors_it(self):
         from cria.probegate import SECTION_PREFIX as P, SECTION_SUFFIX as S
         ws = self._ws()
         captured = {}
@@ -2317,13 +2337,11 @@ class RepetitionRedirectTests(unittest.TestCase):
                 return json.dumps({"choices": [{"message": {"role": "assistant", "content":
                     "Stop rewriting test_handle.py — the mock target is wrong. Patch handler.requests instead."}}]}).encode()
 
-        coder = _Recorder([_write("h.py", "same bytes")])   # IDENTICAL write forever
+        coder = _Recorder([_write("h.py", "same bytes")])
         loop = Loop(_ctx(coder, _Reasoner(), _plan(1), workspace_root=ws))
         rlog = _Rlog()
-        c = None
-        for _ in range(3):                                  # 3 identical forwarded writes
-            c = loop.drive(_body(), "k", _Classification(), rlog)
-        self.assertIn("loop.repetition", rlog.kinds())
+        loop.drive(_body_with_refusals(), "k", _Classification(), rlog)   # 3 refused calls behind it
+        self.assertIn("loop.refusals", rlog.kinds())
         # next turn: the gate fires for ground truth
         gate = loop.drive(_body(), "k", _Classification(), rlog)
         self.assertIn("loop.redirect_probe", rlog.kinds())
@@ -2335,10 +2353,11 @@ class RepetitionRedirectTests(unittest.TestCase):
         self.assertIn("loop.redirect", rlog.kinds())
         self.assertIn("[REDIRECT]", coder.last_user())
         self.assertIn("Patch handler.requests", coder.last_user())   # the reasoner's words
-        # ...and the reasoner SAW the evidence: the trigger, the repeated action, the session, ground truth
+        # ...and the reasoner SAW the evidence: the trigger, the refused call, the session, ground truth
         self.assertIn("WHAT TRIPPED THE DETECTOR", captured["user"])
         self.assertIn("THE CODING SESSION SO FAR", captured["user"])
-        self.assertIn("write_file", captured["user"])
+        self.assertIn("REFUSED 3", captured["user"])
+        self.assertIn("gem install eu_countries", captured["user"])   # a call that WAS refused
         self.assertIn("SyntaxError", captured["user"])
 
     def test_redirect_prompt_does_not_order_a_look_elsewhere_steer(self):
@@ -2368,8 +2387,7 @@ class RepetitionRedirectTests(unittest.TestCase):
         coder = _Recorder([_write("h.py", "same bytes")])
         loop = Loop(_ctx(coder, _Recorder2(), _plan(1), workspace_root=ws))
         rlog = _Rlog()
-        for _ in range(3):
-            loop.drive(_body(), "k", _Classification(), rlog)
+        loop.drive(_body_with_refusals(), "k", _Classification(), rlog)
         gate = loop.drive(_body(), "k", _Classification(), rlog)
         result = f"{P}probe-0{S}\nEXIT:0\n{P}git{S}\nabc\n"
         loop.drive(_body_with_probe(_tc_id(gate), result), "k", _Classification(), rlog)
@@ -2385,8 +2403,7 @@ class RepetitionRedirectTests(unittest.TestCase):
         reasoner = _Scripted([{"choices": [{"message": {"role": "assistant", "content": ""}}]}])  # empty forever
         loop = Loop(_ctx(coder, reasoner, _plan(1), workspace_root=ws))
         rlog = _Rlog()
-        for _ in range(3):
-            loop.drive(_body(), "k", _Classification(), rlog)
+        loop.drive(_body_with_refusals(), "k", _Classification(), rlog)
         gate = loop.drive(_body(), "k", _Classification(), rlog)
         result = f"{P}probe-0{S}\nEXIT:0\n{P}git{S}\nabc\n"
         loop.drive(_body_with_probe(_tc_id(gate), result), "k", _Classification(), rlog)
@@ -2403,122 +2420,58 @@ class RepetitionRedirectTests(unittest.TestCase):
         reasoner = _Scripted([{"choices": [{"message": {"role": "assistant", "content": ""}}]}])  # empty → canned
         loop = Loop(_ctx(coder, reasoner, _plan(1), workspace_root=ws))
         rlog = _Rlog()
-        for _ in range(3):
-            loop.drive(_body(), "k", _Classification(), rlog)
+        loop.drive(_body_with_refusals(), "k", _Classification(), rlog)
         gate = loop.drive(_body(), "k", _Classification(), rlog)
         result = f'{P}probe-0{S}\n  File "h.py", line 1\nSyntaxError: bad\nEXIT:1\n{P}git{S}\nabc\n'
         loop.drive(_body_with_probe(_tc_id(gate), result), "k", _Classification(), rlog)
         nudge = coder.last_user()
         self.assertIn("GROUND TRUTH", nudge)                              # the failing check is present
-        self.assertIn(_CANNED_TAIL, nudge)                          # and so is the repetition framing
-        # the ground truth LEADS — it comes before the 'you repeated' text, not buried after it
+        self.assertIn(_CANNED_TAIL, nudge)                          # and so is the refusal framing
+        # the ground truth LEADS — it comes before the 'your calls were refused' text, not after it
         self.assertLess(nudge.index("GROUND TRUTH"), nudge.index(_CANNED_TAIL))
 
-    def test_varying_args_do_not_trip(self):
-        ws = self._ws()
-        coder = _VaryingWriter("h.py")                      # same file, different bytes each time
-        loop = Loop(_ctx(coder, _Scripted([_verdict()]), _plan(1), workspace_root=ws))
-        rlog = _Rlog()
-        for _ in range(3):
-            loop.drive(_body(), "k", _Classification(), rlog)
-        self.assertNotIn("loop.repetition", rlog.kinds())
 
-    def test_flag_jitter_still_trips_by_nature(self):
-        # The codex-local lesson: the model jitters one flag/word without changing what it's
-        # doing. Exact fingerprints missed this; nature-matching (normalized word-sets) must not.
-        ws = self._ws()
-        coder = _Recorder([_shell_cmd("pytest -q"),
-                           _shell_cmd("pytest -q --tb=short"),   # same hunt, jittered flag
-                           _shell_cmd("pytest -q")])
-        loop = Loop(_ctx(coder, _Scripted([_verdict()]), _plan(1), workspace_root=ws))
-        rlog = _Rlog()
-        for _ in range(3):
-            loop.drive(_body(), "k", _Classification(), rlog)
-        self.assertIn("loop.repetition", rlog.kinds())
 
-    def test_reads_of_different_files_do_not_trip(self):
-        # Wrapper boilerplate (bash -lc) must not count as shared intent: three reads of three
-        # DIFFERENT files share only {cat} once it's stripped — that's exploration, not a loop.
-        ws = self._ws()
-        coder = _Recorder([_shell_cmd("cat a.py"), _shell_cmd("cat b.py"), _shell_cmd("cat c.py")])
-        loop = Loop(_ctx(coder, _Scripted([_verdict()]), _plan(1), workspace_root=ws))
-        rlog = _Rlog()
-        for _ in range(3):
-            loop.drive(_body(), "k", _Classification(), rlog)
-        self.assertNotIn("loop.repetition", rlog.kinds())
 
-    def test_identical_reads_still_trip(self):
-        # The live incident: "stuck on reading package.json" — the SAME read over and over.
-        ws = self._ws()
-        coder = _Recorder([_shell_cmd("cat package.json")])
-        loop = Loop(_ctx(coder, _Scripted([_verdict()]), _plan(1), workspace_root=ws))
-        rlog = _Rlog()
-        for _ in range(3):
-            loop.drive(_body(), "k", _Classification(), rlog)
-        self.assertIn("loop.repetition", rlog.kinds())
 
-    def test_symbol_only_args_match_exact_bytes_only(self):
-        # Args that normalize to an EMPTY word-set (symbol-only/non-ASCII commands) must not
-        # wildcard-match each other — exact bytes only.
-        ws = self._ws()
-        coder = _Recorder([_shell_cmd("→"), _shell_cmd("←"), _shell_cmd("↔")])  # three DIFFERENT
-        loop = Loop(_ctx(coder, _Scripted([_verdict()]), _plan(1), workspace_root=ws))
-        rlog = _Rlog()
-        for _ in range(3):
-            loop.drive(_body(), "k", _Classification(), rlog)
-        self.assertNotIn("loop.repetition", rlog.kinds())
-        coder2 = _Recorder([_shell_cmd("→")])                     # the SAME one, three times
-        loop2 = Loop(_ctx(coder2, _Scripted([_verdict()]), _plan(1), workspace_root=ws))
-        rlog2 = _Rlog()
-        for _ in range(3):
-            loop2.drive(_body(), "k", _Classification(), rlog2)
-        self.assertIn("loop.repetition", rlog2.kinds())
 
-    def test_parallel_identical_writes_fire_one_redirect_no_spin(self):
-        # One completion carrying 5 IDENTICAL write_file calls (parallel tool calls are real):
-        # exactly one intervention — the redirect fires and consumes BOTH windows; the spin
-        # probe stays silent. Previously both fired, two gates ran back-to-back, and the spin
-        # renudge overwrote the reasoner-authored redirect.
-        from cria.probegate import SECTION_PREFIX as P, SECTION_SUFFIX as S
+    def test_parallel_identical_writes_now_reach_the_spin_guard(self):
+        # One completion carrying 5 IDENTICAL write_file calls (parallel tool calls are real). The
+        # retired repetition trigger claimed this shape first and consumed the evidence, so the
+        # wheel-spin guard — whose threshold this exactly meets — never saw it. With that trigger
+        # gone there is one intervention, and it is the right one.
         ws = self._ws()
         tc = {"type": "function", "function": {"name": "write_file",
               "arguments": json.dumps({"path": "h.py", "content": "same"})}}
         five = {"choices": [{"message": {"role": "assistant",
                 "tool_calls": [dict(tc, id=f"w{i}") for i in range(5)]}}]}
         coder = _Recorder([five])
-        reasoner = _Scripted([{"choices": [{"message": {"role": "assistant",
-                                            "content": "Try a different approach now."}}]}])
-        loop = Loop(_ctx(coder, reasoner, _plan(1), workspace_root=ws))
+        loop = Loop(_ctx(coder, _Scripted([_verdict()]), _plan(1), workspace_root=ws))
         rlog = _Rlog()
         loop.drive(_body(), "k", _Classification(), rlog)
-        self.assertIn("loop.repetition", rlog.kinds())
-        self.assertNotIn("loop.wheel_spinning", rlog.kinds())
-        gate = loop.drive(_body(), "k", _Classification(), rlog)
-        self.assertIn("loop.redirect_probe", rlog.kinds())
-        result = f"{P}probe-0{S}\nEXIT:0\n{P}git{S}\nabc\n"
-        loop.drive(_body_with_probe(_tc_id(gate), result), "k", _Classification(), rlog)
-        self.assertNotIn("loop.spin_probe", rlog.kinds())         # no second gate hijack
-        self.assertIn("[REDIRECT]", coder.last_user())
-        self.assertIn("Try a different approach now.", coder.last_user())
+        self.assertIn("loop.wheel_spinning", rlog.kinds())
+        self.assertNotIn("loop.refusals", rlog.kinds())      # cria refused nothing here
+        loop.drive(_body(), "k", _Classification(), rlog)
+        self.assertIn("loop.spin_probe", rlog.kinds())
 
     def test_compliance_write_after_redirect_does_not_trip_spin(self):
-        # Round-2 verify: _track_write_streak runs AFTER _track_repetition on the SAME
-        # completion — without the in-flight freeze it repopulated the flushed window with the
-        # very writes that fired the redirect, and the coder's single compliance write re-tripped
-        # a spin probe steering it away from the file it had just fixed.
+        # guard_track_write_streak runs AFTER guard_track_refusals on the SAME completion — without
+        # the in-flight freeze it repopulates the flushed window with the writes that were in flight
+        # when the redirect fired, and the coder's single compliance write re-trips a spin probe
+        # steering it away from the file it had just fixed.
         from cria.probegate import SECTION_PREFIX as P, SECTION_SUFFIX as S
         ws = self._ws()
         tc = {"type": "function", "function": {"name": "write_file",
               "arguments": json.dumps({"path": "h.py", "content": "same"})}}
-        five = {"choices": [{"message": {"role": "assistant",
-                "tool_calls": [dict(tc, id=f"w{i}") for i in range(5)]}}]}
+        four = {"choices": [{"message": {"role": "assistant",
+                "tool_calls": [dict(tc, id=f"w{i}") for i in range(4)]}}]}   # below the spin bar
         fix = _write("h.py", "the compliant fix")           # ONE new-content write
-        coder = _Recorder([five, five, fix])                # five... gate... [gate result → fix]
+        coder = _Recorder([four, fix])
         reasoner = _Scripted([{"choices": [{"message": {"role": "assistant",
                                             "content": "Fix the mock target instead."}}]}])
         loop = Loop(_ctx(coder, reasoner, _plan(1), workspace_root=ws))
         rlog = _Rlog()
-        loop.drive(_body(), "k", _Classification(), rlog)   # 5 identical writes → repetition
+        loop.drive(_body_with_refusals(), "k", _Classification(), rlog)   # refusals → redirect due
         gate = loop.drive(_body(), "k", _Classification(), rlog)
         result = f"{P}probe-0{S}\nEXIT:0\n{P}git{S}\nabc\n"
         loop.drive(_body_with_probe(_tc_id(gate), result), "k", _Classification(), rlog)
@@ -2526,155 +2479,78 @@ class RepetitionRedirectTests(unittest.TestCase):
         self.assertNotIn("loop.wheel_spinning", rlog.kinds())
         self.assertNotIn("loop.spin_probe", rlog.kinds())
 
-    def test_comparison_operators_are_not_progress(self):
-        # `awk '$3 > 100'` / `grep 'n > 0'` are READS: quoted comparisons must not reset the
-        # hunt, or a real read-loop interleaved with >-laden diagnostics never trips.
-        ws = self._ws()
-        seq = []
-        for i in range(3):
-            seq.append(_shell_cmd("cat src/parser.py"))                    # the stuck read
-            seq.append(_shell_cmd(f"awk '$3 > {100 + i}' data_{i}.txt"))   # distinct diagnostics
-        coder = _Recorder(seq)
-        loop = Loop(_ctx(coder, _Scripted([_verdict()]), _plan(1), workspace_root=ws))
-        rlog = _Rlog()
-        for _ in range(5):                                  # the 3rd identical read is call 5
-            loop.drive(_body(), "k", _Classification(), rlog)
-        self.assertIn("loop.repetition", rlog.kinds())
-
-    def test_dev_null_redirect_is_not_progress(self):
-        from cria.loop import _action_signature, _is_progress
+    def test_dev_null_redirect_is_not_a_write(self):
+        from cria.loop import _shell_write_target
         args = json.dumps({"command": ["bash", "-lc", "pytest -q > /dev/null 2>&1"]})
-        self.assertFalse(_is_progress(_action_signature("shell", args), args))
+        self.assertFalse((_shell_write_target(args) is not None))
         args2 = json.dumps({"command": ["bash", "-lc", "echo done > out.txt"]})
-        self.assertTrue(_is_progress(_action_signature("shell", args2), args2))
+        self.assertTrue((_shell_write_target(args2) is not None))
 
-    def test_prose_sidecar_fields_do_not_corrupt_progress_detection(self):
+    def test_prose_sidecar_fields_do_not_corrupt_write_detection(self):
         # Round-3 verify: one apostrophe in a justification field unbalanced the quote masking.
         # Only COMMAND fields are scanned — prose never hides a real write or fakes one.
-        from cria.loop import _action_signature, _is_progress
+        from cria.loop import _shell_write_target
         read = json.dumps({"command": ["bash", "-lc", "cat a.py"],
                            "justification": "we can't miss Bob's edge > case"})
-        self.assertFalse(_is_progress(_action_signature("shell", read), read))
+        self.assertFalse((_shell_write_target(read) is not None))
         write = json.dumps({"command": ["bash", "-lc", "echo hi > f.txt"],
                             "justification": "don't skip"})
-        self.assertTrue(_is_progress(_action_signature("shell", write), write))
+        self.assertTrue((_shell_write_target(write) is not None))
 
     def test_unparseable_args_still_detect_shell_writes(self):
         # Round-3 verify: a truncated arg blob (invalid JSON, still escape-encoded) must use
         # the raw-tolerant pattern — quote-masking raw JSON would mask the whole command away.
-        from cria.loop import _action_signature, _is_progress
+        from cria.loop import _shell_write_target
         raw = '{"command": ["bash", "-lc", "echo x > f.py"]'   # cut off — invalid JSON
-        self.assertTrue(_is_progress(_action_signature("shell", raw), raw))
+        self.assertTrue((_shell_write_target(raw) is not None))
 
     def test_decodable_non_dict_args_are_quote_masked(self):
         # Round-4 verify: bare shell text and JSON argv arrays (the shapes leaked-tool-call
         # recovery mints) have REAL balanced quotes — they take the masked path, so quoted
         # comparisons are reads, while their real redirects still count as writes.
-        from cria.loop import _action_signature, _is_progress
+        from cria.loop import _shell_write_target
         for read in ("grep 'count > 1' src/module.py",              # bare shell text
                      '["bash", "-lc", "awk \'$3 > 100\' data.txt"]'):  # JSON argv array
-            self.assertFalse(_is_progress(_action_signature("shell", read), read), read)
+            self.assertFalse((_shell_write_target(read) is not None), read)
         for write in ("echo x > f.py",
                       '["bash", "-lc", "echo done > out.txt"]'):
-            self.assertTrue(_is_progress(_action_signature("shell", write), write), write)
+            self.assertTrue((_shell_write_target(write) is not None), write)
 
     def test_shell_command_field_counts_as_command(self):
         # Round-4 verify: _COMMAND_KEYS is derived from shelltool._CMD_FIELDS — a harness
         # whose shell tool uses `shell_command` gets the same progress detection.
-        from cria.loop import _action_signature, _is_progress
+        from cria.loop import _shell_write_target
         args = json.dumps({"shell_command": "echo done > result.txt"})
-        self.assertTrue(_is_progress(_action_signature("shell", args), args))
+        self.assertTrue((_shell_write_target(args) is not None))
 
-    def test_prose_mutator_words_are_not_progress(self):
+    def test_prose_mutator_words_are_not_a_write(self):
         # Round-4 verify: "don't touch the config" in a justification is not a `touch` —
         # mutator words come from the COMMAND text only.
-        from cria.loop import _action_signature, _is_progress
+        from cria.loop import _shell_write_target
         args = json.dumps({"command": "grep -n handler src/module.py",
                            "justification": "checking we don't touch the config"})
-        self.assertFalse(_is_progress(_action_signature("shell", args), args))
+        self.assertFalse((_shell_write_target(args) is not None))
 
     def test_script_outranks_input(self):
         # Round-5 verify: script=program, input=stdin — the derivation must not demote script
         # below input (stdin data with a '>' read as a phantom write; a real script write missed).
-        from cria.loop import _action_signature, _is_progress
+        from cria.loop import _shell_write_target
         stdin_read = json.dumps({"script": "sort", "input": "line a\nc > d\nline b"})
-        self.assertFalse(_is_progress(_action_signature("run", stdin_read), stdin_read))
+        self.assertFalse((_shell_write_target(stdin_read) is not None))
         script_write = json.dumps({"script": "generate.sh > reports/out.txt", "input": "dataset-a"})
-        self.assertTrue(_is_progress(_action_signature("run", script_write), script_write))
+        self.assertTrue((_shell_write_target(script_write) is not None))
 
     def test_bracket_leading_shell_text_is_not_a_json_fragment(self):
         # Round-5 verify: `[ -f x ] && …` test-brackets and `{ cmd; }` brace groups are bare
         # shell text (quote-masked path) — only `{"…` / `["…` shapes are cut-off JSON.
-        from cria.loop import _action_signature, _is_progress
+        from cria.loop import _shell_write_target
         for read in ("[ -f x ] && grep 'count > 1' src/module.py",
                      "{ grep 'n > 0' f.py; } | wc -l"):
-            self.assertFalse(_is_progress(_action_signature("shell", read), read), read)
+            self.assertFalse((_shell_write_target(read) is not None), read)
 
-    def test_jittered_parameter_sweep_fires(self):
-        # Round-6: a version-pin retry loop is "the same nature, one thing jittered" — exactly
-        # what the redesign exists to catch. The round-5 file-target veto SILENCED this (it read
-        # 1.0.1/1.0.2/1.0.3 as disjoint "files"); removing the veto restores the catch.
-        ws = self._ws()
-        coder = _Recorder([_shell_cmd("pip install cryptg==1.0.1"),
-                           _shell_cmd("pip install cryptg==1.0.2"),
-                           _shell_cmd("pip install cryptg==1.0.3")])
-        loop = Loop(_ctx(coder, _Scripted([_verdict()]), _plan(1), workspace_root=ws))
-        rlog = _Rlog()
-        for _ in range(3):
-            loop.drive(_body(), "k", _Classification(), rlog)
-        self.assertIn("loop.repetition", rlog.kinds())
 
-    def test_survey_with_shared_flag_fires_and_is_reasoner_mediated(self):
-        # Round-6 tradeoff (documented): `head -50 a.py/b.py/c.py` share verb+flag and DO fire —
-        # the veto that spared this couldn't be made sound without silencing real loops. A
-        # survey false-positive is cheap: the gate confirms clean and the reasoner sees the 3
-        # distinct files in the evidence. The redirect is delivered, not suppressed.
-        from cria.probegate import SECTION_PREFIX as P, SECTION_SUFFIX as S
-        ws = self._ws()
-        coder = _Recorder([_shell_cmd("head -50 src/a.py"), _shell_cmd("head -50 src/b.py"),
-                           _shell_cmd("head -50 src/c.py")])
-        reasoner = _Scripted([{"choices": [{"message": {"role": "assistant",
-                              "content": "You're surveying different files — nothing is broken, proceed."}}]}])
-        loop = Loop(_ctx(coder, reasoner, _plan(1), workspace_root=ws))
-        rlog = _Rlog()
-        for _ in range(3):
-            loop.drive(_body(), "k", _Classification(), rlog)
-        self.assertIn("loop.repetition", rlog.kinds())
-        gate = loop.drive(_body(), "k", _Classification(), rlog)
-        result = f"{P}probe-0{S}\nEXIT:0\n{P}git{S}\nabc\n"
-        loop.drive(_body_with_probe(_tc_id(gate), result), "k", _Classification(), rlog)
-        self.assertIn("proceed", coder.last_user())        # the reasoner's benign steer, not a canned scold
 
-    def test_identical_writes_far_apart_age_out(self):
-        # Round-3 verify: preserved write signatures must not be immortal — identical writes
-        # ~15 calls apart are NOT "3× within the last 12 calls".
-        ws = self._ws()
-        seq = []
-        for burst in range(3):
-            seq.append(_write("a.py", "same bytes"))           # the recurring identical write
-            for j in range(13):                                # 13 distinct reads age it out
-                seq.append(_shell_cmd(f"cat part_{burst}_{j}.py"))
-        coder = _Recorder(seq)
-        loop = Loop(_ctx(coder, _Scripted([_verdict()]), _plan(1), workspace_root=ws))
-        rlog = _Rlog()
-        for _ in range(len(seq)):
-            loop.drive(_body(), "k", _Classification(), rlog)
-        self.assertNotIn("loop.repetition", rlog.kinds())
 
-    def test_identical_writes_survive_interleaved_progress(self):
-        # The operator's per-file rule: a.py written 3× with the SAME content fires even with
-        # productive other-file writes in between (progress resets the ACTION hunt, not the
-        # write signatures).
-        ws = self._ws()
-        seq = [_write("a.py", "same"), _write("b.py", "real work 1"),
-               _write("a.py", "same"), _write("c.py", "real work 2"),
-               _write("a.py", "same")]
-        coder = _Recorder(seq)
-        loop = Loop(_ctx(coder, _Scripted([_verdict()]), _plan(1), workspace_root=ws))
-        rlog = _Rlog()
-        for _ in range(len(seq)):
-            loop.drive(_body(), "k", _Classification(), rlog)
-        self.assertIn("loop.repetition", rlog.kinds())
 
     def test_no_gate_still_delivers_a_canned_steer(self):
         # The gate can't compose (unreadable workspace → _gate_op returns None). The tripped
@@ -2685,9 +2561,8 @@ class RepetitionRedirectTests(unittest.TestCase):
         coder = _Recorder([_write("h.py", "same bytes")])
         loop = Loop(_ctx(coder, _Scripted([_verdict()]), _plan(1), workspace_root=ws))
         rlog = _Rlog()
-        for _ in range(3):
-            loop.drive(_body(), "k", _Classification(), rlog)
-        self.assertIn("loop.repetition", rlog.kinds())
+        loop.drive(_body_with_refusals(), "k", _Classification(), rlog)
+        self.assertIn("loop.refusals", rlog.kinds())
         with mock.patch("cria.loop.probegate.plan_gate", side_effect=OSError("unreadable")):
             loop.drive(_body(), "k", _Classification(), rlog)
         self.assertIn("loop.redirect", rlog.kinds())        # canned, not silent
@@ -2711,22 +2586,6 @@ class RepetitionRedirectTests(unittest.TestCase):
             loop.drive(_body(), "k", _Classification(), rlog)
         self.assertNotIn("loop.repetition", rlog.kinds())
 
-    def test_healthy_edit_test_cycle_never_trips(self):
-        # write(NEW content) → pytest -q → write(NEW) → pytest -q …: each real edit is progress
-        # and resets the hunt, so the identical test runs never accrue. THE false positive the
-        # nature redesign exists to prevent.
-        ws = self._ws()
-        seq = []
-        for i in range(4):                                  # 4 writes — under the wheel-spin 5
-            seq.append(_write("h.py", f"attempt = {i}"))
-            seq.append(_shell_cmd("pytest -q"))
-        coder = _Recorder(seq)
-        loop = Loop(_ctx(coder, _Scripted([_verdict()]), _plan(1), workspace_root=ws))
-        rlog = _Rlog()
-        for _ in range(len(seq)):
-            loop.drive(_body(), "k", _Classification(), rlog)
-        self.assertNotIn("loop.repetition", rlog.kinds())
-        self.assertNotIn("loop.wheel_spinning", rlog.kinds())  # 4 writes — under the threshold
 
 
 class WritePathTests(unittest.TestCase):
@@ -3378,46 +3237,71 @@ class ReframePreambleTests(unittest.TestCase):
         self.assertEqual(reframe_preamble(m), m)
 
 
-class SharedRepetitionGuardTests(unittest.TestCase):
-    """The repetition/wheel-spin guard is now shared module functions (GuardState-driven), so the
+class SharedRefusalGuardTests(unittest.TestCase):
+    """The refusal/wheel-spin guards are shared module functions (GuardState-driven), so the
     plan-off path runs the IDENTICAL detection→probe→steer the loop does."""
 
     def _tc(self, name, args):
         return {"choices": [{"message": {"tool_calls": [
             {"id": "x", "function": {"name": name, "arguments": args}}]}}]}
 
-    def test_track_repetition_trips_redirect(self):
-        from cria.loop import GuardState, guard_track_repetition, REPEAT_FINGERPRINT_N
+    def _refused(self, *cmds):
+        """A history where cria refused each of ``cmds`` — the evidence the trigger reads."""
+        from cria import denial
+        msgs = []
+        for i, cmd in enumerate(cmds):
+            msgs.append({"role": "assistant", "tool_calls": [{"id": f"d{i}", "type": "function",
+                         "function": {"name": "exec_command",
+                                      "arguments": json.dumps({"cmd": cmd})}}]})
+            msgs.append({"role": "tool", "tool_call_id": f"d{i}",
+                         "content": denial.mark("blocked")})
+        return msgs
+
+    def test_refusals_trip_redirect(self):
+        from cria.loop import GuardState, guard_track_refusals, REPEAT_FINGERPRINT_N
         gs = GuardState()
-        for _ in range(REPEAT_FINGERPRINT_N):
-            guard_track_repetition(gs, self._tc("exec_command", '{"cmd":"pytest -q"}'), _Rlog())
+        msgs = self._refused(*[f"gem install pkg{i}" for i in range(REPEAT_FINGERPRINT_N)])
+        guard_track_refusals(gs, self._tc("exec_command", '{"cmd":"pytest -q"}'), _Rlog(),
+                             messages=msgs)
         self.assertTrue(gs.redirect_due)
-        self.assertIn("exec_command", gs.repeat_action)
+        self.assertEqual(gs.repeat_count, REPEAT_FINGERPRINT_N)
 
-    def test_track_repetition_matches_through_pipe_and_redirect_jitter(self):
-        # The api.handle.me incident: the SAME failing command re-run with output-plumbing jitter
-        # (`2>&1`, `| head -n 5`) must still trip at the 3rd call, not scatter into separate
-        # signatures and fire ~16 calls late. Plumbing (cd/head/redirects) is boilerplate now.
-        from cria.loop import GuardState, guard_track_repetition
+    def test_the_quoted_call_is_a_refused_one_not_the_call_in_flight(self):
+        """The steer says "the most recent was: X". X must be a call cria actually refused — it used
+        to be whatever the coder was doing when the counter tripped."""
+        from cria.loop import GuardState, guard_track_refusals
         gs = GuardState()
-        D = "/home/jesse/src/codex.test.site"
-        variants = [
-            f"cd {D} && git log --oneline -5",
-            f"cd {D} && git log --oneline -5 2>&1",
-            f"cd {D} && git log --oneline -5 2>&1 | head -n 5",
-        ]
-        for cmd in variants:
-            guard_track_repetition(gs, self._tc("exec_command", json.dumps({"cmd": cmd})), _Rlog())
-        self.assertTrue(gs.redirect_due)  # tripped by the 3rd variant, despite the pipe/redirect jitter
+        msgs = self._refused("gem install a", "gem install b", "gem install c")
+        guard_track_refusals(gs, self._tc("write_file", '{"path":"h.py","content":"x"}'), _Rlog(),
+                             messages=msgs)
+        self.assertIn("gem install c", gs.repeat_action)
+        self.assertNotIn("write_file", gs.repeat_action)
 
-    def test_track_repetition_does_not_merge_distinct_shell_commands(self):
-        # Stripping plumbing must not over-merge genuinely different commands into one hunt.
-        from cria.loop import GuardState, guard_track_repetition
+    def test_calls_that_ran_do_not_trip_it(self):
+        """Three DIFFERENT commands that cria allowed are exploration, not a stuck loop — and the
+        retired sibling trigger, which fired on similarity, is not there to catch them either."""
+        from cria.loop import GuardState, guard_track_refusals
         gs = GuardState()
-        D = "/home/jesse/src/codex.test.site"
-        for cmd in [f"cd {D} && git log --oneline -5", f"cd {D} && ls -la", f"cd {D} && git rev-parse --show-toplevel"]:
-            guard_track_repetition(gs, self._tc("exec_command", json.dumps({"cmd": cmd})), _Rlog())
-        self.assertFalse(gs.redirect_due)  # three DIFFERENT commands → not a spin
+        msgs = [{"role": "assistant", "tool_calls": [{"id": f"o{i}", "type": "function",
+                 "function": {"name": "exec_command", "arguments": json.dumps({"cmd": c})}}]}
+                for i, c in enumerate(("git log --oneline -5", "ls -la", "git rev-parse --show-toplevel"))]
+        guard_track_refusals(gs, self._tc("exec_command", '{"cmd":"pytest -q"}'), _Rlog(),
+                             messages=msgs)
+        self.assertFalse(gs.redirect_due)
+
+    def test_one_intervention_consumes_the_evidence(self):
+        """The refusals stay in the history after a fire, so without the re-arm window the redirect
+        re-fires on every call (replayed: 14 redirects over 48 calls)."""
+        from cria.loop import GuardState, guard_track_refusals
+        gs = GuardState()
+        msgs = self._refused("gem install a", "gem install b", "gem install c")
+        fires = 0
+        for _ in range(6):
+            gs.redirect_due = False
+            guard_track_refusals(gs, self._tc("exec_command", '{"cmd":"pytest -q"}'), _Rlog(),
+                                 messages=msgs)
+            fires += bool(gs.redirect_due)
+        self.assertEqual(fires, 1)
 
     def test_track_write_streak_trips_spin(self):
         from cria.loop import GuardState, guard_track_write_streak, WHEEL_SPIN_WRITES
@@ -3782,7 +3666,7 @@ class UnifiedSteerAuthorTests(unittest.TestCase):
         from cria.loop import author_steer
         from cria.probegate import GateOutcome
         gs, ws = self._gs(), tempfile.mkdtemp()
-        for cond in ("repetition", "wheel_spin", "thrash"):   # "flail" removed with its steer
+        for cond in ("refusal", "wheel_spin", "thrash"):   # "flail" removed with its steer
             out = author_steer(self._chat("read the real file and run the failing test"), None, ws, gs,
                                {"messages": []}, _Rlog(), condition=cond, outcome=GateOutcome(ran=False))
             self.assertIn("read the real file", out, cond)
@@ -3923,7 +3807,7 @@ class UnifiedSteerAuthorTests(unittest.TestCase):
         out = author_steer(
             self._chat("You should fetch the API response from https://api.handle.me/api/, "
                        "parse the JSON, then run the unit tests."),
-            None, ws, gs, body, _Rlog(), condition="repetition")
+            None, ws, gs, body, _Rlog(), condition="refusal")
         self.assertIsNone(out)
 
     def test_steer_synthesizing_a_real_route_from_the_spec_survives(self):
@@ -3941,7 +3825,7 @@ class UnifiedSteerAuthorTests(unittest.TestCase):
         ]}
         out = author_steer(
             self._chat("You are stuck re-reading the spec. Fetch https://api.handle.me/handles now."),
-            None, ws, gs, body, _Rlog(), condition="repetition")
+            None, ws, gs, body, _Rlog(), condition="refusal")
         self.assertIsNotNone(out)
         self.assertIn("https://api.handle.me/handles", out)
 
@@ -3953,7 +3837,7 @@ class UnifiedSteerAuthorTests(unittest.TestCase):
         gs, ws = self._gs(), tempfile.mkdtemp()
         body = {"messages": [{"role": "tool", "content": "web_search results mention api.handle.me"}]}
         out = author_steer(self._chat("Stop searching and web_fetch https://api.handle.me directly."),
-                           None, ws, gs, body, _Rlog(), condition="repetition")
+                           None, ws, gs, body, _Rlog(), condition="refusal")
         self.assertIn("https://api.handle.me", out)
 
     def test_url_free_steer_is_untouched(self):
@@ -4278,41 +4162,6 @@ class ReasonedRedirectTests(unittest.TestCase):
         self.assertIsNotNone(guard_gate_verdict(gs, body, _Rlog()))   # 'done' NOT accepted
 
 
-class NavRepeatSignatureTests(unittest.TestCase):
-    """Progressive navigation (paging a doc, drilling by key, listing a NEW dir) is progress, not a
-    spiral — a changed url/cursor/path must not trip the repetition redirect. Three progressive
-    web_fetches falsely matched (host tokens dominated the word-bag), aborting a legitimate paginated
-    read (calls 25-28); three list_dir of DIFFERENT paths falsely fired at call 12."""
-
-    def test_progressive_web_fetch_pages_do_not_match(self):
-        from cria.loop import _action_signature, _actions_match
-        a = _action_signature("web_fetch", '{"url":"https://api.handle.me/openapi.json"}')
-        b = _action_signature("web_fetch", '{"url":"https://api.handle.me/openapi.json","cursor":"c16000"}')
-        self.assertFalse(_actions_match(a, b))          # different cursor = progress, not a repeat
-
-    def test_identical_web_fetch_still_matches(self):
-        from cria.loop import _action_signature, _actions_match
-        s = '{"url":"https://api.handle.me/openapi.json","cursor":"c16000"}'
-        self.assertTrue(_actions_match(_action_signature("web_fetch", s), _action_signature("web_fetch", s)))
-
-    def test_list_dir_of_different_paths_do_not_match(self):
-        from cria.loop import _action_signature, _actions_match
-        a = _action_signature("list_dir", '{"path":"/w"}')
-        b = _action_signature("list_dir", '{"path":"/w/docs"}')
-        self.assertFalse(_actions_match(a, b))          # the bogus call-12 "3 times (list_dir docs)"
-
-    def test_list_dir_same_path_matches(self):
-        from cria.loop import _action_signature, _actions_match
-        s = '{"path":"/w"}'
-        self.assertTrue(_actions_match(_action_signature("list_dir", s), _action_signature("list_dir", s)))
-
-    def test_read_file_progressive_start_lines_do_not_match(self):
-        from cria.loop import _action_signature, _actions_match
-        a = _action_signature("read_file", '{"path":"big.py"}')
-        b = _action_signature("read_file", '{"path":"big.py","start_line":200}')
-        self.assertFalse(_actions_match(a, b))
-
-
 class SatisfactionCheckTests(unittest.TestCase):
     """The periodic 'is the user's task satisfied?' off-ramp for a plan-off session that finished the
     work but can't STOP. Cadence: drive 100, then every 25. Fails CLOSED on an unparseable verdict."""
@@ -4485,7 +4334,7 @@ class SingleItemMethodTests(unittest.TestCase):
         sess = _synth()
         comp = loop._coder_turn(sess, {"messages": [], "tools": [_SHELL]}, {"messages": []}, step=1, rlog=_Rlog())
         self.assertTrue(comp["choices"][0]["message"]["tool_calls"])   # acting turn forwarded
-        self.assertIsNotNone(sess.recent_actions)                      # repetition tracking ran
+        self.assertEqual(sess.action_seq, 1)                           # refusal tracking ran
 
     def test_coder_turn_empty_on_decode_fail(self):
         loop = _single_loop(lambda b, r: b"not json")
