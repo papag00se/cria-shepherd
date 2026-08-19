@@ -135,13 +135,25 @@ cria's install advice names `bundler/setup` and `BUNDLE_GEMFILE`, never `bundle 
 | the seeded block names the root its paths are relative to | `ef9b4d3` |
 | the exec-intent seat and its self-vetoing command list | `1e0ac6e`, earlier |
 
-## Order I would take it in
+## Outcome — every item worked through
 
-1. **C** (delete the false ledger clauses) — cheapest, provably false, no design decision.
-2. **D + G** (elision must not splice or trim inside a record) — one rule, two call sites, removes fabricated evidence.
-3. **E + I** (supersession keeps the newest, not the oldest) — one rule, fixes the reasoner's blind diff and the stale compaction body.
-4. **F** — starting with the reading that says which path emitted the code.
-5. **B** — needs a decision about the inline limit; worth the operator's eye.
-6. **A** — the most valuable and the most delicate, because it touches a rule that exists for a measured reason. Measure the corpus first.
-7. **H, J, K, M** — real, smaller.
-8. **L** — measure before building; may not survive.
+Landed, each with a test naming the incident:
+
+| root | what changed | |
+|---|---|---|
+| C | the fetch ledger says where the body actually is, instead of claiming a transcript cria refused to write to | `b415161` |
+| D | an elision cuts at line boundaries and can no longer splice two records into one | `b21acdc` |
+| G | an empty line in a program's output is a value — anchored on the harness's own `Output:` marker | `e6a3626` |
+| E | a stale edit hides both halves, so the newest write is where the diff lives | `c115ce4` |
+| I | the compaction note says it describes the past; its bullets read as `name(args)` | `557cf10` |
+| F | the dictated-code detector can see Ruby predicate/bang methods and Rust macros | `461a52b` |
+| B | the read refusal states the document's extent and a range that fits | `5f7bd86` |
+| J | the abort notice is replaced on a retry, never stacked | `e933c57` |
+| L | the install route says how to run a one-off command under a project-local install | `7d6ae26` |
+
+**Refuted on measurement or on reading — recorded, not built:**
+
+- **A (split the withheld verdict).** The corpus holds **one** `satisfaction_gap_withheld` event, ever — against 1,521 inspection rounds and 74 caps. #15 says measure prevalence before building a heuristic, and one occurrence is not a systemic problem. The two causes of the cap that produced it were fixed upstream instead (the spill exclusion and the rooted paths), which is where the value was.
+- **H (the staleness note was false).** Read against the capture: a fresh gate result appears with no note, and the SAME result reappears with the note on the next call after a write. Line numbers at 0058 (`rates.rb:50`, `test_rates.rb:71`) match the fresh gate, and the note at 0059 refers to writes made after it. The note is correct; the walk agent's reading was not.
+- **K (a killed unstick author needs a fallback).** `loop.steer_rescue_skipped` fired with "stream aborted by a guard" — a stream cria itself killed must not become a directive, which is a deliberate rule with its own incident behind it. Silence is the right answer. What was worth fixing in that tail was J.
+- **M (label which failing test is the repo's).** cria cannot answer it truthfully with what it holds. The measured case is `test_unknown_zone_rejected` — a REPO test living inside a file the coder also edited — so file-level attribution, the only level cria's write ledger reaches, would have labelled it the coder's own. A wrong label here is exactly the class of false fact the rest of this document is about.
