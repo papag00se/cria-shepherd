@@ -113,7 +113,7 @@ Then, in the last four calls: it got the wrong theory (0164); got it **exactly r
 
 ## Open
 
-- **Nothing constrains a briefing's build claim against the gate that just ran.** `8f7bc32` restores the deterministic appendix, which is the load-bearing half. It does not make cria refuse a briefing sentence its own gate contradicts. Both of this run's bad briefings would still be written; they would now sit beside the truth rather than replacing it.
+- ~~**Nothing constrains a briefing's build claim against the gate that just ran.**~~ **CLOSED by `a1ec3a8`.** The fix is upstream of where this line was looking: rather than refusing a sentence that contradicts the gate, cria now GIVES the compactor the gate verdict up front and tells it not to derive build state from the transcript. Both of this run's bad briefings — the invented crash and the denied failure — are the same defect, a writer asked to work out a fact cria already had.
 - **A steer named two files that have never existed** — call 0091: *"Inspect … Importer.java, Summary.java, and main.java"*. `Summary` is a nested class inside `Importer.java`. The coder spent a call on it.
 - **Compaction machinery cost 15.6% of the run** (288.6 s across 3 compactor + 3 proxy calls and 3 post-compaction steers), and two of the three briefings actively misdirected.
 - **The read cap pushed the coder into keyhole reads of its own file.** 21 read-denials on `Importer.java`; calls 0164/0169/0170 read 10–20 lines around line 211 and could not see where the enclosing `try` opened — the one fact needed to fix it.
