@@ -1566,6 +1566,7 @@ def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | Non
     if swapped and rlog is not None:
         rlog.emit("writeproxy.represented", calls=swapped)
     _note_missing_dependency(out, workspace_root, rlog)
+    _note_dependency_search(out, own_cmds, workspace_root, rlog)
     return out
 
 
@@ -1604,6 +1605,84 @@ def _note_missing_dependency(messages: list[dict], workspace_root, rlog) -> None
     last["content"] = last["content"] + "\n\n" + note
     if rlog is not None:
         rlog.emit("writeproxy.dependency_note", level="info", ecosystem=eco, name=name)
+
+
+def _note_dependency_search(messages: list[dict], own_cmds: dict[str, str],
+                            workspace_root, rlog) -> None:
+    """Answer a search for dependency SOURCE that came back empty, by naming where it really lives.
+
+    `probeparse.searched_for_dependency_source` and `probeparse.dependency_source_root` were written
+    for this on 2026-08-19 and NOTHING EVER CALLED THEM. The prompt file existed, the table of
+    per-ecosystem roots existed, the tests passed against the functions directly — and the whole
+    thing sat outside the loop for a day (#11b, again: a mechanism that reaches nothing). Its sibling
+    from the same walk, the 4xx note in `webfetch.render_page`, did land, so half that fix has been
+    live and half has been dead.
+
+    The incident it was built for, walked on `rust-toml-cli x ternary-bonsai` 2026-08-19: the coder
+    ran `find <WORKSPACE>/.cargo/registry/src/... -name value.rs` twice, got nothing both times, and
+    concluded the source was unavailable. It was on the box the whole run under `~/.cargo/registry/src`
+    — one directory root away — and the model spent the next twenty calls guessing TOML syntax from
+    memory instead.
+
+    THE TRIGGER IS THE SEARCH, NOT THE FAILURE THAT PROMPTED IT, and that bounds what this can do:
+    a model that never goes looking is never answered. `feed-pipeline-java x nemotron-elastic`
+    1787247514 died believing `com.opencsv.CSVRecord` exists, with the jar sitting in `~/.m2` that
+    would have disproved it in one command — and searched no package directory in 74 calls, so this
+    note could not have fired. Pointing a model at the source it did not ask for is a different
+    mechanism and a much higher bar (#1); this one only answers a question already asked.
+
+    ONLY THE LAST ONE, like its sibling above: repeating the same paragraph for every empty search is
+    noise on a signal the model has already read (#3). Silent when the search found something, when
+    the path searched is already the home root (`searched_for_dependency_source` handles that), and
+    when no root for this ecosystem is on disk in the `found` wording — that case gets the `absent`
+    wording instead, which tells the model to stop searching the same way rather than sending it to a
+    directory cria cannot see."""
+    if not messages:
+        return
+    last, searched = None, ""
+    for m in messages:
+        if m.get("role") != "tool":
+            continue
+        c = m.get("content")
+        if not isinstance(c, str) or probegate_marker_in(c):
+            continue
+        tok = probeparse.searched_for_dependency_source(own_cmds.get(m.get("tool_call_id"), ""))
+        if not tok:
+            continue
+        if _strip_exec_envelope(c).strip():
+            continue                     # it FOUND something — nothing to answer (#3)
+        last, searched = m, tok
+    if last is None:
+        return
+    eco = _workspace_ecosystem(workspace_root)
+    root = probeparse.dependency_source_root(eco, workspace_root or "") if eco else ""
+    words = prompts.load_map("dependency_source_root")
+    note = (prompts.fill(words["found"], searched=searched, root=root) if root
+            else prompts.fill(words["absent"], searched=searched))
+    if note in last["content"]:
+        return
+    last["content"] = last["content"] + "\n\n" + note
+    if rlog is not None:
+        rlog.emit("writeproxy.dependency_source_note", level="info",
+                  ecosystem=eco or "", root=root, searched=searched)
+
+
+def _workspace_ecosystem(workspace_root) -> str:
+    """The first ecosystem this workspace declares, by its own manifests — "" when none or unreadable.
+
+    Reuses `probediscovery.detect_ecosystems`, whose enum values are already the keys of
+    `_DEPENDENCY_SOURCE_ROOTS` ("jvm", "rust", …), so there is no second table to drift (#23)."""
+    if not workspace_root:
+        return ""
+    try:
+        import os
+        from pathlib import Path
+        from .probediscovery import ProjectDir, detect_ecosystems
+        names = {e.name for e in os.scandir(workspace_root) if e.is_file()}
+        found = detect_ecosystems(ProjectDir(Path(workspace_root), names))
+        return found[0].value if found else ""
+    except Exception:                     # noqa: BLE001 — a note must never break the reply
+        return ""
 
 
 def probegate_marker_in(text: str) -> bool:
