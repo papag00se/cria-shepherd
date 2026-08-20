@@ -86,10 +86,11 @@ class CommandsAreRecognisedTests(unittest.TestCase):
                 self.assertTrue(shellshape.looks_like_command(text),
                                 f"scored {shellshape.confidence(text)} {shellshape.signals(text)}")
 
-    def test_the_walked_heredoc_scores_near_certainty(self):
-        """The one that cost the run. It should not be a marginal call."""
+    def test_the_walked_heredoc_is_not_a_marginal_call(self):
+        """The one that cost the run. Scored as a SEGMENT — the sentence it lives in — so it does not
+        get the line-start bonus a bare command would; what carries it is the heredoc itself."""
         text = "Run `cat > REVIEW.md << 'EOF'` with file name and line numbers for each issue found."
-        self.assertGreaterEqual(shellshape.confidence(text), shellshape.REFUSE_BAR)
+        self.assertGreater(shellshape.confidence(text), shellshape.RESTATE_BAR + 0.2)
         self.assertIn("heredoc", shellshape.signals(text))
 
 

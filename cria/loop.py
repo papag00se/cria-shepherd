@@ -6582,7 +6582,7 @@ def author_steer(reasoner_chat, reasoner_role, workspace_root, gs, body: dict, r
 
     Neither rule is self-enforcing — `steer_diagnose.txt` forbade replacement code, and on
     rust-toml-cli x ternary-bonsai (2026-08-19, call 0015) the author wrote three snippets anyway.
-    What stopped it was `_dictates_code` + `_strip_invented_code`, in code. The prompt states the
+    What stopped it was `_dictates_code` + `_invented_code_spans`, in code. The prompt states the
     intent; the guards are what hold."""
     # SILENCE OVER A SECOND OPINION ON THE SAME FACTS. If the repo's checks have not moved since the
     # last steer, the previous directive did not land — and a small reasoner asked to explain the same
@@ -7108,7 +7108,7 @@ _CODE_SHAPED = re.compile(
 #     # Instead of: zone = zone_or_code.is_a?(String) && … ? zone_for(zone_or_code) : zone_or_code
 #     # Use this:   zone = ZONE_BASE.key?(zone_or_code) ? zone_or_code : zone_for(zone_or_code)
 #
-# `_dictates_code` returned False, so `_strip_invented_code` never ran and no
+# `_dictates_code` returned False, so `_invented_code_spans` never ran and no
 # `loop.steer_dictated_code` event was emitted — the guard was silent because it could not see. The
 # model adopted the line verbatim and `test_unknown_zone_rejected`, a REPO test that had been green,
 # went red and stayed red: `"moon"` is not a ZONE_BASE key, so it falls through to `zone_for` and
@@ -7251,6 +7251,43 @@ def _restate_without_code(directive: str, ask, rlog) -> str | None:
     return out
 
 
+def _invented_code_spans(directive: str, evidence: str) -> int:
+    """How many code spans in ``directive`` the author did NOT read — 0 when it only quotes.
+
+    A COUNT, NOT A REWRITE. This used to return the directive with the invented spans replaced by a
+    marker, and the caller shipped that. It no longer does: a hollowed sentence is worse than no
+    sentence — "Change [code removed] to [code removed]" is an imperative with both operands deleted
+    (walked on rust-toml-cli x ternary-bonsai, call 0015) — so a directive with anything invented in
+    it now goes to :func:`_restate_without_code`, which is given the ORIGINAL and says it again in
+    words. Nothing this function produces reaches the coder, so it produces nothing but the number
+    that decides whether the rewriter runs.
+
+    Code counts as READ when it appears in what cria OBSERVED — see :func:`_observed_code` for why
+    that is tool results and written bytes, and never the coder's own prose. That is the whole
+    distinction the 2026-08-04 ruling rests on: a steer quoting the coder's own failing line is
+    grounded and carried the ladder passes; a steer inventing a replacement is the author, and the
+    author is the same weak model with no compiler.
+
+    THE UNIT IS A SEGMENT, NOT A LINE. A reasoner writes its whole answer as one paragraph, and
+    judging the LINE it lives in let a 976-character description of real work count as invented code
+    because one sentence in it quoted a command (20260819T133948 call 0110). Whitespace-insensitive,
+    because cria's own relay reflows the directive before anyone sees it."""
+    if not evidence:
+        return 0                                  # nothing to check against → nothing is invented
+    haystack = " ".join(evidence.split())
+    seen = lambda s: " ".join(s.split()) in haystack        # noqa: E731
+    n = 0
+    for line in directive.splitlines():
+        for seg in (shellshape.segments(line) or [line]):
+            body = seg.strip().strip("`")
+            if len(body) >= _QUOTABLE_MIN and _is_code_line(seg) and not seen(body):
+                n += 1
+        for m in _INLINE_CALL.finditer(line):
+            if not seen(m.group(0)):
+                n += 1
+    return n
+
+
 def _dictates_code(directive: str, ask=None) -> bool:
     """True when the directive hands the coder CODE TO COPY rather than a description of the change.
 
@@ -7382,7 +7419,7 @@ def _positional_only(findings: str) -> set:
 def _prescribes_what_the_checks_reject(directive: str, findings: str, rlog, ask) -> str:
     """The symbol a directive tells the coder to USE while the checks name it as the problem — else "".
 
-    THE STRIP CANNOT CATCH THIS, and its own contract is why. `_strip_invented_code` asks "did the
+    THE COUNT CANNOT CATCH THIS, and its own contract is why. `_invented_code_spans` asks "did the
     author READ this or invent it?", and answers from what cria observed — which includes tool
     results. A compiler error is a tool result. So on any "replace X with Y" steer the BROKEN symbol
     X is the best-attested string in the prompt and survives, while the correct replacement Y was
@@ -7561,39 +7598,29 @@ def _grounded_steer_or_none(directive: str | None, evidence: str, rlog, ask=None
         # untouched, which is exactly the case the ladder passes were built on.
         # …AGAINST WHAT CRIA OBSERVED, not against the prompt. The prompt carries the coder's own
         # prose, which made a line the coder only believed count as one cria had seen.
-        kept, stripped = _strip_invented_code(directive, _observed_code(messages))
-        if stripped:
-            # A HOLLOWED SENTENCE IS WORSE THAN NO SENTENCE. Stripping is right when the code was
-            # QUOTED — "this line of yours fails" survives losing nothing. It is wrong when the code
-            # was PRESCRIBED, because the sentence was built around it. Walked on
-            # rust-toml-cli x ternary-bonsai (2026-08-19) call 0015, which came out of the strip as
-            #     "**Line 12**: [code removed] fails because TOML tables use `String` keys, not
-            #      `&str`. Change to [code removed]."
-            # — an imperative with both of its operands deleted, and the WRONG CAUSE left standing.
-            # That is the half that does the damage: measured across twenty-four such directives the
-            # coder's own reading was right and the directive was wrong every time.
+        invented = _invented_code_spans(directive, _observed_code(messages))
+        if invented:
+            # A HOLLOWED SENTENCE IS WORSE THAN NO SENTENCE. Replacing the invented spans in place
+            # and shipping the rest produced "Change [code removed] to [code removed]" — an
+            # imperative with both operands deleted, and the WRONG CAUSE left standing (walked on
+            # rust-toml-cli x ternary-bonsai, 2026-08-19, call 0015). So the directive is REWRITTEN
+            # by a reasoner instead of mutilated by a regex, and the rewriter is given the directive
+            # AND NOTHING ELSE — no session, no evidence, no tools. It cannot introduce a fact
+            # because it holds none; the most it can do is say less.
             #
-            # So the directive is REWRITTEN by a reasoner rather than mutilated by a regex — and the
-            # rewriter is given the directive AND NOTHING ELSE. No session, no evidence, no tools.
-            # It cannot introduce a fact because it holds none; the most it can do is say less.
-            # Prevalence, before building it (#15): of 100 dictated steers in the captures, 66 lost
-            # ZERO spans — those are the sighted "quoting the coder's own line" case the 2026-08-04
-            # ruling protects, and they never reach here. This path is the other 34.
-            # THE ORIGINAL, NOT THE HOLLOWED COPY. `kept` is the directive with its code spans
-            # replaced by a marker — handing that to the rewriter asks it to restate a sentence with
-            # holes in it, and it cannot put back what it was never shown. The rewriter is told to
-            # drop the prescribed code itself; give it the whole thing and let it.
+            # Prevalence, before building it (#15): of 100 dictated steers in the captures, 66 had
+            # nothing invented at all — the sighted "quoting the coder's own line" case the
+            # 2026-08-04 ruling protects. They never reach here. This path is the other 34.
             restated = _restate_without_code(directive, ask, rlog)
             if restated is None:
                 rlog.emit("loop.steer_dictated_code", level="warn", delivered=False,
-                          stripped=stripped, reason="prescription",
+                          invented=invented, reason="prescription",
                           head=_clip(directive, 120))
                 return None       # refused whole, like every other guard in this function
             directive = restated
         else:
             rlog.emit("loop.steer_dictated_code", level="info", delivered=True,
-                      stripped=0, head=_clip(directive, 120))
-            directive = kept
+                      invented=0, head=_clip(directive, 120))
     if sess is not None and _blames_a_service_that_answered(
             directive, sess, messages or [], rlog, (lambda sysm: ask(sysm, "")) if ask else None):
         return None

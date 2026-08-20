@@ -130,14 +130,35 @@ def signals(text: str) -> list[str]:
     return [name for _w, name in sorted(hits, reverse=True)]
 
 
-def confidence(text: str) -> float:
-    """How strongly ``text`` looks like it contains a shell command, 0.0–1.0.
+# A COMMAND IS SHORT AND DENSE; PROSE IS LONG AND SPARSE. Scoring a whole block lets signals
+# ACCUMULATE with length, so a long enough paragraph crosses any bar on scattered evidence. Measured
+# on a real re-orientation note (20260819T133948 call 0110): 976 characters of correct prose about
+# what had been built scored 0.73 — a `gem` here, a flag there, a dotted path somewhere else — and
+# the caller replaced the entire paragraph with a marker. The command that actually cost a run,
+# `cat > REVIEW.md << 'EOF'`, is 24 characters carrying three signals.
+#
+# So the unit of scoring is a SEGMENT: a line, or a sentence within a line. The score of a block is
+# the score of its strongest segment, never the sum of its parts.
+_SEGMENT = re.compile(r"[^\n.;!?]+(?:[.;!?]+|$)")
 
-    Combined as independent evidence — ``1 - Π(1 - w)`` — rather than summed, so three weak signals
-    raise confidence without three of them being able to exceed certainty, and so adding a new
-    signal can never lower an existing score."""
-    if not text:
-        return 0.0
+
+def segments(text: str) -> list[str]:
+    """``text`` split into scorable units — lines, and sentences within a line.
+
+    A fenced block is kept whole: everything between ``` fences is one segment, because a script's
+    lines are a command each and splitting them hides that they arrived together."""
+    out: list[str] = []
+    for block in re.split(r"(```[\s\S]*?```)", text or ""):
+        if block.startswith("```"):
+            out.append(block)
+            continue
+        for line in block.splitlines():
+            out.extend(m.group(0).strip() for m in _SEGMENT.finditer(line) if m.group(0).strip())
+    return out
+
+
+def _score_one(text: str) -> float:
+    """The raw score of a single segment — no splitting."""
     names = set(signals(text))
     if not names:
         return 0.0
@@ -146,6 +167,19 @@ def confidence(text: str) -> float:
         if name in names:
             p *= (1.0 - w)
     return round(1.0 - p, 3)
+
+
+def confidence(text: str) -> float:
+    """How strongly ``text`` looks like it contains a shell command, 0.0–1.0.
+
+    Within a segment, signals combine as independent evidence — ``1 - Π(1 - w)`` — rather than
+    summed, so three weak signals raise confidence without exceeding certainty, and adding a new
+    signal can never lower an existing score. ACROSS segments the score is the MAXIMUM, never the
+    combination: a command mentioned in one sentence does not make the paragraph around it a
+    command, and a paragraph is not more command-like for being long."""
+    if not text:
+        return 0.0
+    return max((_score_one(seg) for seg in segments(text)), default=0.0)
 
 
 def looks_like_command(text: str, bar: float = RESTATE_BAR) -> bool:
