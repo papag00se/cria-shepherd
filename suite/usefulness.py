@@ -139,8 +139,48 @@ def reprobe_elsewhere(ws: Path, task_dir: Path) -> dict | None:
     return {"where": str(where.relative_to(ws)), "verdict": verdict}
 
 
-def evidence(row: dict) -> tuple[str, str]:
-    """`(evidence_text, digest)` — everything the judge is allowed to see, and its fingerprint."""
+def packet_path(run_id: str) -> Path:
+    return PACKETS / f"{run_id}.txt"
+
+
+def save_packet(row: dict) -> Path | None:
+    """Freeze this row's evidence packet to disk while the workspace still exists — or None.
+
+    THE WORKSPACE IS THE PERISHABLE PART AND THE PACKET IS NOT. `evidence()` reads the archived
+    workspace: it walks the file tree and, when the working directory has no manifest, re-runs the
+    verifier from where the project actually is. Once that directory is gone the packet cannot be
+    built, and the run can never be judged — the strict score is all that survives it.
+
+    Measured when the operator asked why the inferred score was missing: of 503 recorded runs, 455
+    had no usefulness verdict and only 138 of those still had a workspace on disk. **Every one of the
+    81 BASE rows that could still be judged had already been judged; the other 57 were unrecoverable.**
+    Nothing in `suite/` deletes an archive, so the loss came from outside — which is exactly why this
+    cannot depend on the archive surviving. 3.4 GB of workspaces against a few KB of text per run.
+
+    Called at the END of a cell, when the workspace is warm and the verifier has just run. Costs one
+    file walk. Best-effort: a packet that cannot be written must never fail a run that finished."""
+    try:
+        text, _digest = evidence(row, _saved=False)
+    except Exception:                                   # noqa: BLE001 — never fail a finished run
+        return None
+    PACKETS.mkdir(parents=True, exist_ok=True)
+    out = packet_path(row["run_id"])
+    out.write_text(text)
+    return out
+
+
+def evidence(row: dict, _saved: bool = True) -> tuple[str, str]:
+    """`(evidence_text, digest)` — everything the judge is allowed to see, and its fingerprint.
+
+    Prefers the packet frozen at run time (`save_packet`) when the archived workspace is gone, so a
+    reaped workspace costs the run its judgeability only if nothing was saved. The digest is always
+    recomputed against the CURRENT rubric, so a reworded rubric still invalidates old verdicts."""
+    saved = packet_path(row.get("run_id", ""))
+    ws_gone = not (Path(row.get("archive") or "") / "workspace").is_dir()
+    if _saved and ws_gone and saved.is_file():
+        text = saved.read_text(errors="replace")
+        stamp = text + "\n\n---RUBRIC---\n" + SYSTEM.read_text()
+        return text, hashlib.sha1(stamp.encode("utf-8", "replace")).hexdigest()[:16]
     task_dir = SUITE / "tasks" / row["task"]
     ws = Path(row.get("archive") or "") / "workspace"
     prompt = (task_dir / "prompt.txt").read_text(errors="replace").strip()
@@ -208,6 +248,8 @@ def parse(text: str) -> dict | None:
 
 
 VERDICTS = Path.home() / ".cria" / "suite" / "_usefulness"
+# The evidence packet, saved AT RUN TIME. See save_packet.
+PACKETS = Path.home() / ".cria" / "suite" / "_usefulness_evidence"
 
 
 def verdict_path(run_id: str) -> Path:
@@ -220,7 +262,14 @@ def pending(rows: list[dict]) -> list[dict]:
     THIS IS THE MEMORY. Not a note in a message and not something to hold in mind across 24 cells
     and a compaction: a cell is judged when its verdict file exists, and unjudged otherwise. A run
     that is interrupted, resumed, or picked up by a different session recomputes the same list."""
-    return [r for r in rows if r.get("archive") and not verdict_path(r["run_id"]).exists()]
+    return [r for r in rows
+            if (r.get("archive") or packet_path(r.get("run_id", "")).is_file())
+            and not verdict_path(r["run_id"]).exists()
+            # …and only when the evidence can still be built: an archive on disk, or a packet frozen
+            # at run time. A row with neither is unjudgeable for good and must not sit in the
+            # worklist forever pretending otherwise (#5b).
+            and ((Path(r.get("archive") or "") / "workspace").is_dir()
+                 or packet_path(r.get("run_id", "")).is_file())]
 
 
 def record(run_id: str, verdict: dict) -> dict:

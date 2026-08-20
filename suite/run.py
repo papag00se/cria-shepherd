@@ -500,7 +500,34 @@ def main() -> None:
     print(json.dumps({k: row[k] for k in
                       ("run_id", "terminal", "success", "score", "wall_seconds",
                        "calls", "avg_tok_s")}, indent=1))
+    _freeze_usefulness_evidence(row)
     _refresh_grid()
+
+
+def _freeze_usefulness_evidence(row: dict) -> None:
+    """Save the judge's evidence packet NOW, while the workspace still exists.
+
+    The usefulness score — "was real work done?", the question the operator actually cares about —
+    is judged from a packet built by walking the archived workspace. The workspace is the perishable
+    half: of 503 recorded runs, 455 had no verdict and only 138 of those still had a workspace on
+    disk, so the rest can never be judged at all. Every BASE row that could still be judged already
+    had been; the other 57 are gone for good, which is why the arms cannot be compared on the number
+    that matters.
+
+    Nothing in `suite/` deletes an archive, so the loss came from outside — and a mechanism that
+    depends on 3.4 GB of trees surviving indefinitely is one that will keep losing runs. A few KB of
+    text per run does not. Judging can then happen whenever, on whatever is left.
+
+    Best-effort by construction: a packet that cannot be written must never fail a run that
+    finished, and the row is already on disk by the time this runs."""
+    try:
+        sys.path.insert(0, str(SUITE))
+        import usefulness
+        out = usefulness.save_packet(row)
+        if out is not None:
+            print(f"[usefulness] evidence frozen -> {out}", flush=True)
+    except Exception as e:                       # noqa: BLE001 — never fail a finished run
+        print(f"[usefulness] could not freeze evidence: {e}", flush=True)
 
 
 def _refresh_grid() -> None:
