@@ -212,6 +212,69 @@ Examples:
 Do not enforce wire invariants independently at call sites. Carry internal intent to the wire, apply it there, strip the hint, and keep the transform opt-in so unaffected models receive byte-identical bodies.
 
 Fix the path that produced the incident. Captured bodies record their phase; identify the actual failing path before changing code, tests, comments, or audits.
+
+---
+
+## G. The measuring instrument
+
+These rules govern `suite/tasks/*/verify.py` — the checks that score a run. They are not about cria's
+behaviour; they are about the thing cria is measured with, and a wrong instrument corrupts every
+decision made from it.
+
+### 25. A check may only fail a run over the property the task NAMES
+Operator, 2026-08-12: *"Be forgiving in the verifications unless that particular thing being tested
+was specifically being exercised… That goes for all of the verifications."*
+
+Anything incidental — capitalisation, punctuation, whitespace, which valid form an output takes, how
+an assertion is spelled, how a location is written down — must pass. If the task never asked for it,
+a check may not fail a run for it.
+
+The strict-by-default reading has produced a steady stream of runs scored wrong, always in the same
+direction: punishing a model for doing exactly what the task said. Every one was found by opening the
+workspace, never by reading the score.
+
+- `handles-cli-node` parsed `--json` output one LINE at a time, so pretty-printed JSON scored zero.
+  The task asks for JSON, never for one line. A 4/4 run recorded 3/4.
+- `feed-pipeline-java` matched `REVIEW.md` case-sensitively; a review written to `review.md` scored
+  nothing for its capitalisation.
+- The same check's located-finding pattern allowed four non-word characters between a filename and a
+  line number. A markdown table needs five, so 729 words of correctly located findings scored 0.
+- `shipping-rates-py` demanded byte-identical seed tests while its own prompt says "Add it, with
+  tests" — the requested tests read as tampering.
+- `cart-billing-go` required a seeded file be byte-identical AND some test file differ: unsatisfiable
+  together for the obvious solution.
+
+**How to apply.** For each check ask what property the task actually names, assert that, and nothing
+adjacent. Prefer meaning over text — a parsed structure over a string, a behaviour over a signature,
+a formatted value over a raw literal.
+
+### 25b. Forgiving is not the same as gameable — say which one a check is
+Where a task DOES exercise the exact thing, the check stays strict, and it must say so in its own
+words so the next reader knows the strictness is deliberate: the anti-cheat on seeded assertions, a
+declared dependency, a real network call.
+
+The counter-pressure is real and it points the other way. `feed-pipeline-java`'s CSV check leads with
+BEHAVIOUR — the quoted-comma row must import at the right value — precisely so that grepping for a
+package name cannot buy the point, which would be the task-specific overfit #20 forbids. Relaxing a
+behavioural check into a textual one is not forgiveness; it is making the instrument blind.
+
+### 25c. A check that needs the program to RUN is entitled to require a build
+A task that says "4× faster", "identical results across runs", or "handle malformed input safely"
+names runtime behaviour. Source that does not compile does not have those properties, and no reading
+of the source can establish that it does. Scoring those zero on a broken build is #25 applied, not
+#25 violated.
+
+The distinction to police is whether the check's OWN property needs the build. A check on something
+the task states as a declaration — a dependency added, a file written — must not fail because
+something else did not compile. When one check asserts both a declaration and a behaviour, its
+docstring must say which half is load-bearing and why the coupling is deliberate.
+
+### 26. Never make a task easier to pass, and never edit a task's prompt
+Changing `suite/tasks/*/prompt.txt` needs the operator. Loosening a check to raise a score is
+falsifying the instrument. Fixing a check that fails over a property the task never named is #25 and
+is always allowed — but it re-bases every score that check ever produced, so it lands between
+measurement passes, never inside one, and the affected rows are annotated rather than deleted.
+
 ---
 
 *Rule numbers are cited throughout the code and tests and never change.*
