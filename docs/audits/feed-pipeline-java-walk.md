@@ -223,6 +223,19 @@ Worth stating plainly: the model **did** catch its own broken file at 0312 and p
 
 ---
 
-## Status
+## Status — 2026-08-19
 
-Nothing in this document has been landed yet. Problems 1 and 4 are unambiguous and mechanical. Problems 2, 3 and 5 change *when cria speaks* and want a decision before they go in.
+| problem | state |
+|---|---|
+| 1 — cria's placeholder written to disk | **fixed** `d387b64` — the superseded call and its result are REMOVED, not stubbed. Nothing is left that can be read as content. |
+| 2 — re-orientation shipped a bash script | **fixed** `317c87e` — refused on shape (a fence, or ≥3 command lines), falling back to the canned reanchor that already existed. 57 of 59 captured notes still delivered. |
+| 3 — a true judge finding replaced by boilerplate | **fixed** `efee733` — the judge's size cap is gone. Not a revert: `seed_files` fixed the cause seventeen days after the cap was built for it. |
+| 4 — a dictated shell heredoc shipped intact | **fixed** `6d9742d`, `700bb79` — `cria/shellshape.py` owns "is this a shell command"; the walked heredoc now routes to the restater. |
+| 5 — sibling recovered calls dropped silently | **open**, deliberately (operator: not a concern). |
+
+**None of it has faced a live model.** `loop.steer_restate` has fired **zero** times in every log ever written — the piece that decides what the coder actually reads has only ever been exercised against stubbed answers. What is verified is detection, on the captures, by hand.
+
+Two defects were introduced and fixed inside this same day's work, both mine, both found only because the operator questioned the algorithm rather than the outcome:
+
+* `shellshape.confidence` scored whole blocks, so signals accumulated with length and a 976-character description of real work scored 0.73 — the caller replaced the whole paragraph with a marker. Fixed by scoring the strongest SEGMENT.
+* The segmenter split on a bare `.`, shattering `test.test.js` into `- test.` / `test.` / `js`; `test.` opens with a binary name, so bullet lists of filenames scored as commands. And `signals()` reported the whole block while `confidence()` reported the best segment, so a caller could see a score of 0.45 with an empty signal list.
