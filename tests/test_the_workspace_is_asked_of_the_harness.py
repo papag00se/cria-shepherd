@@ -25,6 +25,7 @@ import unittest
 from pathlib import Path
 
 from cria import probegate, wsview, writeproxy
+from wsfixture import survey
 
 
 def _survey(root, sess=""):
@@ -137,14 +138,14 @@ class UnknownIsNeverRenderedAsNoTests(unittest.TestCase):
     def test_a_folded_directory_answers_unknown_rather_than_absent(self):
         """A tree too big to list in one result is folded to a count. Questions inside it have not
         been answered, and must not read as answered."""
-        wsview.apply_survey(self.view, "___CRIA_SV_tree___\nX\t9000\tnode_modules\n")
+        wsview.apply_survey(self.view, survey("X\t9000\tnode_modules"))
         self.assertIs(self.view.isdir("node_modules"), True)
         self.assertIsNone(self.view.isfile("node_modules/express/index.js"))
         self.assertIsNone(self.view.listdir("node_modules"))
         self.assertEqual(self.view.folded, ["node_modules"])
 
     def test_a_listing_that_did_arrive_does_answer_no(self):
-        wsview.apply_survey(self.view, "___CRIA_SV_tree___\nF\t0\t3\ta.py\n")
+        wsview.apply_survey(self.view, survey("F\t0\t3\ta.py"))
         self.assertIs(self.view.isfile("b.py"), False)
 
 
@@ -259,19 +260,19 @@ class AFreshListingRetiresAStaleBodyTests(unittest.TestCase):
         view = wsview.View("/ws", "s-stale")
         view.note_written("/ws/a.py", "x = 1\n")
         self.assertEqual(view.read("/ws/a.py"), "x = 1\n")
-        wsview.apply_survey(view, "___CRIA_SV_tree___\nF\t0\t99\ta.py\n")   # 99 bytes, not 6
+        wsview.apply_survey(view, survey("F\t0\t99\ta.py"))   # 99 bytes, not 6
         self.assertIsNone(view.read("/ws/a.py"))
 
     def test_a_body_the_new_listing_confirms_survives(self):
         view = wsview.View("/ws", "s-fresh")
         view.note_written("/ws/a.py", "x = 1\n")
-        wsview.apply_survey(view, "___CRIA_SV_tree___\nF\t0\t6\ta.py\n")
+        wsview.apply_survey(view, survey("F\t0\t6\ta.py"))
         self.assertEqual(view.read("/ws/a.py"), "x = 1\n")
 
     def test_a_file_the_new_listing_does_not_name_is_forgotten(self):
         view = wsview.View("/ws", "s-gone")
         view.note_written("/ws/a.py", "x = 1\n")
-        wsview.apply_survey(view, "___CRIA_SV_tree___\nF\t0\t3\tb.py\n")
+        wsview.apply_survey(view, survey("F\t0\t3\tb.py"))
         self.assertIsNone(view.read("/ws/a.py"))
         self.assertIs(view.isfile("/ws/a.py"), False)
 
@@ -289,11 +290,32 @@ class ASurveyOfAnotherTreeIsRefusedTests(unittest.TestCase):
         self.assertTrue(wsview.apply_survey(view, wsview.strip_survey(_survey(ws))[1]))
         self.assertEqual(view.root, str(ws))
 
-    def test_a_truncated_survey_does_not_empty_what_is_known(self):
+    def test_a_survey_with_no_tree_does_not_empty_what_is_known(self):
         view = wsview.View("/ws", "s")
-        wsview.apply_survey(view, "___CRIA_SV_tree___\nF\t0\t3\ta.py\n")
+        wsview.apply_survey(view, survey("F\t0\t3\ta.py"))
         self.assertFalse(wsview.apply_survey(view, "___CRIA_SV_meta___\nroot\t/ws\n"))
         self.assertIs(view.isfile("a.py"), True)
+
+    def test_a_listing_CUT_IN_TRANSIT_is_refused_outright(self):
+        """The harness caps its own output. A cut listing is indistinguishable from a listing of a
+        smaller repo, so every file past the cut would read as deleted — under a heading saying what
+        exists. The survey states its record count and closes with a marker; either one missing, or a
+        count that does not match, means what came back is not the answer to anything."""
+        whole = survey("F\t0\t3\ta.py\nF\t0\t3\tb.py")
+        view = wsview.View("/ws", "s")
+        self.assertFalse(wsview.apply_survey(view, whole[:whole.index("___CRIA_SV_done___")]))
+        self.assertFalse(view.surveyed)
+        self.assertFalse(wsview.apply_survey(view, whole.replace("entries\t2", "entries\t9")))
+        self.assertFalse(wsview.apply_survey(view, whole.replace(wsview.SURVEY_CLOSE, "")))
+        self.assertTrue(wsview.apply_survey(view, whole))
+
+    def test_a_listing_that_hit_its_own_bound_stops_answering_no(self):
+        """What it DID list is real, and what it did not is unknown — never absent."""
+        view = wsview.View("/ws", "s")
+        wsview.apply_survey(view, survey("F\t0\t3\ta.py", complete=False))
+        self.assertIs(view.isfile("a.py"), True)
+        self.assertIsNone(view.isfile("b.py"))
+        self.assertFalse(view.complete)
 
 
 class NothingProductionAnswersFromCriasOwnDiskTests(unittest.TestCase):

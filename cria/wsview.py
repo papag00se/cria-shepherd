@@ -64,8 +64,19 @@ _SEC_SUFFIX = "___"
 # harness's own output cap before cria ever saw it — which would be a silent lie about what
 # exists. So a directory holding more than FOLD_AT files is FOLDED to a count, and questions
 # inside it answer "unknown" rather than "no".
-TREE_MAX_ENTRIES = 4000
+# The listing rides home inside one tool result, which passes through the HARNESS's own output cap.
+# Overrun it and the result is cut in transit — and a listing cut in transit is indistinguishable
+# from a listing of a smaller repo, so every file past the cut would read as deleted. These bounds
+# keep the whole survey comfortably inside a normal cap; what does not fit is FOLDED (named, with
+# its interior marked unknown) rather than dropped.
+TREE_MAX_ENTRIES = 1200
+TREE_MAX_BYTES = 48_000
 FOLD_AT = 400
+# When the tree bound is reached, the directories still queued are FOLDED — named, with their
+# interiors marked unknown — rather than dropped, so `isdir` stays right and nothing inside them is
+# ever answered "no". Past this many even the fold records would not fit, and the listing says
+# plainly that it is incomplete.
+FOLD_DRAIN_MAX = 400
 # Per-survey body budget. Bodies are fetched only for paths a reader actually asked for and could
 # not be told (see :meth:`View.read`), so this bounds a real demand, not a guess.
 BLOB_FILES_MAX = 8
@@ -112,7 +123,7 @@ class View:
     gathered — from a survey the harness ran, or from a tool call in the conversation."""
 
     __slots__ = ("root", "_files", "_dirs", "_folded", "_bodies", "_stale",
-                 "_progs", "_outside", "_surveyed", "_sess")
+                 "_progs", "_outside", "_surveyed", "_complete", "_sess")
 
     def __init__(self, root: str | None, sess: str = "") -> None:
         self.root: str = _posix(root or "").rstrip("/") if root else ""
@@ -127,6 +138,10 @@ class View:
         # be one: cria names the exact path it wants tested, and the survey answers that path.
         self._outside: dict[str, str] = {}               # path -> "d" | "f" | ""
         self._surveyed = False
+        # Whether the last listing named EVERY file. A survey that hit its own entry bound is still
+        # worth having — what it listed is real — but "not listed" stops meaning "not there", and
+        # every predicate downgrades accordingly.
+        self._complete = True
         self._sess = sess
 
     # -- identity ----------------------------------------------------------
@@ -136,6 +151,12 @@ class View:
         """A harness survey has landed for this workspace. False means the view holds only what
         the conversation proved, so most answers are ``None``."""
         return self._surveyed
+
+    @property
+    def complete(self) -> bool:
+        """The last listing named every file. False when the survey hit its own bound — then a path
+        it does not name is UNKNOWN, not absent."""
+        return self._complete
 
     @property
     def usable(self) -> bool:
@@ -187,7 +208,7 @@ class View:
             return True
         if rel in self._files:
             return False
-        if not self._surveyed or self._folded_under(rel):
+        if not self._surveyed or not self._complete or self._folded_under(rel):
             return None
         return False
 
@@ -199,7 +220,7 @@ class View:
             return True
         if rel in self._dirs or rel in self._folded:
             return False
-        if not self._surveyed or self._folded_under(rel):
+        if not self._surveyed or not self._complete or self._folded_under(rel):
             return None
         return False
 
@@ -370,10 +391,11 @@ class View:
 
     # -- ingestion ----------------------------------------------------------
 
-    def _ingest_tree(self, body: str) -> None:
+    def _ingest_tree(self, body: str, complete: bool = True) -> None:
         self._files.clear()
         self._dirs.clear()
         self._folded.clear()
+        self._complete = complete
         for line in body.splitlines():
             if not line:
                 continue
@@ -716,7 +738,7 @@ def clear_pending(sess: str, bodies: list[str], progs: list[str], outside: list[
 _SURVEY_PY = r'''
 import base64, os, sys
 W = sys.stdout.write
-TREE_MAX, FOLD_AT, PRUNE = {tree_max}, {fold_at}, {prune!r}
+TREE_MAX, TREE_BYTES, FOLD_AT, PRUNE = {tree_max}, {tree_bytes}, {fold_at}, {prune!r}
 BLOB_FILES, BLOB_BYTES, BLOB_FILE = {blob_files}, {blob_bytes}, {blob_file}
 WANT = {want!r}
 PROGS = {progs!r}
@@ -727,8 +749,16 @@ W("{sec}meta{suf}\n")
 W("root\t%s\n" % root)
 W("{sec}tree{suf}\n")
 n = 0
+nrec = 0
+spent = 0
+complete = 1
+def EMIT(line):
+    global nrec, spent
+    W(line)
+    nrec += 1
+    spent += len(line)
 stack = [""]
-while stack and n < TREE_MAX:
+while stack and n < TREE_MAX and spent < TREE_BYTES:
     cur = stack.pop(0)
     d = os.path.join(root, cur) if cur else root
     try:
@@ -743,29 +773,33 @@ while stack and n < TREE_MAX:
             continue
         (subs if isd else files).append(e)
     if len(files) > FOLD_AT:
-        W("X\t%d\t%s\n" % (len(files), cur))
+        EMIT("X\t%d\t%s\n" % (len(files), cur))
         continue
     for e in subs:
         if e.name in PRUNE:
             continue
         rel = (cur + "/" + e.name) if cur else e.name
-        W("D\t%s\n" % rel)
+        EMIT("D\t%s\n" % rel)
         stack.append(rel)
         n += 1
     for e in files:
         rel = (cur + "/" + e.name) if cur else e.name
         try:
             st = e.stat(follow_symlinks=False)
-            W("F\t%.0f\t%d\t%s\n" % (st.st_mtime, st.st_size, rel))
+            EMIT("F\t%.0f\t%d\t%s\n" % (st.st_mtime, st.st_size, rel))
         except OSError:
-            W("F\t0\t0\t%s\n" % rel)
+            EMIT("F\t0\t0\t%s\n" % rel)
         n += 1
-        if n >= TREE_MAX:
+        if n >= TREE_MAX or spent >= TREE_BYTES:
             break
+for rel in stack[:{drain_max}]:
+    EMIT("X\t0\t%s\n" % rel)
+if len(stack) > {drain_max}:
+    complete = 0
 W("{sec}blob{suf}\n")
-spent, taken = 0, 0
+bspent, taken = 0, 0
 for rel in WANT:
-    if taken >= BLOB_FILES or spent >= BLOB_BYTES:
+    if taken >= BLOB_FILES or bspent >= BLOB_BYTES:
         break
     p = os.path.join(root, rel)
     try:
@@ -777,7 +811,7 @@ for rel in WANT:
         continue
     W("@%s\n" % base64.b64encode(rel.encode()).decode())
     W(base64.b64encode(raw).decode() + "\n")
-    spent += len(raw)
+    bspent += len(raw)
     taken += 1
 W("{sec}outside{suf}\n")
 for q in OUTSIDE:
@@ -808,6 +842,9 @@ for name in PROGS:
             if hit:
                 break
     W("%s\t%s\n" % (name, hit))
+W("{sec}done{suf}\n")
+W("entries\t%d\n" % nrec)
+W("complete\t%d\n" % complete)
 W("{close}\n")
 '''
 
@@ -829,7 +866,8 @@ def survey_command(sess: str = "", *, cd: str = "") -> str:
     bodies, progs, outside = bodies[:BLOB_FILES_MAX], progs[:PROG_MAX], outside[:OUTSIDE_MAX]
     clear_pending(sess, bodies, progs, outside)
     body = _SURVEY_PY.format(
-        tree_max=TREE_MAX_ENTRIES, fold_at=FOLD_AT, prune=set(PRUNE_DIRS),
+        tree_max=TREE_MAX_ENTRIES, tree_bytes=TREE_MAX_BYTES, fold_at=FOLD_AT,
+        drain_max=FOLD_DRAIN_MAX, prune=set(PRUNE_DIRS),
         blob_files=BLOB_FILES_MAX, blob_bytes=BLOB_BYTES_MAX, blob_file=BLOB_FILE_MAX,
         want=list(bodies), progs=list(progs), outside=list(outside),
         open=SURVEY_OPEN, close=SURVEY_CLOSE, sec=_SEC_PREFIX, suf=_SEC_SUFFIX)
@@ -862,7 +900,9 @@ def _q(s: str) -> str:
 
 # --------------------------------------------------------------------------- reading it back
 
-_BLOCK = re.compile(re.escape(SURVEY_OPEN) + r"\n(.*?)(?:\n" + re.escape(SURVEY_CLOSE) + r"|\Z)",
+# The CLOSE marker is kept in what this returns: `apply_survey` treats its absence as proof the
+# result was cut in transit, so stripping it here would hide the one signal that says so.
+_BLOCK = re.compile(re.escape(SURVEY_OPEN) + r"\n(.*?\n" + re.escape(SURVEY_CLOSE) + r"|.*)",
                     re.S)
 
 
@@ -878,7 +918,7 @@ def strip_survey(text: str) -> tuple[str, str]:
         found.append(m.group(1))
         return ""
 
-    visible = _BLOCK.sub(take, text)
+    visible = _BLOCK.sub(take, text).replace("\n\n\n", "\n\n")
     return visible.rstrip("\n"), "\n".join(found)
 
 
@@ -908,6 +948,12 @@ def survey_root(survey_text: str) -> str:
     return ""
 
 
+def tree_entries(body: str) -> int:
+    """How many records a tree section carries — the count :func:`apply_survey` checks against what
+    the survey said it wrote."""
+    return sum(1 for ln in (body or "").splitlines() if ln[:2] in ("D\t", "F\t", "X\t"))
+
+
 def apply_survey(view: View, survey_text: str) -> bool:
     """Fold one survey's output into ``view``. False when it carried no tree (a truncated or failed
     run) — then the view keeps whatever it already knew instead of being emptied.
@@ -919,12 +965,25 @@ def apply_survey(view: View, survey_text: str) -> bool:
     secs = sections(survey_text)
     if "tree" not in secs:
         return False
+    # IT MUST HAVE ARRIVED WHOLE. The result this rode home on passes through the harness's own
+    # output cap, and a listing cut in transit is indistinguishable from a listing of a smaller
+    # repo — every file past the cut would read as deleted, under a heading saying what exists.
+    # So the survey states how many records it wrote and closes with a marker; a count that does
+    # not match, or a missing close, means what came back is not the answer to anything.
+    done = dict(ln.split("\t", 1) for ln in (secs.get("done") or "").splitlines() if "\t" in ln)
+    if SURVEY_CLOSE not in survey_text or "entries" not in done:
+        return False
+    try:
+        if int(done["entries"]) != tree_entries(secs["tree"]):
+            return False
+    except ValueError:
+        return False
     ran_in = survey_root(survey_text)
     if ran_in and view.root and ran_in.rstrip("/") != view.root:
         return False
     if ran_in and not view.root:
         view.root = ran_in.rstrip("/")
-    view._ingest_tree(secs["tree"])
+    view._ingest_tree(secs["tree"], complete=done.get("complete") != "0")
     if secs.get("blob"):
         view._ingest_blob(secs["blob"])
     if secs.get("outside"):

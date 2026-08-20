@@ -38,6 +38,7 @@ import unittest
 from unittest import mock
 
 from cria import dirguard, proberun, toolpath, wsview
+from wsfixture import survey
 
 
 class TheAnswerHasThreeStatesTests(unittest.TestCase):
@@ -56,12 +57,11 @@ class TheAnswerHasThreeStatesTests(unittest.TestCase):
         self.assertIn("cargo", progs)
 
     def test_an_answered_absence_is_empty_string_not_None(self):
-        wsview.apply_survey(self.view, "___CRIA_SV_tree___\n___CRIA_SV_progs___\ncargo\t\n")
+        wsview.apply_survey(self.view, survey(progs="cargo\t"))
         self.assertEqual(toolpath.resolved("cargo"), "")
 
     def test_a_versioned_variant_is_what_the_coder_must_type(self):
-        wsview.apply_survey(self.view,
-                            "___CRIA_SV_tree___\n___CRIA_SV_progs___\nbundle\tbundle3.2\n")
+        wsview.apply_survey(self.view, survey(progs="bundle\tbundle3.2"))
         self.assertEqual(toolpath.resolved("bundle"), "bundle3.2")
 
 
@@ -91,8 +91,8 @@ class ProbeSelectionSeesTheCodersToolsTests(unittest.TestCase):
         return types.SimpleNamespace(command=command, working_dir=working_dir)
 
     def _progs(self, **found):
-        wsview.apply_survey(self.view, "___CRIA_SV_tree___\n___CRIA_SV_progs___\n"
-                            + "".join(f"{k}\t{v}\n" for k, v in found.items()))
+        wsview.apply_survey(self.view,
+                            survey(progs="".join(f"{k}\t{v}\n" for k, v in found.items())))
 
     def test_a_toolchain_the_coder_has_is_kept(self):
         self._progs(cargo="cargo", node="node", pytest="pytest")
@@ -117,7 +117,7 @@ class ProbeSelectionSeesTheCodersToolsTests(unittest.TestCase):
     def test_a_project_local_tool_is_still_asked_of_the_workspace(self):
         """`./gradlew` is a file in the coder's project, so it is a question about the harness's
         filesystem like every other one — and the same three states apply."""
-        wsview.apply_survey(self.view, "___CRIA_SV_tree___\nF\t0\t0\tgradlew\n")
+        wsview.apply_survey(self.view, survey("F\t0\t0\tgradlew"))
         self.assertTrue(proberun.program_is_installed(self.cand("./gradlew test", "/ws")))
         self.assertFalse(proberun.program_is_installed(self.cand("./nope test", "/ws")))
 
@@ -130,8 +130,8 @@ class InstallAdviceIsJudgedOnTheCodersPathTests(unittest.TestCase):
         self.addCleanup(wsview.unbind, wsview.bind(self.view))
 
     def _progs(self, **found):
-        wsview.apply_survey(self.view, "___CRIA_SV_tree___\n___CRIA_SV_progs___\n"
-                            + "".join(f"{k}\t{v}\n" for k, v in found.items()))
+        wsview.apply_survey(self.view,
+                            survey(progs="".join(f"{k}\t{v}\n" for k, v in found.items())))
 
     def test_a_route_through_a_tool_the_coder_has_is_offered(self):
         self._progs(cargo="cargo")

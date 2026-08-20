@@ -238,7 +238,8 @@ class TheReplacementToolsAnswerTheSameQuestionsTests(unittest.TestCase):
         planner would draft against the difference (#5b)."""
         from cria import wsview
         view = wsview.View("/ws", "sess-grep")
-        wsview.apply_survey(view, "___CRIA_SV_tree___\nD\tsrc\nF\t0\t10\tsrc/app.py\n")
+        from wsfixture import survey
+        wsview.apply_survey(view, survey("D\tsrc\nF\t0\t10\tsrc/app.py"))
         self.addCleanup(wsview.unbind, wsview.bind(view))
         out = pt.execute_tool("grep_files", {"pattern": "anything"}, "/ws", "", [], _Rlog()).text
         self.assertIn("not exhaustive", out)
