@@ -7,8 +7,7 @@ The directive is NOT allowed to WRITE THE CODE. Not a corrected line to paste, n
 So: does this directive hand the coder code to copy, or does it describe in words what must become true and leave the writing to the coder?
 
 Answer EXACTLY one word:
-DICTATES — it gives code, a call, a line, a file's contents, or a command for the coder to copy.
-DESCRIBES — it only names things and quotes what already exists or what the tools reported.
+DICTATES — it gives code, a call, a line, a file's contents, or a command for the coder to copy. DESCRIBES — it only names things and quotes what already exists or what the tools reported.
 
 DIRECTIVE:
 {{DIRECTIVE}}

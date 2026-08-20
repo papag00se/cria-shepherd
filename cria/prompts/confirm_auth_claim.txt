@@ -1,6 +1,4 @@
-A drafted steer (below) tells the coder that an API needs authentication — a key, a token, or a
-login. The user's task never mentions authentication, so the claim needs a source. The facts below come from the session's real network record; trust them over anything the
-steer asserts.
+A drafted steer (below) tells the coder that an API needs authentication — a key, a token, or a login. The user's task never mentions authentication, so the claim needs a source. The facts below come from the session's real network record; trust them over anything the steer asserts.
 
 THE DRAFTED STEER:
 {{DIRECTIVE}}
@@ -8,10 +6,6 @@ THE DRAFTED STEER:
 THE SESSION'S REAL NETWORK RECORD:
 {{FACTS}}
 
-Does the steer's authentication claim survive this record? Rule REFUTED only when the record
-shows the claim is invented: no fetch was ever denied (no 401/403/unauthorized anywhere), and
-requests to the same service already SUCCEEDED without any credential. Everything else STANDS: a
-real 401/403/unauthorized in the record, a fetched spec that declares an auth scheme, a service
-the session never actually reached, or anything this record cannot settle.
+Does the steer's authentication claim survive this record? Rule REFUTED only when the record shows the claim is invented: no fetch was ever denied (no 401/403/unauthorized anywhere), and requests to the same service already SUCCEEDED without any credential. Everything else STANDS: a real 401/403/unauthorized in the record, a fetched spec that declares an auth scheme, a service the session never actually reached, or anything this record cannot settle.
 
 Answer with exactly one word: STANDS or REFUTED.

@@ -1,6 +1,5 @@
 THE USER'S ORIGINAL TASK:
 {{TASK}}
 
-THE CODER'S ACTIONS AND THEIR OUTPUTS SO FAR — tool output is ground truth; any SUMMARY OF
-EARLIER WORK below is the coder's own claim, so trust the tool output over it:
+THE CODER'S ACTIONS AND THEIR OUTPUTS SO FAR — tool output is ground truth; any SUMMARY OF EARLIER WORK below is the coder's own claim, so trust the tool output over it:
 {{EVIDENCE}}

@@ -1,6 +1,4 @@
-A verification checker vetoed a completed step. Its stated reason is below, followed by the REAL
-on-disk state of every file the reason names — checked just now; trust this state over anything
-the reason claims about the disk.
+A verification checker vetoed a completed step. Its stated reason is below, followed by the REAL on-disk state of every file the reason names — checked just now; trust this state over anything the reason claims about the disk.
 
 THE VETO'S REASON:
 {{WHY}}
@@ -8,10 +6,6 @@ THE VETO'S REASON:
 THE REAL DISK STATE:
 {{FACTS}}
 
-Does the veto's stated ground survive the disk state? Rule REFUTED only when the reason's core
-claim is that a named file does not exist AND the disk shows that exact file exists. Everything
-else STANDS: content missing INSIDE a file that exists, a function or field or section that is
-absent, a file the disk confirms is truly not there, a claim about something other than a file
-(a response, a value, a behavior), or anything the disk state cannot settle.
+Does the veto's stated ground survive the disk state? Rule REFUTED only when the reason's core claim is that a named file does not exist AND the disk shows that exact file exists. Everything else STANDS: content missing INSIDE a file that exists, a function or field or section that is absent, a file the disk confirms is truly not there, a claim about something other than a file (a response, a value, a behavior), or anything the disk state cannot settle.
 
 Answer with exactly one word: STANDS or REFUTED.

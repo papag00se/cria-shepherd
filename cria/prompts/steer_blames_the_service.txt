@@ -7,8 +7,7 @@ Some directives blame the OUTSIDE WORLD for a failure: the service is down, the 
 A directive that says a specific REQUEST failed, or that a specific path returns an error, is fine — that is an observation. What is not fine is concluding from it that the SERVICE does not work or cannot do the thing, when the record shows it answering.
 
 Answer EXACTLY one word:
-BLAMES — it concludes the service is unavailable, broken, rate-limited, or incapable of what is being asked, and the record below shows that same host answering successfully.
-GROUNDED — it does not make that leap, or the record does not contradict it.
+BLAMES — it concludes the service is unavailable, broken, rate-limited, or incapable of what is being asked, and the record below shows that same host answering successfully. GROUNDED — it does not make that leap, or the record does not contradict it.
 
 THE RECORD OF WHAT WAS ACTUALLY FETCHED:
 {{LEDGER}}

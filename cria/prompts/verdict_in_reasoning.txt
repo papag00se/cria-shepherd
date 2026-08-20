@@ -1,16 +1,12 @@
-A judge was asked for a verdict on a coding task and did not answer in the required format. Its
-private thinking is below. Your only job is to read that thinking and report what it CONCLUDED.
+A judge was asked for a verdict on a coding task and did not answer in the required format. Its private thinking is below. Your only job is to read that thinking and report what it CONCLUDED.
 
 THE JUDGE'S THINKING:
 {{THINKING}}
 
-Did it conclude that the work is NOT finished — something required is missing, broken, unverified,
-or still to do?
+Did it conclude that the work is NOT finished — something required is missing, broken, unverified, or still to do?
 
 Answer with exactly one line:
 - `NOT_DONE: <the judge's own reason, in its own words, one or two sentences>` — when the thinking
-  clearly rules the work unfinished. Quote what it actually said is wrong; do not summarise it away
-  and do not add a diagnosis of your own.
+clearly rules the work unfinished. Quote what it actually said is wrong; do not summarise it away and do not add a diagnosis of your own.
 - `UNCLEAR` — for everything else: it concluded the work IS finished, it never reached a conclusion,
-  it was still weighing both sides, or you cannot tell. Approval is never recovered from thinking,
-  so `UNCLEAR` is the right answer whenever there is any doubt.
+it was still weighing both sides, or you cannot tell. Approval is never recovered from thinking, so `UNCLEAR` is the right answer whenever there is any doubt.

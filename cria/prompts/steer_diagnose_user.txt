@@ -1,16 +1,13 @@
 WHAT TRIPPED THE DETECTOR:
 {{TRIGGER}}
 
-HOW TO WEIGH WHAT FOLLOWS — the sections below are NOT equally reliable, and mistaking one for
-another is the single most expensive error made in this seat. In order of authority:
+HOW TO WEIGH WHAT FOLLOWS — the sections below are NOT equally reliable, and mistaking one for another is the single most expensive error made in this seat. In order of authority:
   1. GROUND TRUTH FROM THE REPO'S CHECKS and the fetch record — real output from real runs.
-     Trust the words; check the DATE. That section says when it last ran and what has been
-     written since. If the coder has edited a file the findings name, they describe the code
-     as it WAS, and the coder's own later run of the same check outranks them.
+Trust the words; check the DATE. That section says when it last ran and what has been written since. If the coder has edited a file the findings name, they describe the code as it WAS, and the coder's own later run of the same check outranks them.
   2. THE FILES ON DISK — read them yourself before quoting them.
   3. THE CODING SESSION — what was actually done and what actually came back.
   4. Any line marked as an earlier note from this system — that is a PREVIOUS answer from this same
-     seat, possibly your own and possibly wrong. It is never evidence. Do not cite it back.
+seat, possibly your own and possibly wrong. It is never evidence. Do not cite it back.
 
 THE CODING SESSION SO FAR (the task, and every tool call the coder made with its result):
 {{SESSION}}

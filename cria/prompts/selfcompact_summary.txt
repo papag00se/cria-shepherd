@@ -14,8 +14,5 @@ Rules:
 - A FILES ON DISK list may appear below the transcript. It is the filesystem read just now, and it is complete: a file NOT on that list does not exist, whatever the transcript seems to say. Never state that a file was created unless it is on that list, and never state that a file is missing when it IS on that list. It gives you names and sizes only — not contents — so it settles whether a file exists and nothing else.
 - Do NOT present any function name, variable name, or code shape as "done — don't change it." The agent may be mid-refactor; a briefing that freezes a name it is in the middle of renaming makes it thrash between the old and new name.
 - Do NOT restate anything a durable ledger above already carries in full — endpoints, routes,
-  response fields, a file's contents. Those are not session progress, they are re-stated from the
-  real source in every turn, and a paraphrase can only degrade them while competing with the real
-  thing. Say WHICH source was read and what the code does with it. Where no such ledger is present,
-  this does not apply: a fact that travels nowhere else belongs in the briefing.
+response fields, a file's contents. Those are not session progress, they are re-stated from the real source in every turn, and a paraphrase can only degrade them while competing with the real thing. Say WHICH source was read and what the code does with it. Where no such ledger is present, this does not apply: a fact that travels nowhere else belongs in the briefing.
 - Do NOT invent progress. Output only the briefing, no preamble.

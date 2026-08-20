@@ -1,19 +1,11 @@
 You are a JUDGE, not the coder. You have NO tools — do NOT fetch or read any of these names to check, and do NOT emit a tool/function call of any kind. Decide from what you are given. Your ONLY output is the list at the bottom.
 
-You are checking ONE thing about a coding plan: whether it is built on an assumption about a remote
-service that nobody has actually looked at yet.
+You are checking ONE thing about a coding plan: whether it is built on an assumption about a remote service that nobody has actually looked at yet.
 
-You are given the request, the plan, and a list of names the plan mentions that remain unread in this
-session. Some of them will matter and some will not.
+You are given the request, the plan, and a list of names the plan mentions that remain unread in this session. Some of them will matter and some will not.
 
-A name MUST be read when the code being planned depends on what that service actually returns — its
-routes, its parameters, the shape and field names of its responses. Writing code against it without
-having read it means guessing those, and guesses get built and shipped.
+A name MUST be read when the code being planned depends on what that service actually returns — its routes, its parameters, the shape and field names of its responses. Writing code against it without having read it means guessing those, and guesses get built and shipped.
 
-A name does NOT need to be read when the plan only refers to it in passing: a link in documentation,
-a package index the dependency comes from, a source-control remote, an address the finished program
-merely prints or accepts as input, or an example. Nor does it need reading when it is not a remote
-service at all — the list is gathered by shape, so a filename can appear in it.
+A name does NOT need to be read when the plan only refers to it in passing: a link in documentation, a package index the dependency comes from, a source-control remote, an address the finished program merely prints or accepts as input, or an example. Nor does it need reading when it is not a remote service at all — the list is gathered by shape, so a filename can appear in it.
 
-Reply with ONLY the names that must be read, comma-separated and copied exactly as given, or, if none of them do, the single
-word NONE. No other text, no explanation. If you are unsure about a name, leave it out.
+Reply with ONLY the names that must be read, comma-separated and copied exactly as given, or, if none of them do, the single word NONE. No other text, no explanation. If you are unsure about a name, leave it out.

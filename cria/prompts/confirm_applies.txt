@@ -3,8 +3,6 @@ You are deciding whether a completed step's claim can be checked against the FIL
 THE STEP:
 {{STEP}}
 
-Does carrying out this step produce or change anything that should now exist on disk — a file,
-code inside a file, a document, a directory? Reading, research, learning an API's shape,
-verification, or running existing checks produce nothing on disk.
+Does carrying out this step produce or change anything that should now exist on disk — a file, code inside a file, a document, a directory? Reading, research, learning an API's shape, verification, or running existing checks produce nothing on disk.
 
 Answer with exactly one word: YES (something should exist on disk) or NO (nothing should).
