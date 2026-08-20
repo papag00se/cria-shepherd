@@ -18,20 +18,22 @@ from cria import dirguard
 
 class RouteNamesTheDiscoveredBinary(unittest.TestCase):
     def setUp(self):
-        self._which, self._variant = dirguard.toolpath.which, dirguard._versioned_variant
-
-    def tearDown(self):
-        dirguard.toolpath.which, dirguard._versioned_variant = self._which, self._variant
+        self._resolved = dirguard.toolpath.resolved
+        self.addCleanup(setattr, dirguard.toolpath, "resolved", self._resolved)
 
     def _box(self, present: dict):
-        """A box where `present` maps a plain name to the executable actually on PATH.
+        """A box where `present` maps a plain name to the executable actually on the CODER's PATH.
 
-        NOTE `ruby` is now one of `gem_bundler`'s needs: the route names a one-off `<ruby> -e`
-        command, and a route may only print a binary cria has actually resolved (#5b — the whole
-        reason the `{{TOOL}}` tokens exist). A fixture without it falls through to `gem_direct`,
-        which is correct behaviour and not what these tests are about."""
-        dirguard.toolpath.which = lambda n: n if present.get(n) == n else None
-        dirguard._versioned_variant = lambda n: present.get(n) if present.get(n) != n else None
+        One oracle now, not two: `toolpath.resolved` answers with the name the coder must type — the
+        plain one, a versioned variant, or "" when their shell resolves nothing. The separate
+        versioned-variant search that used to list cria's own PATH directories is gone; the survey
+        the harness runs does that search on the machine it is about.
+
+        NOTE `ruby` is one of `gem_bundler`'s needs: the route names a one-off `<ruby> -e` command,
+        and a route may only print a binary cria has actually resolved (#5b — the whole reason the
+        `{{TOOL}}` tokens exist). A fixture without it falls through to `gem_direct`, which is
+        correct behaviour and not what these tests are about."""
+        dirguard.toolpath.resolved = lambda n: present.get(n, "")
 
     def test_the_versioned_name_reaches_the_sentence(self):
         """FAILS BEFORE: the advice said `bundle install`, a command this box cannot run."""

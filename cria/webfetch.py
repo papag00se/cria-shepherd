@@ -1087,7 +1087,11 @@ def already_spilled(session: Optional[str], url: str, workspace_root: Optional[s
         return True
     if workspace_root and not os.path.abspath(path).startswith(os.path.abspath(workspace_root) + os.sep):
         return False
-    return os.path.exists(path)
+    # The spill file lives in the CODER's workspace, so whether it is still there is a question
+    # about the harness's disk. Unknown keeps the claim — the record says cria wrote it, and
+    # withdrawing that on an unanswered question would send the model to re-fetch a doc it has.
+    from . import wsview
+    return wsview.current().exists(path) is not False
 
 
 def note_search_spill(session: Optional[str], query: str) -> None:

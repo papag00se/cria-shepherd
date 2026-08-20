@@ -42,7 +42,7 @@ import os
 from dataclasses import dataclass, field
 from typing import Callable, Optional
 
-from . import ignore, prompts
+from . import ignore, wsview, prompts
 
 # (exit_code | None, stdout, stderr, timed_out) — see the module docstring for the
 # error-signalling contract (FileNotFoundError = binary absent).
@@ -121,19 +121,19 @@ def collect_files(root: str, exts: list[str]) -> list[str]:
 
 
 def _walk(root: str, dirpath: str, exts: list[str], out: list[str], matcher) -> None:
-    try:
-        entries = list(os.scandir(dirpath))
-    except OSError:
-        return  # unreadable dir → silently return
+    # The workspace is the HARNESS's filesystem, so the entries come from what the harness
+    # reported (:mod:`cria.wsview`), not from cria's own disk. None means the same thing the old
+    # OSError meant — this directory could not be listed — so the contract is unchanged.
+    entries = wsview.current().scandir(dirpath)
+    if entries is None:
+        return  # unlisted dir → silently return
     for e in entries:
         name = e.name
-        try:
-            # follow_symlinks=False mirrors Rust's DirEntry::file_type(): a symlink is
-            # neither dir nor file, so it is skipped rather than followed into a loop.
-            is_dir = e.is_dir(follow_symlinks=False)
-            is_file = e.is_file(follow_symlinks=False)
-        except OSError:
-            continue
+        # follow_symlinks=False mirrored Rust's DirEntry::file_type(): a symlink is neither dir
+        # nor file, so it is skipped rather than followed into a loop. The survey records entries
+        # the same way, so a symlink is already neither.
+        is_dir = e.is_dir()
+        is_file = e.is_file()
         full = os.path.join(dirpath, name)
         if is_dir:
             if name.startswith(".") or name in SKIP_DIRS:

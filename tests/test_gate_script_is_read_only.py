@@ -14,6 +14,7 @@ And when a harness refuses anyway, it must land in the log instead of disabling 
 """
 
 import os
+import subprocess
 
 import pytest
 
@@ -105,15 +106,28 @@ def _litter_sections(paths):
     return {probegate.LITTER_SECTION: "\n".join(paths)}
 
 
+def _sweep_and_remove(ws, paths):
+    """The real two-step: cria queues what the probes created, and the HARNESS removes it.
+
+    cria cannot unlink a file on a filesystem it does not own — off a shared box its own `os.unlink`
+    was a silent no-op and the litter stayed. So the removal is a bounded `python3` leg cria composes
+    and the harness runs, exactly like every other act in the workspace."""
+    plan = probegate.GatePlan(workspace=str(ws))
+    removed = probegate.sweep_litter(plan, _litter_sections(paths))
+    cmd = probegate.litter_removal_command(str(ws))
+    if cmd:
+        subprocess.run(["sh", "-c", cmd], cwd=str(ws), capture_output=True)
+    return removed
+
+
 def test_sweep_removes_exactly_what_the_probes_created(tmp_path):
     ws = tmp_path
     (ws / "kept.py").write_text("x = 1\n")
     (ws / "orders.db").write_text("sqlite")
     (ws / "artifacts").mkdir()
     (ws / "artifacts" / "out.bin").write_text("junk")
-    plan = probegate.GatePlan(workspace=str(ws))
 
-    removed = probegate.sweep_litter(plan, _litter_sections(["orders.db", "artifacts"]))
+    removed = _sweep_and_remove(ws, ["orders.db", "artifacts"])
 
     assert sorted(removed) == ["artifacts", "orders.db"]
     assert not (ws / "orders.db").exists()
@@ -126,11 +140,7 @@ def test_sweep_cannot_escape_the_workspace(tmp_path):
     ws.mkdir()
     outside = tmp_path / "precious.txt"
     outside.write_text("do not delete")
-    plan = probegate.GatePlan(workspace=str(ws))
-
-    removed = probegate.sweep_litter(plan, _litter_sections([
-        "../precious.txt", str(outside), "sub/../../precious.txt",
-    ]))
+    removed = _sweep_and_remove(ws, ["../precious.txt", str(outside), "sub/../../precious.txt"])
 
     assert removed == []
     assert outside.exists(), "the sweep deleted a file outside the workspace"
@@ -146,9 +156,8 @@ def test_sweep_unlinks_a_symlink_rather_than_following_it(tmp_path):
         os.symlink(outside, link)
     except (OSError, NotImplementedError):
         pytest.skip("symlinks unavailable")
-    plan = probegate.GatePlan(workspace=str(ws))
 
-    removed = probegate.sweep_litter(plan, _litter_sections(["link.txt"]))
+    removed = _sweep_and_remove(ws, ["link.txt"])
 
     assert removed == ["link.txt"]
     assert not link.exists() and not link.is_symlink()

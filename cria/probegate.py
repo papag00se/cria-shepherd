@@ -30,10 +30,9 @@ import json
 import os
 import re
 import shlex
-import shutil
 from dataclasses import dataclass, field
 
-from . import dirguard, dedup, jsontext
+from . import dirguard, dedup, jsontext, wsview
 from . import probediscovery, probeparse, prompts, proberun
 
 # Leading ``path:line[:col][:]`` location prefix a linter prints before the diagnostic. Stripping it
@@ -135,7 +134,7 @@ def _checks_ran_elsewhere(workspace: str, candidates: list) -> str:
     return "" if where.startswith("..") or os.path.isabs(where) else where
 
 
-def plan_gate(workspace: str) -> GatePlan:
+def plan_gate(workspace: str, session: str = "") -> GatePlan:
     """Inspect the workspace read-only and compose the gate script.
 
     Selection is re-run on EVERY gate (like upstream's ``discover`` per gate run):
@@ -159,6 +158,12 @@ def plan_gate(workspace: str) -> GatePlan:
         plan.ran_in = _checks_ran_elsewhere(workspace, plan.candidates)
 
     parts: list[str] = [f"cd {shlex.quote(workspace)} || exit 97"] if workspace else []
+    # FIRST, remove what the LAST gate's probes left behind. cria cannot delete on the harness's
+    # filesystem itself, so the removal rides on the next script it composes — before the pre-probe
+    # `git status` below, so this gate's own untracked-file baseline is taken after the cleanup and
+    # the litter is never attributed to the coder.
+    if workspace and (rm := litter_removal_command(workspace)):
+        parts.append(rm)
     # THE GATE MUST NOT LEAVE STATE BEHIND. It runs the repo's own tests in the LIVE workspace, and a
     # test that writes — a database file, a fixture, an output artifact — leaves that behind for the
     # next gate to trip over. cria then reports a failure it manufactured itself, under the strongest
@@ -220,6 +225,11 @@ def plan_gate(workspace: str) -> GatePlan:
     # Changed-files signal: one line summarizing the working tree (porcelain is stable);
     # hashing keeps it tiny and diffable across gate runs. Absent git → empty (no signal).
     parts.append("git status --porcelain 2>/dev/null | sha1sum 2>/dev/null | cut -d' ' -f1")
+    # THE WORKSPACE SURVEY RIDES HOME WITH THE GATE. This is already a harness round trip, so it
+    # costs nothing extra, and it is the one place guaranteed to happen in a session where the
+    # harness offers its own file tools and cria lowers nothing. Appended AFTER the last marker and
+    # taken back off by `interpret_gate`, so no section ever contains a byte of it.
+    parts.append(wsview.survey_command(session, cd=workspace))
     plan.script = "\n".join(parts)
     return plan
 
@@ -295,7 +305,6 @@ def _with_delimiter_facts(findings: list[str], plan, annotate: bool = True,
     counts BALANCE, the imbalance lives on another line — a single-line count would mislead, so
     stay silent (state the fact or be silent)."""
     import os
-    from pathlib import Path
     out: list[str] = []
     workspace = getattr(plan, "workspace", "") or ""
     for f in findings:
@@ -305,10 +314,8 @@ def _with_delimiter_facts(findings: list[str], plan, annotate: bool = True,
         m = _UNMATCHED_RE.match(f)
         if m:
             path, line_no, d = m.group(1), int(m.group(2)), m.group(3)
-            p = Path(path) if os.path.isabs(path) else Path(workspace) / path
-            try:
-                line = p.read_text(errors="replace").splitlines()[line_no - 1]
-            except (OSError, IndexError):
+            line = _source_line(path, line_no, workspace)
+            if line is None:
                 continue
             opener = d if d in "([{" else _DELIM_PAIRS[d]
             closer = _DELIM_PAIRS[opener]
@@ -335,20 +342,14 @@ def _with_delimiter_facts(findings: list[str], plan, annotate: bool = True,
         if os.path.basename(path) in changed_paths:
             continue        # the file moved since this check ran — quoting today's line under
                             # yesterday's finding manufactures the contradiction; the finding stands
-        p = Path(path) if os.path.isabs(path) else Path(workspace) / path
         # ONLY inside the workspace. An absolute finding can name a stdlib frame
         # (/usr/lib/python3.12/unittest/mock.py:956 in a pytest traceback), and quoting it back
         # presents CPython internals as "a line the repo's own checks flagged" — under a header
         # telling the coder to fix what each one names. Walked: ~10 such annotations per checks
-        # block, each duplicating the traceback line printed directly beneath it.
-        try:
-            if workspace and not p.resolve().is_relative_to(Path(workspace).resolve()):
-                continue
-        except (OSError, ValueError):
-            continue
-        try:
-            line = p.read_text(errors="replace").splitlines()[line_no - 1]
-        except (OSError, IndexError):
+        # block, each duplicating the traceback line printed directly beneath it. The workspace
+        # view answers only for paths inside the workspace, so that bound is now the seam itself.
+        line = _source_line(path, line_no, workspace)
+        if line is None:
             continue
         text = line.strip()
         if not text or text in f:      # nothing to quote, or the finding already shows it
@@ -377,21 +378,39 @@ _EXCEPTION_FINDING = re.compile(
     r"|\bat [\w.$]+\([\w.]+\.(?:java|kt|scala):\d+\)")
 
 
+def _source_line(path: str, line_no: int, workspace: str) -> "str | None":
+    """Line ``line_no`` of a workspace file, or None when cria has not been told the file.
+
+    ONE owner for the three annotators that quote a flagged line back to the coder. The bytes come
+    from :mod:`cria.wsview` — the harness's filesystem, which is the one the checks ran against.
+    A path OUTSIDE the workspace answers None, which is what the stdlib-frame guard wanted anyway.
+    """
+    import os
+    view = wsview.current(workspace)
+    full = os.path.normpath(path if os.path.isabs(path) else os.path.join(workspace, path))
+    # ONLY inside the workspace, stated here rather than left to the view. An absolute finding can
+    # name a stdlib frame (/usr/lib/python3.12/unittest/mock.py:956 in a pytest traceback), and
+    # quoting it back presents CPython internals as "a line the repo's own checks flagged".
+    root = os.path.normpath(workspace).rstrip(os.sep)
+    if full != root and not full.startswith(root + os.sep):
+        return None
+    body = view.read(full)
+    if body is None:
+        return None
+    try:
+        return body.splitlines()[line_no - 1]
+    except IndexError:
+        return None
+
+
 def _line_on_disk(finding: str, workspace: str) -> "str | None":
     """The on-disk text of the line a ``path:LINE…`` finding flags, or None. Feeds probeparse's
     F811 discriminator (def/class shadow = real bug; import rebinding = advisory) — the file
     access the pure predicate can't do itself."""
-    import os
-    from pathlib import Path
     m = _FLAGGED_LINE_RE.match(finding)
     if not m or not workspace:
         return None
-    path, line_no = m.group(1), int(m.group(2))
-    p = Path(path) if os.path.isabs(path) else Path(workspace) / path
-    try:
-        return p.read_text(errors="replace").splitlines()[line_no - 1]
-    except (OSError, IndexError):
-        return None
+    return _source_line(m.group(1), int(m.group(2)), workspace)
 
 
 def _is_hard_failure(plan, sid: str) -> bool:
@@ -823,7 +842,9 @@ def _strip_gate_plumbing(cmd: str) -> str:
     COPY", carried 557 characters of runnable shell per call.
 
     Rules 17 and 5b: the model never sees the token, and never sees an idiom that lies about its own
-    exit status."""
+    exit status. The workspace survey that rides home with the gate is cria's own too, and comes off
+    the same way — it is bracketed, so removing it is exact rather than pattern-matched."""
+    cmd = wsview.strip_survey_command(cmd)
     out = []
     for ln in cmd.splitlines():
         if (_GATE_MARKER_ECHO.match(ln) or _GATE_GIT_FP.match(ln)
@@ -972,6 +993,50 @@ def refusal_reason(result_text: str) -> str:
     return ""
 
 
+# Litter one gate's probes created, waiting for the NEXT gate script to remove it. Keyed by
+# workspace because that is what the removal command needs, and bounded like every other
+# per-session store here.
+_LITTER_QUEUE: dict[str, list[str]] = {}
+
+
+def _queue_litter(workspace: str, rels: list[str]) -> None:
+    if not workspace:
+        return
+    if len(_LITTER_QUEUE) > 256:
+        _LITTER_QUEUE.clear()
+    q = _LITTER_QUEUE.setdefault(workspace, [])
+    for r in rels:
+        if r not in q:
+            q.append(r)
+    del q[:-256]
+
+
+def litter_removal_command(workspace: str) -> str:
+    """The shell leg that removes the previous gate's litter, or "" when there is none.
+
+    A `python3` unlink rather than `rm`: the harness sandbox rejects an exec containing `rm` and
+    takes every probe in the script down with it, which is how a cleanup once killed every gate in
+    every language. Paths are workspace-relative and were already bounded by `sweep_litter`; the
+    program refuses an absolute path or a `..` a second time, because this is the leg that deletes.
+    """
+    q = _LITTER_QUEUE.pop(workspace, None)
+    if not q:
+        return ""
+    prog = ("import os,shutil,sys\n"
+            "for rel in " + repr(q) + ":\n"
+            "    if os.path.isabs(rel) or '..' in rel.split('/'):\n"
+            "        continue\n"
+            "    t = os.path.join(os.getcwd(), rel)\n"
+            "    try:\n"
+            "        if os.path.islink(t) or os.path.isfile(t):\n"
+            "            os.unlink(t)\n"
+            "        elif os.path.isdir(t):\n"
+            "            shutil.rmtree(t)\n"
+            "    except OSError:\n"
+            "        pass\n")
+    return "{ python3 - <<'__CRIA_LITTER__'\n" + prog + "__CRIA_LITTER__\n} >/dev/null 2>&1"
+
+
 def sweep_litter(plan: GatePlan, sections: dict) -> list[str]:
     """Remove the untracked files the gate's OWN probes created. Returns what was removed.
 
@@ -987,6 +1052,7 @@ def sweep_litter(plan: GatePlan, sections: dict) -> list[str]:
     if not body or not root:
         return []
     removed: list[str] = []
+    queue: list[str] = []
     for rel in (ln.strip() for ln in body.splitlines()):
         # ONE OWNER for "does this path leave the workspace". This used to be a hand-rolled
         # realpath-the-parent dance here, correct but private, while writeproxy asked dirguard a
@@ -995,22 +1061,27 @@ def sweep_litter(plan: GatePlan, sections: dict) -> list[str]:
         # planner_tools — which also act in the workspace — checked nothing at all.
         if not rel or os.path.isabs(rel) or dirguard.escapes_workspace(rel, root):
             continue
-        target = os.path.join(os.path.realpath(root), rel)
-        try:
-            if os.path.islink(target) or os.path.isfile(target):
-                os.unlink(target)
-            elif os.path.isdir(target):
-                shutil.rmtree(target)
-            else:
-                continue
-        except OSError:
-            continue
+        queue.append(rel)
         removed.append(rel)
+    # THE REMOVAL HAPPENS ON THE HARNESS'S SIDE, because that is whose filesystem this is. cria used
+    # to unlink these paths itself — correct only while the two machines are the same one, and a
+    # silent no-op otherwise, which would leave the gate's own litter behind for the next gate to
+    # report as the repo's failure. So the paths are QUEUED and the next gate script removes them
+    # before it runs anything (see plan_gate). Still not an `rm`: the Codex sandbox hard-rejects the
+    # whole exec when it sees one, and a rejected exec kills every probe in the script.
+    if queue:
+        _queue_litter(plan.workspace, queue)
     return removed
 
 
 def interpret_gate(plan: GatePlan, result_text: str) -> GateOutcome:
     """Replay the harness's gate output through the ported interpreters."""
+    # The workspace survey rode home on this result (see plan_gate). Take it off first — it is
+    # cria's own instrumentation, it belongs to no probe, and left in place it would land inside
+    # whichever section happened to be open when it started.
+    result_text, survey = wsview.strip_survey(result_text)
+    if survey:
+        wsview.apply_survey(wsview.current(), survey)
     sections = split_sections(result_text)
     # Before anything else: take back what the probes left behind. Runs even when the gate FAILED —
     # a suite that errors halfway still wrote its fixtures, and the next gate would inherit them.

@@ -7,6 +7,7 @@ answer_now = You have inspected enough. Answer NOW with ONLY the JSON verdict: {
 outside = [refused: {{PATH}} is outside the workspace — the judge inspects only the workspace under {{ROOT}}]
 unknown_tool = [refused: {{NAME}} is not one of your tools — you have list_dir and read_file; the coder's tools are listed only so the fix you name is one IT can carry out]
 missing = [{{PATH}} does not exist]
+unknown = [{{PATH}} could not be read right now — this is NOT evidence that it is absent, and you must not treat it as such. Ask again on your next round, or judge from what you do have.]
 # read_file on a DIRECTORY must state the truth, not "does not exist" — walked on maple
 # 1785956867 call 0054: the steer author read __pycache__/ (which existed), was told it did
 # not exist, and built a wrong stale-cache theory on that false fact (rule 5b).

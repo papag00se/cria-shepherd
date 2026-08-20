@@ -1287,11 +1287,20 @@ def dependency_source_root(eco: str, workspace_root: str) -> str:
     resolved against ``workspace_root`` so the project-scoped install wins when it is present, which
     is the honest answer to "is there a vendored copy here"."""
     import os
+    from . import wsview
+    view = wsview.current()
     for cand in _DEPENDENCY_SOURCE_ROOTS.get((eco or "").lower(), ()):
-        path = (os.path.expanduser(cand) if cand.startswith("~")
-                else os.path.join(workspace_root or "", cand))
-        if os.path.isdir(path):
-            return path
+        if cand.startswith("~"):
+            # OUTSIDE THE WORKSPACE, so there is no listing to consult — cria names the exact path
+            # and the harness answers about its OWN home directory. `~` is left unexpanded here on
+            # purpose: expanding it would resolve cria's home, and the question is about the
+            # coder's.
+            if view.outside_kind(cand) == "d":
+                return os.path.expanduser(cand)
+        else:
+            path = os.path.join(workspace_root or "", cand)
+            if view.isdir(path) is True:
+                return path
     return ""
 
 
@@ -1308,21 +1317,21 @@ def install_flavour(eco: str, workspace_root: str) -> str:
     "an install landed" and "I cannot tell which", and the general line's `--install-dir` claim came
     straight back for a bundler project. Two readers of one tree must not see different trees (#11b).
     """
-    if not workspace_root or not os.path.isdir(workspace_root):
-        return ""
+    from . import wsview
+    view = wsview.current(workspace_root)
     flavours = _INSTALL_FLAVOUR.get(eco, ())
-    if not flavours:
+    if not flavours or not workspace_root:
         return ""
+    tree = view.walk(workspace_root)
+    if tree is None:
+        return ""            # nothing surveyed yet — cria cannot say, and says so by saying nothing
     root = os.path.join(workspace_root, "")
-    try:
-        for dirpath, dirnames, _files in os.walk(workspace_root):
-            for flavour, marks in flavours:
-                if any(os.path.exists(os.path.join(dirpath, m)) for m in marks):
-                    return flavour
-            if dirpath[len(root):].count(os.sep) >= 2:   # bounded, like install_landed
-                dirnames[:] = []
-    except OSError:
-        return ""
+    for dirpath, dirnames, _files in tree:
+        if dirpath[len(root):].count(os.sep) >= 2:      # bounded, like install_landed
+            continue
+        for flavour, marks in flavours:
+            if any(view.exists(os.path.join(dirpath, m)) is True for m in marks):
+                return flavour
     return ""
 
 
@@ -1348,25 +1357,26 @@ def install_landed(eco: str, workspace_root: str) -> bool | None:
     Recorded as `MODIFY FIRST — add a condition, never soften the sentence` in the cycle-3 ledger and
     not landed then; two more sightings is enough."""
     ev = _INSTALL_EVIDENCE.get(eco)
-    # `os.walk` on a path that does not exist yields NOTHING and raises nothing, so without this the
-    # answer to "is anything installed" would be a confident False about a workspace cria cannot see
-    # — the same class of false fact this function exists to stop.
-    if not ev or not workspace_root or not os.path.isdir(workspace_root):
+    from . import wsview
+    if not ev or not workspace_root:
+        return None
+    tree = wsview.current(workspace_root).walk(workspace_root)
+    # A workspace nobody has surveyed yields NOTHING, so without this the answer to "is anything
+    # installed" would be a confident False about a workspace cria cannot see — the same class of
+    # false fact this function exists to stop.
+    if tree is None:
         return None
     root = os.path.join(workspace_root, "")
-    try:
-        for dirpath, dirnames, filenames in os.walk(workspace_root):
-            if any(n in ev for n in filenames):
-                return True                       # a lock file IS the record of an install
-            for n in dirnames:
-                if n in ev and _holds_a_file(os.path.join(dirpath, n)):
-                    return True
-            # Bounded: an install tree lives at the top of a project, not eight levels down.
-            if dirpath[len(root):].count(os.sep) >= 2:
-                dirnames[:] = []
-        return False
-    except OSError:
-        return None
+    for dirpath, dirnames, filenames in tree:
+        # Bounded: an install tree lives at the top of a project, not eight levels down.
+        if dirpath[len(root):].count(os.sep) >= 2:
+            continue
+        if any(n in ev for n in filenames):
+            return True                       # a lock file IS the record of an install
+        for n in dirnames:
+            if n in ev and _holds_a_file(os.path.join(dirpath, n)):
+                return True
+    return False
 
 
 def _holds_a_file(path: str) -> bool:
@@ -1381,7 +1391,8 @@ def _holds_a_file(path: str) -> bool:
     this whole function exists to stop.
 
     An install writes files. `mkdir -p` writes none."""
-    for _dirpath, _dirnames, filenames in os.walk(path):
+    from . import wsview
+    for _dirpath, _dirnames, filenames in (wsview.current().walk(path) or ()):
         if filenames:
             return True
     return False
@@ -1409,14 +1420,14 @@ def names_a_workspace_file(name: str, workspace_root: str) -> bool:
     Deliberately generous about extension and layout: the question is only "is this the project's
     own code", and a false YES is the safe direction — it means cria says nothing (#3) rather than
     telling the coder its own module is a missing dependency."""
-    import os as _os
-    if not name or not workspace_root or not _os.path.isdir(workspace_root):
+    from . import wsview
+    if not name or not workspace_root:
         return False
     head = re.split(r"[./\\:]", name.strip("'\"" ))[0]
     if not head:
         return False
-    for dirpath, dirnames, filenames in _os.walk(workspace_root):
-        dirnames[:] = [d for d in dirnames if not d.startswith(".")]
+    for _dirpath, dirnames, filenames in (
+            wsview.current(workspace_root).walk(workspace_root, skip_hidden=True) or ()):
         if head in dirnames:
             return True
         for f in filenames:

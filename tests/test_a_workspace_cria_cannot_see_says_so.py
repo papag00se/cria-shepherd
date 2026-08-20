@@ -1,28 +1,26 @@
-"""cria was handed a path from another machine and reported nothing.
+"""cria was handed a path from another machine and treated it as a path on this one.
 
-`workspace_root` is a path the HARNESS announces, about the HARNESS's filesystem. cria hands it
-straight to `os.path.isdir`, which only means anything when the two are the same machine — and
+`workspace_root` is a path the HARNESS announces, about the HARNESS's filesystem. cria used to hand
+it straight to `os.path.isdir`, which only means anything when the two are the same machine — and
 nothing in this repo ever said they must be. The likely deployment is cria beside the model server
 while the harness runs on someone's workstation.
 
-The failure shape is why this exists. `os.path.isdir` on a foreign path returns False, so every
-disk-derived mechanism concludes "nothing there" and abstains — correctly, by #11b — and cria
-degrades to almost nothing while reporting no problem at all. Twenty-nine functions take a workspace
-path; not one asked whether it could be reached. A silent degradation is the one shape nobody can
-notice from the outside.
+The first attempt at this treated an unreachable cwd like an unknown one: blank it, and say so once
+per session. That was the wrong repair, and this file records why. Blanking the path removes the
+workspace from every mechanism that needs it — including `dirguard`'s containment boundary, which is
+a string comparison and perfectly valid across machines — so cria answered a co-location problem by
+disabling itself. The real repair is that NOTHING asks cria's disk about that path any more: the
+name is carried as a name, and every question about what is AT the name goes through
+:mod:`cria.wsview`, which is filled by a survey the harness runs.
 
-An unreachable cwd is now treated exactly like an unknown one — None, callers skip disk work — and
-the fact is stated ONCE per session on cria's own channel (#12).
-
-THE LEXICAL CALLER IS EXEMPT, and that is the point of the split. `dirguard`'s containment boundary
-is a path COMPARISON — is this target inside that prefix — and it is exactly as valid against a
-workspace on another machine. Blanking it there would remove the bound on a fledgling model's file
-tools, which is the opposite of what this change is for.
+So the contract asserted here is: the announced cwd survives whether or not it exists on this
+machine, and a workspace nobody has surveyed answers "unknown" — never "empty", and never "no".
 """
 
 import unittest
 
 from cria import server as srv
+from cria import wsview
 
 
 def _msgs(cwd):
@@ -38,61 +36,70 @@ class _Rlog:
         self.events.append((kind, kw))
 
 
-class AnUnreachableWorkspaceIsNotSilentTests(unittest.TestCase):
-    def setUp(self):
-        srv._CWD_BY_SESSION.clear()
-        srv._UNREACHABLE_REPORTED.clear()
+class TheAnnouncedPathIsCarriedAsANameTests(unittest.TestCase):
+    FOREIGN = "/home/someone-else/projects/api"       # exists on the harness, not here
 
-    def test_disk_callers_are_told_nothing_rather_than_a_path_that_does_not_resolve(self):
-        r = _Rlog()
-        self.assertIsNone(srv._session_cwd("s", _msgs("/not/on/this/machine"), r))
+    def test_a_path_that_does_not_exist_here_is_still_the_workspace(self):
+        """The old repair returned None here, and took the whole workspace down with it."""
+        self.assertEqual(srv._session_cwd("s1", _msgs(self.FOREIGN)), self.FOREIGN)
 
-    def test_it_says_so_on_crias_own_channel(self):
-        r = _Rlog()
-        srv._session_cwd("s", _msgs("/not/on/this/machine"), r)
-        kinds = [k for k, _ in r.events]
-        self.assertIn("server.workspace_unreachable", kinds)
-        self.assertEqual(r.events[0][1]["cwd"], "/not/on/this/machine")
+    def test_it_does_not_warn_about_a_path_it_has_no_business_testing(self):
+        rlog = _Rlog()
+        srv._session_cwd("s2", _msgs(self.FOREIGN), rlog)
+        self.assertEqual([k for k, _ in rlog.events], [])
 
-    def test_it_says_so_ONCE_per_session_not_once_per_request(self):
-        first, second = _Rlog(), _Rlog()
-        srv._session_cwd("s", _msgs("/not/on/this/machine"), first)
-        srv._session_cwd("s", _msgs("/not/on/this/machine"), second)
-        self.assertTrue(first.events)
-        self.assertEqual(second.events, [])          # noise, not signal, the second time (#3)
+    def test_the_lexical_and_ordinary_reads_agree(self):
+        """They were two answers to one question; only the split is gone, not the callers."""
+        self.assertEqual(srv._session_cwd("s3", _msgs(self.FOREIGN)),
+                         srv._session_cwd("s3", _msgs(self.FOREIGN), lexical=True))
 
-    def test_a_reachable_workspace_is_unchanged_and_silent(self):
-        import tempfile
-        r = _Rlog()
-        with tempfile.TemporaryDirectory() as tmp:
-            self.assertEqual(srv._session_cwd("s", _msgs(tmp), r), tmp)
-        self.assertEqual(r.events, [])
+    def test_it_is_remembered_for_the_session(self):
+        srv._session_cwd("s4", _msgs(self.FOREIGN))
+        self.assertEqual(srv._session_cwd("s4", []), self.FOREIGN)
 
     def test_no_cwd_at_all_is_still_just_None(self):
-        r = _Rlog()
-        self.assertIsNone(srv._session_cwd("s", [{"role": "user", "content": "hi"}], r))
-        self.assertEqual(r.events, [])               # unknown is not unreachable
+        self.assertIsNone(srv._session_cwd("s5-unseen", []))
+
+    def test_cria_own_dir_is_never_the_workspace(self):
+        self.assertIsNone(srv._session_cwd("s6", _msgs(".")))
 
 
-class TheContainmentBOUNDARYKeepsItsPathTests(unittest.TestCase):
+class AnUnsurveyedWorkspaceAnswersUnknownTests(unittest.TestCase):
+    """The direction that matters: not knowing must never render as knowing nothing is there."""
+
     def setUp(self):
-        srv._CWD_BY_SESSION.clear()
-        srv._UNREACHABLE_REPORTED.clear()
+        self.view = wsview.View("/home/someone-else/projects/api", "s")
+        self.token = wsview.bind(self.view)
+        self.addCleanup(wsview.unbind, self.token)
 
-    def test_a_lexical_caller_still_gets_the_announced_path(self):
-        got = srv._session_cwd("s", _msgs("/not/on/this/machine"), _Rlog(), lexical=True)
-        self.assertEqual(got, "/not/on/this/machine")
+    def test_existence_is_unknown_not_false(self):
+        self.assertIsNone(self.view.isfile("main.py"))
+        self.assertIsNone(self.view.isdir("src"))
+        self.assertIsNone(self.view.exists("main.py"))
 
-    def test_the_lexical_read_does_not_warn(self):
-        r = _Rlog()
-        srv._session_cwd("s", _msgs("/not/on/this/machine"), r, lexical=True)
-        self.assertEqual(r.events, [])               # it did not need the disk, so nothing is wrong
+    def test_a_listing_is_unknown_not_empty(self):
+        self.assertIsNone(self.view.listdir("."))
+        self.assertIsNone(self.view.walk("."))
 
-    def test_dirguard_is_wired_to_the_lexical_form(self):
-        # The bound on a fledgling model's file tools must survive a workspace cria cannot see.
+    def test_a_body_is_unknown_and_the_question_is_remembered(self):
+        self.assertIsNone(self.view.read("main.py"))
+        bodies, _progs, _outside = wsview.pending("s")
+        self.assertIn("main.py", bodies)
+
+    def test_a_path_outside_the_workspace_is_never_answered_from_it(self):
+        self.assertIsNone(self.view.rel("/etc/passwd"))
+        self.assertIsNone(self.view.isfile("/etc/passwd"))
+
+
+class TheContainmentBoundaryStillHoldsTests(unittest.TestCase):
+    """dirguard bounds a fledgling model's file tools by comparing path strings. That is exactly as
+    valid against a workspace on another machine, and the first repair broke it."""
+
+    def test_dirguard_is_given_the_announced_path(self):
         import inspect
-        src = inspect.getsource(srv)
-        self.assertIn("self._workspace_root = _session_cwd(sess_key, body.get(\"messages\", []), lexical=True)", src)
+        src = inspect.getsource(srv.CriaHandler._setup_translation)
+        self.assertIn("_session_cwd(sess_key", src)
+        self.assertIn("self._workspace_root", src)
 
 
 if __name__ == "__main__":

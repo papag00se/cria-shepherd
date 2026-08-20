@@ -20,27 +20,27 @@ shell.
 from __future__ import annotations
 
 import json
-import hashlib
 import os
 
-from . import dirguard
 from . import content_reduce
 import re
-import subprocess
 import tempfile
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 
-from . import brave, prompts, webfetch
+from . import brave, prompts, webfetch, wsview
 from .searchloop import first_domain_in, normalize_search, searches_match
 
-# The four READ-ONLY tools offered to the planner (inline schemas — local models are lenient). No
-# write/patch/exec-mutate tools: planning is not building. The model-facing DESCRIPTIONS live in
-# prompts/planner_tool_descs.txt (loaded at import; restart re-tunes); the schemas stay here.
+# The READ-ONLY tools offered to the planner (inline schemas — local models are lenient). No
+# write/patch/exec tools at all: planning is not building, and cria cannot run a command on the
+# machine the workspace lives on (see the exec branch of execute_tool). The model-facing
+# DESCRIPTIONS live in prompts/planner_tool_descs.txt (loaded at import; restart re-tunes); the
+# schemas stay here.
 _TD = prompts.load_map("planner_tool_descs")
 PLANNER_TOOLS = [
-    {"type": "function", "function": {"name": "exec_command", "description": _TD["exec_command"], "parameters": {"type": "object", "properties": {"cmd": {"type": "string", "description": "the command line"}}, "required": ["cmd"]}}},
+    {"type": "function", "function": {"name": "list_dir", "description": _TD["list_dir"], "parameters": {"type": "object", "properties": {"path": {"type": "string", "description": "workspace-relative directory, default '.'"}}, "required": []}}},
+    {"type": "function", "function": {"name": "grep_files", "description": _TD["grep_files"], "parameters": {"type": "object", "properties": {"pattern": {"type": "string", "description": "a regular expression"}, "path": {"type": "string", "description": "workspace-relative directory to search under, default '.'"}}, "required": ["pattern"]}}},
     {"type": "function", "function": {"name": "read_file", "description": _TD["read_file"], "parameters": {"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"]}}},
     {"type": "function", "function": {"name": "web_fetch", "description": _TD["web_fetch"], "parameters": {"type": "object", "properties": {"url": {"type": "string"}}, "required": ["url"]}}},
     {"type": "function", "function": {"name": "web_search", "description": _TD["web_search"], "parameters": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]}}},
@@ -60,12 +60,6 @@ _SEARCH_COUNT = 20
 # Above this, a result list goes to the scratchpad instead of the context. Titles+URLs
 # still ride inline; it is the snippet bodies that carry the unrelated vocabulary.
 _SEARCH_INLINE_CHARS = 1500
-# Wall-clock for ONE read-only gather command. Was 20 s, which a recursive grep/find or `git log -p`
-# over a real repo exceeds routinely on a contended box — and a timeout with no partial output feeds
-# the research floor as "this call taught it nothing", the exact input that makes the planner draft
-# from memory.
-GATHER_EXEC_TIMEOUT_S = 90
-
 
 @dataclass(frozen=True)
 class ToolResult:
@@ -96,9 +90,19 @@ def execute_tool(name: str, args: dict, cwd: str, search_key: str, recent_search
     (mutated in place). ``facts`` (mutated in place) collects what each successful fetch PROVED, so
     the gather's findings outlive the gather — see :func:`_record_fetch`."""
     if name in ("exec_command", "shell", "bash", "local_shell"):
-        return _exec_command(args, cwd, scratch)
+        # NO SHELL. cria used to run `bash -lc` here, in the coder's workspace, with cria's own
+        # process — which is a statement about the machine CRIA runs on, not the one the work
+        # happens on. There is no way to route it: this loop is synchronous inside one request and
+        # cria has no channel to the harness until it replies. So the capability is gone rather
+        # than faked, and the planner is told which tools answer the same questions.
+        return _nothing(prompts.fill(prompts.load_map("planner_steers")["no_shell"],
+                                     cmd=str(args.get("cmd") or args.get("command") or "")[:200]))
+    if name in ("list_dir", "ls"):
+        return _list_dir(args, cwd)
+    if name in ("grep_files", "grep", "search_files"):
+        return _grep_files(args, cwd, scratch)
     if name in ("read_file", "cat_file"):
-        return _read_file(args, cwd)
+        return _read_file(args, cwd, scratch)
     if name == "web_fetch":
         return _web_fetch(args, facts, scratch)
     if name in ("web_search", "local_web_search"):
@@ -106,264 +110,147 @@ def execute_tool(name: str, args: dict, cwd: str, search_key: str, recent_search
     return _nothing(prompts.fill(prompts.load_map("planner_steers")["unknown_tool"], tool=name))
 
 
-# ------------------------------------------------------------------ shell / files
+# How much of a grep result the planner is handed. A gather that reads the whole repo back through
+# one tool call is the 210K-prompt shape; the planner narrows and reads the file it wants.
+_GREP_MAX_HITS = 60
 
-def _exec_command(args: dict, cwd: str, scratch: str | None = None) -> ToolResult:
-    cmd = args.get("cmd") or args.get("command") or ""
-    if isinstance(cmd, list):
-        cmd = " ".join(str(c) for c in cmd)
-    cmd = str(cmd).strip()
-    if not cmd:
-        return _nothing("[no command given]")
-    ok, why = is_gather_safe_command(cmd, scratch, workspace=cwd)
-    if not ok:
-        # An install refusal must NOT carry the write-to-/tmp advice: redirecting a `pip install`
-        # into the scratchpad is not a thing, and a refusal that suggests an impossible next move
-        # sends the model somewhere worse than the one it was stopped from.
-        key = "refused_install" if why == REFUSED_ENV_SETUP else "refused_command"
-        return _nothing(prompts.fill(prompts.load_map("planner_steers")[key], cmd=cmd, why=why))
-    # cwd stays the WORKSPACE so reads (ls/grep/find the codebase) resolve there; writes are
-    # confined to the scratchpad by the gate above. TMPDIR points tempfile-using tools at scratch.
-    env = dict(os.environ)
-    if scratch:
-        env["TMPDIR"] = scratch
-    # A workspace that doesn't exist (a fresh build — no repo dir yet) is not a valid cwd, so
-    # subprocess can't even launch and EVERY command dies with "failed to launch". Fall back to
-    # the scratchpad and tell the planner the workspace is empty — so it plans to CREATE files
-    # rather than inspect a repo that isn't there. An UNKNOWN cwd (harness advertised none) falls back
-    # the SAME way — NEVER to "." (cria's OWN source tree): a gather ls/grep against cria's repo would
-    # feed the planner cria's files as if they were the user's project.
-    fresh = not cwd or not os.path.isdir(cwd)
-    run_cwd = (scratch or ".") if fresh else cwd
+
+def _scratch_read(full: str, scratch: str | None) -> str | None:
+    """The file's text when it is one CRIA ITSELF wrote to its own scratchpad, else None.
+
+    This is not a hole in the harness rule. The gather's scratchpad is cria's own directory on
+    cria's own machine — where a fetched spec is spilled so a 57K document does not ride in the
+    prompt — and the planner is the one reader of it. The workspace, which belongs to the harness,
+    is never reachable this way: the path must be inside the scratchpad cria created for this
+    gather, and nothing else is read."""
+    if not scratch:
+        return None
+    import os as _os
+    root = _os.path.realpath(scratch)
     try:
-        # text=False + manual decode: binary stdout under text=True raises UnicodeDecodeError
-        # BEFORE any guard runs (a `cat image.png` would crash the gather tool outright).
-        out = subprocess.run(["bash", "-lc", cmd], cwd=run_cwd, stdin=subprocess.DEVNULL,
-                             capture_output=True, timeout=GATHER_EXEC_TIMEOUT_S, env=env)
-        # Full stdout+stderr — the failing assertion / the one grep match the planner needs may be
-        # past any fixed clip. The context floor (upstream._prep) bounds the window losslessly-first
-        # if this is large; a blind byte-cut here would be a lie the reasoner can't detect.
-        raw_out = out.stdout + out.stderr
-        printed = raw_out.decode("utf-8", errors="replace").strip()
-        if content_reduce.looks_binary(printed):
-            printed = content_reduce.binary_note(len(raw_out), content_reduce.binary_kind(raw_out[:16]))
-        # A curl/cat through THIS tool bypassed the web_fetch spill and inlined a measured 944,245
-        # chars into ONE gather turn — the composed prompt hit ~255K est tokens and the model never
-        # answered, twice (run 0729T152706 calls 0005/0006). Oversized exec output takes the same
-        # road as an oversized fetch: saved whole to the scratchpad, a pointer + head inlined, and
-        # the gather greps the file with the tools it already holds. Spill-impossible (no scratch /
-        # write failed) keeps the old inline path — output that reaches the model as nothing at all
-        # would be worse than output that costs context.
-        if scratch and len(printed) > webfetch.OVERSIZE_CHARS:
-            target = os.path.join(scratch, f"exec-{hashlib.sha1(cmd.encode()).hexdigest()[:10]}.txt")
-            try:
-                os.makedirs(scratch, exist_ok=True)
-                with open(target, "w", encoding="utf-8") as fh:
-                    fh.write(printed)
-                head = printed[:2000]
-                printed = prompts.fill(prompts.load_map("planner_steers")["exec_spill"],
-                                       chars=f"{len(printed):,}", target=target, head=head)
-            except OSError:
-                pass
-        text = printed or "[no output]"
-        if fresh:
-            text += "\n" + prompts.fill(prompts.load_map("planner_steers")["fresh_note"], cwd=cwd)
-        if "No such file" in text and re.search(r"/tmp/|" + re.escape(scratch or "\0"), cmd):
-            text += "\n" + prompts.load_map("planner_steers")["scratch_note"]
-        return ToolResult(text, bool(printed))
-    except subprocess.TimeoutExpired as e:
-        # Keep whatever the command DID print before the clock ran out — a test that printed its
-        # failing assertion and then hung, or a build that logged its error before stalling, has already
-        # said the useful thing. Returning the bare notice threw that away, contradicting the never-clip
-        # rule three lines above. (TimeoutExpired carries bytes or str depending on text=; normalize.)
-        def _txt(v):
-            if not v:
-                return ""
-            return v if isinstance(v, str) else v.decode("utf-8", "replace")
-        partial = (_txt(e.stdout) + _txt(e.stderr)).strip()
-        note = f"[exec timed out after {int(e.timeout)}s]"
-        return ToolResult(f"{note}\n{partial}" if partial else note, bool(partial))
-    except OSError as e:
-        return _nothing(f"[exec failed to launch: {e}]")
+        real = _os.path.realpath(full)
+        if real != root and not real.startswith(root + _os.sep):
+            return None
+        with open(real, encoding="utf-8", errors="replace") as fh:
+            return fh.read()
+    except OSError:
+        return None
 
 
-def _read_file(args: dict, cwd: str) -> ToolResult:
+def _scratch_grep(full: str, rx, scratch: str | None) -> str | None:
+    """:func:`_scratch_read`'s sibling for a pattern search over the gather's own scratchpad."""
+    if not scratch:
+        return None
+    import os as _os
+    root = _os.path.realpath(scratch)
+    try:
+        real = _os.path.realpath(full)
+        if real != root and not real.startswith(root + _os.sep):
+            return None
+        targets = ([real] if _os.path.isfile(real)
+                   else [_os.path.join(d, n) for d, _s, fs in _os.walk(real) for n in sorted(fs)])
+    except OSError:
+        return None
+    hits: list[str] = []
+    for t in targets:
+        try:
+            with open(t, encoding="utf-8", errors="replace") as fh:
+                body = fh.read()
+        except OSError:
+            continue
+        for i, line in enumerate(body.splitlines(), 1):
+            if rx.search(line):
+                hits.append(f"{_os.path.relpath(t, root)}:{i}: {line.strip()[:200]}")
+                if len(hits) >= _GREP_MAX_HITS:
+                    return "\n".join(hits)
+    return "\n".join(hits) if hits else "[no match]"
+
+
+def _list_dir(args: dict, cwd: str) -> ToolResult:
+    """What is in a workspace directory — the half of the retired shell the planner actually used."""
+    import os
+    path = str(args.get("path") or args.get("dir") or ".")
+    full = path if os.path.isabs(path) else os.path.join(cwd or ".", path)
+    view = wsview.current(cwd)
+    entries = view.scandir(full)
+    if entries is None:
+        if view.isdir(full) is False:
+            return _nothing(f"[list_dir: {path} is not a directory]")
+        return _nothing(prompts.fill(prompts.load_map("planner_steers")["not_yet_known"], path=path))
+    lines = [f"{e.name}/" if e.is_dir() else f"{e.name} ({e.size} B)" for e in entries]
+    return ToolResult("\n".join(lines) if lines else f"{path}: empty directory", bool(lines))
+
+
+def _grep_files(args: dict, cwd: str, scratch: str | None = None) -> ToolResult:
+    """Lines matching a pattern across the workspace — the other half of the retired shell.
+
+    Only files whose bytes cria has actually been told are searched, and the answer SAYS how many
+    it could not read. A silent partial search reads exactly like an exhaustive one that found
+    nothing, and the planner would draft against the difference (#5b)."""
+    import os
+    import re as _re
+    pattern = str(args.get("pattern") or args.get("query") or "")
+    if not pattern:
+        return _nothing("[grep_files error: no pattern]")
+    try:
+        rx = _re.compile(pattern)
+    except _re.error as e:
+        return _nothing(f"[grep_files error: bad pattern: {e}]")
+    path = str(args.get("path") or ".")
+    full = path if os.path.isabs(path) else os.path.join(cwd or ".", path)
+    scratched = _scratch_grep(full, rx, scratch)
+    if scratched is not None:
+        return ToolResult(scratched, "no match" not in scratched)
+    view = wsview.current(cwd)
+    tree = view.walk(full, skip_hidden=True)
+    if tree is None:
+        return _nothing(prompts.fill(prompts.load_map("planner_steers")["not_yet_known"], path=path))
+    hits: list[str] = []
+    unread = 0
+    for dirpath, _dirnames, filenames in tree:
+        for name in sorted(filenames):
+            fp = os.path.join(dirpath, name)
+            body = view.read(fp)
+            if body is None:
+                unread += 1
+                continue
+            rel = os.path.relpath(fp, cwd or full)
+            for i, line in enumerate(body.splitlines(), 1):
+                if rx.search(line):
+                    hits.append(f"{rel}:{i}: {line.strip()[:200]}")
+                    if len(hits) >= _GREP_MAX_HITS:
+                        break
+            if len(hits) >= _GREP_MAX_HITS:
+                break
+        if len(hits) >= _GREP_MAX_HITS:
+            break
+    out = "\n".join(hits) if hits else f"[no match for {pattern}]"
+    if unread:
+        out += f"\n[{unread} file(s) under {path} could not be read — this search is not exhaustive]"
+    return ToolResult(out, bool(hits))
+
+
+def _read_file(args: dict, cwd: str, scratch: str | None = None) -> ToolResult:
     path = args.get("path") or args.get("file_path") or ""
     if not path:
         return _nothing("[read_file error: no path]")
     import os
     full = path if os.path.isabs(path) else os.path.join(cwd or ".", path)
-    try:
-        with open(full, "rb") as fh:
-            # Full file — the section the planner must modify may be past any fixed clip. The
-            # context floor bounds the window losslessly-first if this file is large.
-            raw = fh.read()
-    except OSError as e:
-        return _nothing(f"[read_file error: {e}]")
+    scratched = _scratch_read(full, scratch)
+    if scratched is not None:
+        return ToolResult(scratched, bool(scratched.strip()))
+    view = wsview.current(cwd)
+    # Full file — the section the planner must modify may be past any fixed clip. The context floor
+    # bounds the window losslessly-first if this file is large.
+    raw = view.read_bytes(full)
+    if raw is None:
+        if view.isfile(full) is False:
+            return _nothing(f"[read_file: {path} does not exist]")
+        return _nothing(prompts.fill(prompts.load_map("planner_steers")["not_yet_known"], path=path))
     body = raw.decode("utf-8", errors="replace")
     if content_reduce.looks_binary(body) or content_reduce.binary_kind(raw[:16]):
         return ToolResult(content_reduce.binary_note(len(raw), content_reduce.binary_kind(raw[:16])), True)
     return ToolResult(body, bool(body.strip()))
-
-
-# THIS SHELL IS DENY-LISTED, NOT ALLOW-LISTED. An allow-list of ~40 read-only commands used to sit
-# here under the words "reject anything else", orphaned by 882bc2c and referenced by nothing since.
-# What actually runs is everything below: _CATASTROPHIC, the scratchpad write roots, _MUTATORS,
-# _NET_OUT_FLAGS and _ENV_MANAGERS. Two contradictory descriptions of the same guard, eight lines
-# apart, with the false one on top — and this is the shell CRIA ITSELF runs, so a maintainer who
-# believed the comment would think an unlisted command could not get through. The comment was the
-# risk, not the set.
-_GIT_READ = {"status", "log", "diff", "show", "ls-files", "branch", "rev-parse", "cat-file",
-             "blame", "describe", "remote", "config", "grep"}
-
-# Where the gather MAY write — a scratchpad for processing fetched data. Never the workspace.
-_WRITE_ROOTS_BASE = ("/tmp/", "/var/tmp/", "/dev/null", "/dev/stdout", "/dev/stderr")
-# Catastrophic ops refused no matter the target — cria runs this shell itself, so its blast
-# radius must be bounded (the workspace-wipe lesson: a --yolo model once ran `find . -delete`).
-_CATASTROPHIC = re.compile(
-    r"(^|[\s|;&(])rm\s+[^|;&]*(-[a-z]*r[a-z]*f|-[a-z]*f[a-z]*r|-rf|-fr)\b[^|;&]*\s(/|~|\$HOME|\.)(\s|/|$)"
-    r"|(^|[\s|;&(])find\b[^|;&]*\s-delete\b"
-    r"|\bmkfs\b|\bdd\b[^|;&]*\bof=/dev/|:\s*\(\s*\)\s*\{|>\s*/dev/(sd|nvme|mapper)|\bshred\b",
-    re.I,
-)
-# The write operators / mutating bases whose TARGETS must land in the scratchpad. A processor
-# with no shell write (python3 -c, jq, awk without redirect) is a read as far as the shell sees.
-_REDIR_RE = re.compile(r"(?<![0-9<>&])>>?\s*(?!&)([^\s|;&<>]+)")  # `> f` / `>> f`, not `2>&1`
-_MUTATORS = {"rm", "rmdir", "mv", "cp", "mkdir", "touch", "dd", "truncate", "install", "ln",
-             "chmod", "chown", "shred", "tee", "rsync"}
-# curl/wget flags that name an OUTPUT FILE (value is the NEXT token). Bare `-O` (curl) writes the
-# remote filename to the cwd = workspace, so it's always a workspace write.
-_NET_OUT_FLAGS = {"-o", "--output", "--output-document", "-P", "--directory-prefix"}
-
-
-# Package / environment managers. These mutate state — site-packages, node_modules, the system, a
-# new virtualenv — WITHOUT naming a path argument, so the path-based checks below never see them, and
-# `python3 -m venv` hides behind an interpreter. MEASURED (run 0727-125508): the gather ran
-# `pip install …` against the user's system python, then `python3 -m venv venv` in the user's
-# workspace, burning 3 of its 12 research rounds; the install failed only because the machine is PEP
-# 668 externally-managed, and pip's refusal is what taught the model to create the venv.
-# Every ecosystem, because the rule is about the CATEGORY, not about Python.
-_ENV_MANAGERS = {"pip", "pip3", "pipx", "poetry", "pdm", "uv", "conda", "mamba", "easy_install",
-                 "npm", "yarn", "pnpm", "bun",
-                 "cargo", "go", "gem", "bundle", "bundler", "composer", "mvn", "gradle", "sbt",
-                 "apt", "apt-get", "aptitude", "dnf", "yum", "pacman", "zypper", "apk", "brew",
-                 "virtualenv", "pyenv", "rustup", "asdf", "nix-env"}
-# Only the MUTATING subcommands: research legitimately runs `pip list`, `npm ls`, `cargo tree`.
-_ENV_MUTATE_VERBS = {"install", "uninstall", "add", "remove", "rm", "get", "update", "upgrade",
-                     "sync", "init", "new", "require", "download", "build", "publish", "link"}
-# Interpreter-hosted forms of the same thing: `python3 -m venv x`, `python -m pip install y`.
-_PY_ENV_MODULES = {"venv", "virtualenv", "ensurepip"}
-
-
-# The refusal reason for an environment mutation, as a CONSTANT: `_exec_command` picks the model
-# message by comparing against this exact value, never by pattern-matching the sentence.
-REFUSED_ENV_SETUP = "installs packages / builds an environment (planning is research, not setup)"
-
-
-def _mutates_environment(parts: list[str]) -> bool:
-    """Does this command segment install packages or build an environment? Read-only subcommands of
-    the same tools are NOT mutations — the gather inspects dependency state all the time."""
-    base = parts[0].rsplit("/", 1)[-1]
-    if base.startswith("python"):
-        if "-m" in parts:
-            mod = parts[parts.index("-m") + 1] if parts.index("-m") + 1 < len(parts) else ""
-            if mod in _PY_ENV_MODULES:
-                return True
-            if mod in ("pip", "pip3"):
-                parts, base = parts[parts.index("-m") + 1:], "pip"
-            else:
-                return False
-        else:
-            return False
-    if base not in _ENV_MANAGERS:
-        return False
-    if base in ("virtualenv", "easy_install"):   # no subcommand — the command IS the mutation
-        return True
-    # The verb can sit one token deeper when a manager wraps another (`uv pip install httpx`), so
-    # look at the first two non-flag tokens rather than only the first. Two is enough for every
-    # wrapper form seen, and short enough that a PACKAGE NAME can't be mistaken for the verb.
-    words = [p for p in parts[1:] if not p.startswith("-")][:2]
-    return any(w in _ENV_MUTATE_VERBS for w in words)
-
-
-def _net_write_targets(parts: list[str]) -> tuple[list[str], bool]:
-    """(output targets, has_bare_curl_O) for a curl/wget segment — only the token AFTER an
-    output flag is a target; the URL is not."""
-    targets, bare_O = [], False
-    for i, p in enumerate(parts):
-        if p in _NET_OUT_FLAGS and i + 1 < len(parts):
-            targets.append(parts[i + 1])
-        elif p == "-O":
-            bare_O = True
-    return targets, bare_O
-
-
-def _within(path: str, root: str) -> bool:
-    """Is ``path`` inside ``root``? The MECHANISM comes from the one owner; the POLICY below is this
-    module's own and deliberately the inverse of everyone else's.
-
-    cria has three places that act in a directory and each had its own containment code. Two were
-    answering the same question ("does this leave the workspace") and disagreed on a symlink; that is
-    now `dirguard.escapes_workspace`. This one is NOT the same question — the gather may write ONLY
-    to a scratchpad and never to the workspace, the opposite of the other two — so the policy stays
-    here. What is shared is the primitive, which had no business being written a third time.
-
-    Symlink-resolving, because a write target reached through a link out of the scratchpad is a write
-    outside it, and this module runs a real shell."""
-    return not dirguard.escapes_workspace(path, root)
-
-
-def _under_write_roots(target: str, scratch: str | None, workspace: str | None) -> bool:
-    """Is a write target inside the allowed scratchpad (scratch dir or /tmp) AND not inside the
-    workspace? The workspace exclusion matters because cria's scratch — and a workspace — can
-    both live under /tmp; the invariant is 'scratchpad, never the workspace', not 'under /tmp'."""
-    t = target.strip().strip('"\'')
-    if t in ("/dev/null", "/dev/stdout", "/dev/stderr"):
-        return True
-    if not os.path.isabs(t):  # relative → resolves in the WORKSPACE cwd → never allowed
-        return False
-    ap = os.path.normpath(t)
-    if workspace and _within(ap, os.path.abspath(workspace)):  # a /tmp workspace is still off-limits
-        return False
-    roots = list(_WRITE_ROOTS_BASE)
-    if scratch:
-        roots.append(os.path.normpath(scratch) + "/")
-    return any(_within(ap, r) for r in roots)
-
-
-def is_gather_safe_command(cmd: str, scratch: str | None = None, workspace: str | None = None) -> tuple[bool, str]:
-    """The gather may READ anything but WRITE only to the scratchpad (``scratch`` or /tmp), never
-    the ``workspace`` — so a small reasoner can persist and process what it fetched without ever
-    touching the user's code. Returns ``(ok, reason)``; the reason names the violation for the
-    refusal message. Conservative by construction: an unrecognizable mutation is refused (a
-    refused command costs a retry; a slipped workspace write corrupts the user's code)."""
-    if _CATASTROPHIC.search(cmd):
-        return False, "is a destructive operation"
-    for target in _REDIR_RE.findall(cmd):  # every redirect target must be in the scratchpad
-        if not _under_write_roots(target, scratch, workspace):
-            return False, "would write outside the /tmp scratchpad (into the workspace)"
-    for seg in re.split(r"[|;&\n]", cmd):
-        parts = seg.strip().split()
-        if not parts:
-            continue
-        base = parts[0].rsplit("/", 1)[-1]
-        pathargs = [p for p in parts[1:] if not p.startswith("-")]
-        if _mutates_environment(parts):
-            return False, REFUSED_ENV_SETUP
-        if base == "git" and (parts[1:] and parts[1] not in _GIT_READ):
-            return False, "mutates the git repository"
-        if base == "sed" and "-i" in seg:
-            return False, "edits a file in place"
-        if base in ("curl", "wget"):
-            targets, bare_O = _net_write_targets(parts)
-            if bare_O or not all(_under_write_roots(t, scratch, workspace) for t in targets):
-                return False, "would download a file outside the /tmp scratchpad"
-        elif base in _MUTATORS:
-            # every path this mutator touches must be in the scratchpad (dd uses of=… not argv)
-            targets = pathargs + [p.split("=", 1)[1] for p in parts if p.startswith("of=")]
-            if not targets or not all(_under_write_roots(t, scratch, workspace) for t in targets):
-                return False, "would create/modify a file outside the /tmp scratchpad"
-    return True, ""
 
 
 # ------------------------------------------------------------------ web fetch / search

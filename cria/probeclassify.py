@@ -41,6 +41,8 @@ from __future__ import annotations
 
 import enum
 import json
+
+from . import wsview
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -294,7 +296,7 @@ def read_package_script(project_dir: Path, script: str) -> str | None:
     ``classify(..., script_lookup=...)`` for hosts without a shared filesystem.
     """
     try:
-        data = json.loads((Path(project_dir) / "package.json").read_text(encoding="utf-8"))
+        data = json.loads(wsview.current().read(Path(project_dir) / "package.json") or "")
         body = data["scripts"][script]
     except Exception:
         return None

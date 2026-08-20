@@ -44,12 +44,12 @@ class OnlyACertainAbsenceIsDroppedTests(unittest.TestCase):
 
     def test_the_measured_case(self):
         """`bundle exec rubocop` on a box without bundler."""
-        with mock.patch.object(toolpath, "which", lambda p: None if p == "bundle" else "/usr/bin/" + p):
+        with mock.patch.object(toolpath, "resolved", lambda p: "" if p == "bundle" else p):
             self.assertFalse(proberun.program_is_installed(C(["bundle", "exec", "rubocop"])))
             self.assertTrue(proberun.program_is_installed(C(["ruby", "-c", "x.rb"])))
 
     def test_an_env_prefix_is_not_mistaken_for_the_program(self):
-        with mock.patch.object(toolpath, "which", lambda p: "/usr/bin/ruby" if p == "ruby" else None):
+        with mock.patch.object(toolpath, "resolved", lambda p: "ruby" if p == "ruby" else ""):
             self.assertTrue(proberun.program_is_installed(C(["GEM_HOME=vendor", "ruby", "-c", "x"])))
 
     def test_an_empty_command_is_kept(self):

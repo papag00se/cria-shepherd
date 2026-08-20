@@ -218,6 +218,14 @@ cria is not necessarily on the machine the coder is on. The likely deployment is
 
 **A mechanism that cannot reach its subject must SAY so, not just abstain.** `os.path.isdir` on a foreign path returns False, so every disk-derived guard concludes "nothing there" and goes quiet — correct by #11b, and catastrophic in aggregate: cria degrades to almost nothing while reporting no problem at all. Twenty-nine functions took a workspace path and not one asked whether it could be reached. Silent degradation is the one failure nobody can notice from the outside (#12).
 
+**The conversion, and what it costs.** `cria/wsview.py` is the one owner of "what is in the coder's workspace". It is filled by a bounded `python3` survey the HARNESS runs, riding along on commands cria is already sending (a lowered `write_file`/`edit_file`/`list_dir`, and the completion gate), and stripped back out of the result before anything downstream — including the model — sees it. All seventy-four cria-disk call sites now read it. `toolpath` asks the same way: what the CODER's shell resolves, not what cria's process can see.
+
+**Every answer is three-valued, and the third value is the point.** `True`, `False`, `None` — where `None` means nobody has answered yet. Each caller picks its own safe direction and they are NOT the same direction: a probe is KEPT when cria is unsure (a dropped check reads exactly like a check that passed), and a piece of ADVICE is WITHHELD when cria is unsure (naming a command that may not exist is #5b). Never collapse `None` into `False` for convenience — that is precisely how a question becomes a false fact.
+
+**cria has no synchronous channel to the harness.** It is an HTTP server; the harness drives. cria can ask only by putting a command in the reply it is already sending and reading the answer on the NEXT request. So a predicate needed mid-decision cannot get a fresh answer mid-decision — it reads what an earlier turn gathered, and a question it could not answer is REMEMBERED so the next survey carries it. Anything that genuinely needs to run a command inside one request cannot be done at all: the planner's gather shell was removed rather than faked, and its questions are answered by view-backed `list_dir` / `grep_files` / `read_file`.
+
+**cria never DELETES on a filesystem it does not own either.** The gate's own litter is queued when the result is interpreted and removed by a bounded leg at the head of the next gate script — not an `rm` (the sandbox rejects the whole exec when it sees one) and not cria's own `os.unlink` (a silent no-op off a shared box).
+
 ### 24. An invariant that must hold on the WIRE belongs at the wire
 If a property must be true of the serialized model body, enforce it at the final pre-serialization boundary.
 

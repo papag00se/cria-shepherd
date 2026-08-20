@@ -31,7 +31,9 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 from . import prompts
+from . import content_reduce as content_reduce_mod
 from .content_reduce import content_reduce, est_tokens
+from . import wsview
 from .linterprobe import Runner, run_linter_probe
 
 # Per-file snapshot cap, in tokens. This module exists to replace the transcript's
@@ -104,15 +106,13 @@ def file_snapshot(root: str, paths: list[str], cap_tokens: int = DEFAULT_FILE_CA
     content_reduce (lossless-first; source code passes through verbatim) — never a blind byte
     slice the reasoner cannot detect. A missing or unreadable file is a *fact*
     (exists=False), not an exception."""
+    view = wsview.current(root)
     out: list[FileSnapshot] = []
     for p in paths:
-        try:
-            with open(resolve(root, p), "rb") as fh:
-                raw = fh.read()
-        except OSError:
+        content = view.read(resolve(root, p))
+        if content is None:
             out.append(FileSnapshot(path=p, content="", exists=False, truncated=False))
             continue
-        content = raw.decode("utf-8", errors="replace")
         reduced = content
         if cap_tokens > 0 and est_tokens(content) > cap_tokens:
             reduced = content_reduce(content, None, cap_tokens)
@@ -123,10 +123,7 @@ def file_snapshot(root: str, paths: list[str], cap_tokens: int = DEFAULT_FILE_CA
 
 def file_len(root: str, path: str) -> Optional[int]:
     """Size from metadata only (no read); None when stat fails."""
-    try:
-        return os.stat(resolve(root, path)).st_size
-    except OSError:
-        return None
+    return wsview.current(root).size(resolve(root, path))
 
 
 def lint_digest(root: str, runner: Runner) -> Optional[str]:
@@ -174,8 +171,9 @@ def absent_step_literals(step: str, root: str | None) -> list[tuple[str, list[st
     Base-rated across every captured critic approval (n=106 with a workspace and a parseable verdict):
     this fires ONCE, on exactly that verdict. No false positives — which is why it is offered as
     evidence rather than enforced as a gate."""
-    if not step or not root or not os.path.isdir(root):
+    if not step or not root:
         return []
+    view = wsview.current(root)
     lits = [m.group(1) for m in _STEP_LITERAL.finditer(step)]
     lits = [l for l in lits if "/" not in l and "." not in l]   # a path/filename is not a value
     if not lits:
@@ -187,11 +185,8 @@ def absent_step_literals(step: str, root: str | None) -> list[tuple[str, list[st
             path = resolve(root, rel)
         except (OSError, ValueError):
             continue
-        if not os.path.isfile(path):
-            continue
-        try:
-            body = open(path, encoding="utf-8", errors="replace").read()
-        except OSError:
+        body = view.read(path)
+        if body is None:
             continue
         missing = [l for l in lits if l not in body]
         if missing:
@@ -285,25 +280,35 @@ def _spill_rel() -> str:
 _SPILL_REL = _spill_rel()
 
 
+def _walk_entries(view, root: str) -> list[tuple[float, str, int]] | None:
+    """``(mtime, relpath, size)`` for every file in the workspace, or None when nobody has surveyed
+    it yet. ONE walk for the two readers that answer the same question one level apart — what
+    exists, and what is in it — so they can never see different trees (#11b)."""
+    tree = view.walk(root, skip_names=_INVENTORY_EXCLUDE)
+    if tree is None:
+        return None
+    out: list[tuple[float, str, int]] = []
+    for dirpath, _dirnames, filenames in tree:
+        for name in filenames:
+            path = os.path.join(dirpath, name)
+            rel = os.path.relpath(path, root)
+            out.append((view.mtime(path) or 0.0, rel, view.size(path) or 0))
+    return out
+
+
 def files_for_a_judge(root: str | None, budget: int = JUDGE_FILE_BUDGET) -> str:
     """The newest files in the workspace, whole, up to ``budget`` — "" when there is no workspace.
 
     Same walk, same exclusions and same newest-first order as :func:`workspace_inventory`, because
     they answer the same question one level apart: that one says what exists, this one says what is
     in it. Binary and unreadable files are skipped silently (they are still in the listing)."""
-    if not root or not os.path.isdir(root):
+    if not root:
         return ""
+    view = wsview.current(root)
     labels = prompts.load_map("judge_files")
-    entries: list[tuple[float, str, int]] = []
-    for dirpath, dirnames, filenames in os.walk(root):
-        dirnames[:] = sorted(d for d in dirnames if d not in _INVENTORY_EXCLUDE)
-        for name in filenames:
-            path = os.path.join(dirpath, name)
-            try:
-                st = os.stat(path)
-            except OSError:
-                continue
-            entries.append((st.st_mtime, os.path.relpath(path, root), st.st_size))
+    entries = _walk_entries(view, root)
+    if entries is None:
+        return ""
     entries, _folded = _fold_install_prefixes(entries)
     # NOT CRIA'S OWN SCRATCH. The spill directory is where cria writes documents the coder fetched;
     # it is inside the workspace but it is not the coder's work. Seeding it back to a judge does two
@@ -323,10 +328,12 @@ def files_for_a_judge(root: str | None, budget: int = JUDGE_FILE_BUDGET) -> str:
         if size > budget - spent:
             skipped.append(rel)
             continue
-        try:
-            body = open(os.path.join(root, rel), encoding="utf-8").read()
-        except (OSError, UnicodeDecodeError):
-            continue      # binary or unreadable: it is in the listing, it is not quotable here
+        body = view.read(os.path.join(root, rel))
+        if body is None:
+            continue      # not told to cria yet, binary or unreadable: it is in the listing above,
+                          # it is simply not quotable here
+        if content_reduce_mod.looks_binary(body):
+            continue
         spent += len(body)
         shown.append(prompts.fill(labels["file"], path=rel, body=body))
     if not shown:
@@ -347,19 +354,15 @@ def workspace_inventory(root: str | None, flavor: str = "judge") -> str:
     never truncated (operator's call: a bounded list weakens the one clause that makes it decisive) —
     so "not listed = does not exist" always holds. Empty string when there is no workspace root to
     inspect (evidence composition drops the section, as with the fetch facts)."""
-    if not root or not os.path.isdir(root):
+    if not root:
+        return ""
+    entries = _walk_entries(wsview.current(root), root)
+    if entries is None:
+        # NOTHING SURVEYED YET IS NOT AN EMPTY WORKSPACE. This listing's whole value is the clause
+        # "not listed = does not exist", and rendering the empty-workspace sentence from an
+        # unanswered question would put that clause behind a fact nobody established (#5b).
         return ""
     labels = prompts.load_map("workspace_inventory")
-    entries: list[tuple[float, str, int]] = []
-    for dirpath, dirnames, filenames in os.walk(root):
-        dirnames[:] = sorted(d for d in dirnames if d not in _INVENTORY_EXCLUDE)
-        for name in filenames:
-            path = os.path.join(dirpath, name)
-            try:
-                st = os.stat(path)
-            except OSError:
-                continue  # vanished mid-walk (the coder is live) — a missing entry, never a crash
-            entries.append((st.st_mtime, os.path.relpath(path, root), st.st_size))
     entries, folded = _fold_install_prefixes(entries)
     if not entries and not folded:
         # "at judging time" is the CRITIC's wording. The planner is not judging anything, and it read

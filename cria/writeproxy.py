@@ -22,14 +22,13 @@ shell it didn't call. `web_search` routes to the harness's own search tool when 
 from __future__ import annotations
 
 import base64
-import hashlib
 import json
 import os
 import re
 from pathlib import Path
 from shlex import quote as _qbash  # one bash-quoting rule (was a hand-rolled _qbash)
 
-from . import brave, denial, editrecovery, prompts, webfetch
+from . import brave, denial, editrecovery, prompts, webfetch, wsview
 from . import content_reduce as content_reduce_mod
 from . import probeparse
 from . import proberun
@@ -879,41 +878,33 @@ def _fetch_command(args: dict, session: str | None = None, workspace_root: str |
     return f"printf %s {_qbash(result)}"
 
 
-_SPILL_STAGE = CRIA_HOME / "spill"  # cria's OWN dir — a large doc is staged here, then cp'd into the workspace
-
-
-def _stage_spill(content: str, target: str) -> str | None:
-    """Stage ``content`` in cria's OWN spill dir and return its absolute path, so the lowered command can
-    ``cp`` it into the workspace instead of EMBEDDING the whole doc as a shell argument. A big doc's
-    base64 in the argv overflows the harness's exec arg-length cap — Codex rejects it with "Argument
-    list too long (os error 7)", so the spec never lands on disk and the coder thrashes on research. The
-    cp command carries only paths. Returns None on any write failure -> caller falls back to the inline
-    printf (fine for a small doc). Bounded scratch; the workspace copy is what the model actually reads."""
-    try:
-        _SPILL_STAGE.mkdir(parents=True, exist_ok=True)
-        for old in sorted(_SPILL_STAGE.glob("*.dat"), key=lambda p: p.stat().st_mtime)[:-64]:
-            old.unlink(missing_ok=True)  # keep the dir bounded; these are pure staging copies
-        p = _SPILL_STAGE / (hashlib.sha1(target.encode("utf-8")).hexdigest()[:16] + ".dat")
-        p.write_text(content, encoding="utf-8")
-        return str(p)
-    except OSError:
-        return None
-
 
 def _spill_command(target: str, content: str, msg: str) -> str:
     """Land ``content`` at ``target`` (in the workspace spill dir), then print the model-facing pointer
-    message — the harness runs this and records the message as the tool result. cria STAGES the doc in
-    its own dir and lowers a small ``cp`` (the doc is NOT in the argv, so a large spec can't overflow the
-    harness exec arg cap); the sentinel re-presents the whole command as web_fetch, so the model never
-    sees the cp or cria's path. Falls back to an inline base64 printf if staging fails. NOT ``chmod 444``:
-    a read-only file can't be overwritten by a re-spill, and clearing it would need the ``rm -f`` the
-    sandbox rejects — the spill dir is edit-protected by the dirguard, not the FS bit."""
+    message — the harness runs this and records the message as the tool result. The sentinel
+    re-presents the whole command as web_fetch, so the model never sees the plumbing.
+
+    THE DOC TRAVELS IN THE COMMAND, ON A HEREDOC. It used to be staged in cria's OWN directory and
+    lowered as a small ``cp``, to keep a large spec out of the argv — Codex rejects an oversized
+    argument list with "Argument list too long (os error 7)" and the spec never lands. But a path in
+    cria's home means nothing to a harness on another machine, so that ``cp`` copied a file that was
+    not there and the spill silently produced an empty doc. A heredoc solves the original problem
+    without the assumption: stdin has no argv limit, and nothing outside the workspace is named. NOT
+    ``chmod 444``: a read-only file can't be overwritten by a re-spill, and clearing it would need
+    the ``rm -f`` the sandbox rejects — the spill dir is edit-protected by the dirguard, not the FS
+    bit."""
     tdir = os.path.dirname(target) or "."
-    staged = _stage_spill(content, target)
-    if staged:
-        return f"mkdir -p {_qbash(tdir)} && cp {_qbash(staged)} {_qbash(target)} && printf %s {_qbash(msg)}"
-    return (f"mkdir -p {_qbash(tdir)} && printf %s {_qbash(_b64(content))} | base64 -d > {_qbash(target)} && "
+    return (f"mkdir -p {_qbash(tdir)} && base64 -d > {_qbash(target)} <<'__CRIA_SPILL__'\n"
+            f"{_b64_wrapped(content)}\n__CRIA_SPILL__\n"
             f"printf %s {_qbash(msg)}")
+
+
+def _b64_wrapped(s: str, width: int = 76) -> str:
+    """base64 of ``s``, line-wrapped. `base64 -d` accepts one long line on GNU coreutils and rejects
+    it on some BSD builds; wrapping is what every base64 encoder emits by default and works on
+    both."""
+    raw = _b64(s)
+    return "\n".join(raw[i:i + width] for i in range(0, len(raw), width))
 
 
 def _under_spill_dir(path: str) -> bool:
@@ -1057,6 +1048,38 @@ def _external_refusal(name, args, fn, injected, level: str, workspace: str | Non
             return None
         return dirguard.command_refusal(command, level, workspace)
     return None
+
+
+# Lowered tools whose own result is ONE bounded line, so appending the workspace survey to them
+# cannot push the model's own content past the harness's output cap. Reads, fetches and searches
+# are deliberately absent — see the ride-along note in translate_outbound.
+_SURVEYABLE = _WRITE_NAMES | _EDIT_NAMES | _LIST_NAMES
+
+# How many surveyable calls pass between surveys once the view is populated. The tree is re-walked
+# on the harness's side each time, so this is a cost on the CODER's box, not cria's; four is often
+# enough to see the file the coder wrote two turns ago without re-listing the repo every turn.
+SURVEY_EVERY = 4
+_SURVEY_SEQ: dict[str, int] = {}
+
+
+def _survey_due(session: str | None, name: str) -> bool:
+    """Whether this lowered call should carry the workspace survey.
+
+    ALWAYS when cria still knows nothing about the workspace, or when a reader asked a question
+    the view could not answer (a file body, a program on the coder's PATH) — those are real
+    demand, and leaving them unanswered is what makes a mechanism silently stop reaching what it
+    judges (#11b). Otherwise every SURVEY_EVERY-th call, which keeps the listing current without
+    paying for a tree walk on every write."""
+    sess = session or ""
+    view = wsview.current()
+    bodies, progs, outside = wsview.pending(sess)
+    if not view.surveyed or bodies or progs or outside:
+        return True
+    if len(_SURVEY_SEQ) > 512:
+        _SURVEY_SEQ.clear()
+    n = _SURVEY_SEQ.get(sess, 0) + 1
+    _SURVEY_SEQ[sess] = n
+    return n % SURVEY_EVERY == 0
 
 
 def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: set[str] | None = None,
@@ -1238,6 +1261,16 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
                     rebuilt.append({**tc, "function": {**fn, "name": native_search}})
                     continue
             if cmd is not None:
+                # RIDE ALONG. cria has no synchronous channel to the harness — it can ask the
+                # workspace a question only by putting a command in the reply it is already
+                # sending. This is that reply. The survey is appended to write/edit/list
+                # translations, whose own output is one bounded line, and NEVER to a read or a
+                # fetch: those results are already large, and pushing one past the harness's own
+                # output cap would cut the CODER's content to pay for cria's instrumentation.
+                # `represent_inbound` strips it back out, so the model sees its own call's result
+                # and nothing else.
+                if name in _SURVEYABLE and _survey_due(session, name):
+                    cmd = f"{cmd}\n{wsview.survey_command(session or '', cd=workspace_root or '')}"
                 rebuilt.append(_shell_call(tc.get("id"), shell_tool, f"{_sentinel(name, fn.get('arguments'))}\n{cmd}"))
                 if rlog is not None:
                     # `target`/`detail` feed the LIVE status ticker — the harness renders the lowered
@@ -1507,6 +1540,15 @@ def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | Non
     write_paths: dict[str, str] = {}  # tool_call_id -> path, for the success reframe / failure strip
     strip_ids: set[str] = set()       # read/nav re-presented tool ids → strip the harness exec envelope
     own_cmds: dict[str, str] = {}     # tool_call_id -> the model's OWN raw command, for the blind-pipe note
+    # WHAT THIS PASS TEACHES THE WORKSPACE VIEW. cria lowered every one of these calls, so it knows
+    # the path and (for a whole write) the exact bytes — the workspace's own contents, proved by the
+    # harness's own confirmation rather than inferred from the model's account of what it did. An
+    # EDIT proves the opposite direction and is just as useful: the file changed, and cria no longer
+    # knows what it holds (see View.note_changed).
+    view = wsview.current()
+    written: dict[str, str] = {}      # tool_call_id -> whole content the write carried
+    edited: set[str] = set()          # tool_call_id of an edit (content becomes unknown on success)
+    read_whole: dict[str, str] = {}   # tool_call_id -> path of an UNRANGED read (result is the file)
     for m in messages:
         role = m.get("role")
         if role == "assistant" and m.get("tool_calls"):
@@ -1524,10 +1566,24 @@ def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | Non
                         if orig["name"] in (_WRITE_NAMES | _EDIT_NAMES):
                             p = _parse(orig["arguments"])
                             write_paths[tc.get("id")] = _tool_path(p) or ""
+                            if orig["name"] in _EDIT_NAMES:
+                                edited.add(tc.get("id"))
+                            else:
+                                body_arg = next((p[k] for k in ("content", "file_text", "text", "body")
+                                                 if isinstance(p.get(k), str)), None)
+                                if body_arg is not None:
+                                    written[tc.get("id")] = body_arg
                             if tc.get("id") in failed_ids:
                                 tc = _collapse_rejected_payload(tc, _tool_path(p) or "")
                         elif orig["name"] in (_READ_NAMES | _LIST_NAMES | _FETCH_NAMES | _SEARCH_NAMES):
                             strip_ids.add(tc.get("id"))
+                            if orig["name"] in _READ_NAMES:
+                                rp = _parse(orig["arguments"])
+                                # A RANGED read is not the file. Only a whole read proves content;
+                                # recording a `sed -n 20,40p` slice as the file's bytes would be a
+                                # false fact of exactly the shape this module exists to stop (#5b).
+                                if not rp.get("start_line") and not rp.get("end_line") and _tool_path(rp):
+                                    read_whole[tc.get("id")] = str(_tool_path(rp))
                 elif name == "local_web_search":  # always present the Brave tool as web_search
                     tc = {**tc, "function": {**fn, "name": "web_search"}}
                     swapped += 1
@@ -1537,6 +1593,20 @@ def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | Non
         elif role == "tool":
             tid = m.get("tool_call_id")
             content = _debinarized(str(m.get("content") or ""))
+            # cria's own instrumentation rode along on this command — take it back off before
+            # anything else looks at the result, so no downstream check ever sees a byte the model
+            # did not ask for, and fold what it says into the view.
+            content, survey = wsview.strip_survey(content)
+            if survey:
+                wsview.apply_survey(view, survey)
+            if tid in write_paths and write_paths[tid] and tid not in failed_ids \
+                    and any(ln.strip() == _WROTE for ln in content.splitlines()):
+                if tid in written:
+                    view.note_written(write_paths[tid], written[tid])
+                elif tid in edited:
+                    view.note_changed(write_paths[tid])
+            elif tid in read_whole:
+                view.note_read(read_whole[tid], _strip_exec_envelope(content))
             if tid in strip_ids:                          # read/nav result → drop the shell envelope
                 out.append({**m, "content": _strip_exec_envelope(content)})
             elif tid in write_paths and any(ln.strip() == _WROTE for ln in content.splitlines()):  # write/edit SUCCESS
@@ -1675,10 +1745,12 @@ def _workspace_ecosystem(workspace_root) -> str:
     if not workspace_root:
         return ""
     try:
-        import os
         from pathlib import Path
         from .probediscovery import ProjectDir, detect_ecosystems
-        names = {e.name for e in os.scandir(workspace_root) if e.is_file()}
+        entries = wsview.current(workspace_root).scandir(workspace_root)
+        if entries is None:
+            return ""
+        names = {e.name for e in entries if e.is_file()}
         found = detect_ecosystems(ProjectDir(Path(workspace_root), names))
         return found[0].value if found else ""
     except Exception:                     # noqa: BLE001 — a note must never break the reply

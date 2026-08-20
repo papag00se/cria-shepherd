@@ -66,6 +66,13 @@ def _msgs(text):
     return [{"role": "user", "content": text}]
 
 
+def _ws_msgs(text, cwd):
+    """A request that ADVERTISES a workspace, the way a harness does. The gather's read tools resolve
+    against it, so a test about "the planner looked at something" needs a something to look at."""
+    return [{"role": "user", "content": f"<environment_context><cwd>{cwd}</cwd></environment_context>"},
+            {"role": "user", "content": text}]
+
+
 class PlannerTests(unittest.TestCase):
     def test_drafts_plan_in_memory(self):
         plan = _planner('{"steps": ["Fetch the API contract", "Write the handler", "Write tests"]}').plan_for(
@@ -229,16 +236,26 @@ class RewriteSeedTests(unittest.TestCase):
         self.assertIn("now write the live-test script", seed)               # the real current ask
 
 
+def _notes_ws():
+    """A workspace with one readable file, so a read_file round trip really returns bytes."""
+    import os
+    import tempfile
+    d = tempfile.mkdtemp()
+    with open(os.path.join(d, "notes.md"), "w") as fh:
+        fh.write("the docs say GET /handles/{handle} resolves a handle\n")
+    return d
+
+
 class GatherLoopTests(unittest.TestCase):
     def test_investigates_with_a_tool_then_plans(self):
         # PHASE A round 1: the reasoner calls a tool (investigate). Round 2: no tool call → done
         # looking. PHASE B: the drafting call returns the plan.
         prov = _ScriptedProvider([
-            _tool_resp("exec_command", {"cmd": "echo 'the docs say GET /handles/{handle}'"}),
+            _tool_resp("read_file", {"path": "notes.md"}),
             _content_resp("1. Fetch api.handle.me\n2. Write handler.py\n3. Run tests"),
         ])
         plan = Planner(prov, search_key="", clock=lambda: _FIXED).plan_for(
-            _msgs("build an ada handle resolver"), _Rlog())
+            _ws_msgs("build an ada handle resolver", _notes_ws()), _Rlog())
         self.assertEqual(len(plan.items), 3)
         self.assertEqual(prov.calls, 3)  # research round + end-of-research turn + the drafting call
         # the tool round-trip was fed back as PROTOCOL on the 2nd call (assistant tool_calls + tool result)
@@ -268,21 +285,24 @@ class GatherLoopTests(unittest.TestCase):
         # memory and invented `/resolve?handle={handle}`, which the coder duly built and 404'd.
         # Two calls that returned no bytes are not research: the nudge to look must still fire.
         prov = _ScriptedProvider([
-            _tool_resp("exec_command", {"cmd": "true"}),   # runs fine, returns nothing at all
+            _tool_resp("list_dir", {"path": "."}),   # an empty workspace: nothing comes back
             _content_resp("1. write it\n2. test it"),
         ])
+        import tempfile
         rlog = _Rlog()
-        Planner(prov, search_key="", clock=lambda: _FIXED).plan_for(_msgs("do a thing"), rlog)
+        Planner(prov, search_key="", clock=lambda: _FIXED).plan_for(
+            _ws_msgs("do a thing", tempfile.mkdtemp()), rlog)
         self.assertEqual(len([k for k, _ in rlog.events if k == "plan.research_nudge"]), 1)
 
     def test_a_call_that_returns_real_content_is_research(self):
         # The other half: once something actually came back, the planner has looked and is left alone.
         prov = _ScriptedProvider([
-            _tool_resp("exec_command", {"cmd": "echo 'GET /handles/{handle} resolves a handle'"}),
+            _tool_resp("read_file", {"path": "notes.md"}),
             _content_resp("1. write it\n2. test it"),
         ])
         rlog = _Rlog()
-        Planner(prov, search_key="", clock=lambda: _FIXED).plan_for(_msgs("do a thing"), rlog)
+        Planner(prov, search_key="", clock=lambda: _FIXED).plan_for(
+            _ws_msgs("do a thing", _notes_ws()), rlog)
         self.assertNotIn("plan.research_nudge", [k for k, _ in rlog.events])
 
     def test_planner_that_opens_nothing_is_asked_once_to_look_first(self):

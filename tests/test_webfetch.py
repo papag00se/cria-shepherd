@@ -690,11 +690,11 @@ class GateTests(unittest.TestCase):
                 return json.dumps(comp["choices"][0]["message"]["tool_calls"][0])
 
             first = lower()
-            self.assertIn("cp ", first)                           # first time: the doc is written out
+            self.assertIn("base64 -d", first)                     # first time: the doc is written out
             wf.set_visible("sp1", [], [])                         # compaction: nothing visible now
             again = lower()
             self.assertIn(wf._spill_name(url), again)             # re-pointed at the file it has
-            self.assertNotIn("cp ", again)                        # ...not copied over itself again
+            self.assertNotIn("base64 -d", again)                  # ...not written over itself again
             self.assertLess(len(again), len(first))
             # ...but a TARGETED read is navigation, not a re-fetch, and must still be answered
             self.assertNotIn(wf._spill_name(url), lower(find="/p42"))

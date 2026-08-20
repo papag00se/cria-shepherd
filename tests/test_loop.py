@@ -5920,31 +5920,33 @@ class ComposedPromptBoundsTests(unittest.TestCase):
         self.assertNotIn("WITHDRAWN", seen[0]["messages"][0]["content"])  # careful pass untouched
 
 
-class GatherExecSpillTests(unittest.TestCase):
+class GatherOutputCannotBeUnboundedTests(unittest.TestCase):
     """A curl/cat through the gather's exec tool bypassed the web_fetch spill and inlined 944,245
-    chars into one turn — the model never answered, twice (run 0729T152706). Oversized exec output
-    takes the same spill road."""
+    chars into one turn — the model never answered, twice (run 0729T152706). That was patched by
+    spilling oversized exec output to a scratch file and inlining a pointer.
 
-    def test_oversized_output_spills_with_pointer_and_head(self):
+    The exec tool is gone (it ran commands on cria's machine, not the workspace's), so the vector is
+    gone with it — there is no command a gather can run and therefore no unbounded command output.
+    What replaced it is bounded by construction, and that is what is pinned here."""
+
+    def test_a_gather_can_no_longer_run_a_command_at_all(self):
+        from cria import planner_tools
+        out = planner_tools.execute_tool(
+            "exec_command", {"cmd": "python3 -c \"print('y'*40000)\""}, "/ws", "", [], None).text
+        self.assertLess(len(out), 1000)
+        self.assertIn("no shell", out.lower())
+
+    def test_a_search_across_the_whole_project_is_bounded(self):
         import os
         import tempfile
 
         from cria import planner_tools
         d = tempfile.mkdtemp()
-        r = planner_tools._exec_command({"command": "python3 -c \"print('y'*40000)\""}, cwd=d, scratch=d)
-        self.assertLess(len(r.text), 4000)                      # pointer + head, not the blob
-        self.assertIn("grep", r.text)                            # tells the gather how to use it
-        spilled = [f for f in os.listdir(d) if f.startswith("exec-")]
-        self.assertEqual(len(spilled), 1)
-        self.assertGreater(os.path.getsize(os.path.join(d, spilled[0])), 39000)  # saved IN FULL
-
-    def test_small_output_stays_inline(self):
-        import tempfile
-
-        from cria import planner_tools
-        d = tempfile.mkdtemp()
-        r = planner_tools._exec_command({"command": "echo hello"}, cwd=d, scratch=d)
-        self.assertEqual(r.text.strip(), "hello")
+        for i in range(20):
+            with open(os.path.join(d, f"f{i}.py"), "w") as fh:
+                fh.write("hit\n" * 200)
+        out = planner_tools.execute_tool("grep_files", {"pattern": "hit"}, d, "", [], None).text
+        self.assertLessEqual(len(out.splitlines()), planner_tools._GREP_MAX_HITS + 1)
 
 
 class FalseLineCitationTests(unittest.TestCase):

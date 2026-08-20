@@ -2,6 +2,7 @@ import contextlib
 import json
 import pathlib
 import tempfile
+import os
 import unittest
 from unittest import mock
 
@@ -43,46 +44,51 @@ class SearchGate400Tests(unittest.TestCase):
         self.assertIsNotNone(pt.gate_search(recent, "api.handle.me handles/goose response"))
 
 
-class ReadOnlyGuardTests(unittest.TestCase):
-    def test_reads_allowed(self):
-        for cmd in ("ls -la", "cat handler.py", "grep -r foo .", "git status", "git log --oneline",
-                    "curl https://api.handle.me/v1/handles/goose", "find . -name '*.py'", "head -20 x.py",
-                    "python3 -c \"import json; print(1)\"", "jq '.paths' /tmp/api.json"):
-            self.assertTrue(pt.is_gather_safe_command(cmd, "/tmp/s")[0], cmd)
+class NoShellAtAllTests(unittest.TestCase):
+    """The gather used to run `bash -lc` in the coder's workspace, from cria's own process.
 
-    def test_workspace_writes_refused(self):
-        # relative or workspace-absolute writes still corrupt the user's code → refused
-        for cmd in ("echo x > f", "sed -i s/a/b/ f", "git commit -m x", "curl -o out.json https://x",
-                    "python setup.py build" if False else "mkdir d", "cat a | tee b", "touch handler.py",
-                    "mv a.py b.py", "cp x /home/jesse/src/proj/y"):
-            self.assertFalse(pt.is_gather_safe_command(cmd, "/tmp/s")[0], cmd)
+    A read-only deny-list guarded it — no writes outside a scratchpad, no package managers, no
+    `rm -rf /`. That guard was correct and it guarded the wrong thing: the workspace is on the
+    HARNESS's filesystem. cria has no channel to the harness while a gather round is in flight (this
+    loop runs inside one request), so there is no way to route the command — and off a shared box
+    every one of those commands ran against whatever machine cria happened to be on.
 
-    def test_scratchpad_writes_allowed(self):
-        # the whole point: persist + process fetched data in /tmp or the scratch dir
-        for cmd in ("curl https://api.handle.me/openapi.json > /tmp/api.json",
-                    "echo '{}' > /tmp/x.json && grep foo /tmp/x.json",
-                    "python3 -c \"import json,sys; json.dump({}, open('/tmp/o.json','w'))\"",
-                    "cat /tmp/api.json | jq '.paths'", "curl -o /tmp/api.json https://x",
-                    "mkdir -p /tmp/scr/sub", "tee /tmp/log.txt"):
-            self.assertTrue(pt.is_gather_safe_command(cmd, "/tmp/s")[0], cmd)
+    So the capability is gone rather than faked, and the questions it was used for — what is here,
+    where is this defined, what does this file say — are answered by list_dir, grep_files and
+    read_file, from the survey the harness runs. Deleting the executor deletes the whole class of
+    problem the deny-list existed to hold back; these tests pin the deletion, because a
+    re-introduced shell would silently pass every test that came after it."""
 
-    def test_scratch_dir_writes_allowed(self):
-        s = "/tmp/cria-gather-abc"
-        self.assertTrue(pt.is_gather_safe_command(f"echo hi > {s}/note.txt", s)[0])
+    def _exec(self, cmd, ws="/ws"):
+        return pt.execute_tool("exec_command", {"cmd": cmd}, ws, "", [], _Rlog())
 
-    def test_workspace_under_tmp_is_still_off_limits(self):
-        # the invariant is "scratchpad, never the workspace" — a workspace that lives under /tmp
-        # (as in tests) must NOT be writable just because it's /tmp-rooted
-        ws = "/tmp/ws-xyz"
-        self.assertFalse(pt.is_gather_safe_command(f"echo pwned > {ws}/handler.py", "/tmp/s", ws)[0])
-        self.assertFalse(pt.is_gather_safe_command(f"rm {ws}/f.py", "/tmp/s", ws)[0])
-        # but a sibling /tmp path (not the workspace) is fine
-        self.assertTrue(pt.is_gather_safe_command("echo x > /tmp/other.json", "/tmp/s", ws)[0])
+    def test_a_command_is_refused_and_the_refusal_names_the_tools_that_answer(self):
+        out = self._exec("ls -la").text
+        self.assertIn("no shell", out.lower())
+        for tool in ("list_dir", "grep_files", "read_file"):
+            self.assertIn(tool, out)
 
-    def test_catastrophic_refused_regardless_of_target(self):
-        for cmd in ("rm -rf /", "rm -rf ~", "rm -rf .", "find . -delete", "find /tmp -delete",
-                    "dd if=/dev/zero of=/dev/sda", ":(){ :|:& };:", "shred -u /tmp/x"):
-            self.assertFalse(pt.is_gather_safe_command(cmd, "/tmp/s")[0], cmd)
+    def test_the_refusal_quotes_the_command_so_the_planner_can_re_aim_it(self):
+        self.assertIn("grep -rn handle .", self._exec("grep -rn handle .").text)
+
+    def test_a_refused_command_taught_nothing(self):
+        self.assertFalse(self._exec("ls -la").learned)
+
+    def test_every_shell_spelling_lands_on_the_same_refusal(self):
+        for name in ("exec_command", "shell", "bash", "local_shell"):
+            with self.subTest(name=name):
+                out = pt.execute_tool(name, {"cmd": "rm -rf /"}, "/ws", "", [], _Rlog()).text
+                self.assertIn("no shell", out.lower())
+
+    def test_the_executor_and_its_deny_list_are_gone(self):
+        """Behavioural: nothing here can spawn a process, so no guard has to hold one back."""
+        self.assertFalse(hasattr(pt, "subprocess"))
+        self.assertFalse(hasattr(pt, "_exec_command"))
+        self.assertFalse(hasattr(pt, "is_gather_safe_command"))
+
+    def test_no_shell_tool_is_advertised(self):
+        names = {t["function"]["name"] for t in pt.PLANNER_TOOLS}
+        self.assertEqual(names, {"list_dir", "grep_files", "read_file", "web_fetch", "web_search"})
 
 
 class DomainDetectTests(unittest.TestCase):
@@ -172,15 +178,15 @@ class ToolResultLearnedTests(unittest.TestCase):
     """Each gather tool STATES whether its call returned anything to learn from. The planner's
     research phase reads that flag; it must never have to infer it by reading the text back."""
 
-    def test_a_command_that_prints_nothing_taught_nothing(self):
+    def test_a_listing_that_shows_nothing_taught_nothing(self):
         # MEASURED (run 0727-090143): an empty workspace answered `ls -la` and `find` with nothing,
         # two calls counted as "it researched", and the planner drafted from memory and invented
         # `/resolve?handle={handle}` — which the coder then built and 404'd.
         import tempfile
         ws = tempfile.mkdtemp()
-        self.assertFalse(pt.execute_tool("exec_command", {"cmd": "true"}, ws, "", [], _Rlog()).learned)
-        self.assertTrue(pt.execute_tool("exec_command", {"cmd": "echo real output"}, ws, "", [],
-                                        _Rlog()).learned)
+        self.assertFalse(pt.execute_tool("list_dir", {"path": "."}, ws, "", [], _Rlog()).learned)
+        open(os.path.join(ws, "real.py"), "w").write("x = 1\n")
+        self.assertTrue(pt.execute_tool("list_dir", {"path": "."}, ws, "", [], _Rlog()).learned)
 
     def test_errors_and_refusals_taught_nothing(self):
         import tempfile
@@ -191,33 +197,92 @@ class ToolResultLearnedTests(unittest.TestCase):
         self.assertFalse(pt.execute_tool("no_such_tool", {}, ws, "", [], _Rlog()).learned)
 
     def test_a_file_that_opened_taught_something(self):
-        import os, tempfile
+        import tempfile
         d = tempfile.mkdtemp()
         with open(os.path.join(d, "spec.txt"), "w") as fh:
             fh.write("GET /handles/{handle}\n")
         self.assertTrue(pt.execute_tool("read_file", {"path": "spec.txt"}, d, "", [], _Rlog()).learned)
 
+    def test_a_grep_that_matched_nothing_taught_nothing(self):
+        import tempfile
+        d = tempfile.mkdtemp()
+        open(os.path.join(d, "a.py"), "w").write("x = 1\n")
+        self.assertFalse(pt.execute_tool("grep_files", {"pattern": "handle"}, d, "", [], _Rlog()).learned)
+        self.assertTrue(pt.execute_tool("grep_files", {"pattern": "x ="}, d, "", [], _Rlog()).learned)
 
-class FreshWorkspaceTests(unittest.TestCase):
-    """A workspace dir that doesn't exist (a fresh build) must not make exec_command die with
-    'failed to launch' — it falls back to the scratchpad and tells the planner it's fresh."""
 
-    def test_missing_workspace_falls_back_and_notes_fresh(self):
+class TheReplacementToolsAnswerTheSameQuestionsTests(unittest.TestCase):
+    """What the shell was actually used for: what is here, where is it, what does it say."""
+
+    def _ws(self):
+        import tempfile
+        d = tempfile.mkdtemp()
+        os.makedirs(os.path.join(d, "src"))
+        open(os.path.join(d, "src", "app.py"), "w").write("def resolve_handle(h):\n    return h\n")
+        open(os.path.join(d, "README.md"), "w").write("# proj\n")
+        return d
+
+    def test_list_dir_names_files_and_directories(self):
+        out = pt.execute_tool("list_dir", {"path": "."}, self._ws(), "", [], _Rlog()).text
+        self.assertIn("README.md", out)
+        self.assertIn("src/", out)
+
+    def test_grep_files_gives_the_file_the_line_number_and_the_line(self):
+        out = pt.execute_tool("grep_files", {"pattern": "resolve_handle"},
+                              self._ws(), "", [], _Rlog()).text
+        self.assertIn("app.py:1:", out)
+        self.assertIn("def resolve_handle", out)
+
+    def test_a_search_that_could_not_read_everything_says_so(self):
+        """A silent partial search reads exactly like an exhaustive one that found nothing, and the
+        planner would draft against the difference (#5b)."""
+        from cria import wsview
+        view = wsview.View("/ws", "sess-grep")
+        wsview.apply_survey(view, "___CRIA_SV_tree___\nD\tsrc\nF\t0\t10\tsrc/app.py\n")
+        self.addCleanup(wsview.unbind, wsview.bind(view))
+        out = pt.execute_tool("grep_files", {"pattern": "anything"}, "/ws", "", [], _Rlog()).text
+        self.assertIn("not exhaustive", out)
+
+    def test_a_file_nobody_has_read_is_not_reported_as_absent(self):
+        from cria import wsview
+        self.addCleanup(wsview.unbind, wsview.bind(wsview.View("/ws", "sess-read")))
+        out = pt.execute_tool("read_file", {"path": "app.py"}, "/ws", "", [], _Rlog()).text
+        self.assertNotIn("does not exist", out)
+        self.assertIn("NOT evidence", out)
+
+
+class TheGatherStillReadsItsOwnScratchpadTests(unittest.TestCase):
+    """cria spills a fetched spec into its OWN directory so a 57K doc does not ride in the prompt.
+    The planner is the only reader of it, and it runs on cria's machine — so that read is not
+    workstation access and must keep working."""
+
+    def test_a_spilled_doc_can_be_read_back(self):
         import tempfile
         scratch = tempfile.mkdtemp()
-        out = pt.execute_tool("exec_command", {"cmd": "echo hi"}, "/no/such/workspace", "", [],
-                              _Rlog(), scratch=scratch).text
-        self.assertNotIn("failed to launch", out)
-        self.assertIn("does not exist yet", out)
-        self.assertIn("FRESH build", out)
+        target = os.path.join(scratch, "spec.txt")
+        open(target, "w").write("GET /handles/{handle}\n")
+        out = pt.execute_tool("read_file", {"path": target}, "/ws", "", [], _Rlog(),
+                              scratch=scratch).text
+        self.assertIn("/handles/{handle}", out)
 
-    def test_existing_workspace_runs_there(self):
-        import tempfile, os
-        ws = tempfile.mkdtemp()
-        open(os.path.join(ws, "marker.txt"), "w").write("x")
-        out = pt.execute_tool("exec_command", {"cmd": "ls"}, ws, "", [], _Rlog()).text
-        self.assertIn("marker.txt", out)
-        self.assertNotIn("does not exist yet", out)
+    def test_a_spilled_doc_can_be_grepped(self):
+        import tempfile
+        scratch = tempfile.mkdtemp()
+        open(os.path.join(scratch, "spec.txt"), "w").write("GET /handles/{handle}\n")
+        out = pt.execute_tool("grep_files", {"pattern": "handles", "path": scratch}, "/ws", "", [],
+                              _Rlog(), scratch=scratch).text
+        self.assertIn("spec.txt:1:", out)
+
+    def test_the_scratchpad_route_cannot_reach_anything_else(self):
+        import tempfile
+        scratch = tempfile.mkdtemp()
+        other = tempfile.mkdtemp()
+        open(os.path.join(other, "secret.txt"), "w").write("nope\n")
+        from cria import wsview
+        self.addCleanup(wsview.unbind, wsview.bind(wsview.View("/ws", "s")))
+        out = pt.execute_tool("read_file", {"path": os.path.join(other, "secret.txt")},
+                              "/ws", "", [], _Rlog(), scratch=scratch).text
+        self.assertNotIn("nope", out)
 
 
 class FullContentTests(unittest.TestCase):
@@ -368,64 +433,40 @@ class PlannerFetchOversizeTests(unittest.TestCase):
         self.assertEqual([], list(pathlib.Path(scratch).rglob("*")))
 
 
-class GatherEnvironmentMutationTests(unittest.TestCase):
-    """The gather's contract is READ anything, WRITE only to the scratchpad — never the workspace,
-    never the user's machine. The guard enforced that with a list of FILESYSTEM mutators (rm, mv, cp,
-    mkdir, tee) and redirect targets, so it could not see a package manager: `pip install x` names no
-    path, and `python3 -m venv venv` has `python3` as its base.
-
-    MEASURED (run 0727-125508): during planning, cria ran `pip install requests responses
+class NoPackageManagerCanRunFromAGatherTests(unittest.TestCase):
+    """MEASURED (run 0727-125508): during PLANNING, cria ran `pip install requests responses
     koios-mesh-sdk` against the user's SYSTEM python, then `python3 -m venv venv` inside the user's
     workspace, then pip install again — 3 of 12 gather rounds, in a gather that hit its cap. The
-    install failed only because this machine is PEP 668 externally-managed; on a machine without that
-    it would have written to the user's site-packages. And pip's refusal is what TAUGHT the model to
-    create the venv, which the guard then also allowed.
+    install failed only because that machine is PEP 668 externally-managed; on a machine without
+    that it would have written to the user's site-packages.
 
-    Every ecosystem, not just Python: the goal is language-agnostic and so is the category."""
+    A deny-list held this back afterwards. The list is gone because the executor is gone, which is
+    the stronger repair: there is no command a gather can run at all. This pins the OUTCOME the
+    deny-list was protecting, independent of how it is achieved."""
 
     WS, SCRATCH = "/home/jesse/src/ws", "/tmp/scratch"
 
-    def _ok(self, cmd):
-        return pt.is_gather_safe_command(cmd, scratch=self.SCRATCH, workspace=self.WS)[0]
+    def _out(self, cmd):
+        return pt.execute_tool("exec_command", {"cmd": cmd}, self.WS, "", [], _Rlog(),
+                               scratch=self.SCRATCH).text
 
-    def test_python_installers_and_virtualenvs_are_refused(self):
-        for cmd in ("pip install requests", "pip3 install -r requirements.txt",
-                    "python3 -m venv venv", "python -m pip install responses",
-                    "virtualenv env", "uv pip install httpx", "poetry add requests",
-                    "conda install numpy"):
-            self.assertFalse(self._ok(cmd), f"allowed: {cmd}")
+    def test_no_installer_of_any_ecosystem_can_run(self):
+        for cmd in ("pip install requests", "python3 -m venv venv", "npm install express",
+                    "cargo install ripgrep", "gem install rails", "bundle install",
+                    "composer require x", "apt-get install python3-dev", "brew install jq"):
+            with self.subTest(cmd=cmd):
+                self.assertIn("no shell", self._out(cmd).lower())
 
-    def test_other_ecosystems_are_refused_the_same_way(self):
-        for cmd in ("npm install express", "yarn add lodash", "pnpm install",
-                    "cargo install ripgrep", "go get github.com/x/y", "gem install rails",
-                    "bundle install", "composer require x", "apt-get install python3-dev",
-                    "brew install jq"):
-            self.assertFalse(self._ok(cmd), f"allowed: {cmd}")
+    def test_nothing_destructive_can_run_either(self):
+        for cmd in ("rm -rf /", "find . -delete", "dd if=/dev/zero of=/dev/sda", "shred -u /tmp/x"):
+            with self.subTest(cmd=cmd):
+                self.assertIn("no shell", self._out(cmd).lower())
 
-    def test_the_read_subcommands_of_those_same_tools_still_work(self):
-        # Research legitimately inspects a project's dependency state; only MUTATION is refused.
-        for cmd in ("pip list", "pip show requests", "npm ls", "cargo tree",
-                    "go list ./...", "bundle exec rspec --dry-run"):
-            self.assertTrue(self._ok(cmd), f"refused: {cmd}")
-
-    def test_ordinary_research_commands_are_untouched(self):
-        for cmd in ("ls -la", "grep -rn handle .", "find . -name '*.py'", "git log --oneline -5",
-                    "python3 -c \"import json; print(1)\"", "cat README.md"):
-            self.assertTrue(self._ok(cmd), f"refused: {cmd}")
-
-    def test_the_refusal_says_which_rule_was_broken(self):
-        ok, why = pt.is_gather_safe_command("pip install requests", scratch=self.SCRATCH, workspace=self.WS)
-        self.assertFalse(ok)
-        self.assertIn("install", why.lower())
-
-    def test_the_install_refusal_does_not_hand_out_impossible_advice(self):
-        """The generic refusal says "write it to /tmp instead", which is right for a redirect and
-        meaningless for `pip install` — and a refusal that suggests an impossible next move sends the
+    def test_the_refusal_does_not_hand_out_impossible_advice(self):
+        """The old generic refusal said "write it to /tmp instead", which is right for a redirect and
+        meaningless for `pip install` — a refusal that suggests an impossible next move sends the
         model somewhere worse than the one it was stopped from (`pip install --target /tmp/...`)."""
-        out = pt.execute_tool("exec_command", {"cmd": "pip install requests"}, self.WS, "", [],
-                              _Rlog(), scratch=self.SCRATCH).text
-        self.assertIn("Nothing needs installing to research", out)
-        self.assertNotIn("/tmp/api.json", out)
+        self.assertNotIn("/tmp", self._out("pip install requests"))
 
 
 class LedgerShapeFormatTests(unittest.TestCase):

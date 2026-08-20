@@ -22,7 +22,7 @@ from . import content_reduce as content_reduce_mod
 
 import os
 
-from . import prompts
+from . import prompts, wsview
 
 _TD = prompts.load_map("verify_tools")
 
@@ -92,18 +92,17 @@ def _list_dir(path: str, root: str) -> str:
     real = _resolve(path, root)
     if real is None:
         return prompts.fill(_TD["outside"], path=path, root=root)
-    if not os.path.isdir(real):
-        return prompts.fill(_TD["missing"], path=path)
-    lines = []
-    for entry in sorted(os.listdir(real)):
-        full = os.path.join(real, entry)
-        try:
-            if os.path.isdir(full):
-                lines.append(f"{entry}/")
-            else:
-                lines.append(f"{entry} ({os.path.getsize(full)} B)")
-        except OSError:
-            continue  # vanished mid-listing (the coder is live)
+    view = wsview.current(root)
+    entries = view.scandir(real)
+    if entries is None:
+        # NOT "missing". A directory cria has not been told about and a directory that does not
+        # exist are different facts, and answering the second for the first is how a judge came to
+        # reason from a phantom (see _read_file's is_directory note). The judge is told plainly
+        # that the answer is not available, which it can act on; "does not exist" it cannot.
+        if view.isdir(real) is False:
+            return prompts.fill(_TD["missing"], path=path)
+        return prompts.fill(_TD["unknown"], path=path)
+    lines = [f"{e.name}/" if e.is_dir() else f"{e.name} ({e.size} B)" for e in entries]
     return "\n".join(lines) if lines else f"{path}: empty directory"
 
 
@@ -112,18 +111,18 @@ def _read_file(args: dict, root: str) -> str:
     real = _resolve(path, root)
     if real is None:
         return prompts.fill(_TD["outside"], path=path, root=root)
-    if os.path.isdir(real):
+    view = wsview.current(root)
+    if view.isdir(real) is True:
         # A directory is not "missing" — saying so is a false fact the judge then reasons from
         # (maple walk, call 0054: read_file on an existing __pycache__/ answered "does not
         # exist" and fed a phantom stale-cache theory). State what it is; point at list_dir.
         return prompts.fill(_TD["is_directory"], path=path)
-    if not os.path.isfile(real):
+    if view.isfile(real) is False:
         return prompts.fill(_TD["missing"], path=path)
-    try:
-        with open(real, "rb") as fh:
-            raw = fh.read()
-    except OSError as e:
-        return f"[read_file error: {e}]"
+    raw = view.read_bytes(real)
+    if raw is None:
+        # The same distinction as _list_dir: not yet known is not the same as not there.
+        return prompts.fill(_TD["unknown"], path=path)
     text = raw.decode("utf-8", errors="replace")
     # blobs have no place in a judge's prompt — a PNG the judge opens becomes a fact, not soup.
     if content_reduce_mod.looks_binary(text) or content_reduce_mod.binary_kind(raw[:16]):

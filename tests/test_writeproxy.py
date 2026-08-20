@@ -295,11 +295,16 @@ class WebTests(unittest.TestCase):
             translate_outbound(comp, _CMD_SHELL, injected={"web_fetch"})
             cmd = _lowered_cmd(comp)
             self.assertIn("mkdir -p", cmd)
-            # the doc is STAGED in cria's dir + cp'd in — NOT embedded as base64 in the argv (a big spec's
-            # base64 overflows the harness exec arg cap: "Argument list too long"). The command stays tiny.
-            self.assertIn("cp ", cmd)
-            self.assertNotIn("base64 -d", cmd)
-            self.assertLess(len(cmd), len(body), "lowered spill command must not carry the doc bytes")
+            # THE DOC TRAVELS ON A HEREDOC. It must not be an argv argument — a big spec's base64
+            # overflows the harness exec arg cap ("Argument list too long: os error 7") and the spec
+            # never lands. It used to be staged in cria's OWN directory and cp'd in, which kept the
+            # argv small and assumed the harness could see cria's home; off a shared box that `cp`
+            # copied a file that was not there. stdin has no argv limit and names nothing outside
+            # the workspace.
+            self.assertIn("base64 -d", cmd)
+            self.assertIn("<<'__CRIA_SPILL__'", cmd)
+            self.assertNotIn("cp ", cmd)
+            self.assertNotIn(str(CRIA_HOME), cmd, "the command named a path only cria's box has")
             self.assertIn("./tmp/reference/", cmd)  # dedicated read-only scratch dir (the target)
             self.assertNotIn("chmod 444", cmd)      # NOT FS-read-only: a re-spill must overwrite; dirguard protects
             self.assertNotIn("rm -f", cmd)          # the Codex sandbox rejects `rm -f`
@@ -997,8 +1002,8 @@ class SpillLedgerAcrossWorkspacesTests(unittest.TestCase):
                          "cria refused a first fetch by pointing at another run's file")
 
     def _run_the_cp(self, lowered, ws):
-        """cria EMITS the spill as a `cp` command; the HARNESS runs it. Existence is only a fact once
-        it has — which is why the check is worth making: a sandbox-rejected cp now re-spills instead
+        """cria EMITS the spill as a command; the HARNESS runs it. Existence is only a fact once it
+        has — which is why the check is worth making: a sandbox-rejected spill now re-spills instead
         of pointing the model at a file that was never written."""
         # Derived, not spelled out: the spill NAME is webfetch's to choose (it gained a mandatory
         # `.txt` when a fetched `…decimal.go` got compiled by `go build ./...`), and a hard-coded
@@ -1120,7 +1125,7 @@ class BinaryBlobTests(unittest.TestCase):
         self.assertIn("binary content", out)
         self.assertNotIn("�", out)
 
-    def test_gather_exec_of_binary_stdout_is_a_fact_not_a_crash(self):
+    def test_gather_read_of_binary_content_is_a_fact_not_a_crash(self):
         import os
         import tempfile
 
@@ -1128,7 +1133,7 @@ class BinaryBlobTests(unittest.TestCase):
         d = tempfile.mkdtemp()
         with open(os.path.join(d, "blob.bin"), "wb") as f:
             f.write(bytes(range(256)) * 40)
-        r = planner_tools._exec_command({"command": "cat blob.bin"}, cwd=d, scratch=d)
+        r = planner_tools.execute_tool("read_file", {"path": "blob.bin"}, d, "", [], None)
         self.assertIn("binary content", r.text)            # not soup, not an exception
         self.assertNotIn("�", r.text)
 

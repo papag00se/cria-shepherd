@@ -22,7 +22,7 @@ import urllib.parse
 from dataclasses import replace
 from datetime import datetime, timezone
 
-from . import groundtruth, massage, planner_tools, prompts, urlgrounding
+from . import groundtruth, massage, planner_tools, prompts, urlgrounding, wsview
 from .classify import JUDGE_MAX_TOKENS, _task_key, latest_user_text
 from . import jsontext
 from .jsontext import extract_json_object, loads as jsontext_loads, strip_think
@@ -1357,11 +1357,13 @@ def _workspace_match(basename: str, root: str) -> str:
 
     EXACT, not a guess: one basename, one hit, or nothing. Two hits is ambiguous and cria says
     nothing rather than pick."""
-    if not basename or not root or not os.path.isdir(root):
+    if not basename or not root:
+        return ""
+    tree = wsview.current(root).walk(root, skip_names=("__pycache__",), skip_hidden=True)
+    if tree is None:
         return ""
     hits = []
-    for dirpath, dirnames, filenames in os.walk(root):
-        dirnames[:] = [d for d in dirnames if not d.startswith(".") and d != "__pycache__"]
+    for dirpath, _dirnames, filenames in tree:
         if basename in filenames:
             hits.append(os.path.relpath(os.path.join(dirpath, basename), root))
             if len(hits) > 1:
@@ -1387,7 +1389,9 @@ def repoint_unusable_paths(step: str, root: str) -> tuple[str, str]:
                 continue                       # already rewritten by an earlier match
             elided = "..." in tok or "\u2026" in tok
             inside = bool(root_prefix) and tok.startswith(root_prefix)
-            if not elided and inside and os.path.exists(tok):
+            if not elided and inside and wsview.current(root).exists(tok) is not False:
+                # A path cria has not been told about is left alone. Rewriting it would need the
+                # certainty that it is NOT there, and "I have not looked" is not that (#5b).
                 continue                       # a real path the coder is allowed to read
             if not elided and not root_prefix:
                 continue                       # no workspace to judge against — say nothing
@@ -1422,26 +1426,26 @@ def _token_is_grounded(token: str, task: str, root: str) -> bool:
         return False
     if tok in (task or "").casefold():
         return True
-    if not root or not os.path.isdir(root):
+    if not root:
+        return False
+    view = wsview.current(root)
+    tree = view.walk(root, skip_hidden=True,
+                     skip_names=("__pycache__", "node_modules", "venv", "dist", "build"))
+    if tree is None:
         return False
     spent = 0
-    for dirpath, dirnames, filenames in os.walk(root):
-        dirnames[:] = [d for d in dirnames
-                       if not d.startswith(".") and d not in ("__pycache__", "node_modules",
-                                                              "venv", "dist", "build")]
+    for dirpath, _dirnames, filenames in tree:
         for name in filenames:
             if tok in name.casefold():
                 return True
             path = os.path.join(dirpath, name)
-            try:
-                size = os.path.getsize(path)
-                if size > 1_000_000 or spent + size > _GROUND_SCAN_MAX_BYTES:
-                    continue
-                with open(path, "r", errors="ignore") as fh:
-                    body = fh.read(1_000_000)
-                spent += len(body)
-            except OSError:
+            size = view.size(path) or 0
+            if size > 1_000_000 or spent + size > _GROUND_SCAN_MAX_BYTES:
                 continue
+            body = view.read(path)
+            if body is None:
+                continue
+            spent += len(body)
             if tok in body.casefold():
                 return True
     return False

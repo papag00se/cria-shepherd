@@ -43,7 +43,7 @@ from datetime import datetime, timezone
 from enum import Enum, auto
 from pathlib import Path
 
-from . import bodykeys
+from . import bodykeys, wsview
 from . import callcapture, dedup, denial, editrecovery, execcheck, focustrim, groundtruth, indicators, massage, probegate, proberun, prompts, selfcompact, shellshape, toolmenu, urlgrounding, verifytools, webfetch
 from .classify import _task_key, latest_user_text
 from . import jsontext, planner
@@ -849,7 +849,7 @@ def _judge_completion(chat_fn, role, system: str, user: str, rlog, *, phase: str
         {"role": "system", "content": system},
         {"role": "user", "content": user},
     ]
-    inspectable = bool(workspace_root) and os.path.isdir(workspace_root)
+    inspectable = bool(workspace_root) and wsview.current(workspace_root).surveyed
     # HAND IT THE FILES RATHER THAN MAKE IT ASK. The loop below is the judge naming one file, cria
     # reading it, and the whole conversation being re-sent — 1,511 rounds across the captures, 87% of
     # them fetching exactly one file, at a cost that grows with every round (47K -> 62K -> 83K ->
@@ -1038,13 +1038,13 @@ def step_names_absent_artifact(claim: str, workspace_root: str) -> str:
     Deliberately narrow. The other 4 approvals had a NON-empty workspace, where a named file may be
     one the step merely mentions (a README step naming the module it documents), and blocking those
     would be a guess. An empty workspace admits no such reading."""
-    if not workspace_root or not os.path.isdir(workspace_root):
+    if not workspace_root:
         return ""
-    try:
-        if any(not e.name.startswith(".") for e in os.scandir(workspace_root)):
-            return ""
-    except OSError:
-        return ""   # unreadable → say nothing; the reasoned brake still runs
+    top = wsview.current(workspace_root).listdir(workspace_root)
+    if top is None:
+        return ""   # not surveyed → say nothing; the reasoned brake still runs
+    if any(not name.startswith(".") for name in top):
+        return ""
     dom = (first_domain_in(claim or "") or "").lower()
     for m in _STEP_ARTIFACT.finditer(claim or ""):
         at = m.start()
@@ -1171,20 +1171,28 @@ def _veto_refuted_by_disk(why: str, workspace_root: str, ask=None, rlog=None) ->
     if not why or not workspace_root or ask is None or not _VETO_MISSING.search(why):
         return "", ""
     facts, first_existing = [], ""
+    view = wsview.current(workspace_root)
     for m in _VETO_PATH.finditer(why):
         tok = m.group(1)
         try:
             path = tok if os.path.isabs(tok) else groundtruth.resolve(workspace_root, tok)
-            exists = os.path.isfile(path)
         except (OSError, ValueError):
-            exists = False
+            continue
+        # UNANSWERED IS NOT ABSENT. Every failure direction here keeps the veto, and "cria has not
+        # been told about this file" is a failure direction of its own — recording it as NOT on disk
+        # would hand the reasoner a fact nobody established, in the one seat built to overturn a
+        # judgement. A file the harness reported as absent is still the fact it always was.
+        present = view.isfile(path)
+        if present is None:
+            continue
         # SIZE AND SHAPE, not just existence — an emptiness claim is settled by what the file HOLDS.
+        exists = present
         detail = "NOT on disk"
         if exists:
-            try:
-                body = open(path, errors="replace").read(200_000)
-            except OSError:
-                body = ""
+            body = view.read(path)
+            if body is None:
+                continue
+            body = body[:200_000]
             n_lines = body.count("\n") + 1 if body else 0
             code = sum(1 for ln in body.splitlines()
                        if ln.strip() and not ln.lstrip().startswith("#"))
@@ -1275,7 +1283,7 @@ def _confirm_completion(claim: str, reason: str, workspace_root: str, reasoner_c
     the checker's own prompt), quoting it back would be a fair veto — and cria's response here is
     still to withhold approval. The only thing lost is the specific wording; the boolean is
     identical. Nothing can advance that would not have advanced before."""
-    if not workspace_root or not os.path.isdir(workspace_root):
+    if not workspace_root or not wsview.current(workspace_root).surveyed:
         return True, ""
     absent = step_names_absent_artifact(claim, workspace_root)
     if absent:
@@ -4493,12 +4501,15 @@ def _workspace_is_empty(cwd: str) -> bool:
     all (even hidden) → NOT empty, so a repo with real work keeps the normal 'build on it' reframe."""
     if not cwd or cwd == ".":
         return False
-    try:
-        return not os.listdir(cwd)
-    except FileNotFoundError:
-        return True   # the advertised workspace is absent → the 'files already exist' claim is false
-    except OSError:
-        return False  # unreadable (permissions, not-a-dir) → can't assert emptiness; stay with normal
+    view = wsview.current(cwd)
+    top = view.listdir(cwd)
+    if top is not None:
+        return not top
+    # NOT SURVEYED IS NOT EMPTY. The claim this decides is "the files that should already exist" —
+    # calling a workspace nobody has looked at empty would replace one false claim with another, so
+    # an unanswered question keeps the normal reframe (the conservative direction this already had
+    # for an unreadable directory).
+    return False
 
 
 def reframe_compaction(messages: list[dict]) -> tuple[list[dict], bool]:
@@ -4610,21 +4621,14 @@ def _workspace_instructions(cwd: str, relayed: str) -> str | None:
     plumbing and works for any harness that states one."""
     if not cwd:
         return None
-    try:
-        base = Path(cwd)
-        if not base.is_dir():
-            return None
-    except OSError:
+    view = wsview.current(cwd)
+    if not view.surveyed:
         return None
+    base = Path(cwd)
     blob = _squash(relayed)
     for name in _INSTRUCTION_FILES:
-        try:
-            f = base / name
-            if not f.is_file():
-                continue
-            own = f.read_text(errors="replace").strip()
-        except OSError:
-            continue
+        f = base / name
+        own = (view.read(f) or "").strip()
         if own and _squash(own) in blob:
             return own
     return None
@@ -4729,10 +4733,11 @@ def step_artifacts_on_disk(step: str, root: str | None) -> list[str]:
         if rel in out:
             continue
         try:
-            if os.path.isfile(groundtruth.resolve(root, rel)):
-                out.append(rel)
+            resolved = groundtruth.resolve(root, rel)
         except (OSError, ValueError):
             continue
+        if wsview.current(root).isfile(resolved) is True:
+            out.append(rel)
     return out
 
 
@@ -5104,7 +5109,11 @@ def guard_gate_op(gs: GuardState, body: dict, rlog, *, workspace_root=None) -> d
     if root == ".":  # a stray "." from any caller IS cria's own cwd — refuse it (never probe cria's tree)
         root = ""
     try:
-        plan = probegate.plan_gate(root)
+        # The session key lets the gate's survey carry the questions the view could not answer this
+        # turn (a file body, a program on the coder's PATH). Without it the gate would re-ask
+        # nothing and a harness with native file tools — where cria lowers no command of its own —
+        # would never get an answer to any of them.
+        plan = probegate.plan_gate(root, getattr(gs, "web_session", "") or "")
     except OSError as e:  # unreadable workspace → no gate; the caller still fails open
         rlog.emit("loop.gate_error", level="warn", error=str(e))
         gs.gate_plan = None
@@ -6445,19 +6454,20 @@ def _host_in_workspace_code(root: str, host: str) -> bool:
     bare `HTTP 403` in the coder's output, which carries no URL of its own (measured: every one of
     run 1786047359's eight failures printed only `Error resolving handle: HTTP 403: Forbidden`).
     Searching the conversation instead would be circular — cria's own ledger puts the host there."""
-    if not root or not host or not os.path.isdir(root):
+    if not root or not host:
         return False
-    for dirpath, dirnames, filenames in os.walk(root):
-        dirnames[:] = [d for d in dirnames if d not in execcheck._SKIP_DIRS]
+    view = wsview.current(root)
+    tree = view.walk(root, skip_names=execcheck._SKIP_DIRS)
+    if tree is None:
+        return False
+    for dirpath, _dirnames, filenames in tree:
         for name in filenames:
             if not name.endswith((".py", ".js", ".mjs", ".ts", ".go", ".rs", ".rb", ".java", ".php",
                                   ".sh", ".json", ".toml", ".yaml", ".yml")):
                 continue
-            try:
-                if host in open(os.path.join(dirpath, name), errors="replace").read():
-                    return True
-            except OSError:
-                continue
+            body = view.read(os.path.join(dirpath, name))
+            if body is not None and host in body:
+                return True
     return False
 
 
@@ -6824,7 +6834,7 @@ def author_steer(reasoner_chat, reasoner_role, workspace_root, gs, body: dict, r
     def _recover_ask(system: str) -> str:
         return summarize(reasoner_chat, reasoner_role, system, _ASK_USER_TURN, rlog,
                          phase="steer-recover") or ""
-    if workspace_root and os.path.isdir(workspace_root):
+    if workspace_root and wsview.current(workspace_root).surveyed:
         # The author INSPECTS like the critic (operator redesign, 07-30): the disk section above
         # lists names/sizes only, and the author holds the same read-only tools the judges hold —
         # it reads the real bytes it wants to cite instead of having every touched file inlined
@@ -7605,11 +7615,13 @@ def _phantom_system_path(directive: str, workspace_root: str | None) -> str:
         path = m.group(1).rstrip(".,;:'\"")
         if workspace_root and path.startswith(str(workspace_root).rstrip("/") + "/"):
             continue
-        try:
-            if not os.path.exists(path):
-                return path
-        except OSError:
-            continue
+        # ONLY A CERTAINTY BLOCKS. This is a path on the CODER's machine, so cria asks the harness;
+        # until it answers, the path is neither proved nor disproved and the steer stands. Blocking
+        # on an unanswered question would drop every steer that names a real system path for the
+        # first ~one turn of a session, which is the shape of a mechanism that stops reaching what
+        # it judges (#11b).
+        if wsview.current(workspace_root).outside_kind(path) == "":
+            return path
     return ""
 
 
@@ -7821,20 +7833,18 @@ def _symbol_not_in_the_file(directive: str, workspace_root: str | None) -> str |
     letter, or ordinary prose would trip it."""
     if not workspace_root:
         return None
-    try:
-        root = Path(workspace_root).resolve()
-    except (OSError, ValueError):
-        return None
+    view = wsview.current(workspace_root)
+    root = Path(workspace_root)
     for m in _SYMBOL_IN_FILE.finditer(directive):
         symbol, rel = (m.group(1) or m.group(2)), m.group(3)
         if not symbol:
             continue
-        try:
-            p = (root / rel).resolve()
-            if not p.is_relative_to(root) or not p.is_file():
-                continue
-            body = p.read_text(errors="replace")
-        except (OSError, ValueError):
+        # The view answers only for paths inside the workspace, so the containment bound that used
+        # to be a `resolve()`/`is_relative_to` dance is the seam itself now. A file cria has not
+        # been told reads as None and the citation is left alone — a symbol cannot be shown absent
+        # from bytes nobody has seen.
+        body = view.read(root / rel)
+        if body is None:
             continue
         if symbol not in body:
             return f"{symbol} in {rel}"
@@ -8140,14 +8150,10 @@ def search_file_text(workspace_root: str, rel: str) -> str:
     """
     if not rel:
         return ""
-    try:
-        root = Path(workspace_root or ".").resolve()
-        p = (root / rel.lstrip("./")).resolve()
-        if root not in p.parents and p != root:
-            return ""     # never read outside the workspace, whatever the path claimed
-        return p.read_text(encoding="utf-8", errors="replace")
-    except (OSError, ValueError):
-        return ""
+    if not workspace_root:
+        return ""     # never read against cria's OWN cwd, whatever the path claimed
+    # The view answers only inside the workspace, which IS the "never read outside" bound.
+    return wsview.current(workspace_root).read(Path(workspace_root) / rel.lstrip("./")) or ""
 
 
 def _looks_like_url(s: str) -> bool:
@@ -8567,13 +8573,19 @@ def _fresh_disk_facts(root: str | None, recent_writes, spin_path: str) -> str:
     if not paths:
         return ""
     lines: list[str] = []
+    view = wsview.current(root)
     for p in paths:
-        try:
-            raw = open(groundtruth.resolve(root, p), "rb").read()
+        full = groundtruth.resolve(root, p)
+        body = view.read(full)
+        if body is not None:
+            raw = body.encode("utf-8", "replace")
             n_lines = raw.count(b"\n") + (0 if raw.endswith(b"\n") or not raw else 1)
             lines.append(f"FILE {p} — {len(raw):,} bytes, {n_lines:,} line{'s' if n_lines != 1 else ''}")
-        except OSError:
+        elif view.isfile(full) is False:
             lines.append(f"FILE {p} — does NOT exist on disk")
+        elif (size := view.size(full)) is not None:
+            lines.append(f"FILE {p} — {size:,} bytes")
+        # else: cria has not been told about it, and says nothing rather than guessing either way
     return "\n".join(lines)
 
 

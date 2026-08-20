@@ -52,7 +52,7 @@ import shlex
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Optional
 
-from . import content_reduce, probediscovery, probeparse, prompts, toolpath
+from . import content_reduce, probediscovery, probeparse, prompts, toolpath, wsview
 from .probeparse import (
     EMPTY_COMMAND_SUMMARY,
     LAUNCH_FAILURE_FMT,
@@ -329,9 +329,16 @@ def program_is_installed(candidate) -> bool:
     if not prog:
         return True
     if "/" in prog or prog.startswith("."):
+        # A tool inside the PROJECT (`./gradlew`, `node_modules/.bin/jest`) is a workspace file, so
+        # it is a question about the harness's disk like every other one here. Unknown keeps the
+        # probe, which is this function's documented safe direction.
         base = os.path.join(getattr(candidate, "working_dir", "") or "", prog)
-        return os.access(base, os.X_OK) or os.access(prog, os.X_OK)
-    return toolpath.which(prog) is not None
+        view = wsview.current()
+        return view.isfile(base) is not False or view.isfile(prog) is not False
+    # UNSURE MEANS KEEP, and unsure is now a state cria can actually be in: `resolved` answers None
+    # until the harness has been asked about this program, and a probe dropped on an unanswered
+    # question is a check that silently never ran.
+    return toolpath.resolved(prog) != ""
 
 
 # ---------------------------------------------------------------------------
@@ -347,10 +354,13 @@ def source_line_reader(cwd: str):
     from pathlib import Path
 
     def read(path: str, line_no: int) -> Optional[str]:
-        p = Path(path) if os.path.isabs(path) else Path(cwd) / path
+        p = str(Path(path) if os.path.isabs(path) else Path(cwd) / path)
+        body = wsview.current().read(p)
+        if body is None:
+            return None
         try:
-            return p.read_text(errors="replace").splitlines()[line_no - 1]
-        except (OSError, IndexError):
+            return body.splitlines()[line_no - 1]
+        except IndexError:
             return None
     return read
 

@@ -600,14 +600,17 @@ class SessionCwdTests(unittest.TestCase):
         _session_cwd("sk2", self._env("/a"), lexical=True)
         self.assertEqual(_session_cwd("sk2", self._env("/b"), lexical=True), "/b")  # newest wins
 
-    def test_the_same_bookkeeping_holds_for_a_workspace_that_IS_reachable(self):
-        """The disk reading must keep every property above when the path really resolves."""
+    def test_the_bookkeeping_does_not_depend_on_the_path_resolving_here(self):
+        """The cwd is a name on the HARNESS's filesystem. cria carries it either way — it once
+        blanked a perfectly good workspace because the path did not exist on ITS machine."""
         import tempfile
-        from cria.server import _session_cwd, _CWD_BY_SESSION, _UNREACHABLE_REPORTED
-        _CWD_BY_SESSION.clear(); _UNREACHABLE_REPORTED.clear()
-        with tempfile.TemporaryDirectory() as tmp:
-            self.assertEqual(_session_cwd("sk3", self._env(tmp)), tmp)
-            self.assertEqual(_session_cwd("sk3", [{"role": "user", "content": "continue"}]), tmp)
+        from cria.server import _session_cwd, _CWD_BY_SESSION
+        for path, real in (("/somewhere/only/the/harness/has", False), (None, True)):
+            with tempfile.TemporaryDirectory() as tmp:
+                target = tmp if real else path
+                _CWD_BY_SESSION.clear()
+                self.assertEqual(_session_cwd("sk3", self._env(target)), target)
+                self.assertEqual(_session_cwd("sk3", [{"role": "user", "content": "go"}]), target)
 
 
 class VisibleWebCallsTests(unittest.TestCase):

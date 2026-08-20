@@ -56,7 +56,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import ignore, probeclassify
+from . import ignore, wsview, probeclassify
 
 # Walk depth bound: entries of root are checked with depth=0; children of a dir
 # at nesting root/a/b/c are checked with depth=3 and thus never recursed.
@@ -239,30 +239,30 @@ def is_relevant_file(name: str) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Host seam (filesystem reads only — the composed commands are NOT run here).
-# Isolated so a future remote-workspace adapter has one place to intercept:
-# evidence must be read from the same tree the composed commands will run in.
+# Host seam. THIS IS THAT REMOTE-WORKSPACE ADAPTER. The three functions below were the one place
+# this module touched a filesystem, and the note here said a remote workspace would intercept
+# exactly here — because "evidence must be read from the same tree the composed commands will run
+# in", and the tree the commands run in is the HARNESS's, not cria's. They now ask
+# :mod:`cria.wsview`, which answers from what the harness itself reported.
+#
+# Every one of them keeps its old contract for the caller: None means "cannot be read", which is
+# what an unsurveyed workspace also means. No caller has to learn a third answer.
 
 def read_text(path: Path) -> str | None:
-    """File text, or None on ANY read failure (missing, permissions, encoding)."""
-    try:
-        return Path(path).read_text(encoding="utf-8")
-    except (OSError, UnicodeDecodeError):
-        return None
+    """File text, or None when cria has not been told it (missing, unreadable, or not yet surveyed)."""
+    return wsview.current().read(path)
 
 
-def scan_dir(path: Path) -> list[os.DirEntry] | None:
-    """Directory entries, or None if the directory can't be listed."""
-    try:
-        with os.scandir(path) as it:
-            return list(it)
-    except OSError:
-        return None
+def scan_dir(path: Path) -> list | None:
+    """Directory entries (``os.DirEntry``-shaped), or None if the directory can't be listed."""
+    return wsview.current().scandir(path)
 
 
 def is_dir_on_disk(path: Path) -> bool:
-    """Directory test; follows symlinks (Rust ``is_dir`` does too)."""
-    return Path(path).is_dir()
+    """Directory test. Unknown reads as False — the walk that asks this treats a non-directory as a
+    file candidate and `is_relevant_file` then rejects anything it does not recognise, so an
+    unsurveyed tree yields no projects rather than a wrong one."""
+    return wsview.current().isdir(path) is True
 
 
 # ---------------------------------------------------------------------------
@@ -744,10 +744,7 @@ def build_jvm(p: ProjectDir, out: list[ProbeCandidate]) -> None:
         # style violations (80-column limits, missing `final`) presented to gemma4 as the project's
         # own standard, which rewrote Importer.java four times to satisfy a rule the project does
         # not have. A check the repo did not ask for is not one of the repo's checks (#5b).
-        try:
-            pom = (Path(d) / "pom.xml").read_text(errors="replace")
-        except OSError:
-            pom = ""
+        pom = read_text(Path(d) / "pom.xml") or ""
         if "checkstyle" in pom:
             out.append(cand(ProbeKind.StaticAnalysis, [m, "checkstyle:check"], d,
                             60, 80, ProbeCost.Moderate, "checkstyle declared in pom.xml"))
@@ -802,9 +799,8 @@ def build_ruby(p: ProjectDir, out: list[ProbeCandidate]) -> None:
     out.append(cand(ProbeKind.Test, ["bundle", "exec", "rspec"], d, 70, 88,
                     ProbeCost.Moderate, "rspec if in Gemfile"))
     for name in ("Rakefile", "rakefile"):
-        try:
-            body = (Path(d) / name).read_text(errors="replace")
-        except OSError:
+        body = read_text(Path(d) / name)
+        if body is None:
             continue
         if _RAKE_TEST_TASK.search(body):
             out.append(cand(ProbeKind.Test, ["rake", "test"], d, 88, 90,
@@ -1170,10 +1166,8 @@ def _carries_test_code(path: str, conv: TestConvention) -> bool:
     """Does this source file contain test code, by the language's own decoration?"""
     if not conv.marker:
         return False
-    try:
-        return bool(re.search(conv.marker, Path(path).read_text(errors="replace"), re.M))
-    except OSError:
-        return False
+    body = read_text(Path(path))
+    return bool(body) and bool(re.search(conv.marker, body, re.M))
 
 
 # A filename that SAYS test, in any language's spelling — `test` or `spec` as a whole leading or
@@ -1241,7 +1235,7 @@ def stranded_test_sentences(root: Path) -> list[str]:
         paths = _language_files(root, conv)
         if not paths:
             continue                                   # language absent — say nothing about it
-        if any((root / cfg).exists() for cfg in conv.configs):
+        if any(wsview.current().exists(root / cfg) is True for cfg in conv.configs):
             continue                                   # the project re-pointed its own runner
         stranded = _audit_tests(root, paths, conv)[1]
         if stranded:
@@ -1271,7 +1265,7 @@ def undiscoverable_tests(root: Path) -> list[str]:
         paths = _language_files(root, conv)
         if not paths:
             continue                                   # language absent — say nothing about it
-        if any((root / cfg).exists() for cfg in conv.configs):
+        if any(wsview.current().exists(root / cfg) is True for cfg in conv.configs):
             continue                                   # the project re-pointed its own runner
         discoverable, stranded = _audit_tests(root, paths, conv)
         # Each finding is a COMPLETE sentence. They are not interchangeable halves of one template:
