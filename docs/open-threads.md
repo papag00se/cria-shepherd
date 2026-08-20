@@ -70,3 +70,16 @@ If it is ever revisited, the fix belongs in the steer author's own prompt (fence
 - **Config unify — one backends/roles model, zero aliases (`68a4597`).**
 
 **2026-08-04 addendum (REGRESSION1 walks), counter-evidence:** run `ada-handles_gemma4_codex_poff_1785843217` steer 0080 asserted camelCase field names (`resolvedAddresses`/`totalHandles`) against a ledger holding the snake_case truth — and the coder's code was CORRECT until it obeyed; the shipped resolver kept `totalHandles` and scored one of the run's four zeros. This is a defect that arrived BEFORE the write it caused, the case the refusal's "damage already landed" bullet said did not occur. A second same-day instance: `ada-handles_nemotron-elastic_codex_pon_1785834747` (plan-step side) survived five replans and seven correct critic rejections demanding fields from an endpoint the ledger proves does not return them. Two walked runs, two surfaces (steer, plan step), both ledger-disprovable. Re-adjudication is the operator's call.
+
+---
+
+## Open: a command cria composes cannot exceed 128 KiB, and one path is unmeasured
+
+**The bound.** The harness runs `bash -lc "<command>"`, so every command cria composes is ONE argv string, and Linux caps a single argument at `MAX_ARG_STRLEN` = 32 pages = 128 KiB. Nothing inside the command escapes it — a heredoc, chunked printfs and base64 are all bytes in that same string. Codex reports the overrun as `Argument list too long (os error 7)` and fails the WHOLE exec, so nothing lands and the model gets an error it cannot attribute to anything it did.
+
+**Where it is handled.** The fetch spill (`writeproxy._spill_command`). It was measured there: a large spec never landed, and the workaround — stage the doc in cria's own directory, lower a small `cp` — copies a file the harness cannot see the moment cria and the harness are not the same machine, which silently produced an EMPTY doc under a pointer telling the model to read it. It now cuts at `SPILL_CONTENT_MAX` and states the cut in both the file and the pointer message.
+
+**Where it is not.** `writeproxy._write_command` — the model's own `write_file`. A model writing more than ~90 KB in one call would hit the same wall and get the same unattributable error. **Not observed once**, in any walked run, from any model. Per #15 that is not enough to build on: what a guard here would do (refuse, and tell the model to write in parts) is an ADD, and the bar to add is high.
+
+**What would settle it.** One walked run where a `write_file` fails with `os error 7`, or a count of write payload sizes across the capture corpus showing any above ~90 KB. Until then the docstring states the ceiling and nothing enforces it.
+

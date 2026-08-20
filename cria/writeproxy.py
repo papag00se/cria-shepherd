@@ -522,7 +522,15 @@ print('{wrote}')
 def _write_command(path: str, content: str) -> str:
     """Byte-exact atomic write via a python heredoc: validate-before-write (a broken write over a valid
     file is refused), then write to a temp and os.replace over the target so a partial write never
-    leaves a half-written file. No arg-size limit / no chunking — the content rides in the heredoc."""
+    leaves a half-written file. The content rides in the heredoc, so there is nothing to escape and
+    no chunking.
+
+    THERE IS STILL A CEILING, and it is not the heredoc's. The harness runs `bash -lc "<command>"`,
+    so the whole command is ONE argv string and Linux caps a single argument at MAX_ARG_STRLEN =
+    128 KiB. A heredoc does not get around that — its bytes are in the same string. A write past
+    :data:`COMMAND_ARG_BUDGET` therefore dies in the harness with "Argument list too long (os error
+    7)" before any of this runs. Not observed from a model yet (see docs/open-threads.md); the
+    fetch-spill path, where it WAS observed, states its own bound and cuts with disclosure."""
     py = (_VALIDATE_FN + _WRITE_PY).format(path=_b64(path), content=_b64(content),
                                            suffix=_TMP_SUFFIX, wrote=_WROTE,
                                            # Both are REFUSALS decided inside the lowered heredoc —
@@ -879,24 +887,42 @@ def _fetch_command(args: dict, session: str | None = None, workspace_root: str |
 
 
 
+# What one composed command can carry. The harness runs `bash -lc "<command>"`, so the whole command
+# is ONE argv string, and Linux caps a single argument at MAX_ARG_STRLEN = 32 pages = 128 KiB. Nothing
+# inside the command can get around that — a heredoc, chunked printfs, base64: they are all still
+# bytes in that one string. Codex reports the overrun as "Argument list too long (os error 7)" and
+# the whole exec fails, so the doc never lands at all.
+COMMAND_ARG_BUDGET = 120 * 1024
+# base64 is 4 bytes per 3, and the rest of the command (paths, the pointer message, the markers)
+# needs room too.
+SPILL_CONTENT_MAX = (COMMAND_ARG_BUDGET - 4 * 1024) * 3 // 4
+
+
 def _spill_command(target: str, content: str, msg: str) -> str:
     """Land ``content`` at ``target`` (in the workspace spill dir), then print the model-facing pointer
     message — the harness runs this and records the message as the tool result. The sentinel
     re-presents the whole command as web_fetch, so the model never sees the plumbing.
 
-    THE DOC TRAVELS IN THE COMMAND, ON A HEREDOC. It used to be staged in cria's OWN directory and
-    lowered as a small ``cp``, to keep a large spec out of the argv — Codex rejects an oversized
-    argument list with "Argument list too long (os error 7)" and the spec never lands. But a path in
-    cria's home means nothing to a harness on another machine, so that ``cp`` copied a file that was
-    not there and the spill silently produced an empty doc. A heredoc solves the original problem
-    without the assumption: stdin has no argv limit, and nothing outside the workspace is named. NOT
-    ``chmod 444``: a read-only file can't be overwritten by a re-spill, and clearing it would need
-    the ``rm -f`` the sandbox rejects — the spill dir is edit-protected by the dirguard, not the FS
-    bit."""
+    THE DOC TRAVELS IN THE COMMAND. It used to be staged in cria's OWN directory and lowered as a
+    small ``cp``, to keep a large spec out of the argv. That works only while cria and the harness
+    share a filesystem: off a shared box the ``cp`` copies a file that is not there, the exec
+    "succeeds", and the spill silently produces an empty doc — then cria tells the model to go read
+    it. An empty doc under a pointer is worse than no doc at all.
+
+    A doc past what one command can carry is CUT, and the cut is stated — in the file and in the
+    pointer message. cria does not truncate what the model reads without saying so (#5b), and it has
+    no way to deliver more than this in one turn: it cannot write to the harness's disk except
+    through a command, and a command is one argv string."""
     tdir = os.path.dirname(target) or "."
+    body, note = content, ""
+    if len(content.encode("utf-8", "replace")) > SPILL_CONTENT_MAX:
+        body = content.encode("utf-8", "replace")[:SPILL_CONTENT_MAX].decode("utf-8", "ignore")
+        note = prompts.fill(prompts.load("spill_cut"),
+                            kept=f"{len(body):,}", total=f"{len(content):,}")
+        body += "\n\n" + note
     return (f"mkdir -p {_qbash(tdir)} && base64 -d > {_qbash(target)} <<'__CRIA_SPILL__'\n"
-            f"{_b64_wrapped(content)}\n__CRIA_SPILL__\n"
-            f"printf %s {_qbash(msg)}")
+            f"{_b64_wrapped(body)}\n__CRIA_SPILL__\n"
+            f"printf %s {_qbash(msg + (chr(10) + note if note else ''))}")
 
 
 def _b64_wrapped(s: str, width: int = 76) -> str:

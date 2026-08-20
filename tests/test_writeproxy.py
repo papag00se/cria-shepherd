@@ -3,6 +3,7 @@ import json
 import subprocess
 import pathlib
 import tempfile
+import os
 import unittest
 from unittest import mock
 
@@ -311,6 +312,42 @@ class WebTests(unittest.TestCase):
             self.assertIn("grep", cmd)              # pointer message tells the model how to read it
         finally:
             webfetch.fetch = orig
+
+    def test_a_doc_past_what_one_command_can_carry_is_cut_and_SAYS_so(self):
+        """The harness runs `bash -lc "<command>"`, so the whole command is ONE argv string and
+        Linux caps a single argument at 128 KiB. Nothing inside the command gets around that — a
+        heredoc, chunked printfs and base64 are all still bytes in that one string, and Codex fails
+        the whole exec with "Argument list too long (os error 7)" so the doc never lands.
+
+        This used to be worked around by staging the doc in cria's OWN directory and lowering a
+        small `cp`, which copies a file the harness cannot see the moment the two are not the same
+        machine: the exec "succeeds" and the spill silently produces an EMPTY doc, under a pointer
+        telling the model to go read it. A cut doc that says it is cut is strictly better."""
+        import subprocess
+        import tempfile
+        from cria import writeproxy as wp
+        d = tempfile.mkdtemp()
+        big = "x" * (wp.SPILL_CONTENT_MAX + 50_000)
+        cmd = wp._spill_command(os.path.join(d, "tmp/reference/spec.txt"), big, "saved it")
+        self.assertLess(len(cmd), wp.COMMAND_ARG_BUDGET)
+        r = subprocess.run(["bash", "-c", cmd], cwd=d, capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0)
+        landed = open(os.path.join(d, "tmp/reference/spec.txt")).read()
+        self.assertTrue(landed.startswith("x" * 1000))
+        self.assertIn("could not be delivered", landed)       # the file itself says it
+        self.assertIn("could not be delivered", r.stdout)     # and so does the pointer
+
+    def test_a_doc_that_fits_lands_byte_for_byte(self):
+        import subprocess
+        import tempfile
+        from cria import writeproxy as wp
+        d = tempfile.mkdtemp()
+        body = "".join("line %d with 'quotes\" and $vars and `ticks`\n" % i for i in range(400))
+        r = subprocess.run(["bash", "-c", wp._spill_command(
+            os.path.join(d, "tmp/reference/spec.txt"), body, "saved it")],
+            cwd=d, capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0)
+        self.assertEqual(open(os.path.join(d, "tmp/reference/spec.txt")).read(), body)
 
     def test_whole_read_of_a_big_file_is_size_guarded(self):
         # A whole read_file lowers to a size-check: cat a small file, but hand a grep/range pointer for a
