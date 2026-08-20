@@ -44,7 +44,7 @@ from enum import Enum, auto
 from pathlib import Path
 
 from . import bodykeys
-from . import callcapture, dedup, denial, editrecovery, execcheck, focustrim, groundtruth, indicators, massage, probegate, proberun, prompts, selfcompact, toolmenu, urlgrounding, verifytools, webfetch
+from . import callcapture, dedup, denial, editrecovery, execcheck, focustrim, groundtruth, indicators, massage, probegate, proberun, prompts, selfcompact, shellshape, toolmenu, urlgrounding, verifytools, webfetch
 from .classify import _task_key, latest_user_text
 from . import jsontext, planner
 from .jsontext import extract_json_object, strip_think
@@ -7127,9 +7127,23 @@ _QUOTABLE_MIN = 12
 _INVENTED_MARK = ("[code removed — written by this supervisor, not read from your files or your "
                   "checker output; make the change in your own code]")
 # The two shapes, checked differently: a line that IS code, and a call embedded in prose.
+# THE LANGUAGE HALF ONLY. The shell half of this pattern used to live here as a second, weaker
+# alternation (`$ `, `sudo `, `pip install`, `sed -i`, `cat `, `grep -n`, `python -m`, `pytest`) and
+# it missed the shape that cost a run: `cat > REVIEW.md << 'EOF'` matched none of it, so
+# `_strip_invented_code` scored zero, so the restate path never fired and the command shipped
+# (feed-pipeline-java x qwen35, 2026-08-19, call 0270). `cria.shellshape` owns that question now, for
+# every caller — see its module docstring for why it is a score rather than a predicate.
 _CODE_LINE = re.compile(
-    r"^[ \t]*(?:def |class |import |from [.\w]+ import |return |with |@patch|assert )"
-    r"|^[ \t]*(?:\$ |sudo |pip install|sed -i|cat |grep -n|python3? -m |pytest )", re.M)
+    r"^[ \t]*(?:def |class |import |from [.\w]+ import |return |with |@patch|assert )", re.M)
+
+
+def _is_code_line(line: str) -> bool:
+    """A line the coder could paste: source in a language cria recognises, or a shell command.
+
+    ONE OWNER for the shell half (:mod:`cria.shellshape`), at the RESTATE bar rather than the refuse
+    bar — being wrong here costs one reasoner call to say the same thing in words, and the restater
+    can only say less than it was given, never something different."""
+    return bool(_CODE_LINE.search(line)) or shellshape.looks_like_command(line)
 _INLINE_CALL = re.compile(r"\b\w+(?:\.\w+)+\([^)\n]*\)")
 
 
@@ -7194,7 +7208,7 @@ def _strip_invented_code(directive: str, evidence: str) -> tuple[str, int]:
     out = []
     for line in directive.splitlines():
         body = line.strip().strip("`")
-        if len(body) >= _QUOTABLE_MIN and _CODE_LINE.search(line) and not seen(body):
+        if len(body) >= _QUOTABLE_MIN and _is_code_line(line) and not seen(body):
             stripped += 1
             out.append("    " + _INVENTED_MARK)
             continue
@@ -7565,7 +7579,11 @@ def _grounded_steer_or_none(directive: str | None, evidence: str, rlog, ask=None
             # Prevalence, before building it (#15): of 100 dictated steers in the captures, 66 lost
             # ZERO spans — those are the sighted "quoting the coder's own line" case the 2026-08-04
             # ruling protects, and they never reach here. This path is the other 34.
-            restated = _restate_without_code(kept, ask, rlog)
+            # THE ORIGINAL, NOT THE HOLLOWED COPY. `kept` is the directive with its code spans
+            # replaced by a marker — handing that to the rewriter asks it to restate a sentence with
+            # holes in it, and it cannot put back what it was never shown. The rewriter is told to
+            # drop the prescribed code itself; give it the whole thing and let it.
+            restated = _restate_without_code(directive, ask, rlog)
             if restated is None:
                 rlog.emit("loop.steer_dictated_code", level="warn", delivered=False,
                           stripped=stripped, reason="prescription",
