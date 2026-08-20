@@ -313,7 +313,7 @@ def _workspace_listing(ws: str | None) -> str:
     return "FILES ALREADY IN THIS WORKSPACE (on disk right now — do not re-create them):\n" + "\n".join(lines)
 
 
-def _harden_compaction_reply(comp: dict, body: dict, provider, server, rlog) -> dict:
+def _harden_compaction_reply(comp: dict, body: dict, provider, server, rlog, sess_key: str = "") -> dict:
     """The harness stores this reply as the session's ENTIRE remembered past — everything not in it
     is gone (self-compaction's anchors cannot protect messages the harness itself discards). Two
     hardenings, both from captured failures:
@@ -340,7 +340,23 @@ def _harden_compaction_reply(comp: dict, body: dict, provider, server, rlog) -> 
     # Derived ONCE for both halves. The retry (1) composed its request with neither the disk
     # inventory nor the gate plan that the first pass gets, while the appendix (2) below derived the
     # same key again a few lines down. One derivation, both users.
-    sk = session_key({}, body.get("messages", []))
+    #
+    # …AND THE CALLER'S KEY, NOT A SECOND GUESS AT IT. This re-derived the key with an EMPTY headers
+    # dict, and `session_key` reads the session header first — so it could never return the `sid:`
+    # form the loop's store is written under, only the `task:` text-hash fallback. Under Codex, whose
+    # `prompt_cache_key` becomes that `sid:`, the lookup missed every time: `_last_checks_note` and
+    # `_session_gate_plan` both resolved to nothing on every compaction of every session.
+    #
+    # What that cost, walked on feed-pipeline-java x nemotron-elastic 20260820T103857: the briefing
+    # is the ONLY surviving record once the transcript is cut, and `_last_checks_note` exists to bolt
+    # the last gate verdict onto it verbatim — "deterministic check truth the model-authored briefing
+    # kept omitting", in its own docstring. Zero `LATEST CHECK RESULTS` blocks appear in the run's 75
+    # prompts, while the workspace inventory — which needs no store lookup — appears in six. The
+    # compactor was left to describe a broken build from memory and said the code "still references
+    # `CSVRecord` … without importing the class"; the import was line 5 and the class does not exist
+    # in that package. cria then carried that sentence as `⟦ctx:continuation⟧` for the rest of the
+    # run and a steer turned it into a numbered work order (#5b).
+    sk = sess_key or session_key({}, body.get("messages", []))
     ws = _session_cwd(sk, body.get("messages", []))
     text = _text_of(comp).strip()
     truncated = massage.is_truncated(comp)
@@ -1038,7 +1054,7 @@ class CriaHandler(BaseHTTPRequestHandler):
             # or dialect-only "answer" recovers the summary from the model's reasoning.
             comp = massage.coerce_text_answer(comp, rlog)
             if _is_compaction_request(body.get("messages", [])):
-                comp = _harden_compaction_reply(comp, body, provider, server, rlog)
+                comp = _harden_compaction_reply(comp, body, provider, server, rlog, sess_key)
         if massage.is_truncated(comp):
             indic.note = "⚠ output truncated at the token limit"
             rlog.emit("response.truncated")
