@@ -54,6 +54,10 @@ class FileSnapshot:
     content: str
     exists: bool
     truncated: bool
+    # cria has not been told about this file — which is a different fact from "it is not there", and
+    # the difference matters: this snapshot is handed to a reasoner as ground truth, and "does NOT
+    # exist on disk" about a file nobody looked at is the strongest false fact cria can state (#5b).
+    unknown: bool = False
 
 
 @dataclass
@@ -88,6 +92,8 @@ class GroundTruth:
             if f.exists:
                 note = " (truncated)" if f.truncated else ""
                 blocks.append(f"FILE {f.path}{note} — as it is on disk NOW:\n{f.content}")
+            elif f.unknown:
+                continue   # say nothing rather than a fact nobody established (#3)
             else:
                 blocks.append(f"FILE {f.path} — does NOT exist on disk")
         return "\n\n".join(blocks)
@@ -109,9 +115,11 @@ def file_snapshot(root: str, paths: list[str], cap_tokens: int = DEFAULT_FILE_CA
     view = wsview.current(root)
     out: list[FileSnapshot] = []
     for p in paths:
-        content = view.read(resolve(root, p))
+        full = resolve(root, p)
+        content = view.read(full)
         if content is None:
-            out.append(FileSnapshot(path=p, content="", exists=False, truncated=False))
+            out.append(FileSnapshot(path=p, content="", exists=False, truncated=False,
+                                    unknown=view.isfile(full) is not False))
             continue
         reduced = content
         if cap_tokens > 0 and est_tokens(content) > cap_tokens:

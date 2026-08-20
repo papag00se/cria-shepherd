@@ -1426,8 +1426,13 @@ def names_a_workspace_file(name: str, workspace_root: str) -> bool:
     head = re.split(r"[./\\:]", name.strip("'\"" ))[0]
     if not head:
         return False
-    for _dirpath, dirnames, filenames in (
-            wsview.current(workspace_root).walk(workspace_root, skip_hidden=True) or ()):
+    tree = wsview.current(workspace_root).walk(workspace_root, skip_hidden=True)
+    if tree is None:
+        # A FALSE YES IS THE SAFE DIRECTION, and this function says so in its own docstring: yes
+        # means cria stays quiet, no means it tells the coder its own module is a missing
+        # dependency. A workspace nobody has listed cannot rule that out, so it does not.
+        return True
+    for _dirpath, dirnames, filenames in tree:
         if head in dirnames:
             return True
         for f in filenames:

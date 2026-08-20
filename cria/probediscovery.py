@@ -1235,7 +1235,7 @@ def stranded_test_sentences(root: Path) -> list[str]:
         paths = _language_files(root, conv)
         if not paths:
             continue                                   # language absent — say nothing about it
-        if any(wsview.current().exists(root / cfg) is True for cfg in conv.configs):
+        if any(wsview.current().exists(root / cfg) is not False for cfg in conv.configs):
             continue                                   # the project re-pointed its own runner
         stranded = _audit_tests(root, paths, conv)[1]
         if stranded:
@@ -1265,7 +1265,7 @@ def undiscoverable_tests(root: Path) -> list[str]:
         paths = _language_files(root, conv)
         if not paths:
             continue                                   # language absent — say nothing about it
-        if any(wsview.current().exists(root / cfg) is True for cfg in conv.configs):
+        if any(wsview.current().exists(root / cfg) is not False for cfg in conv.configs):
             continue                                   # the project re-pointed its own runner
         discoverable, stranded = _audit_tests(root, paths, conv)
         # Each finding is a COMPLETE sentence. They are not interchangeable halves of one template:

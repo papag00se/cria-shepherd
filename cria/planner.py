@@ -1432,7 +1432,10 @@ def _token_is_grounded(token: str, task: str, root: str) -> bool:
     tree = view.walk(root, skip_hidden=True,
                      skip_names=("__pycache__", "node_modules", "venv", "dist", "build"))
     if tree is None:
-        return False
+        # UNGROUNDED IS THE ACTING DIRECTION — the caller flags the step and rewrites it. A workspace
+        # nobody has listed cannot show that a word is absent from the code, so it does not claim so:
+        # unsure leaves the step exactly as drafted (#3).
+        return True
     spent = 0
     for dirpath, _dirnames, filenames in tree:
         for name in filenames:

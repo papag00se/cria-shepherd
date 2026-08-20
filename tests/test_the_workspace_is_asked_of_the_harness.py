@@ -318,6 +318,53 @@ class ASurveyOfAnotherTreeIsRefusedTests(unittest.TestCase):
         self.assertFalse(view.complete)
 
 
+class EachCallerPicksItsOwnSafeDirectionTests(unittest.TestCase):
+    """`None` is a third answer, and the direction that is safe for it is NOT the same everywhere.
+    Collapsing it into `False` for convenience is exactly how a question becomes a false fact, and
+    each of these four was one line away from doing that."""
+
+    def setUp(self):
+        self.addCleanup(wsview.unbind, wsview.bind(wsview.View("/ws", "s-dir")))
+
+    def test_a_probe_is_KEPT_when_the_coders_PATH_is_unanswered(self):
+        """A dropped check reads exactly like a check that passed. Two Rust cells once ran no Rust
+        tool at any gate and the empty result published as "no error-class problems"."""
+        import types
+
+        from cria import proberun
+        self.assertTrue(proberun.program_is_installed(
+            types.SimpleNamespace(command="cargo test", working_dir="")))
+
+    def test_a_piece_of_ADVICE_is_WITHHELD_when_it_is_unanswered(self):
+        """The opposite direction, for the opposite reason: this names a command the coder will
+        TYPE, and naming one that may not exist is the false fact the whole route-selection is for."""
+        from cria import dirguard
+        self.assertFalse(dirguard._tool_present("bundle"))
+
+    def test_a_file_nobody_looked_at_is_not_reported_to_a_reasoner_as_absent(self):
+        """`file_snapshot` feeds a reasoner as ground truth. "does NOT exist on disk" about a file
+        nobody looked at is the strongest false fact cria can state."""
+        from cria import groundtruth
+        snap = groundtruth.file_snapshot("/ws", ["handler.py"])[0]
+        self.assertFalse(snap.exists)
+        self.assertTrue(snap.unknown)
+        self.assertNotIn("does NOT exist",
+                         groundtruth.GroundTruth(files=[snap], lint_digest="x").render())
+
+    def test_an_unlisted_workspace_does_not_call_the_projects_own_module_a_dependency(self):
+        """`names_a_workspace_file` documents that a false YES is its safe direction: yes means cria
+        stays quiet, no means it tells the coder its own module is a missing dependency."""
+        from cria import probeparse
+        self.assertTrue(probeparse.names_a_workspace_file("shipping", "/ws"))
+
+    def test_an_unlisted_workspace_does_not_rewrite_a_plan_step(self):
+        """`_token_is_grounded` false is the ACTING direction — the caller flags the step. A
+        workspace nobody has listed cannot show a word is absent from the code."""
+        from cria import planner
+        self.assertEqual(planner.step_names_tool("Use web_search to find the spec",
+                                                 task="build it", root="/ws"), "")
+
+
 class NothingProductionAnswersFromCriasOwnDiskTests(unittest.TestCase):
     def test_the_direct_view_is_never_constructed_by_the_package(self):
         """`DirectView` answers from this process's filesystem and exists for tests. If production
