@@ -3942,7 +3942,32 @@ class Loop:
             return canned
         text = summarize(self._ctx.reasoner_chat, self._ctx.reasoner_role,
                          prompts.load("reanchor_reasoned"), summary, rlog, phase="reasoner")
-        return text or canned
+        if not text:
+            return canned
+        # A SCRIPT IS NOT A RE-ORIENTATION. This seat is asked for one short directive — "here is
+        # what exists, here is what remains, inspect before creating" — and its prompt says "Output
+        # ONLY that directive to the coder — no preamble, no meta-commentary". Twice on
+        # feed-pipeline-java x qwen35 (calls 0066 and 0156) it answered with fenced bash instead, and
+        # cria injected the whole thing verbatim. The coder read it as the user speaking — "The user
+        # is right - I need to inspect the workspace... Let me run the commands they suggested" — and
+        # worked through the script command by command for the next ten to fourteen calls,
+        # re-deriving facts the continuation summary two messages earlier already stated with
+        # file:line precision.
+        #
+        # THE TEST IS SHAPE, NOT SCORE, and that is measured. Scoring the text and refusing above a
+        # bar refuses 21 of the 59 re-orientation notes in the captures (36%) — among them "INSPECT
+        # the workspace before creating anything…" and "You have built: - orders/app.py …", good
+        # directives that score high only because they are full of file paths. A fenced block, or
+        # three or more lines that are each independently a command, fires on 2 of 59: exactly the
+        # two failures, and nothing else in the whole captured history.
+        #
+        # The fallback is the canned reanchor that was always here — a compacted coder is never left
+        # without re-orientation, which is why refusing is safe in this one seat.
+        if "```" in text or len(shellshape.command_lines(text)) >= _REANCHOR_MAX_COMMAND_LINES:
+            rlog.emit("loop.reanchor_refused", level="warn",
+                      lines=len(shellshape.command_lines(text)), head=_clip(text, 120))
+            return canned
+        return text
 
     def _self_compact_single(self, framed: dict, sess: PlanSession, rlog, root_task: str = "") -> dict:
         """The plan-OFF driver's adapter onto :meth:`_self_compact` — dict in, dict out. It had its own
@@ -7124,6 +7149,11 @@ _DESCRIBES = "DESCRIBES"
 # A line worth checking for provenance: a code line or a command line. Short fragments and ordinary
 # prose are left alone — the question is only ever about a line the coder could paste.
 _QUOTABLE_MIN = 12
+
+# How many independently-command lines make a post-compaction re-orientation a SCRIPT rather than a
+# directive. Two is a sentence that names a command and then names another; three is a listing.
+# Measured over the 59 captured re-orientation notes: at three, exactly the two script-dumps fire.
+_REANCHOR_MAX_COMMAND_LINES = 3
 _INVENTED_MARK = ("[code removed — written by this supervisor, not read from your files or your "
                   "checker output; make the change in your own code]")
 # The two shapes, checked differently: a line that IS code, and a call embedded in prose.

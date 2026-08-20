@@ -117,8 +117,21 @@ RESTATE_BAR = 0.45
 def signals(text: str) -> list[str]:
     """Which command-shapes ``text`` carries, strongest first — [] for prose.
 
-    Exposed because a score with no account of itself is a number cria cannot defend (#12), and
-    because the caller that refuses something should be able to log WHY."""
+    THE WINNING SEGMENT'S signals, not the whole block's, so this agrees with :func:`confidence` by
+    construction. They disagreed once — a score of 0.45 with an empty signal list — because one
+    counted per segment and the other did not, and a number with no account of itself is one cria
+    cannot defend (#12)."""
+    if not text:
+        return []
+    segs = segments(text)
+    if len(segs) > 1:
+        best = max(segs, key=_score_one)
+        return _signals_of(best) if _score_one(best) else []
+    return _signals_of(text)
+
+
+def _signals_of(text: str) -> list[str]:
+    """The signal names in ONE segment — the corroboration rule lives here."""
     if not text:
         return []
     hits = [(w, name) for pat, w, name in _SIGNALS if pat.search(text)]
@@ -139,7 +152,11 @@ def signals(text: str) -> list[str]:
 #
 # So the unit of scoring is a SEGMENT: a line, or a sentence within a line. The score of a block is
 # the score of its strongest segment, never the sum of its parts.
-_SEGMENT = re.compile(r"[^\n.;!?]+(?:[.;!?]+|$)")
+# A SENTENCE END IS PUNCTUATION FOLLOWED BY SPACE OR NOTHING. Splitting on a bare `.` shatters
+# `test.test.js` into `- test.` / `test.` / `js`, and `test.` opens with a binary name, so a bullet
+# listing a filename scored as a command (measured: 2 false refusals of 59 real re-orientation
+# notes, both bullet lists of files).
+_SEGMENT = re.compile(r"[^\n]+?(?:[.;!?]+(?=\s|$)|$)")
 
 
 def segments(text: str) -> list[str]:
@@ -159,7 +176,7 @@ def segments(text: str) -> list[str]:
 
 def _score_one(text: str) -> float:
     """The raw score of a single segment — no splitting."""
-    names = set(signals(text))
+    names = set(_signals_of(text))
     if not names:
         return 0.0
     p = 1.0
