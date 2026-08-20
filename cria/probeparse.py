@@ -1212,6 +1212,45 @@ _INSTALL_FLAVOUR = {
 }
 
 
+# WHERE A PACKAGE MANAGER PUTS DEPENDENCY SOURCE, per ecosystem. Roots only — cria states where to
+# look, never what is in there. Ordered: the first that EXISTS on this machine is the answer.
+#
+# The two shapes are deliberate. A workspace-local root (`node_modules`, `vendor/bundle`) is where a
+# project-scoped install lands; a home root (`~/.cargo/registry`, `~/.m2`) is where a shared cache
+# does. A model searching the wrong one of those two finds nothing and concludes the source is
+# unavailable — walked on rust-toml-cli x ternary-bonsai (2026-08-19), where the coder ran
+# `find <WORKSPACE>/.cargo/registry/src/... -name value.rs` twice, got nothing both times, stopped
+# looking, and spent twenty calls guessing at TOML syntax. The crate source was on the box the whole
+# time, one directory root away, under ~/.cargo.
+_DEPENDENCY_SOURCE_ROOTS = {
+    "rust":       ("~/.cargo/registry/src",),
+    "javascript": ("node_modules", "~/.npm/_cacache"),
+    "python":     ("~/.venv/lib", ".venv/lib", "~/.local/lib"),
+    "ruby":       ("vendor/bundle", "~/.gem", "~/.rbenv/versions"),
+    "jvm":        ("~/.m2/repository", "~/.gradle/caches/modules-2"),
+    "go":         ("~/go/pkg/mod",),
+    "php":        ("vendor",),
+    "dotnet":     ("~/.nuget/packages",),
+    "elixir":     ("deps", "~/.hex/packages"),
+}
+
+
+def dependency_source_root(eco: str, workspace_root: str) -> str:
+    """The directory on THIS machine holding this ecosystem's dependency source — "" when none exists.
+
+    Deterministic: the candidates are a fixed table, and the answer is the first that is really on
+    disk (#8 — cria gathers the fact, it does not guess it). A workspace-relative candidate is
+    resolved against ``workspace_root`` so the project-scoped install wins when it is present, which
+    is the honest answer to "is there a vendored copy here"."""
+    import os
+    for cand in _DEPENDENCY_SOURCE_ROOTS.get((eco or "").lower(), ()):
+        path = (os.path.expanduser(cand) if cand.startswith("~")
+                else os.path.join(workspace_root or "", cand))
+        if os.path.isdir(path):
+            return path
+    return ""
+
+
 def install_flavour(eco: str, workspace_root: str) -> str:
     """Which install mechanism this project's tree records — "" when cria cannot say.
 
@@ -1340,3 +1379,33 @@ def names_a_workspace_file(name: str, workspace_root: str) -> bool:
             if f == head or f.rsplit(".", 1)[0] == head:
                 return True
     return False
+
+# A COMMAND THAT WENT LOOKING FOR DEPENDENCY SOURCE. Shape-level, not per-language (a rule keyed to
+# one ecosystem's phrasing is inert on the other eight): the command names a package-cache directory
+# and is a search/read verb. `~` and `$HOME` are excluded on purpose — a model that already searched
+# the home root does not need to be told where the home root is.
+_PKG_DIR_SHAPE = re.compile(
+    r"(?:\.cargo/registry|node_modules|site-packages|vendor/bundle|"
+    r"\.m2/repository|\.gradle/caches|go/pkg/mod|\.nuget/packages|\.hex/packages)")
+_LOOKUP_VERB = re.compile(r"\b(?:find|ls|grep|rg|cat|head|tail|fd|locate|tree)\b")
+
+
+def searched_for_dependency_source(command: str) -> str:
+    """The package-cache path a command searched, or "" — the trigger for naming the real root.
+
+    Fires on the SEARCH, not on its result: a command that names one of these directories is asking
+    where a dependency's code is, and if it came back empty the model has just learned the wrong
+    lesson. The caller supplies whether it found anything."""
+    text = command or ""
+    if not _LOOKUP_VERB.search(text):
+        return ""
+    m = _PKG_DIR_SHAPE.search(text)
+    if not m:
+        return ""
+    # the whole token the path sits in, so the note can quote what the model actually typed
+    start = text.rfind(" ", 0, m.start()) + 1
+    end = text.find(" ", m.end())
+    token = text[start:end if end > 0 else len(text)].strip().strip("'\"")
+    # ALREADY LOOKING IN THE HOME ROOT — telling it where the home root is would be noise (#3).
+    return "" if token.startswith(("~", "$HOME")) else token
+

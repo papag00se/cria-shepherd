@@ -1459,6 +1459,29 @@ def page_from(content: str, offset: int, cap_tokens: int) -> tuple[str, int, int
     return content[start:end], end, total
 
 
+# A 4xx says the request was WRONG, and a model reads a status line as a fact about the world rather
+# than a fact about what it typed. Walked on rust-toml-cli x ternary-bonsai (2026-08-19): the coder
+# asked for `docs.rs/toml/v0.8.23/...` — the version segment carries no `v` — got 400, and what it was
+# shown underneath was 830 characters of the docs.rs NAV MENU flattened into prose, framed as
+# `(chars 0-830 of 830)` like a document worth reading. It never retried, never searched, and spent
+# the next twenty calls guessing TOML table syntax from memory and getting it wrong three times.
+#
+# The body stays exactly as rendered — an error page sometimes carries the one line that says how the
+# URL should be formed (docs.rs's own answer, "Shorthand URLs", was in that menu). What is added is
+# one line saying WHOSE fault it is and what to do instead. 5xx is deliberately excluded: the server
+# failing is not the model's to fix, and telling it to correct the URL would be a false lead.
+def client_error_note(status: int, body: str) -> str:
+    """The line appended under a 4xx result — "" for anything else.
+
+    Two wordings, because "read the server's text" is a footgun when there is no text: it sends the
+    model back to re-read a page that says nothing (#5b — never point at content cria knows is not
+    there). The split is on what actually came back, not on the status."""
+    if not (400 <= int(status or 0) < 500):
+        return ""
+    key = "with_body" if (body or "").strip() else "no_body"
+    return "\n\n" + prompts.load_map("fetch_client_error")[key]
+
+
 def render_page(url: str, status: int, ct: Optional[str], reduced: str, parsed: Optional[Any],
                 offset: int, cap_tokens: int, truncated: bool = False) -> str:
     body, nxt, total = page_from(reduced, offset, cap_tokens)
@@ -1512,6 +1535,7 @@ def render_page(url: str, status: int, ct: Optional[str], reduced: str, parsed: 
         body, nxt, total = page_from(reduced, offset, max(50, room // divisor))
         head = _head(nxt, total)
     out = f"{head}--- (chars {offset}–{nxt} of {total}) ---\n{body}\n"
+    out += client_error_note(status, body)
     if nxt < total:
         out += (f'\n⚠ More remains ({total - nxt} of {total} chars left). Continue with the '
                 f'SAME url and cursor="c{nxt}", or call find="<keyword>" to jump to a section.')
