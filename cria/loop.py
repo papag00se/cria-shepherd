@@ -518,7 +518,7 @@ def track_gate_progress(gs: GuardState, finding: str) -> None:
         gs.gate_sig = finding
 
 
-def _satisfaction_verdict(system: str, user: str, reasoner_chat, reasoner_role, rlog, *, reasoning_off: bool, workspace_root: str = "", capped: list | None = None) -> dict | None:
+def _satisfaction_verdict(system: str, user: str, reasoner_chat, reasoner_role, rlog, *, reasoning_off: bool, workspace_root: str = "") -> dict | None:
     """One critic call → the parsed {"satisfied": …} dict, or None if the model produced no parseable
     JSON. Mirrors the plan-path _verdict: NOT summarize() — summarize returns free text and only retries
     on EMPTY, but a reasoning-ON critic pass here does not go empty, it ROLE-PLAYS THE CODER (reasons
@@ -543,7 +543,7 @@ def _satisfaction_verdict(system: str, user: str, reasoner_chat, reasoner_role, 
             # The careful pass may answer through the verdict tool — same channel it inspects on.
             # The toolless retry has no channel to answer on but text, and declares no key.
             verdict_key="" if reasoning_off else "satisfied",
-            capped=capped, seed_files=True,
+            seed_files=True,
             force_think_off=reasoning_off)
         if massage.is_truncated(comp):
             # Cut at the cap → not a verdict. Parsing it risks a partial object that happened to
@@ -833,7 +833,7 @@ def _judge_completion(chat_fn, role, system: str, user: str, rlog, *, phase: str
                       workspace_root: str = "", max_tokens: int = 8192,
                       force_think_off: bool = False, transcript: list | None = None,
                       answer_now: str | None = None, answer_now_simple: str | None = None,
-                      verdict_key: str = "", capped: list | None = None,
+                      verdict_key: str = "",
                       seed_files: bool = False) -> dict:
     """ONE judge completion whose author may first LOOK — the shared inspection loop behind the step
     critic AND the completion critic (operator directive: judges get real read-only tools, not just a
@@ -878,27 +878,24 @@ def _judge_completion(chat_fn, role, system: str, user: str, rlog, *, phase: str
         body: dict = {"stream": False, "temperature": 0, "max_tokens": max_tokens,
                       "messages": list(messages)}
         sent_chars = sum(len(str(m.get("content") or "")) for m in messages)
-        room_left = sent_chars < verifytools.VERIFY_MAX_CHARS
-        if inspectable and rounds < verifytools.VERIFY_MAX_ROUNDS and room_left and not forced_rounds:
+        # THE CHARACTER BUDGET IS GONE (operator, 2026-08-19: "get rid of the judge budget, let it go
+        # free"). It bounded how much a judge could pull in, and when it tripped cria withdrew the
+        # tools mid-look and then DISCARDED whatever the judge said next. Walked on
+        # feed-pipeline-java x qwen35, call 0304: the judge had already run `list_dir`, seen there
+        # was no REVIEW.md, and reported exactly that — "REVIEW.md does not exist in the workspace
+        # (confirmed via list_dir)". cria threw the sentence away and sent the coder the generic
+        # "this step is not yet verified" instead. REVIEW.md was never written in 319 calls.
+        #
+        # The round budget still bounds the loop, so a judge cannot look forever, and the context
+        # floor is the one place window-fitting happens (#5). What is removed is the second, blunter
+        # bound that made a judge answer before it had finished looking.
+        if inspectable and rounds < verifytools.VERIFY_MAX_ROUNDS and not forced_rounds:
             # …AND A WAY TO ANSWER IN THE SAME CHANNEL. Offered tools on one channel and made to
             # answer on another, judges answered where they had been speaking: `<function=satisfied>`,
             # `<function=exec_command>`. cria discarded those and "unverified — keep working" reached
             # a finished workspace (qwen35/ruby 0138 and 9 more). Opt-in by key: the steer author
             # shares this loop and answers in prose.
             body["tools"] = verifytools.tools_for(verdict_key)   # withdrawn on the forced-answer round
-        elif inspectable and not room_left and not forced_rounds:
-            rlog.emit("loop.verify_inspect_capped", phase=phase, chars=sent_chars,
-                      rounds=rounds, level="info")
-            # …AND THE CALLER IS TOLD. A judge that ran out of looking has not finished looking, and
-            # what it says next is a guess wearing a verdict's clothes. Cycle 4 cell 10: the
-            # inspection capped five times and the judge told the coder "Importer.java is the
-            # original unmodified code (WORKERS_ENABLED=false, no OpenCSV usage, no malformed input
-            # handling)" — four minutes after the suite had measured all five checks passing by
-            # running them. cria handed that to the coder as the named gap, six times over 62
-            # minutes, and the coder edited a working 5/5 solution down to 4/5. #11b: a mechanism
-            # that could not observe the thing it was asked about must not answer as if it had.
-            if capped is not None:
-                capped.append(rounds)
         if role is not None:
             role.apply(body, internal=True, rlog=rlog)
         elif force_think_off:  # no role configured, but still force the think block off
@@ -912,7 +909,7 @@ def _judge_completion(chat_fn, role, system: str, user: str, rlog, *, phase: str
         comp = massage.apply(_parse_completion(chat_fn(body, rlog)), body.get("tools"), rlog)
         msg = ((comp.get("choices") or [{}])[0].get("message")) or {}
         calls = msg.get("tool_calls") or []
-        if not (inspectable and calls and rounds < verifytools.VERIFY_MAX_ROUNDS and room_left):
+        if not (inspectable and calls and rounds < verifytools.VERIFY_MAX_ROUNDS):
             # A final reply that is a CORRUPTED tool call (leaked dialect the recovery could not
             # parse — g2-0104: four clean read rounds, then `<|tool_call>call:read_file{...<|"|>`)
             # meant the model asked a question nobody answered and the whole loop died silently.
@@ -986,8 +983,7 @@ def _judge_completion(chat_fn, role, system: str, user: str, rlog, *, phase: str
             messages.append({"role": "tool", "tool_call_id": tc.get("id") or f"vt{rounds}",
                              "content": out})
         rlog.emit("loop.verify_inspect", round=rounds, calls=len(calls))
-        if rounds == verifytools.VERIFY_MAX_ROUNDS or \
-                sum(len(str(m.get("content") or "")) for m in messages) >= verifytools.VERIFY_MAX_CHARS:
+        if rounds == verifytools.VERIFY_MAX_ROUNDS:
             # THE CLOSER MUST ASK FOR THE SCHEMA THIS JUDGE DECLARES. Three judges share this loop and
             # they answer under three different keys — `done`, `satisfied`, `consistent` — while the
             # default closer demands `{"done": …}`. The confirm judge passes answer_now_simple with
@@ -1682,9 +1678,7 @@ def judge_satisfaction(task: str, evidence: str, reasoner_chat, reasoner_role, r
                           evidence=evidence or "(no actions recorded yet)")
     if coder_tools:  # reasoning about the coder's work → give it the coder's tools (see _verify)
         user = user + "\n\n" + prompts.render("reasoner_coder_tools", tools=coder_tools)
-    inspection_capped: list = []
     obj = _satisfaction_verdict(system, user, reasoner_chat, reasoner_role, rlog, reasoning_off=False,
-                                capped=inspection_capped,
                                 workspace_root=workspace_root)
     if obj is not None:
         obj = _fill_missing_verdict_flag(obj, "satisfied", rlog, "satisfaction")
@@ -1720,10 +1714,6 @@ def judge_satisfaction(task: str, evidence: str, reasoner_chat, reasoner_role, r
         # solution down to 4/5. The VERDICT still stands (not satisfied, fail closed, #13); what is
         # withheld is the invented reason, so the caller falls back to the plain instruction rather
         # than sending the coder to fix work that is already right (#3, #5b).
-        if inspection_capped and not satisfied:
-            rlog.emit("loop.satisfaction_gap_withheld", level="warn",
-                      rounds=inspection_capped[0], head=_clip(str(obj.get("reason") or ""), 120))
-            return False, prompts.load("unverified_step"), ""
         return satisfied, _verdict_nudge(obj, satisfied, routes, evidence=user,
                                          workspace_root=workspace_root, rlog=rlog), _fix_text(obj)
     # No parseable careful verdict (the reasoner over-thought, or leaked a spurious tool call instead of

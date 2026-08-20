@@ -5315,11 +5315,20 @@ class ApprovePathConfirmTests(unittest.TestCase):
                                  idx=1, total=2, key="sid:x", workspace_root=ws)
         self.assertTrue(ok)
 
-    def test_inspection_stops_reading_once_the_prompt_is_huge(self):
+    def test_inspection_is_bounded_by_ROUNDS_now_that_the_size_cap_is_gone(self):
         """P1-C1 (ternary-bonsai, ada-handles, 0/4): ONE steer's inspection loop grew 47K -> 62K ->
         83K -> 102K chars and cost 544 seconds — 9 of the run's 30 minutes — while the coder got 16
-        turns in total. Rounds are not equal cost: each one re-sends everything read so far, so the
-        round cap alone bounds the wrong dimension."""
+        turns in total. Rounds are not equal cost: each one re-sends everything read so far.
+
+        THE SIZE CAP THAT BOUNDED THAT IS GONE (operator, 2026-08-19: "get rid of the judge budget,
+        let it go free"). It was removed because it did two jobs and only one of them was right: it
+        bounded COST, and it also made cria DISTRUST the verdict and discard the judge's reason —
+        which on feed-pipeline-java x qwen35 call 0304 threw away a true, verified "REVIEW.md does
+        not exist (confirmed via list_dir)" and sent boilerplate instead.
+
+        So the cost bound is now the ROUND budget alone, and this test holds that line. If a judge
+        loop starts eating minutes again, THIS is the regression to come back to — the quadratic
+        growth above is real and the round cap bounds the wrong dimension for it."""
         import tempfile
         from cria import loop as L, verifytools
         ws = tempfile.mkdtemp()
@@ -5329,18 +5338,17 @@ class ApprovePathConfirmTests(unittest.TestCase):
         def chat(body, rlog):
             calls["n"] += 1
             calls["tools_offered"].append(bool(body.get("tools")))
-            # always ask to read another file — an unbounded loop if nothing stops it
             return json.dumps({"choices": [{"message": {"content": "", "tool_calls": [
                 {"id": f"t{calls['n']}", "type": "function",
                  "function": {"name": "read_file", "arguments": json.dumps({"path": "big.txt"})}}]}}]}).encode()
 
-        huge = "y" * (verifytools.VERIFY_MAX_CHARS + 1000)
-        L._judge_completion(chat, None, "system", huge, _Rlog(), phase="critic", workspace_root=ws)
-        # The FIRST call already carries an over-budget prompt, so no tools are ever offered: cria
-        # answers from what it holds instead of paying for another read.
-        self.assertNotIn(True, calls["tools_offered"],
-                         "tools were offered despite an already-oversized prompt")
-        self.assertLessEqual(calls["n"], 3, "the loop kept going past the size bound")
+        huge = "y" * 200_000
+        L._judge_completion(chat, None, "system", huge, _Rlog(), phase="critic",
+                            workspace_root=ws, verdict_key="satisfied")
+        self.assertIn(True, calls["tools_offered"],
+                      "a big prompt must no longer cost the judge its eyes")
+        self.assertLessEqual(calls["n"], verifytools.VERIFY_MAX_ROUNDS + 2,
+                             "the round budget is the only bound left — it must still hold")
 
     def test_the_simple_ask_is_a_SECOND_attempt_not_the_standing_one(self):
         """Fleet-measured on real captured rounds: nine of ten models answer the normal JSON verdict
