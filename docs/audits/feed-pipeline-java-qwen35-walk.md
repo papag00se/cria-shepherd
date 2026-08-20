@@ -59,9 +59,11 @@ cria then contradicted itself inside a single prompt. Call 0155 carries `The bui
 
 In the sibling run there was no competing truth — the post-compaction prompts carried **zero** copies of the compile error — and the fiction ran unopposed for twenty calls. Same bug, different blast radius, decided entirely by whether a checks block happened to be in the same prompt.
 
-## The other shared cause: one file under two names — worse here
+## The other shared cause: one file under two names — trigger present, harm did not land
 
-`Importer.java` was written **21 times: 10 by absolute path, 11 by relative path**. A near-even split, so neither run of writes ever superseded the other and the history carried copies that should have folded. `pom.xml` was written **once**, and cria's note still told the coder *"3 earlier writes … removed: pom.xml, Importer.java"* — a false fact about a file nothing had touched since call 0016.
+`Importer.java` was written **21 times: 10 by absolute path, 11 by relative path** — a far more even split than the sibling's 7-to-1. But the two spellings **never coexist in a single prompt**: I checked all 125 coder prompts and none holds both as write targets. The eras are cleanly separated — absolute 0016-0056, relative 0069-0147, absolute 0159-0171 — because the three compactions cut the history exactly on the boundaries. Folding worked correctly inside each era. The bug was live and it did not bite; do not read this run as evidence the fix was unnecessary.
+
+The count/list half DID bite. `pom.xml` was written **once**, and cria's note still told the coder *"3 earlier writes … removed: pom.xml, Importer.java"* — a false fact about a file nothing had touched since call 0016.
 
 Both halves fixed in `d99f82e` (path spellings fold by component-suffix) and `cc84738` (the note names what it dropped).
 
@@ -78,6 +80,8 @@ Both halves fixed in `d99f82e` (path spellings fold by component-suffix) and `cc
 ### The free deliverable starved behind an impossible one
 
 `REVIEW.md` was never written. **cria's whole chain worked**: the done-check ran six times (minutes 4.5, 7.3, 12.6, 16.3, 20.1, 24.5), every verdict named `REVIEW.md`, verified on disk each time; every verdict reached the coder as `⟦ctx:steer⟧` two calls later; the coder restated it in its own words all six times and mentions it in **18** reasoning files. **Zero write attempts** — every write in 171 calls went to `Importer.java` or `pom.xml`.
+
+**Fixed in `bb85452`.** `_veto_refuted_by_disk` — cria's one owner of "does the file this verdict calls missing actually exist" — ran only from the approve-path brake on a false DONE, so a NOT-satisfied verdict never reached it (#11b). The gap steer now asks the disk too: a corroborated absence arrives carrying the filesystem facts instead of the hedge, and a claim the disk refutes is dropped whole rather than softened. Claims the disk cannot settle keep the hedge untouched — that is what it was written for.
 
 The shape repeats verbatim: *"Let me first benchmark the performance and then create the REVIEW.md"* (0128), *"Let me verify the performance more carefully and then create REVIEW.md"* (0088). The 4× speedup it chained the file behind was never achievable — its own benchmarks put parallel at ~1.24 s against ~1.17 s single-threaded, about 1.0× — so the precondition never cleared. A sixty-word file needing no build starved for thirty minutes behind a target that could not be met.
 
