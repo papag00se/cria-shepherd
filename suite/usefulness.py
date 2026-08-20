@@ -256,6 +256,30 @@ def verdict_path(run_id: str) -> Path:
     return VERDICTS / f"{run_id}.json"
 
 
+def _needs_judging(row: dict) -> bool:
+    """True when this row has no verdict, or has one written against DIFFERENT evidence or a
+    DIFFERENT rubric.
+
+    THE DIGEST EXISTED AND NOTHING READ IT. `record` stamps every verdict with a hash of the evidence
+    AND the rubric text, and its own comment says why: "Keying on evidence alone meant a reworded
+    prompt silently reused every verdict written under the old one — a cache that hides the change it
+    was supposed to make." But the worklist asked only whether a verdict FILE exists, so a rewritten
+    rubric changed nothing — every stale verdict stayed on its row, and the grid went on reporting
+    numbers earned under a scale that no longer exists (#11b: a mechanism must reach what it judges).
+
+    Found when the operator replaced the global 0-100 band with per-deliverable scoring, which
+    invalidates every verdict in the file. A verdict with no stored digest is treated as stale: it
+    predates the stamp, so nothing can vouch for what it was written against."""
+    p = verdict_path(row["run_id"])
+    if not p.exists():
+        return True
+    try:
+        stored = json.loads(p.read_text()).get("evidence_digest")
+    except (OSError, ValueError):
+        return True
+    return stored != evidence(row)[1]
+
+
 def pending(rows: list[dict]) -> list[dict]:
     """Cells with an archive and no verdict — the worklist, computed from disk every time.
 
@@ -264,7 +288,7 @@ def pending(rows: list[dict]) -> list[dict]:
     that is interrupted, resumed, or picked up by a different session recomputes the same list."""
     return [r for r in rows
             if (r.get("archive") or packet_path(r.get("run_id", "")).is_file())
-            and not verdict_path(r["run_id"]).exists()
+            and _needs_judging(r)
             # …and only when the evidence can still be built: an archive on disk, or a packet frozen
             # at run time. A row with neither is unjudgeable for good and must not sit in the
             # worklist forever pretending otherwise (#5b).

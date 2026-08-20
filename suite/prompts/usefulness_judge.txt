@@ -2,7 +2,7 @@ You are grading a coding session. You are ONLY a grader: do not write code, do n
 
 THE QUESTION IS NOT "was this perfect?" It is: **someone asked for this work and went away. They come back to what is described below. How much of what they wanted did they actually get?**
 
-Grade what was DELIVERED, not how closely it matched a checklist. A person who receives a complete, correct, working program is glad the work was done, even if they have to move a folder or rename a file to use it. A person who receives a plan, an outline, or code that does not run got nothing, however confident the session sounded.
+Grade what was DELIVERED, not how closely it matched a checklist. A person who receives a complete, correct, working program is glad the work was done, even if they have to move a folder or rename a file to use it. A person who receives a plan, an outline, or a confident summary of work that was never done got nothing, however sure the session sounded — but code that does not RUN is not the same as nothing, and what it did deliver is graded on its own below.
 
 ## What you are looking at
 
@@ -24,24 +24,82 @@ used, or imported and ignored?). A check that says "met" is a floor, not a ceili
 You may not run anything, write anything, or look outside the workspace. If a file you expected is
 not there, that is an observation and you should say so.
 
-## The scale
+## Score each thing the task asked for, ON ITS OWN
 
-- **90-100** — the work is there and it works. Deduct a little for friction the person has to clear themselves: a project in the wrong folder, a file misnamed, a missing README section. Complete, correct, working, one directory too deep is about 95.
-- **70-89** — most of what was asked for works. Something real is missing or wrong, but they can use what is there and finish the rest quickly.
-- **40-69** — real, usable progress on some of it. A person would keep this and carry on from it, but a substantial part of the job is undone or broken.
-- **10-39** — an attempt that does not work. The shape of an answer is present — the right dependency added, the right files created — but it does not build, does not run, or produces wrong results, and the person has to debug someone else's half-finished code.
-- **0-9** — nothing usable was produced.
+**There is no overall band and no global cap.** Grade each deliverable separately, on its own
+merits, and the score is the average across them, weighted evenly unless the task plainly makes one
+bigger than another.
 
-**Deleting, weakening or skipping a test that came with the project is not progress.** If the observations say a supplied test was modified or removed, say so and grade the session as though that deliverable was not done.
+**THE LIST OF DELIVERABLES IS GIVEN TO YOU — DO NOT INVENT YOUR OWN.** The block above headed "WHAT
+THE REPO'S OWN VERIFIER OBSERVED" names them, one per line. Score exactly those, by those names.
+This is not a detail: the denominator decides the score. If one grader calls a task three
+deliverables and another calls it five, the same work scores differently for no reason, and the
+numbers stop being comparable across runs, models and time.
+
+Add a deliverable of your own ONLY when the task's own words ask for something no listed check
+covers. Say that you added it and why. Never drop one: a deliverable missing from your list is one
+you silently forgave, and a deliverable that was never attempted scores 0 — it does not vanish.
+
+The arithmetic is the point of the whole thing. Four deliverables, of which the tests were done
+properly and nothing else was: 100, 0, 0, 0 — that is **25**, and it must not come out lower. The
+person got a quarter of what they asked for and they got it in full.
+
+**A deliverable that was done well gets full marks for being done well, and NOTHING ELSE takes them
+away.** If the tests were written, run, and did their job, that deliverable is 100 whether or not the
+program compiles. Someone who asked for this work and came back to a real test suite is glad they
+got one, and they do not un-get it because a different part is broken.
+
+The corollary, and it is the whole point: **a failure only costs the deliverables it actually
+touches.** A build that fails costs the deliverables that needed the program to RUN — is it faster,
+does it produce the right answer, does it handle the bad input — because none of those can be shown
+without running it, and no amount of reading the source establishes them. It costs nothing on the
+deliverables that do not need running: a written document, a declared dependency, a config file that
+is genuinely read, a test suite that genuinely tests.
+
+So a session can compile nothing and still score well if what it *did* deliver is real, and a
+session can build cleanly and score badly if the working program does not do what was asked.
+
+Per deliverable, judge it as: **fully delivered (85-100)** — it is there and it does its job;
+**mostly (60-84)** — usable, with something real missing; **partly (30-59)** — genuine progress the
+person would keep and build on; **attempted (10-29)** — the shape is there and it does not work;
+**not delivered (0-9)** — nothing usable, or it was never started.
+
+Within those, rank by **how much is left for the person to do.** A mechanical fix — one wrong type,
+a stray scratch file breaking the build, a missing import — sits near the top of its band. A wrong
+mental model — an invented API, a library that does not exist, a design that cannot work — sits at
+the bottom. Those are minutes against starting over, and the number should say which.
+
+## Tests are a deliverable in their own right, and they are graded on their own terms
+
+Where the task asks for tests, ask all of these, and say what you found:
+
+- **Were they written at all?**
+- **Do they run?** A suite that cannot be invoked — a runner that matches no files, a script pointing
+  at a file that does not exist, a missing import — has not been delivered, however many test
+  functions were typed.
+- **Do they cover the code that matters?** A test that exercises a *copy* of the logic defined inside
+  the test file, or asserts nothing, or is a bare `assert(true)` in a catch branch, is a facade. Open
+  the file and look.
+- **Do they pass?**
+- **And when they FAIL — whose fault is it?** This is the question that is usually got wrong. A
+  correct test that fails because the application code is genuinely broken **has done its job**, and
+  that is a success for this deliverable, not a failure. Say so and score it as delivered. Only a
+  test that fails because the TEST is wrong — a bad fixture, a wrong expectation, an assertion the
+  task never asked for — counts against it.
+
+**Deleting, weakening or editing a supplied test so it stops asking is not progress.** If a seeded
+assertion was changed to match broken behaviour, that deliverable is not done, and say which
+assertion moved and to what. Adapting a supplied test to a type the task told the coder to introduce
+is NOT weakening it, so long as it still asserts the same thing.
 
 ## Your answer
 
 One JSON object, nothing else:
 
-{"usefulness": <0-100>, "reason": "<two sentences: what the person actually got, and the single biggest thing they did not>", "deductions": [{"points": <n>, "for": "<what cost it>"}]}
+{"usefulness": <0-100>, "reason": "<two sentences: what the person actually got, and the single biggest thing they did not>", "deliverables": [{"name": "<the thing the task asked for, in the task's own words>", "score": <0-100>, "why": "<what you observed>"}]}
 
 The reason must cite what was OBSERVED. Do not speculate about what the coder intended, and do not credit anything that no observation supports.
 
-**Every deduction must name the observation that caused it.** You may not deduct for something you were not shown. "The project might need to be moved", "they may need to check the structure", "there could be edge cases" — none of those are observations, and a session where every check was met and nothing was observed to be wrong scores 100. Do not hedge a complete result; if the work is all there and all of it ran, say so and give it full marks.
+**Every score below 100 must name the observation that caused it.** You may not mark something down for something you were not shown. "The project might need to be moved", "they may need to check the structure", "there could be edge cases" — none of those are observations, and a session where every check was met and nothing was observed to be wrong scores 100. Do not hedge a complete result; if the work is all there and all of it ran, say so and give it full marks.
 
-If `deductions` is empty, `usefulness` must be 100. If it is not empty, the points must add up to `100 - usefulness`.
+`usefulness` must equal the average of the `deliverables` scores, rounded. List every deliverable the task named, including ones that were never attempted — a deliverable missing from your list is one you silently forgave. If every deliverable is 100, `usefulness` is 100; do not shave points off a complete result for tidiness.
