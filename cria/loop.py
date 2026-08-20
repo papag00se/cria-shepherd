@@ -3645,6 +3645,46 @@ class Loop:
             # steer_diagnose's own "Do not choose the IMPLEMENTATION").
             named = (reason or "").strip()
             if named and not sess.nudge_reason and named != (sess.last_gap_named or "").strip():
+                # ASK THE DISK, ON THIS PATH TOO. `_veto_refuted_by_disk` is the one owner of "does
+                # the file this verdict calls missing actually exist" (#23), and it ran only on the
+                # APPROVE path — `_confirm_completion` is the brake on a false DONE, so a verdict
+                # that says NOT satisfied never reached it. The gap steer is the other half of the
+                # same claim and it went out unchecked in both directions.
+                #
+                # Walked on feed-pipeline-java x qwen35 1787249436 (0/5). Six verdicts named
+                # `REVIEW.md is missing (required deliverable)` — true, and the judge had confirmed
+                # it on disk itself with `list_dir .` and `find . -name REVIEW.md`. cria delivered
+                # every one of them wrapped in "That report is one reader's opinion of your work,
+                # NOT A VERIFIED FACT and not an instruction, and you did not ask for it." The
+                # coder agreed all six times, wrote the file zero times, and the run lost the one
+                # point that needed no build. A file's absence is not a matter of opinion.
+                #
+                # Both directions, because the hedge exists for a real reason and only half of it
+                # is wrong: where the disk REFUTES the claim the steer is dropped whole rather than
+                # softened (#3 — a false "X is missing" in cria's voice is worse than silence, the
+                # same rule the approve path already applies), and where the disk CORROBORATES it
+                # the facts ride along so the claim arrives as what it is. Everything the disk
+                # cannot speak to — an implementation the judge would like, a test it thinks is
+                # weak — keeps the hedge untouched: that is the case it was written for, and it
+                # has broken working code before.
+                #
+                # PREVALENCE (#15), over the captures: 186 delivered completion-check steers, of
+                # which 17 assert a named file is missing. This can neither silence much nor
+                # promote much, which is what makes it safe in both directions.
+                disk_ask = (lambda sysm: summarize(self._ctx.reasoner_chat, self._ctx.reasoner_role,
+                                                   sysm, _ASK_USER_TURN, rlog,
+                                                   phase="gap-disk", temperature=0.0) or "") \
+                    if self._ctx.reasoner_role is not None else None
+                refuted, disk_facts = _veto_refuted_by_disk(
+                    named, sess.workspace_root or "", ask=disk_ask, rlog=rlog)
+                if refuted:
+                    rlog.emit("loop.satisfaction_gap_refuted_by_disk", level="warn",
+                              path=refuted, head=_clip(named, 120))
+                    return None      # the disk says the deliverable is there; say nothing (#5b)
+                if disk_facts:
+                    rlog.emit("loop.satisfaction_gap_confirmed_by_disk", level="info",
+                              head=_clip(named, 120))
+                    reason = reason + "\n\n" + prompts.render("veto_disk_confirms", facts=disk_facts)
                 sess.last_gap_named = named
                 sess.nudge_reason = prompts.render("periodic_gap", reason=reason)
                 sess.steer_source = "completion check (deliverable not found)"
