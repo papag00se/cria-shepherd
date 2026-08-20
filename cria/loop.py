@@ -6762,9 +6762,18 @@ def author_steer(reasoner_chat, reasoner_role, workspace_root, gs, body: dict, r
     coder_tools = _coder_tools_summary(body.get("tools"))
     # The one-shot reasoner the dictated-code check uses. Toolless and phase-tagged so it is
     # visible in the captures as its own call, never mistaken for the authoring pass.
-    def _steer_ask(system: str, _user: str) -> str:
-        return summarize(reasoner_chat, reasoner_role, system, _ASK_USER_TURN, rlog, phase="steer-code",
-                         temperature=0.0) or ""
+    #
+    # IT MUST HONOUR `user`. It used to name that parameter `_user` and drop it, which is harmless
+    # for the closed-question guards (they render their payload INTO the system prompt and pass "")
+    # and silently fatal for :func:`_restate_without_code`, which passes the directive as `user`
+    # against a template that has no placeholder for it. Walked on feed-pipeline-java x
+    # nemotron-elastic 20260820T103857, call 0029: the rewriter was sent the bare template plus
+    # "Answer the question above.", reasoned "the original directive does not contain any file paths
+    # or line numbers" about the SYSTEM PROMPT ITSELF, and returned NO_DIRECTIVE — so every steer
+    # that reached the rewriter was dropped, always, for a reason that had nothing to do with it.
+    def _steer_ask(system: str, user: str) -> str:
+        return summarize(reasoner_chat, reasoner_role, system, user or _ASK_USER_TURN, rlog,
+                         phase="steer-code", temperature=0.0) or ""
     # Same shape for the answer-vs-thinking recovery below, under its own phase tag.
     def _recover_ask(system: str) -> str:
         return summarize(reasoner_chat, reasoner_role, system, _ASK_USER_TURN, rlog,

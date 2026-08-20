@@ -311,9 +311,49 @@ def split_loc(s: str) -> Optional[tuple[str, Optional[int], Optional[int]]]:
 _MAVEN_LOC = re.compile(r"^(\S+?):\[(\d+),(\d+)\]\s+")
 _MSVC_LOC = re.compile(r"^(\S+?)\((\d+),(\d+)\):\s+")
 
+# A LEADING SEVERITY TAG IS NOT PART OF THE DIAGNOSTIC. Maven prints every compiler diagnostic
+# through its own logger, so the line that reaches cria is
+#
+#     [ERROR] /w/src/main/java/pipeline/Importer.java:[5,19] cannot find symbol
+#
+# and `_MAVEN_LOC` is anchored at `^`. The bracket tag blocked it, so the Maven normalisation
+# directly above — written for exactly this shape, and whose comment records it as fixed — never
+# fired on a single line of real `mvn` output. `parse_generic` returned ZERO findings for every
+# Java build failure in the battery.
+#
+# What that cost, walked on feed-pipeline-java x nemotron-elastic 1787247514 (1/5): with no
+# findings, `gate_error_text` fell through to "a specific line could not be parsed from the
+# output" and quoted the LAST `[ERROR]` line, which is Maven's help URL — so the steer author was
+# handed `http://cwiki.apache.org/confluence/display/MAVEN/MojoFailureException` as the error while
+# `cannot find symbol / symbol: class CSVRecord / location: package com.opencsv` sat in the same
+# prompt. It steered blind for the whole 30 minutes. Worse, an EMPTY finding set makes
+# `_prescribes_what_the_checks_reject` return "" on its first line — the guard whose entire job is
+# refusing a steer that tells the coder to USE the symbol the checks reject was inert, and two
+# steers ordering `import com.opencsv.CSVRecord` shipped against `cannot find symbol: CSVRecord`.
+#
+# STRIPPED BY SHAPE AND SELF-VALIDATING, not by a vocabulary of severity words (#8, #20): a
+# bracketed alphabetic tag is removed only when what remains parses as a real diagnostic, so a line
+# that is not one is left exactly as it was. `[ERROR] [Help 1] http://…` still yields nothing —
+# `[Help 1]` is not the shape, and the remainder holds no `file:line`.
+_LOG_SEVERITY_TAG = re.compile(r"^\[[A-Za-z]+\]\s+")
+
+# A LEADING SEVERITY TAG IS NOT PART OF THE LOCATION. Log-shaped build tools stamp every line with
+# one — Maven's `[ERROR] `, ant's `[javac] `, MSBuild's `[warn] ` — and both location patterns above
+# anchor at `^`, so the tag pushed the path off position 0 and neither could ever match. A real
+# path never starts with `[`, and `looks_like_path` still gates whatever is recovered, so removing
+# the tag can only expose a location that was already there.
+_LOG_TAG = re.compile(r"^\[[A-Za-z][A-Za-z0-9_-]*\]\s+")
+
 
 def split_diag(s: str) -> Optional[tuple[str, Optional[int], Optional[int], str]]:
     """``file:line[:col]: message`` -> (file, line, col, message). Used by parse_generic."""
+    # See _LOG_SEVERITY_TAG: a build logger's own `[ERROR] ` prefix hid every Maven diagnostic from
+    # this function. Retried WITHOUT the tag, and kept only if the remainder is a real diagnostic.
+    tag = _LOG_SEVERITY_TAG.match(s)
+    if tag:
+        inner = split_diag(s[tag.end():])
+        if inner is not None:
+            return inner
     # MAVEN PUTS THE LINE AND COLUMN IN BRACKETS. javac-via-Maven prints
     # `/…/Importer.java:[3,30] cannot find symbol` — no colon-space after the location, so every
     # Maven diagnostic fell through to `return None` and cria then told the steer author "a specific
@@ -326,6 +366,14 @@ def split_diag(s: str) -> Optional[tuple[str, Optional[int], Optional[int], str]
     # `file:[line,col]`. Reading a compiler's file/line/column is something this function already
     # claims to do; a rule keyed to the word "Maven" would be the per-language matcher this project
     # keeps getting burned by.
+    #
+    # ...AND THE TAG COMES OFF FIRST, or the normalisation above never fires on real output. Maven
+    # prints `[ERROR] /…/Importer.java:[5,19] cannot find symbol`, never the bare form the comment
+    # above quotes, so the bracket-location fix shipped in cycle 1 was inert on every real Java run.
+    # Walked again on feed-pipeline-java x nemotron-elastic 20260820T103857 call 0031: cria held the
+    # `cannot find symbol class CSVRecord` line in the same prompt and still told the coder "a
+    # specific line could not be parsed from the output", quoting Maven's `[Help 1]` URL instead.
+    s = _LOG_TAG.sub("", s, count=1)
     s = _MAVEN_LOC.sub(r"\1:\2:\3: ", s, count=1)
     s = _MSVC_LOC.sub(r"\1:\2:\3: ", s, count=1)
     if ": " not in s:

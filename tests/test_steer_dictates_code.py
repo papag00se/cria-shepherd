@@ -150,6 +150,46 @@ class WiringTests(unittest.TestCase):
         self.assertTrue(seen_tooled.get("dictates_check_ran"), "tooled path never asked")
         self.assertTrue(seen_tooled.get("marker_seen"))
 
+    def test_the_rewriter_is_actually_SENT_the_directive(self):
+        """The seam that broke. `_restate_without_code` passes the directive as the ask's SECOND
+        argument, and the ask `author_steer` supplies used to name that parameter `_user` and drop
+        it — against a template (`steer_restate`) that has no placeholder for it either. So the
+        rewriter was sent the bare instructions plus "Answer the question above." and nothing else.
+
+        Walked on feed-pipeline-java x nemotron-elastic 20260820T103857 call 0029: the model
+        reasoned "The original directive does not contain any file paths or line numbers" — about
+        the SYSTEM PROMPT ITSELF — and returned NO_DIRECTIVE. Every steer that reached the rewriter
+        was therefore dropped, always, for a reason that had nothing to do with the steer.
+
+        The unit test one file over could not see it: it calls `_restate_without_code` with a fake
+        ask that honours `user`. This one drives the ask cria really builds."""
+        import json as _json
+
+        seen = {}
+
+        def chat(body, rlog):
+            msgs = body["messages"]
+            sysm = msgs[0].get("content", "")
+            sent = "\n".join(str(m.get("content") or "") for m in msgs)
+            if "prescribes code" in sysm:                      # the rewriter's own prompt
+                seen["restate_ran"] = True
+                seen["directive_sent"] = "UNIQUE_MARKER_RST" in sent
+                return _json.dumps({"choices": [{"message": {
+                    "content": "Register the marker the warning names, then re-run the tests."}}]}).encode()
+            if "DIRECTIVE:" in sysm:                           # the dictates-code question
+                return _json.dumps({"choices": [{"message": {"content": "DICTATES"}}]}).encode()
+            return _json.dumps({"choices": [{"message": {"content": (
+                "UNSTUCK UNIQUE_MARKER_RST the fix is "
+                'pytest.register_pytest_mark("live")')}}]}).encode()
+
+        gs = loop.GuardState()
+        body = {"messages": [{"role": "user", "content": "build it"},
+                             tool_result("PytestUnknownMarkWarning: live")], "tools": []}
+        loop.author_steer(chat, None, "", gs, body, _Rlog(), condition="wheel_spin")
+        self.assertTrue(seen.get("restate_ran"), "the rewriter never ran")
+        self.assertTrue(seen.get("directive_sent"),
+                        "the rewriter was asked to restate a directive it was never given")
+
     def test_a_DICTATES_steer_is_still_delivered_not_dropped(self):
         """The operator's 2026-08-04 ruling stands: the steer SHIPS. The drop's harm evidence came
         from a BLIND author (since fixed) and the 08-01 dense passes were carried by sighted

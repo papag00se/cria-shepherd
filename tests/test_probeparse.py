@@ -654,6 +654,59 @@ class RunnerLocationTests(unittest.TestCase):
         self.assertIn("cannot find value", f[0].message)
 
 
+class LogTaggedDiagnosticsTests(unittest.TestCase):
+    """A leading `[ERROR] `/`[javac] ` tag must not hide the location behind it.
+
+    `split_diag` normalises Maven's bracket location (`file:[line,col] msg`), and both that pattern
+    and the MSVC one anchor at `^` — so on the output Maven actually prints, with every line stamped
+    `[ERROR] `, neither could ever match. The bracket-location fix was inert on real Java runs from
+    the day it shipped.
+
+    VERBATIM from feed-pipeline-java x nemotron-elastic 20260820T103857 (`mvn -q compile`, exit 1).
+    cria held these lines and still told the coder "a specific line could not be parsed from the
+    output", quoting Maven's trailing `[Help 1]` URL as the error (call 0031)."""
+
+    MVN_COMPILE = (
+        "[ERROR] COMPILATION ERROR : \n"
+        "[ERROR] /w/src/main/java/pipeline/Importer.java:[5,19] cannot find symbol\n"
+        "  symbol:   class CSVRecord\n"
+        "  location: package com.opencsv\n"
+        "[ERROR] /w/src/main/java/pipeline/Importer.java:[127,44] cannot find symbol\n"
+        "  symbol:   method parseRecord(java.lang.String,com.opencsv.CSVParser)\n"
+        "[ERROR] -> [Help 1]\n"
+        "[ERROR] For more information about the errors and possible solutions, please read the "
+        "following articles:\n"
+        "[ERROR] [Help 1] http://cwiki.apache.org/confluence/display/MAVEN/MojoFailureException\n"
+    )
+
+    def test_the_tagged_maven_diagnostic_is_located(self):
+        f = probeparse.parse_generic(self.MVN_COMPILE)
+        self.assertTrue(f, "every line was tagged, so nothing parsed")
+        self.assertEqual((f[0].file, f[0].line, f[0].col),
+                         ("/w/src/main/java/pipeline/Importer.java", 5, 19))
+        self.assertIn("cannot find symbol", f[0].message)
+
+    def test_the_summary_quotes_the_diagnostic_not_the_help_url(self):
+        r = probeparse.parse_output("mvn -q compile", "maven", 1, self.MVN_COMPILE, "")
+        self.assertIn("Importer.java:5", r.summary)
+        self.assertNotIn("Help 1", r.summary)
+
+    def test_the_help_footer_is_not_mistaken_for_a_location(self):
+        for line in ("[ERROR] -> [Help 1]",
+                     "[ERROR] [Help 1] http://cwiki.apache.org/x/MojoFailureException"):
+            with self.subTest(line=line):
+                self.assertEqual(probeparse.parse_generic(line), [])
+
+    def test_an_untagged_bracket_location_still_parses(self):
+        f = probeparse.parse_generic("/w/Importer.java:[5,19] cannot find symbol")
+        self.assertEqual((f[0].file, f[0].line), ("/w/Importer.java", 5))
+
+    def test_a_bracketed_word_is_not_stripped_from_a_message(self):
+        # Only a LEADING tag comes off, and only one.
+        f = probeparse.parse_generic("src/a.py:3: error: [misc] bad thing")
+        self.assertIn("[misc]", f[0].message)
+
+
 class SucceededCommandsHaveNoFailures(unittest.TestCase):
     """A shape scraper must never manufacture a failure out of the output of a command that
     exited 0. Captured live (run 20260728T000013, calls 0165-0205): the tests PASSED and cria
