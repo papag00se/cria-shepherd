@@ -11,7 +11,8 @@ Settings live in **two files**, split by whether they need a model reload:
 
 cria attaches the **role's** sampling + reasoning to **every request** it makes for that role (`temperature`, `repeat_penalty`, … and reasoning as `chat_template_kwargs.enable_thinking`). The launcher's sampling is only a fallback — so tune in `cria.toml`, not `models.toml`.
 
-> **One 3080, one model at a time** (`-np 1`). Swap with `systemctl` (the `llama-fleet` launcher reads `models.toml`); see §Server launch.
+> **One model at a time** (`-np 1`). Swap with `systemctl` (the `llama-fleet` launcher reads `models.toml`); see §Server launch.
+> Every model but one runs on the 3080 alone. **`qwen38` is the exception** — 14.3 GiB of weights cannot fit in 10 GiB, so it spans the 3080 **and** the GTX 1080. Its unit `Conflicts=` the whole 18084 family, so starting it stops whatever else holds either card.
 
 ---
 
@@ -29,6 +30,7 @@ Sampling is **client-side** (`cria.toml`); set the role you're driving to these.
 | **qwopus** (9B, Qwen3.5) | Q6_K | `temp 0.6, top_p 0.95, top_k 20` *(inferred — Qwen3.5)* | ⚠ not stated on card | verify before trusting |
 | **nemotron-elastic** (12B-A2B) | Q4_K_M | `temp 0.6, top_p 0.95` (tool-calling; general chat `1.0/1.0`) | NVIDIA (Nemotron 3 guide) | `nemotron_h_moe` mamba-hybrid MoE (128 experts/6 active, elastic-pruned from Nano-30B-A3B); ctx_train **1M**; 9.64 GB file auto-fits the 3080; **service-verified 86 t/s** on stock b9893. No plain Q4_0 exists anywhere — Q4_K_M substituted. Reasoning = automatic `<think>` in template; ON confirmed from real runs (`reasoning_content` on 20/20 sampled coder replies, capture 20260805T210927). The OFF recipe is still unexercised on this model |
 | **qwen3.5** (9B) | Q6_K | `temp 0.6, top_p 0.95, top_k 20` | Qwen's own thinking-mode card | the BASE the fleet's two 9B finetunes come from (qwythos = empero-ai's, qwopus = Jackrong's) — same size, quant, build and sampling as both, so a score gap is the weights. Added 2026-08-08; `unsloth/Qwen3.5-9B-GGUF:Q6_K`, 7.46 GB. Reasoning toggle **verified on load** (0 chars off / 649 on). Stock CUDA build, default q8_0 KV — TurboQuant was considered and dropped so a runtime change would not land in the same step as a model change |
+| **qwen38** (27B, Qwen3.8) | UD-Q4_K_S | `temp 0.7, top_p 0.80, top_k 20` (instruct mode; thinking mode `1.0/0.95/20`) | Qwen's own card | **the only DUAL-GPU model** (3080 + 1080). Arch reports as `qwen35` — hybrid Gated-DeltaNet with a full-attention layer every 4th, so only 16 of 65 blocks hold a growing KV: ~34.8 KB/token at q8_0, roughly a quarter of a same-size dense model. `ctx_train` **262144**. Needs the `~/src/llama.cpp-qwen38` build (§Server launch) — the stock b9893 tree has a `qwen35` builder but predates the NextN/MTP handling these GGUFs carry and will not load the file. Runs `--spec-type draft-mtp`; the draft block is **inline** in the GGUF (blk.64), so speculation costs one block, not a second model. See §VRAM accounting on WSL for the `--fit-target` requirement — without it this model quietly runs a quarter of itself on the CPU |
 | **maple-preview** (20B-A1B MoE) | **tq2_0** (ternary, GGML type 35) | `temp 1.0, top_p 0.95, top_k 64, repeat_penalty 1.0` | ⚠ no publisher card — NEUTRAL start | DeepGrove; 256 experts / 8 active. Needs the **stamsam/llama.cpp fork @ prism 9ee03ee** (its commit IS the tq2_0 CUDA kernel work — mainline cannot load the arch). Embedded template, no toggle template earned yet; emits `reasoning_content` on every coder reply (25/25 sampled, run 1786228135). `repeat_penalty 1.0` is deliberate: the penalty is a per-model finding, never a default |
 
 ### Considered and REJECTED for the Llama-family slot (2026-08-08, closed 2026-08-09)
@@ -185,7 +187,7 @@ The fold preserves order, never drops text, and creates a user turn when a body 
 
 ## Server launch (`models.toml`) — uniform except model + template
 
-All models share: `-c 49152` (48K) · `-b 2048 -ub 512` · `-np 1` · `--device CUDA0 -ngl auto -sm none -mg 0` · `-ctk q8_0 -ctv q8_0` **(except ternary-bonsai: `tbq3` both)** · `-fa on --no-host --no-mmproj --no-warmup --jinja` · `--reasoning auto` (the *parsing* mode — distinct from per-request `enable_thinking`) · `--host 127.0.0.1 --port 18084`. **Sampling is NOT set here** (cria sends it per request).
+All models share: `-c 49152` (48K) · `-b 2048 -ub 512` · `-np 1` · `--device CUDA0 -ngl auto -sm none -mg 0` · `-ctk q8_0 -ctv q8_0` **(except ternary-bonsai: `tbq3` both; qwen38: `iq4_nl` both)** · `-fa on --no-host --no-mmproj --no-warmup --jinja` · `--reasoning auto` (the *parsing* mode — distinct from per-request `enable_thinking`) · `--host 127.0.0.1 --port 18084`. **Sampling is NOT set here** (cria sends it per request).
 
 Most models differ only by source + chat template (all in `~/shepherd-eval/templates/`). **Three override `binary` + `lib_dir`**, because their weight format needs CUDA kernels the stock build does not carry. In every case `lib_dir` must LEAD with the fork's own dir, then `cuda-12.8-local/lib64` and `/usr/lib/wsl/lib`.
 
@@ -194,6 +196,7 @@ Most models differ only by source + chat template (all in `~/shepherd-eval/templ
 | ternary-bonsai | `~/src/llama.cpp-tq-prism/llama-v0.0.0/` | `Q2_0_g128` kernels **+ TurboQuant `tbq3` KV**. Also the only model overriding `-ctk`/`-ctv` (see below). Rollback, known-good and ~4× slower at depth: `~/src/llama.cpp-prism/llama-prism-b9596-9fcaed7/` with `-ctk q8_0 -ctv q4_0` and `--spec-type ngram-cache` |
 | maple-preview | `~/src/llama.cpp-maple-prism/build-cuda/bin/` | `tq2_0` ternary kernels (stamsam fork @ prism 9ee03ee); mainline cannot load the arch |
 | zaya1 | `~/src/llama.cpp-zaya/build/bin/` | draft-PR build for the `zaya` arch — exists in no release |
+| qwen38 | `~/src/llama.cpp-qwen38/build-cuda/bin/` | upstream b10497 (9731ad3f2). NOT a fork — the stock tree is simply too old (b9893, Apr 22) and lacks the NextN/MTP layer handling. Built for `CMAKE_CUDA_ARCHITECTURES=61;86` so it drives the Pascal 1080 as well as the 3080; NCCL vendored at `vendor-nccl/`. ⚠ Rebuilds MUST run with `LD_LIBRARY_PATH` including `cuda-12.8-local/lib64`, or the executable link fails resolving `libcudart.so.12` |
 
 | Model | Source | Template |
 |-------|--------|----------|
@@ -208,10 +211,70 @@ Most models differ only by source + chat template (all in `~/shepherd-eval/templ
 | maple-preview | `-m …/maple/maple-tq2_0.gguf` **(stamsam fork binary + lib_dir)** | *(embedded)* |
 | nemotron-elastic | `-m …/Nemotron-Elastic-12B/…gguf` | *(embedded)* |
 | zaya1 | `-m …/ZAYA1-8B/ZAYA1-8B-Q6_K.gguf` **(zaya draft-PR binary + lib_dir)** | *(embedded)* |
+| qwen38 | `-m …/Qwen3.8-27B/Qwen3.8-27B-UD-Q4_K_S.gguf` **(b10497 binary + lib_dir; `--device CUDA0,CUDA1 -sm layer`)** | *(embedded ChatML w/ `enable_thinking`)* |
 
 - **`-ub 512` is required** — a larger prefill micro-batch overflows the 10 GB 3080.
-- **All fit the single 3080** (9Bs ~7.3 GB Q6_K; the 12B MoEs ~7–8 GB).
+- **All fit the single 3080** (9Bs ~7.3 GB Q6_K; the 12B MoEs ~7–8 GB) — **except `qwen38`**, 14.3 GiB of weights across both cards.
+- **Filename trap when pulling a quant:** unsloth model cards list K-quants WITHOUT the `UD-` prefix that the repo files actually carry. `Qwen3.8-27B-Q4_K_S.gguf` 404s to a 15-byte *Entry not found*. Always enumerate with `curl -s https://huggingface.co/api/models/<repo>?blobs=true` instead of trusting the card.
 - The `*-toggle.jinja` templates gate on `enable_thinking` so the per-request flag works. Keep `--reasoning-budget` at default — launching with `--reasoning-budget 0` pins the whole instance no-think and defeats per-request control.
+
+---
+
+## VRAM accounting on WSL — the hidden CPU offload (found and cleared 2026-08-19)
+
+**Symptom.** `qwen38` loaded, served, and looked fine — but generated at 10.2 t/s and read prompts at 50.9 t/s. `nvidia-smi` showed the two cards holding ~13.5 GiB between them, *less than the 14.3 GiB of weights*, which was written off as WSL misreporting. It was not. `-ngl auto` had silently parked **15 of 66 layers (4.3 GB) in system RAM**, which a `triad` benchmark measures at **44 GB/s** — seven times slower than even the GTX 1080's 320 GB/s. llama.cpp does not mention this at default verbosity; it only appears as `load_tensors: layer N assigned to device CPU` under `-lv 5`.
+
+**Root cause — CUDA under-reports free VRAM inside the WSL guest.** Proven three ways, on an otherwise idle machine (monitor is on the iGPU; no display or compute process on either card):
+
+| State | CUDA (`cudaMemGetInfo`) | NVIDIA driver (`nvidia-smi`) | Windows host (`vmwp.exe`) |
+|---|---|---|---|
+| idle, nothing running | — | 3080 **0 MiB**, 1080 32 MiB | **0 MiB** dedicated, both cards |
+| **one bare CUDA context**, zero allocations | 3080 **1166 MiB**, 1080 **1005 MiB** | 3080 **214 MiB**, 1080 **136 MiB** | 3080 **213.3 MiB**, 1080 **104.6 MiB** |
+
+The host and the driver agree to within a MiB. **CUDA is the sole outlier, overstating by ~1.85 GB.** Nothing is reserved, retained, or cached — `vmwp.exe` (the Hyper-V worker that owns the VM's GPU memory) holds nothing between runs. The gap is a *reporting artifact*, and llama.cpp's auto-fit believes it.
+
+A direct ceiling test (`cudaMalloc` descending 256→0.25 MiB chunks until free hits 0) shows what is really reachable:
+
+| Card | `cudaMemGetInfo` free | actually allocatable | unreachable |
+|---|---|---|---|
+| RTX 3080 | 9073 MiB | **9538.0 MiB** (+465) | 701.5 MiB |
+| GTX 1080 | 7187 MiB | **7544.0 MiB** (+357) | 648.0 MiB |
+
+Of the unreachable remainder, 187/133 MiB is the driver's own declared `FB Reserved` and 214/105 MiB is the context itself; ~300/~410 MiB stays unexplained by any queryable source. **Do not assert a cause for it** — an earlier claim that it was "a WSL reservation" was disproved by the host-side reading above.
+
+**The fix — `--fit-target` (`-fitt`), and it accepts NEGATIVE values.** It sets the headroom the fitter holds back *per device* (default **1024 MiB each**, i.e. >2 GB withheld). Negative values tell the fitter to spend past the reported-free figure — which is not overcommitting, it is **correcting a bad reading**.
+
+| `-fitt` | layers on CPU | weights on GPU |
+|---|---|---|
+| `1024` (default) | **15** | 11316 MiB |
+| `384` | 8 | 12573 MiB |
+| `192` | 6 | 12961 MiB |
+| **`-600,-550`** ← set | **1** (the embedding only) | **13950 MiB** |
+| `-750,-650` | 0 — but `cudaMalloc` then FAILS on the 394 MiB compute buffer. **The wall.** |
+
+**Never use `-ngl` or `-ts` to chase this.** Setting either by hand makes the fitter abort outright (`tensor_split already set by user, abort` / `n_gpu_layers already set by user`), and nothing then reserves room for compute buffers — CUDA1 OOMs on a 394 MiB allocation and the unit restart-loops. `-fitt` *guides* the fitter; `-ngl`/`-ts` *disable* it. Shrinking `-b/-ub` also frees a little (`-b 512 -ub 128` reaches 4 CPU layers) but starves prefill, which is already the bottleneck — not taken.
+
+**What remains on CPU at `-fitt -600,-550`** — placement `CPU 0-0, CUDA0 1-41, CUDA1 42-65`. That is 66 entries for 65 blocks, so index 0 is the **input embedding**, not a transformer block: **all 65 blocks, and the MTP drafter, are on GPU.** CPU holds `token_embd.weight` (686 MiB ≈ 248320×5120 at ~4.5 bpw), 12.5 MiB of recurrent state, and **zero KV**. Leave it: an embedding is a row *lookup*, ~2.5 KB per token — a 4865-token prefill gathers ~12 MB from host RAM, ~0.3 ms of an 80 s prefill. Moving it costs 686 MiB of VRAM that does not exist.
+
+**Result** (ctx 49152, `iq4_nl` KV, `--spec-type draft-mtp`, tg t/s):
+
+| task | start | `-fitt 192` | `-fitt -600,-550` |
+|---|---|---|---|
+| code — merge sorted lists | 10.24 | 21.12 | **28.38** |
+| code — LRU cache class | — | 16.49 | **22.05** |
+| short prose | 9.49 | 13.58 | **18.57** |
+| long prose | 9.26 | — | **16.16** |
+| prefill, 4865 tok | 50.9 | 56.1 | **60.5** (95.6 s → 80.4 s) |
+
+**2.8× on code generation from hardware that did not change.** Draft acceptance tracks how predictable the output is — 93% on code, ~46% on prose — which is why speculation is worth keeping for cria's traffic and would not be for an essay workload.
+
+**Probe tools** — kept in [`scripts/vram-probes/`](../scripts/vram-probes/) with their own README:
+- `ctxprobe.cu` — cost of a bare CUDA context, CUDA's view vs the driver's.
+- `allocmax.cu` — real allocation ceiling, descending chunk sizes.
+- `probe_fit.sh` — boot the fleet config once with extra flags, print the **final** layer placement, kill it. Note the load log contains several *trial* fits; only the last `layer 0 assigned` block is the real one.
+
+> **Do not size a config on this box from `nvidia-smi` or from `cudaMemGetInfo`.** Measure the ceiling, then set `-fitt` against it.
+
 
 ---
 
@@ -230,4 +293,9 @@ done
 
 # see the exact launch command a model would run (no side effects)
 llama-fleet gemma4 --dry-run
+
+# WHERE THE LAYERS ACTUALLY WENT (the default log hides this — needs -lv 5).
+# Stop the unit first; this boots a second instance. Only the LAST block is the real fit.
+systemctl stop llama-qwen38 && llama-fleet qwen38 -lv 5 2>&1 | tee /tmp/fit.log | grep -m1 'listening on'
+awk '/layer +0 assigned/{d=""} /assigned to device/{split($0,a,"device ");split(a[2],b,",");c[b[1]]++} END{for(k in c)print k,c[k]}' /tmp/fit.log
 ```
