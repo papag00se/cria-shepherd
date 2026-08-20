@@ -115,11 +115,35 @@ class TheWorklistOnlyHoldsJudgEABLERowsTests(unittest.TestCase):
         rows = [{"run_id": "lost", "archive": "/nowhere"}]
         self.assertEqual(usefulness.pending(rows), [])
 
-    def test_a_judged_row_leaves_the_worklist(self):
+    def test_a_judged_row_leaves_the_worklist_when_its_digest_still_matches(self):
+        (self.packets / "done.txt").write_text("frozen")
+        row = {"run_id": "done", "archive": "/nowhere"}
+        (self.verdicts / "done.json").write_text(
+            json.dumps({"usefulness": 80, "evidence_digest": usefulness.evidence(row)[1]}))
+        self.assertEqual(usefulness.pending([row]), [])
+
+    def test_a_verdict_written_against_a_DIFFERENT_rubric_is_reopened(self):
+        """The digest covers the rubric, and this is what makes that mean something. `pending` used
+        to ask only whether a verdict FILE existed, so rewriting the rubric silently kept every
+        stale verdict on its row and the grid went on reporting numbers earned under a scale that no
+        longer exists."""
+        (self.packets / "done.txt").write_text("frozen")
+        row = {"run_id": "done", "archive": "/nowhere"}
+        (self.verdicts / "done.json").write_text(
+            json.dumps({"usefulness": 80, "evidence_digest": usefulness.evidence(row)[1]}))
+        with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False) as fh:
+            fh.write("a different rubric entirely\n")
+            other = Path(fh.name)
+        with mock.patch.object(usefulness, "SYSTEM", other):
+            self.assertEqual([r["run_id"] for r in usefulness.pending([row])], ["done"])
+        other.unlink()
+
+    def test_a_verdict_with_no_digest_at_all_is_reopened(self):
+        # It predates the stamp, so nothing can vouch for what it was written against.
         (self.packets / "done.txt").write_text("frozen")
         (self.verdicts / "done.json").write_text(json.dumps({"usefulness": 80}))
         rows = [{"run_id": "done", "archive": "/nowhere"}]
-        self.assertEqual(usefulness.pending(rows), [])
+        self.assertEqual([r["run_id"] for r in usefulness.pending(rows)], ["done"])
 
 
 if __name__ == "__main__":
