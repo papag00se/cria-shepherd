@@ -85,6 +85,52 @@ class ItStillDropsWhatItAlwaysDroppedTests(unittest.TestCase):
         for var in ("__cria_pre", "__cria_post", "__cria_new", "__cria_out", "__cria_ec"):
             self.assertNotIn(var, out)
 
+class TheTestExitCodeAndTheOfflineLegNeverRideEitherTests(unittest.TestCase):
+    """Two lines survived the strip for as long as it has existed, and a walked run measured what
+    they cost: 340 copies of `__cria_test_ec=$__cria_ec` and 170 of the offline re-run across one
+    run's coder prompts — 2.7% of every byte cria sent the model, and the longest single leak was
+    3,969 characters in one prompt.
+
+    Both are cria's own bookkeeping. The offline leg's single product is a SENTENCE for the judge
+    ("these same tests also pass with the network gone"); it reaches the model through the checks
+    summary, never as shell. This is the same harm the strip was built for — three models copied the
+    wrapper back into their own commands, and the repetition detector's fingerprint drowned in the
+    boilerplate."""
+
+    def test_the_saved_test_exit_code_is_dropped(self):
+        out = probegate._strip_gate_plumbing(
+            "ruby -c a.rb\n" + f"{proberun.TEST_EC_VAR}=$__cria_ec\n" + "bundle exec rspec")
+        self.assertEqual(out.splitlines(), ["ruby -c a.rb", "bundle exec rspec"])
+
+    def test_the_offline_re_run_is_dropped(self):
+        offline = (f"cd /ws && if [ \"${{{proberun.TEST_EC_VAR}:-1}}\" -eq 0 ] && "
+                   "unshare -rnm -- sh -c 'mount --bind /ws /ws' >/dev/null 2>&1; then :; fi")
+        out = probegate._strip_gate_plumbing("pytest -q\n" + offline)
+        self.assertEqual(out, "pytest -q")
+
+    def test_a_real_composed_gate_keeps_only_the_probe_commands(self):
+        """End to end on what plan_gate builds for a repo with a test probe — the case where both
+        lines are actually emitted."""
+        import pathlib
+        import subprocess
+        import tempfile
+        ws = tempfile.mkdtemp()
+        pathlib.Path(ws, "pyproject.toml").write_text("[project]\nname='x'\nversion='0'\n")
+        pathlib.Path(ws, "test_a.py").write_text("def test_a():\n    assert True\n")
+        subprocess.run(["git", "init", "-q", ws], check=True)
+        from cria import wsview
+        view = wsview.View(ws, "s-strip")
+        token = wsview.bind(view)
+        self.addCleanup(wsview.unbind, token)
+        raw = subprocess.run(["bash", "-c", wsview.survey_command("s-strip")], cwd=ws,
+                             capture_output=True, text=True).stdout
+        wsview.apply_survey(view, wsview.strip_survey(raw)[1])
+        out = probegate._strip_gate_plumbing(probegate.plan_gate(ws, "s-strip").script)
+        self.assertNotIn("__cria_", out)
+        self.assertNotIn("unshare", out)
+        self.assertNotIn("cria", out.lower())
+
+
 
 if __name__ == "__main__":
     unittest.main()

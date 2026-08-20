@@ -202,7 +202,7 @@ def plan_gate(workspace: str, session: str = "") -> GatePlan:
             # Remember THIS probe's exit code for the offline leg below. compose_probe_command
             # leaves it in __cria_ec, which the next probe overwrites, so it is captured here under
             # a name of its own.
-            parts.append("__cria_test_ec=$__cria_ec")
+            parts.append(f"{proberun.TEST_EC_VAR}=$__cria_ec")
     # The OFFLINE re-run of the test probe — see proberun.offline_probe_command.
     # Emitted last among the probes so a failure here can never mask a real check result.
     test_c = next((c for c in plan.candidates
@@ -810,16 +810,32 @@ _GATE_CD_GUARD = re.compile(r"^\s*cd\s+.*\|\|\s*exit\s+97\s*$")
 # The litter bookkeeping (pre/post untracked snapshot). Named for the three variables that appear
 # ONLY there — the probe wrapper uses __cria_out/_ec/_n, so a real probe line can never match.
 _GATE_LITTER = re.compile(r"__cria_(?:pre|post|new)\b")
+# The TEST probe's saved exit code, and the offline re-run that reads it. Both are cria's own
+# bookkeeping and neither is a check the coder can act on — the offline leg's single product is a
+# SENTENCE for the judge ("these same tests also pass with the network gone"), which reaches the
+# model through the checks summary, never as shell. Measured on one walked run: 340 copies of the
+# save line and 170 of the offline leg across the coder's prompts, 2.7% of every byte cria sent it.
+# Keyed on the shared variable name, which no probe command can contain — a wrapper line parks its
+# code in `__cria_ec` and is UNWRAPPED below, not dropped.
+_GATE_TEST_EC = re.compile(re.escape(proberun.TEST_EC_VAR))
 
 
 # The capture wrapper `proberun.compose_probe_command` builds, reduced to the command inside it.
-# Deliberately anchored on the SHAPE (`$(timeout … <argv> </dev/null 2>&1)`) rather than on cria's
-# variable names, so a rename cannot silently turn this back off.
+# Deliberately anchored on the SHAPE (`$(timeout … <argv> </dev/null 2>&1)` … `printf 'EXIT:%d…'`)
+# rather than on cria's variable names, so a rename cannot silently turn this back off.
+#
+# IT SPANS LINES, and that is not a detail. `compose_probe_command` calls itself "one physical shell
+# line", and it is — until a probe's own argv contains a newline. `python3 -c '<multi-line program>'`
+# is one shlex-quoted token with real newlines in it, and cria composes several: the pyproject TOML
+# check, the JSON check, the discovered-test loader. A line-anchored pattern misses those wrappers
+# entirely, so the WHOLE thing rode into the coder's context — the `timeout` capture, the byte-count
+# arithmetic, the head/tail elision branch and the EXIT printf, ~1.3 KB per probe. Replayed against
+# a live capture: 1,703 characters of one gate command, of which 377 were the five real commands.
 _GATE_WRAPPER = re.compile(
-    r"""(?x)^\s*(?:cd\s+\S+\s+&&\s+)?          # the cd guard, when present
+    r"""(?xs)(?:cd\s+\S+\s+&&\s+)?              # the cd guard, when present
         \w+=\$\(\s*timeout\s+(?:-k\s+\S+\s+)?\S+\s+   # __x_out=$(timeout [-k GRACE] LIMIT
         (?P<cmd>.+?)\s*</dev/null\s*2>&1\s*\);           # …the real command…
-        .*$""")
+        .*?printf\s+'[^']*""" + re.escape(proberun.PROBE_EXIT_SENTINEL) + r"""[^\n]*""")
 
 
 def _strip_gate_plumbing(cmd: str) -> str:
@@ -845,13 +861,17 @@ def _strip_gate_plumbing(cmd: str) -> str:
     exit status. The workspace survey that rides home with the gate is cria's own too, and comes off
     the same way — it is bracketed, so removing it is exact rather than pattern-matched."""
     cmd = wsview.strip_survey_command(cmd)
+    # UNWRAP FIRST, ACROSS THE WHOLE STRING. The wrapper can span lines (see _GATE_WRAPPER), so this
+    # cannot be a per-line pass: the inner command is pulled out wherever it sits, and only what is
+    # left is filtered line by line.
+    cmd = _GATE_WRAPPER.sub(lambda m: m.group("cmd"), cmd)
     out = []
     for ln in cmd.splitlines():
         if (_GATE_MARKER_ECHO.match(ln) or _GATE_GIT_FP.match(ln)
-                or _GATE_CD_GUARD.match(ln) or _GATE_LITTER.search(ln)):
+                or _GATE_CD_GUARD.match(ln) or _GATE_LITTER.search(ln)
+                or _GATE_TEST_EC.search(ln)):
             continue
-        m = _GATE_WRAPPER.match(ln)
-        out.append(m.group("cmd") if m else ln)
+        out.append(ln)
     return "\n".join(ln for ln in out if ln.strip()).strip()
 
 

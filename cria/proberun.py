@@ -894,6 +894,12 @@ def _netns_capable(working_dir) -> str:
 _NETNS_ENTER = "unshare -rnm -- sh -c"
 _NETNS_LOOPBACK_UP = "ip link set lo up 2>/dev/null; exec "
 
+# The shell variable the composed script parks the TEST probe's exit code in, so the offline leg can
+# ask whether the online run passed. ONE owner: `probegate` writes it, `offline_probe_command` reads
+# it, and `probegate._strip_gate_plumbing` drops every line that mentions it — three places that
+# must agree, and did not while it was a bare literal in each (#23).
+TEST_EC_VAR = "__cria_test_ec"
+
 
 def offline_probe_command(c: "ProbeCandidate", timeout_s: float) -> str:
     """The same test command, re-run with the network blocked — or "" when cria cannot block it.
