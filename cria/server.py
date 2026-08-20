@@ -162,17 +162,52 @@ def _is_compaction_request(messages: list) -> bool:
 _CWD_BY_SESSION: dict[str, str] = {}
 
 
-def _session_cwd(sess_key: str, messages: list) -> str | None:
+# Sessions whose workspace cria has already reported it cannot see — one warning per session, not
+# one per request. See _session_cwd.
+_UNREACHABLE_REPORTED: set[str] = set()
+
+
+def _session_cwd(sess_key: str, messages: list, rlog=None, *, lexical: bool = False) -> str | None:
     """The harness's workspace cwd for this session: the freshly-advertised <cwd>, else the last one
     remembered for the session. NEVER '.' (cria's own dir) — an unknown cwd stays None so callers skip
-    disk work rather than target cria's source tree."""
+    disk work rather than target cria's source tree.
+
+    AND NEVER A PATH CRIA CANNOT SEE. This is a path the HARNESS announced, about the HARNESS's
+    filesystem, and cria hands it straight to `os.path.isdir` — which only means anything when the two
+    are the same machine. Nothing in this repo says they must be, and the likely deployment is cria
+    beside the model server while the harness runs on someone's workstation.
+
+    The failure mode is the reason this check exists. `os.path.isdir` on a path from another machine
+    returns False, so every disk-derived mechanism concludes "nothing there" and abstains — correctly,
+    by #11b — and cria degrades to almost nothing while reporting no problem at all. Twenty-nine
+    functions take a workspace path and not one of them asked whether it could be reached.
+
+    So an unreachable cwd is treated exactly like an unknown one: None, callers skip disk work, and
+    the fact is stated ONCE per session on cria's own channel. Stating it is the point — a silent
+    degradation is the one shape that cannot be noticed from the outside (#12: surface the fact from
+    the authoritative event).
+
+    ``lexical=True`` skips the reachability test and returns the announced string, because not every
+    caller needs the disk. `dirguard`'s containment boundary is a PATH COMPARISON — is this target
+    inside that prefix — and it is exactly as valid against a workspace on another machine as on this
+    one. Blanking it there would remove the bound on a fledgling model's file tools, which is the
+    opposite of what this change is for."""
     cwd = _extract_cwd(messages)
     if cwd:
         if len(_CWD_BY_SESSION) > 512:
             _CWD_BY_SESSION.clear()
         _CWD_BY_SESSION[sess_key] = cwd
-        return cwd
-    return _CWD_BY_SESSION.get(sess_key)
+    cwd = cwd or _CWD_BY_SESSION.get(sess_key)
+    if lexical:
+        return cwd            # a containment boundary is a STRING comparison; see _announced_cwd
+    if cwd and not os.path.isdir(cwd):
+        if sess_key not in _UNREACHABLE_REPORTED and rlog is not None:
+            if len(_UNREACHABLE_REPORTED) > 512:
+                _UNREACHABLE_REPORTED.clear()
+            _UNREACHABLE_REPORTED.add(sess_key)
+            rlog.emit("server.workspace_unreachable", level="warn", cwd=cwd)
+        return None
+    return cwd
 
 
 def _proxy_body(body: dict) -> dict:
@@ -369,7 +404,7 @@ def _harden_compaction_reply(comp: dict, body: dict, provider, server, rlog, ses
     # in that package. cria then carried that sentence as `⟦ctx:continuation⟧` for the rest of the
     # run and a steer turned it into a numbered work order (#5b).
     sk = sess_key or session_key({}, body.get("messages", []))
-    ws = _session_cwd(sk, body.get("messages", []))
+    ws = _session_cwd(sk, body.get("messages", []), rlog)
     text = _text_of(comp).strip()
     truncated = massage.is_truncated(comp)
     if not text or massage.has_tool_call_leak(text) or truncated:
@@ -790,7 +825,7 @@ class CriaHandler(BaseHTTPRequestHandler):
         self._brave_key = brave.api_key()
         # The workspace root (from the harness env-context <cwd>) — the boundary the external-dir
         # guard classifies paths against when it bounds a fledgling model on the --yolo harness.
-        self._workspace_root = _session_cwd(sess_key, body.get("messages", []))
+        self._workspace_root = _session_cwd(sess_key, body.get("messages", []), lexical=True)
         # Re-present prior lowered shell calls as the synthetic tool the model actually called —
         # UNCONDITIONALLY, before the shell-tool gate. A harness compaction/summarize turn arrives with
         # tools:[] (no shell tool), yet its history still holds cria's ⟦ctx:tool⟧-lowered write_file/
@@ -1013,7 +1048,7 @@ class CriaHandler(BaseHTTPRequestHandler):
             rlog.phase = "proxy"
             sbody = _proxy_body(body)
             if _is_compaction_request(body.get("messages", [])):
-                sbody = _compaction_body(sbody, _session_cwd(sk, body.get("messages", [])),
+                sbody = _compaction_body(sbody, _session_cwd(sk, body.get("messages", []), rlog),
                                          _session_gate_plan(server, sk),
                                          _last_gate_flag(server, sk))
             stream = massage.massage_stream(
@@ -1052,7 +1087,7 @@ class CriaHandler(BaseHTTPRequestHandler):
         rlog.phase = "proxy"
         pbody = _proxy_body(body)
         if _is_compaction_request(body.get("messages", [])):
-            pbody = _compaction_body(pbody, _session_cwd(sess_key, body.get("messages", [])),
+            pbody = _compaction_body(pbody, _session_cwd(sess_key, body.get("messages", []), rlog),
                                      _session_gate_plan(server, sess_key),
                                      _last_gate_flag(server, sess_key))
         pbody, _ = self._focus_trim(self._apply_route_role(pbody, indic), rlog)

@@ -573,7 +573,12 @@ class RewriteDetectionTests(unittest.TestCase):
 
 class SessionCwdTests(unittest.TestCase):
     """The workspace cwd is the HARNESS's own repo — never cria's dir — and it must persist across a
-    turn that drops the <cwd> block (a harness compaction), so the gate/steer never lose the repo."""
+    turn that drops the <cwd> block (a harness compaction), so the gate/steer never lose the repo.
+
+    These assert the PATH BOOKKEEPING — remembered across turns, newest advertised wins, cria's own
+    dir never used — which is the `lexical=True` reading: the announced string, whatever machine it
+    names. The reachability half (a path cria cannot stat is None, and says so once) is a separate
+    question with its own file, test_a_workspace_cria_cannot_see_says_so."""
 
     def _env(self, cwd):
         return [{"role": "user", "content": f"<environment_context>\n<cwd>{cwd}</cwd>\n</environment_context>"}]
@@ -582,17 +587,27 @@ class SessionCwdTests(unittest.TestCase):
         from cria.server import _session_cwd, _CWD_BY_SESSION
         _CWD_BY_SESSION.clear()
         # turn 1: harness advertises its repo
-        self.assertEqual(_session_cwd("sk1", self._env("/home/u/project")), "/home/u/project")
+        self.assertEqual(_session_cwd("sk1", self._env("/home/u/project"), lexical=True), "/home/u/project")
         # turn 2: harness compaction dropped the <cwd> block → the last-known repo is kept, NOT "."/None
-        self.assertEqual(_session_cwd("sk1", [{"role": "user", "content": "continue"}]), "/home/u/project")
+        self.assertEqual(_session_cwd("sk1", [{"role": "user", "content": "continue"}], lexical=True),
+                         "/home/u/project")
         # a session that NEVER advertised a cwd stays unknown (None) — callers skip; never cria's dir
-        self.assertIsNone(_session_cwd("sk_unknown", [{"role": "user", "content": "hi"}]))
+        self.assertIsNone(_session_cwd("sk_unknown", [{"role": "user", "content": "hi"}], lexical=True))
 
     def test_a_fresh_cwd_updates_the_remembered_one(self):
         from cria.server import _session_cwd, _CWD_BY_SESSION
         _CWD_BY_SESSION.clear()
-        _session_cwd("sk2", self._env("/a"))
-        self.assertEqual(_session_cwd("sk2", self._env("/b")), "/b")   # newest advertised wins
+        _session_cwd("sk2", self._env("/a"), lexical=True)
+        self.assertEqual(_session_cwd("sk2", self._env("/b"), lexical=True), "/b")  # newest wins
+
+    def test_the_same_bookkeeping_holds_for_a_workspace_that_IS_reachable(self):
+        """The disk reading must keep every property above when the path really resolves."""
+        import tempfile
+        from cria.server import _session_cwd, _CWD_BY_SESSION, _UNREACHABLE_REPORTED
+        _CWD_BY_SESSION.clear(); _UNREACHABLE_REPORTED.clear()
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertEqual(_session_cwd("sk3", self._env(tmp)), tmp)
+            self.assertEqual(_session_cwd("sk3", [{"role": "user", "content": "continue"}]), tmp)
 
 
 class VisibleWebCallsTests(unittest.TestCase):

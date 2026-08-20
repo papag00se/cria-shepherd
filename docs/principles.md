@@ -201,6 +201,23 @@ Defined fully under `## Principle:` in [`shephard.md`](shephard.md).
 - **Own no rendering.** Every exposed tool must reduce to a primitive the harness can execute and display.
 - **Guard state is session-scoped.** Reset guard memory on each user turn; never leak it across sessions, sub-agents, or forks.
 
+### 23c. Reaching the workstation, the environment or the repo goes through the HARNESS
+cria is not necessarily on the machine the coder is on. The likely deployment is cria beside the model server while the harness runs on someone's workstation, and nothing in the protocol says otherwise.
+
+`workspace_root` is a path the HARNESS announced, about the HARNESS's filesystem. Handing it to `os.path.isdir` only means anything when the two are the same machine.
+
+**Any access to the workstation, the environment or the repo must go through a harness tool.** cria composes the call, the harness runs it where the files actually are, and cria reads the result. The completion gate is the worked example: `guard_gate_op` builds a shell tool call, the harness runs the repo's own checks in the workspace, and `probegate.clean_gate_results` replaces the raw output in the model's view — the command scaffolding the coder never wrote is stripped, non-signal turns are dropped along with their calling turn so nothing orphans, and what the model sees is a `⟦ctx:checks⟧` summary. So cria can already act on the repo without the model ever reading cria's plumbing (`___CRIA_GATE_`, `selfcompact._ANCHOR_MARKERS`).
+
+**Three kinds of fact, and only two of them travel:**
+
+- **Message-derived** — a tool result, a file the coder wrote or read, the check output it ran. Already in the conversation. Works on any topology; prefer it.
+- **Harness-executed** — cria composes a call, the harness runs it, cria reads the result. Works on any topology.
+- **cria-disk** — `os.path.isdir`, `os.walk`, `open()` against a harness-supplied path. Works only when co-located. This is what must be converted.
+
+**A lexical path check is not disk access.** `dirguard`'s containment boundary asks whether one path sits under another; that is a string comparison and it is exactly as valid against a workspace on another machine. Do not blank it for unreachability — doing so removes the bound on a fledgling model's file tools.
+
+**A mechanism that cannot reach its subject must SAY so, not just abstain.** `os.path.isdir` on a foreign path returns False, so every disk-derived guard concludes "nothing there" and goes quiet — correct by #11b, and catastrophic in aggregate: cria degrades to almost nothing while reporting no problem at all. Twenty-nine functions took a workspace path and not one asked whether it could be reached. Silent degradation is the one failure nobody can notice from the outside (#12).
+
 ### 24. An invariant that must hold on the WIRE belongs at the wire
 If a property must be true of the serialized model body, enforce it at the final pre-serialization boundary.
 
