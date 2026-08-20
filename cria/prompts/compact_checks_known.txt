@@ -1,0 +1,3 @@
+THE REPO'S OWN CHECKS, AS THEY LAST RAN. This is a real result from a real command, not a claim from the transcript above, and it is the ONLY thing you may base a statement about the build or the tests on. Do not work the current build state out by reading the transcript: an error earlier in the session may already be fixed, and a success may already be stale. Copy what matters from here, quoting the concrete error and its file:line, and if this section and the transcript disagree, this section is right.
+
+{{FLAG}}

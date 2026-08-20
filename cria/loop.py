@@ -2760,7 +2760,13 @@ class Loop:
                                                          flavor="briefing"),
                                      # …and the gate plan, so the cleaner reports what the gate
                                      # actually found rather than its most forgiving branch.
-                                     getattr(sess, "gate_plan", None)), rlog,
+                                     getattr(sess, "gate_plan", None),
+                                     # …and the last gate VERDICT, by the same argument as the
+                                     # disk above: this was appended to the briefing afterwards
+                                     # (_briefing_gate_ground_truth, on the line below) and never
+                                     # given to the writer, which was left to work the build state
+                                     # out by reading. Both compaction paths, one rule.
+                                     getattr(sess, "last_gate_flag", "") or ""), rlog,
                                  phase="self-compact", max_tokens=ROLLUP_MAX_TOKENS),
                                  workspace_inventory(sess.workspace_root or "", flavor="coder"),
                                  rlog) + _briefing_gate_ground_truth(sess),

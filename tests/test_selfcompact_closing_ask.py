@@ -70,7 +70,7 @@ class SelfCompactionAskTests(unittest.TestCase):
 
         calls = []
 
-        def fake_compaction_request(messages, files_list="", gate_plan=None):
+        def fake_compaction_request(messages, files_list="", gate_plan=None, checks=""):
             calls.append(len(messages))
             return "COMPOSED"
 

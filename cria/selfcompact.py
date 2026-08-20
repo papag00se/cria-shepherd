@@ -320,7 +320,8 @@ def _program_output(text: str) -> str:
     return _ENVELOPE.sub("", text or "").strip()
 
 
-def compaction_request(messages: list[dict], files_list: str = "", gate_plan=None) -> str:
+def compaction_request(messages: list[dict], files_list: str = "", gate_plan=None,
+                       checks: str = "") -> str:
     """The compactor's user message: the cleaned transcript, the disk, then cria's ask LAST.
 
     ``gate_plan`` is the live ``probegate.GatePlan``. Every other caller of ``clean_gate_results``
@@ -371,8 +372,41 @@ def compaction_request(messages: list[dict], files_list: str = "", gate_plan=Non
     # newest. The bytes of the older ones are on disk, which is the only current version.
     # Evidence, then disk, then the ask — the ask stays LAST for the reason above.
     disk = f"\n\n{files_list.strip()}" if files_list.strip() else ""
+    # …AND THE CHECKS, for the reason the disk is here — one step further along the same argument.
+    # A writer shown no workspace invents one; a writer shown no BUILD RESULT invents one too, and
+    # both halves were being appended to its OUTPUT instead of given to it as input.
+    #
+    # Walked on feed-pipeline-java x qwen35 1787249436. The briefing at minute 26 says "The build
+    # compiles successfully" while its own transcript carries `cannot find symbol / symbol: class
+    # Action` eight times and `exited with code 1` twice. The briefing at minute 8 makes the same
+    # error in the other direction: it reports a ConcurrentModificationException that had been fixed
+    # 99 seconds earlier and never re-run, and the coder burned eight calls disproving it
+    # ("the summary says it fails … but my test shows it works"). Dropped and invented are one
+    # defect, not two: the writer was asked to work out the build state by READING, which is a fact
+    # cria already holds exactly (#8 — deterministic code gathers, the reasoner judges).
+    #
+    # A VETO ON THE OUTPUT WAS THE OBVIOUS FIX AND IT IS THE WRONG ONE. Refusing a briefing sentence
+    # that contradicts the gate treats the symptom and leaves the writer guessing on every sentence
+    # nobody thought to check. Given the result up front it has no reason to guess (#4: fix upstream,
+    # not at the point of damage).
+    #
+    # Empty when no gate has spoken or the last one was clean — the section is dropped rather than
+    # rendered as an empty or guessed verdict (#5b, #3), the same rule the disk section follows.
+    #
+    # The RAW verdict comes in and the framing is applied HERE, so both compaction paths cannot
+    # disagree about whether their argument is already rendered (#23, one owner).
+    known = f"\n\n{checks_input(checks)}" if checks_input(checks) else ""
     return (serialize(stub_old_write_args(probegate.clean_gate_results(messages, gate_plan)))
-            + disk + "\n\n" + prompts.load("compact_closing_ask"))
+            + disk + known + "\n\n" + prompts.load("compact_closing_ask"))
+
+
+def checks_input(flag: str) -> str:
+    """The last gate verdict, framed for the compactor's INPUT — "" when no gate has spoken.
+
+    Distinct from the note the same verdict gets as an OUTPUT appendix: that one tells the READER
+    what the checks said, this one tells the WRITER not to derive build state from the transcript.
+    Same fact, two jobs, so two strings (#22, both in prompt files)."""
+    return prompts.render("compact_checks_known", flag=flag.strip()) if (flag or "").strip() else ""
 
 
 def _summary_msg(summary: str) -> dict:

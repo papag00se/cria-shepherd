@@ -192,15 +192,22 @@ def _proxy_body(body: dict) -> dict:
     return {**body, "messages": kept}
 
 
+def _last_gate_flag(server, sess_key: str) -> str:
+    """The session's last gate verdict, or "". One lookup for both users of it — the compactor's
+    INPUT (`selfcompact.checks_input`, so the writer does not derive build state by reading) and the
+    briefing's OUTPUT appendix (`_last_checks_note`, so the fact survives if the writer omits it)."""
+    loop = getattr(server, "loop", None)
+    sess = loop._store.get(sess_key) if loop is not None else None
+    return getattr(sess, "last_gate_flag", "") if sess is not None else ""
+
+
 def _last_checks_note(server, sess_key: str) -> str:
     """The most recent gate verdict, verbatim, for the compaction summary — deterministic check
     truth the model-authored briefing kept omitting (and on gemma the briefing never materializes
     at all: 4-of-4 compactor passes across g1/g2 leaked, so the appendices ARE the memory; the
     post-compaction coder otherwise re-learns 'tests are failing' by re-running them). Empty when
     no gate has spoken or the last gate was clean — silence over noise."""
-    loop = getattr(server, "loop", None)
-    sess = loop._store.get(sess_key) if loop is not None else None
-    flag = getattr(sess, "last_gate_flag", "") if sess is not None else ""
+    flag = _last_gate_flag(server, sess_key)
     if not flag:
         return ""
     return "LATEST CHECK RESULTS (the repo's own checks, most recent run):\n" + flag
@@ -217,7 +224,8 @@ def _session_gate_plan(server, sess_key: str):
     return getattr(sess, "gate_plan", None) if sess is not None else None
 
 
-def _compaction_transcript(messages: list, files_list: str = "", gate_plan=None) -> str:
+def _compaction_transcript(messages: list, files_list: str = "", gate_plan=None,
+                           checks: str = "") -> str:
     """The conversation to be briefed, as flat text — the SAME preparation cria's internal
     compaction and steer author use: the harness's agent frame dropped (Codex ships ~7.8K tokens of
     update_plan/apply_patch docs and PLUGIN BLURBS — measured leading the g7 transcript, so the
@@ -245,10 +253,11 @@ def _compaction_transcript(messages: list, files_list: str = "", gate_plan=None)
     # cria's ask goes LAST, after the evidence — so nothing in the transcript out-recencies it.
     # Composed in ONE place (selfcompact.compaction_request) so this path and loop's self-compaction
     # cannot drift apart again; they already did once, and the sibling failed for months.
-    return selfcompact.compaction_request(_drop_harness_frame(convo), files_list, gate_plan)
+    return selfcompact.compaction_request(_drop_harness_frame(convo), files_list, gate_plan, checks)
 
 
-def _compaction_body(pbody: dict, workspace_root: str | None = None, gate_plan=None) -> dict:
+def _compaction_body(pbody: dict, workspace_root: str | None = None, gate_plan=None,
+                     checks: str = "") -> dict:
     """The compaction request, re-asked in CRIA'S OWN WORDS.
 
     THE CAUSE of the blank briefings (g1 0093/0094, g2 0087/0088, forensics 07-30): the proxy path
@@ -279,7 +288,10 @@ def _compaction_body(pbody: dict, workspace_root: str | None = None, gate_plan=N
             # …AND THE DISK, for the same reason the self-compaction sibling now passes it: a writer
             # shown no workspace invents one. ONE mechanism, both paths.
             groundtruth.workspace_inventory(workspace_root or "", flavor="briefing"),
-            gate_plan)},
+            gate_plan,
+            # …and the checks, by the same argument one step on: a writer shown no build result
+            # invents one. See selfcompact.compaction_request.
+            checks)},
     ]}
 
 
@@ -370,15 +382,17 @@ def _harden_compaction_reply(comp: dict, body: dict, provider, server, rlog, ses
         # for weak models: prose only, no tools, name real files, quote real checks.
         pb = {**pb, "messages": [
             {"role": "system", "content": prompts.load("selfcompact_summary")},
-            # The SAME two grounding facts the first pass gets. This retry composed the request
+            # The SAME grounding facts the first pass gets. This retry composed the request
             # without them: no disk inventory (so the writer that already invented a file is asked
             # again with nothing to check itself against) and no gate plan (so a red gate cleans to
             # cria's most forgiving sentence). It is the pass that runs precisely when the first one
-            # produced garbage — the one that can least afford to be given less.
+            # produced garbage — the one that can least afford to be given less. The checks join
+            # them for the same reason, and most of all here.
             {"role": "user", "content": _compaction_transcript(
                 pb.get("messages", []),
                 groundtruth.workspace_inventory(ws or "", flavor="briefing"),
-                _session_gate_plan(server, sk))},
+                _session_gate_plan(server, sk),
+                _last_gate_flag(server, sk))},
         ]}
         if role is not None:
             replace(role, reasoning="off").apply(pb)
@@ -1000,7 +1014,8 @@ class CriaHandler(BaseHTTPRequestHandler):
             sbody = _proxy_body(body)
             if _is_compaction_request(body.get("messages", [])):
                 sbody = _compaction_body(sbody, _session_cwd(sk, body.get("messages", [])),
-                                         _session_gate_plan(server, sk))
+                                         _session_gate_plan(server, sk),
+                                         _last_gate_flag(server, sk))
             stream = massage.massage_stream(
                 provider.stream_chat(self._apply_route_role(sbody, indic), rlog),
                 body.get("model", ""),
@@ -1038,7 +1053,8 @@ class CriaHandler(BaseHTTPRequestHandler):
         pbody = _proxy_body(body)
         if _is_compaction_request(body.get("messages", [])):
             pbody = _compaction_body(pbody, _session_cwd(sess_key, body.get("messages", [])),
-                                     _session_gate_plan(server, sess_key))
+                                     _session_gate_plan(server, sess_key),
+                                     _last_gate_flag(server, sess_key))
         pbody, _ = self._focus_trim(self._apply_route_role(pbody, indic), rlog)
         raw = provider.chat(pbody, rlog)
         try:
