@@ -30,7 +30,7 @@ Sampling is **client-side** (`cria.toml`); set the role you're driving to these.
 | **qwopus** (9B, Qwen3.5) | Q6_K | `temp 0.6, top_p 0.95, top_k 20` *(inferred — Qwen3.5)* | ⚠ not stated on card | verify before trusting |
 | **nemotron-elastic** (12B-A2B) | Q4_K_M | `temp 0.6, top_p 0.95` (tool-calling; general chat `1.0/1.0`) | NVIDIA (Nemotron 3 guide) | `nemotron_h_moe` mamba-hybrid MoE (128 experts/6 active, elastic-pruned from Nano-30B-A3B); ctx_train **1M**; 9.64 GB file auto-fits the 3080; **service-verified 86 t/s** on stock b9893. No plain Q4_0 exists anywhere — Q4_K_M substituted. Reasoning = automatic `<think>` in template; ON confirmed from real runs (`reasoning_content` on 20/20 sampled coder replies, capture 20260805T210927). The OFF recipe is still unexercised on this model |
 | **qwen3.5** (9B) | Q6_K | `temp 0.6, top_p 0.95, top_k 20` | Qwen's own thinking-mode card | the BASE the fleet's two 9B finetunes come from (qwythos = empero-ai's, qwopus = Jackrong's) — same size, quant, build and sampling as both, so a score gap is the weights. Added 2026-08-08; `unsloth/Qwen3.5-9B-GGUF:Q6_K`, 7.46 GB. Reasoning toggle **verified on load** (0 chars off / 649 on). Stock CUDA build, default q8_0 KV — TurboQuant was considered and dropped so a runtime change would not land in the same step as a model change |
-| **qwen38** (27B, Qwen3.8) | UD-Q4_K_S | `temp 0.7, top_p 0.80, top_k 20` (instruct mode; thinking mode `1.0/0.95/20`) | Qwen's own card | **the only DUAL-GPU model** (3080 + 1080). Arch reports as `qwen35` — hybrid Gated-DeltaNet with a full-attention layer every 4th, so only 16 of 65 blocks hold a growing KV: ~34.8 KB/token at q8_0, roughly a quarter of a same-size dense model. `ctx_train` **262144**. Needs the `~/src/llama.cpp-qwen38` build (§Server launch) — the stock b9893 tree has a `qwen35` builder but predates the NextN/MTP handling these GGUFs carry and will not load the file. Runs `--spec-type draft-mtp`; the draft block is **inline** in the GGUF (blk.64), so speculation costs one block, not a second model. See §VRAM accounting on WSL for the `--fit-target` requirement — without it this model quietly runs a quarter of itself on the CPU |
+| **qwen38** (27B, Qwen3.8) | UD-Q4_K_S | `temp 0.7, top_p 0.80, top_k 20` (instruct mode; thinking mode `1.0/0.95/20`) | Qwen's own card | **the only DUAL-GPU model** (3080 + 1080). Arch reports as `qwen35` — hybrid Gated-DeltaNet with a full-attention layer every 4th, so only 16 of 65 blocks hold a growing KV: ~34.8 KB/token at q8_0, roughly a quarter of a same-size dense model. `ctx_train` **262144**. Needs the `~/src/llama.cpp-qwen38` build (§Server launch) — the stock b9893 tree has a `qwen35` builder but predates the NextN/MTP handling these GGUFs carry and will not load the file. KV **`q8_0` — do NOT use `iq4_nl`/4-bit here**, it cost 2.3× decode and 11× prefill in the field (§The field regression). Runs `--spec-type draft-mtp`; the draft block is **inline** in the GGUF (blk.64), so speculation costs one block, not a second model — but acceptance is only 47–76% on reasoning prose, so it is close to a wash on cria traffic. See §VRAM accounting on WSL for the `--fit-target` requirement — without it this model quietly runs a quarter of itself on the CPU |
 | **maple-preview** (20B-A1B MoE) | **tq2_0** (ternary, GGML type 35) | `temp 1.0, top_p 0.95, top_k 64, repeat_penalty 1.0` | ⚠ no publisher card — NEUTRAL start | DeepGrove; 256 experts / 8 active. Needs the **stamsam/llama.cpp fork @ prism 9ee03ee** (its commit IS the tq2_0 CUDA kernel work — mainline cannot load the arch). Embedded template, no toggle template earned yet; emits `reasoning_content` on every coder reply (25/25 sampled, run 1786228135). `repeat_penalty 1.0` is deliberate: the penalty is a per-model finding, never a default |
 
 ### Considered and REJECTED for the Llama-family slot (2026-08-08, closed 2026-08-09)
@@ -187,7 +187,7 @@ The fold preserves order, never drops text, and creates a user turn when a body 
 
 ## Server launch (`models.toml`) — uniform except model + template
 
-All models share: `-c 49152` (48K) · `-b 2048 -ub 512` · `-np 1` · `--device CUDA0 -ngl auto -sm none -mg 0` · `-ctk q8_0 -ctv q8_0` **(except ternary-bonsai: `tbq3` both; qwen38: `iq4_nl` both)** · `-fa on --no-host --no-mmproj --no-warmup --jinja` · `--reasoning auto` (the *parsing* mode — distinct from per-request `enable_thinking`) · `--host 127.0.0.1 --port 18084`. **Sampling is NOT set here** (cria sends it per request).
+All models share: `-c 49152` (48K) · `-b 2048 -ub 512` · `-np 1` · `--device CUDA0 -ngl auto -sm none -mg 0` · `-ctk q8_0 -ctv q8_0` **(except ternary-bonsai: `tbq3` both)** · `-fa on --no-host --no-mmproj --no-warmup --jinja` · `--reasoning auto` (the *parsing* mode — distinct from per-request `enable_thinking`) · `--host 127.0.0.1 --port 18084`. **Sampling is NOT set here** (cria sends it per request).
 
 Most models differ only by source + chat template (all in `~/shepherd-eval/templates/`). **Three override `binary` + `lib_dir`**, because their weight format needs CUDA kernels the stock build does not carry. In every case `lib_dir` must LEAD with the fork's own dir, then `cuda-12.8-local/lib64` and `/usr/lib/wsl/lib`.
 
@@ -256,7 +256,7 @@ Of the unreachable remainder, 187/133 MiB is the driver's own declared `FB Reser
 
 **What remains on CPU at `-fitt -600,-550`** — placement `CPU 0-0, CUDA0 1-41, CUDA1 42-65`. That is 66 entries for 65 blocks, so index 0 is the **input embedding**, not a transformer block: **all 65 blocks, and the MTP drafter, are on GPU.** CPU holds `token_embd.weight` (686 MiB ≈ 248320×5120 at ~4.5 bpw), 12.5 MiB of recurrent state, and **zero KV**. Leave it: an embedding is a row *lookup*, ~2.5 KB per token — a 4865-token prefill gathers ~12 MB from host RAM, ~0.3 ms of an 80 s prefill. Moving it costs 686 MiB of VRAM that does not exist.
 
-**Result** (ctx 49152, `iq4_nl` KV, `--spec-type draft-mtp`, tg t/s):
+**Result** (ctx 49152, `--spec-type draft-mtp`, tg t/s; synthetic short-prompt probes — see the next subsection for why these overstate the field):
 
 | task | start | `-fitt 192` | `-fitt -600,-550` |
 |---|---|---|---|
@@ -276,6 +276,33 @@ Of the unreachable remainder, 187/133 MiB is the driver's own declared `FB Reser
 > **Do not size a config on this box from `nvidia-smi` or from `cudaMemGetInfo`.** Measure the ceiling, then set `-fitt` against it.
 
 
+### The field regression: 4-bit KV cost 2.3× decode and 11× prefill (2026-08-20)
+
+The offload fix above was measured with **40-token prompts, greedy sampling, thinking OFF, code output** — the single most favourable configuration. In real cria traffic the same server delivered **4.9 t/s weighted**. The synthetic 28.4 was not a lie, it was unrepresentative in four ways at once, and the gap is a lesson about benchmark design as much as about settings.
+
+**Replay from captures, not synthetic probes.** `~/.cria/calls/<session>/NNNN-<phase>.json` stores the exact request body. Replay it verbatim — real tools, real message history, real sampling, `enable_thinking: true` — with only `stream:false` and a `max_tokens` cap added, so the *rate* is measured at real depth without waiting out an 8000-token generation. This reproduced the field number on the first try; no synthetic prompt did.
+
+**Config matrix, real captured bodies** (`temp 0.2 / top_p 0.95 / top_k 20 / repeat_penalty 1.1`, thinking ON; shallow = 3.7K prompt, deep = 7.5K):
+
+| KV | spec | `-fitt` | shallow tg | **deep tg** | pp |
+|---|---|---|---|---|---|
+| **`iq4_nl`** | on | `-600,-550` | 14.3 | **5.6** | **22–39** |
+| **`q8_0`** | on | `-600,-550` | 15.0–20.2 | **11.9–13.9** | **249–275** |
+| `q8_0` | on | `-350,-300` | 12.5 | 10.4 | 208 |
+| `q8_0` | **off** | `-350,-300` | 12.2 | 11.9 | 367–390 |
+| `q8_0` | **off** | `-500`/`-560` | 12.1 | 11.6 | 348–378 |
+
+**`iq4_nl` KV was the whole regression.** 4-bit KV has no fast attention kernel for this model's `head_dim 256` on this hardware and falls back to something pathological — it does not merely cost bandwidth, it costs **11× the prefill**. Switching to `q8_0` costs ~750 MiB and buys 2.3× decode at depth. **This was already a documented fleet finding** (see the TurboQuant sweep above: *"the wall was the QUANTIZED-KV CODE PATH, not KV bandwidth"*, f16 beating turbo3 on the same build, and *"q8_0 stays the fleet default"*). It was set anyway, for headroom, and not re-tested under real load. **`q8_0` is the default for a reason — deviate only with a measurement at real depth.**
+
+**Speculation is near-worthless for reasoning traffic.** Draft acceptance is 93% on clean code but **47–76% on reasoning prose**, and every cria coder call is reasoning-dominated — one captured call emitted 34,047 chars of reasoning for a 232-char answer. With `q8_0` it is roughly a wash on decode and **costs ~30–40% of prefill** (250 vs 375 t/s). Kept ON only because it edges ahead on decode, which dominates when a call emits thousands of tokens. Turn it off if prefill ever matters more.
+
+**The negative `--fit-target` is calibrated to one memory profile.** Turning speculation OFF frees the draft context's ~340 MiB, the fitter packs more layers in, and `-600,-550` then overshoots into an OOM **restart loop** (58 restarts before it was caught). Any change touching memory — KV type, ctx, batch, spec — invalidates the margin. Re-probe with `scripts/vram-probes/probe_fit.sh` after changing any of them.
+
+**Aborting a run does not free the GPU.** After a killed session, `/slots` still reported `is_processing: true` six minutes later — llama.cpp kept generating for a client that was gone. Check `curl -s :18084/slots` before trusting any measurement, and restart the unit to clear it.
+
+> **Never benchmark this fleet on synthetic prompts.** Replay a captured body. Greedy short-prompt code generation flatters every setting that real agentic traffic punishes.
+
+
 ---
 
 ## Quick reference — verify what's actually live
@@ -293,6 +320,19 @@ done
 
 # see the exact launch command a model would run (no side effects)
 llama-fleet gemma4 --dry-run
+
+# is the slot actually free? (a killed run leaves llama.cpp generating)
+curl -s 127.0.0.1:18084/slots | python3 -c 'import sys,json;print([("BUSY" if s.get("is_processing") else "idle") for s in json.load(sys.stdin)])'
+
+# replay a REAL captured request (real tools/history/sampling) instead of a synthetic prompt
+python3 - <<'EOF'
+import json,glob,sys
+f=sorted(glob.glob('/home/jesse/.cria/calls/*/[0-9]*-coder-s1.json'))[-1]
+b=json.load(open(f))['body']; b['stream']=False; b['max_tokens']=400
+json.dump(b, open('/tmp/replay.json','w')); print('from', f)
+EOF
+curl -s 127.0.0.1:18084/v1/chat/completions -H 'Content-Type: application/json' -d @/tmp/replay.json \
+ | python3 -c 'import sys,json;t=json.load(sys.stdin)["timings"];d=t.get("draft_n",0);print(f"pp={t[\"prompt_per_second\"]:.0f} tg={t[\"predicted_per_second\"]:.2f} accept={100*t.get(\"draft_n_accepted\",0)/d if d else 0:.0f}%")'
 
 # WHERE THE LAYERS ACTUALLY WENT (the default log hides this — needs -lv 5).
 # Stop the unit first; this boots a second instance. Only the LAST block is the real fit.
