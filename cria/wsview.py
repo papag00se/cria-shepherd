@@ -81,7 +81,10 @@ FOLD_DRAIN_MAX = 400
 # not be told (see :meth:`View.read`), so this bounds a real demand, not a guess.
 BLOB_FILES_MAX = 8
 BLOB_BYTES_MAX = 48_000
-BLOB_FILE_MAX = 24_000
+# One file may use the whole turn's budget — a 40 KB source file is ordinary, and a judge asked to
+# grade it needs the bytes. Anything past this cannot be delivered at all, and the survey SAYS so
+# rather than silently skipping it (see the undeliverable note in View.read_bytes).
+BLOB_FILE_MAX = BLOB_BYTES_MAX
 # Program lookups per survey (``toolpath.resolved`` misses).
 PROG_MAX = 24
 # Named paths OUTSIDE the workspace tested per survey (dependency caches, install prefixes).
@@ -123,7 +126,7 @@ class View:
     gathered — from a survey the harness ran, or from a tool call in the conversation."""
 
     __slots__ = ("root", "_files", "_dirs", "_folded", "_bodies", "_stale",
-                 "_progs", "_outside", "_surveyed", "_complete", "_sess")
+                 "_progs", "_outside", "_undeliverable", "_surveyed", "_complete", "_sess")
 
     def __init__(self, root: str | None, sess: str = "") -> None:
         self.root: str = _posix(root or "").rstrip("/") if root else ""
@@ -137,6 +140,11 @@ class View:
         # (`~/.m2/repository`), an install prefix. There is no listing of these and there must not
         # be one: cria names the exact path it wants tested, and the survey answers that path.
         self._outside: dict[str, str] = {}               # path -> "d" | "f" | ""
+        # Paths the harness was ASKED for and could not hand back — too large for one result, or
+        # unreadable — recorded with the size they had when it refused. Without this the reader asks
+        # again every turn, the survey refuses again every turn, and the miss list is never empty:
+        # measured as a survey riding on EVERY lowered call, forever, for one 36 KB file.
+        self._undeliverable: dict[str, int] = {}
         self._surveyed = False
         # Whether the last listing named EVERY file. A survey that hit its own entry bound is still
         # worth having — what it listed is real — but "not listed" stops meaning "not there", and
@@ -267,6 +275,12 @@ class View:
             return None
         if rel in self._bodies and rel not in self._stale:
             return self._bodies[rel]
+        # ASKED AND REFUSED, AT THIS SIZE. Re-asking would spend a survey a turn on a question with
+        # a known answer. The moment the file changes size it is a different question and is asked
+        # again, so a file the coder trims back into range is not written off for good.
+        entry = self._files.get(rel)
+        if rel in self._undeliverable and entry and entry[0] == self._undeliverable[rel]:
+            return None
         if self.isfile(path) is not False:
             want_body(self._sess, rel)
         return None
@@ -348,6 +362,12 @@ class View:
             return None
         return [Entry(name=posixpath.basename(r), path=self.abs(r), _is_dir=False,
                       size=s, mtime=m) for r, (s, m) in sorted(self._files.items())]
+
+    @property
+    def undeliverable(self) -> list[str]:
+        """Files the harness was asked for and could not hand back in one result. Their existence
+        and size are known; their contents are not, and cria has no way to get them."""
+        return sorted(self._undeliverable)
 
     @property
     def folded(self) -> list[str]:
@@ -438,7 +458,17 @@ class View:
         cur_rel: str | None = None
         buf: list[str] = []
         for line in body.splitlines():
-            if line.startswith("@"):
+            if line.startswith("!"):
+                if cur_rel is not None:
+                    self._set_body(cur_rel, "\n".join(buf))
+                cur_rel, buf = None, []
+                enc, _, size = line[1:].partition("\t")
+                try:
+                    self._undeliverable[base64.b64decode(enc.encode()).decode("utf-8", "replace")] \
+                        = int(size)
+                except Exception:                     # noqa: BLE001 — a malformed record is no record
+                    pass
+            elif line.startswith("@"):
                 if cur_rel is not None:
                     self._set_body(cur_rel, "\n".join(buf))
                 buf = []
@@ -458,6 +488,7 @@ class View:
             return
         self._bodies[rel] = raw
         self._stale.discard(rel)
+        self._undeliverable.pop(rel, None)
 
     def _ingest_outside(self, body: str) -> None:
         for line in body.splitlines():
@@ -480,6 +511,7 @@ class View:
         raw = content if isinstance(content, bytes) else content.encode("utf-8", "replace")
         self._bodies[rel] = raw
         self._stale.discard(rel)
+        self._undeliverable.pop(rel, None)
         prev = self._files.get(rel)
         self._files[rel] = (len(raw), prev[1] if prev else 0.0)
         self._dirs.discard(rel)
@@ -803,11 +835,18 @@ for rel in WANT:
         break
     p = os.path.join(root, rel)
     try:
-        if os.path.getsize(p) > BLOB_FILE:
-            continue
+        sz = os.path.getsize(p)
+    except OSError:
+        W("!%s\t-1\n" % base64.b64encode(rel.encode()).decode())
+        continue
+    if sz > BLOB_FILE:
+        W("!%s\t%d\n" % (base64.b64encode(rel.encode()).decode(), sz))
+        continue
+    try:
         with open(p, "rb") as fh:
             raw = fh.read(BLOB_FILE)
     except OSError:
+        W("!%s\t%d\n" % (base64.b64encode(rel.encode()).decode(), sz))
         continue
     W("@%s\n" % base64.b64encode(rel.encode()).decode())
     W(base64.b64encode(raw).decode() + "\n")

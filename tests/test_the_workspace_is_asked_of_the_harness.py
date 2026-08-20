@@ -122,6 +122,63 @@ class AskingForABodyTakesTwoTurnsTests(unittest.TestCase):
         self.assertTrue(view.read_bytes("chart.png").startswith(b"\x89PNG"))
 
 
+class AQuestionWithAKNOWNAnswerIsNotReAskedTests(unittest.TestCase):
+    """A miss is remembered so the next survey carries it. That is right up until the harness has
+    already answered "I cannot hand you this" — then remembering it means asking the same
+    unanswerable question every turn, and the miss list is never empty, so a survey rides on EVERY
+    lowered call for the rest of the session. Measured on one 36 KB file before the cap was raised:
+    four turns, four surveys, four refusals, no bytes."""
+
+    def _ws(self, size):
+        d = Path(tempfile.mkdtemp())
+        (d / "big.rb").write_text("x = 1\n" * (size // 6))
+        return d
+
+    def _turn(self, view, d, sess):
+        raw = subprocess.run(["bash", "-c", wsview.survey_command(sess)], cwd=str(d),
+                             capture_output=True, text=True).stdout
+        wsview.apply_survey(view, wsview.strip_survey(raw)[1])
+
+    def test_a_body_too_large_to_deliver_is_asked_once(self):
+        d = self._ws(wsview.BLOB_FILE_MAX * 3)
+        view = wsview.View(str(d), "s-undeliv")
+        self.addCleanup(wsview.unbind, wsview.bind(view))
+        self._turn(view, d, "s-undeliv")
+        self.assertIsNone(view.read("big.rb"))
+        self.assertEqual(wsview.pending("s-undeliv")[0], ["big.rb"])   # asked
+        self._turn(view, d, "s-undeliv")
+        self.assertIsNone(view.read("big.rb"))
+        self.assertEqual(view.undeliverable, ["big.rb"])               # answered: cannot
+        self.assertEqual(wsview.pending("s-undeliv")[0], [])           # and not asked again
+
+    def test_the_ask_re_arms_when_the_file_changes_size(self):
+        """Written off at THAT size, not for good — a file the coder trims back into range is a
+        different question."""
+        d = self._ws(wsview.BLOB_FILE_MAX * 3)
+        view = wsview.View(str(d), "s-rearm")
+        self.addCleanup(wsview.unbind, wsview.bind(view))
+        self._turn(view, d, "s-rearm")
+        view.read("big.rb")
+        self._turn(view, d, "s-rearm")
+        view.read("big.rb")
+        (d / "big.rb").write_text("x = 1\n")
+        self._turn(view, d, "s-rearm")
+        self.assertIsNone(view.read("big.rb"))
+        self.assertEqual(wsview.pending("s-rearm")[0], ["big.rb"])
+        self._turn(view, d, "s-rearm")
+        self.assertEqual(view.read("big.rb"), "x = 1\n")
+
+    def test_an_ordinary_source_file_still_fits_in_one_turn(self):
+        d = self._ws(36_000)
+        view = wsview.View(str(d), "s-fits")
+        self.addCleanup(wsview.unbind, wsview.bind(view))
+        self._turn(view, d, "s-fits")
+        view.read("big.rb")
+        self._turn(view, d, "s-fits")
+        self.assertIsNotNone(view.read("big.rb"))
+        self.assertEqual(view.undeliverable, [])
+
+
 class UnknownIsNeverRenderedAsNoTests(unittest.TestCase):
     """The whole point. A silent degradation is the one failure shape nobody can see from outside."""
 
