@@ -35,10 +35,11 @@ already-focused view.
 from __future__ import annotations
 
 import json
+import os
 import re
 from dataclasses import dataclass
 
-from . import dedup, denial, jsontext
+from . import dedup, denial, editrecovery, jsontext
 from . import probegate, prompts
 
 # cria's OWN ground-truth gate probe tags its output with these section markers. Such a probe
@@ -390,14 +391,22 @@ def _drop_superseded_writes(messages: list[dict]) -> tuple[list[dict], int]:
     Only SUPERSEDED copies are stubbed; the newest write to each path stays whole, because that one
     is what is on disk. #5 names this exception in its own words: "repeated content may appear once
     with a pointer to the original"."""
+    # A WRITE THAT NEVER REACHED DISK IS NOT THE NEWEST VERSION OF ANYTHING. `last` used to record
+    # every write-shaped call, refusals included, so a REJECTED write became the "surviving" copy
+    # and the real one before it was dropped — the model then held cria's rejection placeholder
+    # where the file's text should be, which is exactly the destruction the removal rule above
+    # exists to prevent. Walked on `feed-pipeline-java x nemotron-elastic` 20260820T103857 call
+    # 0054: the coder's `pom.xml` write was refused as malformed XML, and the note still told it
+    # "what is on disk is what you last wrote" about `pom.xml`.
+    failed = _failed_write_ids(messages)
+    landed = [(i, _write_path(tc)) for i, m in enumerate(messages)
+              if isinstance(m, dict) and m.get("role") == "assistant"
+              for tc in (m.get("tool_calls") or [])
+              if _write_path(tc) and tc.get("id") not in failed]
+    key = _path_identity([p for _, p in landed])
     last: dict = {}
-    for i, m in enumerate(messages):
-        if not isinstance(m, dict) or m.get("role") != "assistant":
-            continue
-        for tc in m.get("tool_calls") or []:
-            path = _write_path(tc)
-            if path:
-                last[path] = i
+    for i, path in landed:
+        last[key(path)] = i
     if not last:
         return messages, 0
     # THE WHOLE CALL GOES, NOT THE INSIDE OF ITS ARGUMENT. This used to replace the payload with an
@@ -414,13 +423,20 @@ def _drop_superseded_writes(messages: list[dict]) -> tuple[list[dict], int]:
     # superseded call and its result are REMOVED, the way `_collapse_duplicates` already removes a
     # folded call, and one note says it happened. Nothing is left behind that can be read as content,
     # because nothing is left behind.
-    drop_ids = {tc.get("id") for i, m in enumerate(messages)
-                if isinstance(m, dict) and m.get("role") == "assistant"
-                for tc in (m.get("tool_calls") or [])
-                if (p := _write_path(tc)) and last.get(p) != i and _payload_chars(tc) >= _STUB_MIN_CHARS}
+    superseded = [(tc.get("id"), p) for i, m in enumerate(messages)
+                  if isinstance(m, dict) and m.get("role") == "assistant"
+                  for tc in (m.get("tool_calls") or [])
+                  if (p := _write_path(tc)) and last.get(key(p)) != i
+                  and tc.get("id") not in failed and _payload_chars(tc) >= _STUB_MIN_CHARS]
+    drop_ids = {i for i, _ in superseded}
     drop_ids.discard(None)
     if not drop_ids:
         return messages, 0
+    # THE NOTE NAMES WHAT IT DROPPED, not every file the session ever wrote. `paths` was rendered
+    # from `last` — the full write target list — so a note reporting ONE removal listed four files,
+    # and asserted "what is on disk is what you last wrote" about files nothing had touched since.
+    # Same walk, same call 0054.
+    dropped_paths = sorted({key(p) for i, p in superseded if i in drop_ids})
     out, dropped = [], 0
     for m in messages:
         role = m.get("role") if isinstance(m, dict) else None
@@ -445,8 +461,59 @@ def _drop_superseded_writes(messages: list[dict]) -> tuple[list[dict], int]:
     if dropped:
         out.append({"role": "user",
                     "content": prompts.render("superseded_writes_dropped", count=str(dropped),
-                                              paths=", ".join(sorted(last)[:6]))})
+                                              paths=", ".join(dropped_paths[:6]))})
     return (out if dropped else messages), dropped
+
+
+def _path_identity(paths: list[str]):
+    """A function folding the spellings of ONE file onto a single key — for grouping, not for I/O.
+
+    ONE FILE UNDER TWO NAMES IS TWO FILES TO A dict, and that is how the superseded-write rule lost
+    the file it existed for. Walked on `feed-pipeline-java x nemotron-elastic` 20260820T103857: the
+    coder wrote `Importer.java` seven times by absolute path and once, at call 0043, as
+    `src/main/java/pipeline/Importer.java` — the tool accepts both and they land on the same inode.
+    Keyed on the raw string, the relative write and the absolute writes never superseded each other,
+    so the biggest payload in the session went unfolded and cria's own note listed the file twice in
+    one sentence, which reads as two different files that both changed (#5b).
+
+    RESOLVED BY SHAPE, because cria cannot resolve it by path: the working directory is the
+    HARNESS's, not cria's, so `abspath` here would anchor to the wrong root and invent a file that
+    does not exist. A relative path folds onto an absolute one when it is a component-wise SUFFIX of
+    it — `src/main/java/pipeline/Importer.java` under `/w/src/main/java/pipeline/Importer.java`.
+
+    AMBIGUITY DOES NOT FOLD. When a relative spelling suffixes two different absolute paths, cria
+    cannot know which was meant, so it stays its own key: the cost of not folding is a duplicate the
+    model can still read, and the cost of folding wrongly is deleting a file's only copy. Safe null
+    over a guess (#1)."""
+    absolute = sorted({p for p in paths if os.path.isabs(p)})
+    out: dict[str, str] = {}
+    for p in paths:
+        if p in out:
+            continue
+        norm = os.path.normpath(p)
+        if os.path.isabs(p):
+            out[p] = norm
+            continue
+        tail = os.sep + norm.lstrip(os.sep)
+        hits = [a for a in absolute if os.path.normpath(a).endswith(tail)]
+        out[p] = os.path.normpath(hits[0]) if len(hits) == 1 else norm
+    return lambda p: out.get(p, os.path.normpath(p))
+
+
+def _failed_write_ids(messages: list[dict]) -> set[str]:
+    """tool_call_ids whose write/edit result came back as a refusal — the payload never hit disk.
+
+    Read from cria's OWN markers on the result, not from the prose of it: `denial.mark` prefixes
+    every call cria refused, and `editrecovery.compose` prefixes every edit-failure directive. Both
+    are structural, so this asks the event rather than pattern-matching an error sentence."""
+    ids: set[str] = set()
+    for m in messages:
+        if not isinstance(m, dict) or m.get("role") != "tool" or not m.get("tool_call_id"):
+            continue
+        body = str(m.get("content") or "")
+        if denial.is_denied(body) or editrecovery.EDIT_MARK in body:
+            ids.add(m["tool_call_id"])
+    return ids
 
 
 def _payload_chars(tc: dict) -> int:

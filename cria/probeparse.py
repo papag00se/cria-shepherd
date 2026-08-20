@@ -335,21 +335,18 @@ _MSVC_LOC = re.compile(r"^(\S+?)\((\d+),(\d+)\):\s+")
 # bracketed alphabetic tag is removed only when what remains parses as a real diagnostic, so a line
 # that is not one is left exactly as it was. `[ERROR] [Help 1] http://…` still yields nothing —
 # `[Help 1]` is not the shape, and the remainder holds no `file:line`.
-_LOG_SEVERITY_TAG = re.compile(r"^\[[A-Za-z]+\]\s+")
-
-# A LEADING SEVERITY TAG IS NOT PART OF THE LOCATION. Log-shaped build tools stamp every line with
-# one — Maven's `[ERROR] `, ant's `[javac] `, MSBuild's `[warn] ` — and both location patterns above
-# anchor at `^`, so the tag pushed the path off position 0 and neither could ever match. A real
-# path never starts with `[`, and `looks_like_path` still gates whatever is recovered, so removing
-# the tag can only expose a location that was already there.
+# The tag itself: Maven's `[ERROR] `, ant's `[javac] `, MSBuild's `[warn] `. A real path never
+# starts with `[`, and `looks_like_path` still gates whatever is recovered.
 _LOG_TAG = re.compile(r"^\[[A-Za-z][A-Za-z0-9_-]*\]\s+")
 
 
 def split_diag(s: str) -> Optional[tuple[str, Optional[int], Optional[int], str]]:
     """``file:line[:col]: message`` -> (file, line, col, message). Used by parse_generic."""
-    # See _LOG_SEVERITY_TAG: a build logger's own `[ERROR] ` prefix hid every Maven diagnostic from
-    # this function. Retried WITHOUT the tag, and kept only if the remainder is a real diagnostic.
-    tag = _LOG_SEVERITY_TAG.match(s)
+    # See _LOG_TAG: a build logger's own `[ERROR] ` prefix hid every Maven diagnostic from this
+    # function. Retried WITHOUT the tag, and kept ONLY if the remainder is a real diagnostic — an
+    # unconditional strip would rewrite lines that are not diagnostics at all, and the recursion
+    # terminates because each pass removes one tag.
+    tag = _LOG_TAG.match(s)
     if tag:
         inner = split_diag(s[tag.end():])
         if inner is not None:
@@ -373,7 +370,6 @@ def split_diag(s: str) -> Optional[tuple[str, Optional[int], Optional[int], str]
     # Walked again on feed-pipeline-java x nemotron-elastic 20260820T103857 call 0031: cria held the
     # `cannot find symbol class CSVRecord` line in the same prompt and still told the coder "a
     # specific line could not be parsed from the output", quoting Maven's `[Help 1]` URL instead.
-    s = _LOG_TAG.sub("", s, count=1)
     s = _MAVEN_LOC.sub(r"\1:\2:\3: ", s, count=1)
     s = _MSVC_LOC.sub(r"\1:\2:\3: ", s, count=1)
     if ": " not in s:
