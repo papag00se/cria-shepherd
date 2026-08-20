@@ -141,5 +141,39 @@ class TheRemovalRidesOnTheNextGateTests(unittest.TestCase):
         self.assertEqual(probegate.litter_removal_command(ws), "")
 
 
+class TheLitterGoesOutEvenWithNoNextGateTests(unittest.TestCase):
+    """The queue is only safe if something is guaranteed to carry it. A gate is not: a run can end,
+    or simply never gate again, and then cria's own probe artifacts sit in the user's repo for good
+    — which is principle 7 broken by the mechanism that exists to keep it."""
+
+    def _queue(self, ws):
+        plan = probegate.plan_gate(ws)
+        probegate.interpret_gate(plan, "\n".join([
+            f"{probegate.SECTION_PREFIX}{probegate.LITTER_SECTION}{probegate.SECTION_SUFFIX}",
+            "junk.txt",
+            f"{probegate.SECTION_PREFIX}git{probegate.SECTION_SUFFIX}",
+        ]))
+
+    def test_the_next_lowered_write_carries_it(self):
+        import json
+
+        from cria import writeproxy, wsview
+        ws = _repo()
+        pathlib.Path(ws, "junk.txt").write_text("cria's own probe artifact")
+        self._queue(ws)
+        self.addCleanup(wsview.unbind, wsview.bind(wsview.View(ws, "s-lit")))
+        comp = {"choices": [{"message": {"tool_calls": [
+            {"id": "t1", "type": "function",
+             "function": {"name": "write_file",
+                          "arguments": json.dumps({"path": "a.py", "content": "x = 1\n"})}}]}}]}
+        writeproxy.translate_outbound(comp, {"name": "shell", "parameters": {}},
+                                      injected={"write_file"}, session="s-lit", workspace_root=ws)
+        cmd = json.loads(comp["choices"][0]["message"]["tool_calls"][0]
+                         ["function"]["arguments"])["command"]
+        subprocess.run(["sh", "-c", cmd], cwd=ws, capture_output=True)
+        self.assertFalse(pathlib.Path(ws, "junk.txt").exists())
+        self.assertTrue(pathlib.Path(ws, "a.py").exists(), "the coder's own write must still land")
+
+
 if __name__ == "__main__":
     unittest.main()

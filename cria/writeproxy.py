@@ -1088,6 +1088,15 @@ SURVEY_EVERY = 4
 _SURVEY_SEQ: dict[str, int] = {}
 
 
+def _litter_leg(workspace_root: str | None) -> str:
+    """The queued gate-litter removal, or "". One line, so the gate keeps owning WHAT is litter and
+    this only asks whether anything is waiting to go out."""
+    if not workspace_root:
+        return ""
+    from .probegate import litter_removal_command
+    return litter_removal_command(workspace_root)
+
+
 def _survey_due(session: str | None, name: str) -> bool:
     """Whether this lowered call should carry the workspace survey.
 
@@ -1297,6 +1306,13 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
                 # and nothing else.
                 if name in _SURVEYABLE and _survey_due(session, name):
                     cmd = f"{cmd}\n{wsview.survey_command(session or '', cd=workspace_root or '')}"
+                # AND TAKE CRIA'S OWN LITTER OUT WITH IT. The gate's probes create untracked files in
+                # the coder's workspace; cria cannot unlink them itself (that filesystem is the
+                # harness's), so the removal rides on a command cria composes. The next GATE carries
+                # it too — this is the leg that matters when there is no next gate, which is the case
+                # where the litter would otherwise sit in the user's repo for good (#7).
+                if (rm := _litter_leg(workspace_root)):
+                    cmd = f"{rm}\n{cmd}"
                 rebuilt.append(_shell_call(tc.get("id"), shell_tool, f"{_sentinel(name, fn.get('arguments'))}\n{cmd}"))
                 if rlog is not None:
                     # `target`/`detail` feed the LIVE status ticker — the harness renders the lowered
