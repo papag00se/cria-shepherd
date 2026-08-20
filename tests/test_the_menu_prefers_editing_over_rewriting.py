@@ -21,7 +21,7 @@ task, with the harness's own menu, wrote the file once and made three ~285-byte 
 regeneration is a fresh chance to break one.
 
 This is the A fix. Folding the superseded copies out of the prompt
-(`focustrim._stub_superseded_writes`) is the B — worth keeping on its own terms, because a stale copy
+(`focustrim._drop_superseded_writes`) is the B — worth keeping on its own terms, because a stale copy
 of a file is not what is on disk and #5 allows carrying repeated content once as a pointer — but it
 treats the bloat, and this treats the rewriting.
 """

@@ -69,6 +69,13 @@ def bodies(msgs, path="src/main.rs"):
 
 
 class TheSupersededCopiesGoTests(unittest.TestCase):
+    """THEY GO ENTIRELY NOW (operator, 2026-08-19: "There is not supposed to be any elision. It's all
+    or nothing."). This used to replace the payload with an elision stub and leave the call in place,
+    which put cria's own prose in the slot where file content lives — and the coder copied it forward
+    as a real write, destroying a 357-line file (feed-pipeline-java x qwen35, call 0095). The call
+    and its result are removed now, the way `_collapse_duplicates` already removes a folded call, and
+    a marked note says it happened.
+"""
     def test_only_the_newest_write_to_a_path_survives_whole(self):
         msgs = [write("1", "src/main.rs", BIG), result("1"),
                 write("2", "src/main.rs", BIG2), result("2"),
@@ -85,13 +92,33 @@ class TheSupersededCopiesGoTests(unittest.TestCase):
                 for m in out for tc in (m.get("tool_calls") or [])]
         self.assertIn(BIG3, kept)
 
-    def test_the_stub_points_at_the_disk(self):
-        msgs = [write("1", "src/main.rs", BIG), result("1"),
+    def _five_writes(self):
+        return [write("1", "src/main.rs", BIG), result("1"),
                 write("2", "src/main.rs", BIG2), result("2")]
-        out, _ = focustrim.trim(msgs)
-        blob = json.dumps(out)
-        self.assertIn("read_file for what is actually on disk now", blob)
-        self.assertIn("src/main.rs", blob)
+
+    def test_the_removal_is_STATED_never_silent(self):
+        """The call is gone, so a note must say so — a model shown a history where its own writes
+        simply vanished concludes the file was never written and starts again."""
+        out, _n = focustrim._drop_superseded_writes(self._five_writes())
+        note = out[-1]
+        self.assertEqual(note["role"], "user")
+        self.assertIn("⟦ctx:facts⟧", note["content"])
+        self.assertIn("removed from the history", note["content"])
+        self.assertIn("Nothing was lost", note["content"])
+
+    def test_nothing_cria_wrote_is_left_in_an_ARGUMENT_slot(self):
+        """THE WHOLE POINT. The old rendering put cria's prose in the `content` argument of a
+        superseded write, and on feed-pipeline-java x qwen35 call 0095 the coder copied it forward
+        as the content of a new write — javac answered `illegal character: '\u2014'`, the em dash in
+        cria's own sentence. Whatever survives here, no tool-call argument may carry cria's voice."""
+        import json as _json
+        out, _n = focustrim._drop_superseded_writes(self._five_writes())
+        for m in out:
+            for tc in (m.get("tool_calls") or []):
+                args = tc.get("function", {}).get("arguments") or "{}"
+                with self.subTest(call=tc.get("id")):
+                    self.assertNotIn("elided", args)
+                    self.assertNotIn("⟦ctx:", args)
 
     def test_near_identical_is_the_whole_point(self):
         """Byte-identical copies were already folded. These differ by ~1%, which is why they were not."""
@@ -119,13 +146,24 @@ class WhatIsLeftAloneTests(unittest.TestCase):
         out, _ = focustrim.trim(msgs)
         self.assertIn("x = 1", json.dumps(out))
 
-    def test_tool_RESULTS_are_never_stubbed(self):
-        """A tool result is ground truth, not a superseded payload of cria's own carrying."""
-        msgs = [write("1", "src/main.rs", BIG), result("1", "here is the file:\n" + BIG),
-                write("2", "src/main.rs", BIG2), result("2")]
+    def test_tool_RESULTS_of_SURVIVING_calls_are_untouched(self):
+        """A tool result is ground truth, not a superseded payload of cria's own carrying. The
+        result of a DROPPED call goes with its call (an orphan would break the protocol); the result
+        of a surviving one keeps every byte."""
+        msgs = [write("1", "src/main.rs", BIG), result("1"),
+                write("2", "src/main.rs", BIG2), result("2", "here is the file:\n" + BIG)]
         out, _ = focustrim.trim(msgs)
         tool_txt = "".join(str(m.get("content") or "") for m in out if m.get("role") == "tool")
         self.assertIn("fn resolve_path", tool_txt)
+
+    def test_a_dropped_calls_result_goes_with_it(self):
+        """An orphaned tool result is a malformed conversation, and one malformed historical call
+        500s every later turn (the poisoned-history class)."""
+        out, _ = focustrim._drop_superseded_writes(
+            [write("1", "src/main.rs", BIG), result("1"), write("2", "src/main.rs", BIG2), result("2")])
+        ids = {m.get("tool_call_id") for m in out if m.get("role") == "tool"}
+        live = {tc.get("id") for m in out for tc in (m.get("tool_calls") or [])}
+        self.assertTrue(ids <= live, f"orphaned results: {ids - live}")
 
 
 class ItIsTheSameRuleTheCompactorAlreadyHasTests(unittest.TestCase):

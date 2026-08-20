@@ -371,7 +371,7 @@ def _squash_failures(messages: list[dict]) -> tuple[list[dict], TrimReport]:
     return out, rep
 
 
-def _stub_superseded_writes(messages: list[dict]) -> tuple[list[dict], int]:
+def _drop_superseded_writes(messages: list[dict]) -> tuple[list[dict], int]:
     """A write payload that a LATER write to the same path replaced is carried once, as a pointer.
 
     THE MODEL WAS LOOKING AT SIX COPIES OF ITS OWN FILE. Measured on the targeted post-fix re-run of
@@ -400,46 +400,71 @@ def _stub_superseded_writes(messages: list[dict]) -> tuple[list[dict], int]:
                 last[path] = i
     if not last:
         return messages, 0
-    out, stubbed = [], 0
-    for i, m in enumerate(messages):
-        calls = m.get("tool_calls") if isinstance(m, dict) and m.get("role") == "assistant" else None
-        if not calls:
+    # THE WHOLE CALL GOES, NOT THE INSIDE OF ITS ARGUMENT. This used to replace the payload with an
+    # elision stub — `[elided 8031 chars — an EARLIER version of X, replaced by a later write…]` —
+    # and leave the call in place. That put cria's own prose in the exact slot where file content
+    # lives, in the model's own history, and on `feed-pipeline-java x qwen35` (2026-08-19) call 0095
+    # the coder copied it forward as the content of a NEW write. javac answered
+    # `Importer.java:[1,20] illegal character: '\u2014'` — the em dash in cria's sentence — and the
+    # model's own reasoning read "The file got corrupted with placeholder text." A 357-line file
+    # became one line of cria's note; recovery was `git checkout` to the seed, and everything built
+    # since was lost.
+    #
+    # Operator, 2026-08-19: "There is not supposed to be any elision. It's all or nothing." So the
+    # superseded call and its result are REMOVED, the way `_collapse_duplicates` already removes a
+    # folded call, and one note says it happened. Nothing is left behind that can be read as content,
+    # because nothing is left behind.
+    drop_ids = {tc.get("id") for i, m in enumerate(messages)
+                if isinstance(m, dict) and m.get("role") == "assistant"
+                for tc in (m.get("tool_calls") or [])
+                if (p := _write_path(tc)) and last.get(p) != i and _payload_chars(tc) >= _STUB_MIN_CHARS}
+    drop_ids.discard(None)
+    if not drop_ids:
+        return messages, 0
+    out, dropped = [], 0
+    for m in messages:
+        role = m.get("role") if isinstance(m, dict) else None
+        if role == "assistant" and m.get("tool_calls"):
+            kept = [tc for tc in m["tool_calls"] if tc.get("id") not in drop_ids]
+            n = len(m["tool_calls"]) - len(kept)
+            if not n:
+                out.append(m)
+                continue
+            dropped += n
+            if not kept and not str(m.get("content") or "").strip():
+                continue                      # emptied → the whole assistant turn goes
+            out.append({**m, "tool_calls": kept})
+        elif role == "tool" and m.get("tool_call_id") in drop_ids:
+            continue                          # orphaned result of a dropped call
+        else:
             out.append(m)
-            continue
-        new_calls, touched = [], False
-        for tc in calls:
-            path = _write_path(tc)
-            if not path or last.get(path) == i:
-                new_calls.append(tc)
-                continue
-            fn = tc.get("function") or {}
-            try:
-                args = json.loads(fn.get("arguments") or "{}")
-            except ValueError:
-                new_calls.append(tc)
-                continue
-            hit = False
-            # `old_string` belongs here for the same reason the rest do: this whole call is
-            # superseded. Leaving it out rendered a stale edit as the BEFORE text in full and the
-            # AFTER text as a pointer, so every seat asked whether the coder is looping was shown no
-            # diff — the judgement it exists to make. Walked on `shipping-rates-rb x ternary-bonsai`
-            # 1787111689, where the reasoner's whole view of the run's edits was old_string after
-            # old_string with every new_string elided.
-            for key in ("content", "contents", "new_string", "patch", "old_string"):
-                v = args.get(key)
-                if isinstance(v, str) and len(v) >= _STUB_MIN_CHARS:
-                    words = prompts.load_map("compact_view")
-                    args[key] = prompts.fill(
-                        words["write_stub_replaced" if key == "old_string" else "write_stub_superseded"],
-                        chars=str(len(v)), path=path)
-                    hit = True
-            if hit:
-                touched, stubbed = True, stubbed + 1
-                new_calls.append({**tc, "function": {**fn, "arguments": json.dumps(args)}})
-            else:
-                new_calls.append(tc)
-        out.append({**m, "tool_calls": new_calls} if touched else m)
-    return (out if stubbed else messages), stubbed
+    # SAY IT HAPPENED, once, in cria's own marked channel — never in an argument slot. The model is
+    # otherwise shown a history in which writes it made are simply absent, and a weak model reading
+    # that concludes the file was never written and starts again (the disown-your-own-work failure
+    # the re-orientation seat exists for).
+    if dropped:
+        out.append({"role": "user",
+                    "content": prompts.render("superseded_writes_dropped", count=str(dropped),
+                                              paths=", ".join(sorted(last)[:6]))})
+    return (out if dropped else messages), dropped
+
+
+def _payload_chars(tc: dict) -> int:
+    """The size of the biggest write-payload argument on this call — 0 when it carries none.
+
+    The size test is what keeps a one-line edit in the history: dropping every superseded call
+    regardless of size would throw away the small, cheap ones that cost nothing to keep and that
+    show the model the shape of what it has been doing."""
+    fn = tc.get("function") or {}
+    try:
+        args = json.loads(fn.get("arguments") or "{}")
+    except ValueError:
+        return 0
+    if not isinstance(args, dict):
+        return 0
+    return max((len(v) for k, v in args.items()
+                if k in ("content", "contents", "new_string", "patch", "old_string")
+                and isinstance(v, str)), default=0)
 
 
 def _write_path(tc: dict) -> str:
@@ -465,7 +490,7 @@ def trim(messages: list[dict]) -> tuple[list[dict], TrimReport]:
         return messages, TrimReport()
     out, rep_a = _collapse_duplicates(messages)
     out, rep_b = _squash_failures(out)
-    out, superseded = _stub_superseded_writes(out)
+    out, superseded = _drop_superseded_writes(out)
     rep_b = TrimReport(dropped_calls=rep_b.dropped_calls, dropped_msgs=rep_b.dropped_msgs,
                        squashed_runs=rep_b.squashed_runs + superseded)
     total = TrimReport(

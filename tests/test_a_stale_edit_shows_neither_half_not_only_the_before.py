@@ -13,7 +13,7 @@ over:
       end; new_string=[elided 597 chars — an EARLIER version of …/lib/shipping/rates.rb, replaced by
       a later write in this session; read_file for what is actually on disk now]
 
-Both stubbing paths — `focustrim._stub_superseded_writes` and `selfcompact`'s write-arg folding —
+Both folding paths — `focustrim._drop_superseded_writes` and `selfcompact`'s write-arg folding —
 listed `content`, `new_string`, `patch` and **not** `old_string`. So a historical `edit_file` reached
 its reader as the text being replaced, in full, and the replacement as a pointer. The seat convened
 to decide whether an edit changed anything was handed the one half that cannot answer that.
@@ -51,36 +51,55 @@ def edit_key(path, key, value, cid="c1"):
         "function": {"name": "edit_file", "arguments": json.dumps({"path": path, key: value})}}]}
 
 
-class TheSupersededEditHidesBothHalvesTests(unittest.TestCase):
-    def test_the_before_is_no_longer_the_only_half_kept(self):
-        msgs = [edit("lib/x.rb", BIG_OLD, BIG_NEW, "a"), edit("lib/x.rb", BIG_NEW, BIG_OLD, "b")]
-        out, n = focustrim._stub_superseded_writes(msgs)
+def _write(path, content, cid="w1"):
+    return {"role": "assistant", "tool_calls": [{
+        "id": cid, "type": "function",
+        "function": {"name": "write_file",
+                     "arguments": json.dumps({"path": path, "content": content})}}]}
+
+
+class TheSupersededEditGOESTests(unittest.TestCase):
+    """The fix this file recorded — hide BOTH halves of a stale edit, not only the after — was right
+    about the diagnosis and wrong about the remedy. Eliding a half still leaves cria's prose in an
+    argument slot, and on feed-pipeline-java x qwen35 call 0095 the coder copied one forward as the
+    content of a new write and destroyed the file. Operator, 2026-08-19: "There is not supposed to be
+    any elision. It's all or nothing." So a superseded edit is REMOVED, both halves with it."""
+
+    def _edit_then_write(self):
+        """A stale edit to a file, then a later whole-file write to the same path."""
+        return [edit("lib/shipping/rates.rb", BIG_OLD, BIG_NEW),
+                {"role": "tool", "tool_call_id": "c1", "content": "ok"},
+                _write("lib/shipping/rates.rb", "NEWEST" + ("\n# v2" * 200))]
+
+    def test_the_superseded_edit_is_gone_entirely(self):
+        out, n = focustrim._drop_superseded_writes(self._edit_then_write())
         self.assertEqual(n, 1)
-        stale = args_of(out[0])
-        self.assertIn("elided", stale["old_string"])
-        self.assertIn("elided", stale["new_string"])
+        blob = json.dumps(out)
+        self.assertNotIn("# before", blob, "the old_string survived")
+        self.assertNotIn("# after", blob, "the new_string survived")
 
-    def test_the_newest_write_keeps_both_halves_whole(self):
-        """Where the diff actually lives — this one is what is on disk."""
-        msgs = [edit("lib/x.rb", BIG_OLD, BIG_NEW, "a"), edit("lib/x.rb", BIG_NEW, BIG_OLD, "b")]
-        out, _ = focustrim._stub_superseded_writes(msgs)
-        newest = args_of(out[1])
-        self.assertEqual(newest["old_string"], BIG_NEW)
-        self.assertEqual(newest["new_string"], BIG_OLD)
+    def test_neither_half_is_replaced_by_a_pointer(self):
+        """The distinction that matters: not "hidden behind a stub" — ABSENT."""
+        out, _n = focustrim._drop_superseded_writes(self._edit_then_write())
+        blob = json.dumps(out)
+        self.assertNotIn("elided", blob)
+        self.assertNotIn("the text this edit replaced", blob)
 
-    def test_a_replaced_fragment_is_not_called_a_version_of_the_file(self):
-        msgs = [edit("lib/x.rb", BIG_OLD, BIG_NEW, "a"), edit("lib/x.rb", BIG_NEW, BIG_OLD, "b")]
-        out, _ = focustrim._stub_superseded_writes(msgs)
-        stale = args_of(out[0])
-        self.assertIn("the text this edit replaced", stale["old_string"])
-        self.assertNotIn("an EARLIER version", stale["old_string"])
-        self.assertIn("an EARLIER version", stale["new_string"])
+    def test_the_newest_write_keeps_its_payload_whole(self):
+        out, _n = focustrim._drop_superseded_writes(self._edit_then_write())
+        calls = [tc for m in out for tc in (m.get("tool_calls") or [])]
+        self.assertEqual(len(calls), 1, "only the newest write survives")
+        self.assertIn("NEWEST", calls[0]["function"]["arguments"])
 
-    def test_a_short_fragment_is_left_alone(self):
-        """Below the floor a pointer is longer than the thing it replaces."""
-        msgs = [edit("lib/x.rb", "a = 1", BIG_NEW, "a"), edit("lib/x.rb", BIG_NEW, BIG_OLD, "b")]
-        out, _ = focustrim._stub_superseded_writes(msgs)
-        self.assertEqual(args_of(out[0])["old_string"], "a = 1")
+    def test_a_short_edit_is_left_alone(self):
+        """Dropping every superseded call regardless of size would throw away the small ones, which
+        cost nothing to keep and show the model the shape of what it has been doing."""
+        msgs = [edit("lib/x.rb", "a = 1", "a = 2"),
+                {"role": "tool", "tool_call_id": "c1", "content": "ok"},
+                _write("lib/x.rb", "NEWEST" + "x" * 900)]
+        out, n = focustrim._drop_superseded_writes(msgs)
+        self.assertEqual(n, 0)
+        self.assertEqual(out, msgs)
 
 
 class TheCompactViewFoldsItTooTests(unittest.TestCase):
@@ -97,7 +116,7 @@ class TheCompactViewFoldsItTooTests(unittest.TestCase):
             with self.subTest(key=key):
                 msgs = [edit_key("lib/x.rb", key, "x" * 500, "a"),
                         edit_key("lib/x.rb", key, "y" * 500, "b")]
-                out, n = focustrim._stub_superseded_writes(msgs)
+                out, n = focustrim._drop_superseded_writes(msgs)
                 self.assertEqual(n, 1, f"{key} was not recognized as a stubbable write payload")
                 stale = args_of(out[0])
                 self.assertNotIn("x" * 500, stale[key])
