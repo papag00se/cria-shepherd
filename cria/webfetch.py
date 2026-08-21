@@ -1087,11 +1087,23 @@ def already_spilled(session: Optional[str], url: str, workspace_root: Optional[s
         return True
     if workspace_root and not os.path.abspath(path).startswith(os.path.abspath(workspace_root) + os.sep):
         return False
-    # The spill file lives in the CODER's workspace, so whether it is still there is a question
-    # about the harness's disk. Unknown keeps the claim — the record says cria wrote it, and
-    # withdrawing that on an unanswered question would send the model to re-fetch a doc it has.
+    # THE RECORD IS NOT EVIDENCE. It is written at COMPOSE time, one line before the command is even
+    # returned — so it says cria INTENDED to write the file, never that the harness wrote it. When the
+    # exec is refused (an oversized spill, a sandbox rejection) nothing lands, and a claim built on
+    # that record is a false fact cria then defends.
+    #
+    # Walked on handles-cli-node x nemotron-elastic 1787273429: the spill exec was refused, and for
+    # twenty-six turns cria told the model "that file is still there" in one paragraph while its own
+    # read guard answered "is not there — nothing was read" in the next. The model re-fetched the
+    # same 111 KB document seven times.
+    #
+    # So this needs the FILESYSTEM to say yes, not merely to fail to say no. Unknown re-allows a
+    # fetch, which costs a turn; the other direction cost twenty-six. (This line said `is not False`
+    # for a day — the reasoning was that withdrawing a claim on an unanswered question would send the
+    # model to re-fetch a doc it has. That is right for a claim cria VERIFIED and wrong for one it
+    # only intended.)
     from . import wsview
-    return wsview.current().exists(path) is not False
+    return wsview.current().exists(path) is True
 
 
 def note_search_spill(session: Optional[str], query: str) -> None:

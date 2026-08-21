@@ -892,7 +892,22 @@ def _fetch_command(args: dict, session: str | None = None, workspace_root: str |
 # inside the command can get around that — a heredoc, chunked printfs, base64: they are all still
 # bytes in that one string. Codex reports the overrun as "Argument list too long (os error 7)" and
 # the whole exec fails, so the doc never lands at all.
-COMMAND_ARG_BUDGET = 120 * 1024
+# MEASURED, NOT DERIVED FROM THE KERNEL CAP. `MAX_ARG_STRLEN` is 128 KiB, and 120 KiB left headroom
+# on paper — but the harness wraps what cria composes in `/bin/bash -lc "<command>"`, so the shell
+# quoting, the ⟦ctx:tool⟧ sentinel and the harness's own framing all ride on top, and its effective
+# limit is lower than the kernel's. Across the captured rollouts: seven spill execs were REFUSED, the
+# smallest at 123,848 bytes on the wire.
+#
+# THE COST IS ASYMMETRIC, so the budget is. Overshooting does not merely fail: the harness echoes the
+# WHOLE refused command back as the tool result, so ~10 KB of raw base64 lands in the model's context
+# per attempt. Walked on handles-cli-node x nemotron-elastic 1787273429 — the spill was refused, cria
+# recorded it as written anyway, the model re-fetched seven times chasing the phantom file, and by the
+# final compaction that base64 was 68% of a 92,261-character prompt. The context floor could drop
+# nothing (two composed messages), the model server answered HTTP 400, and the run ended early.
+#
+# Undershooting costs a disclosed cut (see SPILL_CONTENT_MAX and prompts/spill_cut.txt). Half the
+# kernel cap sits far below every observed refusal and still carries a substantial spec.
+COMMAND_ARG_BUDGET = 64 * 1024
 # base64 is 4 bytes per 3, and the rest of the command (paths, the pointer message, the markers)
 # needs room too.
 SPILL_CONTENT_MAX = (COMMAND_ARG_BUDGET - 4 * 1024) * 3 // 4
