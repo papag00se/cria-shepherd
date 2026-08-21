@@ -83,3 +83,17 @@ If it is ever revisited, the fix belongs in the steer author's own prompt (fence
 
 **What would settle it.** One walked run where a `write_file` fails with `os error 7`, or a count of write payload sizes across the capture corpus showing any above ~90 KB. Until then the docstring states the ceiling and nothing enforces it.
 
+---
+
+## Open: the zero-config TEST FLOOR has the same bundler blindness, and its counter-case is unread
+
+**Settled and fixed:** `rake test` now runs through bundler when the Gemfile declares `gem "rake"` (`probediscovery.build_ruby`). Evidence and counter-evidence are in `tests/test_the_repos_own_check_is_the_repos_own_command.py`.
+
+**Not settled:** the ruby TEST FLOOR — `ruby -Ilib -Itest -e 'Dir["test/**/test_*.rb"].each { … }'` — has the identical problem. It does not consult bundler, so in a project that vendors its gems it dies on `require` and cria publishes that as the repo's own check. Both false reds show it: floor red bare, green under `bundle exec`.
+
+**Why it was not changed with the other one.** Running the floor under bundler flips one archived run the OTHER way — `shipping-rates-rb x qwen35` 1786864442, where the bare floor is GREEN and `bundle exec` is red. That run does not declare `gem "rake"`, so the shipped rule leaves it alone, but a floor-specific rule keyed on "a Gemfile exists" would not. **Nobody has read why that one fails under bundler.** Until someone does, a change here trades two false reds for an unknown number of false greens, and a false green is the worse direction (#13).
+
+**There is also a design question underneath it.** The floor's own docstring says it exists "for the config-free case: a runner is added when the tree has that language's test files but no manifest to trigger ecosystem discovery". It is firing on projects that HAVE a Gemfile, where `build_ruby` already supplies rspec and rake. Either the floor should not fire there at all (subtractive, #1's safe direction) or it should be composed like the manifest's own command. Deciding that needs the reading above.
+
+**What would settle it:** read `bundle exec ruby -Ilib -Itest -e …` in archive `shipping-rates-rb_qwen35_codex_poff_1786864442` and say why it exits non-zero where the bare command does not.
+

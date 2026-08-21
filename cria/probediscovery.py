@@ -791,9 +791,15 @@ _RAKE_TEST_TASK = re.compile(r"^\s*(?:Rake::TestTask\.new|task\s+:test\b|task\s+
                              re.M)
 
 
+# `gem "rake"` in a Gemfile — the project declaring that rake belongs to its bundle, which is what
+# makes `bundle exec rake` the project's own command rather than a guess about one.
+_BUNDLED_RAKE = re.compile(r'^\s*gem\s+["\']rake["\']', re.M)
+
+
 def build_ruby(p: ProjectDir, out: list[ProbeCandidate]) -> None:
     # Unconditional once the ecosystem is detected — no Gemfile-content check.
     d = p.dir
+    gemfile = read_text(Path(d) / "Gemfile") or ""
     out.append(cand(ProbeKind.Lint, ["bundle", "exec", "rubocop"], d, 70, 82,
                     ProbeCost.Cheap, "rubocop if in Gemfile"))
     out.append(cand(ProbeKind.Test, ["bundle", "exec", "rspec"], d, 70, 88,
@@ -803,7 +809,26 @@ def build_ruby(p: ProjectDir, out: list[ProbeCandidate]) -> None:
         if body is None:
             continue
         if _RAKE_TEST_TASK.search(body):
-            out.append(cand(ProbeKind.Test, ["rake", "test"], d, 88, 90,
+            # THROUGH BUNDLER WHEN THE PROJECT PUTS RAKE IN ITS BUNDLE. A bare `rake test` does not
+            # consult bundler, so in a project that vendors its gems (`BUNDLE_PATH: vendor/bundle`)
+            # it cannot see them and dies on `require` — and cria then publishes that under "the
+            # repo's own checks report these error-class problems", which is the one header the
+            # coder is told is the only thing it may believe about the build.
+            #
+            # Measured across every archived ruby run whose checks reported a require failure and
+            # whose workspace held a bundler install (n=18): five declare `gem "rake"`, and on two
+            # of them `bundle exec rake test` is GREEN while the bare command is red — 8 runs, 8
+            # assertions, 0 failures, reported to the coder as a LoadError for four gate cycles
+            # running. It spent the rest of that run trying to fix a load path that was not broken.
+            #
+            # Gated on the manifest, not on a guess. The other thirteen runs do NOT declare rake —
+            # for them `bundle exec rake` fails with "rake is not currently included in the bundle",
+            # so `rake test` bare is genuinely their command and they are left exactly as they are.
+            # Under this rule 14 of the 18 report red today and 12 do after, and the two that move
+            # are the two independently confirmed green.
+            argv = (["bundle", "exec", "rake", "test"] if _BUNDLED_RAKE.search(gemfile)
+                    else ["rake", "test"])
+            out.append(cand(ProbeKind.Test, argv, d, 88, 90,
                             ProbeCost.Moderate, f"test task declared in {name}"))
         break
 
