@@ -1407,8 +1407,24 @@ def dependency_missing(text: str) -> tuple[str, str] | None:
     for eco, pat in _DEPENDENCY_MISSING:
         m = pat.search(text or "")
         if m:
-            return eco, m.group(1)
+            return eco, _trim_sentence_punctuation(m.group(1))
     return None
+
+
+# Punctuation a runtime puts AFTER the name because its message continues, not because it is part of
+# the name. Go's is the one that bit: `no required module provides package X; to add it:` — the
+# pattern's `\S+` takes the semicolon with it, so cria named the module `github.com/arithmetic/
+# decimal;` and prescribed `go get github.com/arithmetic/decimal;`, a command that cannot work for
+# ANY module, real or invented. Walked on cart-billing-go x nemotron-elastic 1787152914: that note
+# rode into six coder turns and four reasoner directives.
+#
+# Trimmed for every ecosystem rather than only for Go — a name never legitimately ends in one of
+# these, and the next runtime to append a separator should not need its own fix (#20).
+_TRAILING_PUNCT = ";:,.'\"`)]}"
+
+
+def _trim_sentence_punctuation(name: str) -> str:
+    return (name or "").rstrip(_TRAILING_PUNCT)
 
 
 # A dotted or slashed name's FIRST segment is the thing that has to resolve — `shipping.rates` is
