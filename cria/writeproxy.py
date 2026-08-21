@@ -995,7 +995,13 @@ def _search_command(args: dict, brave_key: str) -> str:
     # nothing above names a file — the filename only appears in the spill branch, which is the
     # branch not taken. A pointer to a file cria never named is a false fact in cria's own voice
     # (#5b); seen in three cells of cycle 1. The target is known here, so it goes in the sentence.
-    inline_note = prompts.fill(prompts.load("search_inline_note"), target=target)
+    # THE POINTER MUST CARRY ITS QUERY. cria's read-judge finds the query for a saved result file by
+    # matching this sentence, and the inline branch's version did not contain one — so the judge was
+    # asked to rule on a search whose query it was told was "(none)", and ruled it off-target. Walked
+    # on shipping-rates-rb x nemotron-elastic 1787294328: the deleted file held
+    # `ISO3166::Country#in_eu?`, the exact predicate that task needed, and the run scored 0/5. Both
+    # pointers now say the same sentence, so one regex reads both (#23).
+    inline_note = prompts.fill(prompts.load("search_inline_note"), target=target, query=query)
     url = brave.query_url(query, count=_SEARCH_MAX_RESULTS)
     header_flags = " ".join(f"-H {_qbash(f'{k}: {v}')}" for k, v in brave.headers(brave_key).items())
     # `e`: a Brave ERROR body (401 invalid key, 422, 429 rate-limited) is valid JSON, so json.load

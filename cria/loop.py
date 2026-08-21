@@ -2680,8 +2680,25 @@ class Loop:
                     # and a definite false DELETES it. Unreadable → judge nothing, strip nothing (the file
                     # stays marked judged, so this can never become a per-turn reasoner call either).
                     results = search_file_text(sess.workspace_root, f)
+                    query = q_of.get(_search_key(f), "")
+                    if not query:
+                        # NO QUERY, NO VERDICT. This judgement is destructive — a false DENIES the
+                        # coder a file that is still on disk, permanently — and without the query
+                        # there is nothing to judge the results against. Asked anyway, the judge
+                        # reasons from the literal "(none)" it was handed and rules false: walked on
+                        # shipping-rates-rb x nemotron-elastic 1787294328, where the file it deleted
+                        # held `ISO3166::Country#in_eu?`, the exact predicate the task required.
+                        # The host veto below cannot save that case — the task named no host.
+                        #
+                        # The cause is fixed upstream (both search pointers now carry their query),
+                        # and this is the floor under it: a pointer shape cria cannot read must cost
+                        # the model nothing (#13, and #8 — the deterministic half gathers the fact,
+                        # and there is no fact here).
+                        rlog.emit("loop.search_judge_skipped", level="info", file=f, why="no query")
+                        out.append(m)
+                        continue
                     _q, r_ok, rec = judge_search(self._ctx.reasoner_chat, self._ctx.reasoner_role,
-                                                 latest_user_text(msgs), q_of.get(_search_key(f), ""), results, rlog,
+                                                 latest_user_text(msgs), query, results, rlog,
                                                  coder_tools=_coder_tools_summary(body.get("tools")))
                     # DETERMINISTIC VETO over a destructive fuzzy verdict. Ruling the results
                     # off-target DENIES the coder a file that is still on disk, permanently, on one

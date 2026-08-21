@@ -1,1 +1,1 @@
-(each result's full description is in {{TARGET}} — read that if a title is not enough to choose)
+web_search "{{QUERY}}" — results saved to {{TARGET}} (each result's full description is there — read it if a title is not enough to choose)
