@@ -329,27 +329,46 @@ def files_for_a_judge(root: str | None, budget: int = JUDGE_FILE_BUDGET) -> str:
     entries = [e for e in entries if not e[1].replace(os.sep, "/").startswith(_SPILL_REL)]
     entries.sort(key=lambda e: (-e[0], e[1]))
 
-    shown: list[str] = []
-    skipped: list[str] = []
+    # WHAT THE HEADER CLAIMS IS WHAT THIS HAS TO DELIVER. It says "THE CONTENTS OF THE N MOST
+    # RECENTLY CHANGED FILES … judge against these rather than asking for them again", and the loop
+    # used to step over a file cria had no bytes for, or a binary one, with a bare `continue`. Newer
+    # file dropped, N counted from what was left, and a judge told not to ask — so the file the coder
+    # had just written could be absent from a block that says it is the newest work, with nothing
+    # naming it. The oversize case was already named for exactly this reason; these two were not.
+    #
+    # NAMED ONLY WHERE THE CLAIM REACHES. `entries` is newest-first, so a drop BEFORE the last file
+    # shown is one the "most recently changed" sentence stepped over — that is the lie, and there are
+    # a handful. A drop after it is simply an older file the block never claimed to carry, and naming
+    # every one of those would be a list of the whole workspace under a header about recent work
+    # (#3). The inventory beside this block is where completeness lives.
+    shown: list[tuple[int, str]] = []
+    oversize: list[str] = []
+    no_bytes: list[tuple[int, str]] = []
+    binary: list[tuple[int, str]] = []
     spent = 0
-    for _mtime, rel, size in entries:
+    for i, (_mtime, rel, size) in enumerate(entries):
         if size > budget - spent:
-            skipped.append(rel)
+            oversize.append(rel)
             continue
         body = view.read(os.path.join(root, rel))
         if body is None:
-            continue      # not told to cria yet, binary or unreadable: it is in the listing above,
-                          # it is simply not quotable here
+            no_bytes.append((i, rel))   # cria has never been handed this file's contents
+            continue
         if content_reduce_mod.looks_binary(body):
+            binary.append((i, rel))
             continue
         spent += len(body)
-        shown.append(prompts.fill(labels["file"], path=rel, body=body))
+        shown.append((i, prompts.fill(labels["file"], path=rel, body=body)))
     if not shown:
         return ""
+    reach = max(i for i, _ in shown)
     out = (prompts.fill(labels["header"], count=str(len(shown)), root=os.path.abspath(root))
-           + "\n\n" + "\n\n".join(shown))
-    if skipped:
-        out += "\n\n" + prompts.fill(labels["skipped"], paths=", ".join(sorted(skipped)))
+           + "\n\n" + "\n\n".join(t for _i, t in shown))
+    for key, dropped in (("skipped", [(0, r) for r in oversize]),
+                         ("not_quoted", no_bytes), ("binary", binary)):
+        names = sorted(r for i, r in dropped if key == "skipped" or i < reach)
+        if names:
+            out += "\n\n" + prompts.fill(labels[key], paths=", ".join(names))
     return out
 
 

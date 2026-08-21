@@ -8,3 +8,10 @@
 header = ⟦ctx:files⟧ THE CONTENTS OF THE {{COUNT}} MOST RECENTLY CHANGED FILES IN {{ROOT}}, read from disk just now. Paths below are relative to that directory, so `lib/x.rb` here is the same file the log calls `{{ROOT}}/lib/x.rb`. This is what is actually there, not a claim by anyone. Judge against these rather than asking for them again.
 file = ----- {{PATH}} -----\n{{BODY}}
 skipped = NOT INCLUDED ABOVE (too large to fit alongside the rest, so they are named instead of cut): {{PATHS}}. Use read_file if you need one of them.
+# TWO MORE WAYS A NEWER FILE CAN BE ABSENT, both of which used to be a bare `continue`. The header
+# says these are the most recently changed files and tells the judge not to ask for them again, so a
+# file it stepped over has to be named or that sentence is false about the one file that matters —
+# the one the coder just wrote. `read_file` recovers the first kind and cannot help with the second,
+# so they say different things.
+not_quoted = NOT INCLUDED ABOVE (their contents have not reached this seat, so they are named instead of guessed at): {{PATHS}}. Use read_file if you need one of them.
+binary = NOT INCLUDED ABOVE (not text — there is nothing to read): {{PATHS}}.
