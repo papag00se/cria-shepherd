@@ -8,51 +8,83 @@ cited "line 245", "lines 30 and 98", "lines 95–99 … in resolve_test.py", and
 mocked, in a session whose every fetch was an HTTP 200.
 """
 
+import pathlib
+import tempfile
 import unittest
 
 from cria.loop import _false_line_citation, _steer_auth_refuted
 
 
-EVIDENCE = ("FILES ALREADY IN THIS WORKSPACE (on disk right now — do not re-create them):\n"
-            "FILE pyproject.toml — 318 bytes, 15 lines\n"
-            "FILE resolve_test.py — 2,195 bytes, 64 lines\n")
+def _workspace():
+    """The run's real workspace: `pyproject.toml` at 15 lines and `resolve_test.py` at 64, the two
+    counts the author's own prompt carried while its steers cited 245.
+
+    A DIRECTORY, not the sentence cria wrote about one. The check used to re-parse its own
+    `FILE x — 318 bytes, 15 lines` list back out of the evidence blob; it now asks the file."""
+    ws = tempfile.mkdtemp()
+    pathlib.Path(ws, "pyproject.toml").write_text("\n".join(f"# line {i}" for i in range(1, 16)))
+    pathlib.Path(ws, "tests").mkdir()
+    pathlib.Path(ws, "tests", "resolve_test.py").write_text(
+        "\n".join(f"# line {i}" for i in range(1, 65)))
+    return ws
+
+
+WS = _workspace()
+# The files the coder has been touching — the set the composed disk list was always built from,
+# now handed over as paths instead of recovered from the sentence that listed them.
+TOUCHED = ["pyproject.toml", "tests/resolve_test.py"]
+
+
+def _cite(directive, root=None, touched=None):
+    return _false_line_citation(directive, WS if root is None else root,
+                                TOUCHED if touched is None else touched)
 
 
 class FalseLineCitationShapeTests(unittest.TestCase):
     def test_from_preposition_is_checked(self):
         # steer 0222: "deleting lines 23-24 from pyproject.toml" — pyproject.toml has 15 lines
-        self.assertIsNotNone(_false_line_citation(
-            "Fix it by deleting lines 23-24 from pyproject.toml.", EVIDENCE))
+        self.assertIsNotNone(_cite("Fix it by deleting lines 23-24 from pyproject.toml."))
 
     def test_bare_parenthetical_line_past_every_file(self):
         # steer 0218: "(line 245)" — no file in the workspace has 245 lines
-        self.assertIsNotNone(_false_line_citation(
-            "Delete the stale assertion comparing to `resolve_had` (line 245).", EVIDENCE))
+        self.assertIsNotNone(_cite("Delete the stale assertion comparing to `resolve_had` (line 245)."))
 
     def test_bare_and_list_past_every_file(self):
         # steer 0218: "two identical def main() blocks starting on lines 30 and 98"
-        self.assertIsNotNone(_false_line_citation(
-            "You have two identical def main() blocks starting on lines 30 and 98.", EVIDENCE))
+        self.assertIsNotNone(_cite("You have two identical def main() blocks starting on lines 30 and 98."))
 
     def test_bare_range_list_past_every_file(self):
         # steer 0222: "lines 9–15, 67–80, AND 95–99 all use names never imported"
-        self.assertIsNotNone(_false_line_citation(
-            "Lines 9–15, 67–80, and 95–99 all use names never imported.", EVIDENCE))
+        self.assertIsNotNone(_cite("Lines 9–15, 67–80, and 95–99 all use names never imported."))
 
     def test_bare_reference_within_range_passes(self):
         # A bare line number no bigger than the largest listed file could be true — silence.
-        self.assertIsNone(_false_line_citation(
-            "Remove them at lines 19-20 and rerun the tests.", EVIDENCE))
+        self.assertIsNone(_cite("Remove them at lines 19-20 and rerun the tests."))
 
     def test_named_file_still_tighter_than_the_ceiling(self):
         # "of/in" form binds to the named file: 40 fits resolve_test.py's 64 but not pyproject's 15.
-        self.assertIsNotNone(_false_line_citation(
-            "Move both keys on lines 40-41 of pyproject.toml.", EVIDENCE))
-        self.assertIsNone(_false_line_citation(
-            "Move both keys on lines 40-41 of resolve_test.py.", EVIDENCE))
+        self.assertIsNotNone(_cite("Move both keys on lines 40-41 of pyproject.toml."))
+        self.assertIsNone(_cite("Move both keys on lines 40-41 of resolve_test.py."))
 
     def test_no_counts_no_check(self):
-        self.assertIsNone(_false_line_citation("Delete line 9999.", "no disk list here"))
+        self.assertIsNone(_cite("Delete line 9999.", root=tempfile.mkdtemp(), touched=[]))
+        self.assertIsNone(_cite("Delete line 9999.", root=None, touched=[]))
+
+    def test_a_name_that_matches_two_files_is_not_guessed_at(self):
+        """The old dict was keyed on the basename, so the second `client.py` silently replaced the
+        first and every citation was checked against whichever came last."""
+        ws = tempfile.mkdtemp()
+        for d in ("a", "b"):
+            pathlib.Path(ws, d).mkdir()
+        pathlib.Path(ws, "a", "client.py").write_text("x\n" * 10)
+        pathlib.Path(ws, "b", "client.py").write_text("x\n" * 200)
+        self.assertIsNone(_cite("Fix client.py:150 now.", root=ws, touched=[]))
+        self.assertIsNotNone(_cite("Fix a/client.py:150 now.", root=ws, touched=[]))
+
+    def test_a_file_named_only_by_its_basename_is_still_checked(self):
+        """`resolve_test.py` lives in `tests/`, and a steer says it the way a person would."""
+        self.assertIsNotNone(_cite("Delete resolve_test.py:245."))
+        self.assertIsNone(_cite("Delete resolve_test.py:60."))
 
 
 class _Sess:

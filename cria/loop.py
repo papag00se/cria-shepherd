@@ -7782,7 +7782,7 @@ def _grounded_steer_or_none(directive: str | None, evidence: str, rlog, ask=None
         rlog.emit("loop.steer_invented_version", level="warn", version=made_up,
                   head=_clip(directive, 120))
         return None
-    cite = _false_line_citation(directive, evidence)
+    cite = _false_line_citation(directive, workspace_root, _touched_paths(messages or []))
     if cite:
         # Same enforcement, next claim class: the author cited a LINE past the file's real length —
         # its own disk list said "68 lines" and the steer said "lines 108-112" (run g1 0034; run g1
@@ -7852,7 +7852,6 @@ _CITE_COLON = re.compile(r"\b([\w./-]+\.\w{1,4}):(\d{1,5})\b")
 _CITE_WORDS = re.compile(r"\blines?\s+(\d{1,5})(?:\s*[-–—]\s*(\d{1,5}))?\s+(?:of|in|from)\s+([\w./-]+\.\w{1,4})\b", re.I)
 _CITE_BARE = re.compile(r"\blines?\s+(\d{1,5}(?:\s*[-–—]\s*\d{1,5})?(?:(?:\s*,\s*|\s+and\s+)"
                         r"\d{1,5}(?:\s*[-–—]\s*\d{1,5})?)*)", re.I)
-_DISK_LINE = re.compile(r"^FILE\s+(\S+)\s+—\s+[\d,]+\s+bytes,\s+([\d,]+)\s+lines?$", re.M)
 
 
 # The symbol must be MARKED AS CODE — backticked, or written as a call. "the change in app.py" is
@@ -7962,26 +7961,87 @@ def _invented_version(directive: str, evidence: str) -> str | None:
     return None
 
 
-def _false_line_citation(directive: str, evidence: str) -> str | None:
-    """A line citation in the steer that exceeds the file's REAL line count as stated by the
-    disk list cria itself composed into the evidence — or None. Only files whose count we stated are
-    checkable; everything else passes (silence over noise)."""
-    counts = {os.path.basename(m.group(1)): int(m.group(2).replace(",", ""))
-              for m in _DISK_LINE.finditer(evidence)}
-    if not counts:
+def _resolve_cited(root: str, rel: str) -> str | None:
+    """The workspace file a steer means by ``rel``, or None when cria cannot say which.
+
+    A steer cites the file the way a person says it — `test_client.py` for `tests/test_client.py` —
+    so the name has to be resolved before it can be checked. EXACTLY ONE match or nothing: two files
+    with that basename means cria does not know which was meant, and the old code answered anyway by
+    keying a dict on the basename, where the last one silently overwrote the first."""
+    view = wsview.current(root)
+    if view.isfile(Path(root) / rel) is True:
+        return rel
+    walked = view.walk(root, skip_names=(".git",), skip_hidden=True)
+    if walked is None:
         return None
+    want = os.path.basename(rel)
+    hits = [os.path.relpath(os.path.join(d, n), root)
+            for d, _subdirs, names in walked for n in names if n == want]
+    return hits[0] if len(hits) == 1 else None
+
+
+def _lines_in(root: str | None, rel: str) -> int | None:
+    """How many lines are really in the file a steer calls ``rel``, or None when cria cannot say."""
+    if not root or not rel:
+        return None
+    found = _resolve_cited(root, rel)
+    if found is None:
+        return None
+    body = wsview.current(root).read(Path(root) / found)
+    if body is None:
+        return None
+    raw = body.encode("utf-8", "replace")
+    return raw.count(b"\n") + (0 if raw.endswith(b"\n") or not raw else 1)
+
+
+def _false_line_citation(directive: str, workspace_root: str | None,
+                         touched: list[str] | None = None) -> str | None:
+    """A line citation in the steer that exceeds the file's REAL line count — or None.
+
+    ASKED OF THE FILE, not recovered from cria's own sentence about the file. This used to re-parse
+    the `FILE x — 1,234 bytes, 56 lines` list that `_fresh_disk_facts` had composed into the
+    evidence a few thousand characters earlier, with a regex that had to agree with an inline
+    f-string on an em dash and a comma. The same class as the nine gate matchers and the search
+    pointer: cria read the file, wrote a sentence about it, threw the number away, and tried to get
+    it back out of English. It cost accuracy three ways — a path with a space stopped at the space,
+    two files with the same basename collapsed onto one count with the last one silently winning,
+    and the two OTHER lines that list writes ("does NOT exist", a size with no line count) were
+    invisible to the reader, so a file cria KNEW about was unheckable.
+
+    The view answers directly, so any file the steer names is checkable — not only the handful that
+    happened to be in the list (#12).
+
+    A BARE citation ("lines 30 and 98") names no file, so it is measured against the longest of the
+    files the CODER HAS BEEN TOUCHING — `touched`, which is the same set the composed disk list was
+    built from, taken from the write history instead of from the sentence that listed it. Nothing
+    touched and nothing named means no ceiling and no check (silence over noise). Anything fuzzier
+    would be judgment dressed as a rule."""
     cited: list[tuple[str, int]] = []
     cited += [(m.group(1), int(m.group(2))) for m in _CITE_COLON.finditer(directive)]
-    cited += [(m.group(3), max(int(m.group(1)), int(m.group(2) or 0))) for m in _CITE_WORDS.finditer(directive)]
+    cited += [(m.group(3), max(int(m.group(1)), int(m.group(2) or 0)))
+              for m in _CITE_WORDS.finditer(directive)]
+    counts: dict[str, int] = {}
+    for f, _n in cited:
+        if f not in counts:
+            got = _lines_in(workspace_root, f)
+            if got is not None:
+                counts[f] = got
     for f, n in cited:
-        known = counts.get(os.path.basename(f))
+        known = counts.get(f)
         if known is not None and n > known:
             return f"{f}:{n} (file has {known} lines)"
+    for f in (touched or []):
+        if f not in counts:
+            got = _lines_in(workspace_root, f)
+            if got is not None:
+                counts[f] = got
+    if not counts:
+        return None
     ceiling = max(counts.values())
     for m in _CITE_BARE.finditer(directive):
         n = max(int(d) for d in re.findall(r"\d{1,5}", m.group(1)))
         if n > ceiling:
-            return f"line {n} (no listed file has more than {ceiling} lines)"
+            return f"line {n} (no file in play has more than {ceiling} lines)"
     return None
 
 
