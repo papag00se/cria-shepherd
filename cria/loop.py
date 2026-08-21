@@ -2468,8 +2468,7 @@ class Loop:
                 sess.plan.items.append(fix)
         sess.plan.status = "in_progress"
         sess.nudge_reason = prompts.render("done_incomplete", reason=reason,
-                                           check_state=_check_state_words(sess),
-)
+                                           check_state=_check_state_words(sess))
         sess.steer_source = "completion critic (task not fully done)"
         self._persist_plan(sess.plan, rlog)
         return reason
@@ -3766,8 +3765,7 @@ class Loop:
                 # actually satisfied. cria never lets a still-incomplete task exit early — the model
                 # finishes the real work on its own; there is no "give up after one look".
                 sess.nudge_reason = prompts.render("done_incomplete", reason=critic_reason,
-                                                   check_state=_check_state_words(sess),
-)
+                                                   check_state=_check_state_words(sess))
                 sess.steer_source = "completion critic (task not fully done)"
                 sess.pending_done = ""
             else:  # green + (satisfied / already critiqued / no reasoner) → trust the objective gate, END
@@ -3945,8 +3943,7 @@ class Loop:
             # No shell → the gate never ran; say so rather than claiming the checks passed.
             return self._renudge(sess, key, body, prompts.render(
                 "done_incomplete", reason=critic_reason,
-                check_state=prompts.load_map("done_check_state")["never_ran"],
-), rlog)
+                check_state=prompts.load_map("done_check_state")["never_ran"]), rlog)
         return comp  # no reasoner AND no shell → can't verify at all; forward the 'done' (Tier-2 fail-open, left)
 
     def _done_critic_reason(self, sess: PlanSession, body: dict, rlog) -> str:
