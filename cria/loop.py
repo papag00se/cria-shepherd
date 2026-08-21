@@ -7202,8 +7202,18 @@ _CODE_SHAPED = re.compile(
     r"|^[ \t]*\S.*[;{}]\s*$"                            # a statement or brace line: java/rust/go/c/js
     r"|^[ \t]*\w+(?:[.:]{1,2}\w+)*[?!]?\s*\([^)\n]*\)"   # a call at the head of a line
     r"|^[ \t]*\$?\s*[\w./-]+(?:\s+[\w./=-]+)*\s+--?[\w-]+"  # a command with a flag: `mvn -q test`
-    r"|\b\w+(?:\.\w+)+[?!]?\s*\([^)\n]*\)",             # an inline dotted CALL: `pkg.fn(arg)`
+    r"|\b\w+(?:(?:\.|::)\w+)+[?!]?\s*\([^)\n]*\)",       # an inline CALL: `pkg.fn(a)`, `mod::fn(a)`
     re.M)
+# …AND `::` IS NOT DECORATION EITHER. The head-of-line shape has accepted `[.:]{1,2}` since it was
+# written; the INLINE one accepted only `.`, so `serde_json::to_string(&value)` sitting mid-sentence
+# was invisible — and Rust, C++ and PHP write their calls that way. Measured on
+# rust-toml-cli x nemotron-elastic 1787257904: the reasoner authored a directive ending in `;`, the
+# guard answered DICTATES, cria's own restater returned the SAME two code lines with " must be true."
+# appended, and that four-word suffix moved the `;` off end-of-line. The line-end shape stopped
+# matching, the inline shape could not see `::`, and `_dictates_code` then returned False WITHOUT
+# MAKING A MODEL CALL — so the reasoned judge never ruled and the raw code shipped. cria's restater
+# defeating cria's guard.
+#
 # …AND THE `[?!]` IS NOT DECORATION. Without it this pattern cannot see `ZONE_BASE.key?(x)`,
 # `rec.save!(x)` or `println!("x")` — Ruby's predicate and bang methods, which are the ordinary way
 # Ruby is written, and Rust's macros. A detector whose entire job is to be language-agnostic (#20)
