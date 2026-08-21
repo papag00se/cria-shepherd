@@ -4037,8 +4037,16 @@ class SearchJudgeTests(unittest.TestCase):
         # got back is cria's spill STEER — not the results.
         steer = ("./tmp/reference/search-ada_handles_api.txt is a large reference document — reading it "
                  "whole gets truncated, so you would miss the middle. Instead grep it for what you need.")
+        # THE POINTER IS PART OF THE SHAPE. A real conversation always carries the sentence that says
+        # which query produced which file — it is how cria finds the file at all — and a fixture
+        # without it exercises a conversation that cannot occur. It also cannot reach the judge any
+        # more, because a verdict with no query is no longer made: see
+        # tests/test_a_search_is_not_deleted_on_a_query_cria_lost.py for why that floor exists.
+        pointer = ('web_search "ada handles api" — results saved to '
+                   './tmp/reference/search-ada_handles_api.txt (each result is title / url / description)')
         return {"messages": [
             {"role": "user", "content": "resolve an Ada Handle via the API (api.handle.me)"},
+            {"role": "tool", "tool_call_id": "s0", "content": pointer},
             {"role": "assistant", "content": "", "tool_calls": [{"id": "r1", "type": "function", "function": {
                 "name": "read_file", "arguments": json.dumps({"path": self._SPILL_REL})}}]},
             {"role": "tool", "tool_call_id": "r1", "content": steer},

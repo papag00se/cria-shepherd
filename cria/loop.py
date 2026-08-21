@@ -8122,7 +8122,20 @@ def _search_key(path: str) -> str:
     model gave up in the same turn. cria withheld a query it was holding, then destroyed the answer
     on the strength of the judge's reply to the question it had mangled."""
     return "/" + (path or "").lstrip("./").lstrip("/")
-_SEARCH_POINTER_RE = re.compile(r'web_search "([^"]*)"\s*[—-]+\s*results saved to (\.?/?'
+# THE QUERY AND THE FILE, from EITHER pointer web_search writes. There are two, and they say
+# different things on purpose: the SPILL form ("results saved to X") sends the model to the file
+# because the results are not inline, and the INLINE form ("each result's full description is in X")
+# must NOT, because the titles and links are already in front of it — a test pins that distinction
+# (`test_a_realistic_search_is_never_spilled_away_from_the_model`).
+#
+# This reader used to understand only the spill form, so a search that took the inline branch had no
+# query cria could find, and the read-judge was asked to rule on "(none)". Walked on
+# shipping-rates-rb x nemotron-elastic 1787294328: it ruled the results off-target and cria deleted
+# the file holding `ISO3166::Country#in_eu?`, the exact predicate that task needed.
+#
+# The fix belongs HERE, not in the prompts: cria's internal reader bends to the model-facing text,
+# never the other way round (#22 — the prompt says what the model needs to hear).
+_SEARCH_POINTER_RE = re.compile(r'web_search "([^"]*)"[^\n]*?(\.?/?'
                                 + _SPILL_SEG + r'/search-[\w.\-]+\.txt)')
 
 
