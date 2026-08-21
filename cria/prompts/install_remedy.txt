@@ -2,6 +2,17 @@
 # Model-facing (rule 22), keyed `<manager>_<route>`; dirguard._INSTALL_REMEDY picks the first route
 # whose tools are actually on PATH.
 #
+# VERIFIED ON THE BOX, 2026-08-21, on the shipping-rates-rb seed: `bundle install --path
+# vendor/bundle` with a Gemfile naming ONLY `countries` installs in about a minute, and the suite
+# then runs green under a plain `ruby -Ilib -Itest` — no `bundle exec` anywhere — because the
+# library file's `require "bundler/setup"` puts the bundled gems on the path for whatever loads it.
+# THE SAME ROUTE FAILS COMPLETELY if the Gemfile also names the test framework: the test file has
+# already activated the system minitest by the time the library file runs, and `bundler/setup`
+# raises `Gem::LoadError` rather than accept the mismatch, so every test errors before it runs.
+# ternary-bonsai wrote exactly that Gemfile (`minitest "~> 5.18"` beside `countries "~> 1.2"`) on
+# run 1787340410 and scored 1/5; the pin was the second killer, since countries 1.2 depends on
+# `currencies`, which no longer builds. Both are now named in the route.
+#
 # A ROUTE CRIA HAS NOT VERIFIED IS A ROUTE CRIA IS GUESSING. The ruby row prescribed
 # `bundle install --path vendor/bundle`, and `bundle` is not installed on the box the battery runs
 # on. Two runs followed the advice into `bundle: command not found` and spent the rest of the run on
@@ -45,7 +56,7 @@ pip_venv = First check whether you need it at all: the package may already be im
 
 npm_local = Drop the global flag: `{{NPM}} install <pkg>` installs into this project's own `node_modules`, which is what your code will load.
 
-gem_bundler = Install it into the project instead: add the gem to a `Gemfile` and run `{{BUNDLE}} install --path vendor/bundle`. Gems installed that way are not on the default load path, so make them reachable from your LIBRARY FILE rather than from the command line: put `require "bundler/setup"` at the very top, before the gem require. That covers anything started from the project directory — including tests and scripts you did not write, which are what will be run against your code. A process started from somewhere else needs `BUNDLE_GEMFILE` pointing at your `Gemfile`. A one-off command that does NOT go through your library file — `{{RUBY}} -e "..."` to check something — loads none of it: put `{{BUNDLE}} exec` in front of that one.
+gem_bundler = Install it into the project instead: add the gem to a `Gemfile` and run `{{BUNDLE}} install --path vendor/bundle`. Gems installed that way are not on the default load path, so make them reachable from your LIBRARY FILE rather than from the command line: put `require "bundler/setup"` at the very top, before the gem require. That covers anything started from the project directory — including tests and scripts you did not write, which are what will be run against your code. A process started from somewhere else needs `BUNDLE_GEMFILE` pointing at your `Gemfile`. A one-off command that does NOT go through your library file — `{{RUBY}} -e "..."` to check something — loads none of it: put `{{BUNDLE}} exec` in front of that one. Put ONLY the gem you actually need in that `Gemfile`, and do not pin its version. Naming your test framework there is what breaks this: the test file loads it before your library file runs `bundler/setup`, and `bundler/setup` then refuses the version already in memory — `You have already activated minitest 5.16.3, but your Gemfile requires minitest 6.0.6` — which fails every test at once, including the ones you did not write. A version pin does the same damage a second way: an old release drags in dependencies that no longer build.
 
 gem_direct = Install it into the project instead: `{{GEM}} install --install-dir vendor/bundle <gem>`, then make it loadable FROM YOUR CODE — `$LOAD_PATH.unshift` the gem's `lib` directory at the top of your library file, so it is on the load path for anything that requires it. Setting `GEM_HOME=vendor/bundle` only covers commands you launch yourself; tests and scripts you did not write are run without it, and those are what will be run against your code.
 
