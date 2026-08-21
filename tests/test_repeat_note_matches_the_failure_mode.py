@@ -73,6 +73,22 @@ class WhatCountsAsFailedTests(unittest.TestCase):
     def test_a_real_result_is_not_a_failure(self):
         self.assertFalse(focustrim._repeat_failed(_result("48.58\nEXIT:0"), "c1"))
 
+    def test_output_that_MENTIONS_the_sentinel_is_not_the_shell_reporting_it(self):
+        """The exit code is the LAST one, because a program can print that string itself — a log
+        line, a test name, a here-doc. Read top-down, `grep -n EXIT: run.log` was a failed call
+        whatever the shell said."""
+        self.assertFalse(focustrim._repeat_failed(
+            _result('run.log:14:EXIT:1\nrun.log:88:EXIT:3\nEXIT:0'), "c1"))
+        self.assertTrue(focustrim._repeat_failed(
+            _result('run.log:14:EXIT:0\nEXIT:1'), "c1"))
+
+    def test_it_reads_the_sentinel_its_owner_writes(self):
+        """One spelling, one parser: `proberun` composes the line and `proberun.scrape_exit` reads
+        it. A second copy of the string here would drift out of step with a rename."""
+        from cria import proberun
+        self.assertTrue(focustrim._repeat_failed(
+            _result("boom\n" + proberun.PROBE_EXIT_SENTINEL + "9"), "c1"))
+
     def test_no_result_at_all_keeps_the_original_wording(self):
         """Conservative: only a KNOWN failure changes the sentence."""
         self.assertFalse(focustrim._repeat_failed([], "c1"))

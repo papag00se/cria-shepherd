@@ -40,7 +40,7 @@ import re
 from dataclasses import dataclass
 
 from . import dedup, denial, editrecovery, jsontext
-from . import probegate, prompts
+from . import probegate, proberun, prompts
 
 # cria's OWN ground-truth gate probe tags its output with these section markers. Such a probe
 # exits NON-ZERO by design (a failing check is the signal), so it trips the fail signatures — but it
@@ -340,11 +340,13 @@ def _repeat_failed(messages: list[dict], call_id: str) -> bool:
         body = str(m.get("content") or "")
         if denial.is_denied(body):
             return True
-        for line in body.splitlines():
-            s = line.strip()
-            if s.startswith("EXIT:") and s[5:].strip() not in ("0", ""):
-                return True
-        return False
+        # THE EXIT SENTINEL, READ THE ONE WAY IT IS WRITTEN. This scanned top-down for a literal
+        # "EXIT:" of its own — so a program that PRINTED that string ("EXIT:1" in a log line, a test
+        # name, a here-doc) was read as the shell's own exit code, and the first one won over the
+        # real one at the bottom. `proberun` owns the sentinel and already reads it bottom-up for
+        # exactly that reason; there is no second parser and no second spelling to keep in step.
+        _, code = proberun.scrape_exit(body)
+        return code not in (0, None)
     return False
 
 
