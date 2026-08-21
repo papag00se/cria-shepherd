@@ -45,19 +45,39 @@ PRESCRIPTION = (
     "Replace `toml::Value::Int(ref i)` with `toml::Value::I64(ref i)`.")
 
 
+def _reasoner(rewrite: str, verdict: str = "DESCRIBES", log=None):
+    """A stand-in for the two questions this path asks: rewrite the directive, then rule on the
+    rewrite. They are told apart by their system prompt, the way the real reasoner sees them."""
+    def ask(system, user):
+        if log is not None:
+            log.append((system, user))
+        return rewrite if system == prompts.load("steer_restate") else verdict
+    return ask
+
+
 class TheRewriterIsBlindTests(unittest.TestCase):
     def test_it_is_given_the_directive_and_nothing_else(self):
         """The safety property. A rewriter with context could substitute one invention for another;
         this one holds no facts to substitute."""
-        seen = {}
+        log = []
+        loop._restate_without_code(
+            PRESCRIPTION,
+            _reasoner("Read src/main.rs line 12 and make the key lookup compile. Run cargo build.",
+                      log=log),
+            _Rlog())
+        self.assertEqual(log[0], (prompts.load("steer_restate"), PRESCRIPTION))
 
-        def ask(system, user):
-            seen["system"], seen["user"] = system, user
-            return "Read src/main.rs line 12 and make the key lookup compile. Run cargo build."
-
-        loop._restate_without_code(PRESCRIPTION, ask, _Rlog())
-        self.assertEqual(seen["user"], PRESCRIPTION)
-        self.assertEqual(seen["system"], prompts.load("steer_restate"))
+    def test_the_rewrite_is_ruled_on_even_when_it_reads_as_prose(self):
+        """The verdict TRAVELS. This input was already ruled a dictation, so the rewrite does not
+        have to look code-shaped to earn the question — that trigger is documented as missing inline
+        dictation, and prose is exactly what a rewrite comes back as."""
+        log = []
+        rewrite = "Call pytest.register_pytest_mark for the live marker, then re-run."
+        out = loop._restate_without_code(
+            PRESCRIPTION, _reasoner(rewrite, verdict="DICTATES", log=log), _Rlog())
+        self.assertIsNone(out)
+        self.assertEqual(len(log), 2, "the rewrite must be ruled on, not re-triggered")
+        self.assertEqual(log[1][0], prompts.render("steer_dictates_code", directive=rewrite))
 
     def test_no_reasoner_means_no_directive(self):
         self.assertIsNone(loop._restate_without_code(PRESCRIPTION, None, _Rlog()))
@@ -66,14 +86,14 @@ class TheRewriterIsBlindTests(unittest.TestCase):
 class OneAttemptThenSilenceTests(unittest.TestCase):
     def test_a_clean_restatement_is_kept(self):
         clean = "Read `src/main.rs` line 12, make the key lookup compile, then run cargo build."
-        out = loop._restate_without_code(PRESCRIPTION, lambda s, u: clean, _Rlog())
+        out = loop._restate_without_code(PRESCRIPTION, _reasoner(clean), _Rlog())
         self.assertEqual(out, clean)
 
     def test_a_restatement_that_still_dictates_is_refused(self):
         """One attempt. A second ask is a second guess (#3)."""
         rlog = _Rlog()
         still = "Change line 12 to `map.get(&key.to_string())` and rebuild."
-        out = loop._restate_without_code(still, lambda s, u: still, rlog)
+        out = loop._restate_without_code(still, _reasoner(still, verdict="DICTATES"), rlog)
         self.assertIsNone(out)
         self.assertIn(("loop.steer_restate", {"level": "info", "kept": False,
                                               "reason": "still dictates"}), rlog.events)

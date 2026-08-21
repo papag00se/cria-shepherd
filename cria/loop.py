@@ -7367,7 +7367,9 @@ def _restate_without_code(directive: str, ask, rlog) -> str | None:
     if not out or _NO_DIRECTIVE in out.upper():
         rlog.emit("loop.steer_restate", level="info", kept=False, reason="nothing left")
         return None
-    if _dictates_code(out, ask):      # it did it again — one attempt, then silence (#3)
+    # ASKED OUTRIGHT, not re-triggered. The input to this rewrite was ruled a dictation; the output is
+    # the higher-risk text, not the lower-risk one, so it does not have to re-earn the question.
+    if _dictates_code(out, ask, presumed=True):   # it did it again — one attempt, then silence (#3)
         rlog.emit("loop.steer_restate", level="info", kept=False, reason="still dictates")
         return None
     rlog.emit("loop.steer_restate", level="info", kept=True, chars=len(out))
@@ -7411,7 +7413,7 @@ def _invented_code_spans(directive: str, evidence: str) -> int:
     return n
 
 
-def _dictates_code(directive: str, ask=None) -> bool:
+def _dictates_code(directive: str, ask=None, presumed: bool = False) -> bool:
     """True when the directive hands the coder CODE TO COPY rather than a description of the change.
 
     Deterministic pre-filter, then ONE focused question — the pattern the operator's policy calls for:
@@ -7420,8 +7422,17 @@ def _dictates_code(directive: str, ask=None) -> bool:
 
     ``ask(system, user) -> str`` is the caller's one-shot reasoner. With no reasoner (or an answer
     that is not one of the two words) the pre-filter's verdict stands — which is exactly today's
-    behaviour, so this can only move steers from dropped to delivered, never the other way."""
-    if not _CODE_SHAPED.search(directive):
+    behaviour, so this can only move steers from dropped to delivered, never the other way.
+
+    ``presumed`` SKIPS THE PRE-FILTER. The filter's only job is to decide whether one call is worth
+    making; a caller that already has a DICTATES verdict on this text's parent has that answer, and
+    re-deriving it from the shape of the rewrite can only lose. It did: a rewrite asked to take the
+    code OUT comes back as prose, prose is not code-SHAPED, so the trigger declined and the judge —
+    the half that actually rules quote-versus-dictation — was never asked. Inline dictation in a
+    sentence is precisely the shape the trigger is documented as missing (`pytest.register_pytest_mark
+    ("live")`, a function that does not exist, sailed through for that reason). The verdict travels
+    forward instead of being guessed again (#12)."""
+    if not presumed and not _CODE_SHAPED.search(directive):
         return False
     if ask is None:
         return True
@@ -7737,6 +7748,13 @@ def _grounded_steer_or_none(directive: str | None, evidence: str, rlog, ask=None
             # nothing invented at all — the sighted "quoting the coder's own line" case the
             # 2026-08-04 ruling protects. They never reach here. This path is the other 34.
             restated = _restate_without_code(directive, ask, rlog)
+            # AND MEASURED AGAINST THE SAME EVIDENCE. The rewrite is judged for dictation by a
+            # reasoner; whether it still carries code cria never READ is exact, and cria is holding
+            # both halves right here. A rewrite that swapped one unread span for another would
+            # otherwise ship on a fuzzy pass.
+            if restated is not None and _invented_code_spans(restated, _observed_code(messages)):
+                rlog.emit("loop.steer_restate", level="info", kept=False, reason="still invented")
+                restated = None
             if restated is None:
                 rlog.emit("loop.steer_dictated_code", level="warn", delivered=False,
                           invented=invented, reason="prescription",

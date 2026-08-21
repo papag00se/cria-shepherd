@@ -99,6 +99,17 @@ def wrote(path, content):
                                          "arguments": _json.dumps({"path": path, "content": content})}}]}
 
 
+def _reasoner(rewrite: str, on_rewrite: str = "DESCRIBES"):
+    """The two questions `_grounded_steer_or_none` asks on this path: rule the directive, rewrite it,
+    then rule the REWRITE. A fixture that answers DICTATES to all three refuses its own restatement —
+    which is what the real reasoner would do only if the rewrite really did prescribe code."""
+    def ask(system, user):
+        if "prescribes code" in system:
+            return rewrite
+        return on_rewrite if rewrite and rewrite in system else "DICTATES"
+    return ask
+
+
 class WiringTests(unittest.TestCase):
     def test_the_gate_passes_its_reasoner_through(self):
         """Driven for real: the `ask` handed to `_grounded_steer_or_none` must be the one
@@ -215,16 +226,25 @@ class WiringTests(unittest.TestCase):
         tests/test_a_prescription_is_restated_not_hollowed.py."""
         rlog = _Rlog()
         restated = "Register the `live` marker the warning names, then re-run the tests."
-
-        def ask(system, user):
-            return restated if "prescribes code" in system else "DICTATES"
-
-        out = loop._grounded_steer_or_none(REAL_DICTATION, "evidence", rlog, ask=ask,
+        out = loop._grounded_steer_or_none(REAL_DICTATION, "evidence", rlog, ask=_reasoner(restated),
                                            messages=[tool_result("PytestUnknownMarkWarning: live")])
         self.assertEqual(out, restated)                        # a whole sentence, not a hole
         self.assertNotIn("register_pytest_mark", out)          # the invention is gone
         self.assertNotIn("code removed", out)                  # ...and so is the marker debris
         self.assertTrue([e for e in rlog.events if e[0] == "loop.steer_restate"])
+
+    def test_a_rewrite_that_swaps_one_invention_for_another_is_refused(self):
+        """The rewriter is blind so it CANNOT introduce a fact — but "cannot" is an argument, and the
+        caller is holding both halves. A rewrite is measured against the same observed evidence the
+        original was, so a fresh unread span cannot ship on a fuzzy pass."""
+        rlog = _Rlog()
+        swapped = 'Add conftest.configure_live_marker("live") to conftest.py and re-run.'
+        out = loop._grounded_steer_or_none(REAL_DICTATION, "evidence", rlog,
+                                           ask=_reasoner(swapped),
+                                           messages=[tool_result("PytestUnknownMarkWarning: live")])
+        self.assertIsNone(out)
+        self.assertIn(("loop.steer_restate", {"level": "info", "kept": False,
+                                              "reason": "still invented"}), rlog.events)
 
     def test_a_prescription_the_rewriter_cannot_save_is_refused(self):
         """Every other guard in this function returns None. This one used to be the exception."""
@@ -263,12 +283,8 @@ class WiringTests(unittest.TestCase):
         rlog = _Rlog()
         directive = 'Replace the handler line with return self._send(201, {"error": "internal"})'
         restated = "Make orders/app.py:54 stop returning 500 on that exception, then re-run the tests."
-
-        def ask(system, user):
-            return restated if "prescribes code" in system else "DICTATES"
-
         out = loop._grounded_steer_or_none(
-            directive, "unused", rlog, ask=ask,
+            directive, "unused", rlog, ask=_reasoner(restated),
             messages=[tool_result("orders/app.py:54: 500 returned on exception"),
                       {"role": "assistant",
                        "content": 'return self._send(201, {"error": "internal"})? That seems odd.'}])
