@@ -74,10 +74,21 @@ Seven `view_image` calls aimed at `.rb` and `.java` source files. Six tool calls
 
 ### Rust — never compiles (0%, 0%, 75%)
 
-The failing runs die at the compiler every time: `E0308` mismatched types, `E0432` unresolved import, `E0599` no method, `E0106` missing lifetime. Two failures are not Rust mistakes but wrong-ecosystem reaches:
+The failing runs die at the compiler every time: `E0308` mismatched types, `E0432` unresolved import, `E0599` no method, `E0106` missing lifetime.
 
-- `failed to select a version for the requirement 'tomli = "^0.9"'` — **tomli is a Python library**, and `^0.9` is not Cargo's version syntax.
-- `invalid type: map, expected a sequence | --> Cargo.toml:8:1`.
+**And one of them is cria's fault, not the model's.** Run 1787160046 scored 0/4 on `failed to select a version for the requirement 'tomli = "^0.9"'`. The first pass over this corpus recorded that as the model "reaching out of its ecosystem"; walking it call by call says otherwise. The first appearance of the string `tomli` anywhere in that session is cria's OWN TOML manifest check, composed as a `python3 -c` program and carried into the coder's prompt at call 0012 inside the gate command:
+
+    python3 -c 'import sys
+    try:
+        import tomllib
+    except ModuleNotFoundError:
+        try:
+            import tomli as tomllib
+    …'
+
+`tomli` is a Python package. The model was writing a Rust TOML reader. It read that as the library to use, wrote `tomli = "^0.9"` into Cargo.toml, and every later build died. Two of cria's own steers then contradicted each other about it — call 0070 says *"replace `use toml::Toml;` with `use tomli::Toml;`"*, calls 0051 and 0053 say delete it.
+
+The same leak feeds Java `from xml.etree import ElementTree as ET` (pom check) and Node `json.load(fh)` (package.json check). Fixed: a probe the coder could retype is one line; a program cria wrote is several, and only the first is shown. Across every gate command in these 13 runs that is 2,519,840 characters cut to 451,288.
 
 The one run that compiled scored 75% and exited on its own.
 
@@ -85,7 +96,12 @@ The one run that compiled scored 75% and exited on its own.
 
 `go get github.com/arithmetic/decimal` — that module does not exist. Later in the same run, `go get cartsvc` — the project's own module name. A web search did find the real `github.com/ericlagergren/decimal`, but the check still reports `decimal_money_library: declared nothing; imported by non-test source: none`.
 
+One of cria's steers here prescribes invalid code: call 0055 says *"Edit go.mod to remove the version spec v0.1.0 for github.com/shopspring/decimal (keep only `require (github.com/shopspring/decimal)`)"* — a `require` line without a version does not parse.
+
 ### Java — uses classes it never imports (20%, 20%)
+
+A steer here also prescribes uncompilable Java: call 0081 hands back `private static final ConcurrentMap<String,Long> skippedCounts = new ConcurrentHashMap<>;` — missing the constructor parentheses.
+
 
 `cannot find symbol: class ConcurrentMap`, and `(+64 more)` symbols on one run. It declared `opencsv` correctly in the pom, so the dependency reasoning is sound and the code does not compile around it. `race_fixed_workers_on: import spawned 0 thread(s) (need >=2)` — the parallelism it reported adding is not there.
 
@@ -115,3 +131,14 @@ Nothing here is a pacing artifact and nothing is a cria fault except the ruby me
 3. **Not knowing when it is done** — 15 premature completions and 89 pointless re-runs.
 
 `ada-handles` is Python, single-file, no compiler and no dependency manifest. That is the whole of the difference.
+
+
+## Addendum — what the first pass got wrong
+
+The first pass over these runs counted patterns and did not read them. Three of its conclusions do not survive the walk:
+
+- **"Reaches out of ecosystem entirely: `tomli` in a Cargo.toml"** — cria put `tomli` in front of it. See the Rust section.
+- **"The step never advances"** — it does. `loop.research_satisfied` cleared step 1 after nine turns and `loop.plan_off_handback` followed. The regex used only matched the last step block in each prompt and there is none after the handback.
+- **"29% of shell calls are exact repeats"** stands, but an earlier version of the same number was wrong: commands were compared on their first 80 characters, which the long absolute workspace paths consumed entirely, so distinct commands collapsed together.
+
+What the walk found that counting could not: cria authored the failure in the Rust run, prescribed invalid Go and Java in three steers, and blocked its own satisfaction check 601 times against 7 runs — 244 of the named blocks on `gate-red`, which for a model whose projects rarely compile means the completion machinery is dormant for whole runs.

@@ -838,6 +838,33 @@ _GATE_WRAPPER = re.compile(
         .*?printf\s+'[^']*""" + re.escape(proberun.PROBE_EXIT_SENTINEL) + r"""[^\n]*""")
 
 
+def _kept_probe(m) -> str:
+    """The probe command from a wrapper, or "" when it is one of cria's own inline programs.
+
+    A COMMAND THE CODER COULD RETYPE IS WORTH SHOWING; A PROGRAM CRIA WROTE IS NOT. Most probes are
+    a command the coder already knows — `cargo test`, `go vet ./...`, `bundle exec rubocop` — and
+    seeing them run is useful. A handful are not commands at all: they are multi-line Python or
+    shell programs cria composes to check a manifest, and they were reaching the coder's context as
+    source code, mixed in among its own work.
+
+    THIS COST A RUN. `rust-toml-cli x nemotron-elastic` 1787160046 scored 0/4, never compiling.
+    Walked call by call, the first appearance of `tomli` anywhere in that session is cria's own TOML
+    check — `python3 -c 'import tomllib / except ModuleNotFoundError: import tomli as tomllib …'` —
+    riding into the coder's prompt at call 0012. `tomli` is a PYTHON package. The model, building a
+    RUST TOML reader, read it as the library to use and wrote `tomli = "^0.9"` into Cargo.toml; every
+    later build died on `failed to select a version for the requirement`, and two of cria's own
+    steers then argued with each other about deleting it. The model never reached out of its
+    ecosystem — it was handed the wrong ecosystem and believed cria.
+
+    The same leak feeds Java `from xml.etree import ElementTree as ET` (the pom check) and Node
+    `json.load(fh)` (the package.json check).
+
+    One line is the whole distinction, and it needs no per-language knowledge: a real command is one
+    line, an embedded program is several."""
+    inner = m.group("cmd")
+    return "" if "\n" in inner else inner
+
+
 def _strip_gate_plumbing(cmd: str) -> str:
     """Drop cria's gate scaffolding from a composed gate command, keeping only the real probe commands
     (pytest/lint) the model might care about. Returns '' when nothing but scaffolding remains.
@@ -864,7 +891,7 @@ def _strip_gate_plumbing(cmd: str) -> str:
     # UNWRAP FIRST, ACROSS THE WHOLE STRING. The wrapper can span lines (see _GATE_WRAPPER), so this
     # cannot be a per-line pass: the inner command is pulled out wherever it sits, and only what is
     # left is filtered line by line.
-    cmd = _GATE_WRAPPER.sub(lambda m: m.group("cmd"), cmd)
+    cmd = _GATE_WRAPPER.sub(_kept_probe, cmd)
     out = []
     for ln in cmd.splitlines():
         if (_GATE_MARKER_ECHO.match(ln) or _GATE_GIT_FP.match(ln)
