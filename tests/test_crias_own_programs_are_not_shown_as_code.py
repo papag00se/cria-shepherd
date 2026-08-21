@@ -25,66 +25,80 @@ never read cria's own plumbing as if it were the work).
 The same leak feeds Java `from xml.etree import ElementTree as ET` from the pom check and Node
 `json.load(fh)` from the package.json check.
 
-THE RULE NEEDS NO PER-LANGUAGE KNOWLEDGE. A probe the coder could retype is one line — `cargo test`,
-`go vet ./...`, `bundle exec rubocop`. A program cria wrote is several. Only the first is worth
-showing.
+THE RULE NEEDS NO PER-LANGUAGE KNOWLEDGE, AND IT IS NO LONGER A RULE ABOUT TEXT. `plan_gate` knows
+which of its candidates is argv the coder could retype and which is a program cria composed, and it
+says so in the plan (`GATE_SENTINEL`). These tests run the real composition on real project trees:
+what the model may see is whatever survives that, in every language.
 """
 
+import pathlib
+import tempfile
 import unittest
 
-from cria import probegate, proberun
+from cria import probegate
 
 
-def _wrapped(inner: str) -> str:
-    """A probe command shaped exactly as `proberun.compose_probe_command` builds it."""
-    return (f"cd /ws && __cria_out=$(timeout -k 5 240 {inner} </dev/null 2>&1); __cria_ec=$?; "
-            f"__cria_n=$(printf '%s' \"$__cria_out\" | wc -c); "
-            f"if [ \"$__cria_n\" -le 1850 ]; then printf '%s\\n' \"$__cria_out\"; fi; "
-            f"printf '{proberun.PROBE_EXIT_SENTINEL}%d\\n' \"$__cria_ec\"")
+def _tree(**files) -> str:
+    ws = tempfile.mkdtemp()
+    for rel, body in files.items():
+        p = pathlib.Path(ws, rel.replace("__", "/"))
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(body)
+    return ws
 
 
-class ARealCommandIsShownTests(unittest.TestCase):
-    def test_the_commands_the_coder_could_retype_survive(self):
-        for cmd in ("cargo test --no-fail-fast", "go vet ./...", "bundle exec rubocop",
-                    "mvn -q compile", "python3 -m pytest -q"):
-            with self.subTest(cmd=cmd):
-                self.assertEqual(probegate._strip_gate_plumbing(_wrapped(cmd)), cmd)
+def _shown(ws: str) -> str:
+    """Exactly what the model reads back of the gate cria ran in `ws`."""
+    return probegate._strip_gate_plumbing(probegate.plan_gate(ws).script)
 
-    def test_several_probes_in_one_script_all_survive(self):
-        script = "\n".join(_wrapped(c) for c in ("cargo check", "cargo test --no-fail-fast"))
-        self.assertEqual(probegate._strip_gate_plumbing(script).splitlines(),
-                         ["cargo check", "cargo test --no-fail-fast"])
+
+RUST = dict(**{"Cargo.toml": "[package]\nname = \"toml-cli\"\nversion = \"0.1.0\"\n",
+               "src__main.rs": "fn main() {}\n"})
+JAVA = dict(**{"pom.xml": "<project><artifactId>x</artifactId></project>",
+               "src__main__java__App.java": "class App {}\n"})
+NODE = dict(**{"package.json": "{\"name\":\"x\",\"scripts\":{\"test\":\"jest\"}}",
+               "index.js": "module.exports = {};\n"})
 
 
 class CriasOwnProgramIsNotTests(unittest.TestCase):
-    TOML_CHECK = ("python3 -c 'import sys\n"
-                  "try:\n"
-                  "    import tomllib\n"
-                  "except ModuleNotFoundError:\n"
-                  "    try:\n"
-                  "        import tomli as tomllib\n"
-                  "    except ModuleNotFoundError:\n"
-                  "        sys.exit(0)\n"
-                  "' /ws/Cargo.toml")
-
     def test_the_toml_check_that_cost_the_run_is_gone(self):
-        out = probegate._strip_gate_plumbing(_wrapped(self.TOML_CHECK))
+        out = _shown(_tree(**RUST))
         self.assertNotIn("tomli", out)
         self.assertNotIn("tomllib", out)
-        self.assertEqual(out, "")
 
     def test_the_java_and_node_manifest_checks_too(self):
-        for prog in ("python3 -c 'from xml.etree import ElementTree as ET\nET.parse(f)\n' pom.xml",
-                     "python3 -c 'import json\nwith open(f) as fh:\n    json.load(fh)\n' package.json"):
-            with self.subTest(prog=prog.split("\n")[0]):
-                out = probegate._strip_gate_plumbing(_wrapped(prog))
+        for lang, files in (("java", JAVA), ("node", NODE)):
+            with self.subTest(lang=lang):
+                out = _shown(_tree(**files))
                 self.assertNotIn("import", out)
-                self.assertEqual(out, "")
+                self.assertNotIn("ElementTree", out)
+                self.assertNotIn("json.load", out)
 
-    def test_a_real_command_beside_an_inline_program_still_survives(self):
-        """Dropping the program must not drop the probe next to it."""
-        script = "\n".join([_wrapped(self.TOML_CHECK), _wrapped("cargo check")])
-        self.assertEqual(probegate._strip_gate_plumbing(script), "cargo check")
+    def test_no_program_cria_composed_reaches_the_model_in_any_language(self):
+        """The general form: a line the model sees is one command, never a program."""
+        for lang, files in (("rust", RUST), ("java", JAVA), ("node", NODE)):
+            with self.subTest(lang=lang):
+                for line in _shown(_tree(**files)).splitlines():
+                    self.assertNotIn("python3 -c", line)
+                    self.assertNotIn("<<", line)
+
+
+class ARealCommandIsShownTests(unittest.TestCase):
+    """Dropping the program must not drop the probe beside it — the gate is still worth seeing."""
+
+    def test_the_rust_probes_the_coder_could_retype_survive(self):
+        shown = _shown(_tree(**RUST))
+        self.assertTrue(shown.strip(), "a Rust gate that shows the coder nothing is not a gate")
+        for line in shown.splitlines():
+            self.assertTrue(line.startswith("cargo "), line)
+
+    def test_every_line_shown_is_a_command_and_nothing_else(self):
+        for lang, files in (("rust", RUST), ("java", JAVA), ("node", NODE)):
+            for line in _shown(_tree(**files)).splitlines():
+                with self.subTest(lang=lang, line=line):
+                    self.assertNotIn("cria", line.lower())
+                    self.assertNotIn("$", line)
+                    self.assertNotIn(";", line)
 
 
 if __name__ == "__main__":

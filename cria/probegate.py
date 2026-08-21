@@ -26,6 +26,7 @@ the pre-existing don't-wedge semantics instead of inventing a verdict.
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import re
@@ -230,7 +231,12 @@ def plan_gate(workspace: str, session: str = "") -> GatePlan:
     # harness offers its own file tools and cria lowers nothing. Appended AFTER the last marker and
     # taken back off by `interpret_gate`, so no section ever contains a byte of it.
     parts.append(wsview.survey_command(session, cd=workspace))
-    plan.script = "\n".join(parts)
+    # STATE IT NOW, while cria still knows. A probe the coder could retype is one line of argv; a
+    # manifest check cria composed is a multi-line inline program. The distinction is free here and
+    # unrecoverable downstream — see GATE_SENTINEL.
+    retypable = [" ".join(c.command) for c in plan.candidates
+                 if c.command and not c.composed_by_cria]
+    plan.script = "\n".join([_gate_sentinel(retypable), *parts])
     return plan
 
 
@@ -801,106 +807,70 @@ def _checks_payload(m) -> tuple[str, str] | None:
 
 _NO_SIGNAL_CHECK = "no usable result"   # the ⟦ctx:checks⟧ non-signal — nothing to act on
 
-# Gate SCAFFOLDING lines (from plan_gate): the section-marker echoes, the git-status|sha1sum changed-files
-# fingerprint, and the ``cd <ws> || exit 97`` guard. Pure plumbing the model never authored and can't act
-# on — stripped from the COMMAND side so the coder's view isn't flooded with the gate's own machinery.
-_GATE_MARKER_ECHO = re.compile(r"^\s*echo\s+.*" + re.escape(SECTION_PREFIX))
-_GATE_GIT_FP = re.compile(r"^\s*git status --porcelain.*sha1sum")
-_GATE_CD_GUARD = re.compile(r"^\s*cd\s+.*\|\|\s*exit\s+97\s*$")
-# The litter bookkeeping (pre/post untracked snapshot). Named for the three variables that appear
-# ONLY there — the probe wrapper uses __cria_out/_ec/_n, so a real probe line can never match.
-_GATE_LITTER = re.compile(r"__cria_(?:pre|post|new)\b")
-# The TEST probe's saved exit code, and the offline re-run that reads it. Both are cria's own
-# bookkeeping and neither is a check the coder can act on — the offline leg's single product is a
-# SENTENCE for the judge ("these same tests also pass with the network gone"), which reaches the
-# model through the checks summary, never as shell. Measured on one walked run: 340 copies of the
-# save line and 170 of the offline leg across the coder's prompts, 2.7% of every byte cria sent it.
-# Keyed on the shared variable name, which no probe command can contain — a wrapper line parks its
-# code in `__cria_ec` and is UNWRAPPED below, not dropped.
-_GATE_TEST_EC = re.compile(re.escape(proberun.TEST_EC_VAR))
-
-
-# The capture wrapper `proberun.compose_probe_command` builds, reduced to the command inside it.
-# Deliberately anchored on the SHAPE (`$(timeout … <argv> </dev/null 2>&1)` … `printf 'EXIT:%d…'`)
-# rather than on cria's variable names, so a rename cannot silently turn this back off.
+# WHAT THE MODEL MAY SEE OF A GATE, CARRIED AS DATA — not re-derived by matching cria's own text.
 #
-# IT SPANS LINES, and that is not a detail. `compose_probe_command` calls itself "one physical shell
-# line", and it is — until a probe's own argv contains a newline. `python3 -c '<multi-line program>'`
-# is one shlex-quoted token with real newlines in it, and cria composes several: the pyproject TOML
-# check, the JSON check, the discovered-test loader. A line-anchored pattern misses those wrappers
-# entirely, so the WHOLE thing rode into the coder's context — the `timeout` capture, the byte-count
-# arithmetic, the head/tail elision branch and the EXIT printf, ~1.3 KB per probe. Replayed against
-# a live capture: 1,703 characters of one gate command, of which 377 were the five real commands.
-_GATE_WRAPPER = re.compile(
-    r"""(?xs)(?:cd\s+\S+\s+&&\s+)?              # the cd guard, when present
-        \w+=\$\(\s*timeout\s+(?:-k\s+\S+\s+)?\S+\s+   # __x_out=$(timeout [-k GRACE] LIMIT
-        (?P<cmd>.+?)\s*</dev/null\s*2>&1\s*\);           # …the real command…
-        .*?printf\s+'[^']*""" + re.escape(proberun.PROBE_EXIT_SENTINEL) + r"""[^\n]*""")
+# There used to be nine regexes here and in `wsview`, and their whole job was to answer a question
+# cria could answer for free: "is this my own text?". At compose time `plan_gate` knows exactly which
+# argv are real probes and which bytes are its own scaffolding; it threw that away into a shell
+# script and every reader downstream tried to recover it by pattern.
+#
+# It does not work, and the failure has a signature: the same matcher was patched THREE TIMES in one
+# day — for a wrapper that spans lines, then for cria's own inline programs, then for the litter
+# heredoc — each time because cria had grown a new kind of self-authored text the patterns had never
+# heard of. Each patch was correct and none of them was the fix (#4: fix upstream, not at the point
+# of damage; #12: take the fact from the authoritative event, never from an English match).
+#
+# So the plan states it. `writeproxy._sentinel` has done exactly this for every lowered tool call
+# since it was written, statelessly, and needs no strip patterns at all — this is that pattern,
+# applied to the one caller that lacked it.
+#
+# A COMMAND THE CODER COULD RETYPE IS WORTH SHOWING; A PROGRAM CRIA WROTE IS NOT. `cargo test`,
+# `go vet ./...`, `bundle exec rubocop` come off the project's own tooling and seeing one run is real
+# provenance for the finding it produced. The parse floor does not: it is cria's own construction,
+# and it is the half that hurt — the TOML check handed a Rust project the Python package `tomli`
+# (0/4), and a coder emitted cria's `compileall` line back as its own work. Discovery states which
+# is which (`ProbeCandidate.composed_by_cria`); the plan carries only the coder's half.
+GATE_SENTINEL = "⟦ctx:gate⟧"
 
 
-def _kept_probe(m) -> str:
-    """The probe command from a wrapper, or "" when it is one of cria's own inline programs.
+def _gate_sentinel(probes: list[str]) -> str:
+    """The leading comment line naming the probe commands the model may see. Same shape and the same
+    stateless contract as `writeproxy._sentinel`: it rides IN the command, so it survives a restart,
+    a compaction and any re-render of the history."""
+    payload = base64.b64encode(json.dumps(probes, ensure_ascii=False).encode("utf-8")).decode("ascii")
+    return f"# {GATE_SENTINEL}{payload}"
 
-    A COMMAND THE CODER COULD RETYPE IS WORTH SHOWING; A PROGRAM CRIA WROTE IS NOT. Most probes are
-    a command the coder already knows — `cargo test`, `go vet ./...`, `bundle exec rubocop` — and
-    seeing them run is useful. A handful are not commands at all: they are multi-line Python or
-    shell programs cria composes to check a manifest, and they were reaching the coder's context as
-    source code, mixed in among its own work.
 
-    THIS COST A RUN. `rust-toml-cli x nemotron-elastic` 1787160046 scored 0/4, never compiling.
-    Walked call by call, the first appearance of `tomli` anywhere in that session is cria's own TOML
-    check — `python3 -c 'import tomllib / except ModuleNotFoundError: import tomli as tomllib …'` —
-    riding into the coder's prompt at call 0012. `tomli` is a PYTHON package. The model, building a
-    RUST TOML reader, read it as the library to use and wrote `tomli = "^0.9"` into Cargo.toml; every
-    later build died on `failed to select a version for the requirement`, and two of cria's own
-    steers then argued with each other about deleting it. The model never reached out of its
-    ecosystem — it was handed the wrong ecosystem and believed cria.
-
-    The same leak feeds Java `from xml.etree import ElementTree as ET` (the pom check) and Node
-    `json.load(fh)` (the package.json check).
-
-    One line is the whole distinction, and it needs no per-language knowledge: a real command is one
-    line, an embedded program is several."""
-    inner = m.group("cmd")
-    return "" if "\n" in inner else inner
+def gate_probes_of(cmd: str) -> list[str] | None:
+    """The probe list a gate command declares, or None when this is not a cria-authored gate."""
+    for line in (cmd or "").splitlines():
+        s = line.strip()
+        if not s.startswith("# " + GATE_SENTINEL):
+            continue
+        try:
+            got = json.loads(base64.b64decode(s[len("# " + GATE_SENTINEL):].encode()).decode("utf-8"))
+        except Exception:                       # noqa: BLE001 — an unreadable stamp is not a gate
+            return None
+        return [str(x) for x in got] if isinstance(got, list) else None
+    return None
 
 
 def _strip_gate_plumbing(cmd: str) -> str:
-    """Drop cria's gate scaffolding from a composed gate command, keeping only the real probe commands
-    (pytest/lint) the model might care about. Returns '' when nothing but scaffolding remains.
+    """A composed gate command, reduced to the probe commands the model may see.
 
-    IT NOW DOES WHAT IT SAYS. It dropped whole LINES matching four scaffolding patterns — but the
-    capture wrapper is ONE line with the real command inside it, so every probe line rode through
-    complete: `cd /tmp/… && __cria_out=$(timeout -k 5 240 pytest -q </dev/null 2>&1); __cria_ec=$?;
-    …; printf 'EXIT:%d\n' "$__cria_ec"`. Measured on one day of real prompts: 131,946 occurrences of
-    cria's own variable names across 1,433 coder prompts — 6.1% of every byte cria sent the coder and
-    31.6% of the worst single prompt.
+    Reads the stamp `plan_gate` put there. No patterns, no un-composing, and nothing to teach when
+    cria grows a new kind of internal leg — a survey, a litter removal, an offline re-run — because
+    none of them is in the list and none of them ever has to be excluded.
 
-    Three harms, one cause. Three different models COPIED the wrapper back into their own commands
-    (21 responses, 5 sessions; one reproduced the whole four-probe script including the offline leg),
-    and the copy always exits 0 because its last statement is a `printf`. The repetition detector's
-    fingerprint drowned: the boilerplate contributes ~35 shared words against a real command's 1–4,
-    so `cat main.go` matched `mv cart.go .` — three live fires, each costing a probe and a reasoned
-    redirect. And the steer author's transcript, defanged precisely so there is "nothing a model can
-    COPY", carried 557 characters of runnable shell per call.
+    THE HARMS THIS PREVENTS ARE MEASURED. Across the thirteen walked nemotron runs the unstripped
+    scaffolding was 3.8% of every byte cria sent one coder (50 copies of a pom checker, 100 of the
+    `unshare` offline leg, 850 occurrences of `__cria_`); three separate models copied it back as
+    their own command; and the token `cria` reached the model 63 times in a single prompt (#17).
 
-    Rules 17 and 5b: the model never sees the token, and never sees an idiom that lies about its own
-    exit status. The workspace survey that rides home with the gate is cria's own too, and comes off
-    the same way — it is bracketed, so removing it is exact rather than pattern-matched."""
-    cmd = wsview.strip_survey_command(cmd)
-    cmd = _LITTER_BLOCK.sub("", cmd)
-    # UNWRAP FIRST, ACROSS THE WHOLE STRING. The wrapper can span lines (see _GATE_WRAPPER), so this
-    # cannot be a per-line pass: the inner command is pulled out wherever it sits, and only what is
-    # left is filtered line by line.
-    cmd = _GATE_WRAPPER.sub(_kept_probe, cmd)
-    out = []
-    for ln in cmd.splitlines():
-        if (_GATE_MARKER_ECHO.match(ln) or _GATE_GIT_FP.match(ln)
-                or _GATE_CD_GUARD.match(ln) or _GATE_LITTER.search(ln)
-                or _GATE_TEST_EC.search(ln)):
-            continue
-        out.append(ln)
-    return "\n".join(ln for ln in out if ln.strip()).strip()
+    Not a gate → "". A cria-authored call the model never made has nothing in it for the model.
+    """
+    probes = gate_probes_of(cmd)
+    return "\n".join(p for p in (probes or []) if p.strip())
 
 
 def _strip_command_plumbing(m: dict) -> dict:
@@ -1057,15 +1027,6 @@ def _queue_litter(workspace: str, rels: list[str]) -> None:
         if r not in q:
             q.append(r)
     del q[:-256]
-
-
-# cria's own litter-removal leg, for the strip below. It is a standalone `{ python3 - <<HEREDOC }`
-# block rather than a wrapped probe, so `_kept_probe` — which drops the multi-line INNER command of a
-# capture wrapper — never sees it. Walked on orders-api-py x nemotron-elastic 1787270062: the block
-# rode into 28 coder prompts as an assistant turn, and at call 0044 the model emitted cria's own
-# `compileall` line back as its own work, exclusion regex and all. My own regression, from the commit
-# that moved the removal onto the harness (8f18472).
-_LITTER_BLOCK = re.compile(r"\{ python3 - <<'__CRIA_LITTER__'.*?__CRIA_LITTER__\n\}[^\n]*\n?", re.S)
 
 
 def litter_removal_command(workspace: str) -> str:

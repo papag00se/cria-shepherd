@@ -918,21 +918,6 @@ def survey_command(sess: str = "", *, cd: str = "") -> str:
             f"{SURVEY_CMD_CLOSE}")
 
 
-_CMD_BLOCK = re.compile(re.escape(SURVEY_CMD_OPEN) + r".*?(?:" + re.escape(SURVEY_CMD_CLOSE) + r"|\Z)",
-                        re.S)
-
-
-def strip_survey_command(command: str) -> str:
-    """A composed command with cria's survey leg taken back out.
-
-    The COMMAND-side twin of :func:`strip_survey`, which handles the RESULT side. Both exist for the
-    same reason: the model must see the call it made and the answer to it, never cria's own
-    instrumentation riding along on either."""
-    if not command or SURVEY_CMD_OPEN not in command:
-        return command
-    return _CMD_BLOCK.sub("", command).strip("\n")
-
-
 def _q(s: str) -> str:
     return "'" + str(s).replace("'", "'\\''") + "'"
 

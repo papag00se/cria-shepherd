@@ -16,8 +16,10 @@ Three harms, one cause:
   * the steer author's transcript, defanged precisely so there is "nothing a model can COPY",
     carried 557 characters of runnable shell per call.
 
-The matcher is anchored on the wrapper's SHAPE, not on cria's variable names, so renaming them
-cannot silently turn this back off.
+There is no matcher any more. The strip does not READ the wrapper, it reads the list of probe
+commands `plan_gate` stamped into the script when it composed it — so a rename of cria's variables,
+a new internal leg, or a wrapper that spans lines cannot turn this back off, because none of them is
+ever consulted. That is what the four patched patterns were reaching for and never got.
 """
 
 import unittest
@@ -26,6 +28,12 @@ from cria import probediscovery, probegate, proberun
 
 
 def composed(command, wd="/tmp/ws", timeout_s=240):
+    """The gate script for one probe, exactly as cria builds it: the stamp naming what the model may
+    see, then the capture wrapper it may not."""
+    return probegate._gate_sentinel([" ".join(command)]) + "\n" + wrapped(command, wd, timeout_s)
+
+
+def wrapped(command, wd="/tmp/ws", timeout_s=240):
     c = probediscovery.ProbeCandidate(
         kind=probediscovery.ProbeKind.Test, command=command, working_dir=wd, confidence=1,
         expected_value=1, cost=probediscovery.ProbeCost.Cheap, mutates_code=False,
@@ -55,18 +63,32 @@ class TheRealCommandSurvivesAndNothingElseTests(unittest.TestCase):
     def test_it_is_the_bulk_of_the_bytes(self):
         raw = composed(["python3", "-m", "pytest", "-q"])
         out = probegate._strip_gate_plumbing(raw)
-        self.assertGreater(len(raw), 400)
+        self.assertGreater(len(wrapped(["python3", "-m", "pytest", "-q"])), 400)
         self.assertLess(len(out), 40)
 
-    def test_the_shape_not_the_name_is_what_is_matched(self):
-        """A rename of cria's variables must not turn this off — that is how the leak survived."""
-        raw = composed(["python3", "-m", "pytest", "-q"]).replace("__cria_", "__p_")
-        self.assertEqual(probegate._strip_gate_plumbing(raw), "python3 -m pytest -q")
+    def test_nothing_about_the_wrapper_is_load_bearing(self):
+        """A rename of cria's variables must not turn this off — that is how the leak survived. Now
+        it cannot: rename them, add a leg, split it over lines; the strip never looked."""
+        for mutate in (lambda r: r.replace("__cria_", "__p_"),
+                       lambda r: r + "\n__cria_brand_new_leg=$(date)",
+                       lambda r: r.replace("; ", ";\n")):
+            with self.subTest(mutation=mutate(composed(["true"]))[:0] or "mutated"):
+                raw = mutate(composed(["python3", "-m", "pytest", "-q"]))
+                self.assertEqual(probegate._strip_gate_plumbing(raw), "python3 -m pytest -q")
 
 
 class ItStillDropsWhatItAlwaysDroppedTests(unittest.TestCase):
-    def test_a_plain_command_is_untouched(self):
-        self.assertEqual(probegate._strip_gate_plumbing("pytest -q"), "pytest -q")
+    def test_the_coders_own_command_is_untouched(self):
+        """At the caller, which is where it matters: a shell call the CODER made passes through
+        byte-identical. (The strip itself is only ever handed a gate; asked about anything else it
+        answers "not mine, nothing to show" — the safe direction, since the cost of guessing wrong
+        is cria's own plumbing reaching the model as the coder's work.)"""
+        import json
+        mine = {"role": "assistant", "tool_calls": [{"id": "c1", "type": "function", "function": {
+            "name": "exec_command", "arguments": json.dumps({"cmd": "pytest -q tests/test_cart.py"})}}]}
+        out = probegate.clean_gate_results([mine])
+        self.assertEqual(out, [mine])
+        self.assertEqual(probegate._strip_gate_plumbing("pytest -q"), "")
 
     def test_scaffolding_only_reduces_to_nothing(self):
         from cria.probegate import SECTION_PREFIX, SECTION_SUFFIX
@@ -98,15 +120,15 @@ class TheTestExitCodeAndTheOfflineLegNeverRideEitherTests(unittest.TestCase):
     boilerplate."""
 
     def test_the_saved_test_exit_code_is_dropped(self):
-        out = probegate._strip_gate_plumbing(
-            "ruby -c a.rb\n" + f"{proberun.TEST_EC_VAR}=$__cria_ec\n" + "bundle exec rspec")
-        self.assertEqual(out.splitlines(), ["ruby -c a.rb", "bundle exec rspec"])
+        script = "\n".join([probegate._gate_sentinel(["bundle exec rspec"]),
+                            f"{proberun.TEST_EC_VAR}=$__cria_ec", "bundle exec rspec"])
+        self.assertEqual(probegate._strip_gate_plumbing(script).splitlines(), ["bundle exec rspec"])
 
     def test_the_offline_re_run_is_dropped(self):
         offline = (f"cd /ws && if [ \"${{{proberun.TEST_EC_VAR}:-1}}\" -eq 0 ] && "
                    "unshare -rnm -- sh -c 'mount --bind /ws /ws' >/dev/null 2>&1; then :; fi")
-        out = probegate._strip_gate_plumbing("pytest -q\n" + offline)
-        self.assertEqual(out, "pytest -q")
+        script = "\n".join([probegate._gate_sentinel(["pytest -q"]), "pytest -q", offline])
+        self.assertEqual(probegate._strip_gate_plumbing(script), "pytest -q")
 
     def test_a_real_composed_gate_keeps_only_the_probe_commands(self):
         """End to end on what plan_gate builds for a repo with a test probe — the case where both

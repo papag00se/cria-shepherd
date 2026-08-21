@@ -364,7 +364,8 @@ class CleanGateOutputTests(unittest.TestCase):
 
     def _gate_cmd(self):
         import json
-        cmd = ("cd /ws || exit 97\necho " + probegate.SECTION_PREFIX + "probe-0___\npytest -q\necho "
+        cmd = (probegate._gate_sentinel(["pytest -q"]) + "\n"
+               + "cd /ws || exit 97\necho " + probegate.SECTION_PREFIX + "probe-0___\npytest -q\necho "
                + probegate.SECTION_PREFIX + "git___\ngit status --porcelain 2>/dev/null | sha1sum 2>/dev/null | cut -d' ' -f1")
         return {"role": "assistant", "tool_calls": [{"id": "g1", "type": "function",
                 "function": {"name": "exec_command", "arguments": json.dumps({"cmd": cmd})}}]}

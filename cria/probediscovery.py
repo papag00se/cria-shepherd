@@ -176,6 +176,21 @@ class ProbeCandidate:
     may_hang: bool
     may_need_services: bool
     reason: str
+    composed_by_cria: bool = False
+    """Did cria AUTHOR this argv, or did it read it off the project?
+
+    `cargo test --no-fail-fast`, `go vet ./...`, `bundle exec rspec` come from the project's own
+    tooling: the coder could have typed them, and seeing one run is real provenance for the finding
+    it produced. The parse floor does not — `python3 -m compileall -q -x <cria's skip regex> .`,
+    `ruby -c <a file cria picked>`, and the manifest checks are cria's own construction, and they are
+    the ones that hurt when they reach the model: the TOML check handed a RUST project the PYTHON
+    package `tomli` (rust-toml-cli x nemotron-elastic 1787160046, 0/4), and a Python coder emitted
+    the compileall line back as its own work, skip regex and all (orders-api-py 1787270062, call
+    0044).
+
+    Stated here, at the one place that knows, so no reader downstream has to recognise cria's own
+    text to hide it — which is a thing readers cannot do, and three patched matchers in one day were
+    the proof (#4, #12)."""
 
     def is_safe(self) -> bool:
         """Safe to run unattended: read-only, terminates, no external services.
@@ -410,10 +425,15 @@ def project_types(root: Path) -> list[str]:
 # Candidate construction helpers.
 
 def cand(kind: ProbeKind, command: list[str], working_dir: Path, confidence: int,
-         expected_value: int, cost: ProbeCost, reason: str) -> ProbeCandidate:
+         expected_value: int, cost: ProbeCost, reason: str,
+         composed_by_cria: bool = False) -> ProbeCandidate:
     return ProbeCandidate(
         kind=kind,
         command=list(command),  # fresh list — callers may reuse prefixes
+        # A multi-line token is an inline PROGRAM: no project config produces one, so it is cria's
+        # by construction and says so whether or not the caller remembered to. A future floor probe
+        # cannot leak by omission.
+        composed_by_cria=composed_by_cria or any("\n" in t for t in command),
         working_dir=Path(working_dir),
         confidence=confidence,
         expected_value=expected_value,
@@ -995,28 +1015,28 @@ def syntax_floor_candidates(root: Path) -> list[ProbeCandidate]:
     if py:
         out.append(cand(ProbeKind.SyntaxCheck,
                         ["python3", "-m", "compileall", "-q", "-x", _COMPILEALL_SKIP_RE, "."],
-                        root, 95, 95, ProbeCost.Cheap, "Python files present: parse floor"))
+                        root, 95, 95, ProbeCost.Cheap, composed_by_cria=True, reason="Python files present: parse floor"))
     for f in linterprobe.collect_files(str(root), ["js", "mjs", "cjs"])[:MAX_FLOOR_FILES_PER_LANG]:
         out.append(cand(ProbeKind.SyntaxCheck, ["node", "--check", f],
-                        root, 95, 95, ProbeCost.Cheap, "JS file present: parse floor"))
+                        root, 95, 95, ProbeCost.Cheap, composed_by_cria=True, reason="JS file present: parse floor"))
     for f in linterprobe.collect_files(str(root), ["php"])[:MAX_FLOOR_FILES_PER_LANG]:
         out.append(cand(ProbeKind.SyntaxCheck, ["php", "-l", f],
-                        root, 95, 95, ProbeCost.Cheap, "PHP file present: parse floor"))
+                        root, 95, 95, ProbeCost.Cheap, composed_by_cria=True, reason="PHP file present: parse floor"))
     for f in linterprobe.collect_files(str(root), ["rb"])[:MAX_FLOOR_FILES_PER_LANG]:
         out.append(cand(ProbeKind.SyntaxCheck, ["ruby", "-c", f],
-                        root, 95, 95, ProbeCost.Cheap, "Ruby file present: parse floor"))
+                        root, 95, 95, ProbeCost.Cheap, composed_by_cria=True, reason="Ruby file present: parse floor"))
     tomls = linterprobe.collect_files(str(root), ["toml"])[:MAX_FLOOR_FILES_PER_LANG]
     if tomls:
         out.append(cand(ProbeKind.SyntaxCheck, ["python3", "-c", _TOML_CHECK, *tomls],
-                        root, 95, 95, ProbeCost.Cheap, "TOML config present: parse floor"))
+                        root, 95, 95, ProbeCost.Cheap, composed_by_cria=True, reason="TOML config present: parse floor"))
     jsons = _strict_json_files(root)[:MAX_FLOOR_FILES_PER_LANG]
     if jsons:
         out.append(cand(ProbeKind.SyntaxCheck, ["python3", "-c", _JSON_CHECK, *jsons],
-                        root, 95, 95, ProbeCost.Cheap, "strict-JSON config present: parse floor"))
+                        root, 95, 95, ProbeCost.Cheap, composed_by_cria=True, reason="strict-JSON config present: parse floor"))
     xmls = _strict_xml_files(root)[:MAX_FLOOR_FILES_PER_LANG]
     if xmls:
         out.append(cand(ProbeKind.SyntaxCheck, ["python3", "-c", _XML_CHECK, *xmls],
-                        root, 95, 95, ProbeCost.Cheap, "build XML present: parse floor"))
+                        root, 95, 95, ProbeCost.Cheap, composed_by_cria=True, reason="build XML present: parse floor"))
     return out
 
 
@@ -1034,8 +1054,8 @@ def lint_floor_candidates(root: Path) -> list[ProbeCandidate]:
     if py:
         out.append(cand(ProbeKind.Lint,
                         ["python3", "-m", "pyflakes", *py[:MAX_FLOOR_FILES_PER_LANG]],
-                        root, 60, 80, ProbeCost.Cheap,
-                        "Python linting: pyflakes (undefined names, unused imports; zero-config)"))
+                        root, 60, 80, ProbeCost.Cheap, composed_by_cria=True,
+                        reason="Python linting: pyflakes (undefined names, unused imports; zero-config)"))
     dirs = inventory(root)
     for p in dirs:
         if p.has("Cargo.toml"):
