@@ -105,9 +105,14 @@ class TheBlockIsStillClosedTests(unittest.TestCase):
         self.assertIn("every deliverable it named is present and genuinely works", self.body)
 
     def test_the_slots_still_exist(self):
-        for slot in ("{{CHECK_STATE}}", "{{REASON}}", "{{EXEC_FINDING}}"):
+        """{{EXEC_FINDING}} is NOT among them, and this line is why it survived a retirement. The seat
+        that filled it was removed on 2026-08-18 and this test kept asserting the empty slot, so what
+        the coder read was the literal braces — see
+        tests/test_no_prompt_token_is_orphaned.py."""
+        for slot in ("{{CHECK_STATE}}", "{{REASON}}"):
             with self.subTest(slot=slot):
                 self.assertIn(slot, self.body)
+        self.assertNotIn("{{EXEC_FINDING}}", self.body)
 
     def test_the_done_critiqued_bound_never_came_back(self):
         """e0da427 removed a `done_critiqued` once-bound field after a false 'done' shipped a
