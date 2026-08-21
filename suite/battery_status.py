@@ -27,7 +27,15 @@ from pathlib import Path
 SUITE = Path(__file__).resolve().parent
 RESULTS = SUITE / "results" / "results.jsonl"
 WALK = SUITE.parent / "docs" / "audits" / "battery-walk.md"
-NOTE_PREFIX = "BATTERY2"
+NOTE_PREFIX = "BATTERY2"          # what a NEW campaign run is stamped with (battery_run.py imports it)
+
+# EVERY RUN OF A CELL COUNTS, WHATEVER PROMPTED IT. A rerun launched to chase a low score is still a
+# measurement of the same task, model and arm, and `prior_cell` below already states the rule the
+# operator settled on: "a run is a run". Reading only the campaign prefix meant the grid ignored the
+# reruns launched to improve it — four cells re-run on 08-20 never entered the ranking they were run
+# for, and one of them was the best ruby result on record (qwen35, 4/5). The grid is the operator
+# view; a measurement it cannot see is a measurement nobody acts on.
+COUNTED_PREFIXES = (NOTE_PREFIX, "LOWSCORE", "RERANK")
 
 MODELS = ("gemma4", "qwen35", "ternary-bonsai", "nemotron-elastic")
 # ONE KIND OF WORK PER LANGUAGE. BATTERY1 ran six tasks that were five-sixths Python, because the
@@ -58,7 +66,7 @@ def rows() -> list[dict]:
             r = json.loads(line)
         except ValueError:
             continue
-        if str(r.get("note", "")).startswith(NOTE_PREFIX):
+        if str(r.get("note", "")).startswith(COUNTED_PREFIXES):
             out.append(r)
     return out
 
