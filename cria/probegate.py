@@ -888,6 +888,7 @@ def _strip_gate_plumbing(cmd: str) -> str:
     exit status. The workspace survey that rides home with the gate is cria's own too, and comes off
     the same way — it is bracketed, so removing it is exact rather than pattern-matched."""
     cmd = wsview.strip_survey_command(cmd)
+    cmd = _LITTER_BLOCK.sub("", cmd)
     # UNWRAP FIRST, ACROSS THE WHOLE STRING. The wrapper can span lines (see _GATE_WRAPPER), so this
     # cannot be a per-line pass: the inner command is pulled out wherever it sits, and only what is
     # left is filtered line by line.
@@ -1056,6 +1057,15 @@ def _queue_litter(workspace: str, rels: list[str]) -> None:
         if r not in q:
             q.append(r)
     del q[:-256]
+
+
+# cria's own litter-removal leg, for the strip below. It is a standalone `{ python3 - <<HEREDOC }`
+# block rather than a wrapped probe, so `_kept_probe` — which drops the multi-line INNER command of a
+# capture wrapper — never sees it. Walked on orders-api-py x nemotron-elastic 1787270062: the block
+# rode into 28 coder prompts as an assistant turn, and at call 0044 the model emitted cria's own
+# `compileall` line back as its own work, exclusion regex and all. My own regression, from the commit
+# that moved the removal onto the harness (8f18472).
+_LITTER_BLOCK = re.compile(r"\{ python3 - <<'__CRIA_LITTER__'.*?__CRIA_LITTER__\n\}[^\n]*\n?", re.S)
 
 
 def litter_removal_command(workspace: str) -> str:

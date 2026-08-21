@@ -10,6 +10,10 @@ re-read an error as though it were the result it wanted, and forbade the retry t
 fixed it.
 
 One guard, two failure modes, two different true sentences.
+
+AND THE SPLIT IS ONLY AS GOOD AS WHAT COUNTS AS FAILED. See
+`test_an_empty_body_is_NOT_a_known_failure`: an empty body was on that list, and calling a true
+empty answer a failure cost twelve turns in a walked run.
 """
 import unittest
 
@@ -43,8 +47,25 @@ class WhatCountsAsFailedTests(unittest.TestCase):
         self.assertTrue(focustrim._repeat_failed(
             _result(denial.mark("that path is outside the workspace")), "c1"))
 
-    def test_an_empty_body(self):
-        self.assertTrue(focustrim._repeat_failed(_result("   "), "c1"))
+    def test_an_empty_body_is_NOT_a_known_failure(self):
+        """This assertion used to read True, and it contradicted this file's own rule.
+
+        `test_no_result_at_all_keeps_the_original_wording` states it: only a KNOWN failure changes
+        the sentence. An empty body is not one — an empty file, a grep that matched nothing, a
+        command that printed nothing are all answers the coder asked for and got.
+
+        Measured cost of calling them failures, on orders-api-py x nemotron-elastic 1787270062:
+        `orders/__init__.py` is 0 bytes, `read_file` returned it correctly, and cria answered "you
+        have now made this exact call 12 times and it failed the same way every time … do not read
+        its result as the answer". The model obeyed for twelve turns and, pushed by "use a different
+        tool", called `view_image` on a `.py` file.
+
+        The residual risk is a harness tool that fails silently with an empty body: it now gets the
+        successful wording. That is the conservative direction this file already chose for the
+        unknown case, and the other two discriminators — a cria-authored refusal and a nonzero
+        `EXIT:` — still catch every failure cria can actually see."""
+        self.assertFalse(focustrim._repeat_failed(_result("   "), "c1"))
+        self.assertFalse(focustrim._repeat_failed(_result(""), "c1"))
 
     def test_a_nonzero_exit_from_the_lowered_command(self):
         self.assertTrue(focustrim._repeat_failed(_result("boom\nEXIT:2"), "c1"))

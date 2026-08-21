@@ -313,14 +313,32 @@ def _collapse_duplicates(messages: list[dict]) -> tuple[list[dict], TrimReport]:
 def _repeat_failed(messages: list[dict], call_id: str) -> bool:
     """Did the repeated call come back as a failure rather than an answer?
 
-    Conservative on purpose: a refusal cria itself authored, an empty body, or a nonzero exit
-    reported by the lowered command. Anything else is treated as a real result, so the guard's
-    original wording stands wherever it was already true."""
+    Conservative on purpose: a refusal cria itself authored, or a nonzero exit reported by the
+    lowered command. Anything else is treated as a real result, so the guard's original wording
+    stands wherever it was already true.
+
+    AN EMPTY BODY IS AN ANSWER, NOT A FAILURE — and it used to be counted as one. An empty file, a
+    grep that matched nothing, a command that printed nothing: each is a fact the coder asked for and
+    got. Walked on orders-api-py x nemotron-elastic 1787270062: `orders/__init__.py` is 0 bytes,
+    `read_file` returned it correctly, and cria answered
+
+        [you have now made this exact call 12 times and it FAILED the same way every time … Repeating
+        it will fail the same way. It has not answered the question, so do not read its result as the
+        answer: use a different tool, or fix what made it fail, before asking again.]
+
+    The model obeyed it literally for twelve turns — "Maybe the file exists but empty? Let's try to
+    view it" — and, pushed by "use a different tool", called `view_image` on a `.py` file. It escaped
+    only by shelling out to `cat`, which printed the same nothing, at which point it believed the
+    emptiness. Twelve of 146 turns, and a false fact in the one seat built to break loops (#5b).
+
+    This is the same class as `selfcompact`'s "an empty line in a program's output is a value"
+    (e6a3626), one module over. The repeat guard still fires on the REPETITION — that part was never
+    wrong — it just no longer calls the answer a failure."""
     for m in messages:
         if m.get("role") != "tool" or m.get("tool_call_id") != call_id:
             continue
         body = str(m.get("content") or "")
-        if not body.strip() or denial.is_denied(body):
+        if denial.is_denied(body):
             return True
         for line in body.splitlines():
             s = line.strip()
