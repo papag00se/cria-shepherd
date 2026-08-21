@@ -220,10 +220,18 @@ def _cache_put(url: str, status: int, ct: Optional[str], reduced: str, parsed: O
 _FETCH_SEEN: dict[str, set] = {}
 _FETCH_STREAK: dict[str, int] = {}
 _SEARCH_SEEN: dict[str, set] = {}
-# Queries whose results cria ITSELF spilled to a file. Only the synthetic Brave path writes that file;
-# a harness-native search never does. The repeat refusal used to name the spill path unconditionally,
-# sending the model to grep a file that was never written.
-_SEARCH_SPILLED: dict[str, set] = {}
+# Queries whose results cria ITSELF spilled to a file, `{lowered: as the model typed it}`. Only the
+# synthetic Brave path writes that file; a harness-native search never does. The repeat refusal used
+# to name the spill path unconditionally, sending the model to grep a file that was never written.
+#
+# The ORIGINAL spelling is kept because the read-judge is asked to rule a saved file's results on- or
+# off-target and must be handed the query that produced them. It used to recover that query by
+# regexing cria's own pointer sentence out of the conversation, and when the sentence changed shape
+# the match missed and the judge was told the query was "(none)" — it ruled off-target on that and
+# cria PERMANENTLY DELETED the file (shipping-rates-rb x nemotron-elastic 1787294328, holding
+# `ISO3166::Country#in_eu?`, the exact predicate the task needed; 0/5). cria wrote that file and knew
+# that query; there was never anything to recover (#12).
+_SEARCH_SPILLED: dict[str, dict] = {}
 # Queries a reasoner has judged a genuinely NEW direction rather than a re-hunt (`allow_search`), so
 # the word-overlap trigger does not refuse them.
 _SEARCH_ALLOWED: dict[str, set] = {}
@@ -1110,7 +1118,17 @@ def note_search_spill(session: Optional[str], query: str) -> None:
     """Record that cria SPILLED this query's results to a file — the only warrant for later telling the
     model to go read that file. Set by the synthetic Brave path; a harness-native search never sets it."""
     if session and (query or "").strip():
-        _SEARCH_SPILLED.setdefault(session, set()).add(query.strip().lower())
+        _SEARCH_SPILLED.setdefault(session, {})[query.strip().lower()] = query.strip()
+
+
+def spilled_search_files(session: Optional[str]) -> dict:
+    """``{spill file: the query that produced it}`` for this session — cria's own record of what it
+    wrote, and the only warrant for judging one of those files.
+
+    A file cria did not spill is simply absent, and the judge is skipped rather than asked to rule on
+    a query nobody knows. That is also what happens across a restart, which is the right direction:
+    the verdict is destructive, so an unremembered file costs the model nothing (#13)."""
+    return {search_spill_name(q): orig for q, orig in (_SEARCH_SPILLED.get(session) or {}).items()}
 
 
 def set_visible(session: Optional[str], fetch_keys, search_queries) -> None:

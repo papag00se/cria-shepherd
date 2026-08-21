@@ -4032,15 +4032,24 @@ class SearchJudgeTests(unittest.TestCase):
         (p / "search-ada_handles_api.txt").write_text(self._REAL_RESULTS, encoding="utf-8")
         return tmp
 
+    def _register_spill(self, sess):
+        """What the coder's turn did before this one: cria lowered `web_search` to Brave and wrote the
+        results to a file, recording the query it did that for. Production does this in
+        `writeproxy._search_command`; without it there is no spill and nothing to judge."""
+        sess.web_session = "s-judge"
+        webfetch.clear_cache()
+        webfetch.note_search_spill("s-judge", "ada handles api")
+
     def _read_body(self):
         # what the coder's history really looks like: it read the spilled file, and the tool result it
         # got back is cria's spill STEER — not the results.
         steer = ("./tmp/reference/search-ada_handles_api.txt is a large reference document — reading it "
                  "whole gets truncated, so you would miss the middle. Instead grep it for what you need.")
-        # THE POINTER IS PART OF THE SHAPE. A real conversation always carries the sentence that says
-        # which query produced which file — it is how cria finds the file at all — and a fixture
-        # without it exercises a conversation that cannot occur. It also cannot reach the judge any
-        # more, because a verdict with no query is no longer made: see
+        # THE POINTER IS PART OF THE SHAPE. A real conversation always carries the sentence naming the
+        # query and the file it went to. cria no longer READS that sentence to recover the query — it
+        # keeps the record it made when it spilled (`_register_spill` below) — but the sentence is
+        # still what the coder sees, so a fixture without it exercises a conversation that cannot
+        # occur. The verdict itself is unreachable without the record: see
         # tests/test_a_search_is_not_deleted_on_a_query_cria_lost.py for why that floor exists.
         pointer = ('web_search "ada handles api" — results saved to '
                    './tmp/reference/search-ada_handles_api.txt (each result is title / url / description)')
@@ -4069,6 +4078,7 @@ class SearchJudgeTests(unittest.TestCase):
             ctx = _ctx(_Scripted([]), reasoner); ctx.reasoner_role = self._role()
             loop = Loop(ctx)
             sess = PlanSession(plan=_plan(2)); sess.workspace_root = tmp
+            self._register_spill(sess)
             out = loop._judge_search_reads(sess, self._read_body(), _Rlog())
         self.assertIn("koralabs/api.handle.me", seen["user"])      # the judge saw the REAL results...
         self.assertIn("api.handle.me/swagger/", seen["user"])      # ...including the spec pointer
@@ -4087,6 +4097,7 @@ class SearchJudgeTests(unittest.TestCase):
             ctx = _ctx(_Scripted([]), reasoner); ctx.reasoner_role = self._role()
             loop = Loop(ctx)
             sess = PlanSession(plan=_plan(2)); sess.workspace_root = tmp
+            self._register_spill(sess)
             body = self._read_body()
             out = loop._judge_search_reads(sess, body, _Rlog())
             out2 = loop._judge_search_reads(sess, body, _Rlog())   # and never re-judged turn after turn

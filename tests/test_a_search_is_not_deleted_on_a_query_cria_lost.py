@@ -19,38 +19,45 @@ It returned `query_on_target: false, results_on_target: false`, and cria told th
 The model was redirected to the `europe` gem, which has no EU-membership predicate at all, and
 never recovered.
 
-A -> B -> C. **A** is the pointer: `web_search` has two of them, and only the SPILL form carried the
-query in the sentence `_SEARCH_POINTER_RE` matches. The INLINE form said only "(each result's full
-description is in <file>)". So the query never reached `q_of`. **B** is the judge ruling on
-"(none)". **C** is the denial. The host veto that exists to stop exactly this cannot fire, because
-this task names no host.
+A -> B -> C. **C** is the denial. **B** is the judge ruling on "(none)". **A** was that cria went
+looking for the query in its OWN PROSE: `web_search` writes two different pointer sentences on
+purpose, and the regex knew one of them. The inline form said only "(each result's full description
+is in <file>)", so the query never arrived. The host veto that exists to stop exactly this cannot
+fire, because this task names no host.
 
-Both halves are fixed: the pointers now say the same sentence, and a judgement with no query is not
-made at all.
+cria wrote that file. It had the query in its hand at that moment and threw it away, then tried to
+recover it by reading English. Now it keeps it (`webfetch.spilled_search_files`), and there is no
+sentence to match, no second shape to miss, and nothing a reworded prompt can break (#12, #22).
+
+The pointers still name their query — for the CODER, who is told which search a file holds.
 """
 
 import unittest
 
-from cria import loop, prompts
+from cria import loop, prompts, webfetch
 
 
-class BothPointersCarryTheirQueryTests(unittest.TestCase):
-    """One regex reads both, so a second pointer shape cannot silently bypass it (#23)."""
+class TheQueryComesFromTheRecordNotThePointerTests(unittest.TestCase):
+    """The pointer is for the coder to read. cria reads its own record, so a third pointer shape
+    could be added tomorrow and nothing here would change (#23)."""
 
-    def test_the_inline_pointer_is_readable(self):
-        note = prompts.fill(prompts.load("search_inline_note"),
-                            target="./tmp/reference/search-x.txt", query="ruby gem eu membership")
-        m = loop._SEARCH_POINTER_RE.search(note)
-        self.assertIsNotNone(m, "the inline pointer must name its query")
-        self.assertEqual(m.group(1), "ruby gem eu membership")
-        self.assertEqual(m.group(2), "./tmp/reference/search-x.txt")
+    def test_the_spill_names_the_query_that_produced_it(self):
+        webfetch.clear_cache()
+        webfetch.note_search_spill("s", "ruby gem to determine eu membership")
+        got = webfetch.spilled_search_files("s")
+        self.assertEqual(list(got.values()), ["ruby gem to determine eu membership"])
+        self.assertIn("search-ruby_gem_to_determine_eu_membership.txt", list(got)[0])
 
-    def test_the_spill_pointer_still_is(self):
-        note = prompts.fill(prompts.load_map("webfetch_guards")["search_spill"],
-                            query="ruby gem eu membership", target="./tmp/reference/search-x.txt")
-        m = loop._SEARCH_POINTER_RE.search(note)
-        self.assertIsNotNone(m)
-        self.assertEqual(m.group(1), "ruby gem eu membership")
+    def test_both_pointers_still_tell_the_coder_which_search_this_is(self):
+        for name, note in (("inline", prompts.fill(prompts.load("search_inline_note"),
+                                                   target="./tmp/reference/search-x.txt",
+                                                   query="ruby gem eu membership")),
+                           ("spill", prompts.fill(prompts.load_map("webfetch_guards")["search_spill"],
+                                                  query="ruby gem eu membership",
+                                                  target="./tmp/reference/search-x.txt"))):
+            with self.subTest(pointer=name):
+                self.assertIn("ruby gem eu membership", note)
+                self.assertIn("./tmp/reference/search-x.txt", note)
 
     def test_the_inline_pointer_names_the_real_file(self):
         """It once ended 'in the file named above' on a branch where nothing above named a file."""
@@ -60,22 +67,55 @@ class BothPointersCarryTheirQueryTests(unittest.TestCase):
 
 
 class NoQueryMeansNoVerdictTests(unittest.TestCase):
-    """The floor under the fix: a pointer shape cria cannot read must cost the model nothing."""
+    """The floor under the fix: a file cria has no record of must cost the model nothing. That is also
+    what a restart looks like — the file is still on disk and the record is not — and the verdict is
+    destructive, so it must fail toward leaving the coder's file alone (#13)."""
 
-    def test_the_judge_is_not_asked_when_the_query_was_lost(self):
-        import inspect
-        src = inspect.getsource(loop.Loop._judge_search_reads)
-        self.assertIn("if not query:", src)
-        i, j = src.index("if not query:"), src.index("judge_search(")
-        self.assertLess(i, j, "the skip must come BEFORE the judge is called")
-        self.assertIn("loop.search_judge_skipped", src)
+    def _drive(self, register):
+        """The real `_judge_search_reads` over a coder that read a spilled search file."""
+        import json
+        import os
+        import tempfile
+        ws = tempfile.mkdtemp()
+        os.makedirs(os.path.join(ws, "tmp", "reference"))
+        rel = "./tmp/reference/search-ruby_gem_to_determine_eu_membership.txt"
+        with open(os.path.join(ws, rel.lstrip("./")), "w") as f:
+            f.write("European Union Membership · c.in_eu? #=> false\n#in_eu?, #in_eu_vat?\n")
+        webfetch.clear_cache()
+        if register:
+            webfetch.note_search_spill("s-floor", "ruby gem to determine eu membership")
+        calls = {"n": 0}
 
-    def test_the_skip_leaves_the_read_untouched(self):
-        import inspect
-        src = inspect.getsource(loop.Loop._judge_search_reads)
-        block = src[src.index("if not query:"):src.index("judge_search(")]
-        self.assertIn("out.append(m)", block)
-        self.assertIn("continue", block)
+        def fake_judge_search(chat, role, task, query, results, rlog, coder_tools=""):
+            calls["n"] += 1
+            return False, False, "europe gem"       # the verdict that deleted the answer
+
+        saved, loop.judge_search = loop.judge_search, fake_judge_search
+        try:
+            lp = loop.Loop.__new__(loop.Loop)
+            lp._ctx = type("C", (), {"reasoner_chat": object(), "reasoner_role": None})()
+            sess = loop.PlanSession(plan=None)
+            sess.workspace_root, sess.web_session = ws, "s-floor"
+            body = {"messages": [
+                {"role": "user", "content": "charge EU VAT for member states"},
+                {"role": "assistant", "tool_calls": [{"id": "r1", "type": "function", "function": {
+                    "name": "read_file", "arguments": json.dumps({"path": rel})}}]},
+                {"role": "tool", "tool_call_id": "r1", "content": "in_eu? is defined on Country"},
+            ], "tools": []}
+            return calls, lp._judge_search_reads(sess, body, type("R", (), {"emit": lambda *a, **k: None})())
+        finally:
+            loop.judge_search = saved
+
+    def test_the_judge_is_not_asked_for_a_file_cria_has_no_record_of(self):
+        calls, out = self._drive(register=False)
+        self.assertEqual(calls["n"], 0)
+        self.assertEqual(out[-1]["content"], "in_eu? is defined on Country")   # untouched
+
+    def test_it_still_judges_the_file_it_did_spill(self):
+        """Otherwise the floor above would pass by never judging anything."""
+        calls, out = self._drive(register=True)
+        self.assertEqual(calls["n"], 1)
+        self.assertIn("off-target", out[-1]["content"])
 
 
 if __name__ == "__main__":

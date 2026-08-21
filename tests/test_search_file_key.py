@@ -17,9 +17,9 @@ from cria.config import Role
 
 
 class SearchKeyTests(unittest.TestCase):
-    SPELLINGS = ("./tmp/reference/search-ada.txt",
-                 "/tmp/reference/search-ada.txt",
-                 "tmp/reference/search-ada.txt")
+    SPELLINGS = ("./tmp/reference/search-ada_handles_api.txt",
+                 "/tmp/reference/search-ada_handles_api.txt",
+                 "tmp/reference/search-ada_handles_api.txt")
 
     def test_every_spelling_is_one_key(self):
         self.assertEqual(len({loop._search_key(p) for p in self.SPELLINGS}), 1)
@@ -32,21 +32,29 @@ class SearchKeyTests(unittest.TestCase):
         self.assertEqual(loop._search_key(""), "/")
         self.assertEqual(loop._search_key(None), "/")
 
-    def test_the_pointer_query_is_found_from_the_readers_spelling(self):
-        # The exact miss: pointer written one way, read the other.
-        import re
-        m = loop._SEARCH_POINTER_RE.search(
-            'web_search "ada handles api" — results saved to ./tmp/reference/search-ada.txt')
-        self.assertIsNotNone(m)
-        q_of = {loop._search_key(m.group(2)): m.group(1)}
-        self.assertEqual(q_of.get(loop._search_key("/tmp/reference/search-ada.txt")),
+    def test_the_query_is_found_from_the_readers_spelling(self):
+        # The exact miss: cria writes the file one way, the model reads it the other.
+        from cria import webfetch
+        webfetch.clear_cache()
+        webfetch.note_search_spill("s1", "ada handles api")
+        q_of = {loop._search_key(f): q
+                for f, q in webfetch.spilled_search_files("s1").items()}
+        self.assertEqual(q_of.get(loop._search_key("/tmp/reference/search-ada_handles_api.txt")),
                          "ada handles api")
 
-    def test_the_judge_is_never_handed_a_none_query_for_a_pointer_it_holds(self):
-        m = loop._SEARCH_POINTER_RE.search(
-            'web_search "resolve ada handle" — results saved to ./tmp/reference/search-r.txt')
-        q_of = {loop._search_key(m.group(2)): m.group(1)}
-        self.assertNotEqual(q_of.get(loop._search_key("/tmp/reference/search-r.txt"), ""), "")
+    def test_the_query_is_the_one_the_model_typed(self):
+        """Not the lowercased key cria dedupes searches by — the judge rules on what was asked."""
+        from cria import webfetch
+        webfetch.clear_cache()
+        webfetch.note_search_spill("s1", "Ruby Gem EU Membership")
+        self.assertEqual(list(webfetch.spilled_search_files("s1").values()), ["Ruby Gem EU Membership"])
+
+    def test_a_file_cria_never_spilled_has_no_query(self):
+        """And so is never judged — the floor under a destructive verdict."""
+        from cria import webfetch
+        webfetch.clear_cache()
+        self.assertEqual(webfetch.spilled_search_files("s1"), {})
+        self.assertEqual(webfetch.spilled_search_files(None), {})
 
     def test_every_call_site_uses_the_key(self):
         """The whole incident, end to end: drive the REAL `Loop._judge_search_reads` with the
@@ -57,7 +65,7 @@ class SearchKeyTests(unittest.TestCase):
         finds the query or it doesn't."""
         ws = tempfile.mkdtemp()
         os.makedirs(os.path.join(ws, "tmp", "reference"), exist_ok=True)
-        with open(os.path.join(ws, "tmp", "reference", "search-ada.txt"), "w") as f:
+        with open(os.path.join(ws, "tmp", "reference", "search-ada_handles_api.txt"), "w") as f:
             f.write("koralabs/handles-public-api\nhttps://api.handle.me/openapi.json\n")
 
         captured = {}
@@ -75,6 +83,9 @@ class SearchKeyTests(unittest.TestCase):
             def emit(self, *a, **k):
                 pass
 
+        from cria import webfetch
+        webfetch.clear_cache()
+        webfetch.note_search_spill("s-key", "ada handles api")   # cria spilled it, and knows the query
         saved = loop.judge_search
         loop.judge_search = fake_judge_search
         try:
@@ -82,16 +93,17 @@ class SearchKeyTests(unittest.TestCase):
             lp._ctx = _Ctx()
             sess = loop.PlanSession(plan=None)
             sess.workspace_root = ws
+            sess.web_session = "s-key"
             body = {"messages": [
                 {"role": "user", "content": "resolve an ada handle"},
                 {"role": "tool", "content": ('web_search "ada handles api" — results saved to '
-                                             './tmp/reference/search-ada.txt')},
+                                             './tmp/reference/search-ada_handles_api.txt')},
                 {"role": "assistant", "tool_calls": [
                     {"id": "c1", "type": "function", "function": {
                         "name": "read_file",
-                        "arguments": '{"path": "/tmp/reference/search-ada.txt"}'}}]},
+                        "arguments": '{"path": "/tmp/reference/search-ada_handles_api.txt"}'}}]},
                 {"role": "tool", "tool_call_id": "c1",
-                 "content": "search-ada.txt is a large reference document — grep it instead"},
+                 "content": "search-ada_handles_api.txt is a large reference document — grep it instead"},
             ], "tools": []}
             lp._judge_search_reads(sess, body, _Rlog())
         finally:
