@@ -98,7 +98,8 @@ def fetch(url: str, user_agent: Optional[str] = None) -> FetchResult:
         raise ValueError("web_fetch: url must not be empty")
     scheme = trimmed.split("://", 1)[0].lower() if "://" in trimmed else ""
     if scheme not in ("http", "https"):
-        raise ValueError(f"web_fetch: unsupported scheme '{scheme or trimmed[:12]}': only http/https")
+        raise ValueError(f"web_fetch: unsupported scheme "
+                         f"'{scheme or content_reduce.clip(trimmed, 12)}': only http/https")
     req = urllib.request.Request(trimmed, headers={
         "User-Agent": user_agent or USER_AGENT,
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,application/json;q=0.8,*/*;q=0.7",

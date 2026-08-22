@@ -25,6 +25,7 @@ from . import bodykeys
 from . import (callcapture, compat, focustrim, groundtruth, massage, probegate, prompts,
                responses, rumination, selfcompact)
 from .classify import Classifier
+from . import content_reduce
 from .content_reduce import est_tokens
 from .config import Config
 from . import brave, webfetch
@@ -1099,7 +1100,8 @@ class CriaHandler(BaseHTTPRequestHandler):
             # A chat completion MUST be JSON; a non-JSON 200 (an intermediary's HTML 502 page, a
             # truncated body) is an upstream error — NOT a successful empty turn. Fail closed so the
             # caller surfaces a clean 502/failed and the client retries, instead of recording "done".
-            raise UpstreamError(f"upstream returned a non-JSON 200 body: {raw[:200]!r}") from e
+            raise UpstreamError("upstream returned a non-JSON 200 body: "
+                                + repr(content_reduce.clip(raw, 200))) from e
         if not body.get("tools"):
             # The HARNESS offered no tools (a compaction/summary, a question) — a tool-call answer
             # (native or a recovered dialect leak) is spurious. Coerce it back to text so an empty

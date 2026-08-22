@@ -6972,7 +6972,8 @@ def author_steer(reasoner_chat, reasoner_role, workspace_root, gs, body: dict, r
                           disk=(disk or "(no files touched yet)"),
                           truth=(truth or "(no check results for this steer)"),
                           checks_age=(prompts.fill(prompts.load_map("steer_checks_age")["written"],
-                                                   files=", ".join(written[:6])) if written else ""))
+                                                   files=prompts.named_list(written, 6, "file(s)"))
+                                                      if written else ""))
     coder_tools = _coder_tools_summary(body.get("tools"))
     # The one-shot reasoner the dictated-code check uses. Toolless and phase-tagged so it is
     # visible in the captures as its own call, never mistaken for the authoring pass.
@@ -7734,7 +7735,7 @@ def _prescribes_what_the_checks_reject(directive: str, findings: str, rlog, ask)
     if not shared:
         return ""
     ans = strip_think(ask(prompts.render("steer_prescribes_broken", directive=directive,
-                                         findings=findings, symbols=", ".join(shared[:8]))) or "").strip()
+                                         findings=findings, symbols=prompts.named_list(shared, 8, "name(s)"))) or "").strip()
     head = ans.upper().split()[0].strip(".,:;`*\"'") if ans.split() else ""
     if head != "PRESCRIBES":
         return ""
