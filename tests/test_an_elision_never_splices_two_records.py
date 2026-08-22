@@ -70,7 +70,7 @@ class NoHalfLineSurvivesTheCutTests(unittest.TestCase):
         # checker exists to print: with four probes in a plan each section gets 1,850 bytes, 925 from
         # each end, while a javac error with its symbol lines is ~200 and a minitest failure with a
         # backtrace is ~500. Walked 2026-08-22: four of nine java errors never reached cria at all.
-        self.assertIn("carries a file and a line number", marker)
+        self.assertIn("carry a file and a line number", marker)
 
     def test_the_line_after_the_marker_starts_at_a_line_boundary(self):
         """The failure mode, in one assertion: the tail used to open mid-token (`ec"=>"10.38…`)."""
@@ -78,7 +78,7 @@ class NoHalfLineSurvivesTheCutTests(unittest.TestCase):
         lines = out.splitlines()
         # The tail now resumes after the SECOND marker — the recovered diagnostic lines sit between
         # the two. The property under test is unchanged: whatever resumes starts at a line boundary.
-        i = next(k for k, l in enumerate(lines) if "tail of the output follows" in l)
+        i = next(k for k, l in enumerate(lines) if "recovered from the middle" in l)
         after = next(l for l in lines[i + 1:] if l.strip())
         self.assertRegex(after, r'^row\d{3} ', "the tail resumed mid-line")
 
@@ -159,6 +159,43 @@ class TheDiagnosticsSurviveTheCutTests(unittest.TestCase):
         from cria import proberun
         self.assertNotIn("[[", proberun._DIAG_LINE_RE)
         self.assertNotIn("[:", proberun._DIAG_LINE_RE)
+
+
+
+
+class TheRecoveredMiddleIsWholeLinesToo(unittest.TestCase):
+    """The leg added on 2026-08-22 to keep the diagnostics shipped without the whole-line guard its
+    two siblings carry, and reproduced the splice they were written to prevent: with 40 errors and a
+    six-probe section the recovered band ended `symbol:   ` and the closing marker was glued onto
+    that half-line. A shortened record is missing information; a spliced one is information that was
+    never true."""
+
+    def _long_javac(self, n=40):
+        noise = "\n".join(f"[INFO] downloading part {i}" for i in range(80))
+        errs = "\n".join(
+            f"[ERROR] /w/A{i}.java:[{i},3] cannot find symbol\n"
+            f"  symbol:   class VeryLongClassNameNumber{i}\n"
+            f"  location: package com.example.deep" for i in range(n))
+        return noise + "\n" + errs + "\n" + noise
+
+    def test_the_recovered_band_ends_on_a_line_boundary(self):
+        out = run_with_cap(self._long_javac(), 1233)      # the six-probe share
+        i = out.find("recovered from the middle")
+        self.assertGreater(i, 0, "the closing marker is missing")
+        # The last thing before the marker must be a COMPLETE line of the compiler's output, not a
+        # fragment the marker is then glued onto.
+        band = out[:i].rstrip("\n.[")
+        last = band.splitlines()[-1] if band.splitlines() else ""
+        self.assertFalse(last.rstrip().endswith(("symbol:", "location:", "class", "package")),
+                         f"the band ended mid-diagnostic: {last!r}")
+
+    def test_the_opening_marker_does_not_promise_every_line(self):
+        """It said EVERY line carrying a file and a line number is reproduced. The byte bound and the
+        context bound can both falsify that, and a promise cria cannot keep is a false fact (#5b)."""
+        out = run_with_cap(self._long_javac(), 1233)
+        marker = next(l for l in out.splitlines() if "elided here" in l)
+        self.assertNotIn("Every line", marker)
+        self.assertIn("up to", marker)      # names the per-diagnostic context bound it actually uses
 
 
 if __name__ == "__main__":

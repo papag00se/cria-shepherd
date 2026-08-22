@@ -428,6 +428,20 @@ class View:
                 if d:
                     self._dirs.add(d)
                     self._folded.add(d)
+                else:
+                    # THE ROOT ITSELF WAS FOLDED, and this record used to be thrown away because its
+                    # path is the empty string. The survey emits `X\t<count>\t` for a root holding
+                    # more than FOLD_AT files and then stops — so `_files`, `_dirs` and `_folded` all
+                    # stayed empty while `_surveyed` and `_complete` stayed True. Every predicate
+                    # then answered FALSE rather than None, and `groundtruth.workspace_inventory`
+                    # told every judge, the planner and the briefing writer:
+                    #
+                    #   "WORKSPACE FILES in <root>: none — the workspace has no files at judging time."
+                    #
+                    # Reproduced on a 420-file root: `isfile(main.py)` returned False, not None. A
+                    # bound that turns "I could not look" into "it is not there" is the false fact
+                    # this class of guard exists to prevent (#5b, #11b, #23c).
+                    self._complete = False
             elif kind == "F":
                 mt, _, rest2 = rest.partition("\t")
                 sz, _, rel = rest2.partition("\t")

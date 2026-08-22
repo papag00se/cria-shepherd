@@ -849,9 +849,14 @@ def compose_probe_command(c: ProbeCandidate, timeout_s: float, cap: int | None =
         # at most one whole line per side and it is language-agnostic — no runner's format is parsed
         # here (#20).
         f"else printf '%s' \"$__cria_out\" | head -c {end} | sed '$d'; "
-        f"printf '\\n...[%d bytes elided here — the lines above and below are NOT continuous. "
-        f"Every line from the removed middle that carries a file and a line number is reproduced "
-        f"below, with the lines indented under it]...\\n' "
+        # WHAT THE MARKER MAY PROMISE. It used to say "EVERY line from the removed middle that
+        # carries a file and a line number is reproduced below" — which the byte bound below can
+        # falsify, and the context bound (`-A3`) falsifies for any diagnostic with more than three
+        # continuation lines, which rustc routinely prints. A claim cria cannot keep is a false fact
+        # in cria's own voice (#5b), so the sentence says what it actually does.
+        f"printf '\\n...[%d bytes elided here — the lines above and below are NOT continuous. The "
+        f"lines from the removed middle that carry a file and a line number follow, each with up to "
+        f"{_DIAG_CONTEXT_LINES} lines indented under it]...\\n' "
         f"\"$((__cria_n - {budget}))\"; "
         # THE DIAGNOSTICS ARE THE POINT OF RUNNING THE PROBE, AND THEY LIVE IN THE MIDDLE.
         # A blind head+tail cut removes exactly the part a checker exists to produce. Measured on
@@ -866,9 +871,15 @@ def compose_probe_command(c: ProbeCandidate, timeout_s: float, cap: int | None =
         # under it, which is where javac, rustc, clang and tsc put the part that says what is wrong.
         # Shape, not a tool list (#20). Nothing here parses a runner's format; it decides only which
         # bytes are worth the space.
+        # WHOLE LINES HERE TOO. `head -c` slices mid-token, and the marker below then reads as the
+        # continuation of a half-line: `symbol:   ` followed by `...[end of the recovered lines`.
+        # That is the same splice the head and tail legs carry `sed '$d'`/`sed '1d'` to prevent, and
+        # this leg shipped without it for a day. A shortened record is missing information; a spliced
+        # one is information that was never true.
         f"printf '%s' \"$__cria_out\" | grep -E -A{_DIAG_CONTEXT_LINES} "
-        f"{shlex.quote(_DIAG_LINE_RE)} | head -c {middle}; "
-        f"printf '\\n...[end of the recovered lines; the tail of the output follows]...\\n'; "
+        f"{shlex.quote(_DIAG_LINE_RE)} | head -c {middle} | sed '$d'; "
+        f"printf '\\n...[end of the lines recovered from the middle. There may be more of them than "
+        f"fit here; what is above is the earliest of them, in order]...\\n'; "
         f"printf '%s' \"$__cria_out\" | tail -c {end} | sed '1d'; printf '\\n'; fi; "
         f"printf '{PROBE_EXIT_SENTINEL}%d\\n' \"$__cria_ec\""
     )

@@ -29,3 +29,9 @@ spill_note = — reference material saved into the read-only scratch directory f
 briefing_header = FILES ON DISK RIGHT NOW (gathered from the filesystem just now, newest first). This is the only description of the workspace you have — the transcript's file mentions may be stale:
 
 install_prefix = \n  {{PREFIX}}/ — {{COUNT}} files installed here by a package manager on this session's own instruction; not your source, and not listed one by one.
+
+# WHEN THE SURVEY HIT ITS OWN BOUND. The completeness clause above is what makes the listing
+# decisive, and it may only be printed when the survey actually reached everything. A folded
+# directory, a drained queue or a root with more files than one survey carries all mean cria did not
+# look everywhere — and a path it did not reach is UNKNOWN, never absent (#5b, #11b).
+partial = This list is NOT complete — the survey of this workspace hit its own limit, so a file missing from this list may still exist. Use list_dir on a directory you expect before concluding anything is absent.

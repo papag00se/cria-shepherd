@@ -391,7 +391,22 @@ def workspace_inventory(root: str | None, flavor: str = "judge") -> str:
         return ""
     labels = prompts.load_map("workspace_inventory")
     entries, folded = _fold_install_prefixes(entries)
+    # AN INCOMPLETE SURVEY MAY NOT CLAIM COMPLETENESS, AND MAY NEVER SAY "EMPTY". The view knows when
+    # it hit its own bound — a folded directory, a drained queue, a root with more files than the
+    # survey carries — and this renderer used to throw that flag away and stamp the listing with
+    # "a file not listed here does not exist in the workspace". Reproduced on a 420-file root: the
+    # whole workspace read as `none — the workspace has no files at judging time` to every judge, the
+    # planner and the briefing writer. The listing is still worth having; the CLAUSE is what has to
+    # go (#5b, and #11b — a mechanism may only speak about what it reached).
+    # …AND NOTHING FOLDED. A folded directory is one the survey listed only as a count, so its files
+    # are absent from the walk while `complete` stays True. The install-prefix fold already earns the
+    # clause back by printing a line for what it folded; a view-level fold prints nothing, so the
+    # clause has to go instead.
+    _v = wsview.current(root)
+    complete = _v.complete and not _v.folded
     if not entries and not folded:
+        if not complete:
+            return ""          # nothing seen AND the survey was bounded — say nothing, not "empty"
         # "at judging time" is the CRITIC's wording. The planner is not judging anything, and it read
         # that phrase on every run once the inventory was shared with it.
         return prompts.fill(labels["planner_empty" if flavor == "planner" else "empty"], root=root)
@@ -403,18 +418,18 @@ def workspace_inventory(root: str | None, flavor: str = "judge") -> str:
         # in read_file range; the compacted view carries the LIST, not the bytes).
         lines = [labels["coder_header"]]
         lines += [f"  {rel} ({size} B)" for _, rel, size in entries] + fold_lines
-        lines.append(labels["coder_note"])
+        lines.append(labels["coder_note"] if complete else labels["partial"])
         return "\n".join(lines)
     if flavor == "briefing":
         # The rolling/harness compaction writer. Same complete listing, wording that says why it is
         # here: the transcript's file mentions may be stale, this is not. See the header's own note.
         lines = [labels["briefing_header"]]
         lines += [f"  {rel} ({size} B)" for _, rel, size in entries] + fold_lines
-        lines.append(labels["complete"])
+        lines.append(labels["complete" if complete else "partial"])
         return "\n".join(lines)
     lines = [prompts.fill(labels["planner_header" if flavor == "planner" else "header"], root=root)]
     lines += [f"  {rel} ({size} B)" for _, rel, size in entries] + fold_lines
-    lines.append(labels["complete"])
+    lines.append(labels["complete" if complete else "partial"])
     return "\n".join(lines)
 
 
