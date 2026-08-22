@@ -1147,11 +1147,28 @@ def already_spilled(session: Optional[str], url: str, workspace_root: Optional[s
     return wsview.current().exists(path) is True
 
 
-def note_search_spill(session: Optional[str], query: str) -> None:
-    """Record that cria SPILLED this query's results to a file — the only warrant for later telling the
-    model to go read that file. Set by the synthetic Brave path; a harness-native search never sets it."""
+def note_search_spill(session: Optional[str], query: str, target: Optional[str] = None) -> None:
+    """Record that cria SPILLED this query's results, AND THE PATH IT WROTE — the only warrant for
+    later telling the model to go read that file. Set by the synthetic Brave path; a harness-native
+    search never sets it.
+
+    THE PATH IS REMEMBERED, NOT RECOMPUTED. The repeat refusal used to derive the filename again from
+    the earlier query's text, and `search_spill_name` digests that text — so two spellings of one
+    search ("...detect EU membership" / "...detect eu membership") name two different files while
+    only one was ever written. Live on shipping-rates-rb x nemotron-elastic 1787431835: cria sent the
+    coder to `search-ruby_gem_detect_eu_membership-2d34dace.txt`, the coder read it, and cria answered
+    "is not there — nothing was read" about its own suggestion, which then rode in 26 later prompts
+    (#5b, and #R5 — a remedy the reader cannot take). A name derived twice from two inputs is two
+    names; the write knows which one it made."""
     if session and (query or "").strip():
-        _SEARCH_SPILLED.setdefault(session, {})[query.strip().lower()] = query.strip()
+        q = query.strip()
+        _SEARCH_SPILLED.setdefault(session, {})[q.lower()] = (q, target or search_spill_name(q))
+
+
+def spilled_path(session: Optional[str], query: str) -> str:
+    """The file cria wrote for this query, as cria wrote it. Empty when it spilled no such file."""
+    rec = (_SEARCH_SPILLED.get(session) or {}).get((query or "").strip().lower())
+    return rec[1] if rec else ""
 
 
 def spilled_search_files(session: Optional[str]) -> dict:
@@ -1161,7 +1178,7 @@ def spilled_search_files(session: Optional[str]) -> dict:
     A file cria did not spill is simply absent, and the judge is skipped rather than asked to rule on
     a query nobody knows. That is also what happens across a restart, which is the right direction:
     the verdict is destructive, so an unremembered file costs the model nothing (#13)."""
-    return {search_spill_name(q): orig for q, orig in (_SEARCH_SPILLED.get(session) or {}).items()}
+    return {path: orig for orig, path in (_SEARCH_SPILLED.get(session) or {}).values()}
 
 
 def set_visible(session: Optional[str], fetch_keys, search_queries) -> None:
@@ -1287,8 +1304,9 @@ def gate_search(session: Optional[str], query: str) -> Optional[str]:
         # pointing at content that was never there, while the coder never opened the file that held it.
         domain = first_domain_in(query)
         steer = _guard_msg("domain_steer", domain=domain) if domain else ""
+        # The path cria WROTE for that query, not a name derived from it a second time.
         return _guard_msg("search_repeat", query=query, prior=prior,
-                          target=search_spill_name(prior), domain_steer=steer)
+                          target=spilled_path(session, prior), domain_steer=steer)
     return None
 
 

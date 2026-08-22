@@ -1309,10 +1309,13 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
                 if refusal is not None:  # exact-repeat search this session → refuse, don't burn a call
                     cmd = _refusal_command(refusal)
                 elif "web_search" in injected and brave_key:  # synthetic → Brave curl
+                    q = str(args.get("query") or "")
                     cmd = _search_command(args, brave_key)
                     # ONLY this path writes the spill file, so only this path earns the later
-                    # "go read that file" refusal.
-                    webfetch.note_search_spill(session, str(args.get("query") or ""))
+                    # "go read that file" refusal — and it records the path the composed curl
+                    # actually writes, so that refusal names a file that exists rather than
+                    # deriving the name a second time from a differently-spelled copy of the query.
+                    webfetch.note_search_spill(session, q, webfetch.search_spill_name(q))
                 elif native_search and native_search != "web_search":  # route to the harness's search tool
                     rebuilt.append({**tc, "function": {**fn, "name": native_search}})
                     continue
