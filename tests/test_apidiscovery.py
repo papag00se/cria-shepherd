@@ -319,11 +319,6 @@ class ApiCatalogTests(unittest.TestCase):
         self.assertNotIn("no endpoints or field names could be read", out)
         self.assertIn("one/openapi.json", out)
 
-
-if __name__ == "__main__":
-    unittest.main()
-
-
 class ABoundIsNotAnEmptyApiTests(unittest.TestCase):
     """A reply bigger than the probe reads used to come back as `None`, which webfetch renders as an
     endpoint that offers nothing. The read was cut at 2 MB and cut JSON does not parse, so a real MCP
@@ -365,3 +360,7 @@ class ABoundIsNotAnEmptyApiTests(unittest.TestCase):
         with mock.patch("urllib.request.urlopen", return_value=big):
             with self.assertRaises(apidiscovery.ProbeTooLarge):
                 apidiscovery._post_json("https://x/mcp", {"a": 1}, {})
+
+
+if __name__ == "__main__":
+    unittest.main()
