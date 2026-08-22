@@ -43,3 +43,40 @@ def tool_path(args) -> str | None:
         if v:
             return str(v)
     return None
+
+
+# WHICH WRITE IS CURRENT — one owner, because there were three and they disagreed.
+#
+# `focustrim._drop_superseded_writes` deleted a whole `write_file` because a later `edit_file`
+# touched the same path, and told the coder "The newest version of each of those files is still here
+# in full. Nothing was lost." Reproduced: a 3,000-character write followed by a 500-character edit
+# leaves only the edit's `new_string` fragment in the view, under that sentence. An edit is not a
+# version of a file; it is a change to one.
+#
+# The three lists also differed — focustrim had four names, contextfloor six, selfcompact two — so
+# whether a call counted as a write depended on which module was asked.
+#
+# WHOLE_FILE_WRITES replace a file's contents outright, so a later one makes an earlier one
+# historical. PARTIAL_WRITES change part of a file: they never supersede anything, and the file's
+# current contents can only be had by reading it.
+WHOLE_FILE_WRITES = ("write_file", "create_file", "text_editor")
+PARTIAL_WRITES = ("edit_file", "apply_patch", "str_replace_editor")
+WRITE_TOOL_NAMES = WHOLE_FILE_WRITES + PARTIAL_WRITES
+
+
+def write_target(tc: dict) -> tuple[str, bool]:
+    """``(path, replaces_whole_file)`` for a write-ish tool call, or ``("", False)``.
+
+    The second value is the one that matters to any caller deciding whether a LATER call makes an
+    earlier one redundant: only a whole-file write does."""
+    fn = (tc or {}).get("function") or {}
+    name = fn.get("name")
+    if name not in WRITE_TOOL_NAMES:
+        return "", False
+    path = tool_path(parse_args(fn.get("arguments"))) or ""
+    return path, name in WHOLE_FILE_WRITES
+
+
+def write_path(tc: dict) -> str:
+    """The path a write-ish tool call targets, or "" — whole-file or partial alike."""
+    return write_target(tc)[0]

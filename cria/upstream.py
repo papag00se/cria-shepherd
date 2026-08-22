@@ -256,6 +256,26 @@ class Upstream:
         msgs = body.get("messages")
         if isinstance(msgs, list):
             window = self._resolve_window(rlog)
+            # A GUESSED WINDOW MAY NOT TRIM. `_resolve_window` returns `_FALLBACK_WINDOW` when
+            # /props could not be read — an invented number, and the abort guard below already
+            # refuses to act on it for exactly that reason (`not self._window_guessed`). The floor
+            # was left running against it, which is the destructive direction of the same guess.
+            #
+            # cria's own measurement of what that cost is in `_window_at_least`: 52 floor runs
+            # against the 8,192 fallback, over_budget on 52 of 52, 934 PROTECTED messages destroyed
+            # across 6 sessions, while the model's real window was 49,152. The trigger is as
+            # ordinary as cria restarting while llama.cpp is still loading.
+            #
+            # SEND IT AND LET THE SERVER SETTLE IT. An overflow comes back as a 400 carrying
+            # `n_prompt_tokens` AND `n_ctx`, and `_overflow_refit` treats that n_ctx as FINAL, clears
+            # `_window_guessed` and retries once — so the cost of not guessing is one round trip,
+            # after which the window is measured and the floor runs normally for the rest of the
+            # process. The cost of guessing is every message the guess threw away, permanently and
+            # silently (#5, #5b, #23c: unknown is not a small number, it is unknown).
+            if window and self._window_guessed:
+                rlog.emit("context.floor_skipped", level="warning", why="window is a guess",
+                          guess=window)
+                window = None
             if window:
                 reserve = contextfloor.reserve_for(body)  # reads cria_output_reserve (stripped below)
                 tools_in = body.get("tools")

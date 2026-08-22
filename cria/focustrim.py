@@ -39,7 +39,7 @@ import os
 import re
 from dataclasses import dataclass
 
-from . import dedup, denial, editrecovery, jsontext
+from . import dedup, denial, editrecovery, jsontext, toolargs
 from . import probegate, proberun, prompts
 
 # cria's OWN ground-truth gate probe tags its output with these section markers. Such a probe
@@ -418,11 +418,25 @@ def _drop_superseded_writes(messages: list[dict]) -> tuple[list[dict], int]:
     # exists to prevent. Walked on `feed-pipeline-java x nemotron-elastic` 20260820T103857 call
     # 0054: the coder's `pom.xml` write was refused as malformed XML, and the note still told it
     # "what is on disk is what you last wrote" about `pom.xml`.
+    # ONLY A WHOLE-FILE WRITE SUPERSEDES, and it supersedes everything BEFORE it.
+    #
+    # Two sides, and the old rule had neither right. The superseding call has to replace the file
+    # outright: an `edit_file` changes part of one and is not a version of it, so a 500-character
+    # edit was deleting a 3,000-character `write_file` of the same path while the note below still
+    # said "The newest version of each of those files is still here in full. Nothing was lost."
+    # Reproduced before the fix. The superseded call, on the other hand, can be any write — once a
+    # later whole-file write lands, every earlier call to that path is historical, edits included.
+    #
+    # So `last` indexes the last WHOLE-FILE write per path, and a call is superseded when it sits
+    # strictly before it. An edit AFTER the last whole-file write is the newest change to that file
+    # and survives. `toolargs.write_target` is the one owner of the distinction — there were three
+    # implementations with three different tool-name lists (#23).
     failed = _failed_write_ids(messages)
-    landed = [(i, _write_path(tc)) for i, m in enumerate(messages)
+    landed = [(i, p) for i, m in enumerate(messages)
               if isinstance(m, dict) and m.get("role") == "assistant"
               for tc in (m.get("tool_calls") or [])
-              if _write_path(tc) and tc.get("id") not in failed]
+              if (pw := toolargs.write_target(tc))[1] and (p := pw[0])
+              and tc.get("id") not in failed]
     key = _path_identity([p for _, p in landed])
     last: dict = {}
     for i, path in landed:
@@ -446,7 +460,7 @@ def _drop_superseded_writes(messages: list[dict]) -> tuple[list[dict], int]:
     superseded = [(tc.get("id"), p) for i, m in enumerate(messages)
                   if isinstance(m, dict) and m.get("role") == "assistant"
                   for tc in (m.get("tool_calls") or [])
-                  if (p := _write_path(tc)) and last.get(key(p)) != i
+                  if (p := toolargs.write_path(tc)) and i < last.get(key(p), -1)
                   and tc.get("id") not in failed and _payload_chars(tc) >= _STUB_MIN_CHARS]
     drop_ids = {i for i, _ in superseded}
     drop_ids.discard(None)

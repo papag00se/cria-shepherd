@@ -35,7 +35,7 @@ import json
 from dataclasses import dataclass, field
 
 from . import bodykeys
-from . import toolargs
+from . import denial, editrecovery, toolargs
 from .content_reduce import content_reduce, digest_reduce, est_tokens
 
 # The synthesized state note that REPLACES dropped turns (spirit of trim/state_extract): instead of
@@ -66,8 +66,7 @@ _NOTE_MAX_SHARE_OF_DROPPED = 0.6   # every drop nets at least 40% of what it rem
                                    # reject it and lose the page's substance to buy back 20% more.
 _NOTE_FRAME_TOKENS = 48         # the note's own header/file-list overhead, counted with its digests
 # Tools whose target file a dropped turn MODIFIED — a durable fact worth keeping across the drop.
-_WRITE_TOOL_NAMES = ("write_file", "edit_file", "apply_patch", "str_replace_editor",
-                     "create_file", "text_editor")
+_WRITE_TOOL_NAMES = toolargs.WRITE_TOOL_NAMES
 
 # Anchors the floor must NOT silently trim: the completion-briefing envelope a follow-up re-reads
 # FROM history, cria's ground-truth gate output the coder must read to fix a step, the synthesized-state
@@ -537,16 +536,36 @@ def _drop_oldest(messages: list[dict], msg_budget: int) -> tuple[list[dict], int
     return kept, dropped
 
 
+def _refused_write_ids(msgs: list[dict]) -> set:
+    """tool_call ids whose paired result says the write never landed — cria's own denial mark, or an
+    edit-recovery mark. The same two signals `focustrim._failed_write_ids` reads."""
+    out: set = set()
+    for m in msgs or []:
+        if not isinstance(m, dict) or m.get("role") != "tool":
+            continue
+        body = str(m.get("content") or "")
+        cid = m.get("tool_call_id") or m.get("call_id")
+        if cid and (denial.is_denied(body) or editrecovery.EDIT_MARK in body):
+            out.add(cid)
+    return out
+
+
 def _modified_files(msgs: list[dict]) -> list[str]:
     """Deduped paths of files that the given (dropped) assistant turns WROTE/EDITED — the fact that
     survives the drop even though the content doesn't."""
     out: list[str] = []
+    refused = _refused_write_ids(msgs)
     for m in msgs:
         if m.get("role") != "assistant":
             continue
         for tc in m.get("tool_calls") or []:
             fn = tc.get("function") or {}
-            if (fn.get("name") or "") in _WRITE_TOOL_NAMES:
+            # …AND IT HAS TO HAVE LANDED. The note this feeds says the files are "still on disk",
+            # and nothing here checked. Walked on feed-pipeline-java x nemotron-elastic
+            # 20260820T103857: a `pom.xml` write cria itself refused as malformed XML was named in
+            # that sentence. Its two siblings — selfcompact's stubber and focustrim's superseded-
+            # write rule — both learned this already; this one had not (#5b, #23).
+            if (fn.get("name") or "") in _WRITE_TOOL_NAMES and tc.get("id") not in refused:
                 p = toolargs.tool_path(toolargs.parse_args(fn.get("arguments")))
                 if p and p not in out:
                     out.append(p)

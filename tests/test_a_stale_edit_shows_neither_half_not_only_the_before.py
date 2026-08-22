@@ -114,12 +114,16 @@ class TheCompactViewFoldsItTooTests(unittest.TestCase):
         appears somewhere in the function's source."""
         for key in selfcompact._WRITE_ARG_KEYS:
             with self.subTest(key=key):
+                # The SUPERSEDING call is a whole-file write, because only a whole-file write makes
+                # an earlier call redundant — an edit changes part of a file and is not a version of
+                # one (toolargs.write_target). What is under test here is unchanged: that both
+                # folding paths recognise the same argument keys as write payload.
                 msgs = [edit_key("lib/x.rb", key, "x" * 500, "a"),
-                        edit_key("lib/x.rb", key, "y" * 500, "b")]
+                        {"role": "tool", "tool_call_id": "a", "content": "ok"},
+                        _write("lib/x.rb", "NEWEST" + "\n# v2" * 200, "b")]
                 out, n = focustrim._drop_superseded_writes(msgs)
                 self.assertEqual(n, 1, f"{key} was not recognized as a stubbable write payload")
-                stale = args_of(out[0])
-                self.assertNotIn("x" * 500, stale[key])
+                self.assertNotIn("x" * 500, json.dumps(out))
 
 
 class TheWordingExistsTests(unittest.TestCase):

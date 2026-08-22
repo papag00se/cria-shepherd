@@ -28,7 +28,7 @@ import json
 import re
 from dataclasses import dataclass
 
-from . import jsontext, probegate, prompts
+from . import jsontext, probegate, prompts, toolargs
 from .content_reduce import est_tokens
 
 # Tunables in TOKENS. TRIGGER is operator-tunable via [context] trigger_compaction; the rest are
@@ -505,7 +505,11 @@ def strip_frame_echo(summary: str, ask: str = "") -> str:
 # only the LAST tool call keeps its full arguments). Applies ONLY to the model's OWN write arguments
 # (content it emitted, now durably on disk) — tool RESULTS the model read are never touched
 # (never-truncate). Mirrors writeproxy's write-tool names; a test asserts sync.
-_WRITE_TOOL_NAMES = ("write_file", "edit_file")
+# ONE OWNER (#23). These were three lists in three modules — four names here, six in contextfloor,
+# two here — so whether a call counted as a write depended on which module was asked. The one that
+# matters for "which write is current" is `toolargs.WHOLE_FILE_WRITES`: a partial edit is not a
+# version of a file and may not supersede one.
+_WRITE_TOOL_NAMES = toolargs.WRITE_TOOL_NAMES
 # `old_string` is here for the same reason the others are: the whole call is historical. Leaving
 # it out rendered a past edit as the BEFORE in full and the AFTER as a pointer — the reader
 # saw what the code used to be and never what it became. It gets its own wording (see
@@ -546,6 +550,12 @@ def _last_write_index_by_path(msgs: list[dict]) -> dict:
         if not isinstance(m, dict):
             continue
         for tc in (m.get("tool_calls") or []):
+            # EVERY write call, partial edits included. This index answers "is this the NEWEST call
+            # to this path", which is the question the stubber asks — an older `edit_file` is just as
+            # historical as an older `write_file` and its payload is folded for the same reason
+            # (see the module note on `old_string`). That is a different question from "does this
+            # call supersede a whole-file write", which only `toolargs.write_target`'s second value
+            # may answer; `focustrim` asks that one, because there it decides a DELETION.
             if not _is_write_call(tc):
                 continue
             fn = tc.get("function") or {}
