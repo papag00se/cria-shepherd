@@ -1359,6 +1359,23 @@ def _command_of(args) -> str:
     return str(v or "")
 
 
+def original_call(command: str) -> dict | None:
+    """The tool call a lowered command was made FROM — ``{"name":…, "arguments":…}`` — or None when
+    this is not one of cria's.
+
+    Public so a reader that wants to know what the CODER did stops reading what CRIA WROTE. The
+    lowered form is cria's text: a `python3` heredoc, a curl, and — appended to writes, edits and
+    lists — the workspace survey program. Anything that scans it is scanning cria's own bytes.
+
+    Walked on feed-pipeline-java x nemotron-elastic 1787346816. `loop._shell_write_target` looks for
+    a redirect target after a `>`; the survey program contains the ordinary Python comparison
+    `if len(files) > FOLD_AT:`, so cria read one of its OWN CONSTANTS as a file the coder had
+    written, and then told the model, in its own voice, `FILE FOLD_AT — does NOT exist on disk`.
+    Same family as the gate matchers retired on 2026-08-21: cria's own text re-entering as the
+    model's work (#12, #17)."""
+    return _read_sentinel(command)
+
+
 def _read_sentinel(command: str) -> dict | None:
     """The original tool call encoded in a lowered command's sentinel, or None."""
     m = _SENTINEL_LINE.search(command or "")

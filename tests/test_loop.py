@@ -1482,6 +1482,14 @@ class GateFlowTests(unittest.TestCase):
                 # Answers the step critic AND the approve-path confirm that follows a DONE: one object
                 # carrying both shapes, since the confirm now fails CLOSED on a reply it cannot read
                 # and this test is about the gate digest, not the brake.
+                #
+                # The confirm also LOOKS before approving — an approval from a brake that never
+                # opened anything no longer stands (loop._confirm_completion). One list_dir round
+                # earns it; the round after that carries the verdict.
+                if _R.calls == 2:
+                    return json.dumps({"choices": [{"message": {"content": "", "tool_calls": [
+                        {"id": "l1", "type": "function", "function": {
+                            "name": "list_dir", "arguments": json.dumps({"path": "."})}}]}}]}).encode()
                 return json.dumps({"choices": [{"message": {"content": json.dumps(
                     {"done": True, "reason": "ok", "proposed_fix": "",
                      "consistent": True, "why": ""})}}]}).encode()
@@ -5303,6 +5311,16 @@ class ApprovePathConfirmTests(unittest.TestCase):
         return {"choices": [{"message": {"content": json.dumps(
             {"consistent": consistent, "why": why})}}]}
 
+    @staticmethod
+    def _looked():
+        """The inspection round a real confirm makes before answering — measured over the last 40
+        sessions, 36 of 45 replies call a tool first. An APPROVAL from a brake that never looked no
+        longer stands (loop._confirm_completion), so a fixture that answers `consistent: true`
+        outright is exercising the rubber-stamp rather than the brake."""
+        return {"choices": [{"message": {"content": "", "tool_calls": [
+            {"id": "look1", "type": "function", "function": {
+                "name": "list_dir", "arguments": json.dumps({"path": "."})}}]}}]}
+
     def _loop_with(self, responses):
         chat = _Scripted(responses)
         ctx = _ctx(_Scripted([_toolcall()]), chat)
@@ -5329,7 +5347,7 @@ class ApprovePathConfirmTests(unittest.TestCase):
             {"done": True, "reason": "resolver written and verified", "proposed_fix": ""})}}]}
         with tempfile.TemporaryDirectory() as ws:
             Path(ws, "resolve_handle.py").write_text("x = 1\n")
-            loop, _ = self._loop_with([verdict, self._confirm(True)])
+            loop, _ = self._loop_with([verdict, self._looked(), self._confirm(True)])
             ok, _ = loop._verify("Write resolve_handle.py", "c", "", "ev", _Rlog(),
                                  idx=1, total=2, key="sid:x", workspace_root=ws)
         self.assertTrue(ok)
@@ -5469,6 +5487,10 @@ class ConfirmCheckerInspectsTests(unittest.TestCase):
 
         def chat(body, rlog):
             bodies.append(body)
+            if len(bodies) == 1:      # it LOOKS first, which is what earns its approval
+                return json.dumps({"choices": [{"message": {"content": "", "tool_calls": [
+                    {"id": "l1", "type": "function", "function": {
+                        "name": "list_dir", "arguments": json.dumps({"path": "."})}}]}}]}).encode()
             return json.dumps({"choices": [{"message": {"content": json.dumps(
                 {"consistent": True, "why": ""})}}]}).encode()
 

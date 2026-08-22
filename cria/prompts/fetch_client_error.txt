@@ -1,2 +1,6 @@
 with_body = That request FAILED and the failure is on your side (a 4xx is a client error — the URL, the path, or the version segment in it was wrong, not the service). The text above is whatever the server chose to send with the refusal; read it in case it says how the URL should be formed, then either correct the URL or run a web_search for what you were after.
 no_body = That request FAILED and the failure is on your side (a 4xx is a client error — the URL, the path, or the version segment in it was wrong, not the service). The server sent nothing back explaining it, so there is nothing more to read here: either correct the URL or run a web_search for what you were after.
+# CRIA CHOSE THE URL. The coder asked to search; cria replaced that call with a fetch of a url one of
+# its own reasoners recommended, and the url was wrong. Telling the coder to "correct the URL" here
+# points it at something it never wrote — see webfetch.client_error_note for the run this cost.
+ours = That fetch was not yours — it replaced the search you asked for, and the address it used does not exist. Nothing about it is yours to correct. Run the search you originally wanted.

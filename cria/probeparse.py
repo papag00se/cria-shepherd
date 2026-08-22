@@ -708,6 +708,16 @@ def parse_pytest(s: str) -> list[Finding]:
 #   cargo test   thread 'tests::it_adds' (72242) panicked at src/lib.rs:7:20:
 #   rspec            # ./a_spec.rb:3:in `block (2 levels) in <top (required)>'
 #   phpunit      /w/tests/AppTest.php:14                       (bare, on its own line)
+#   minitest     TestRates#test_free_shipping [/w/test/test_rates.rb:23]:   (path:line IN BRACKETS)
+#
+# MINITEST IS THE BATTERY'S ONLY RUBY RUNNER AND IT WAS MISSING FOR AS LONG AS THIS TABLE HAS
+# EXISTED. `runner_and_tally` identified it correctly and reported "1 failed of 7" — cria knew the
+# framework and the count and lost the one thing the coder needed. Walked on shipping-rates-rb x
+# nemotron-elastic 1787344941: the model swapped one green test for one red one at call 0064, and
+# for the next twenty calls every steer read "a specific line could not be parsed from the output"
+# while `TestRates#test_oversize_surcharge_still_applies_to_free_shipping [.../test_rates.rb:23]`
+# sat in the same prompt. The regression detector counts passes, so 6-before/6-after hid it too:
+# cria had neither channel to say "your last edit destroyed a passing test".
 #
 # Compiler and linter output was always parsed; TEST-runner failures mostly were not, so a failing
 # Rust/Ruby/PHP suite reached the coder as `$ cargo test — summary` with no file:line at all.
@@ -719,6 +729,7 @@ _RUNNER_LOCATIONS = (
     re.compile(r"panicked at ([^\s:][^:]*):(\d+):(\d+)"),          # cargo test / any Rust panic
     re.compile(r"^\s*#\s+(\.?[^\s:]+):(\d+)(?::in\b|\s*$)", re.M),  # rspec backtrace line
     re.compile(r"^\s*(/[^\s:]+\.php):(\d+)\s*$", re.M),            # phpunit failure location
+    re.compile(r"^\s*\S+#\S+\s+\[([^\]\s:]+):(\d+)\]", re.M),        # minitest failure location
 )
 
 
@@ -750,6 +761,43 @@ def parse_runner_locations(s: str) -> list[Finding]:
     return out
 
 
+# HOW MUCH OF A DIAGNOSTIC IS THE DIAGNOSTIC. A real compiler writes a header line carrying the
+# location, then indents the part that says WHAT IS WRONG underneath it:
+#
+#     [ERROR] /w/src/pipeline/Importer.java:[13,30] cannot find symbol
+#       symbol:   class CSVParserBuilder
+#       location: package org.apache.commons.csv
+#
+# Read a line at a time, that reaches the coder as `Importer.java:13: cannot find symbol` — a
+# sentence with its subject deleted. Walked on feed-pipeline-java x nemotron-elastic 1787346816:
+# 44 coder prompts carried that headless form, the model concluded an import was missing, and spent
+# 89 calls hunting a dependency that was never absent while the two dropped lines named the class
+# and named the package it is not in. It never compiled.
+#
+# INDENTATION IS THE SHAPE, and it is not one language's convention: javac, rustc, clang, tsc, gcc's
+# notes and pytest's assertion diff all continue a diagnostic by indenting under it (#20). A
+# continuation line is one that is indented and is NOT itself a new diagnostic — so a run of them
+# ends the moment another `file:line` appears, whatever tool wrote it.
+_CONTINUATION_MAX = 6          # a header plus its detail, never a whole stack trace
+
+
+def _with_continuation(msg: str, lines: list[str], i: int) -> str:
+    """``msg`` plus the indented lines that belong to it — the rest of the compiler's sentence."""
+    got = [msg]
+    base = len(lines[i]) - len(lines[i].lstrip())
+    for nxt in lines[i + 1:]:
+        if not nxt.strip():
+            break
+        if len(nxt) - len(nxt.lstrip()) <= base:
+            break                       # back at the header's own level: a new diagnostic
+        if split_diag(nxt.strip()) is not None:
+            break                       # indented, but it is a diagnostic of its own
+        got.append(nxt.strip())
+        if len(got) > _CONTINUATION_MAX:
+            break
+    return "\n".join(got)
+
+
 def parse_generic(s: str) -> list[Finding]:
     """``file:line[:col]: message`` — ruff / flake8 / mypy / go vet / gcc shape.
 
@@ -758,13 +806,14 @@ def parse_generic(s: str) -> list[Finding]:
     which sits right after the line number.
     """
     out: list[Finding] = []
-    for l in s.splitlines():
+    lines = s.splitlines()
+    for i, l in enumerate(lines):
         t = l.strip()
         r = split_diag(t)
         if r is not None:
             file, line, col, msg = r
             if looks_like_path(file):
-                out.append(Finding(file, line, col, msg))
+                out.append(Finding(file, line, col, _with_continuation(msg, lines, i)))
     if not out:
         # Only when the ordinary shape found nothing: a compiler's own `file:line:` diagnostics must
         # never be crowded out by a panic location further down the same output.
@@ -835,6 +884,20 @@ def prefer_own_code(findings: list["Finding"]) -> list["Finding"]:
     return own + [f for f in findings if not _own_code(f.file)] if own else findings
 
 
+# A bracketed cross-reference a tool prints beside a url: Maven's `[Help 1]`, and the same shape
+# wherever else it appears. Removed only to ask "is a url all that is left?" — never from the text
+# the model reads.
+_XREF = re.compile(r"\[[A-Za-z][A-Za-z0-9 _-]*\]")
+_BARE_URL = re.compile(r"^(?:->\s*)?https?://\S+$")
+
+
+def _is_only_a_pointer(line: str) -> bool:
+    """True when this line's whole content is a url — a place to read about the error, not the
+    error. See the note in :func:`summarize` for the 89-call run this cost."""
+    rest = _XREF.sub("", _LOG_TAG.sub("", line.strip())).strip(" \t->:")
+    return rest == "" or bool(_BARE_URL.match(rest))
+
+
 def summarize(findings: list[Finding], exit_code: Optional[int], combined: str) -> str:
     """One line the model can act on: first finding, or the last error-ish output line."""
     findings = prefer_own_code(findings)
@@ -852,14 +915,23 @@ def summarize(findings: list[Finding], exit_code: Optional[int], combined: str) 
         # Unknown exit reads as clean — see the CONTRACT HAZARD note in the module doc.
         return CLEAN_SUMMARY
     # Non-zero exit, nothing parsed: hunt bottom-up for the last error-ish line.
-    line = ""
-    for l in reversed(combined.splitlines()):
-        low = l.lower()
-        # upstream quirk, preserved: the `strip() != ""` clause is redundant once a
-        # keyword matched (keywords contain non-space chars), but it stays.
-        if any(kw in low for kw in ERRORISH_KEYWORDS) and l.strip() != "":
-            line = l
-            break
+    #
+    # …BUT A POINTER TO AN EXPLANATION IS NOT THE EXPLANATION. Bottom-up is right for a traceback,
+    # where the last line is the exception. It is wrong for a build log, whose last error-ish line
+    # is the tool telling you where to read about errors in general. Maven ends every failure with
+    # `[ERROR] [Help 1] http://cwiki.apache.org/...DependencyResolutionException`, and that is what
+    # the coder was handed — for 89 calls on feed-pipeline-java x nemotron-elastic 1787346816 —
+    # while three lines above it sat `Could not find artifact org.opencsv:opencsv:jar:5.9 in
+    # central`, which is the entire answer and fixes the run in one edit.
+    #
+    # Shape, not a vocabulary of tool names (#20): strip the log tag and any bracketed cross
+    # reference, and if what remains is a bare URL then the line carries no fact about THIS failure.
+    # A line that merely CONTAINS a url — the artifact line above contains the repository's — still
+    # says something and is kept. If every candidate is a pointer, the last one is still better than
+    # silence.
+    lines = [l for l in reversed(combined.splitlines())
+             if l.strip() != "" and any(kw in l.lower() for kw in ERRORISH_KEYWORDS)]
+    line = next((l for l in lines if not _is_only_a_pointer(l)), lines[0] if lines else "")
     line = line.strip()
     if line == "":
         return f"exited {exit_code} with no parseable diagnostics"

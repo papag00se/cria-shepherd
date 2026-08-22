@@ -46,7 +46,7 @@ from pathlib import Path
 from . import bodykeys, wsview
 from . import callcapture, dedup, denial, editrecovery, execcheck, focustrim, groundtruth, indicators, massage, probegate, proberun, prompts, selfcompact, shellshape, toolmenu, urlgrounding, verifytools, webfetch
 from .classify import _task_key, latest_user_text
-from . import jsontext, planner
+from . import jsontext, planner, writeproxy
 from .jsontext import extract_json_object, strip_think
 from . import research
 from .plan import Plan, PlanItem
@@ -403,7 +403,14 @@ _COMPLETION_FIX_PREFIX = "The task is not yet fully satisfied — fix this befor
 # spiral at different rates; either set to 0 DISABLES it.
 
 
-def _satisfaction_blocker(*, steer, rewritten: bool, done_probe: bool, gate_red: bool) -> str:
+# HOW LONG A RED GATE MAY HOLD THE WHOLE-TASK QUESTION BACK. Two gates with the same finding-set is
+# already the signal `gate_stall` exists to carry; a third says the red is not moving and is therefore
+# not evidence that the coder is mid-fix.
+RED_HOLDS_SATISFACTION_FOR = 2
+
+
+def _satisfaction_blocker(*, steer, rewritten: bool, done_probe: bool, gate_red: bool,
+                          gate_stall: int = 0) -> str:
     """WHICH condition is holding the satisfaction check back this turn — "" when none is.
 
     Returns a name rather than a bool so the skip event can say why (#12). The order is reporting
@@ -414,14 +421,26 @@ def _satisfaction_blocker(*, steer, rewritten: bool, done_probe: bool, gate_red:
     back genuinely clean clears it — a gate that could not run leaves it exactly as it was. So a
     session whose checks are red early stays blocked until a clean gate happens to land, and on
     rust-toml-cli x ternary-bonsai (2026-08-19) none ever did: 34 due drives, all skipped, while the
-    workspace sat at three of four deliverables with a README that was never written."""
+    workspace sat at three of four deliverables with a README that was never written.
+
+    A RED THAT IS NOT MOVING IS NOT A REASON TO WAIT. The block reads "checks are failing, so there
+    is obvious work — do not ask the whole-task question yet", and that is true while the coder is
+    closing on the red. It is false when the same finding-set comes back gate after gate, and it is
+    false from turn one on a whole class of tasks: "fix the failing repository tests" starts red BY
+    CONSTRUCTION, so the latch closes on the first gate and never opens.
+
+    Measured on shipping-rates-rb x nemotron-elastic 1787344941: 76 skips, 68 of them `gate-red`,
+    `last_ran` stuck at -1 for the entire session. The one mechanism that asks "have you started
+    items 2 to 5 yet?" never ran, and express pricing and the README were never begun in 31 minutes.
+    `gate_stall` already counts consecutive gates with the SAME finding-set — the fact is in hand, so
+    the hold ends when the red stops moving (#12)."""
     if steer:
         return "steer"
     if rewritten:
         return "history-rewritten"
     if done_probe:
         return "done-probe-in-flight"
-    if gate_red:
+    if gate_red and gate_stall < RED_HOLDS_SATISFACTION_FOR:
         return "gate-red"
     return ""
 
@@ -829,6 +848,25 @@ def reassess_remaining(reasoner_chat, reasoner_role, task: str, completed: str, 
     return kept
 
 
+# HOW MANY TIMES THE JUDGE ACTUALLY LOOKED, carried on the completion it produced.
+#
+# A seat whose whole justification is "a judge that must look cannot rubber-stamp a narrative" has to
+# be able to tell whether it looked, and the number of inspection rounds is the authoritative event
+# for that (#12) — not a guess from the wording of the reply. `_confirm_completion` is the caller
+# that needs it; see the note there for the run where a brake confirmed a broken CLI in fifteen
+# tokens without opening a single file.
+ROUNDS_KEY = "_cria_inspection_rounds"
+
+
+def _with_rounds(comp: dict, rounds: int) -> dict:
+    return {**comp, ROUNDS_KEY: int(rounds)} if isinstance(comp, dict) else comp
+
+
+def inspection_rounds(comp: dict) -> int:
+    """How many rounds of list_dir/read_file this judge spent before answering."""
+    return int((comp or {}).get(ROUNDS_KEY) or 0) if isinstance(comp, dict) else 0
+
+
 def _judge_completion(chat_fn, role, system: str, user: str, rlog, *, phase: str,
                       workspace_root: str = "", max_tokens: int = 8192,
                       force_think_off: bool = False, transcript: list | None = None,
@@ -949,7 +987,7 @@ def _judge_completion(chat_fn, role, system: str, user: str, rlog, *, phase: str
                 continue
             if transcript is not None:  # the caller wants the inspection record (e.g. for grounding)
                 transcript.extend(messages[2:])
-            return comp
+            return _with_rounds(comp, rounds)
         # THE ANSWER ARRIVED AS A CALL. Read it off the structured tool_call (#12) and stop: this is
         # the judge declaring its verdict, not asking to look at something. Any inspection call made
         # in the same turn is ignored on purpose — the tool's own description forbids mixing them,
@@ -965,7 +1003,7 @@ def _judge_completion(chat_fn, role, system: str, user: str, rlog, *, phase: str
                 rlog.emit("loop.verdict_by_tool", phase=phase, round=rounds)
                 if transcript is not None:
                     transcript.extend(messages[2:])
-                return _completion_of(comp, json.dumps(obj))
+                return _with_rounds(_completion_of(comp, json.dumps(obj)), rounds)
         rounds += 1
         # Same reason as the write-back above: preserve what the judge produced this round, from
         # whichever channel it produced it in, or the next round asks it to answer against a
@@ -1291,6 +1329,7 @@ def _confirm_completion(claim: str, reason: str, workspace_root: str, reasoner_c
         return False, prompts.render("confirm_absent_artifact", artifact=absent)
     labels = prompts.load_map("verify_confirm")
     role = replace(reasoner_role, reasoning="off") if reasoner_role is not None else None
+    looked: list[int] = [0]          # inspection rounds spent by the most recent `ask`
 
     def ask(extra: str = "") -> tuple[bool | None, str]:
         """One confirm judgement → (consistent, why), or (None, "") when it cannot be read."""
@@ -1298,6 +1337,7 @@ def _confirm_completion(claim: str, reason: str, workspace_root: str, reasoner_c
         comp = _judge_completion(reasoner_chat, role, labels["system"], user, rlog,
                                  phase=phase, force_think_off=True, workspace_root=workspace_root,
                                  answer_now_simple=verifytools.ANSWER_NOW_CONSISTENT)
+        looked[0] = inspection_rounds(comp)
         vtext = _completion_text(comp)
         if reasoner_role is not None:
             vtext = reasoner_role.clean_content(vtext)
@@ -1324,6 +1364,27 @@ def _confirm_completion(claim: str, reason: str, workspace_root: str, reasoner_c
         return obj["consistent"], str(obj.get("why") or "").strip()
 
     verdict, why = ask()
+    # AN APPROVAL FROM A JUDGE THAT NEVER LOOKED IS NOT AN APPROVAL.
+    #
+    # This seat's entire justification, in the docstring above, is that "a judge that must look
+    # cannot rubber-stamp a narrative" — and nothing made it look. Walked on handles-cli-node x
+    # nemotron-elastic 1787348728: the brake was handed the task and the satisfied verdict's own
+    # optimistic reason in 4,095 bytes, with reasoning off, and answered `{"consistent": true}` in
+    # fifteen tokens having called no tool at all. The workspace it approved held a CLI that dies on
+    # `ReferenceError: json is not defined` before it reads its first argument. Given only a claim
+    # and a task, agreeing is the only reachable answer.
+    #
+    # The old note here says cria "cannot see whether it looked". It can: the inspection round count
+    # is on the completion, and it is the authoritative event (#12). One escalated re-ask, pointing
+    # it back at the tools it holds — the same bounded shape the restate path below already uses —
+    # and if it still answers without opening anything, the approval does not stand. Fail CLOSED is
+    # the safe direction on completion (#13): the cost is a work turn cria has already paid for.
+    if verdict is True and not looked[0]:
+        rlog.emit("loop.confirm_without_looking", level="warning", phase=phase)
+        verdict, why = ask("\n\n" + labels["restate"])
+        if verdict is True and not looked[0]:
+            rlog.emit("loop.confirm_without_looking_twice", level="warning", phase=phase)
+            verdict = None
     if verdict is False and _restates_the_verdict(why, reason):
         # ONE re-ask, escalated — the checker is told that echoing the reason answers nothing and
         # pointed back at the tools it holds. A plain repeat would be worthless: the judge call runs
@@ -2505,7 +2566,8 @@ class Loop:
         done_now = self._periodic_satisfaction(
             sess, body, rlog, plan_off=False,
             blocked=_satisfaction_blocker(steer=sess.nudge_reason, rewritten=False,
-                                          done_probe=sess.done_probe, gate_red=sess.last_gate_red))
+                                          done_probe=sess.done_probe, gate_red=sess.last_gate_red,
+                                          gate_stall=sess.gate_stall))
         if done_now is not None:
             return done_now
         framed = dict(body)
@@ -3819,7 +3881,8 @@ class Loop:
         done_now = self._periodic_satisfaction(
             sess, body, rlog, plan_off=True,
             blocked=_satisfaction_blocker(steer=steer, rewritten=rewritten,
-                                          done_probe=sess.done_probe, gate_red=sess.last_gate_red))
+                                          done_probe=sess.done_probe, gate_red=sess.last_gate_red,
+                                          gate_stall=sess.gate_stall))
         if done_now is not None:
             return done_now
         # PERIODIC gate: every N acting turns, run the checks and insert ground truth — only when nothing
@@ -5076,6 +5139,16 @@ def _write_path(fn: dict) -> str | None:
     a SHELL-native write (redirect/heredoc/`tee`), so the wheel-spin guard counts a model rewriting
     one file straight through the shell the same as a write_file."""
     name = fn.get("name")
+    # WHAT THE CODER CALLED, NOT WHAT CRIA LOWERED IT TO. A shell call carrying cria's sentinel is
+    # cria's own composition — a heredoc, a curl, and on writes/edits/lists the workspace survey
+    # program riding along — and scanning those bytes for a redirect target reads cria's text as the
+    # coder's work. The survey contains `if len(files) > FOLD_AT:`; the redirect matcher read that
+    # `>` as one and reported `FILE FOLD_AT — does NOT exist on disk` to the model, naming one of
+    # cria's own constants as a file (feed-pipeline-java x nemotron-elastic 1787346816). The
+    # sentinel holds the call that was actually made, exactly, so ask it (#12).
+    original = writeproxy.original_call(_command_text(fn.get("arguments") or "") or "")
+    if original is not None:
+        fn, name = original, original.get("name")
     if _is_write_tool(name):
         return _path_of_args(fn.get("arguments") or "", patch_ok=name == "apply_patch")
     if is_shell_tool_name(name):
@@ -8350,10 +8423,22 @@ def guard_search_query(sess: GuardState, coder: dict, body: dict,
         # for. What it must not do is send the coder to a site it invented — which its own prompt
         # invites, saying "never invented" and then asking it to synthesise `<domain>/openapi.json`.
         evidence = task + "\n" + selfcompact.serialize(_reasoner_session(body.get("messages", [])))
-        if not urlgrounding.host_is_grounded(url, evidence):
+        # HOST-ONLY IS ENOUGH ONLY FOR THE HOST THE TASK ITSELF NAMES. That is the case the comment
+        # above describes and it stays: "fetch api.handle.me's spec" is a route, and a route nobody
+        # has walked is the whole point. Anywhere else, a path segment carries a NAME that must exist
+        # in the world — `/gems/<gem>`, `/crates/<crate>` — and a reasoner will invent one. cria
+        # substituted `rubygems.org/gems/eu-membership` for a coder's own search on shipping-rates-rb
+        # x nemotron-elastic 1787344941: the host was grounded, the gem has never existed, and the
+        # coder read a 404 with cria's note saying the mistake was its own. Twice, in one run.
+        grounded = (urlgrounding.host_is_grounded(url, task)
+                    or urlgrounding.url_is_grounded(url, evidence))
+        if not grounded:
             rlog.emit("loop.search_query_ungrounded", level="warn", query=query, rec=url)
             return coder
         rlog.emit("loop.search_query_judged", action="fetch", query=query, rec=url)
+        # WHOSE REQUEST THIS IS. The coder asked to search; this fetch is cria's. Recorded so a 4xx
+        # is not reported back to the coder as its own mistake (webfetch.client_error_note).
+        webfetch.note_substituted(getattr(sess, "web_session", ""), url)
         return _substitute_fetch(coder, msg, search_tc, url,
                                  (f"fetching {url} — the source this task names, read it directly"
                                   if on_target else

@@ -68,6 +68,25 @@ def host_is_grounded(url: str, evidence: str) -> bool:
     return bool(host) and host in (evidence or "").lower()
 
 
+def url_is_grounded(url: str, evidence: str) -> bool:
+    """Has cria SEEN this exact url — not merely its host?
+
+    The host-only test above exists for one case and is right for it: the task names a domain and the
+    judge says "fetch its spec", so the path is by definition one nobody has fetched. It is wrong for
+    every other host, because a path segment can carry a NAME that has to exist in the world for the
+    url to resolve at all — a package, a crate, a gem — and a reasoner will invent one.
+
+    Walked on shipping-rates-rb x nemotron-elastic 1787344941. The coder ran a web_search for an EU
+    gem; cria substituted a fetch of `https://rubygems.org/gems/eu-membership`. `rubygems.org` was in
+    the evidence, so the host test passed. The gem does not exist and never has. The coder read a 404
+    attributed to itself, twice in one run, and its own search never ran."""
+    u = (url or "").strip().rstrip("/")
+    if not u:
+        return False
+    ev = (evidence or "")
+    return u in ev or u.split("://", 1)[-1] in ev
+
+
 _METHOD_ROUTE = re.compile(r"\b(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\s+(/[^\s\"'`,;)\]}]*)")
 
 

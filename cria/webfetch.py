@@ -247,6 +247,7 @@ def clear_cache() -> None:
     _FETCH_STREAK.clear()
     _SEARCH_SEEN.clear()
     _SEARCH_SPILLED.clear()
+    _SUBSTITUTED.clear()
     _SEARCH_ALLOWED.clear()
     _FETCH_SPILLED.clear()
 
@@ -1317,7 +1318,8 @@ def fetch_nav(url: str, *, find: Optional[str] = None, cursor: Optional[str] = N
                 return _guard_msg("fetch_repeat_spilled", url=url, target=_spill_name(url),
                                   outline=outline_for_url(url))
         return _guard_msg("fetch_repeat", url=url)
-    out, status, discovered = _fetch_and_render(url, find, cursor, cap_tokens, user_agent, raw)
+    out, status, discovered = _fetch_and_render(url, find, cursor, cap_tokens, user_agent, raw,
+                                               ours=was_substituted(session, url))
     if session and external and status is not None:
         # A PROTOCOL endpoint answers a GET with 405/400 by design, and cria just came back with its
         # full callable surface. Counting that as another failed URL guess would push the model over
@@ -1346,7 +1348,7 @@ def _render_discovery(url: str, status: int, ct: Optional[str], found) -> str:
 
 
 def _fetch_and_render(url, find, cursor, cap_tokens, user_agent,
-                      raw=False) -> tuple[str, Optional[int], bool]:
+                      raw=False, ours: bool = False) -> tuple[str, Optional[int], bool]:
     """Fetch (or serve from cache) → reduce → render to the model-facing text. Returns
     ``(text, status, discovered)``; ``status`` is None on a transport error (no HTTP response) and
     ``discovered`` is True when the text came from a protocol probe rather than the document. ``raw``
@@ -1462,7 +1464,8 @@ def _fetch_and_render(url, find, cursor, cap_tokens, user_agent,
             head += "\n\n" + outline
         return head, status, False
     offset = _parse_cursor(cursor) if cursor else 0
-    return render_page(url, status, ct, reduced, parsed, offset, cap_tokens, truncated), status, False
+    return render_page(url, status, ct, reduced, parsed, offset, cap_tokens, truncated,
+                       ours=ours), status, False
 
 
 # --- paging (content_reduce.rs::page_from + render_page) ------------------------------------
@@ -1504,20 +1507,46 @@ def page_from(content: str, offset: int, cap_tokens: int) -> tuple[str, int, int
 # URL should be formed (docs.rs's own answer, "Shorthand URLs", was in that menu). What is added is
 # one line saying WHOSE fault it is and what to do instead. 5xx is deliberately excluded: the server
 # failing is not the model's to fix, and telling it to correct the URL would be a false lead.
-def client_error_note(status: int, body: str) -> str:
+# Urls cria itself put in the coder's mouth — see `substituted()` below.
+_SUBSTITUTED: dict[str, set] = {}
+
+
+def note_substituted(session: Optional[str], url: str) -> None:
+    """Record that CRIA chose this url, not the coder. The coder asked to SEARCH; cria replaced that
+    call with a fetch of a url a reasoner recommended."""
+    if session and (url or "").strip():
+        _SUBSTITUTED.setdefault(session, set()).add(url.strip())
+        _bound(_SUBSTITUTED)
+
+
+def was_substituted(session: Optional[str], url: str) -> bool:
+    return (url or "").strip() in (_SUBSTITUTED.get(session) or ())
+
+
+def client_error_note(status: int, body: str, ours: bool = False) -> str:
     """The line appended under a 4xx result — "" for anything else.
 
     Two wordings, because "read the server's text" is a footgun when there is no text: it sends the
     model back to re-read a page that says nothing (#5b — never point at content cria knows is not
-    there). The split is on what actually came back, not on the status."""
+    there). The split is on what actually came back, not on the status.
+
+    ``ours`` — CRIA CHOSE THIS URL, so the coder is not told the mistake is its own. The default text
+    says "the failure is on your side (the URL, the path… was wrong)". Walked on shipping-rates-rb x
+    nemotron-elastic 1787344941: the coder ran a web_search, cria substituted a fetch of
+    `rubygems.org/gems/eu-membership` — a package that does not exist, invented by cria's own
+    reasoner — the transcript showed the fetch as the coder's own action, and this sentence then told
+    it the 404 was its fault. Twice in one run. Blaming the coder for a request cria authored is a
+    false fact in cria's own voice (#5b), and the coder cannot act on it: it never typed that url."""
     if not (400 <= int(status or 0) < 500):
         return ""
+    if ours:
+        return "\n\n" + prompts.load_map("fetch_client_error")["ours"]
     key = "with_body" if (body or "").strip() else "no_body"
     return "\n\n" + prompts.load_map("fetch_client_error")[key]
 
 
 def render_page(url: str, status: int, ct: Optional[str], reduced: str, parsed: Optional[Any],
-                offset: int, cap_tokens: int, truncated: bool = False) -> str:
+                offset: int, cap_tokens: int, truncated: bool = False, ours: bool = False) -> str:
     body, nxt, total = page_from(reduced, offset, cap_tokens)
 
     def _head(nxt_: int, total_: int) -> str:
@@ -1569,7 +1598,7 @@ def render_page(url: str, status: int, ct: Optional[str], reduced: str, parsed: 
         body, nxt, total = page_from(reduced, offset, max(50, room // divisor))
         head = _head(nxt, total)
     out = f"{head}--- (chars {offset}–{nxt} of {total}) ---\n{body}\n"
-    out += client_error_note(status, body)
+    out += client_error_note(status, body, ours=ours)
     if nxt < total:
         out += (f'\n⚠ More remains ({total - nxt} of {total} chars left). Continue with the '
                 f'SAME url and cursor="c{nxt}", or call find="<keyword>" to jump to a section.')

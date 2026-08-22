@@ -85,6 +85,10 @@ class ItIsEvidenceNotAGateTests(unittest.TestCase):
         replies = [
             {"choices": [{"message": {"content": json.dumps(
                 {"done": True, "reason": "it exists and works", "proposed_fix": ""})}}]},
+            # The confirm looks before approving — see loop._confirm_completion.
+            {"choices": [{"message": {"content": "", "tool_calls": [
+                {"id": "l1", "type": "function", "function": {
+                    "name": "list_dir", "arguments": json.dumps({"path": "."})}}]}}]},
             {"choices": [{"message": {"content": json.dumps({"consistent": True, "why": ""})}}]},
         ]
         calls = []

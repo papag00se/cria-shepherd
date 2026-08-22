@@ -65,6 +65,12 @@ class _Reasoner:
     def __call__(self, body, rlog):
         self.calls += 1
         self.prompts.append(body["messages"][-1].get("content") or "")
+        # The approve-path confirm LOOKS before it approves — an approval from a brake that never
+        # opened anything no longer stands (loop._confirm_completion). One list_dir round earns it.
+        if self.calls == 2:
+            return json.dumps({"choices": [{"message": {"content": "", "tool_calls": [
+                {"id": "l1", "type": "function", "function": {
+                    "name": "list_dir", "arguments": json.dumps({"path": "."})}}]}}]}).encode()
         return json.dumps({"choices": [{"message": {"content": json.dumps(
             {"done": self.done, "reason": "the failing tests belong to a later step", "proposed_fix": "",
              "consistent": True, "why": ""})}}]}).encode()

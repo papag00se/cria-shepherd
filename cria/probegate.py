@@ -686,11 +686,25 @@ def clean_gate_output(raw: str, plan: "GatePlan | None" = None, *, annotate: boo
         # WHICH SENTENCE IS TRUE depends on whether a test command was composed at all — see
         # prompts/no_tests_found.txt for the run where the wrong one went out over a gate script
         # containing `mvn test`.
-        ran_tests = any(c.kind is probediscovery.ProbeKind.Test
-                        for c in (getattr(plan, "candidates", None) or []))
+        cands = list(getattr(plan, "candidates", None) or [])
+        ran_tests = any(c.kind is probediscovery.ProbeKind.Test for c in cands)
         words = prompts.load_map("no_tests_found")
+        # NAME WHAT ACTUALLY RAN. The sentence read "the checks above cover syntax and lint only"
+        # whatever the plan held — so on a JavaScript project, where the floor is `node --check` and
+        # no linter is composed at all, cria claimed a lint pass that never happened. Walked on
+        # handles-cli-node x nemotron-elastic 1787348728: the coder shipped a CLI that dies on an
+        # undefined variable, `node --check` passed it (a parser cannot see one), the judge read
+        # "syntax and lint" as "the code is fine", and the run ended in five minutes. A claim about
+        # cria's own coverage is a fact cria holds — it must be read off the plan, never asserted
+        # (#12, #5b).
+        kinds = {probediscovery.ProbeKind.SyntaxCheck: "syntax",
+                 probediscovery.ProbeKind.Lint: "lint",
+                 probediscovery.ProbeKind.Typecheck: "type",
+                 probediscovery.ProbeKind.BuildCheck: "build"}
+        ran = [w for k, w in kinds.items() if any(c.kind is k for c in cands)]
+        covered = " and ".join([", ".join(ran[:-1]), ran[-1]] if len(ran) > 2 else ran) or "nothing"
         clean += " " + prompts.fill(words["ran_some" if ran_tests else "no_command"],
-                                    findings=" ".join(untested))
+                                    findings=" ".join(untested), covered=covered)
     # WHERE the checks had to run, when none of them could run where the coder is working. A green
     # gate over a project the working directory does not contain is the most expensive green there
     # is — see _checks_ran_elsewhere for the cell it cost.

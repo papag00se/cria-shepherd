@@ -1056,6 +1056,28 @@ def lint_floor_candidates(root: Path) -> list[ProbeCandidate]:
                         ["python3", "-m", "pyflakes", *py[:MAX_FLOOR_FILES_PER_LANG]],
                         root, 60, 80, ProbeCost.Cheap, composed_by_cria=True,
                         reason="Python linting: pyflakes (undefined names, unused imports; zero-config)"))
+    # JAVASCRIPT'S SECOND RUNG. Python's floor is two rungs — parse it, then catch the undefined
+    # names a parser cannot see — and JavaScript's was one. `node --check` is a parser; an assignment
+    # to an undeclared name is legal syntax and fails only when the module runs. Walked on
+    # handles-cli-node x nemotron-elastic 1787348728: `json = false` inside an ES module, `node
+    # --check lookup.js` exit 0, and a CLI that dies with `ReferenceError: json is not defined`
+    # before reading its first argument was approved as finished. That is the exact defect class
+    # `escalate_pyflakes` exists for, one language over — and cria's own history records the same bug
+    # in Python, with the same variable name, caught by the rung Python has.
+    #
+    # eslint is used CONFIG-FREE, the way pyflakes is: one rule, no project config consulted, so a
+    # repo without an .eslintrc is covered exactly like a repo without a setup.cfg. Absent tool
+    # abstains — it never blocks — which on a box with no eslint leaves the floor where it was, and
+    # the clean-gate sentence now says which kinds actually ran rather than claiming a lint pass.
+    js = linterprobe.collect_files(str(root), ["js", "mjs", "cjs"])
+    if js:
+        out.append(cand(ProbeKind.Lint,
+                        ["eslint", "--no-eslintrc", "--no-ignore", "--format", "compact",
+                         "--rule", '{"no-undef":"error","no-undefined":"off"}',
+                         "--env", "es2022,node,browser",
+                         *js[:MAX_FLOOR_FILES_PER_LANG]],
+                        root, 60, 80, ProbeCost.Cheap, composed_by_cria=True,
+                        reason="JS linting: eslint no-undef (undefined names; zero-config)"))
     dirs = inventory(root)
     for p in dirs:
         if p.has("Cargo.toml"):

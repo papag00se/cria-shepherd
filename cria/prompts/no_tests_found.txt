@@ -5,7 +5,7 @@
 # test command was composed". Walked on cycle 4 cell 16 (`feed-pipeline-java x ternary-bonsai`):
 # cria said exactly that in the same message as a gate script containing `mvn test`, over a run that
 # had also just executed `mvn -q compile`. False in cria's own voice (#5b).
-no_command = The checks above cover syntax and lint only — no test command was composed, so nothing here says whether this project's tests pass. {{FINDINGS}}
+no_command = The checks above cover {{COVERED}} only — no test command was composed, so nothing here says whether this project's tests pass, and a check of that kind cannot see a name that is only wrong when the code runs. {{FINDINGS}}
 # A test command DID run — so the "no test command was composed" half cannot be said. What is still
 # true, and is the whole reason this qualifier exists, is that the green above does not establish
 # that this project's tests pass. The finding beside it says why in each case: files a runner cannot
