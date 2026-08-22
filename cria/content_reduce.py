@@ -39,6 +39,16 @@ def est_tokens(s: str) -> int:
 # this constant is what makes it hold on the far side of the harness too.
 INLINE_RESULT_MAX_BYTES = 9000
 
+# HOW MUCH OF A DOCUMENT ONE COMMAND CAN CARRY TO DISK. cria has no channel to the harness's
+# filesystem except a command, and a command is one argv string, so a spill past this is CUT.
+#
+# Defined here rather than in `writeproxy` because the module that COMPOSES the spill message has to
+# know it. It did not: `webfetch` said "it was saved IN FULL to <path>" while `writeproxy` appended
+# "this saved copy holds the first 45,056 characters of a 186,444-character document" to the same
+# tool result. Two sentences, one output, contradicting each other (#5b).
+COMMAND_ARG_BUDGET = 64 * 1024
+SPILL_CONTENT_MAX = (COMMAND_ARG_BUDGET - 4 * 1024) * 3 // 4
+
 
 # Magic-byte signatures for the binary-content fact line — named so the note can say WHAT was
 # omitted, not just that something was. Text-adjacent formats are absent on purpose.
@@ -125,7 +135,12 @@ def digest_reduce(content: str, content_type: str | None, cap_tokens: int) -> st
     if "html" in ct or "xml" in ct:
         content, ct = html_to_text(content), ""
     elif "json" in ct:
-        reduced = reduce_json(content, cap_tokens)
+        # LOSSLESS ONLY. Minification is free; the prose tier is the word-deleter this whole
+        # function exists to avoid, and it was reachable from here. Verified before the fix: a JSON
+        # body carrying "the request could not be read from the server because the token is not
+        # valid" came back as "request could not read server because token not valid", silently, on
+        # the compaction path, in text the model reads as fact.
+        reduced = reduce_json(content, cap_tokens, strip_prose=False)
         if reduced is not None and est_tokens(reduced) <= cap_tokens:
             return reduced
         content = reduced if reduced is not None else content
@@ -157,7 +172,14 @@ def content_reduce(content: str, content_type: str | None, cap_tokens: int) -> s
 # JSON tier: parse -> minify (lossless) -> strip prose nodes (lossy) -> re-serialize
 # ---------------------------------------------------------------------------
 
-def reduce_json(content: str, cap_tokens: int) -> str | None:
+def reduce_json(content: str, cap_tokens: int, strip_prose: bool = True) -> str | None:
+    """Minify; if that is not enough and ``strip_prose``, compress prose-named string values.
+
+    ``strip_prose=False`` stops at the lossless tier. :func:`digest_reduce` passes it, because the
+    whole reason that function exists is to keep the word-deleter away from text a model reads as
+    instruction — and its JSON tier walked straight into it through this call. The fields
+    `_PROSE_FIELDS` names — `message`, `text`, `body`, `details`, `note`, `description`, `summary` —
+    are exactly where an API error, a test failure or a tool's own explanation lives."""
     try:
         v = json.loads(content)
     except (ValueError, TypeError):
@@ -165,8 +187,8 @@ def reduce_json(content: str, cap_tokens: int) -> str | None:
     minified = _dump_json(v)
     if minified is None:
         return None
-    if est_tokens(minified) <= cap_tokens:
-        return minified  # lossless was enough
+    if est_tokens(minified) <= cap_tokens or not strip_prose:
+        return minified  # lossless was enough, or lossless is all this caller permits
     v = _strip_prose_nodes(v, None)
     return _dump_json(v)
 

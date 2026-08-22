@@ -8,18 +8,20 @@ search was effectively a null query and the results were noise" — and cria PER
 file. It held github.com/koralabs/handles-public-api (the API behind the host the task named) and
 the docs page on resolving handles to addresses. The model gave up in the same turn.
 """
+import json
 import os
 import tempfile
 import unittest
 
-from cria import loop
+from cria import loop, webfetch
 from cria.config import Role
 
 
 class SearchKeyTests(unittest.TestCase):
-    SPELLINGS = ("./tmp/reference/search-ada_handles_api.txt",
-                 "/tmp/reference/search-ada_handles_api.txt",
-                 "tmp/reference/search-ada_handles_api.txt")
+    # DERIVED, never hardcoded: `webfetch.search_spill_name` is the one owner of this path, and a
+    # literal here is the drift that lets the two disagree.
+    _NAME = webfetch.search_spill_name("ada handles api").split("/")[-1]
+    SPELLINGS = (f"./tmp/reference/{_NAME}", f"/tmp/reference/{_NAME}", f"tmp/reference/{_NAME}")
 
     def test_every_spelling_is_one_key(self):
         self.assertEqual(len({loop._search_key(p) for p in self.SPELLINGS}), 1)
@@ -39,7 +41,7 @@ class SearchKeyTests(unittest.TestCase):
         webfetch.note_search_spill("s1", "ada handles api")
         q_of = {loop._search_key(f): q
                 for f, q in webfetch.spilled_search_files("s1").items()}
-        self.assertEqual(q_of.get(loop._search_key("/tmp/reference/search-ada_handles_api.txt")),
+        self.assertEqual(q_of.get(loop._search_key(f"/tmp/reference/{SearchKeyTests._NAME}")),
                          "ada handles api")
 
     def test_the_query_is_the_one_the_model_typed(self):
@@ -65,7 +67,7 @@ class SearchKeyTests(unittest.TestCase):
         finds the query or it doesn't."""
         ws = tempfile.mkdtemp()
         os.makedirs(os.path.join(ws, "tmp", "reference"), exist_ok=True)
-        with open(os.path.join(ws, "tmp", "reference", "search-ada_handles_api.txt"), "w") as f:
+        with open(os.path.join(ws, "tmp", "reference", SearchKeyTests._NAME), "w") as f:
             f.write("koralabs/handles-public-api\nhttps://api.handle.me/openapi.json\n")
 
         captured = {}
@@ -101,7 +103,8 @@ class SearchKeyTests(unittest.TestCase):
                 {"role": "assistant", "tool_calls": [
                     {"id": "c1", "type": "function", "function": {
                         "name": "read_file",
-                        "arguments": '{"path": "/tmp/reference/search-ada_handles_api.txt"}'}}]},
+                        "arguments": json.dumps(
+                            {"path": f"/tmp/reference/{SearchKeyTests._NAME}"})}}]},
                 {"role": "tool", "tool_call_id": "c1",
                  "content": "search-ada_handles_api.txt is a large reference document — grep it instead"},
             ], "tools": []}

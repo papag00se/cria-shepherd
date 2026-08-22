@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import difflib
 import ipaddress
+import hashlib
 import json
 import os
 import re
@@ -37,7 +38,8 @@ from dataclasses import dataclass
 from typing import Any, Optional
 
 from . import apidiscovery, brave, denial, prompts
-from .content_reduce import INLINE_RESULT_MAX_BYTES, est_tokens, html_to_text
+from .content_reduce import (COMMAND_ARG_BUDGET, INLINE_RESULT_MAX_BYTES,  # noqa: F401
+                             SPILL_CONTENT_MAX, est_tokens, html_to_text)
 from .searchloop import first_domain_in, normalize_search, searches_match
 
 try:  # structural YAML is best-effort — the Rust degrades YAML to text too when it can't parse
@@ -364,9 +366,21 @@ def _greppable(reduced: str, parsed: Optional[Any], ct: Optional[str]) -> str:
 
 
 def search_spill_name(query: str) -> str:
-    """A stable ``SPILL_DIR`` filename for a query's saved search results (same query → same file)."""
-    stem = re.sub(r"[^A-Za-z0-9._-]+", "_", (query or "").strip().lower()).strip("_")[:60] or "query"
-    return f"{SPILL_DIR}/search-{stem}.txt"
+    """A stable ``SPILL_DIR`` filename for a query's saved search results (same query → same file).
+
+    ONE QUERY, ONE FILE — AND TWO QUERIES, TWO FILES. The readable stem is cut at 60 characters, so
+    two different searches whose first 60 slug characters agree used to map to one path. The writer
+    is `open(T, "w")`, which truncates: the earlier results were destroyed on disk while
+    `_SEARCH_SPILLED` still recorded both queries, and the repeat refusal then pointed the model at
+    that file saying its earlier results were in it. Verified: two queries differing only in their
+    last word collided.
+
+    The suffix is a digest of the WHOLE query, so the stem stays readable (the model greps this path
+    by name) and distinct queries cannot share a file (#5b)."""
+    q = (query or "").strip()
+    stem = re.sub(r"[^A-Za-z0-9._-]+", "_", q.lower()).strip("_")[:60] or "query"
+    tag = hashlib.sha1(q.encode("utf-8", "replace")).hexdigest()[:8]
+    return f"{SPILL_DIR}/search-{stem}-{tag}.txt"
 
 
 def search_spill(query: str) -> tuple[str, str]:
@@ -545,8 +559,13 @@ def oversized_spill(url: str) -> Optional[tuple[int, str, str, str]]:
     content = _greppable(reduced, parsed, ct)
     target = _spill_name(url)
     fmt = _doc_format(content)
+    # SAY WHAT ACTUALLY LANDS. `writeproxy._spill_command` cuts anything past SPILL_CONTENT_MAX and
+    # appends its own honest note — so this message claiming "saved IN FULL" put a flat
+    # contradiction in the same tool result. The composer holds both numbers; it picks the sentence.
+    whole = len(content.encode("utf-8", "replace")) <= SPILL_CONTENT_MAX
     msg = _guard_msg("spill", status_label=status_label(status), url=url,
                      chars=f"{len(content):,}", target=target,
+                     extent=_guard_msg("spill_extent_full" if whole else "spill_extent_cut"),
                      format=(f" It is {fmt}." if fmt else ""),
                      outline=_spill_outline(parsed, target))
     return status, target, content, msg

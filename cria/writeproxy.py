@@ -907,10 +907,10 @@ def _fetch_command(args: dict, session: str | None = None, workspace_root: str |
 #
 # Undershooting costs a disclosed cut (see SPILL_CONTENT_MAX and prompts/spill_cut.txt). Half the
 # kernel cap sits far below every observed refusal and still carries a substantial spec.
-COMMAND_ARG_BUDGET = 64 * 1024
+COMMAND_ARG_BUDGET = content_reduce_mod.COMMAND_ARG_BUDGET
 # base64 is 4 bytes per 3, and the rest of the command (paths, the pointer message, the markers)
 # needs room too.
-SPILL_CONTENT_MAX = (COMMAND_ARG_BUDGET - 4 * 1024) * 3 // 4
+SPILL_CONTENT_MAX = content_reduce_mod.SPILL_CONTENT_MAX
 
 
 def _spill_command(target: str, content: str, msg: str) -> str:

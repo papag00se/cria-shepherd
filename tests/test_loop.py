@@ -4027,7 +4027,7 @@ class SearchJudgeTests(unittest.TestCase):
         self.assertFalse(_looks_like_url("api.handle.me handles endpoint"))   # a search phrase, not a URL
 
     # ---- the read-judge must judge the RESULTS, never cria's own envelope -------------------------
-    _SPILL_REL = "./tmp/reference/search-ada_handles_api.txt"
+    _SPILL_REL = webfetch.search_spill_name("ada handles api")
     _REAL_RESULTS = ("20 results:\nGitHub - koralabs/api.handle.me: decentralized API for Handles\n"
                      "  https://github.com/koralabs/api.handle.me\nAdaHandle for Unity\n"
                      "  https://github.com/Odiobill/AdaHandle\n  documented at the official API swagger: "
@@ -4037,7 +4037,7 @@ class SearchJudgeTests(unittest.TestCase):
         import pathlib
         p = pathlib.Path(tmp) / webfetch.SPILL_DIR.lstrip("./")
         p.mkdir(parents=True)
-        (p / "search-ada_handles_api.txt").write_text(self._REAL_RESULTS, encoding="utf-8")
+        (p / self._SPILL_REL.split("/")[-1]).write_text(self._REAL_RESULTS, encoding="utf-8")
         return tmp
 
     def _register_spill(self, sess):
@@ -4051,7 +4051,7 @@ class SearchJudgeTests(unittest.TestCase):
     def _read_body(self):
         # what the coder's history really looks like: it read the spilled file, and the tool result it
         # got back is cria's spill STEER — not the results.
-        steer = ("./tmp/reference/search-ada_handles_api.txt is a large reference document — reading it "
+        steer = (f"{self._SPILL_REL} is a large reference document — reading it "
                  "whole gets truncated, so you would miss the middle. Instead grep it for what you need.")
         # THE POINTER IS PART OF THE SHAPE. A real conversation always carries the sentence naming the
         # query and the file it went to. cria no longer READS that sentence to recover the query — it
@@ -4059,8 +4059,8 @@ class SearchJudgeTests(unittest.TestCase):
         # still what the coder sees, so a fixture without it exercises a conversation that cannot
         # occur. The verdict itself is unreachable without the record: see
         # tests/test_a_search_is_not_deleted_on_a_query_cria_lost.py for why that floor exists.
-        pointer = ('web_search "ada handles api" — results saved to '
-                   './tmp/reference/search-ada_handles_api.txt (each result is title / url / description)')
+        pointer = (f'web_search "ada handles api" — results saved to '
+                   f'{self._SPILL_REL} (each result is title / url / description)')
         return {"messages": [
             {"role": "user", "content": "resolve an Ada Handle via the API (api.handle.me)"},
             {"role": "tool", "tool_call_id": "s0", "content": pointer},

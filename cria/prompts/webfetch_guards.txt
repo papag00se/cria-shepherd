@@ -17,7 +17,7 @@ fetch_repeat_failed = You already fetched web_fetch {{URL}} with these exact par
 # naming REAL routes — so no "<keyword>" placeholder for a weak model to echo back into find=.
 fetch_repeat_spilled = You already fetched web_fetch {{URL}} with these exact params. It was too large to inline, so it was saved IN FULL to {{TARGET}}, and that file is still there.\n{{OUTLINE}}Read it — do NOT re-fetch the whole url. Grep the file for what you need (grep -n on {{TARGET}}), read a line range with read_file start_line/end_line, or call web_fetch again with a find= argument to get just that section back inline.
 guess_hint = \n\n⚠ {{STREAK}} fetches in a row failed (non-2xx). If you're guessing URLs, stop — find the right one via search, or take a different step.
-spill = {{STATUS_LABEL}} · {{URL}}\nThis document is larger than can be returned in one read ({{CHARS}} chars) — it was saved IN FULL to {{TARGET}}, a path relative to the project directory you are working in.{{FORMAT}}\n{{OUTLINE}}Read it — do NOT re-fetch the whole url. Grep the file for what you need (grep -n on {{TARGET}}), read a line range with read_file start_line/end_line, or call web_fetch again with a find= argument to get just that section back inline.
+spill = {{STATUS_LABEL}} · {{URL}}\nThis document is larger than can be returned in one read ({{CHARS}} chars) — it was saved {{EXTENT}} to {{TARGET}}, a path relative to the project directory you are working in.{{FORMAT}}\n{{OUTLINE}}Read it — do NOT re-fetch the whole url. Grep the file for what you need (grep -n on {{TARGET}}), read a line range with read_file start_line/end_line, or call web_fetch again with a find= argument to get just that section back inline.
 find_large = \n\n⚠ This find="{{FIND}}" match is large ({{CHARS}} chars) and is only part of the document — narrow it (a more specific keyword), or grep {{TARGET}} for exact lines, or fetch this URL again WITHOUT find= to get the document's full route/shape outline.
 search_spill = web_search "{{QUERY}}" — results saved to {{TARGET}} (each result is title / url / description). They are NOT inlined here (search snippets are mostly noise). Read them there: grep for a term (grep -n "<keyword>" {{TARGET}}), or read the first lines with read_file start_line/end_line to see the top results and their URLs.
 # Same repeat, but cria never spilled these results to a file (a harness-native search) — so they are
@@ -31,3 +31,10 @@ search_repeat_inline = You already ran web_search "{{PRIOR}}", which is near-ide
 # that defines the method it then guessed wrong. Both numbers come from the cached document
 # (webfetch.spill_reading_hint); with no cached doc there is no sentence.
 spill_extent = It is {{LINES}} lines — read_file with start_line=1 end_line={{FITS}} fits in one read, and you can page on from there.
+
+# WHAT ACTUALLY LANDED ON DISK. One command can only carry so much, so a big enough document is
+# cut — and the message used to say "saved IN FULL" regardless, in the same tool result where the
+# cut note said it held the first 45,056 characters of 186,444. The composer knows which case it
+# is and picks the clause (#5b).
+spill_extent_full = IN FULL
+spill_extent_cut = as much of it as one step can carry (the file itself says where it stops)

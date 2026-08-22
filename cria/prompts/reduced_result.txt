@@ -1,0 +1,3 @@
+⟦ctx:reduced⟧ This tool result was too large to carry whole and was compressed to fit — the structure and every fact are here, but the wording is not verbatim. If a detail matters, run the command again or read the file directly rather than quoting this back.
+
+{{BODY}}

@@ -35,7 +35,7 @@ import json
 from dataclasses import dataclass, field
 
 from . import bodykeys
-from . import denial, editrecovery, toolargs
+from . import denial, editrecovery, prompts, toolargs
 from .content_reduce import content_reduce, digest_reduce, est_tokens
 
 # The synthesized state note that REPLACES dropped turns (spirit of trim/state_extract): instead of
@@ -364,11 +364,11 @@ def _reduce_tool_outputs(messages: list[dict], msg_budget: int) -> tuple[list[di
         cap = max(256, msg_budget // 4)
         new_text = content_reduce(text, _sniff_content_type(text), cap)
         if est_tokens(new_text) < sz:
-            # LABEL it. content_reduce is genuinely lossy (prose function words dropped, JSON string
-            # values rewritten), and this swapped the result in with no marker — the model read a
-            # transformed tool result as the verbatim one, with no way to tell. Prefer a labelled
-            # reduction over a silent one.
-            out[i] = {**m, "content": _REDUCED_MARK + " " + new_text}
+            # LABEL it, AND SAY WHAT THE LABEL MEANS. content_reduce is genuinely lossy, and this
+            # swapped the result in with no marker at all until a bare glyph was added — a glyph no
+            # prompt file, no system prompt and no legend ever explained. A disclosure no reader can
+            # decode is not one, so the sentence rides with it (#5, #22).
+            out[i] = {**m, "content": prompts.render("reduced_result", body=new_text)}
             total = total - sz + est_tokens(new_text)
             reduced += 1
     return out, reduced

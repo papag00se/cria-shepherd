@@ -46,7 +46,8 @@ class TheQueryComesFromTheRecordNotThePointerTests(unittest.TestCase):
         webfetch.note_search_spill("s", "ruby gem to determine eu membership")
         got = webfetch.spilled_search_files("s")
         self.assertEqual(list(got.values()), ["ruby gem to determine eu membership"])
-        self.assertIn("search-ruby_gem_to_determine_eu_membership.txt", list(got)[0])
+        self.assertIn(webfetch.search_spill_name("ruby gem to determine eu membership").split("/")[-1],
+                      list(got)[0])
 
     def test_both_pointers_still_tell_the_coder_which_search_this_is(self):
         for name, note in (("inline", prompts.fill(prompts.load("search_inline_note"),
@@ -78,7 +79,7 @@ class NoQueryMeansNoVerdictTests(unittest.TestCase):
         import tempfile
         ws = tempfile.mkdtemp()
         os.makedirs(os.path.join(ws, "tmp", "reference"))
-        rel = "./tmp/reference/search-ruby_gem_to_determine_eu_membership.txt"
+        rel = webfetch.search_spill_name("ruby gem to determine eu membership")
         with open(os.path.join(ws, rel.lstrip("./")), "w") as f:
             f.write("European Union Membership · c.in_eu? #=> false\n#in_eu?, #in_eu_vat?\n")
         webfetch.clear_cache()
