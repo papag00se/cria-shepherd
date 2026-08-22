@@ -1,0 +1,8 @@
+# What a probed protocol endpoint is told to the model. `{{URL}}` is the endpoint the model asked for.
+# mcp/graphql are the one-line "what this is and how you call it" notes; `unread` fires when the
+# server's own answer was larger than the probe reads, which is NOT "this endpoint offers nothing".
+mcp = This is an MCP server{{NAMED}} speaking JSON-RPC 2.0 over POST {{URL}} (protocol {{PROTOCOL}}). Call a tool with method "tools/call" and params {"name": <tool>, "arguments": {…}}.
+graphql = This is a GraphQL endpoint: every call is a POST to {{URL}} with a JSON body {"query": "…"} — there are no REST paths. The callable surface is the root fields below.
+unread = This endpoint answered, but its reply ran past {{LIMIT}} — more than can be read here — so the list of what it offers is NOT known — that is a limit here, not an endpoint with nothing to offer. Ask it yourself: {{HOW}}
+unread_mcp_how = POST {{URL}} with {"jsonrpc": "2.0", "id": 1, "method": "tools/list"} and read the reply in pieces.
+unread_graphql_how = POST {{URL}} with a narrow introspection query for just the root fields you need, rather than the whole schema.

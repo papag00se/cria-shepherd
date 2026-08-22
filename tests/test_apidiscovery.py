@@ -322,3 +322,46 @@ class ApiCatalogTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ABoundIsNotAnEmptyApiTests(unittest.TestCase):
+    """A reply bigger than the probe reads used to come back as `None`, which webfetch renders as an
+    endpoint that offers nothing. The read was cut at 2 MB and cut JSON does not parse, so a real MCP
+    server or a large GraphQL introspection (several megabytes) reported an empty surface."""
+
+    def test_an_oversized_reply_is_disclosed_not_reported_as_nothing(self):
+        from cria import apidiscovery
+        d = apidiscovery._unread("https://api.example.com/mcp", "mcp")
+        self.assertTrue(d)                                   # truthy → the model is told
+        self.assertIn("api.example.com/mcp", d.unread)
+        self.assertIn("tools/list", d.unread)                # a route it can take itself
+        self.assertEqual(d.routes, [])                       # no surface is claimed
+        self.assertNotIn("cria", d.unread.lower())
+
+    def test_the_render_makes_no_routes_claim(self):
+        from cria import apidiscovery, webfetch
+        d = apidiscovery._unread("https://x/graphql", "graphql")
+        text = webfetch._render_discovery("https://x/graphql", 400, "application/json", d)
+        self.assertNotIn("routes(", text)
+        self.assertIn("introspection", text)
+
+    def test_the_probe_raises_rather_than_parsing_a_cut_body(self):
+        import io
+        from unittest import mock
+
+        from cria import apidiscovery
+
+        class _Resp(io.BytesIO):
+            status = 200
+            headers = {"Content-Type": "application/json"}
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+        big = _Resp(b"x" * (apidiscovery.MAX_PROBE_BYTES + 5))
+        with mock.patch("urllib.request.urlopen", return_value=big):
+            with self.assertRaises(apidiscovery.ProbeTooLarge):
+                apidiscovery._post_json("https://x/mcp", {"a": 1}, {})

@@ -72,7 +72,7 @@ class CollectFilesIntegrationTests(unittest.TestCase):
             open(os.path.join(d, "app.js"), "w").write("x\n")
             files, skipped = linterprobe.collect_files_with_skips(d, ["js"])
             self.assertEqual([os.path.relpath(p, d) for p in files], ["app.js"])
-            self.assertEqual(skipped, ["node_modules"])
+            self.assertEqual(skipped, ["node_modules (a tool owns this name)"])
 
 
 class CleanVerdictTests(unittest.TestCase):
@@ -88,6 +88,21 @@ class CleanVerdictTests(unittest.TestCase):
         from cria.linterprobe import LinterFinding, LinterReport
         r = LinterReport(findings=[LinterFinding("python", "py_compile", True)])
         self.assertNotIn("Not checked", r.probe_digest())
+
+
+class UnreadableIsNotEmptyTests(unittest.TestCase):
+    def test_a_directory_that_cannot_be_listed_is_named_not_dropped(self):
+        with tempfile.TemporaryDirectory() as d:
+            os.makedirs(os.path.join(d, "locked"))
+            open(os.path.join(d, "app.py"), "w").write("x = 1\n")
+            os.chmod(os.path.join(d, "locked"), 0o000)
+            try:
+                _files, skipped = linterprobe.collect_files_with_skips(d, ["py"])
+            finally:
+                os.chmod(os.path.join(d, "locked"), 0o755)
+        if os.geteuid() == 0:
+            self.skipTest("root can list an unreadable directory")
+        self.assertEqual(skipped, ["locked (could not be listed)"])
 
 
 if __name__ == "__main__":

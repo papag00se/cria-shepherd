@@ -34,7 +34,7 @@ from dataclasses import dataclass, field
 from typing import Any, Optional
 
 from . import brave   # the browser UA only; importing webfetch here would be a cycle
-from . import content_reduce
+from . import content_reduce, prompts
 
 # The MCP revision cria speaks. A server that does not support it answers with an error and cria
 # surfaces nothing rather than guessing at a shape it did not receive.
@@ -45,7 +45,18 @@ CLIENT_VERSION = "1"
 PROBE_TIMEOUT_S = 10          # a discovery probe is a side quest; it must never hold up the model. The
                               # MCP path makes at most five requests, so a server that accepts the
                               # connection and then hangs costs a bounded ~50s, not an open-ended stall.
-MAX_PROBE_BYTES = 2 * 1024 * 1024
+# The probe reads a MACHINE-READ answer, not model context: what the model is shown is bounded
+# separately by MAX_ITEMS/MAX_ARGS and disclosed there. This used to cut the read at 2 MB, and a cut
+# JSON does not parse — so a real MCP server or a large GraphQL schema (Shopify's introspection is
+# several megabytes) came back as `None`, which webfetch renders as an endpoint that offers nothing.
+# PARSE FIRST, BOUND SECOND: read far enough that a real schema fits, and when the bound is genuinely
+# hit, SAY SO rather than reporting an empty surface (#5b).
+MAX_PROBE_BYTES = 32 * 1024 * 1024
+MAX_PROBE_LABEL = "32 MB"
+
+
+class ProbeTooLarge(Exception):
+    """The endpoint's own answer ran past MAX_PROBE_BYTES — a bound cria hit, not a fact about the API."""
 MAX_ITEMS = 40                # tools / root fields listed; the cap is DISCLOSED, never silent
 MAX_ARGS = 12                 # arguments shown per item, likewise disclosed
 MAX_FIELDS = 24               # return-type fields shown per GraphQL root field
@@ -63,9 +74,10 @@ class Discovery:
     note: str = ""                             # one line: what this endpoint is and how it is called
     routes: list[str] = field(default_factory=list)   # the callable surface, arguments inline
     shapes: list[str] = field(default_factory=list)   # what a call RETURNS, when the server declares it
+    unread: str = ""                           # set INSTEAD of routes when a bound stopped the probe
 
     def __bool__(self) -> bool:
-        return bool(self.routes)
+        return bool(self.routes or self.unread)
 
 
 # --------------------------------------------------------------------------- transport
@@ -87,7 +99,9 @@ def _post_json(url: str, payload: dict, headers: dict) -> tuple[int, str, dict]:
         resp = e
     with resp:
         status = int(getattr(resp, "status", 0) or getattr(resp, "code", 0) or 0)
-        raw = resp.read(MAX_PROBE_BYTES)
+        raw = resp.read(MAX_PROBE_BYTES + 1)  # +1 so a body AT the cap is distinguishable from one over it
+        if len(raw) > MAX_PROBE_BYTES:
+            raise ProbeTooLarge(url)
         hdrs = {k.lower(): v for k, v in dict(resp.headers).items()}
     return status, raw.decode("utf-8", "replace"), hdrs
 
@@ -184,9 +198,9 @@ def _mcp_discover(url: str) -> Optional[Discovery]:
     server = (init.get("serverInfo") or {}) if isinstance(init.get("serverInfo"), dict) else {}
     name = str(server.get("name") or "").strip()
     d = Discovery(kind="mcp")
-    d.note = (f"This is an MCP server{f' ({name})' if name else ''} speaking JSON-RPC 2.0 over POST "
-              f"{url} (protocol {init.get('protocolVersion') or MCP_PROTOCOL_VERSION}). Call a tool with "
-              'method "tools/call" and params {"name": <tool>, "arguments": {…}}.')
+    d.note = prompts.fill(prompts.load_map("api_discovery")["mcp"], url=url,
+                          named=f" ({name})" if name else "",
+                          protocol=init.get("protocolVersion") or MCP_PROTOCOL_VERSION)
     tools = listing("tools/list", "tools")
     for t in tools[:MAX_ITEMS]:
         if not isinstance(t, dict) or not t.get("name"):
@@ -303,8 +317,7 @@ def _graphql_discover(url: str) -> Optional[Discovery]:
         if isinstance(t, dict) and t.get("name"):
             by_name[t["name"]] = t
     d = Discovery(kind="graphql")
-    d.note = (f"This is a GraphQL endpoint: every call is a POST to {url} with a JSON body "
-              '{"query": "…"} — there are no REST paths. The callable surface is the root fields below.')
+    d.note = prompts.fill(prompts.load_map("api_discovery")["graphql"], url=url)
     for root_key, prefix in (("queryType", "Query"), ("mutationType", "Mutation")):
         root = schema.get(root_key)
         if not isinstance(root, dict):
@@ -375,5 +388,18 @@ def discover(url: str, status: Optional[int], body: str,
         return None
     try:
         return _mcp_discover(url) if kind == "mcp" else _graphql_discover(url)
+    except ProbeTooLarge:
+        return _unread(url, kind)
     except Exception:  # noqa: BLE001 — discovery is best-effort by construction
         return None
+
+
+def _unread(url: str, kind: str) -> Discovery:
+    """The endpoint answered and the answer was too big to read here. That is a bound cria hit, and
+    saying nothing about it hands the model a dead 405 page instead — so the endpoint is named, the
+    bound is named, and the model is told how to ask it directly."""
+    m = prompts.load_map("api_discovery")
+    d = Discovery(kind=kind)
+    d.unread = prompts.fill(m["unread"], limit=MAX_PROBE_LABEL,
+                            how=prompts.fill(m[f"unread_{kind}_how"], url=url))
+    return d

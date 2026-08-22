@@ -1366,6 +1366,11 @@ def _render_discovery(url: str, status: int, ct: Optional[str], found) -> str:
     That is deliberate and load-bearing: loop's durable fetch ledger rebuilds session facts by parsing
     these markers out of rendered tool results, so a bespoke marker here would produce a fact that
     vanishes at the first compaction — exactly the half-built mechanism this file exists to avoid."""
+    if found.unread:
+        # A BOUND CRIA HIT IS NOT A SURFACE THE ENDPOINT DOES NOT HAVE. Rendering the routes marker
+        # here would file "routes(0)" into the durable fetch ledger — a false fact that outlives the
+        # turn — so the disclosure goes out on its own and no route claim is made.
+        return (f"{status_label(status)} · {url}\nContent-Type: {ct or '(none)'}\n{found.unread}")
     head = (f"{status_label(status)} · {url}\nContent-Type: {ct or '(none)'}\n"
             f"{found.note}\n"
             # INLINE on the marker line, like a spec's routes: loop._extract_fetches reads the

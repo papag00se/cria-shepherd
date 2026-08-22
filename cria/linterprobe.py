@@ -140,7 +140,12 @@ def _walk(root: str, dirpath: str, exts: list[str], out: list[str], skipped: lis
     # OSError meant — this directory could not be listed — so the contract is unchanged.
     entries = wsview.current().scandir(dirpath)
     if entries is None:
-        return  # unlisted dir → silently return
+        # UNREADABLE IS NOT EMPTY. This returned silently, so a directory the harness could not list
+        # contributed nothing to the walk AND nothing to the sentence about it — and the floor then
+        # said every source file passes, having been unable to open one of them (#23c, #11b).
+        rel = os.path.relpath(dirpath, root)
+        skipped.append(rel if rel == "." else f"{rel} (could not be listed)")
+        return
     for e in entries:
         name = e.name
         # follow_symlinks=False mirrored Rust's DirEntry::file_type(): a symlink is neither dir
@@ -152,7 +157,8 @@ def _walk(root: str, dirpath: str, exts: list[str], out: list[str], skipped: lis
         if is_dir:
             proof = ignore.generated(name, lambda: _child_names(full))
             if proof is not None:
-                skipped.append(os.path.relpath(full, root))
+                rel = os.path.relpath(full, root)
+                skipped.append(proof.replace(name, rel, 1) if rel != name else proof)
                 continue
             _walk(root, full, exts, out, skipped)
         elif is_file:

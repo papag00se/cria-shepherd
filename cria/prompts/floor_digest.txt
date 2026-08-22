@@ -4,5 +4,5 @@
 failing = Errors — the workspace does NOT pass its syntax/linter check:
 none = No checker ran (no recognized source files on disk, or no checker binary installed) — treat this as no signal.
 clean = Clean — every source file passes its syntax/linter check. The defect is NOT a syntax error; look at logic, a wrong or missing import, a stub/placeholder shadowing real code, or whether the task is already satisfied.
-unread = Not checked, because a tool generated them: {{DIRS}}. If your code is in one of those, say so — this verdict is not about it.
+unread = Not checked: {{DIRS}}. If your code is in one of those, say so — this verdict is not about it.
 nudge_preamble = [GROUND TRUTH — your code does not pass its own checker] Fix these exact errors before continuing. Do NOT rewrite the whole file — go to the reported line and fix only what it points to:
