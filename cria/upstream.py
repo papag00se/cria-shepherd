@@ -283,7 +283,8 @@ class Upstream:
                 msgs, tools, rep = contextfloor.fit(msgs, tools_in, window=window, reserve=reserve, safety=safety)
                 if rep.applied or rep.over_budget:
                     lvl = "warning" if rep.over_budget else "info"
-                    rlog.emit("context.floor", level=lvl, safety=round(safety, 2), **rep.as_event())
+                    rlog.emit("context.floor", reshape="floor-trim", level=lvl, safety=round(safety, 2),
+                              **rep.as_event())
                 if rep.tools_compressed and tools is not None:
                     out["tools"] = tools  # send the bounded tool schema, not the fat original
             # A malformed tool_call in the REPLAYED history (a weak model's over-escaped nested-quote
@@ -296,7 +297,7 @@ class Upstream:
             # on every request, so no orphan ever reaches the model.
             msgs, deorphaned = contextfloor.ensure_tool_integrity(msgs)
             if deorphaned:
-                rlog.emit("context.deorphaned", count=deorphaned, level="info")
+                rlog.emit("context.deorphaned", reshape="deorphan", count=deorphaned, level="info")
             msgs = _merge_consecutive_assistant(msgs)
             # THE LAST message transform, and last is the point. A template that enforces strict
             # user/assistant alternation ({user,tool} vs {assistant}) rejects the body outright, and
@@ -719,12 +720,12 @@ class Upstream:
                 if aborted is None and window_room > 0 and \
                         chunks_seen >= window_room * rumination.WINDOW_EXHAUSTED_FRACTION:
                     aborted = {"window_exhausted": True, "room": window_room, "frames": chunks_seen}
-                    rlog.emit("rumination.abort", level="warning", window_exhausted=True,
+                    rlog.emit("rumination.abort", steer="rumination", level="warning", window_exhausted=True,
                               room=window_room, frames=chunks_seen)
                     break
                 if aborted is None and streamed_chars == 0 and chunks_seen >= rumination.DEAD_STREAM_CHUNKS:
                     aborted = {"dead_stream": True, "chunks": chunks_seen}
-                    rlog.emit("rumination.abort", level="warning", dead_stream=True,
+                    rlog.emit("rumination.abort", steer="rumination", level="warning", dead_stream=True,
                               chunks=chunks_seen)
                     break
                 # …AND THE SAME DEATH WITH TOO FEW CHUNKS TO COUNT. The condition above needs 400
@@ -736,7 +737,7 @@ class Upstream:
                         time.monotonic() - t0 >= rumination.DEAD_STREAM_SECONDS:
                     elapsed = round(time.monotonic() - t0, 1)
                     aborted = {"dead_stream": True, "chunks": chunks_seen, "seconds": elapsed}
-                    rlog.emit("rumination.abort", level="warning", dead_stream=True,
+                    rlog.emit("rumination.abort", steer="rumination", level="warning", dead_stream=True,
                               chunks=chunks_seen, seconds=elapsed)
                     break
                 # THE WIDE UNIT, on a stride. The cheap check above cannot see a repeating block
@@ -747,7 +748,7 @@ class Upstream:
                     wide_evaled = len(wide_tail)
                     if rumination.degenerate_wide(wide_tail):
                         aborted = {"degenerate": True, "chars": len(wide_tail)}
-                        rlog.emit("rumination.abort", level="warning", degenerate=True,
+                        rlog.emit("rumination.abort", steer="rumination", level="warning", degenerate=True,
                                   chars=len(wide_tail), wide=True)
                         break
                 if aborted is None and rumination.degenerate_tail(gen_tail):
@@ -756,7 +757,7 @@ class Upstream:
                     # and the notice built from that told the coder it "hit 0 second-guessing phrases
                     # after ~2048 reasoning tokens". A guard must not invent the numbers it fired on.
                     aborted = {"degenerate": True, "chars": len(gen_tail)}
-                    rlog.emit("rumination.abort", level="warning", degenerate=True, chars=len(gen_tail))
+                    rlog.emit("rumination.abort", steer="rumination", level="warning", degenerate=True, chars=len(gen_tail))
                     break
                 if watch is not None and aborted is None:
                     # Watch reasoning if the server splits it out; else the content stream (a
@@ -767,7 +768,7 @@ class Upstream:
                         verdict = watch(watch_text, len(watch_text) // 4)
                         if verdict:
                             aborted = verdict
-                            rlog.emit("rumination.abort", level="warning",
+                            rlog.emit("rumination.abort", steer="rumination", level="warning",
                                       hits=verdict.get("hits"), reasoning_tokens=verdict.get("reasoning_tokens"))
                             break  # drop the receiver → server stops generating, slot freed
         except TimeoutError as e:
@@ -778,7 +779,7 @@ class Upstream:
             # the body that just stalled (#13, fail open toward continuing work).
             elapsed = round(time.monotonic() - t0, 1)
             aborted = {"dead_stream": True, "chunks": chunks_seen, "seconds": elapsed, "wire": True}
-            rlog.emit("rumination.abort", level="warning", dead_stream=True, wire=True,
+            rlog.emit("rumination.abort", steer="rumination", level="warning", dead_stream=True, wire=True,
                       chunks=chunks_seen, seconds=elapsed, error=str(e))
             self._save_reasoning(capture_path, "".join(reasoning), aborted, rlog,
                                  ending=f"the wire went silent for {elapsed}s and the read was cut")

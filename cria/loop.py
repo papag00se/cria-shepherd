@@ -1927,7 +1927,8 @@ def _briefing_disk_truth(briefing: str, files_list: str, rlog=None) -> str:
     if not named:
         return briefing
     if rlog is not None:
-        rlog.emit("context.briefing_denies_disk", level="warn", files=",".join(named[:6]))
+        rlog.emit("context.briefing_denies_disk", steer="briefing-fix", level="warn",
+                  files=prompts.named_list(named, 6, "file(s)"))
     return briefing + "\n\n" + prompts.fill(
         prompts.load_map("briefing_checks")["files_exist"], files=", ".join(named))
 
@@ -2650,7 +2651,7 @@ class Loop:
             trimmed, rep = focustrim.trim(msgs)
             if rep.applied:
                 framed["messages"] = trimmed
-                rlog.emit("context.focus_trim", step=idx,
+                rlog.emit("context.focus_trim", reshape="focus-trim", step=idx,
                           dropped_calls=rep.dropped_calls, dropped_msgs=rep.dropped_msgs)
         if self._ctx.coder_role is not None:  # the coder role's sampling/reasoning from cria.toml
             self._ctx.coder_role.apply(framed)
@@ -2923,7 +2924,8 @@ class Loop:
                                           phase="self-compact-refold", max_tokens=ROLLUP_MAX_TOKENS),
             rlog=rlog)
         if applied:
-            rlog.emit("context.self_compact", step=idx, before=len(msgs), after=len(out), boundary=force)
+            rlog.emit("context.self_compact", reshape="compact", step=idx, before=len(msgs),
+                      after=len(out), boundary=force)
             return out
         return msgs
 
@@ -3979,7 +3981,8 @@ class Loop:
             trimmed, rep = focustrim.trim(framed["messages"])
             if rep.applied:
                 framed = {**framed, "messages": trimmed}
-                rlog.emit("context.focus_trim", dropped_calls=rep.dropped_calls, dropped_msgs=rep.dropped_msgs)
+                rlog.emit("context.focus_trim", reshape="focus-trim", dropped_calls=rep.dropped_calls,
+                            dropped_msgs=rep.dropped_msgs)
         comp = self._coder_turn(sess, framed, body, step=1, rlog=rlog)  # SHARED coder turn (see _work)
         if rewritten:  # no hidden guards: surface that cria re-anchored the turn
             _add_note(comp, "re-anchored after a harness compaction")
@@ -5350,7 +5353,7 @@ def guard_track_refusals(gs: GuardState, coder: dict, rlog, *, step=None,
                 # THE MEASURED NUMBER, NOT THE THRESHOLD (#12). Emitting the constant instead is what
                 # put a false "3x" in front of the steer author.
                 gs.repeat_count = blocked
-                rlog.emit("loop.refusals", step=step, count=blocked,
+                rlog.emit("loop.refusals", steer="refusals", step=step, count=blocked,
                           action=_clip(last_refused, 120))
 
 
@@ -5414,7 +5417,8 @@ def guard_track_write_streak(gs: GuardState, coder: dict, rlog, *, step=None, me
                 # gate would otherwise be hijacked and its reasoner-authored nudge
                 # overwritten by the spin renudge)
                 gs.recent_writes = []
-                rlog.emit("loop.wheel_spinning", step=step, path=path, writes=WHEEL_SPIN_WRITES)
+                rlog.emit("loop.wheel_spinning", steer="wheel-spin", step=step, path=path,
+                          writes=WHEEL_SPIN_WRITES)
 
 
 def guard_intervene(gs: GuardState, body: dict, rlog, *, step=None, workspace_root=None) -> dict | None:
@@ -5509,7 +5513,7 @@ def guard_periodic_gate(gs: GuardState, body: dict, rlog, *, workspace_root=None
     gs.awaiting_probe = True
     gs.periodic_probe = True
     gs.probe_call_id = probe_tc["id"]
-    rlog.emit("loop.periodic_gate", plan_off=workspace_root is None)
+    rlog.emit("loop.periodic_gate", steer="periodic-gate", plan_off=workspace_root is None)
     return _completion_toolcalls([probe_tc], note="periodic check-in — running the repo's checks")
 
 
@@ -5634,10 +5638,10 @@ def summarize(chat_fn, role, system: str, user: str, rlog, *, phase: str = "comp
             if massage.has_tool_call_leak(text):
                 # A leaked/mangled tool call, not prose — fail this pass so the reasoning-off retry
                 # fires. Returning it would inject a wall of `<|tool_call>…` garbage as the briefing.
-                rlog.emit("summarize.leaked_tool_call", level="warn", phase=rlog.phase)
+                rlog.emit("summarize.leaked_tool_call", reshape="recover", level="warn", phase=rlog.phase)
                 return ""
             if answered_with_tool_call and not reasoning_off:
-                rlog.emit("summarize.tool_call_answer", level="warn", phase=rlog.phase)
+                rlog.emit("summarize.tool_call_answer", reshape="recover", level="warn", phase=rlog.phase)
                 return ""  # recovered reasoning is a plan, not a summary — force the reasoning-off retry
             if (applied.get(bodykeys.RUMINATION)
                     or (applied.get("choices") or [{}])[0].get("finish_reason") == "rumination"):
@@ -6519,14 +6523,14 @@ def _elide_ledger_copies(msgs: list[dict], sess, rlog=None) -> list[dict]:
                                        prompts.load("ledger_dedup_note"),
                                        skip_prefix=selfcompact.FACTS_MARKER)
     if n and rlog is not None:
-        rlog.emit("context.ledger_dedup", excised=n)
+        rlog.emit("context.ledger_dedup", reshape="dedup", excised=n)
     # …and the same rule for whole messages the harness repeated verbatim, which the ledger units
     # cannot reach: a file read twice, cria's own refusal re-earned, one page delivered twice.
     # Measured at 13% of coder prompts and 2.2 MB. See dedup.fold_repeated_messages.
     out, folded = dedup.fold_repeated_messages(
         out, prompts.load("repeated_message_note").strip(), protect=_ANCHOR_MARKERS_FOR_DEDUP)
     if folded and rlog is not None:
-        rlog.emit("context.repeat_dedup", folded=folded)
+        rlog.emit("context.repeat_dedup", reshape="dedup", folded=folded)
     return out
 
 
@@ -8688,7 +8692,7 @@ def guard_truncation(coder: dict, body: dict, coder_chat, rlog, *, step=None, ph
         # writes, 81 calls, empty workspace. It gets the same real remedy the cap-truncation gets,
         # worded truthfully for what actually happened (it stopped itself; it did not hit the cap).
         selfcut = not massage.is_truncated(coder)
-        rlog.emit("loop.truncated", step=step, attempt=attempt + 1, path=path,
+        rlog.emit("loop.truncated", steer="truncation", step=step, attempt=attempt + 1, path=path,
                   output_tokens=out_tok, selfcut=selfcut)
         if path is None:
             break  # not a mid-write truncation → the write steer doesn't apply; refuse below

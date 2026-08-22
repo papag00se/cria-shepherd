@@ -1054,7 +1054,7 @@ class Planner:
                     # result it already has (or submit its plan) and keep gathering. The nudge is
                     # a proper tool result per call, so the protocol stays well-formed, and the
                     # round cap still bounds a model that ignores it.
-                    rlog.emit("plan.repeat_nudge", tools=[n for _, n, _ in calls])
+                    rlog.emit("plan.repeat_nudge", steer="plan-repeat", tools=[n for _, n, _ in calls])
                     for cid, name, _args in calls:
                         messages.append({"role": "tool", "tool_call_id": cid,
                                          "content": prompts.fill(prompts.load_map("planner_steers")["gather_repeat"], tool=name)})

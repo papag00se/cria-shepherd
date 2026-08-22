@@ -17,31 +17,16 @@ from .indicators import MARKER
 # text-matching note echoes — which under-counted (a periodic gate / redirect matches no needle),
 # over-counted (a persisting note re-tallied each request), and broke on any prompt reword.
 #
-# 🛡 STEERS — model-FACING interventions the coder reads. Keyed on the DETECTION/trigger event, not
-# the shared `loop.redirect` delivery (which would double-count repetition + wheel-spin).
-_STEER_EVENTS = {
-    "loop.refusals": "refusals",
-    "loop.wheel_spinning": "wheel-spin",
-    "loop.periodic_gate": "periodic-gate",
-    "loop.gate.blocked": "gate",          # only a BLOCKING gate (synthesized in events.py), not a pass
-    "loop.truncated": "truncation",
-    "rumination.abort": "rumination",     # the streaming guard's abort — fires on BOTH paths
-    "plan.repeat_nudge": "plan-repeat",
-}
-# 🧰 RESHAPES — SILENT context/output reshaping the coder never reads as a steer but which changes
-# what it sees. A many-fire count here is normal (self-compact runs each time the window fills).
-_RESHAPE_EVENTS = {
-    "context.self_compact": "compact",
-    "context.focus_trim": "focus-trim",
-    "context.floor": "floor-trim",
-    "loop.compaction_reframed": "reframe",
-    "massage.leaked_recovered": "massage",
-    "massage.text_from_reasoning": "massage",
-    "massage.args_repaired": "massage",
-    "massage.tool_renamed": "massage",
-    "summarize.tool_call_answer": "recover",
-    "summarize.leaked_tool_call": "recover",
-}
+# The two `kind -> label` maps that used to live here are gone. They were a hand-maintained list of
+# other modules' events, kept beside the thing they described, and they drifted exactly the way such
+# a list does: four mechanisms that rewrite model-visible content — the ledger, repeat and anchor
+# dedups, and the de-orphaner — fired invisibly under a heading about silent reshaping. Each fire
+# site now declares itself (`steer=` / `reshape=` on the emit, see :mod:`cria.events`), so this
+# renders what actually happened and cannot disagree with it.
+#
+# 🛡 STEERS are model-FACING interventions the coder reads. 🧰 RESHAPES are SILENT context/output
+# reshaping the coder never reads as a steer but which changes what it sees (a many-fire count there
+# is normal — self-compact runs each time the window fills).
 
 
 def _fmt_tokens(n: int) -> str:
@@ -60,9 +45,11 @@ class TurnStats:
         self.tps: list[float] = []
         self.tokens = 0
         self.events: Counter = Counter()   # every event kind fired this turn (from each request's rlog)
+        self.ledger: Counter = Counter()   # (bucket, label) -> fires, as each fire site declared it
 
     def observe(self, tok_per_s: float | None,
-                gen_tokens: int = 0, model_calls: int = 0, events: Counter | None = None) -> None:
+                gen_tokens: int = 0, model_calls: int = 0, events: Counter | None = None,
+                ledger: Counter | None = None) -> None:
         if self.t0 is None:
             self.t0 = time.monotonic()
         self.calls += 1
@@ -72,12 +59,13 @@ class TurnStats:
         self.tokens += int(gen_tokens or 0)
         if events:
             self.events.update(events)   # authoritative per-fire tally, summed across the turn's requests
+        if ledger:
+            self.ledger.update(ledger)
 
-    def _bucket(self, mapping: dict) -> "Counter":
+    def _bucket(self, bucket: str) -> "Counter":
         out: Counter = Counter()
-        for kind, n in self.events.items():
-            label = mapping.get(kind)
-            if label:
+        for (b, label), n in self.ledger.items():
+            if b == bucket:
                 out[label] += n
         return out
 
@@ -87,10 +75,10 @@ class TurnStats:
         parts = [f"⏱ {secs}s", f"🧮 {self.model_calls} calls", f"⚡ {avg} tok/s"]
         if self.tokens:  # generated tokens this turn — the volume behind the rate
             parts.append(f"🔢 {_fmt_tokens(self.tokens)} tok")
-        steers = self._bucket(_STEER_EVENTS)
+        steers = self._bucket("steer")
         if steers:  # model-facing interventions the coder read
             parts.append("🛡 " + " ".join(f"{k}×{v}" for k, v in steers.most_common()))
-        reshapes = self._bucket(_RESHAPE_EVENTS)
+        reshapes = self._bucket("reshape")
         if reshapes:  # silent context/output reshaping
             parts.append("🧰 " + " ".join(f"{k}×{v}" for k, v in reshapes.most_common()))
         return f"{MARKER}turn done · " + " · ".join(parts)

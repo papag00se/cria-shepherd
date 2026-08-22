@@ -691,7 +691,7 @@ class CriaHandler(BaseHTTPRequestHandler):
                 if stripped:
                     rlog.emit("indicators.stripped", lines=stripped)
                 if reframed:
-                    rlog.emit("loop.compaction_reframed")
+                    rlog.emit("loop.compaction_reframed", reshape="reframe")
 
         # write_file↔shell: if the harness has shell but not write_file, re-present
         # our prior shell translations as write_file (so the model sees its own
@@ -772,7 +772,7 @@ class CriaHandler(BaseHTTPRequestHandler):
         stats = self.server.stats_store.get(sess_key)
         stats.observe(getattr(rlog, "last_tok_per_s", None),
                       getattr(rlog, "gen_tokens", 0), getattr(rlog, "model_calls", 0),
-                      getattr(rlog, "events", None))
+                      getattr(rlog, "events", None), getattr(rlog, "ledger", None))
         completion = self._decorate(completion)
         # THE CONNECT BANNER, on the path that actually runs. `_route` builds an Indicator carrying
         # it, and that covers the PROXY path — but when the loop engages (every suite run, every
@@ -869,7 +869,8 @@ class CriaHandler(BaseHTTPRequestHandler):
         trimmed, rep = focustrim.trim(msgs)
         if not rep.applied:
             return framed, False
-        rlog.emit("context.focus_trim", dropped_calls=rep.dropped_calls, dropped_msgs=rep.dropped_msgs)
+        rlog.emit("context.focus_trim", reshape="focus-trim", dropped_calls=rep.dropped_calls,
+                  dropped_msgs=rep.dropped_msgs)
         return {**framed, "messages": trimmed}, True
 
     def _route(self, body: dict, classification, rlog) -> tuple[object, Indicator]:
@@ -1169,7 +1170,7 @@ class CriaHandler(BaseHTTPRequestHandler):
                 if stripped:
                     rlog.emit("indicators.stripped", lines=stripped)
                 if reframed:
-                    rlog.emit("loop.compaction_reframed")
+                    rlog.emit("loop.compaction_reframed", reshape="reframe")
 
         # Same context-shaping as the chat path: write_file↔shell + cheat-sheet. Pass THIS path's
         # sess_key (sid:<sess>) so the fetch gate's visible-set is recorded under the SAME key the

@@ -166,6 +166,14 @@ class BoundLog:
         # text-match of note echoes). `loop.gate` is split by its `blocked` flag so only a BLOCKING
         # gate (a real steer) is counted, not a clean pass.
         self.events: Counter = Counter()
+        # THE OPERATOR'S LEDGER, DECLARED WHERE THE WORK HAPPENS. The turn line used to be rendered
+        # from two `kind -> label` maps kept in turnstats, beside the events they described and
+        # updated by hand — so four mechanisms that rewrite model-visible content (the ledger, repeat
+        # and anchor dedups, and the de-orphaner) reshaped every turn without ever appearing in the
+        # line whose own heading says it shows silent reshaping. A fire site that says what it is
+        # cannot fall out of a list it is not in: pass `steer="gate"` or `reshape="compact"` on the
+        # emit, and the turn line has it the day the event is written.
+        self.ledger: Counter = Counter()
         # The role/phase of the NEXT upstream call (coder / critic / classifier / planner /
         # proxy) — set by the calling subsystem right before it calls the model, read by the
         # call-capture so each dump is labeled with what it is. None until set.
@@ -186,6 +194,10 @@ class BoundLog:
                 self.gen_tokens += int(toks)
             self.model_calls += 1  # one upstream.done == one real model call
         self.events[kind] += 1
+        for bucket in ("steer", "reshape"):
+            label = kw.get(bucket)
+            if label:
+                self.ledger[(bucket, str(label))] += 1
         if self.on_event is not None:
             try:
                 self.on_event(kind, self.phase, kw)
@@ -193,6 +205,7 @@ class BoundLog:
                 pass
         if kind == "loop.gate" and kw.get("blocked"):
             self.events["loop.gate.blocked"] += 1  # a BLOCKING gate is a steer; a clean pass is not
+            self.ledger[("steer", "gate")] += 1
         self._log.emit(kind, session=self._session, turn=self._turn, **kw)
 
     def decide(self, name: str, choice: object, reason: str, **kw: object) -> None:

@@ -763,7 +763,7 @@ def compact(messages: list[dict], summarize, state: CompactState, *,
     if dup_anchors and rlog is not None:
         # Every sibling dedup in cria emits its count (context.ledger_dedup, context.focus_trim,
         # context.deorphaned); a silent drop makes a future misfire invisible in the run log.
-        rlog.emit("context.anchor_dedup", dropped=dup_anchors)
+        rlog.emit("context.anchor_dedup", reshape="dedup", dropped=dup_anchors)
     band = messages[covered:tail_start]                                   # old-but-unfolded, verbatim
     # The pinned task leads the compacted view (right after cria's system prompt) so the north star is
     # the first thing the coder reads — never summarized, re-emitted fresh from the caller each turn.

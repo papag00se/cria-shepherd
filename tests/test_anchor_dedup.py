@@ -90,7 +90,7 @@ class TheKeyCoversTheToolCallTests(unittest.TestCase):
         selfcompact.compact(_msgs(), lambda mm: "summary", selfcompact.CompactState(),
                             force=True, pinned_task="t",
                             rlog=type("R", (), {"emit": lambda self, k, **kw: events.append((k, kw))})())
-        self.assertIn(("context.anchor_dedup", {"dropped": 5}), events)
+        self.assertIn(("context.anchor_dedup", {"reshape": "dedup", "dropped": 5}), events)
 
 if __name__ == "__main__":
     unittest.main()

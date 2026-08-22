@@ -1,15 +1,26 @@
 import unittest
 from collections import Counter
 
+from cria.events import BoundLog, EventLog
 from cria.turnstats import StatsStore, TurnStats
+
+
+def _fires(*calls):
+    """Drive a real BoundLog so the test sees what the FIRE SITES declare, not a mapping table."""
+    lg = BoundLog(EventLog(console=False, jsonl=False), "s", "t")
+    for kind, kw in calls:
+        lg.emit(kind, **kw)
+    return lg
 
 
 class TurnStatsTests(unittest.TestCase):
     def test_tallies_calls_tps_and_steers_from_events(self):
         st = TurnStats()
-        # steer fires arrive as event counters (one entry per distinct fire), not note text
-        st.observe(40.0, model_calls=1, events=Counter({"rumination.abort": 1}))
-        st.observe(36.0, model_calls=1, events=Counter({"loop.wheel_spinning": 1}))
+        # steer fires arrive as declared fires (one entry per distinct fire), not note text
+        a = _fires(("rumination.abort", {"steer": "rumination"}))
+        b = _fires(("loop.wheel_spinning", {"steer": "wheel-spin"}))
+        st.observe(40.0, model_calls=1, events=a.events, ledger=a.ledger)
+        st.observe(36.0, model_calls=1, events=b.events, ledger=b.ledger)
         s = st.summary()
         self.assertTrue(s.startswith("⟦cria⟧ turn done"))
         self.assertIn("🧮 2 calls", s)
@@ -21,12 +32,15 @@ class TurnStatsTests(unittest.TestCase):
     def test_steers_and_reshapes_are_separate_buckets(self):
         st = TurnStats()
         # a heavy turn: model-facing steers AND silent context reshaping, from authoritative events
-        st.observe(60.0, model_calls=1, events=Counter({
-            "loop.periodic_gate": 3, "loop.gate.blocked": 1, "loop.wheel_spinning": 1,
-            "context.self_compact": 22, "context.focus_trim": 21,
-            "massage.leaked_recovered": 4, "massage.text_from_reasoning": 2,
-            "loop.gate": 1,                       # a clean gate pass → NOT counted (only .blocked is)
-        }))
+        lg = _fires(*([("loop.periodic_gate", {"steer": "periodic-gate"})] * 3),
+                    ("loop.gate", {"blocked": True}),
+                    ("loop.wheel_spinning", {"steer": "wheel-spin"}),
+                    *([("context.self_compact", {"reshape": "compact"})] * 22),
+                    *([("context.focus_trim", {"reshape": "focus-trim"})] * 21),
+                    *([("massage.leaked_recovered", {"reshape": "massage"})] * 4),
+                    *([("massage.text_from_reasoning", {"reshape": "massage"})] * 2),
+                    ("loop.gate", {"blocked": False}))  # a clean pass → NOT a steer
+        st.observe(60.0, model_calls=1, events=lg.events, ledger=lg.ledger)
         s = st.summary()
         self.assertIn("🛡 ", s)
         self.assertIn("periodic-gate×3", s)       # was invisible under the old text-match

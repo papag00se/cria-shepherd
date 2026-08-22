@@ -221,7 +221,7 @@ def coerce_text_answer(completion: dict, rlog=None) -> dict:
             reasoning = msg.get("reasoning_content") or msg.get("reasoning") or ""
             if isinstance(reasoning, str) and reasoning.strip():
                 msg["content"] = reasoning.strip()
-                _log(rlog, "massage.text_from_reasoning", chars=len(reasoning.strip()))
+                _log(rlog, "massage.text_from_reasoning", reshape="massage", chars=len(reasoning.strip()))
             elif isinstance(content, str) and has_tool_call_leak(content):
                 # No reasoning to promote — the model's real prose is INSIDE the fake call's string
                 # payload (`content:<|"|># How to run …`). Salvage the longest delimited span: the
@@ -366,7 +366,7 @@ def normalize_tool_names(completion: dict, tools=None, rlog=None) -> dict:
             canon = cmap.get(_canon_key(name))
             if canon and canon != name:
                 fn["name"] = canon
-                _log(rlog, "massage.tool_renamed", was=name, now=canon)
+                _log(rlog, "massage.tool_renamed", reshape="massage", was=name, now=canon)
     return completion
 
 
@@ -847,7 +847,7 @@ def recover_leaked_tool_calls(completion: dict, tools=None, rlog=None) -> dict:
                 msg["content"] = None
                 if choice.get("finish_reason") in (None, "stop"):
                     choice["finish_reason"] = "tool_calls"
-                _log(rlog, "massage.envelope_recovered",
+                _log(rlog, "massage.envelope_recovered", reshape="massage",
                      calls=[c["function"]["name"] for c in env])
                 continue
         else:
@@ -877,7 +877,7 @@ def recover_leaked_tool_calls(completion: dict, tools=None, rlog=None) -> dict:
             msg["content"] = cleaned or None
             if choice.get("finish_reason") in (None, "stop"):
                 choice["finish_reason"] = "tool_calls"
-            _log(rlog, event, calls=[c["function"]["name"] for c in calls])
+            _log(rlog, event, reshape="massage", calls=[c["function"]["name"] for c in calls])
     return recover_reasoning_tool_calls(completion, tools, rlog)
 
 
@@ -1684,7 +1684,7 @@ def repair_tool_args(completion: dict, rlog=None) -> dict:
                     obj = _recover_write_args(raw)  # raw newlines / unescaped quotes in content
                 if obj is not None:
                     fn["arguments"] = json.dumps(obj, ensure_ascii=False)
-                    _log(rlog, "massage.args_repaired", tool=fn.get("name"))
+                    _log(rlog, "massage.args_repaired", reshape="massage", tool=fn.get("name"))
     return completion
 
 
