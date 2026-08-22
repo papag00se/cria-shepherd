@@ -99,9 +99,11 @@ If it is ever revisited, the fix belongs in the steer author's own prompt (fence
 
 ---
 
-## Elision sweep — 2026-08-22 — the roots still open
+## Elision sweep — 2026-08-22 — all fourteen roots closed
 
-Eight agents read all 37,355 lines of `cria/` plus all 168 prompt files, on one dimension: **anything that makes what a model reads shorter or less complete than what cria had.** Every claim below was reproduced by running the code. Nine roots are already fixed and live (`15b3aea`, `d53f004`, `664edd2`, `c77f9d9`); the working notes with the per-site evidence are at `docs/audits/2026-08-22-elision-sweep.md`, on disk and out of git by the usual rule.
+Eight agents read all 37,355 lines of `cria/` plus all 168 prompt files, on one dimension: **anything that makes what a model reads shorter or less complete than what cria had.** Every claim below was reproduced by running the code. The working notes with the per-site evidence are at `docs/audits/2026-08-22-elision-sweep.md`, on disk and out of git by the usual rule.
+
+**All fourteen are fixed and live.** The table is kept as the record of what each root WAS and what the fix at the root is — the shape is what stops the next instance, and a table of shapes is worth more than a changelog of sites. Two guards ride with them and are the durable half: `tests/test_unknown_is_never_read_as_absent.py` (no workspace answer is tested for bare truthiness, since None is falsy) and `tests/test_no_new_unmarked_bounds.py` (every bare `[:N]` reaching model-facing text carries a written reason). A third, `tests/test_the_operator_sees_every_reshape.py`, holds R13's rule that a mechanism which rewrites the context declares itself.
 
 Grouped by ROOT rather than by site, because the same mistake appears in up to seven modules — fixing seven sites without fixing the shape means the eighth arrives next week.
 
@@ -124,4 +126,4 @@ Grouped by ROOT rather than by site, because the same mistake appears in up to s
 
 **Two that are the operator's call, not cria's.** `INLINE_RESULT_MAX_BYTES = 9000` still bounds eleven model-facing paths, and cria's own source calls the belief behind it *"outlived its evidence"* — the question is whether the number should be measured from the wire (`note_harness_cuts` already asks) instead of remembered. And `toolmenu.focus_tools` drops a harness's native search, which in a deferred-tool harness removes the model's only route to most tools.
 
-**Ranked, if only some get done:** R1 (it manufactures false facts, and is the root of the sweep's two worst findings) → R6 (measured at 21 of 90 calls in one run) → R4 (cost four of nine Java compile errors) → R8 (the coder loses the turn it is answering) → R2 and R3 (cheap, mechanical, and they stop the class rather than the instance).
+**What the fixes changed on the way through.** Several roots turned out to be load-bearing beyond their own site. R6's glued `(+1 more)` was silently defeating the gate's own de-duplication, so every multi-finding probe printed its first finding twice. R12's template pruning was removing `lib/`, `build/` and `dist/` from the lint floor for every language at once, and the hand-kept name lists beside it removed `target`, `vendor`, `bin` and `obj` as well. R13's guard test, written to hold the rule, immediately found three more undeclared events. R7's structural rule kept a traceback's source echo that the phrase filter had been deleting from the middle of a block cria ships as the checker's own words.
