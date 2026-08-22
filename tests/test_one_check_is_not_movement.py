@@ -41,21 +41,35 @@ def _row(task, model, arm, score, mx=5, **kw):
 
 
 class OneCheckIsNotMovementTests(unittest.TestCase):
-    def test_a_one_check_delta_is_marked_as_noise(self):
+    """The `~` that used to prefix such a delta is gone from the cell (operator, 2026-08-21) — it
+    did not matter to the reader. What it stood on is not gone: `within_noise` is the same test, and
+    the grid still refuses to BOLD a movement smaller than one check, so a flip does not shout."""
+
+    def test_a_one_check_delta_is_inside_the_noise(self):
         now, before = _row("t", "m", "CRIA", 4), _row("t", "m", "CRIA", 3)
-        self.assertEqual(bs.delta_of(now, before), " (~+20)")
+        self.assertEqual(bs.delta_of(now, before), " (+20)")
+        self.assertTrue(bs.within_noise(now, before))
+
+    def test_the_mark_is_not_printed_at_all(self):
+        for a, b in ((4, 3), (5, 3), (3, 3)):
+            with self.subTest(scores=(a, b)):
+                self.assertNotIn("~", bs.delta_of(_row("t", "m", "CRIA", a),
+                                                  _row("t", "m", "CRIA", b)))
 
     def test_a_two_check_delta_is_real(self):
         now, before = _row("t", "m", "CRIA", 5), _row("t", "m", "CRIA", 3)
         self.assertEqual(bs.delta_of(now, before), " (+40)")
+        self.assertFalse(bs.within_noise(now, before))
 
     def test_the_floor_follows_the_task_not_a_constant(self):
         """A four-check task cannot move less than 25 points; a five-check one, 20. The same 25-point
         delta is therefore noise on one task and movement on the other."""
+        self.assertTrue(bs.within_noise(_row("t", "m", "CRIA", 3, mx=4),
+                                        _row("t", "m", "CRIA", 2, mx=4)))     # 25 pts = one check
+        self.assertFalse(bs.within_noise(_row("t", "m", "CRIA", 5, mx=5),
+                                         _row("t", "m", "CRIA", 3.75, mx=5)))  # 25 pts = 1.25 checks
         self.assertEqual(bs.delta_of(_row("t", "m", "CRIA", 3, mx=4),
-                                     _row("t", "m", "CRIA", 2, mx=4)), " (~+25)")
-        self.assertEqual(bs.delta_of(_row("t", "m", "CRIA", 5, mx=5, score_=None),
-                                     _row("t", "m", "CRIA", 3.75, mx=5)), " (+25)")
+                                     _row("t", "m", "CRIA", 2, mx=4)), " (+25)")
 
     def test_a_row_with_no_check_count_still_gets_a_floor(self):
         """Fail toward marking (#13): claiming precision a row cannot support is the bug."""

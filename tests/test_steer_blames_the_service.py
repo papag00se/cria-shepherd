@@ -105,7 +105,9 @@ class WiringTests(unittest.TestCase):
         def make_chat():
             def chat(body, rlog):
                 sys_content = body["messages"][0]["content"]
-                verdict = "BLAMES" if "THE RECORD OF WHAT WAS ACTUALLY FETCHED" in sys_content else REAL_BLAME
+                # Keyed on the question, not on a heading — headings above the payload are what a
+                # weak model answers with, so they are plain lowercase now.
+                verdict = "BLAMES" if "the service is unavailable" in sys_content else REAL_BLAME
                 return json.dumps({"choices": [{"message": {"content": verdict}}]}).encode()
             return chat
 

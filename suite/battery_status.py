@@ -137,8 +137,22 @@ def delta_of(now: dict | None, before: dict | None) -> str:
     # 54% under cria) rested on one run per cell against a floor bigger than the difference. The
     # mechanism findings from the walks survived that; every score comparison did not.
     #
-    # The floor is the task's own check granularity, which is what actually flips — not a constant.
-    return f" ({'~' if abs(d) <= noise_floor(now, before) else ''}{d:+.0f})"
+    # NOT PRINTED IN THE CELL (operator, 2026-08-21). The floor used to prefix a `~` to a delta it
+    # covered; the mark is gone from the number because it does not matter to the reader. The
+    # measurement it stands on is not gone — `within_noise` below is the same test, and the grid
+    # still refuses to BOLD a movement smaller than one check, so a one-check flip does not shout.
+    return f" ({d:+.0f})"
+
+
+def within_noise(now: dict | None, before: dict | None) -> bool:
+    """Is the movement between these two rows no bigger than one check — the amount that flips on a
+    re-run of the same binary? See the note above `delta_of`'s return for what that cost."""
+    if not now or not before or judged(now) != judged(before):
+        return False
+    a, b = pct(now), pct(before)
+    if a is None or b is None:
+        return False
+    return abs(a - b) <= noise_floor(now, before)
 
 
 def noise_floor(*rows: dict | None) -> float:
@@ -286,13 +300,12 @@ def _overall_delta(rs: list[dict], arm: str, model: str, cells: list[dict | None
     d = now - before
     if abs(d) < 0.5:
         return " (0)"
-    # Same `~` rule as a cell (see :func:`delta_of`), against a SMALLER floor: the total pools every
-    # cell that moved, and independent flips partly cancel. `grain/sqrt(n)` is the standard-error
-    # shape of that pooling — one check still flipping in each of six cells lands near 8 points, not
-    # 20 — so the total is allowed to be more sensitive than any cell in it without being allowed to
-    # call a single flipped check a trend.
-    floor = max(noise_floor(*[c for c, _ in pairs]) / (len(pairs) ** 0.5), 0.5)
-    return f" ({'~' if abs(d) <= floor else ''}{d:+.0f})"
+    # The mark is not printed here either (operator, 2026-08-21) — same reason as :func:`delta_of`.
+    # The pooled floor it stood on is kept in the comment because it is the reason a total may be
+    # read as more sensitive than any cell in it: the total pools every cell that moved and
+    # independent flips partly cancel, so `grain/sqrt(n)` — one check still flipping in each of six
+    # cells lands near 8 points, not 20 — is the amount of a total that is not a trend.
+    return f" ({d:+.0f})"
 
 
 def cycle_start(rs: list[dict], arm: str) -> float:
@@ -434,11 +447,11 @@ def report(rs: list[dict], now: float | None = None) -> str:
             "",
             # ONE LINE: a generated markdown paragraph is never hand-edited, and hard wraps in it
             # only make it a misery for anyone who ever does (operator's standing rule).
-            "**A `~` on a delta means the movement is smaller than one check, and one check flips "
-            "between runs of the SAME code.** " + repeat_evidence(rs) +
-            "So a `~` number is not evidence that anything changed — read it as \"unmoved\". Two "
-            "single runs differing by one check say nothing about the code between them; only a gap "
-            "bigger than that, or the same gap repeated, is a result.",
+            "**A delta smaller than one check is not evidence that anything changed** — one check "
+            "flips between runs of the SAME code. " + repeat_evidence(rs) +
+            "Such a delta is printed plainly but never bolded, so the eye-catch stays on real "
+            "movement. Two single runs differing by one check say nothing about the code between "
+            "them; only a gap bigger than that, or the same gap repeated, is a result.",
             "The **total** is one vote per judged cell, and checks-passed over checks-attempted",
             "across any cells still scored strictly; its delta is computed only over cells that have",
             "both a current and a previous run, so a part-finished cycle compares like with like."]
@@ -458,9 +471,9 @@ def report(rs: list[dict], now: float | None = None) -> str:
             # `80%ˢ | 15% | -65`, which is a strict baseline minus a judged assisted cell — a number
             # that is not movement in anything. Blank until both sides are the same measure.
             d = delta_of(c, b).strip().strip("()")
-            # Bold is the operator's eye-catch for "this cell moved". A `~` delta did not move —
-            # it is one check, which flips between runs of the SAME binary — so it must not shout.
-            emph = d if (d in ("", "0") or d.startswith("~")) else f"**{d}**"
+            # Bold is the operator's eye-catch for "this cell moved". A one-check delta did not move
+            # — it flips between runs of the SAME binary — so it must not shout.
+            emph = d if (d in ("", "0") or within_noise(c, b)) else f"**{d}**"
             out.append(f"| {t} | {language(t)} | {m} | {score_of(b).strip()} | "
                        f"{score_of(c).strip()} | {emph or '—'} | "
                        f"{_n(b,'calls')}→{_n(c,'calls')} | "

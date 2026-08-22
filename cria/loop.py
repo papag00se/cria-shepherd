@@ -7235,6 +7235,10 @@ _CODE_SHAPED = re.compile(
 # wording moved, `DESCRIBES` is the word that would silently stop matching and every steer would be
 # delivered. The name is on that one now, and a test ties it to the prompt file.
 _DESCRIBES = "DESCRIBES"
+# The OTHER legal answer. Not used to decide anything — the verdict falls closed on anything that is
+# not DESCRIBES — but naming it is what lets the code tell "the judge ruled" from "the judge said
+# something that is not an answer", which are different events and used to look identical.
+_DICTATES = "DICTATES"
 
 # A line worth checking for provenance: a code line or a command line. Short fragments and ordinary
 # prose are left alone — the question is only ever about a line the coder could paste.
@@ -7366,7 +7370,7 @@ def _restate_without_code(directive: str, ask, rlog) -> str | None:
         return None
     # ASKED OUTRIGHT, not re-triggered. The input to this rewrite was ruled a dictation; the output is
     # the higher-risk text, not the lower-risk one, so it does not have to re-earn the question.
-    if _dictates_code(out, ask, presumed=True):   # it did it again — one attempt, then silence (#3)
+    if _dictates_code(out, ask, presumed=True, rlog=rlog):   # it did it again — one attempt, then silence (#3)
         rlog.emit("loop.steer_restate", level="info", kept=False, reason="still dictates")
         return None
     rlog.emit("loop.steer_restate", level="info", kept=True, chars=len(out))
@@ -7410,7 +7414,7 @@ def _invented_code_spans(directive: str, evidence: str) -> int:
     return n
 
 
-def _dictates_code(directive: str, ask=None, presumed: bool = False) -> bool:
+def _dictates_code(directive: str, ask=None, presumed: bool = False, rlog=None) -> bool:
     """True when the directive hands the coder CODE TO COPY rather than a description of the change.
 
     Deterministic pre-filter, then ONE focused question — the pattern the operator's policy calls for:
@@ -7435,6 +7439,18 @@ def _dictates_code(directive: str, ask=None, presumed: bool = False) -> bool:
         return True
     ans = strip_think(ask(prompts.render("steer_dictates_code", directive=directive), "") or "").strip()
     head = ans.upper().split()[0].strip(".,:;`*") if ans.split() else ""
+    if head not in (_DESCRIBES, _DICTATES):
+        # NEITHER WORD IS A FACT ABOUT THE PROMPT, NOT ABOUT THE STEER. The verdict still falls
+        # closed, which is right, but it used to fall closed in silence and so this was invisible:
+        # walked on cart-billing-go x nemotron-elastic 1787349058 call 0125, where the answer was
+        # `DIRECTIVE` — the bare label this prompt used to print immediately above the text being
+        # judged. The reasoning is explicit: "answer with a single word: either DIRECTIVE or
+        # DESCRIBES". A weak model took the label for an option, the correct steer was refused, and
+        # the run spent its last ten calls without the one fact that would have unblocked it. The
+        # label is gone from the prompt; this line is how the next one gets noticed (#12).
+        if rlog is not None:
+            rlog.emit("loop.dictates_verdict_unreadable", level="warn",
+                      answer=_clip(ans, 60), head=_clip(directive, 100))
     return head != _DESCRIBES        # DICTATES, or anything unreadable → the pre-filter stands
 
 
@@ -7712,7 +7728,7 @@ def _grounded_steer_or_none(directive: str | None, evidence: str, rlog, ask=None
         rlog.emit("loop.steer_phantom_field", level="warn", field=denied_field,
                   head=_clip(directive, 120))
         return None
-    if _dictates_code(directive, ask):
+    if _dictates_code(directive, ask, rlog=rlog):
         # OBSERVE-ONLY on the DROP (operator ruling, 2026-08-04) — and the ruling's own reasoning is
         # what this now enforces. The drop's harm evidence came from a BLIND author (empty truth
         # slot, 6/6 runs of invented code); blindness was fixed the same day, and the 08-01 ladder

@@ -55,7 +55,14 @@ class OneQuestionTests(unittest.TestCase):
             return "DESCRIBES"
 
         self.assertFalse(loop._dictates_code(REAL_QUOTE, ask))
-        self.assertIn("DIRECTIVE:", asked["system"])
+        # THE DIRECTIVE IS FRAMED, AND THE TWO LEGAL WORDS COME LAST. No bare capitalised label
+        # sits above the payload any more: a weak model answered with that label rather than with a
+        # verdict, and the correct steer was thrown away (cart-billing-go x nemotron-elastic
+        # 1787349058 call 0125). Its reasoning: "answer with a single word: either DIRECTIVE or
+        # DESCRIBES".
+        self.assertNotIn("DIRECTIVE:", asked["system"])
+        self.assertIn(REAL_QUOTE, asked["system"])
+        self.assertTrue(asked["system"].rstrip().endswith("DICTATES or DESCRIBES."))
         self.assertIn("response.json()", asked["system"])
 
     def test_a_DICTATES_verdict_drops_it(self):
@@ -137,7 +144,10 @@ class WiringTests(unittest.TestCase):
         def reasoner(diagnose_reply, seen):
             def chat(body, rlog):
                 sysm = body["messages"][0].get("content", "")
-                if "DIRECTIVE:" in sysm:
+                # Keyed on the QUESTION, not on the layout. This used to look for "DIRECTIVE:",
+                # a bare label printed above the payload — which is exactly the string a weak model
+                # answered with, so it is gone from the prompt (see loop._dictates_code).
+                if "hand the coder code to copy" in sysm:
                     seen["dictates_check_ran"] = True
                     seen["marker_seen"] = "UNIQUE_MARKER_XYZ" in sysm
                     return _json.dumps({"choices": [{"message": {"content": "DESCRIBES"}}]}).encode()
