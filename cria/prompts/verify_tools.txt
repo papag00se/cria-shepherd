@@ -3,7 +3,7 @@
 # the result goes back as protocol. Tool descriptions + steers. Parsed by prompts.load_map.
 list_dir = List a directory INSIDE the workspace: entries with sizes (dirs marked with /). Call with no path (or ".") for the workspace root. Use this to check what actually exists before ruling on a step that promises a file.
 read_file = Read a file INSIDE the workspace and see its REAL content (optionally only lines start_line..end_line, 1-based inclusive). Use this to check that a claimed artifact actually contains what the step requires — a file can exist and still be empty or a stub.
-answer_now = You have inspected enough. Answer NOW with ONLY the JSON verdict: {"done": true|false, "reason": "<short>", "proposed_fix": "<brief fix prose>"}. If you did not manage to read something you needed, SAY THAT in the reason — "could not verify X" — and do not state as fact anything you did not actually read. A guess written as an observation is worse than no answer: it is handed to the coder as work to do.
+answer_now = Answer NOW with ONLY the JSON verdict: {"done": true|false, "reason": "<short>", "proposed_fix": "<brief fix prose>"}. If you did not manage to read something you needed, SAY THAT in the reason — "could not verify X" — and do not state as fact anything you did not actually read. A guess written as an observation is worse than no answer: it is handed to the coder as work to do.
 outside = [refused: {{PATH}} is outside the workspace — the judge inspects only the workspace under {{ROOT}}]
 unknown_tool = [refused: {{NAME}} is not one of your tools — you have list_dir and read_file; the coder's tools are listed only so the fix you name is one IT can carry out]
 missing = [{{PATH}} does not exist]
@@ -21,8 +21,8 @@ empty_file = [{{PATH}} exists and is EMPTY (0 bytes)]
 # word is the one shape that resembles nothing it can call, which is why answer_now_steer
 # (prose or the single word ON_TRACK) has never had this failure either. ternary-bonsai answers
 # every shape 6/6, so nothing here costs a model that was already fine.
-answer_now_consistent = You have inspected enough. Reply with EXACTLY ONE WORD on the first line — CONSISTENT if the completion claim holds up against what you read, INCONSISTENT if it does not — then, on a second line, one short sentence saying why.
-answer_now_steer = You have inspected enough. Answer NOW with the short unstick directive spoken to the coder ("You ..."), or EXACTLY the one word ON_TRACK — never JSON, never a verdict.
+answer_now_consistent = Reply with EXACTLY ONE WORD on the first line — CONSISTENT if the completion claim holds up against what you read, INCONSISTENT if it does not — then, on a second line, one short sentence saying why.
+answer_now_steer = Answer NOW with the short unstick directive spoken to the coder ("You ..."), or EXACTLY the one word ON_TRACK — never JSON, never a verdict.
 # The VERDICT tool. A judge was offered list_dir/read_file on the tool channel and required to answer
 # on the text channel, with the coder's own tool signatures printed below in the transcript. It did
 # the obvious thing and answered where it had been speaking: `<function=satisfied>`,
@@ -35,3 +35,10 @@ verdict = Give your final answer. Call this once, when you have finished looking
 verdict_satisfied = true only when every requested deliverable is present, verified and working; false otherwise.
 verdict_reason = A short evidence-based verdict: what proves completion, or the exact deliverable that is missing, failing, fake or unproven.
 verdict_fix = When satisfied is false, NAME the missing or failing deliverable in one line — what must become true, not how to make it true. Never a command, a tool call, a library, a filename the task did not name, or an approach; those belong to the coder. Empty string when true.
+# WHY THE LOOKING STOPPED, prefixed to whichever forced answer follows. All three closers used to
+# open "You have inspected enough" — a statement about the READER's judgement, asserted at the two
+# moments cria could least support it: after the reader had just asked to look at something (its
+# call was refused, not answered), and at a round cap the reader never agreed to. It says who
+# stopped it and at what bound instead (#5b), and never claims the reader is satisfied.
+rounds_spent = No more inspection rounds are available — {{ROUNDS}} were used, which is the limit here.
+inspection_closed = Your last reply asked to use a tool, and there are no inspection rounds left, so nothing was run for it.

@@ -60,7 +60,11 @@ class TheCloserAsksForTheSchemaTheJudgeDeclaresTests(unittest.TestCase):
         self.assertEqual(len(chat.bodies), verifytools.VERIFY_MAX_ROUNDS + 1,
                          "the round cap must be the one that ended the loop")
         cap_request = chat.bodies[verifytools.VERIFY_MAX_ROUNDS]["messages"][-1]["content"]
-        self.assertEqual(cap_request, "SIMPLE_CLOSER_MARKER")
+        self.assertTrue(cap_request.endswith("SIMPLE_CLOSER_MARKER"), cap_request)
+        # …and it opens by saying WHY the looking stopped. It used to open "You have inspected
+        # enough" — cria asserting the reader's own judgement, at a cap the reader never agreed to.
+        self.assertIn(str(verifytools.VERIFY_MAX_ROUNDS), cap_request)
+        self.assertNotIn("inspected enough", cap_request)
 
     def test_the_confirm_judge_has_a_closer_that_matches_its_prompt(self):
         self.assertIn("CONSISTENT", verifytools.ANSWER_NOW_CONSISTENT)

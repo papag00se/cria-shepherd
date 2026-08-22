@@ -107,7 +107,8 @@ def execute_tool(name: str, args: dict, cwd: str, search_key: str, recent_search
         return _web_fetch(args, facts, scratch)
     if name in ("web_search", "local_web_search"):
         return _web_search(args, search_key, recent_searches, facts, scratch)
-    return _nothing(prompts.fill(prompts.load_map("planner_steers")["unknown_tool"], tool=name))
+    return _nothing(prompts.fill(prompts.load_map("planner_steers")["unknown_tool"], tool=name,
+                                 tools=", ".join(t["function"]["name"] for t in PLANNER_TOOLS)))
 
 
 # How much of a grep result the planner is handed. A gather that reads the whole repo back through
@@ -164,7 +165,7 @@ def _scratch_grep(full: str, rx, scratch: str | None) -> str | None:
             continue
         for i, line in enumerate(body.splitlines(), 1):
             if rx.search(line):
-                hits.append(f"{_os.path.relpath(t, root)}:{i}: {line.strip()[:200]}")
+                hits.append(f"{_os.path.relpath(t, root)}:{i}: {content_reduce.clip(line.strip(), 200)}")
                 if len(hits) >= _GREP_MAX_HITS:
                     return "\n".join(hits)
     return "\n".join(hits) if hits else "[no match]"
@@ -334,7 +335,24 @@ def _spill_to_scratch(r, reduced: str, parsed, scratch: str | None) -> str | Non
         return None
     return prompts.fill(prompts.load_map("planner_steers")["fetch_spill"],
                         status=str(r.status), url=r.final_url, chars=f"{len(content):,}",
-                        target=target, outline=webfetch.spill_outline(parsed, target))
+                        target=target, outline=webfetch.spill_outline(parsed, target),
+                        remedy=spill_remedy(target))
+
+
+def spill_remedy(target: str) -> str:
+    """How to read a spilled file, in the names of the tools THIS SEAT HOLDS.
+
+    The two spill notes used to say "exec_command: grep -n 'pattern' <file>" and "read_file it with a
+    line range" — to a reader with no exec tool at all (this module's own `no_shell` refusal says so)
+    and a read_file whose schema takes a path and nothing else. A remedy the reader cannot take is
+    worse than none: it spends the model's turns proving cria wrong. So the clause is generated from
+    PLANNER_TOOLS, and when the menu holds no way to read a file it says that instead (#R5)."""
+    names = {t["function"]["name"] for t in PLANNER_TOOLS}
+    m = prompts.load_map("planner_steers")
+    if "read_file" not in names:
+        return m["remedy_none"]
+    key = "remedy_grep_read" if "grep_files" in names else "remedy_read"
+    return prompts.fill(m[key], target=target)
 
 
 def _record_fetch(facts: dict | None, url: str, status, body: str, content_type) -> None:
@@ -411,7 +429,8 @@ def _spill_search(query: str, body: str, scratch: str | None) -> str | None:
     titles = "\n".join(ln for ln in body.splitlines()
                        if ln[:2].strip().rstrip(".").isdigit() or ln.startswith("Search results for:"))
     return prompts.fill(prompts.load_map("planner_steers")["search_spill"],
-                        query=query, chars=f"{len(body):,}", target=target, titles=titles)
+                        query=query, chars=f"{len(body):,}", target=target, titles=titles,
+                        remedy=spill_remedy(target))
 
 
 def brave_search(api_key: str, query: str, count: int = _SEARCH_COUNT) -> list[dict]:

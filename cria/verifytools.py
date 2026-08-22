@@ -53,6 +53,15 @@ ANSWER_NOW_STEER = _TD["answer_now_steer"]
 # demand there gets another tool call (measured 0/10 vs 10/10).
 ANSWER_NOW_CONSISTENT = _TD["answer_now_consistent"]
 
+def closing_reason(key: str, rounds: int | None = None) -> str:
+    """The sentence that says why the looking stopped, for the forced-answer round.
+
+    Never "you have inspected enough": that is a claim about the reader's judgement, and cria says it
+    at the two moments it can least support — right after the reader asked to look at something cria
+    then did not run, and at a round cap the reader never agreed to."""
+    return prompts.fill(_TD[key], rounds=rounds if rounds is not None else "")
+
+
 VERIFY_TOOLS = [
     {"type": "function", "function": {
         "name": "list_dir", "description": _TD["list_dir"],

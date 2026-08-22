@@ -982,6 +982,13 @@ def _judge_completion(chat_fn, role, system: str, user: str, rlog, *, phase: str
                                          "content": "[not executed — no further inspection rounds]"})
                 ask_text = (answer_now_simple if forced_rounds == 2
                             else (answer_now or verifytools.ANSWER_NOW))
+                # WHY IT STOPPED, and it was not because the reader had seen enough: the reader
+                # just asked to look at something and cria did not run it. Only on the FIRST forced
+                # round — round 2 exists because round 1 came back unreadable, and its whole design
+                # is the shortest ask that resembles nothing the model can call (measured 10/10
+                # against 0/10 for a longer one); prefixing prose to it would undo that.
+                if forced_rounds == 1:
+                    ask_text = verifytools.closing_reason("inspection_closed") + " " + ask_text
                 if forced_rounds == 2:
                     rlog.emit("loop.verdict_simplified", phase=phase)
                 messages.append({"role": "user", "content": ask_text})
@@ -1037,7 +1044,8 @@ def _judge_completion(chat_fn, role, system: str, user: str, rlog, *, phase: str
             # ignored the closer, answered `{"consistent": true}`, and the run ended. Same workspace,
             # same verdict, four times; the only variable was which key came back.
             messages.append({"role": "user",
-                             "content": answer_now_simple or answer_now or verifytools.ANSWER_NOW})
+                             "content": verifytools.closing_reason("rounds_spent", rounds) + " "
+                                        + (answer_now_simple or answer_now or verifytools.ANSWER_NOW)})
 
 
 def _consistent_word(text: str) -> bool | None:
