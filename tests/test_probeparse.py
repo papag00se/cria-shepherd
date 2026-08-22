@@ -302,12 +302,15 @@ class TestPortRegressions(unittest.TestCase):
         self.assertEqual(r.summary, "no problems reported")
         self.assertEqual(r.findings, [])
 
-    def test_multi_finding_summary_counts_more(self):
+    def test_the_summary_is_the_checkers_sentence_and_nothing_else(self):
+        """It used to append cria's own " (+N more)" to the end of the compiler's message. The coder
+        then read `cannot find symbol (+1 more)` and hunted a stray `+` for 21 of 90 calls; the count
+        is the render's to print, and the render lists every finding anyway."""
         r = parse_output("ruff check .", "ruff", 1,
                          "a.py:1:1: E1 first\nb.py:2:2: E2 second\n", "")
         self.assertEqual(len(r.findings), 2)
-        self.assertIn(" (+1 more)", r.summary)
-        self.assertTrue(r.summary.startswith("a.py:1: "))
+        self.assertEqual(r.summary, "a.py:1: E1 first")
+        self.assertNotIn("more)", r.summary)
 
 
 # ---------------------------------------------------------------------------

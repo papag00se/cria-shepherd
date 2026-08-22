@@ -240,14 +240,16 @@ class TestCompletionBlockNudge(unittest.TestCase):
     def test_structured_findings_block_with_exact_format(self):
         floor = LinterReport()
         report = ProbeReport(["python"], [], [ProbeResult(
-            "ruff check .", 1, "src/b.py:9: boom (+1 more)",
+            "ruff check .", 1, "src/b.py:9: boom",
             [Finding("src/b.py", 9, 1, "boom"), Finding("src/c.py", None, None, "bad")])])
         nudge = completion_block_nudge(report, floor)
         self.assertTrue(nudge.startswith(BLOCK_NUDGE_PREAMBLE))
         lines = nudge[len(BLOCK_NUDGE_PREAMBLE):].split("\n")
-        self.assertEqual(lines[0], "$ ruff check . — src/b.py:9: boom (+1 more)")
-        self.assertEqual(lines[1], "  • src/b.py:9: boom")
-        self.assertEqual(lines[2], "  • src/c.py: bad")  # line=None -> bare file
+        self.assertEqual(lines[0], "$ ruff check . — src/b.py:9: boom")
+        # The header IS the first finding now that no count is glued to it, so it is not repeated as
+        # a bullet — the suppression at the bottom of the block compares them, and the glued count
+        # used to defeat it on EVERY multi-finding probe.
+        self.assertEqual(lines[1], "  • src/c.py: bad")  # line=None -> bare file
 
     def test_all_findings_shown_per_probe(self):
         # No .take(5) clip: EVERY finding a probe produced is shown, so an error past the 5th is never
@@ -261,8 +263,7 @@ class TestCompletionBlockNudge(unittest.TestCase):
 
     def test_single_finding_is_not_echoed_as_a_duplicate_bullet(self):
         # When the "$ cmd — summary" header IS the one finding (summary == "file:line: msg"), the bullet
-        # would be byte-identical noise — suppress it. Multi-finding summaries ("… (+N more)") differ,
-        # so their bullets stay.
+        # would be byte-identical noise — suppress it.
         report = ProbeReport(["python"], [], [ProbeResult(
             "python3 -m pytest -q", 2, "smoke_test.py:2: ImportError: rel import",
             [Finding("smoke_test.py", 2, None, "ImportError: rel import")])])

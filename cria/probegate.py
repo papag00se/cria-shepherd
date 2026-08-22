@@ -314,10 +314,30 @@ def _with_delimiter_facts(findings: list[str], plan, annotate: bool = True,
     import os
     out: list[str] = []
     workspace = getattr(plan, "workspace", "") or ""
-    for f in findings:
+    done: set = set()
+    for idx, f in enumerate(findings):
+        if idx in done:
+            continue        # already emitted as part of the diagnostic that owns it
         out.append(f)
+        done.add(idx)
         if not workspace:
             continue
+
+        def emit(note: str, _i=idx, _head=f) -> None:
+            """cria's line goes AFTER the whole diagnostic, never inside it.
+
+            The findings list is one entry per LINE, and a compiler's diagnostic spans several: Go
+            prints `have (int)` / `want (string)` under its error, javac prints `symbol:` and
+            `location:`. Appending here put cria's sentence between the error and the rest of its own
+            explanation — 132 times in one run, under a header reading "each is the checker's OWN
+            message" (#R6). The continuation lines are moved out first, so the checker's text stays
+            in one piece and cria's annotation follows it."""
+            j = _i + 1
+            while j < len(findings) and probeparse.continues_previous(findings[j], _head):
+                out.append(findings[j])
+                done.add(j)
+                j += 1
+            out.append(note)
         m = _UNMATCHED_RE.match(f)
         if m:
             path, line_no, d = m.group(1), int(m.group(2)), m.group(3)
@@ -329,8 +349,8 @@ def _with_delimiter_facts(findings: list[str], plan, annotate: bool = True,
             n_open, n_close = line.count(opener), line.count(closer)
             if n_open == n_close:
                 continue
-            out.append(f"  counted fact: line {line_no} on disk is `{line.strip()}` — it contains "
-                       f"{n_open} '{opener}' and {n_close} '{closer}'.")
+            emit(f"  counted fact: line {line_no} on disk is `{line.strip()}` — it contains "
+                 f"{n_open} '{opener}' and {n_close} '{closer}'.")
             continue
         # GENERAL case (walked on run 1785904860, ~call 0045): a finding that names a POSITION
         # without quoting the line invites the model to GUESS the line's text — the checker said
@@ -373,7 +393,7 @@ def _with_delimiter_facts(findings: list[str], plan, annotate: bool = True,
             continue
         # MARKED. This quote exists so the model does not GUESS the line; a silent cut inside the
         # backticks is a partial guess-prompt, which is the failure it was built to prevent.
-        out.append(f"  the flagged line on disk — line {line_no}: `{content_reduce.clip(text, 200)}`")
+        emit(f"  the flagged line on disk — line {line_no}: `{content_reduce.clip(text, 200)}`")
     return out
 
 

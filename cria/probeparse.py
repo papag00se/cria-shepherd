@@ -912,8 +912,16 @@ def summarize(findings: list[Finding], exit_code: Optional[int], combined: str) 
             loc = f.file
         else:
             loc = UNKNOWN_LOCATION
-        more = f" (+{len(findings) - 1} more)" if len(findings) > 1 else ""
-        return f"{loc}: {f.message.strip()}{more}"   # FULL message — never width/length-clipped
+        # A FIELD HOLDING A CHECKER'S WORDS HOLDS ONLY THOSE WORDS. This used to append
+        # " (+N more)" — cria's own count — to the end of the compiler's sentence, and every reader
+        # downstream got a message that the checker never wrote. Measured on
+        # feed-pipeline-java x nemotron-elastic: `cannot find symbol (+1 more)` sent the coder
+        # hunting a stray `+` through 21 of 90 calls. It also broke the de-duplication in
+        # proberun.completion_block_nudge, which suppresses the bullet that IS the header by
+        # comparing them — with the count glued on they never matched, so every multi-finding probe
+        # printed its first finding twice. The count belongs to the RENDER, which already lists every
+        # finding underneath, and to `len(result.findings)` for a reader that wants it.
+        return f"{loc}: {f.message.strip()}"   # FULL message — never width/length-clipped
     if exit_code == 0 or exit_code is None:
         # Unknown exit reads as clean — see the CONTRACT HAZARD note in the module doc.
         return CLEAN_SUMMARY
@@ -1576,3 +1584,18 @@ def searched_for_dependency_source(command: str) -> str:
     # ALREADY LOOKING IN THE HOME ROOT — telling it where the home root is would be noise (#3).
     return "" if token.startswith(("~", "$HOME")) else token
 
+
+def continues_previous(line: str, head: str) -> bool:
+    """True when ``line`` is more of the diagnostic that started at ``head`` — indented under it and
+    not a diagnostic of its own.
+
+    ONE OWNER for "the rest of the compiler's sentence", shared by the parser (which folds these
+    into a Finding's message) and by the gate renderer (which must not insert its own line into the
+    middle of one). Shape, not a vocabulary: every compiler that continues a diagnostic indents it —
+    Go's `have (int)` / `want (string)`, javac's `symbol:` / `location:`, rustc's `note:`."""
+    if not line.strip():
+        return False
+    base = len(head) - len(head.lstrip())
+    if len(line) - len(line.lstrip()) <= base:
+        return False
+    return split_diag(line.strip()) is None
