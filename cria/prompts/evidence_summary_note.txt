@@ -1,3 +1,3 @@
-[the action log below is a CONDENSED record, not the verbatim log — it was too long to carry whole. Distinct actions, paths, errors and counts are preserved; repetition and long output bodies are not. Inspect the files directly if a detail matters.]
+[the action log below is a CONDENSED record, not the verbatim log — it was too long to carry whole. It was written by a model that was asked to keep every distinct action, path, error and count and to drop repetition and long output bodies; whether it did is not checked here. Treat a detail that matters as unconfirmed and inspect the files directly.]
 
 {{SUMMARY}}

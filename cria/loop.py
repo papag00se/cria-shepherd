@@ -49,6 +49,7 @@ from .classify import _task_key, latest_user_text
 from . import jsontext, planner, writeproxy
 from .jsontext import extract_json_object, strip_think
 from . import research
+from .rumination import WINDOW_EXHAUSTED_FRACTION
 from .plan import Plan, PlanItem
 from .groundtruth import workspace_inventory
 from .planner import (_extract_cwd, missing_deliverables, reasoned_noise_indices,
@@ -8604,7 +8605,9 @@ def guard_rumination(coder: dict, body: dict, coder_chat, rlog, *, step=None, ph
         # the comment above gives. A dead stream produced NOTHING — telling it to stop re-examining,
         # or to stop repeating a passage, would name a behaviour that did not happen (5b).
         notice = {"role": "user", "content": (
-            prompts.load("rumination_guard_window") if v.get("window_exhausted") else
+            prompts.render("rumination_guard_window",
+                           percent=int(WINDOW_EXHAUSTED_FRACTION * 100))
+            if v.get("window_exhausted") else
             prompts.load("rumination_guard_dead_stream") if v.get("dead_stream") else
             prompts.load("rumination_guard_degenerate") if v.get("degenerate") else
             prompts.render("rumination_guard", hits=v.get("hits", "several"),

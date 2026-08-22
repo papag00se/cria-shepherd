@@ -153,8 +153,15 @@ class TheNoticeDoesNotGuessTests(unittest.TestCase):
         """The aborted call was an `edit_file` whose payload was 6.3 KB and already finished."""
         self.assertNotIn("almost always means one write was too big", self.BODY)
 
-    def test_it_still_says_the_true_part(self):
-        self.assertIn("used up the whole of the space", self.BODY)
+    def test_it_states_who_stopped_the_turn_and_at_what_bound(self):
+        """It used to say the turn "used up the whole of the space" and that "nothing it produced
+        COULD have been kept" — both untrue. The abort fires at WINDOW_EXHAUSTED_FRACTION on a
+        frame-count proxy, so roughly a twelfth of the room was still there and the discard was a
+        choice made here (#5b, #14)."""
+        self.assertIn("{{PERCENT}}%", self.BODY)
+        self.assertIn("on this side of the model", self.BODY)
+        self.assertNotIn("used up the whole of the space", self.BODY)
+        self.assertNotIn("could have been kept", self.BODY)
         self.assertIn("discarded, not truncated and saved", self.BODY)
 
     def test_it_gives_a_next_action(self):

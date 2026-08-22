@@ -279,7 +279,9 @@ class TheCoderIsToldSomethingActionableTests(unittest.TestCase):
         loop.guard_rumination(_ruminating_both(), {"messages": [{"role": "user", "content": "hi"}]},
                               coder_chat, rlog)
         self.assertEqual(rlog.first("loop.rumination")["guard"], "window_exhausted")
-        self.assertEqual(calls[0]["messages"][-1]["content"], prompts.load("rumination_guard_window"))
+        self.assertEqual(calls[0]["messages"][-1]["content"],
+                         prompts.render("rumination_guard_window",
+                                        percent=int(rumination.WINDOW_EXHAUSTED_FRACTION * 100)))
 
     def test_it_never_names_the_shim_to_the_model(self):
         import re
