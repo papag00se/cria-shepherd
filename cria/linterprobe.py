@@ -49,14 +49,10 @@ from . import ignore, wsview, prompts
 RunResult = tuple[Optional[int], str, str, bool]
 Runner = Callable[[list[str], Optional[str], Optional[float]], RunResult]
 
-# Directories that are vendored/generated/tooling output — their files are not the
-# coder's work product and their syntax is not our problem.
-# Cheap always-on fast-path prune (VCS/cache dirs the language templates don't list). The
-# language-aware pruning — a model's installed dependency tree under ANY name, e.g. a venv it called
-# `handle_resolver/`, caught via Python's `lib/` rule — comes from the vendored .gitignore templates
-# in collect_files (see cria/ignore.py), not from this name list.
-SKIP_DIRS = [".git", ".codex-multi", "node_modules", "__pycache__", ".pytest_cache",
-             ".venv", "venv", "env", "dist", "build", ".mypy_cache", ".ruff_cache", "target"]
+# Whether a directory is generated is decided by :mod:`cria.ignore`, on PROOF (a tool owns the name,
+# or a tool's marker file is inside it) — never by a bare name list. The list that used to live here
+# pruned `dist`, `build`, `target`, `env` and `venv` for every language at once, so a Python package
+# in `build/` never reached the floor and the gate called the workspace clean without reading it.
 
 
 @dataclass
@@ -71,6 +67,7 @@ class LinterFinding:
 class LinterReport:
     findings: list[LinterFinding] = field(default_factory=list)
     skipped: list[str] = field(default_factory=list)  # languages on disk, checker binary absent
+    skipped_dirs: list[str] = field(default_factory=list)  # dirs the walk proved generated
 
     def is_clean(self) -> bool:
         # Empty report is clean=True: silence is not an objection, and the floor must
@@ -91,7 +88,14 @@ class LinterReport:
             return text
         if not self.findings:
             return d["none"]
-        return d["clean"]
+        return d["clean"] + self._unread_clause(d)
+
+    def _unread_clause(self, d: dict) -> str:
+        """What the clean verdict is NOT about — named, or nothing at all."""
+        if not self.skipped_dirs:
+            return ""
+        return " " + prompts.fill(d["unread"],
+                                  dirs=prompts.named_list(self.skipped_dirs, 6, "directories"))
 
     def nudge_text(self) -> Optional[str]:
         """Coder-facing re-prompt with the exact errors; None when nothing is failing."""
@@ -108,19 +112,29 @@ class LinterReport:
 # File collection (pure filesystem read, no execution)
 
 def collect_files(root: str, exts: list[str]) -> list[str]:
-    """Recursively collect files under ``root`` whose extension (text after the last
-    dot, not including the dot) is in ``exts``; hidden dirs and SKIP_DIRS are pruned;
-    an unreadable directory contributes nothing, silently. Sorted (path order)."""
+    """Recursively collect files under ``root`` whose extension (text after the last dot, not
+    including the dot) is in ``exts``. A directory is skipped only on proof that a tool generated it
+    (:func:`cria.ignore.generated`); an unreadable directory contributes nothing, silently. Sorted
+    (path order)."""
     out: list[str] = []
-    # The language's own .gitignore template decides what's vendored/generated (catches an
-    # arbitrarily-named venv via `lib/`, node_modules, target/, …) — applied only to this language's
-    # files, so Python's `lib/` never prunes a Ruby project's source `lib/`.
-    _walk(root, root, exts, out, ignore.for_exts(tuple(exts)))
+    _walk(root, root, exts, out, [])
     out.sort()
     return out
 
 
-def _walk(root: str, dirpath: str, exts: list[str], out: list[str], matcher) -> None:
+def collect_files_with_skips(root: str, exts: list[str]) -> tuple[list[str], list[str]]:
+    """:func:`collect_files`, plus the proof for every directory the walk did not enter.
+
+    The floor's clean sentence is a claim about the whole workspace, so it has to be able to name
+    what it never opened."""
+    out: list[str] = []
+    skipped: list[str] = []
+    _walk(root, root, exts, out, skipped)
+    out.sort()
+    return out, sorted(set(skipped))
+
+
+def _walk(root: str, dirpath: str, exts: list[str], out: list[str], skipped: list[str]) -> None:
     # The workspace is the HARNESS's filesystem, so the entries come from what the harness
     # reported (:mod:`cria.wsview`), not from cria's own disk. None means the same thing the old
     # OSError meant — this directory could not be listed — so the contract is unchanged.
@@ -136,15 +150,19 @@ def _walk(root: str, dirpath: str, exts: list[str], out: list[str], matcher) -> 
         is_file = e.is_file()
         full = os.path.join(dirpath, name)
         if is_dir:
-            if name.startswith(".") or name in SKIP_DIRS:
+            proof = ignore.generated(name, lambda: _child_names(full))
+            if proof is not None:
+                skipped.append(os.path.relpath(full, root))
                 continue
-            if matcher.ignored(os.path.relpath(full, root), True):
-                continue
-            _walk(root, full, exts, out, matcher)
+            _walk(root, full, exts, out, skipped)
         elif is_file:
-            if "." in name and name.rsplit(".", 1)[1] in exts \
-                    and not matcher.ignored(os.path.relpath(full, root), False):
+            if "." in name and name.rsplit(".", 1)[1] in exts:
                 out.append(full)
+
+
+def _child_names(dirpath: str) -> list[str] | None:
+    entries = wsview.current().scandir(dirpath)
+    return None if entries is None else [e.name for e in entries]
 
 
 # ---------------------------------------------------------------------------
@@ -229,12 +247,16 @@ def run_linter_probe(project_dir: str, runner: Runner) -> LinterReport:
     callers on a serving loop must run this in a worker thread, exactly as upstream
     wrapped it in ``spawn_blocking``."""
     report = LinterReport()
-    py_files = collect_files(project_dir, ["py"])
+    py_files, py_skipped = collect_files_with_skips(project_dir, ["py"])
     if py_files:
         check_python(py_files, report, runner)
-    js_files = collect_files(project_dir, ["js", "mjs", "cjs"])
+    js_files, js_skipped = collect_files_with_skips(project_dir, ["js", "mjs", "cjs"])
     if js_files:
         check_javascript(js_files, report, runner)
+    # The clean sentence is a claim about the WHOLE workspace, so it carries the directories the walk
+    # never entered. A reader who knows its code is in one of them can then say so, instead of
+    # believing a clean verdict that was never about that code (#11b).
+    report.skipped_dirs = sorted(set(py_skipped) | set(js_skipped))
     return report
 
 

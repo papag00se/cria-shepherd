@@ -1,154 +1,76 @@
-"""Language-agnostic 'is this a vendored / build / cache path?' guidance, driven by the canonical
-per-language .gitignore templates vendored under ``ignore_templates/`` (github/gitignore, CC0).
+"""Which directories a workspace walk may skip — and the PROOF that let it.
 
-Used to prune the lint-floor file walk (``linterprobe.collect_files``) and the evidence walk
+Used by the lint-floor file walk (``linterprobe.collect_files``) and the evidence walk
 (``probediscovery.inventory``) so a model's installed dependency tree — a virtualenv, ``node_modules``,
-a ``target/`` dir, under ANY name — never floods the probe and overflows the model context. A named
-venv (``handle_resolver/``) is caught by the Python template's ``lib/`` rule matching its inner
-``lib/…/site-packages`` tree, regardless of the directory's own name.
+a cargo ``target/``, under ANY name — never floods the probe and overflows the model context.
 
-Each language's template is applied ONLY to that language's files (``for_exts``): Python's ``lib/``
-rule prunes a venv's site-packages without touching a Ruby project's real source ``lib/``. Where the
-language is unknown (evidence collection), ``default_matcher`` unions every template's directory rules.
+This used to union eight vendored ``.gitignore`` templates. It could not stay. A VCS's "do not track
+this" is a different question from "the author did not write this": Python's template lists ``lib/``,
+``build/``, ``dist/`` and ``env/`` with no anchor, so a bare name matched at ANY depth — a Python
+package the model had just written into ``lib/`` was pruned from the lint floor, and the gate then
+said "every source file passes its syntax check" about code it never opened. A hand-kept SKIP_DIRS
+list beside it pruned ``dist``, ``build``, ``target``, ``env`` and ``venv`` by name alone, for every
+language at once.
 
-A small, dependency-free subset of the gitignore spec: comments/blanks, ``!`` negation (last match
-wins), trailing ``/`` (directory-only), a slash anchoring to the root vs. a bare name matching at any
-depth, and ``*`` / ``?`` / ``**`` globs. Faithful enough for pruning; not a full git implementation.
+So the rule is now: skip a directory only on PROOF that a tool generated it, and hand the caller the
+proof so the sentence about a clean walk can say what it did not read (#11b — a mechanism may only
+speak about what it reached). Proof is one of two things, and no name is guessed at:
+
+* the directory's name is owned by a tool — a package manager or a VCS creates it, nothing an author
+  writes lives there, and the name means the same thing in every language;
+* the directory CONTAINS a marker a tool wrote: ``pyvenv.cfg`` (a virtualenv under any name — the
+  ``handle_resolver/`` case), ``CACHEDIR.TAG`` (the cross-tool cache standard, cargo's ``target/``),
+  a ``site-packages`` or ``maven-status`` child, a setuptools ``bdist.*``.
+
+An ambiguously-named directory with no marker — ``lib``, ``build``, ``dist``, ``out``, ``target``,
+``env`` — is WALKED. Reading a stale build copy costs a duplicate finding; not reading the author's
+source costs a false clean.
 """
 
 from __future__ import annotations
 
-import re
-from functools import lru_cache
-from pathlib import Path
+from typing import Callable, Optional
 
-_DIR = Path(__file__).parent / "ignore_templates"
+# A package manager or a VCS creates these; the name is theirs in every ecosystem, and an author's
+# own source is never inside one. Kept small on purpose: a name earns a place here only when it
+# cannot also be something a person wrote.
+_TOOL_OWNED = (
+    ".git", ".hg", ".svn", ".codex-multi",
+    "node_modules", "bower_components", ".yarn", ".pnpm-store",
+    "__pycache__", ".mypy_cache", ".pytest_cache", ".ruff_cache", ".tox", ".nox", ".eggs",
+    "site-packages", "dist-packages",
+    ".gradle", ".m2", ".cargo", ".bundle",
+    ".terraform", ".next", ".nuxt", ".parcel-cache", ".sass-cache",
+)
 
-# A file extension → the template whose ignore rules apply when collecting that extension. Grouped so
-# each language's rules touch only its own source (no cross-language `lib/` contamination).
-_EXT_TEMPLATE = {
-    "py": "Python", "pyi": "Python", "pyw": "Python",
-    "js": "Node", "mjs": "Node", "cjs": "Node", "jsx": "Node",
-    "ts": "Node", "tsx": "Node",
-    "rb": "Ruby", "rake": "Ruby", "gemspec": "Ruby",
-    "php": "Composer",
-    "rs": "Rust",
-    "go": "Go",
-    "java": "Java", "kt": "Java", "kts": "Java",
-}
+# A file or directory a tool writes INSIDE the directory it generated. This is what catches a tree
+# whose own name proves nothing — a venv the model called `handle_resolver/`.
+_MARKER_FILES = ("pyvenv.cfg", "CACHEDIR.TAG")
+_MARKER_DIRS = ("site-packages", "dist-packages", "maven-status", "maven-archiver")
+_MARKER_PREFIXES = ("bdist.",)  # setuptools' build/bdist.linux-x86_64
 
-
-class _Rule:
-    __slots__ = ("negate", "dir_only", "regex")
-
-    def __init__(self, negate: bool, dir_only: bool, regex: "re.Pattern"):
-        self.negate = negate
-        self.dir_only = dir_only
-        self.regex = regex
+Children = Callable[[], Optional[list[str]]]
 
 
-def _translate(pat: str) -> str:
-    """A gitignore glob body (no leading `!`, no anchoring/trailing slash) → a regex fragment that
-    matches one relative path. ``**`` spans directories; ``*`` and ``?`` stop at ``/``."""
-    out: list[str] = []
-    i, n = 0, len(pat)
-    while i < n:
-        c = pat[i]
-        if c == "*":
-            if pat[i:i + 2] == "**":
-                out.append(".*")
-                i += 2
-                if i < n and pat[i] == "/":  # `**/` — the `.*` already spans the slash
-                    i += 1
-            else:
-                out.append("[^/]*")
-                i += 1
-        elif c == "?":
-            out.append("[^/]")
-            i += 1
-        else:
-            out.append(re.escape(c))
-            i += 1
-    return "".join(out)
+def generated(name: str, children: Children) -> Optional[str]:
+    """The proof that a tool generated this directory, or None to walk into it.
 
-
-def _compile(line: str) -> _Rule | None:
-    negate = line.startswith("!")
-    if negate:
-        line = line[1:]
-    dir_only = line.endswith("/")
-    line = line.rstrip("/")
-    if not line:
-        return None
-    # A slash anywhere (after the trailing one is stripped) anchors the pattern to the root; a bare
-    # name matches at any depth. Either way it also matches everything BELOW a matched directory.
-    anchored = "/" in line
-    if line.startswith("/"):
-        line = line[1:]
-    body = _translate(line)
-    rx = (f"^{body}(/.*)?$") if anchored else (f"(^|.*/){body}(/.*)?$")
-    return _Rule(negate, dir_only, re.compile(rx))
-
-
-@lru_cache(maxsize=None)
-def _rules(template: str) -> tuple:
-    try:
-        text = (_DIR / f"{template}.gitignore").read_text(encoding="utf-8")
-    except OSError:
-        return ()
-    rules = []
-    for raw in text.splitlines():
-        line = raw.strip()
-        if not line or line.startswith("#"):
-            continue
-        r = _compile(line)
-        if r is not None:
-            rules.append(r)
-    return tuple(rules)
-
-
-class Matcher:
-    """A compiled set of gitignore rules. ``ignored(relpath, is_dir)`` applies them in order — last
-    match wins — so negation (``!keep/``) can re-include. ``relpath`` is workspace-root-relative."""
-
-    __slots__ = ("_rules",)
-
-    def __init__(self, rules: tuple):
-        self._rules = rules
-
-    def ignored(self, relpath: str, is_dir: bool) -> bool:
-        rel = relpath.strip("/")
-        if not rel or rel == ".":
-            return False
-        result = False
-        for r in self._rules:
-            if r.dir_only and not is_dir:
-                continue
-            if r.regex.match(rel):
-                result = not r.negate
-        return result
-
-
-_EMPTY = Matcher(())
-
-
-@lru_cache(maxsize=None)
-def for_exts(exts: tuple) -> Matcher:
-    """A matcher for the templates that own these file extensions — applied when collecting that
-    language's source. Unknown extensions contribute no rules (an empty, always-False matcher)."""
-    names: list[str] = []
-    for e in exts:
-        t = _EXT_TEMPLATE.get(e.lower())
-        if t and t not in names:
-            names.append(t)
+    ``children`` is called only when the name alone decides nothing, and may return None for a
+    directory that could not be listed — which is NOT proof of anything, so the walk proceeds (#23c:
+    unknown is its own answer, and it is not "yes")."""
+    if name in _TOOL_OWNED:
+        return f"{name} (a tool owns this name)"
+    names = children()
     if not names:
-        return _EMPTY
-    return Matcher(tuple(r for t in names for r in _rules(t)))
-
-
-@lru_cache(maxsize=1)
-def default_matcher() -> Matcher:
-    """The union of every vendored template's rules — for a language-agnostic walk (evidence
-    collection) where the file extension doesn't pin one language."""
-    names = sorted(set(_EXT_TEMPLATE.values()))
-    return Matcher(tuple(r for t in names for r in _rules(t)))
+        return None
+    for m in _MARKER_FILES:
+        if m in names:
+            return f"{name} (contains {m})"
+    for m in _MARKER_DIRS:
+        if m in names:
+            return f"{name} (contains {m}/)"
+    for p in _MARKER_PREFIXES:
+        for n in names:
+            if n.startswith(p):
+                return f"{name} (contains {n})"
+    return None

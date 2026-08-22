@@ -69,15 +69,10 @@ PRIMARY_MANIFESTS = (
     "build.gradle.kts", "composer.json", "Gemfile", "mix.exs",
 )
 
-# Cheap always-on fast-path prune (VCS/cache dirs). The language-agnostic pruning of an installed
-# dependency tree under ANY name (a venv, node_modules, target/, …) comes from the vendored .gitignore
-# templates via ignore.default_matcher() in the walk below — not from this name list.
-SKIP_DIRS = (
-    ".git", "node_modules", "target", "dist", "build", ".venv", "venv",
-    "__pycache__", "vendor", ".gradle", "bin", "obj", ".next", ".nuxt",
-    ".svelte-kit", ".mypy_cache", ".ruff_cache", ".pytest_cache", ".tox",
-    ".idea", ".vscode", "coverage",
-)
+# Which directories this walk may skip is decided by :mod:`cria.ignore`, on proof that a tool
+# generated them. The name list that used to be here skipped `target`, `dist`, `build`, `vendor`,
+# `bin` and `obj` for every project at once, so a real sub-project's manifest under any of those
+# names was never discovered and its test command never existed as far as the probe was concerned.
 
 # Exact-name evidence files, grouped as upstream. upstream quirk, preserved:
 # Makefile, Justfile/justfile, Taskfile.yml/.yaml, Dockerfile, Rakefile,
@@ -298,6 +293,11 @@ def inventory(root: Path) -> list[ProjectDir]:
             if d == root or any(f in PRIMARY_MANIFESTS for f in fs)]
 
 
+def _child_names(path: Path) -> list[str] | None:
+    entries = scan_dir(path)
+    return None if entries is None else [e.name for e in entries]
+
+
 def walk(root: Path, dir: Path, depth: int, dirs: dict[Path, set[str]]) -> None:
     entries = scan_dir(dir)
     if entries is None:
@@ -306,8 +306,8 @@ def walk(root: Path, dir: Path, depth: int, dirs: dict[Path, set[str]]) -> None:
         path = Path(e.path)
         name = e.name
         if is_dir_on_disk(path):  # follows symlinks; the depth bound prevents runaway
-            if (depth >= MAX_DEPTH or name.startswith(".") or name in SKIP_DIRS
-                    or ignore.default_matcher().ignored(str(path.relative_to(root)), True)):
+            if (depth >= MAX_DEPTH or name.startswith(".")
+                    or ignore.generated(name, lambda p=path: _child_names(p)) is not None):
                 # "still record .github one level for workflow detection".
                 # Port deviation (spec FLAG-1, recommended): upstream exempted
                 # `.github` from the dot-dir skip (`name != ".github"`), so it
