@@ -3516,6 +3516,26 @@ class FreshDiskFactsTests(unittest.TestCase):
         self.assertEqual(_fresh_disk_facts(None, ["h.py"], ""), "")  # no root → empty (prior behavior)
         self.assertEqual(_fresh_disk_facts(d, [], ""), "")          # no paths → empty
 
+    def test_a_bounded_file_list_says_how_many_it_left_out(self):
+        """The cap used to be a bare `[-8:]` inside _touched_paths, so the ninth-oldest file simply
+        ceased to exist for the reader — under a header telling it to trust this over the transcript."""
+        import os
+        import tempfile
+
+        from cria.loop import TOUCHED_PATHS_CAP, _fresh_disk_facts
+        d = tempfile.mkdtemp()
+        names = []
+        for i in range(TOUCHED_PATHS_CAP + 4):
+            with open(os.path.join(d, f"f{i}.py"), "w") as f:
+                f.write("x = 1\n")
+            names.append(f"f{i}.py")
+        out = _fresh_disk_facts(d, names, "")
+        self.assertEqual(out.count("FILE "), TOUCHED_PATHS_CAP)
+        self.assertIn("4 more file(s)", out)
+        self.assertIn(f"FILE {names[-1]}", out)                  # the NEWEST survive the bound
+        self.assertNotIn(f"FILE {names[0]}", out)
+        self.assertNotIn("more file(s)", _fresh_disk_facts(d, names[:2], ""))
+
     def test_path_spellings_of_one_file_are_one_entry(self):
         # `api.json` vs `./api.json` vs the absolute form are ONE file; the exact-string dedupe
         # listed (previously: inlined) it twice. Dedupe is canonical; the coder's spelling displays.

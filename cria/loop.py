@@ -5948,10 +5948,15 @@ def _checks_ran_before(paths: list[str]) -> str:
     if not paths:
         return labels.get("none", "").strip()
     key = "one" if len(paths) == 1 else "many"
-    return prompts.fill(labels[key], files=", ".join(paths)).rstrip("\n")
+    return prompts.fill(labels[key],
+                        files=prompts.named_list(paths, WRITES_SINCE_GATE_CAP, "file(s)")).rstrip("\n")
 
 
-def _writes_since_last_gate(messages: list[dict], cap: int = 3) -> list[str]:
+# How many of the files written since the checks ran are NAMED; the rest are counted, never dropped.
+WRITES_SINCE_GATE_CAP = 3
+
+
+def _writes_since_last_gate(messages: list[dict], cap: int | None = None) -> list[str]:
     """Files the coder wrote AFTER cria's checks last ran — newest first, bounded.
 
     cria caches a check result and re-shows it. It cannot know the findings still hold: the coder
@@ -5975,7 +5980,8 @@ def _writes_since_last_gate(messages: list[dict], cap: int = 3) -> list[str]:
             p = _write_path(tc.get("function") or {})
             if p and p not in out:
                 out.append(p)
-    return list(reversed(out))[:cap]
+    out = list(reversed(out))
+    return out[:cap] if cap else out
 
 
 def _checks_already_visible(body: dict, checks: str) -> bool:
@@ -8792,14 +8798,17 @@ def _read_tool_result(messages: list[dict], call_id: str) -> str:
     return ""
 
 
-TOUCHED_PATHS_CAP = 8      # files named in the steer author's on-disk section; the rest are counted
+# Files whose on-disk facts are READ for the steer author's section. The list itself is not bounded:
+# the bound belongs where the printing happens, with the sentence that says how many it left out
+# (#R2) — a bare `[-8:]` here made the ninth-oldest file simply cease to exist for the reader.
+TOUCHED_PATHS_CAP = 8
 
 
-def _touched_paths(messages, cap: int = TOUCHED_PATHS_CAP) -> list[str]:
+def _touched_paths(messages, cap: int | None = None) -> list[str]:
     """Paths the coder actually WROTE this session, recovered from the normalized history's
     assistant tool_calls — the durable record. GuardState's recent_writes window is consumed by
     detector interventions (flushed on purpose), so it alone cannot ground the steer author's
-    on-disk section. Newest-last, deduped, bounded to the last ``cap`` distinct paths."""
+    on-disk section. Newest-last, deduped; ``cap`` keeps only the newest N when a caller asks."""
     seen: list[str] = []
     for m in messages or []:
         if m.get("role") != "assistant":
@@ -8810,7 +8819,7 @@ def _touched_paths(messages, cap: int = TOUCHED_PATHS_CAP) -> list[str]:
                 if p in seen:
                     seen.remove(p)   # re-touch moves it to newest
                 seen.append(p)
-    return seen[-cap:]
+    return seen[-cap:] if cap else seen
 
 
 def _fresh_disk_facts(root: str | None, recent_writes, spin_path: str) -> str:
@@ -8834,9 +8843,13 @@ def _fresh_disk_facts(root: str | None, recent_writes, spin_path: str) -> str:
             paths.append(p)   # keep the coder's own spelling for display
     if not paths:
         return ""
+    # NEWEST FIRST OUT OF THE BOUND, and the bound is counted below. Bounding on the number of lines
+    # PRODUCED would count wrong: a file the view knows nothing about contributes no line, so the
+    # remainder must come from the paths, not from what could be read about them.
+    shown, rest = paths[-TOUCHED_PATHS_CAP:], max(0, len(paths) - TOUCHED_PATHS_CAP)
     lines: list[str] = []
     view = wsview.current(root)
-    for p in paths:
+    for p in shown:
         full = groundtruth.resolve(root, p)
         body = view.read(full)
         if body is not None:
@@ -8848,6 +8861,13 @@ def _fresh_disk_facts(root: str | None, recent_writes, spin_path: str) -> str:
         elif (size := view.size(full)) is not None:
             lines.append(f"FILE {p} — {size:,} bytes")
         # else: cria has not been told about it, and says nothing rather than guessing either way
+    if lines and rest > 0:
+        # Only ever as the TAIL of a real list. With no lines above it there is nothing for "and N
+        # more" to be more THAN, and the caller's own no-files-touched branch is the true answer.
+        # THE COUNT IS THE POINT. Reading every file the coder ever touched is what the cap is for,
+        # but a list that stops without saying so reads as the whole truth, and the author then
+        # reasons about a workspace with the older files deleted from it.
+        lines.append(prompts.fill(prompts.load_map("disk_facts")["more"], count=rest))
     return "\n".join(lines)
 
 

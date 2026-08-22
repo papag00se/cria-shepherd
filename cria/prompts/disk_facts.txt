@@ -1,0 +1,3 @@
+# The steer author's on-disk section. `more` closes a list that was bounded, so the reader knows the
+# older files still exist and can read them itself.
+more = …and {{COUNT}} more file(s) written earlier this session, not read here — use read_file if one of them matters.
