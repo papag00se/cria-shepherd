@@ -156,6 +156,17 @@ MARKER_OVERHEAD_BYTES = 1100
 # :func:`probe_output_budget` says so via `fits`.
 MIN_PROBE_SECTION_BYTES = 700
 
+# A LINE THAT NAMES A FILE AND A LINE NUMBER — the one shape every checker in every language prints
+# and the one `probeparse.split_diag` reads. `path:12:` (gcc, ruff, go, ruby), `path:[12,30]` (javac
+# through Maven), `path:12` bare (phpunit). Used only to decide which bytes are worth keeping when a
+# probe overruns its share; nothing is parsed here.
+# Written without a POSIX class and with no two adjacent `[` so the gate script stays free of the
+# `[[` a portability check forbids. A path token in a diagnostic never contains a space, and the
+# optional `[` covers Maven's `path:[12,30]` beside everyone else's `path:12`.
+_DIAG_LINE_RE = r"[^ :]+:\[?[0-9]+"
+# javac and rustc put the symbol, the location and the note on the lines UNDER the header.
+_DIAG_CONTEXT_LINES = 3
+
 
 def probe_output_budget(n_sections: int) -> tuple[int, bool]:
     """Per-section byte budget when ``n_sections`` probes share ONE shell result, and whether the
@@ -808,7 +819,12 @@ def compose_probe_command(c: ProbeCandidate, timeout_s: float, cap: int | None =
     # `cap` is this SECTION's share of the one result every probe in the plan writes into; the
     # default is the whole-result budget, for a caller composing a single probe on its own.
     budget = PROBE_OUTPUT_CAP_BYTES if cap is None else max(int(cap), 1)
-    half = budget // 2
+    # MOST OF THE SPACE GOES TO THE DIAGNOSTICS. The ends were carrying the whole burden and could
+    # not: their stated job — "a failure printed EARLY survives a long teardown tail" — is now done
+    # by the shape filter, which finds a diagnostic wherever it sits. What the ends are still for is
+    # the part that carries no file:line and still matters: a runner's tally line ("7 runs, 1
+    # failures"), a build's opening banner. An eighth of even the smallest section holds those.
+    end, middle = max(budget // 8, 120), (budget * 3) // 4
     # One physical shell line (no literal newlines — ``\\n`` are printf escapes): capture, then if the
     # byte size is within budget print it whole, else print the first half + an elided-count marker +
     # the last half, so BOTH an early and a late failure land in the parseable capture.
@@ -832,11 +848,28 @@ def compose_probe_command(c: ProbeCandidate, timeout_s: float, cap: int | None =
         # leading partial line, so neither side can contain a token the tool never printed. It costs
         # at most one whole line per side and it is language-agnostic — no runner's format is parsed
         # here (#20).
-        f"else printf '%s' \"$__cria_out\" | head -c {half} | sed '$d'; "
-        f"printf '\\n...[%d bytes elided here — the lines above and below are NOT continuous; "
-        f"they are the START and the END of the output with the middle removed]...\\n' "
+        f"else printf '%s' \"$__cria_out\" | head -c {end} | sed '$d'; "
+        f"printf '\\n...[%d bytes elided here — the lines above and below are NOT continuous. "
+        f"Every line from the removed middle that carries a file and a line number is reproduced "
+        f"below, with the lines indented under it]...\\n' "
         f"\"$((__cria_n - {budget}))\"; "
-        f"printf '%s' \"$__cria_out\" | tail -c {half} | sed '1d'; printf '\\n'; fi; "
+        # THE DIAGNOSTICS ARE THE POINT OF RUNNING THE PROBE, AND THEY LIVE IN THE MIDDLE.
+        # A blind head+tail cut removes exactly the part a checker exists to produce. Measured on
+        # the 2026-08-22 walks: with four probes in a plan each section gets 1,850 bytes — 925 from
+        # each end — while one javac error with its `symbol:`/`location:` lines is ~200 bytes and one
+        # minitest failure with a backtrace is ~500. Four of nine java compile errors never reached
+        # cria at all, and the ruby run's located failure was cut out of a section whose own marker
+        # announced 3,504 bytes removed. cria then said "a specific line could not be parsed".
+        #
+        # So the middle is not dropped, it is FILTERED: every line carrying `path:line` — the shape
+        # `probeparse.split_diag` itself parses, in every language — survives with the lines indented
+        # under it, which is where javac, rustc, clang and tsc put the part that says what is wrong.
+        # Shape, not a tool list (#20). Nothing here parses a runner's format; it decides only which
+        # bytes are worth the space.
+        f"printf '%s' \"$__cria_out\" | grep -E -A{_DIAG_CONTEXT_LINES} "
+        f"{shlex.quote(_DIAG_LINE_RE)} | head -c {middle}; "
+        f"printf '\\n...[end of the recovered lines; the tail of the output follows]...\\n'; "
+        f"printf '%s' \"$__cria_out\" | tail -c {end} | sed '1d'; printf '\\n'; fi; "
         f"printf '{PROBE_EXIT_SENTINEL}%d\\n' \"$__cria_ec\""
     )
 

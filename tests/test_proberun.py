@@ -445,12 +445,18 @@ class TestComposeProbeCommand(unittest.TestCase):
         c = synth(["echo", "a b"])
         c.working_dir = "/tmp/with space"
         line = compose_probe_command(c, 10.0)
-        half = PROBE_OUTPUT_CAP_BYTES // 2
+        # A QUARTER TO EACH END AND HALF TO THE DIAGNOSTICS. The ends are context; the middle is the
+        # answer, and a blind head+tail cut removed exactly it — four of nine java compile errors
+        # never reached cria on the 2026-08-22 walk, out of a section whose own marker announced the
+        # bytes it had dropped.
+        quarter, middle = max(PROBE_OUTPUT_CAP_BYTES // 8, 120), (PROBE_OUTPUT_CAP_BYTES * 3) // 4
         self.assertIn("cd '/tmp/with space' && ", line)        # cwd, quoted
         self.assertIn("timeout -k 5 10 echo 'a b'", line)      # hard timeout + quoted argv
         self.assertIn("</dev/null 2>&1", line)                 # stdin null, merged streams
-        self.assertIn(f"head -c {half}", line)                 # head+tail budget: an EARLY failure survives
-        self.assertIn(f"tail -c {half}", line)                 # ...and a late one
+        self.assertIn(f"head -c {quarter}", line)              # an EARLY failure survives
+        self.assertIn(f"tail -c {quarter}", line)              # ...and a late one
+        self.assertIn(f"head -c {middle}", line)               # ...and the diagnostics between them
+        self.assertIn("grep -E -A", line)                      # kept by SHAPE: path:line, any language
         self.assertIn("elided", line)                          # middle-elision disclosed, never silent
         self.assertIn(PROBE_EXIT_SENTINEL, line)               # exit-code sentinel
 

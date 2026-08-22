@@ -65,13 +65,20 @@ class NoHalfLineSurvivesTheCutTests(unittest.TestCase):
         out = run_with_cap(LONG, 1200)
         marker = next(l for l in out.splitlines() if "elided" in l)
         self.assertIn("NOT continuous", marker)
-        self.assertIn("START and the END", marker)
+        self.assertIn("NOT continuous", marker)
+        # …and it now says what fills the gap. A blind head+tail cut removed exactly the lines a
+        # checker exists to print: with four probes in a plan each section gets 1,850 bytes, 925 from
+        # each end, while a javac error with its symbol lines is ~200 and a minitest failure with a
+        # backtrace is ~500. Walked 2026-08-22: four of nine java errors never reached cria at all.
+        self.assertIn("carries a file and a line number", marker)
 
     def test_the_line_after_the_marker_starts_at_a_line_boundary(self):
         """The failure mode, in one assertion: the tail used to open mid-token (`ec"=>"10.38…`)."""
         out = run_with_cap(LONG, 1200)
         lines = out.splitlines()
-        i = next(k for k, l in enumerate(lines) if "elided" in l)
+        # The tail now resumes after the SECOND marker — the recovered diagnostic lines sit between
+        # the two. The property under test is unchanged: whatever resumes starts at a line boundary.
+        i = next(k for k, l in enumerate(lines) if "tail of the output follows" in l)
         after = next(l for l in lines[i + 1:] if l.strip())
         self.assertRegex(after, r'^row\d{3} ', "the tail resumed mid-line")
 
@@ -96,6 +103,62 @@ class OutputThatFitsIsUntouchedTests(unittest.TestCase):
         out = run_with_cap(body, 1200)
         self.assertIn("FIRST_FAILURE_HERE", out)
         self.assertIn("LAST_FAILURE_HERE", out)
+
+
+
+
+class TheDiagnosticsSurviveTheCutTests(unittest.TestCase):
+    """The middle of a probe's output is where the findings are, and it was the part being removed.
+
+    With four probes in a plan each section gets 1,850 bytes — 925 from each end — while one javac
+    error with its `symbol:`/`location:` lines is about 200 bytes and one minitest failure with a
+    backtrace is about 500. Walked on the 2026-08-22 runs: four of nine java compile errors never
+    reached cria at all, and the ruby run's located failure was cut out of a section whose own marker
+    announced 3,504 bytes removed — after which cria told the coder "a specific line could not be
+    parsed from the output", with the raw block in the same prompt.
+
+    So the middle is filtered, not dropped: every line carrying `path:line` survives with the lines
+    indented under it. That is the shape `probeparse.split_diag` reads, in every language.
+    """
+
+    def _run(self, text, cap=1850):
+        return run_with_cap(text, cap)
+
+    def test_nine_javac_errors_buried_in_a_build_log_all_survive(self):
+        from cria import probeparse
+        noise = "\n".join(f"[INFO] downloading artifact part {i} of the reactor" for i in range(60))
+        errs = "\n".join(
+            f"[ERROR] /w/src/main/java/pipeline/Importer.java:[{100 + i},30] cannot find symbol\n"
+            f"  symbol:   class Thing{i}\n  location: package com.opencsv" for i in range(9))
+        out = self._run(noise + "\n" + errs + "\n" + noise)
+        found = probeparse.parse_generic(out)
+        self.assertEqual(len(found), 9, "a diagnostic was cut out of the middle")
+        self.assertIn("class Thing4", out)          # one from the deepest part of the removed middle
+        self.assertIn("package com.opencsv", out)   # ...with the line that says which package
+
+    def test_a_minitest_failure_behind_five_error_backtraces_survives(self):
+        blocks = "\n".join(
+            f"  {i}) Error:\nTestRates#test_{i}:\nNoMethodError: undefined method\n"
+            + "\n".join(f"    /w/lib/shipping/rates.rb:{20 + j}:in `zone_for'" for j in range(8))
+            for i in range(5))
+        out = self._run("Run options: --seed 1\n\n" + blocks +
+                        "\n\n  6) Failure:\nTestRates#test_threshold "
+                        "[/w/test/test_rates.rb:15]:\nExpected: 0.0\n  Actual: 7.24\n\n"
+                        "7 runs, 2 assertions, 1 failures, 5 errors, 0 skips\n")
+        self.assertIn("test_rates.rb:15", out)
+
+    def test_output_with_no_diagnostics_is_not_padded_with_noise(self):
+        """Nothing to recover means nothing is added — the ends still bound it (#3)."""
+        out = self._run("\n".join(f"progress line {i} with no location in it" for i in range(400)))
+        self.assertIn("elided", out)
+        self.assertNotIn("progress line 200", out)
+
+    def test_the_gate_script_stays_portable(self):
+        """The filter is a `grep -E` with no POSIX class and no two adjacent `[` — the portability
+        check forbids `[[`, and a path token in a diagnostic never contains a space anyway."""
+        from cria import proberun
+        self.assertNotIn("[[", proberun._DIAG_LINE_RE)
+        self.assertNotIn("[:", proberun._DIAG_LINE_RE)
 
 
 if __name__ == "__main__":

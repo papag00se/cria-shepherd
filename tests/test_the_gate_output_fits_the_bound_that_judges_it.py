@@ -95,8 +95,9 @@ class TheComposedProbeCarriesItsShareTests(unittest.TestCase):
     def test_the_cap_reaches_the_shell(self):
         cmd = proberun.compose_probe_command(candidate("a"), 10.0, cap=1200)
         self.assertIn("-le 1200", cmd)
-        self.assertIn("head -c 600", cmd)
-        self.assertIn("tail -c 600", cmd)
+        self.assertIn("head -c 150", cmd)        # an eighth to the opening context
+        self.assertIn("head -c 900", cmd)        # three quarters to the diagnostics themselves
+        self.assertIn("tail -c 150", cmd)        # an eighth to the tally line at the end
 
     def test_the_elision_marker_counts_against_the_same_number(self):
         """The disclosed count must describe the bytes actually dropped, not a different budget."""
