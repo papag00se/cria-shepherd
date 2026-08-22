@@ -727,6 +727,14 @@ def _subview(v: View, sub: str) -> View:
     out._stale = {p[n:] for p in v._stale if p.startswith(pre)}
     out._progs = v._progs
     out._surveyed = v._surveyed
+    # THE BOUND FLAG TRAVELS WITH THE SUBTREE. `_complete` defaults True on a fresh View, so a
+    # subview of an INCOMPLETE view used to answer False where its parent answered None — the
+    # three-valued contract this class exists for, undone by a missing field copy. `sub` itself
+    # being folded is the same loss by another door: "src" does not start with "src/", so the
+    # marker for the directory being rerooted into never matched and its interior read as absent.
+    out._complete = v._complete and sub not in v._folded
+    out._undeliverable = {p[n:] for p in v._undeliverable if p.startswith(pre)}
+    out._outside = dict(v._outside)
     return out
 
 

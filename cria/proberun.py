@@ -166,6 +166,12 @@ MIN_PROBE_SECTION_BYTES = 700
 _DIAG_LINE_RE = r"[^ :]+:\[?[0-9]+"
 # javac and rustc put the symbol, the location and the note on the lines UNDER the header.
 _DIAG_CONTEXT_LINES = 3
+# The offline re-run's own window. Named, because every other budget in this file is.
+OFFLINE_TAIL_BYTES = 600
+# A RUNNER'S TALLY, BY SHAPE. `7 runs, 1 failures`, `12 passed, 1 failed`, `ok 3 - …`, `FAIL` — the
+# counts every runner prints, wherever they sit in the output. Used only to make sure the tally
+# survives a window; nothing is parsed here.
+_TALLY_LINE_RE = r"[0-9]+ (runs|tests|passed|failed|failures|errors|examples)|^(ok|not ok|FAIL|PASS)\b"
 
 
 def probe_output_budget(n_sections: int) -> tuple[int, bool]:
@@ -995,7 +1001,14 @@ def offline_probe_command(c: "ProbeCandidate", timeout_s: float) -> str:
         f'if [ "${{__cria_test_ec:-1}}" -eq 0 ] && {_netns_capable(c.working_dir)} >/dev/null 2>&1; then '
         f"__cria_out=$(timeout -k {TIMEOUT_KILL_GRACE_S} {timeout_s:g} "
         f"{_NETNS_ENTER} {shlex.quote(inner)} </dev/null 2>&1); __cria_ec=$?; "
-        f"printf '%s' \"$__cria_out\" | tail -c 600; "
+        # THE TALLY LINE BY ITS SHAPE, NOT BY BEING LAST. This was a bare `tail -c 600` — no marker,
+        # no named constant, and it is ALL the offline evidence there is: the section is skipped for
+        # findings entirely, so 600 bytes is the whole basis of the sentence cria then tells the
+        # model about whether the tests passed with the network gone. A runner that prints its tally
+        # and then anything else (a coverage table, a teardown, a warnings summary) lost the tally,
+        # and `_offline_fact` fell silently to its weaker wording or returned "" (#12).
+        f"printf '%s' \"$__cria_out\" | grep -E {shlex.quote(_TALLY_LINE_RE)} | tail -c {OFFLINE_TAIL_BYTES}; "
+        f"printf '%s' \"$__cria_out\" | tail -c {OFFLINE_TAIL_BYTES}; "
         f"printf '\\n{PROBE_EXIT_SENTINEL}%d\\n' \"$__cria_ec\"; "
         f"fi"
     )

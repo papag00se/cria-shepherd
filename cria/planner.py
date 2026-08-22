@@ -1408,7 +1408,7 @@ def repoint_unusable_paths(step: str, root: str) -> tuple[str, str]:
 _GROUND_SCAN_MAX_BYTES = 2_000_000   # bounded sweep; a token this common is found long before here
 
 
-def _token_is_grounded(token: str, task: str, root: str) -> bool:
+def _token_is_grounded(token: str, task: str, root: str) -> bool | None:
     """True when this word belongs to the USER'S ask or to the WORKSPACE — not to cria's tool menu.
 
     Operator, 2026-08-05: "those tool names are not highly unique words. If the user asks to work on
@@ -1437,6 +1437,17 @@ def _token_is_grounded(token: str, task: str, root: str) -> bool:
         # unsure leaves the step exactly as drafted (#3).
         return True
     spent = 0
+    # A FILE CRIA HOLDS NO BYTES FOR CANNOT SHOW A WORD IS ABSENT. The `tree is None` case above is
+    # handled correctly and says so — "a workspace nobody has listed cannot show that a word is
+    # absent, so it does not claim so" — and the identical reasoning was not applied to a file whose
+    # CONTENTS never arrived, which is the ordinary case: the survey carries a handful of bodies, so
+    # most `view.read` calls answer None. cria then concluded the operator's own word belonged to
+    # its tool menu and REWROTE the plan step the coder is driven from.
+    #
+    # Unknown is unknown either way. Any file the scan could not read makes the answer None, and the
+    # caller treats None as grounded — the safe direction, because the cost of a false "ungrounded"
+    # is a rewritten step and the cost of a false "grounded" is silence (#3, #11b, #23c).
+    unread = False
     for dirpath, _dirnames, filenames in tree:
         for name in filenames:
             if tok in name.casefold():
@@ -1444,14 +1455,16 @@ def _token_is_grounded(token: str, task: str, root: str) -> bool:
             path = os.path.join(dirpath, name)
             size = view.size(path) or 0
             if size > 1_000_000 or spent + size > _GROUND_SCAN_MAX_BYTES:
+                unread = True
                 continue
             body = view.read(path)
             if body is None:
+                unread = True
                 continue
             spent += len(body)
             if tok in body.casefold():
                 return True
-    return False
+    return None if unread else False
 
 
 def step_names_tool(step: str, task: str = "", root: str = "") -> str:
@@ -1464,7 +1477,9 @@ def step_names_tool(step: str, task: str = "", root: str = "") -> str:
     m = _TOOL_IN_STEP.search(step or "")
     if not m:
         return ""
-    return "" if _token_is_grounded(m.group(0), task, root) else m.group(0)
+    # None means "cria could not tell" — treated as grounded, so the step is left alone. A step
+    # rewritten on a guess is the expensive direction; saying nothing is the cheap one (#3).
+    return "" if _token_is_grounded(m.group(0), task, root) is not False else m.group(0)
 
 def _extract_cwd(messages: list[dict]) -> str | None:
     """The workspace path a harness advertises in its environment preamble (e.g. Codex's

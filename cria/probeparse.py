@@ -42,6 +42,7 @@ from __future__ import annotations
 
 import os
 import re
+from .content_reduce import clip
 from dataclasses import dataclass, field
 from typing import Optional, Protocol, Sequence
 
@@ -757,7 +758,9 @@ def parse_runner_locations(s: str) -> list[Finding]:
             msg = next((x for x in near if any(w in x.lower() for w in
                                                ("assert", "expected", "failed", "error"))),
                        (near[0] if near else "test failure"))
-            out.append(Finding(file, line, None, msg[:200]))
+            # MARKED. This is the runner's assertion message — expected-vs-got lives in its tail —
+            # and it was cut with a bare slice the reader cannot see.
+            out.append(Finding(file, line, None, clip(msg, 200)))
     return out
 
 
@@ -1511,7 +1514,23 @@ def names_a_workspace_file(name: str, workspace_root: str) -> bool:
     from . import wsview
     if not name or not workspace_root:
         return False
-    head = re.split(r"[./\\:]", name.strip("'\"" ))[0]
+    # A PATH INSIDE THE WORKSPACE IS THE PROJECT'S OWN, WHATEVER ITS SPELLING. This asked only
+    # "is the first dotted segment a name in the tree", and `re.split` on a leading separator yields
+    # an empty first segment — so the guard was inert for exactly the shape Node prints. Measured:
+    # `/home/…/test/test_lookup.test.js is not installed — this project has no node_modules/` fired
+    # 17 times in the last three minutes of handles-cli-node x nemotron-elastic 1787384650, about
+    # the coder's own test file, and the coder answered it by running `npm install` on a task whose
+    # requirement is to need no node_modules (#5b).
+    raw = name.strip("'\"" )
+    if os.path.isabs(raw):
+        try:
+            inside = os.path.commonpath([os.path.abspath(raw),
+                                         os.path.abspath(workspace_root)]) == os.path.abspath(workspace_root)
+        except ValueError:                     # different drives on Windows — not comparable
+            inside = False
+        if inside:
+            return True                        # the project's own file, named the long way
+    head = next((x for x in re.split(r"[./\\:]", raw) if x), "")
     if not head:
         return False
     tree = wsview.current(workspace_root).walk(workspace_root, skip_hidden=True)

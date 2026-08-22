@@ -45,6 +45,7 @@ from .proberun import ProbeReport
 # runner_tally lives in probeparse now (it parses runner OUTPUT, and the tally must be taken at
 # parse time while the raw text still exists). Re-exported so existing callers are unmoved.
 from .probeparse import COMPILES_FIRST, runner_and_tally, runner_tally  # noqa: F401
+from . import content_reduce
 
 # Marker line delimiting each section of the composed script's output. The id after the
 # prefix names the section ("probe-0", "git"). Chosen to never collide with tool output.
@@ -370,7 +371,9 @@ def _with_delimiter_facts(findings: list[str], plan, annotate: bool = True,
             # a default argument three functions away. cria cannot justify the pointer, so it does
             # not make it (#5b, and #3 — silence over noise).
             continue
-        out.append(f"  the flagged line on disk — line {line_no}: `{text[:200]}`")
+        # MARKED. This quote exists so the model does not GUESS the line; a silent cut inside the
+        # backticks is a partial guess-prompt, which is the failure it was built to prevent.
+        out.append(f"  the flagged line on disk — line {line_no}: `{content_reduce.clip(text, 200)}`")
     return out
 
 

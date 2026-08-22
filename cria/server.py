@@ -141,6 +141,8 @@ SESSION_HEADER = "X-Cria-Session-Id"
 # so cria can recognize a SUMMARIZE turn (correctly tool-less) and route it to the compactor role's
 # tuned sampling, never the classifier's guess or a bare passthrough. Harness-agnostic: any harness
 # that leads its compaction prompt with this marker gets the compactor.
+_COMPACT_TOP_MAX = 40      # entries listed at the workspace root; the remainder is NAMED
+_COMPACT_KIDS_MAX = 12     # entries listed inside each directory; likewise
 LOCAL_COMPACT_MARKER = "<<<LOCAL_COMPACT>>>"
 
 
@@ -329,18 +331,27 @@ def _workspace_listing(ws: str | None) -> str:
     if top is None:
         return ""          # nobody has surveyed it yet — say nothing rather than "no files"
     lines: list[str] = []
-    for name in top[:40]:
+    # THE LISTING THAT BECOMES THE SESSION'S MEMORY MAY NOT LIE BY OMISSION. `top[:40]` and the
+    # `[:12]` below were bare literals under a header reading "FILES ALREADY IN THIS WORKSPACE
+    # (on disk right now — do not re-create them)" — so a file past the cap was not merely missing,
+    # it was implicitly denied, in the one reply whose own docstring says everything not in it is
+    # gone. The caps stay (this rides in a summary); the remainder is now named.
+    over = max(0, len(top) - _COMPACT_TOP_MAX)
+    for name in top[:_COMPACT_TOP_MAX]:
         if name.startswith(".") or name == "tmp" or name.endswith(".pyc"):
             continue
         full = os.path.join(ws, name)
         if view.isdir(full) is True:
-            inner = [x for x in (view.listdir(full) or [])
-                     if not x.startswith((".", "__pycache__"))][:12]
-            lines.append(f"  {name}/" + (("  (" + ", ".join(inner) + ")") if inner else ""))
+            kids = [x for x in (view.listdir(full) or [])
+                    if not x.startswith((".", "__pycache__"))]
+            inner = prompts.named_list(kids, _COMPACT_KIDS_MAX, "entries")
+            lines.append(f"  {name}/" + (f"  ({inner})" if inner else ""))
         else:
             lines.append(f"  {name}")
     if not lines:
         return ""
+    if over:
+        lines.append(f"  …and {over} more entries at the top level, not listed here")
     return "FILES ALREADY IN THIS WORKSPACE (on disk right now — do not re-create them):\n" + "\n".join(lines)
 
 

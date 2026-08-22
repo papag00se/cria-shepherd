@@ -83,8 +83,11 @@ def strip_history(messages: list[dict]) -> tuple[list[dict], int]:
 
 def _strip_marker_lines(text: str) -> tuple[str, int]:
     """Drop cria's own lines: every ``MARKER`` line, PLUS the clean (unmarked) body between a pair of
-    ``THINK_FENCE`` lines (the reasoning-transcript block). The fence toggles: an unmatched open fence
-    drops to the end of the content — fail-safe, so a model never re-ingests its own reasoning."""
+    ``THINK_FENCE`` lines (the reasoning-transcript block). The fence toggles.
+
+    An UNMATCHED fence used to drop to the end of the content. That is only fail-safe if the
+    unmatched fence always means leaked reasoning, and it does not: a stream cut between the two
+    fences leaves one open and takes the assistant's real answer with it. See the note in the body."""
     lines = text.split("\n")
     kept: list[str] = []
     dropped = 0
@@ -101,6 +104,17 @@ def _strip_marker_lines(text: str) -> tuple[str, int]:
             dropped += 1
             continue
         kept.append(ln)
+    if inside:
+        # AN UNMATCHED FENCE IS A PARSE FAILURE, NOT A LICENCE TO DELETE. The toggle drops everything
+        # after an unclosed fence — "fail-safe, so a model never re-ingests its own reasoning" — but
+        # a stream cut between the two fences (a shutdown drain, a rumination abort, a harness
+        # disconnect) leaves one open, and the assistant's real ANSWER goes with it. cria cannot tell
+        # a leaked-reasoning fence from a cut one; what it CAN tell is that the fences did not
+        # balance. When they do not, the only lines removed are the ones that are unambiguously
+        # cria's — the MARKER lines — and the rest is left alone (#5).
+        kept = [ln for ln in lines if not ln.lstrip().startswith(MARKER)
+                and ln.strip() != THINK_FENCE]
+        return "\n".join(kept).strip("\n"), len(lines) - len(kept)
     return "\n".join(kept).strip("\n"), dropped
 
 

@@ -118,6 +118,21 @@ def _tail_start(messages: list[dict], head_end: int, budget_tokens: int) -> int:
             break
         acc += t
         i -= 1
+    # THE TURN THE MODEL IS ANSWERING IS NEVER THE ONE FOLDED AWAY. The docstring above says "Keeps
+    # at least one message" and the loop did not: when the newest message alone exceeds the budget
+    # it breaks on its first iteration and returns len(messages) — an EMPTY verbatim tail. That
+    # message then lands in `summarizable` and is replaced by the rollup, so the coder is handed a
+    # two-message conversation and a summary headed "older turns were elided", about the turn in
+    # front of it. Reproduced with a 28 KB file read as the current tool result; any tool result
+    # over ~24 KB does it, and at a step boundary the budget is 0 so it happens every time.
+    #
+    # An oversized present is an overflow for the floor to disclose, not a past to summarise.
+    #
+    # A budget of ZERO is different and deliberate: at a step boundary the caller means "fold the
+    # finished step entirely", supplies the next step in the system message, and keeps no verbatim
+    # tail on purpose. That case is left exactly as it was.
+    if budget_tokens > 0 and i == len(messages) and len(messages) - 1 > head_end:
+        return len(messages) - 1
     return i
 
 

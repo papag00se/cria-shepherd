@@ -372,7 +372,10 @@ class RollingSummaryTests(unittest.TestCase):
         seen = []
 
         def summ(mm):
-            seen.append([m["content"][:12] for m in mm])
+            # The whole label, not its first 12 characters: "early turn 2" is a prefix of BOTH
+            # "early turn 2:" and "early turn 29:", which made the old capture ambiguous exactly
+            # where the band boundary sits.
+            seen.append([m["content"].split(":")[0] for m in mm])
             return f"summary#{len(seen)}"
 
         msgs = [{"role": "system", "content": "sys"}] + self._msgs(30, "early")
@@ -387,8 +390,15 @@ class RollingSummaryTests(unittest.TestCase):
                                       recompact_tokens=100)   # cross the re-summarize throttle
         self.assertTrue(applied2)
         self.assertEqual(st2.summary, "summary#1\n\nsummary#2")   # APPENDED, not replaced
-        self.assertTrue(all(c.startswith("late") for c in seen[1]),
-                        f"round 2 must see ONLY the new band, saw: {seen[1][:3]}...")
+        # ONLY THE NEW BAND — tested as the property, not as a string prefix. It used to assert
+        # every round-2 turn began "late", which held only because round 1 folded EVERY message
+        # including the newest: `_tail_start` returned len(messages) for this very fixture, so the
+        # coder was handed a rollup and nothing verbatim at all. The tail now keeps the turn the
+        # model is answering, so the boundary sits one message earlier — and what matters is
+        # unchanged: round 2 re-summarises nothing round 1 already covered.
+        self.assertFalse(set(seen[0]) & set(seen[1]),
+                         f"round 2 re-summarized turns round 1 had covered: {seen[1][:3]}...")
+        self.assertTrue(any(c.startswith("late") for c in seen[1]), "round 2 saw none of the new turns")
 
     def test_lost_state_falls_back_to_the_whole_middle(self):
         from cria.selfcompact import CompactState, compact

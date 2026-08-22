@@ -494,8 +494,13 @@ def _drop_superseded_writes(messages: list[dict]) -> tuple[list[dict], int]:
     # the re-orientation seat exists for).
     if dropped:
         out.append({"role": "user",
+                    # THE REMAINDER IS NAMED. `paths` was cut at six with no marker, so a note could
+                    # read "9 earlier write(s) removed … : a, b, c, d, e, f" and the model had no
+                    # way to learn which files the missing bytes belonged to. The two units in the
+                    # sentence are deliberate — N writes were removed, ACROSS these files — and the
+                    # count stays a count of calls.
                     "content": prompts.render("superseded_writes_dropped", count=str(dropped),
-                                              paths=", ".join(dropped_paths[:6]))})
+                                              paths=prompts.named_list(dropped_paths, 6, "file(s)"))})
     return (out if dropped else messages), dropped
 
 

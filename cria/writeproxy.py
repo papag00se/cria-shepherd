@@ -1429,8 +1429,26 @@ def _debinarized(content: str) -> str:
         head, payload = content[:m.end()], content[m.end():]
         if not content_reduce_mod.looks_binary(payload):
             return content
-        return head + "\n" + content_reduce_mod.binary_note(len(payload.encode("utf-8", "replace")), None)
-    return content_reduce_mod.binary_note(len(content.encode("utf-8", "replace")), None)
+        return head + "\n" + _binary_fact(payload)
+    return _binary_fact(content)
+
+
+def _binary_fact(blob: str) -> str:
+    """The stand-in line for output cria will not pass through as text — NAMING the format.
+
+    Both call sites passed `kind=None`, so the note read "[binary content: 4,096 bytes — not shown]"
+    and the model could not tell a PNG from a ZIP from a corrupt log. `binary_kind` existed for
+    exactly this and was reached from nowhere. It reads magic bytes, so re-encode the head — as
+    latin-1, the only codec where one character is the one byte it came from. Encoding the head as
+    UTF-8 turns 0x89 into 0xc2 0x89 and no signature ever matches, which is how a kind of None became
+    the only outcome. When the head will not round-trip, the format is genuinely unrecoverable and
+    the note says only what it knows (#5b)."""
+    try:
+        head = blob[:16].encode("latin-1")
+    except UnicodeEncodeError:
+        head = b""
+    return content_reduce_mod.binary_note(len(blob.encode("utf-8", "replace")),
+                                          content_reduce_mod.binary_kind(head))
 
 
 def _blind_pipe_failure(command: str, content: str) -> bool:

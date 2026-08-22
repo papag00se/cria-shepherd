@@ -468,3 +468,17 @@ def _looks_like_code(s: str) -> bool:
         if ns and sum(1 for c in ns if c in "{}()[]<>=;+*/\\|&%$#@`~") * 100 // len(ns) >= 12:
             return True
     return False
+
+
+# THE ONLY SANCTIONED WAY TO SHORTEN MODEL-FACING TEXT. Six sites clipped a string with a bare slice
+# and no marker: a runner's assertion message (which IS the diagnostic), the flagged source line
+# quoted back inside backticks, two API descriptions cut mid-word, a grep match line cut at the
+# column where a minified spec lives. `probeparse`'s own module comment says these were all removed —
+# "summary/finding messages now flow WHOLE … (Former SUMMARY_*_LIMIT ceilings + truncate() removed as
+# dead.)" — which stopped being true of that module.
+#
+# A shortened string a reader cannot detect is worse than a short one it can (#5).
+def clip(s: str, n: int, marker: str = "…") -> str:
+    """``s`` shortened to ``n`` characters, always with a visible marker when anything was cut."""
+    s = s or ""
+    return s if len(s) <= n else s[:max(n - len(marker), 0)] + marker

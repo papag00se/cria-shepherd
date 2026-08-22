@@ -112,6 +112,10 @@ def execute_tool(name: str, args: dict, cwd: str, search_key: str, recent_search
 
 # How much of a grep result the planner is handed. A gather that reads the whole repo back through
 # one tool call is the 210K-prompt shape; the planner narrows and reads the file it wants.
+# A HIT CAP THAT SAYS SO. The walk `break`s out of every loop when it fills, so files after that
+# point are never opened — and `unread` (which this function does disclose) under-counts them too.
+# A 60-hit result read exactly like an exhaustive search that found sixty things, which is the
+# failure this function's own docstring names for the OTHER partiality it discloses.
 _GREP_MAX_HITS = 60
 
 
@@ -217,7 +221,7 @@ def _grep_files(args: dict, cwd: str, scratch: str | None = None) -> ToolResult:
             rel = os.path.relpath(fp, cwd or full)
             for i, line in enumerate(body.splitlines(), 1):
                 if rx.search(line):
-                    hits.append(f"{rel}:{i}: {line.strip()[:200]}")
+                    hits.append(f"{rel}:{i}: {content_reduce.clip(line.strip(), 200)}")
                     if len(hits) >= _GREP_MAX_HITS:
                         break
             if len(hits) >= _GREP_MAX_HITS:

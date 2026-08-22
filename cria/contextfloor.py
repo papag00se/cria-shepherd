@@ -109,7 +109,16 @@ MIN_MSG_BUDGET = 512
 MAX_TOOL_FRACTION = 0.5
 # Description-length caps tried, longest first, until the tool schema fits its budget.
 # 0 = drop the description entirely (name + parameter structure still identify the tool).
-_DESC_CAPS = (400, 240, 140, 80, 40, 0)
+# A TOOL WITH NO DESCRIPTION IS NOT A SMALLER TOOL, IT IS AN UNUSABLE ONE. The last rung used to be
+# `0`, which REMOVES the description key — so at a tight budget every tool and every parameter
+# reached the model as a bare name and a type. Reproduced: `read_file` arrived as
+# `{"path": {"type": "string"}}`.
+#
+# The floor stops at the lowest cap that still carries a first sentence. If the schema still does not
+# fit, `_drop_whole_tools` below removes tools ENTIRELY and names them — fewer tools the model can
+# use beats every tool rendered unusable, and it is the shape `toolmenu.focus_tools` already takes.
+_DESC_CAPS = (400, 240, 140, 80, 40)
+_DESC_FLOOR = 40
 
 
 @dataclass
@@ -275,10 +284,18 @@ def _compress_tools(tools, budget_est: int) -> tuple[list, int]:
         return tools, 0
     for cap in _DESC_CAPS:
         out = [_cap_descriptions(t, cap) for t in tools]
-        if est_tokens(json.dumps(out)) <= budget_est or cap == _DESC_CAPS[-1]:
+        if est_tokens(json.dumps(out)) <= budget_est:
             n = sum(1 for a, b in zip(tools, out) if a != b)
             return out, n
-    return tools, 0
+    # STILL OVER AT THE FLOOR. Shrinking further meant deleting the description key, which leaves a
+    # bare name and a type — a tool the model cannot know when to use. Drop whole tools from the END
+    # of the menu instead (the menu is ordered by usefulness where a curator ran), keeping at least
+    # one, so what survives is usable.
+    out = [_cap_descriptions(t, _DESC_FLOOR) for t in tools]
+    while len(out) > 1 and est_tokens(json.dumps(out)) > budget_est:
+        out = out[:-1]
+    n = sum(1 for a, b in zip(tools, out) if a != b) + (len(tools) - len(out))
+    return out, n
 
 
 def _cap_descriptions(obj, cap: int):

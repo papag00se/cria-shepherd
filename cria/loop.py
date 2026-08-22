@@ -1182,6 +1182,27 @@ _VETO_MISSING = re.compile(r"(?i)\b(?:does not exist|not founds?|missing|no such
 _VETO_PATH = re.compile(r"(/?[\w][\w./-]*\.[A-Za-z][A-Za-z0-9]{0,4})")
 
 
+_VETO_FACT_MAX_BYTES = 200_000   # past this, state existence only — a count from a clip is false
+
+
+def _basename_matches(root: str, name: str) -> list[str] | None:
+    """Workspace-relative paths whose basename is ``name`` — ``None`` when cria cannot say.
+
+    A judge writes file names in prose, and `groundtruth.resolve` is `os.path.join`, so `feed.csv`
+    became `<root>/feed.csv` while the file sat in `data/`. An empty list here means the walk
+    covered the tree and the name is genuinely absent; `None` means it did not, and no claim about
+    absence may be made from it (#5b, #11b)."""
+    if not root or not name:
+        return None
+    view = wsview.current(root)
+    walked = view.walk(root, skip_names=(".git",), skip_hidden=True)
+    if walked is None or not view.complete:
+        return None
+    want = os.path.basename(name)
+    return [os.path.relpath(os.path.join(d, n), root)
+            for d, _subs, names in walked for n in names if n == want]
+
+
 def _veto_refuted_by_disk(why: str, workspace_root: str, ask=None, rlog=None) -> tuple[str, str]:
     """``(refuted_path, disk_facts)`` for a NOT-consistent veto — ``("", "")`` when nothing applies.
 
@@ -1223,6 +1244,21 @@ def _veto_refuted_by_disk(why: str, workspace_root: str, ask=None, rlog=None) ->
         present = view.isfile(path)
         if present is None:
             continue
+        if present is False:
+            # A BARE BASENAME IS NOT A PATH. A judge writes file names in prose — `feed.csv`,
+            # `Importer.java` — and `groundtruth.resolve` is `os.path.join`, so those became
+            # `<root>/feed.csv` and `<root>/Importer.java` while the files sat in `data/` and
+            # `src/main/java/pipeline/`. Both were then printed as `NOT on disk` under "a verified
+            # fact about the workspace" (feed-pipeline-java x qwen35 1787392958, call 0041).
+            #
+            # Resolve it the way the steer guard already does: exactly one file in the workspace
+            # with that basename, or nothing. Two matches means cria does not know which was meant
+            # and says nothing at all (#5b, #3).
+            hits = _basename_matches(workspace_root, tok)
+            if hits is None or len(hits) > 1:
+                continue          # unknown, or two files with that name — cria does not guess
+            if hits:
+                path, present = str(Path(workspace_root) / hits[0]), True
         # SIZE AND SHAPE, not just existence — an emptiness claim is settled by what the file HOLDS.
         exists = present
         detail = "NOT on disk"
@@ -1230,15 +1266,30 @@ def _veto_refuted_by_disk(why: str, workspace_root: str, ask=None, rlog=None) ->
             body = view.read(path)
             if body is None:
                 continue
-            body = body[:200_000]
-            n_lines = body.count("\n") + 1 if body else 0
-            code = sum(1 for ln in body.splitlines()
-                       if ln.strip() and not ln.lstrip().startswith("#"))
-            detail = (f"EXISTS on disk — {len(body):,} bytes, {n_lines} lines, "
-                      f"{code} non-comment code lines")
+            # COUNT THE WHOLE FILE, OR SAY ONLY THAT IT EXISTS. These numbers ship to the coder
+            # under "That part is a verified fact about the workspace as it stands, not one
+            # reader's opinion" — so a count taken from a clipped copy is a false fact in the one
+            # sentence that claims verification. A 900 KB file was reported as 200,000 bytes.
+            if len(body) > _VETO_FACT_MAX_BYTES:
+                detail = "EXISTS on disk"
+            else:
+                n_lines = body.count("\n") + 1 if body else 0
+                code = sum(1 for ln in body.splitlines()
+                           if ln.strip() and not ln.lstrip().startswith("#"))
+                detail = (f"EXISTS on disk — {len(body):,} bytes, {n_lines} lines, "
+                          f"{code} non-comment code lines")
         facts.append(f"- {tok}: {detail}")
         if exists and not first_existing:
             first_existing = tok
+    if not facts:
+        # NOTHING RESOLVED IS NOT CORROBORATION. When no named token could be checked at all — the
+        # judge wrote bare basenames and `groundtruth.resolve` joins them to the workspace root, so
+        # `feed.csv` became `<root>/feed.csv` while the file sits in `data/` — `first_existing`
+        # stayed empty and this fell into the branch below, turning a resolution failure into
+        # "the filesystem was checked just now and agrees". Reproduced on feed-pipeline-java x
+        # qwen35 1787392958 call 0041: `feed.csv: NOT on disk` and `Importer.java: NOT on disk`,
+        # both printed as verified fact, about files the coder had been running for twenty calls.
+        return "", ""
     if not first_existing:
         # THE DISK AGREED, AND cria USED TO THROW THAT AWAY. Only the REFUTED direction had a return
         # path; when the filesystem corroborated the veto, these facts — freshly stat'ed, exact —
@@ -8734,7 +8785,10 @@ def _read_tool_result(messages: list[dict], call_id: str) -> str:
     return ""
 
 
-def _touched_paths(messages, cap: int = 8) -> list[str]:
+TOUCHED_PATHS_CAP = 8      # files named in the steer author's on-disk section; the rest are counted
+
+
+def _touched_paths(messages, cap: int = TOUCHED_PATHS_CAP) -> list[str]:
     """Paths the coder actually WROTE this session, recovered from the normalized history's
     assistant tool_calls — the durable record. GuardState's recent_writes window is consumed by
     detector interventions (flushed on purpose), so it alone cannot ground the steer author's

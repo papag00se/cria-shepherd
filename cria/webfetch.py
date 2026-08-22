@@ -39,8 +39,9 @@ from typing import Any, Optional
 
 from . import apidiscovery, brave, denial, prompts
 from .content_reduce import (COMMAND_ARG_BUDGET, INLINE_RESULT_MAX_BYTES,  # noqa: F401
-                             SPILL_CONTENT_MAX, est_tokens, html_to_text)
+                             SPILL_CONTENT_MAX, clip, est_tokens, html_to_text)
 from .searchloop import first_domain_in, normalize_search, searches_match
+from . import content_reduce
 
 try:  # structural YAML is best-effort — the Rust degrades YAML to text too when it can't parse
     import yaml as _yaml
@@ -119,7 +120,18 @@ def fetch(url: str, user_agent: Optional[str] = None) -> FetchResult:
     if _is_text_content_type(content_type):
         body = slice_.decode("utf-8", "replace")
     else:
-        body = f"[non-text response: {len(raw)} bytes, content-type={content_type or '(none)'}]"
+        # NAME A ROUTE, OR DO NOT CLAIM IT IS UNREADABLE. This replaced the whole document with a
+        # byte count on a closed content-type allowlist — so a spec served as
+        # `application/octet-stream`, `application/x-ndjson`, or under a mistyped header was
+        # destroyed before anything parsed it, with no alternative offered. The header is the thing
+        # that was wrong, so sniff the BYTES: text that decodes and reads as text is text (#5b).
+        text = slice_.decode("utf-8", "replace")
+        if not content_reduce.looks_binary(text):
+            body = text
+        else:
+            body = (f"[non-text response: {len(raw)} bytes, content-type={content_type or '(none)'} "
+                    f"— the bytes are not text. Ask for a specific part with find=, or fetch a "
+                    f"different representation of this resource.]")
     return FetchResult(status, final_url, content_type, body, truncated)
 
 
@@ -1013,7 +1025,7 @@ def _path_param_notes(op: dict, ops: dict, schemas: dict, max_len: int = 90) -> 
             ex = prm.get("example") or (prm.get("schema") or {}).get("example")
             note = f"e.g. {ex}" if ex else ""
         if note:
-            out.append(f"{{{name}}} = {note[:max_len]}")
+            out.append(f"{{{name}}} = {clip(note, max_len)}")
     return out
 
 

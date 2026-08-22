@@ -34,6 +34,7 @@ from dataclasses import dataclass, field
 from typing import Any, Optional
 
 from . import brave   # the browser UA only; importing webfetch here would be a cycle
+from . import content_reduce
 
 # The MCP revision cria speaks. A server that does not support it answers with an error and cria
 # surfaces nothing rather than guessing at a shape it did not receive.
@@ -190,10 +191,20 @@ def _mcp_discover(url: str) -> Optional[Discovery]:
     for t in tools[:MAX_ITEMS]:
         if not isinstance(t, dict) or not t.get("name"):
             continue
-        args = _json_schema_args(t.get("inputSchema"))
-        entry = f"mcp tool {t['name']}({', '.join(args)})"
+        # A SCHEMA CRIA CANNOT READ IS NOT A TOOL THAT TAKES NOTHING. `_json_schema_args` answers []
+        # for a schema built from `$ref`, `allOf` or `oneOf` — and `name()` then renders as a
+        # positive claim that the tool needs no arguments, under a header telling the coder to use
+        # these EXACT names. Say what is true instead: cria could not read the arguments (#5b).
+        schema = t.get("inputSchema")
+        args = _json_schema_args(schema)
+        if args:
+            entry = f"mcp tool {t['name']}({', '.join(args)})"
+        elif isinstance(schema, dict) and schema and not isinstance(schema.get("properties"), dict):
+            entry = f"mcp tool {t['name']}(… arguments not readable from this schema — call it to see)"
+        else:
+            entry = f"mcp tool {t['name']}()"
         desc = str(t.get("description") or "").strip().replace("\n", " ")
-        d.routes.append(f"{entry} — {desc[:120]}" if desc else entry)
+        d.routes.append(f"{entry} — {content_reduce.clip(desc, 120)}" if desc else entry)
         # Only a declared outputSchema goes in the shape block: that block's ledger label states its
         # entries are what an endpoint RETURNS, so putting inputs there would file a false fact.
         fields = _json_schema_args(t.get("outputSchema"), mark_optional=False)
@@ -311,7 +322,7 @@ def _graphql_discover(url: str) -> Optional[Discovery]:
             ret = _gql_type_name(f.get("type"))
             entry = f"{prefix}.{f['name']}({', '.join(args)}) -> {ret}"
             desc = str(f.get("description") or "").strip().replace("\n", " ")
-            d.routes.append(f"{entry} — {desc[:120]}" if desc else entry)
+            d.routes.append(f"{entry} — {content_reduce.clip(desc, 120)}" if desc else entry)
             named = ret.strip("[]!")
             sub = by_name.get(named)
             subfields = (sub or {}).get("fields")

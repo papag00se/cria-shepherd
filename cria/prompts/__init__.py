@@ -99,3 +99,23 @@ def validate_referenced(rlog=None) -> list[str]:
     if out and rlog is not None:
         rlog.emit("prompts.missing", level="error", names=",".join(out))
     return out
+
+
+# A BOUNDED LIST OF NAMES, WITH ITS REMAINDER. Seven sites printed `names[:N]` into a model-facing
+# sentence with a bare integer literal, no named constant and no marker — and three of them under
+# wording that asserts completeness. `focustrim`'s superseded note listed six paths while its own
+# count field counted CALLS, so the model was told "9 earlier write(s) removed: a, b, c, d, e, f"
+# and had no way to learn which three files the missing bytes belonged to.
+#
+# This is the only sanctioned way to print a bounded list of names to a model. The remainder is
+# derived from the same list that was printed, so the two can never disagree (#5b).
+def named_list(items, cap: int = 6, unit: str = "") -> str:
+    """``"a, b, c"`` — or ``"a, b, c, and 4 more <unit>"`` when the list was longer than ``cap``."""
+    names = [str(x) for x in (items or []) if str(x).strip()]
+    if not names:
+        return ""
+    shown, rest = names[:max(cap, 1)], max(0, len(names) - max(cap, 1))
+    out = ", ".join(shown)
+    if rest:
+        out += f", and {rest} more{(' ' + unit) if unit else ''}"
+    return out

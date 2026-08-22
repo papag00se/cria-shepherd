@@ -153,7 +153,13 @@ def fold_repeated_messages(msgs: list[dict], note: str, *, protect: "tuple[str, 
     out, folded = [], 0
     for i, m in enumerate(msgs):
         c = m.get("content")
-        if (isinstance(c, str) and keep.get(c.strip(), i) != i):
+        # THE ROLE FILTER GATES THE WRITE. It guarded only the index build above, so any message —
+        # including an `assistant` turn and a `system` message — whose content matched a later
+        # user/tool payload had its content replaced by cria's third-person pointer. Reproduced both
+        # ways. The docstring says the opposite: "NEVER an assistant turn (the model's own words are
+        # never rewritten), never a system message (cria's frame)."
+        if (m.get("role") in ("user", "tool") and isinstance(c, str)
+                and keep.get(c.strip(), i) != i):
             out.append({**m, "content": note})
             folded += 1
             continue
