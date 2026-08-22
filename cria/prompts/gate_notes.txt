@@ -30,3 +30,4 @@ skipped = [GROUND TRUTH] The test run reported {{COUNT}} test(s) SKIPPED. A skip
 # ONLY WHEN IT IS TRUE NOW. `gate_fresh` is false the moment the workspace may have moved under the
 # reading, and a stale green is the one thing worse than no green (#5b).
 green = [GROUND TRUTH] The repo's own checks were run against the workspace as it stands and reported no error-class problems. That is a live result, not a claim from the transcript — older check output above may predate edits that have since been made.
+advisory_dropped = [{{COUNT}} advisory line(s) from this check are not shown — unused names, style and formatting, which do not stop the program running.]

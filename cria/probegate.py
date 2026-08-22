@@ -302,6 +302,20 @@ def _paths_written_after(messages: list, start: int) -> "frozenset[str]":
     return frozenset(changed)
 
 
+# A line that is itself a DIAGNOSTIC — it names a location, or it opens with a severity word. Only
+# these are candidates for the advisory filter; everything else in a check's output is the program's
+# own text (a traceback's source echo, a failure report's body) and is not cria's to judge.
+_SEVERITY_OPENER = re.compile(r"^\s*(?:note|warning|hint|info|convention|refactor|error|E\d{3}|W\d{3}|"
+                              r"C\d{4}|R\d{4})\b[: ]", re.I)
+
+
+def _is_a_diagnostic_line(s: str) -> bool:
+    """Does this line NAME A LOCATION or DECLARE A SEVERITY — i.e. is it the checker talking about
+    code, rather than the code (or the program's own output) itself?"""
+    return (bool(_LOC_PREFIX.match(s)) or bool(_SEVERITY_OPENER.match(s))
+            or probeparse.split_diag(s) is not None)
+
+
 def _with_delimiter_facts(findings: list[str], plan, annotate: bool = True,
                           changed_paths: "frozenset[str]" = frozenset()) -> list[str]:
     """For an unmatched-delimiter finding, append ONE counted fact: the flagged line's actual
@@ -487,6 +501,7 @@ def clean_gate_output(raw: str, plan: "GatePlan | None" = None, *, annotate: boo
     workspace = getattr(plan, "workspace", "") or ""
     stranded_findings: list[str] | None = None   # scanned at most once, only on a zero-tests signal
     findings: list[str] = []
+    dropped_advisories = 0
     seen: set[str] = set()
     could_not_run = False
     failed_no_detail = False
@@ -569,6 +584,7 @@ def clean_gate_output(raw: str, plan: "GatePlan | None" = None, *, annotate: boo
         if code == 0:
             continue
         had_content = False
+        advisory_dropped = 0
         section_findings: list[str] = []
         prev_kept = ""   # consecutive-repeat collapse only — see the note at the append below
         for ln in text.splitlines():
@@ -583,8 +599,17 @@ def clean_gate_output(raw: str, plan: "GatePlan | None" = None, *, annotate: boo
             # the disk read.
             flagged = (_line_on_disk(s, workspace)
                        if probeparse.F811_PHRASE in s.lower() else None)
-            if (probeparse.is_advisory(s, flagged)
-                    or probeparse.is_advisory(_LOC_PREFIX.sub("", s), flagged)):
+            # A DELETION IS KEYED ON STRUCTURE, AND IT IS COUNTED. Two rules used to be missing
+            # here. First, this ran the advisory PHRASE test over every raw line of a check's
+            # output — including the source echo inside a traceback and the body of a failure
+            # report — so a line of the coder's own code containing "unused variable" was deleted
+            # from the middle of a block cria ships as "the checker's OWN message". A line is only
+            # a candidate for this filter when it IS a diagnostic: it carries a location prefix or
+            # a severity word of its own. Second, the drop was silent, so a check whose entire
+            # output was advisory read as a check that printed nothing (#R7).
+            if _is_a_diagnostic_line(s) and (probeparse.is_advisory(s, flagged)
+                                             or probeparse.is_advisory(_LOC_PREFIX.sub("", s), flagged)):
+                advisory_dropped += 1
                 continue
             # KEEP THE LINE AS THE CHECKER WROTE IT. `s` is the stripped copy — fine for deciding
             # whether to keep a line, wrong to SHIP, because cria ships this block under "each is the
@@ -619,6 +644,11 @@ def clean_gate_output(raw: str, plan: "GatePlan | None" = None, *, annotate: boo
             if s != prev_kept:
                 prev_kept = s
                 section_findings.append(ln.rstrip())
+        # NAMED, NEVER SILENT — but NOT as a finding. A note about cria's own handling must not make
+        # an advisory-only check read as a failing one; it rides alongside, on whichever branch the
+        # gate takes, so the reader can tell "this check had nothing to say" from "this check said
+        # things cria decided were style".
+        dropped_advisories += advisory_dropped
         findings.extend(section_findings)
         # a check that exited NON-ZERO but printed NOTHING usable (empty output) still FAILED — don't
         # let it read as clean. If it printed only advisory lines (had_content, no findings), that's an
@@ -674,7 +704,7 @@ def clean_gate_output(raw: str, plan: "GatePlan | None" = None, *, annotate: boo
         return prompts.render("checks_error_class",
                               seeded_test_rule=prompts.load("seeded_test_rule").strip(),
                               stale=stale.rstrip("\n"),
-                              findings="\n".join(findings))
+                              findings="\n".join(findings + _advisory_note(dropped_advisories)))
     if failed_no_detail:            # ran, exited non-zero, no usable output → a failure with no location
         return ("⟦ctx:checks⟧ one of the repo's own checks FAILED but printed no parseable location — "
                 "run it yourself and read the actual error before continuing. Not done.")
@@ -739,7 +769,18 @@ def clean_gate_output(raw: str, plan: "GatePlan | None" = None, *, annotate: boo
     offline = _offline_fact(_sections, plan)
     if offline:
         clean += " " + offline
+    for note in _advisory_note(dropped_advisories):
+        clean += " " + note
     return clean
+
+
+def _advisory_note(count: int) -> list[str]:
+    """cria's own count of what it filtered — one line, or nothing at all.
+
+    A deletion that is not counted is indistinguishable from a check that printed nothing (#R7)."""
+    if not count:
+        return []
+    return [prompts.fill(prompts.load_map("gate_notes")["advisory_dropped"], count=count)]
 
 
 # The runner-said-nothing-ran shapes, per supported runner — consulted only to decide whether the

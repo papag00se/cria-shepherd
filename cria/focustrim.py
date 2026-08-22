@@ -144,7 +144,26 @@ def _is_failure(content, tool_name: str = "") -> bool:
         return False   # the tool exited 0 / returned 2xx → a success whose body just mentions "not found"
     if tool_name in _FILE_TOOLS:
         return False   # a file payload: the phrase is the file's content, not the tool's verdict
+    if _is_a_payload(content):
+        return False   # a service's own structured answer: the phrase is DATA, not a verdict
     return any(p.search(content) for p in _SOFT_FAIL_SIGNATURES)
+
+
+def _is_a_payload(content: str) -> bool:
+    """Is this the tool's structured RESULT rather than its report of what happened?
+
+    A deletion keyed on a phrase deletes whatever contains the phrase. `{"error":"route_not_found",
+    "docs":"https://…/routes"}` is a live API answering — the exact hint the model needs — and it was
+    read as a dead end and squashed into a "tried this" note. Whether a body PARSES as JSON is
+    structural and needs no vocabulary: a service that answers in JSON is answering (#R7)."""
+    text = (content or "").strip()
+    if not text or text[0] not in "{[":
+        return False
+    try:
+        json.loads(text)
+    except ValueError:
+        return False
+    return True
 
 
 def _is_hard_failure(content) -> bool:
