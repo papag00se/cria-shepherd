@@ -151,12 +151,22 @@ def says_nothing_ran(text: str) -> bool:
     return bool(_NOTHING_RAN.search(text or ""))
 
 _TALLY_FAILED_PASSED = "fp"     # groups are (failed, passed)
+# ONLY JUNIT'S ROW READ THE RUNNER'S ERROR COUNT, and an error is not a pass. Ran each runner with a
+# test that raises rather than asserts: pytest printed `1 failed, 1 passed, 1 error` and parsed to
+# `0f/1p`; minitest printed `2 runs, 1 assertions, 0 failures, 1 errors` and parsed to `0f/2p`;
+# phpunit's `Tests: 3, Assertions: 2, Errors: 1` parsed to `0f/3p`. Every one of them starts `0f/`,
+# which `_checks_superseded_by_coder_run` reads as a clean run — so a coder run with errors and no
+# failures DROPS cria's real cached findings, and `gate_passing_tests` over-counts by the error
+# count. The `0 failures, N errors` shape occurs 1,749 times across 9 sessions in the captures.
+_TALLY_FAILED_PASSED_ERRORS = "fpe"   # groups are (failed, passed, errors); an error is not a pass
 _TALLY_PASSED_FAILED = "pf"     # groups are (passed, failed)
 _TALLY_TOTAL_FAILED = "tf"      # groups are (total, failed) — passed is total - failed
 
 _TALLIES = (
     # pytest · `2 failed, 7 passed in 0.05s`  (the leading `=` is its banner)
-    ("pytest", re.compile(r"(?im)^=*\s*(?:(\d+) failed[, ]+)?(\d+) passed"), _TALLY_FAILED_PASSED, False),
+    ("pytest", re.compile(r"(?im)^=*\s*(?:(\d+) failed[, ]+)?(\d+) passed"
+                          r"(?:[, ]+\d+ skipped)?(?:[, ]+(\d+) errors?)?"),
+     _TALLY_FAILED_PASSED_ERRORS, False),
     # cargo · one `test result:` line per test binary
     ("cargo", re.compile(r"(?im)^test result:\s*\w+\.\s*(\d+) passed;\s*(\d+) failed"), _TALLY_PASSED_FAILED, True),
     # jest / vitest · `Tests:       1 failed, 11 passed, 12 total`
@@ -167,17 +177,22 @@ _TALLIES = (
     ("gradle", re.compile(r"(?im)^\s*(\d+) tests? completed(?:,\s*(\d+) failed)?"), _TALLY_TOTAL_FAILED, False),
     # go test -v · one `--- PASS:` / `--- FAIL:` per test (counted below, not by a group pair)
     # rspec · `12 examples, 1 failure, 2 pending`
-    ("rspec", re.compile(r"(?im)^\s*(\d+) examples?,\s*(\d+) failures?"), _TALLY_TOTAL_FAILED, False),
+    ("rspec", re.compile(r"(?im)^\s*(\d+) examples?,\s*(\d+) failures?"
+                         r"(?:,\s*\d+ pending)?(?:,\s*(\d+) errors?)?"),
+     _TALLY_TOTAL_FAILED, False),
     # ExUnit · `12 tests, 1 failure` (also `doctests`)
     ("exunit", re.compile(r"(?im)^\s*(?:\d+ doctests?,\s*)?(\d+) tests?,\s*(\d+) failures?"), _TALLY_TOTAL_FAILED, False),
     # phpunit · `Tests: 12, Assertions: 30, Failures: 1`
-    ("phpunit", re.compile(r"(?im)^\s*Tests:\s*(\d+),\s*Assertions:\s*\d+(?:,\s*Failures:\s*(\d+))?"), _TALLY_TOTAL_FAILED, False),
+    ("phpunit", re.compile(r"(?im)^\s*Tests:\s*(\d+),\s*Assertions:\s*\d+"
+                           r"(?:,\s*Errors:\s*(\d+))?(?:,\s*Failures:\s*(\d+))?"),
+     _TALLY_TOTAL_FAILED, False),
     # dotnet test · `Failed:     1, Passed:    12, Skipped:     0`
     ("dotnet", re.compile(r"(?im)^.*?Failed:\s*(\d+),\s*Passed:\s*(\d+)"), _TALLY_FAILED_PASSED, True),
     # mocha · `11 passing` / `1 failing`, on separate lines
     ("mocha", re.compile(r"(?im)^\s*(\d+) passing\b"), None, False),
     # minitest · `9 runs, 9 assertions, 0 failures, 0 errors, 0 skips`
-    ("minitest", re.compile(r"(?im)^\s*(\d+) runs?,\s*\d+ assertions?,\s*(\d+) failures?"),
+    ("minitest", re.compile(r"(?im)^\s*(\d+) runs?,\s*\d+ assertions?,\s*(\d+) failures?"
+                            r"(?:,\s*(\d+) errors?)?"),
      _TALLY_TOTAL_FAILED, False),
     # node --test (TAP) · `# pass 13` / `# fail 0`, on separate lines
     ("node", re.compile(r"(?im)^\s*#\s*pass\s+(\d+)\b"), None, False),
@@ -213,6 +228,10 @@ def _tally_counts(kind: str, groups) -> "tuple[int, int] | None":
     try:
         if kind == _TALLY_FAILED_PASSED:
             return g[0], g[1]
+        if kind == _TALLY_FAILED_PASSED_ERRORS:
+            # The passed count is the runner's own and already excludes the errored test, so the
+            # errors only move to the failed side; they are never subtracted twice.
+            return g[0] + g[2], g[1]
         if kind == _TALLY_PASSED_FAILED:
             return g[1], g[0]
         if kind == _TALLY_TOTAL_FAILED:
