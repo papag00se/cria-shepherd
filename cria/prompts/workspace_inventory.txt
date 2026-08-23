@@ -35,3 +35,13 @@ install_prefix = \n  {{PREFIX}}/ — {{COUNT}} files installed here by a package
 # directory, a drained queue or a root with more files than one survey carries all mean cria did not
 # look everywhere — and a path it did not reach is UNKNOWN, never absent (#5b, #11b).
 partial = This list is NOT complete — the survey of this workspace hit its own limit, so a file missing from this list may still exist. Use list_dir on a directory you expect before concluding anything is absent.
+
+# WHEN THE SURVEY IS BEHIND THE DISK. Separate from `partial`, which is about a bound the survey hit;
+# this is about a listing that was complete when it was taken and has since been overtaken. A survey
+# rides along only on a composed write/edit/list, so a run of the coder's own shell commands moves
+# the disk while the view stands still. Measured: 674 prompts carried "This list is complete — a file
+# not listed here does not exist" and 0 carried the partial wording; in 20260822T231008 call 0102 the
+# listing named 10 files under that clause while 95 sat in the workspace, put there by a `gem install`
+# whose own `ls` output was 200 lines further up the SAME prompt. The headers above say "right now" /
+# "just now" / "at judging time", so this clause has to withdraw that too, not only the completeness.
+stale = This list is the last complete look at the workspace, not a fresh one: a command has run since that could have changed the tree — an install, a build, a shell write — so read it as of that moment rather than as of now. A file missing from it may have been created since; use list_dir on a directory you expect before concluding anything is absent.

@@ -402,8 +402,21 @@ def workspace_inventory(root: str | None, flavor: str = "judge") -> str:
     # are absent from the walk while `complete` stays True. The install-prefix fold already earns the
     # clause back by printing a line for what it folded; a view-level fold prints nothing, so the
     # clause has to go instead.
+    # …AND NOT OVERTAKEN. `complete`/`folded` answer whether the survey reached everything; they say
+    # nothing about WHEN. A survey rides along only on a composed write/edit/list, so a run of the
+    # coder's own shell commands moves the disk while the view stands still — and the listing then
+    # ships under "right now" / "just now" / "at judging time" plus a clause saying a file not on it
+    # does not exist. Measured: 674 prompts carried that clause and 0 carried the partial wording;
+    # at 20260822T231008 call 0102 it named 10 files while 95 were on disk, put there by a
+    # `gem install` whose own `ls` sat 200 lines earlier in the SAME prompt. The flag has existed
+    # since 2026-08-22 and had one reader out of the five seats that make claims about this disk.
     _v = wsview.current(root)
-    complete = _v.complete and not _v.folded
+    bounded = not (_v.complete and not _v.folded)
+    complete = not bounded and not _v.may_have_changed
+    # WHY the clause is withheld decides which sentence replaces it: a bound the survey hit is a
+    # different fact from a listing the disk has overtaken, and the second one has to withdraw the
+    # header's freshness claim as well (#5b).
+    caveat = "partial" if bounded else "stale"
     if not entries and not folded:
         if not complete:
             return ""          # nothing seen AND the survey was bounded — say nothing, not "empty"
@@ -418,18 +431,23 @@ def workspace_inventory(root: str | None, flavor: str = "judge") -> str:
         # in read_file range; the compacted view carries the LIST, not the bytes).
         lines = [labels["coder_header"]]
         lines += [f"  {rel} ({size} B)" for _, rel, size in entries] + fold_lines
-        lines.append(labels["coder_note"] if complete else labels["partial"])
+        # THE READ-FILE INSTRUCTION IS NOT THE COMPLETENESS CLAUSE. "the disk is the only current
+        # version — do not reconstruct content from the summary" is true of a bounded or overtaken
+        # listing too, and was being dropped along with the clause it happened to share a line with.
+        lines.append(labels["coder_note"])
+        if not complete:
+            lines.append(labels[caveat])
         return "\n".join(lines)
     if flavor == "briefing":
         # The rolling/harness compaction writer. Same complete listing, wording that says why it is
         # here: the transcript's file mentions may be stale, this is not. See the header's own note.
         lines = [labels["briefing_header"]]
         lines += [f"  {rel} ({size} B)" for _, rel, size in entries] + fold_lines
-        lines.append(labels["complete" if complete else "partial"])
+        lines.append(labels["complete" if complete else caveat])
         return "\n".join(lines)
     lines = [prompts.fill(labels["planner_header" if flavor == "planner" else "header"], root=root)]
     lines += [f"  {rel} ({size} B)" for _, rel, size in entries] + fold_lines
-    lines.append(labels["complete" if complete else "partial"])
+    lines.append(labels["complete" if complete else caveat])
     return "\n".join(lines)
 
 
