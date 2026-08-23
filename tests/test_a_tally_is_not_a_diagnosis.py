@@ -62,5 +62,55 @@ class TheCheckersOwnMessageTests(unittest.TestCase):
         self.assertFalse(probeparse._says_what_went_wrong("614.8036 assertions/s"))
 
 
+MINITEST_ERROR = """Run options: --seed 58361
+
+# Running:
+
+..EEE..
+
+Finished in 0.011s, 636.0 runs/s, 363.4 assertions/s.
+
+  1) Error:
+TestRates#test_free_shipping_at_the_threshold:
+NameError: undefined local variable or method `surcharge' for Shipping:Module
+    /w/lib/shipping/rates.rb:19:in `shipping_cost'
+    /w/test/test_rates.rb:15:in `test_free_shipping_at_the_threshold'
+
+7 runs, 4 assertions, 0 failures, 3 errors, 0 skips
+"""
+
+
+class AnErrorIsNotAFailureAndBothMustLandTests(unittest.TestCase):
+    """minitest prints a FAILURE as `TestX#test_y [file:line]` and an ERROR with bare indented frames.
+    The Ruby frame pattern required the literal `from`, which only a plain traceback uses — so every
+    minitest Error parsed as nothing, and `summarize` fell back to the bottom-up keyword scan, which
+    took `7 runs, 4 assertions, 0 failures, 3 errors, 0 skips` because a tally contains "errors".
+
+    33 of 81 prompts on shipping-rates-rb x nemotron-elastic 1787475117 read "a specific line could
+    not be parsed from the output" and then quoted the count."""
+
+    def test_the_error_frame_locates_without_the_word_from(self):
+        [*found] = probeparse.parse_runner_locations(MINITEST_ERROR)
+        self.assertTrue(any(f.file.endswith("rates.rb") and f.line == 19 for f in found), found)
+
+    def test_the_message_is_the_exception_not_the_index_header(self):
+        summary = probeparse.parse_output(
+            "rake test", probeparse.family_of(["rake", "test"]), 1, MINITEST_ERROR, "").summary
+        self.assertIn("NameError: undefined local variable or method", summary)
+        self.assertNotIn("1) Error:", summary)
+
+    def test_an_index_header_is_recognised_as_carrying_nothing(self):
+        for line in ("  1) Error:", "2) Failure:", "10) Errors"):
+            self.assertFalse(probeparse._says_what_went_wrong(line), line)
+
+    def test_the_fallback_prefers_a_real_line_over_the_tally(self):
+        out = ("Run options: --seed 1\n\n..EEE..\n\n"
+               "NoMethodError: undefined method `zone_for' for Shipping:Module\n\n"
+               "7 runs, 4 assertions, 0 failures, 3 errors, 0 skips\n")
+        summary = probeparse.parse_output("rake test", "", 1, out, "").summary
+        self.assertIn("NoMethodError", summary)
+        self.assertNotIn("7 runs", summary)
+
+
 if __name__ == "__main__":
     unittest.main()

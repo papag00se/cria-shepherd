@@ -739,7 +739,12 @@ _RUNNER_LOCATIONS = (
     # stray file that was shadowing it. cria quoted the head 31 times and dropped the frame every
     # time, so its own ground-truth block said "a specific line could not be parsed from the output"
     # about a trace whose second line is a file and a line number.
-    re.compile(r"^\s*from\s+(\S+\.rb):(\d+):in\b", re.M),
+    # `from` IS OPTIONAL. A plain Ruby traceback prefixes its frames with `from`; minitest's ERROR
+    # backtrace (as opposed to its FAILURE, which has its own bracketed pattern above) prints the
+    # same frames bare and indented. Requiring the word missed every minitest Error — reproduced on
+    # shipping-rates-rb x nemotron-elastic 1787475117, where `NameError: undefined local variable or
+    # method 'surcharge'` at rates.rb:19 parsed as nothing and cria fell back to quoting the tally.
+    re.compile(r"^\s+(?:from\s+)?(\S+\.rb):(\d+):in\b", re.M),
 )
 
 
@@ -752,7 +757,11 @@ _RUNNER_LOCATIONS = (
 # and the line it flagged". Walked on both ruby cells of the 2026-08-22 batch.
 _TALLY_SHAPED = re.compile(r"(?i)\b\d+\s+(?:runs?|tests?|examples?|assertions?|failures?|errors?|"
                            r"skips?|skipped|pending|passed)\b|\b(?:runs?|assertions?)/s\b|"
-                           r"^\s*Finished in\b|^\s*Tests run:")
+                           r"^\s*Finished in\b|^\s*Tests run:"
+                           # …and a runner's INDEX HEADER — `  1) Error:` / `2) Failure:`. It carries
+                           # the word "Error" and nothing else; the sentence naming the defect is the
+                           # line under it. Without this the header wins on the word alone.
+                           r"|^\s*\d+\)\s*(?:Error|Failure)s?:?\s*$")
 # The words a diagnostic uses, as WORDS — `assertions/s` is not an assertion. Plus the shape a
 # runtime uses for the type itself: every ecosystem names them `<Something>Error` / `<Something>Exception`
 # / `<Something>Failure` as ONE token, so a bare word-boundary list misses `AssertionError` and
@@ -1002,7 +1011,14 @@ def summarize(findings: list[Finding], exit_code: Optional[int], combined: str) 
     # silence.
     lines = [l for l in reversed(combined.splitlines())
              if l.strip() != "" and any(kw in l.lower() for kw in ERRORISH_KEYWORDS)]
-    line = next((l for l in lines if not _is_only_a_pointer(l)), lines[0] if lines else "")
+    # …AND A TALLY IS NEVER THE FAILURE, on this path either. `7 runs, 4 assertions, 0 failures, 3
+    # errors, 0 skips` contains "errors", so the keyword scan took it and cria reported the count as
+    # the diagnosis — 33 of 81 prompts on shipping-rates-rb x nemotron-elastic 1787475117, under a
+    # steer reading "a specific line could not be parsed from the output". Same rule as the located
+    # path uses, same owner: a line that says HOW MANY is not a line that says WHAT (#20, #5b).
+    line = next((l for l in lines
+                 if not _is_only_a_pointer(l) and _says_what_went_wrong(l.strip())),
+                next((l for l in lines if not _is_only_a_pointer(l)), lines[0] if lines else ""))
     line = line.strip()
     if line == "":
         return f"exited {exit_code} with no parseable diagnostics"
