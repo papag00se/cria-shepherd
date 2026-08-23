@@ -51,10 +51,18 @@ _CHAIN = re.compile(r"(?:&&|\|\||;\s*(?=\w+\s))")
 _FLAG = re.compile(r"(?:^|\s)-{1,2}[A-Za-z][\w.-]*(?:=\S+)?")
 # A binary that is never an English word in ordinary prose.
 _HARD_BINARY = re.compile(
-    r"(?:^|[\s;&|(`$])(?:npm|npx|pnpm|yarn|pip3?|pytest|cargo|mvn|gradle|go|rustc|javac|"
+    # …OR REACHED THROUGH A PATH. `vendor/bin/phpunit` and `./node_modules/.bin/jest` are how these
+    # are actually invoked, and a `/` before the name was not an allowed boundary, so the commonest
+    # spelling of a PHP or JS runner scored as prose.
+    r"(?:^|[\s;&|(`$/])(?:npm|npx|pnpm|yarn|pip3?|pytest|cargo|mvn|gradle|go|rustc|javac|"
     r"tsc|node|deno|bundle|gem|composer|dotnet|git|docker|kubectl|systemctl|curl|wget|"
     r"chmod|chown|mkdir|rmdir|ln|scp|rsync|ssh|tar|unzip|gunzip|sudo|apt|apt-get|brew|"
-    r"yum|dnf|pacman|pkill|lsof|netstat|xargs)\b")
+    r"yum|dnf|pacman|pkill|lsof|netstat|xargs|"
+    # PHP AND ITS RUNNERS WERE MISSING while every other battery launcher was here. Measured:
+    # `php vendor/bin/phpunit` scored 0.00 and `looks_like_command` answered False, so the
+    # re-orientation script detector and the invented-code counter were both blind to a whole
+    # ecosystem. `rake` and `phpunit` are the same shape — never English in ordinary prose.
+    r"php|phpunit|rake|jest|vitest|mocha|tox|nox)\b")
 # `source`, `go`, `env`, `export`, `read`, `kill`, `test`, `ps`, `ss`, `df` and `du` were here and
 # came out: every one is ordinary English ("set it in the source", "go to the file", "kill the
 # process that owns it"), and each fired on a steer that was prose.
@@ -80,6 +88,7 @@ _LINE_START_BINARY = re.compile(
     r"rmdir|ln|scp|rsync|ssh|tar|unzip|sudo|apt|apt-get|brew|yum|dnf|pacman|ps|kill|pkill|lsof|"
     r"ss|netstat|df|du|env|export|source|xargs|cat|ls|cd|cp|mv|rm|touch|make|test|less|more|head|"
     r"tail|grep|sed|awk|echo|sort|uniq|wc|tee|diff|patch|which|time|find|python3?|ruby|java|sh|"
+    r"php|phpunit|rake|jest|vitest|mocha|tox|nox|"
     r"bash)\b"
     # ...AND WHAT FOLLOWS IT IS NOT AN ENGLISH FUNCTION WORD. "cat the file", "ls of the directory"
     # and "echo of that" all open with a binary and are all sentences. A command's next token is a

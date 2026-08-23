@@ -170,7 +170,12 @@ _TALLIES = (
     # cargo · one `test result:` line per test binary
     ("cargo", re.compile(r"(?im)^test result:\s*\w+\.\s*(\d+) passed;\s*(\d+) failed"), _TALLY_PASSED_FAILED, True),
     # jest / vitest · `Tests:       1 failed, 11 passed, 12 total`
-    ("jest", re.compile(r"(?im)^\s*Tests:\s+(?:(\d+) failed,\s+)?(?:\d+ skipped,\s+)?(\d+) passed"), _TALLY_FAILED_PASSED, False),
+    # jest / vitest · `Tests:       1 failed, 11 passed, 12 total`. THE COLON IS JEST'S ALONE —
+    # vitest prints `      Tests  5 passed (5)` — and the optional middle group covered `skipped`
+    # while jest also prints `todo`, so `1 failed, 1 skipped, 1 todo, 9 passed` matched nothing.
+    # Both are named in this row's own comment as the runners it covers.
+    ("jest", re.compile(r"(?im)^\s*Tests:?\s+(?:(\d+) failed,\s+)?"
+                        r"(?:\d+ (?:skipped|todo),\s+)*(\d+) passed"), _TALLY_FAILED_PASSED, False),
     # JUnit via maven-surefire / ant · `Tests run: 12, Failures: 1, Errors: 0, Skipped: 2`
     ("junit", re.compile(r"(?im)^\s*Tests run:\s*(\d+),\s*Failures:\s*(\d+)(?:,\s*Errors:\s*(\d+))?"), _TALLY_TOTAL_FAILED, True),
     # gradle · `12 tests completed, 1 failed`

@@ -1184,14 +1184,19 @@ TEST_CONVENTIONS: tuple = (
     TestConvention(("rs",), (), (), r"#\[(?:test|cfg\(test\))\]", (),
                    "marked with #[test], normally inside a #[cfg(test)] mod", "cargo test"),
     TestConvention(("java",), ("Test*.java", "*Test.java", "*Tests.java", "*TestCase.java"), (),
-                   r"^\s*@Test\b", (),
+                   # `@ParameterizedTest` and `@RepeatedTest` are JUnit 5's other test
+                   # annotations. A class using only those held tests and read as holding none.
+                   r"^\s*@(?:Test|ParameterizedTest|RepeatedTest)\b", (),
                    "annotated @Test, in a file named *Test.java or *Tests.java (surefire default)",
                    "mvn test"),
     TestConvention(("js", "jsx", "ts", "tsx", "mjs", "cjs"),
                    ("*.test.js", "*.spec.js", "*.test.jsx", "*.spec.jsx",
                     "*.test.ts", "*.spec.ts", "*.test.tsx", "*.spec.tsx",
                     "*.test.mjs", "*.spec.mjs", "*.test.cjs", "*.spec.cjs"),
-                   ("__tests__",), r"^\s*describe\s*\(",
+                   # `node:test` — the runner cria itself composes for a bare node project —
+                   # writes `test('name', ...)` with no `describe`, so a `tests/resolver.js` written
+                   # that way was neither discoverable NOR stranded and cria said nothing at all.
+                   ("__tests__",), r"^\s*(?:describe|it|test)\s*\(",
                    ("jest.config.js", "jest.config.ts", "jest.config.mjs", "jest.config.cjs",
                     "vitest.config.js", "vitest.config.ts"),
                    "named *.test.js / *.spec.ts, or placed under __tests__/", "jest/vitest"),
@@ -1214,7 +1219,10 @@ TEST_CONVENTIONS: tuple = (
                    # run.
                    ("ruby", "-Ilib", "-Itest", "-e",
                     'Dir["test/**/test_*.rb"].each { |f| require File.expand_path(f) }')),
-    TestConvention(("php",), ("*Test.php",), (), r"extends\s+TestCase\b",
+    # The FULLY-QUALIFIED base class is what a file with no `use` line writes, and PHPUnit 10
+    # marks a test with an attribute instead of a name. Both are ordinary; neither matched.
+    TestConvention(("php",), ("*Test.php",), (),
+                   r"extends\s+(?:\\?PHPUnit\\Framework\\)?TestCase\b|^\s*#\[Test\]",
                    ("phpunit.xml", "phpunit.xml.dist"),
                    "named *Test.php", "phpunit"),
 )

@@ -115,9 +115,13 @@ MAX_TOOL_FRACTION = 0.5
 # reached the model as a bare name and a type. Reproduced: `read_file` arrived as
 # `{"path": {"type": "string"}}`.
 #
-# The floor stops at the lowest cap that still carries a first sentence. If the schema still does not
-# fit, `_drop_whole_tools` below removes tools ENTIRELY and names them — fewer tools the model can
-# use beats every tool rendered unusable, and it is the shape `toolmenu.focus_tools` already takes.
+# The floor is the lowest cap in the ladder. `_cap_descriptions` slices to it — a character cut, not
+# a sentence boundary, so at 40 a first sentence usually does NOT survive; the comment used to claim
+# it did. If the schema still does not fit, `_compress_tools` drops tools ENTIRELY from the end of
+# the menu (which is ordered by usefulness where a curator ran) — fewer tools the model can use
+# beats every tool rendered unusable, and it is the shape `toolmenu.focus_tools` already takes. The
+# count of dropped tools is reported as `tools_dropped`, because "compressed" and "removed" are
+# different things to whoever reads the event.
 _DESC_CAPS = (400, 240, 140, 80, 40)
 _DESC_FLOOR = 40
 
@@ -130,6 +134,11 @@ class FloorReport:
     tool_tokens: int = 0
     tool_tokens_before: int = 0
     tools_compressed: int = 0
+    # A TOOL THE MODEL NO LONGER HAS IS NOT A SHORTER DESCRIPTION. `_compress_tools` removes whole
+    # tools when the schema still will not fit at the description floor, and folded that into
+    # `tools_compressed` — so the event said "N tools compressed" for a menu that had lost some, and
+    # nothing anywhere said which. Counted separately (#12).
+    tools_dropped: int = 0
     msg_tokens_before: int = 0
     msg_tokens_after: int = 0
     outputs_reduced: int = 0
@@ -143,6 +152,7 @@ class FloorReport:
         return {
             "window": self.window, "reserve": self.reserve, "tool_tokens": self.tool_tokens,
             "tool_tokens_before": self.tool_tokens_before, "tools_compressed": self.tools_compressed,
+            "tools_dropped": self.tools_dropped,
             "msg_before": self.msg_tokens_before, "msg_after": self.msg_tokens_after,
             "outputs_reduced": self.outputs_reduced, "turns_dropped": self.turns_dropped,
             "protected_dropped": self.protected_dropped,
@@ -231,7 +241,8 @@ def fit(messages: list[dict], tools, *, window: int, reserve: int,
 
     # --- Lever 1: bound the tool schema so it can't crowd out the conversation. ---
     if tools and rep.tool_tokens_before > int(target_est * MAX_TOOL_FRACTION):
-        tools, rep.tools_compressed = _compress_tools(tools, int(target_est * MAX_TOOL_FRACTION))
+        tools, rep.tools_compressed, rep.tools_dropped = _compress_tools(
+            tools, int(target_est * MAX_TOOL_FRACTION))
     tool_tokens = est_tokens(json.dumps(tools)) if tools else 0
     rep.tool_tokens = tool_tokens
 
@@ -275,7 +286,7 @@ def fit(messages: list[dict], tools, *, window: int, reserve: int,
     return work, tools, rep
 
 
-def _compress_tools(tools, budget_est: int) -> tuple[list, int]:
+def _compress_tools(tools, budget_est: int) -> tuple[list, int, int]:
     """Bound the tool SCHEMA to ``budget_est`` estimated tokens by truncating free-text
     descriptions (function + parameter), longest cap first until it fits. Every tool stays
     callable: name, parameter names/types/required/enum are untouched. Returns
@@ -287,7 +298,7 @@ def _compress_tools(tools, budget_est: int) -> tuple[list, int]:
         out = [_cap_descriptions(t, cap) for t in tools]
         if est_tokens(json.dumps(out)) <= budget_est:
             n = sum(1 for a, b in zip(tools, out) if a != b)
-            return out, n
+            return out, n, 0
     # STILL OVER AT THE FLOOR. Shrinking further meant deleting the description key, which leaves a
     # bare name and a type — a tool the model cannot know when to use. Drop whole tools from the END
     # of the menu instead (the menu is ordered by usefulness where a curator ran), keeping at least
@@ -296,7 +307,7 @@ def _compress_tools(tools, budget_est: int) -> tuple[list, int]:
     while len(out) > 1 and est_tokens(json.dumps(out)) > budget_est:
         out = out[:-1]
     n = sum(1 for a, b in zip(tools, out) if a != b) + (len(tools) - len(out))
-    return out, n
+    return out, n, len(tools) - len(out)
 
 
 def _cap_descriptions(obj, cap: int):
