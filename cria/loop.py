@@ -1255,7 +1255,13 @@ def _basename_matches(root: str, name: str) -> list[str] | None:
         return None
     view = wsview.current(root)
     walked = view.walk(root, skip_names=(".git",), skip_hidden=True)
-    if walked is None or not view.complete:
+    # …AND NOTHING FOLDED. A folded directory is one the survey listed only as a count, so its files
+    # are absent from the walk while `complete` stays True — the sibling in `groundtruth` checks both
+    # and says why. Measured against a real 1,169-file run workspace: `complete` True, 7 folded
+    # directories, 503 of 1,169 files known, and `_basename_matches('PT.yaml')` returned `[]` — the
+    # "genuinely absent" answer — for a file that is on disk. It feeds `_veto_refuted_by_disk`,
+    # which prints "NOT on disk" under a sentence calling it a verified fact.
+    if walked is None or not view.listed_everything(root):
         return None
     want = os.path.basename(name)
     return [os.path.relpath(os.path.join(d, n), root)
@@ -4748,7 +4754,11 @@ def _workspace_is_empty(cwd: str) -> bool:
         return False
     view = wsview.current(cwd)
     top = view.listdir(cwd)
-    if top is not None:
+    if top is not None and view.listed_everything(cwd):
+        # ...AND THE LISTING COULD NAME EVERYTHING. `listdir` returns what cria KNOWS, and a survey
+        # that folded the root to a count returns `[]` — which read as "empty" for a workspace with
+        # 420 files in it. The conservative direction this function already documents applies to a
+        # bounded listing exactly as it does to an unanswered one (#11b).
         return not top
     # NOT SURVEYED IS NOT EMPTY. The claim this decides is "the files that should already exist" —
     # calling a workspace nobody has looked at empty would replace one false claim with another, so

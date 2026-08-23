@@ -1664,7 +1664,12 @@ def install_landed(eco: str, workspace_root: str) -> bool | None:
     # A workspace nobody has surveyed yields NOTHING, so without this the answer to "is anything
     # installed" would be a confident False about a workspace cria cannot see — the same class of
     # false fact this function exists to stop.
-    if tree is None:
+    #
+    # …AND A BOUNDED ONE YIELDS A SUBSET, which is the same problem one step in. `walk` returns what
+    # cria KNOWS; a survey that folded a directory to a count walks past it, so `vendor/bundle` can
+    # sit inside a fold and this would answer a confident False. Measured on a real 1,169-file
+    # workspace: `complete` True, 7 folded directories, 503 of 1,169 files known.
+    if tree is None or not view.listed_everything(workspace_root):
         return None
     root = os.path.join(workspace_root, "")
     for dirpath, dirnames, filenames in tree:
@@ -1674,12 +1679,19 @@ def install_landed(eco: str, workspace_root: str) -> bool | None:
         if any(n in ev for n in filenames):
             return True                       # a lock file IS the record of an install
         for n in dirnames:
-            if n in ev and _holds_a_file(os.path.join(dirpath, n)):
+            if n not in ev:
+                continue
+            held = _holds_a_file(os.path.join(dirpath, n))
+            if held:
                 return True
+            if held is None:
+                # The one directory that would settle this is inside a fold. cria cannot say whether
+                # the install landed, and "no" is the answer that becomes a sentence (#23c).
+                return None
     return False
 
 
-def _holds_a_file(path: str) -> bool:
+def _holds_a_file(path: str) -> bool | None:
     """Does this directory contain any file at all, at any depth?
 
     AN EMPTY TREE IS NOT AN INSTALL. Reading the directory NAME was wrong, and only a replay against
@@ -1690,9 +1702,16 @@ def _holds_a_file(path: str) -> bool:
     gone back to saying the gem was installed somewhere ruby could not see it — the exact false fact
     this whole function exists to stop.
 
-    An install writes files. `mkdir -p` writes none."""
+    An install writes files. `mkdir -p` writes none.
+
+    THREE-VALUED, because a walk that could not cover the tree has not shown the directory empty:
+    None is "cria cannot say", and the caller must not read it as False."""
     from . import wsview
-    for _dirpath, _dirnames, filenames in (wsview.current().walk(path) or ()):
+    view = wsview.current()
+    tree = view.walk(path)
+    if tree is None or not view.listed_everything(path):
+        return None
+    for _dirpath, _dirnames, filenames in tree:
         if filenames:
             return True
     return False
@@ -1758,11 +1777,14 @@ def names_a_workspace_file(name: str, workspace_root: str) -> bool:
     head = next((x for x in re.split(r"[./\\:]", raw) if x), "")
     if not head:
         return False
-    tree = wsview.current(workspace_root).walk(workspace_root, skip_hidden=True)
-    if tree is None:
+    _v = wsview.current(workspace_root)
+    tree = _v.walk(workspace_root, skip_hidden=True)
+    if tree is None or not _v.listed_everything(workspace_root):
         # A FALSE YES IS THE SAFE DIRECTION, and this function says so in its own docstring: yes
         # means cria stays quiet, no means it tells the coder its own module is a missing
-        # dependency. A workspace nobody has listed cannot rule that out, so it does not.
+        # dependency. A workspace nobody has listed cannot rule that out — and neither can one whose
+        # listing stopped at a bound, which is the same blindness with a partial answer in front
+        # of it.
         return True
     for _dirpath, dirnames, filenames in tree:
         if head in dirnames:

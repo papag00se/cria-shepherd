@@ -183,7 +183,14 @@ def _list_dir(args: dict, cwd: str) -> ToolResult:
             return _nothing(f"[list_dir: {path} is not a directory]")
         return _nothing(prompts.fill(prompts.load_map("planner_steers")["not_yet_known"], path=path))
     lines = [f"{e.name}/" if e.is_dir() else f"{e.name} ({e.size} B)" for e in entries]
-    return ToolResult("\n".join(lines) if lines else f"{path}: empty directory", bool(lines))
+    if lines:
+        return ToolResult("\n".join(lines), True)
+    # AN EMPTY LIST FROM A BOUNDED SURVEY IS NOT AN EMPTY DIRECTORY — see the sibling in
+    # verifytools. `scandir` returns what cria KNOWS, and a root the survey folded to a count
+    # answers `[]`. The not-yet-known wording above is the honest one and simply never reached it.
+    if not view.listed_everything(full):
+        return _nothing(prompts.fill(prompts.load_map("planner_steers")["not_yet_known"], path=path))
+    return ToolResult(f"{path}: empty directory", False)
 
 
 def _grep_files(args: dict, cwd: str, scratch: str | None = None) -> ToolResult:

@@ -128,7 +128,15 @@ def _list_dir(path: str, root: str) -> str:
             return prompts.fill(_TD["missing"], path=path)
         return prompts.fill(_TD["unknown"], path=path)
     lines = [f"{e.name}/" if e.is_dir() else f"{e.name} ({e.size} B)" for e in entries]
-    return "\n".join(lines) if lines else f"{path}: empty directory"
+    if lines:
+        return "\n".join(lines)
+    # AN EMPTY LIST FROM A BOUNDED SURVEY IS NOT AN EMPTY DIRECTORY. `scandir` returns what cria
+    # KNOWS, and on a root the survey folded to a count that is `[]` — measured on a real 420-file
+    # workspace, where this answered "empty directory" to the judge. The branch above already had
+    # the honest wording for a question cria cannot answer; it simply never reached it (#23c).
+    if not view.listed_everything(real):
+        return prompts.fill(_TD["unknown"], path=path)
+    return f"{path}: empty directory"
 
 
 def _read_file(args: dict, root: str) -> str:

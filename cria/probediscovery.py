@@ -1244,11 +1244,20 @@ def _rel_to(root: Path, p: str) -> Path:
         return Path(q.name)
 
 
-def _carries_test_code(path: str, conv: TestConvention) -> bool:
-    """Does this source file contain test code, by the language's own decoration?"""
+def _carries_test_code(path: str, conv: TestConvention) -> bool | None:
+    """Does this source file contain test code, by the language's own decoration?
+
+    None when cria has not been told the file's bytes. `read_text` answers None for a file the
+    survey did not carry — which `planner._token_is_grounded` documents as the ORDINARY case ("the
+    survey carries a handful of bodies, so most `view.read` calls answer None") — and folding that
+    into False made "cannot read it" mean "contains no tests". For Rust, where `conv.globs` is empty
+    and the decoration IS the discovery rule, that turns straight into
+    "No cargo test tests were found — to be run they must be marked with #[test]" (#5b, #23c)."""
     if not conv.marker:
         return False
     body = read_text(Path(path))
+    if body is None:
+        return None
     return bool(body) and bool(re.search(conv.marker, body, re.M))
 
 
@@ -1269,7 +1278,7 @@ def _name_says_test(stem: str) -> bool:
     return bool(_TESTY_NAME.search(stem))
 
 
-def _audit_tests(root: Path, paths: list[str], conv: TestConvention) -> tuple[bool, list[str]]:
+def _audit_tests(root: Path, paths: list[str], conv: TestConvention) -> tuple[bool | None, list[str]]:
     """``(discoverable, stranded)`` — whether this language's runner will find ANY test, and the files
     that hold test code it will NOT find.
 
@@ -1290,7 +1299,11 @@ def _audit_tests(root: Path, paths: list[str], conv: TestConvention) -> tuple[bo
         if not conv.globs:
             # No filename rule at all (Rust): the decoration IS the discovery rule, so test code
             # anywhere in the tree is already discoverable and nothing can be stranded.
-            discoverable = discoverable or _carries_test_code(p, conv)
+            carries = _carries_test_code(p, conv)
+            if carries:
+                discoverable = True
+            elif carries is None and discoverable is False:
+                discoverable = None      # unread: cria cannot yet say there are none
             continue
         if named:
             discoverable = True
@@ -1300,7 +1313,7 @@ def _audit_tests(root: Path, paths: list[str], conv: TestConvention) -> tuple[bo
 
 
 def _has_discoverable_test(root: Path, paths: list[str], conv: TestConvention) -> bool:
-    return _audit_tests(root, paths, conv)[0]
+    return _audit_tests(root, paths, conv)[0] is True
 
 
 def stranded_test_sentences(root: Path) -> list[str]:
@@ -1357,7 +1370,9 @@ def undiscoverable_tests(root: Path) -> list[str]:
         if stranded:
             out.append(f"Test code in {prompts.named_list(stranded, 4, 'file(s)')} will not run: "
                        f"{conv.runner} only runs tests {conv.label}.")
-        elif not discoverable:
+        elif discoverable is False:
+            # `is False`, NOT falsy. None means cria could not read the bodies that would settle it,
+            # and "No cargo test tests were found" is a sentence about the world (#23c).
             out.append(f"No {conv.runner} tests were found — to be run they must be {conv.label}.")
     return out
 

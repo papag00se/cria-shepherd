@@ -43,6 +43,7 @@ import base64
 import contextvars
 import os
 import posixpath
+import time
 import re
 from dataclasses import dataclass
 
@@ -422,6 +423,22 @@ class View:
 
     # -- the coder's PATH ---------------------------------------------------
 
+    def listed_everything(self, path: str = "") -> bool:
+        """Could the last survey have named EVERY entry at ``path``?
+
+        The absence half of `listdir`/`scandir`/`walk`. Those three return the files cria KNOWS
+        about, which is the right answer for a caller checking things it can see — and the wrong one
+        for a caller reading a short list as a complete one. `isfile`/`isdir` already refuse to
+        answer under the same conditions; this is the same guard for a listing.
+
+        Measured on a real 420-file root, which the survey folds to a count: `listdir` answered `[]`,
+        so both model-facing `list_dir` tools said "empty directory", `_workspace_is_empty` answered
+        True, and the server's workspace listing — whose own comment says it "may not lie by
+        omission" — rendered nothing (#5b, #11b, #23c)."""
+        if not self._surveyed or not self._complete:
+            return False
+        return not self._folded_under(self.rel(path) if path else "")
+
     def program(self, name: str) -> str | None:
         """The executable the CODER's shell resolves ``name`` to, "" when it resolves nothing, and
         None when nobody has asked yet. A miss is remembered for the next survey."""
@@ -551,7 +568,12 @@ class View:
         self._stale.discard(rel)
         self._undeliverable.pop(rel, None)
         prev = self._files.get(rel)
-        self._files[rel] = (len(raw), prev[1] if prev else 0.0)
+        # A FILE CRIA JUST WATCHED BEING WRITTEN IS THE NEWEST FILE IN THE WORKSPACE. A brand-new
+        # path has no previous mtime, and epoch is not "unknown" here — it sorts LAST in every
+        # newest-first listing cria renders, so the file the coder wrote this turn went to the bottom
+        # of the judge's inventory and to the back of the seeded-file budget. cria knows when this
+        # happened: now.
+        self._files[rel] = (len(raw), prev[1] if prev else time.time())
         self._dirs.discard(rel)
         for d in _parents(rel):
             self._dirs.add(d)
@@ -583,7 +605,13 @@ class View:
         if rel is None:
             return
         self._stale.add(rel)
-        self._files.setdefault(rel, (0, 0.0))
+        # UNKNOWN SIZE IS NOT ZERO BYTES. The docstring above is exactly right about the BODY and was
+        # silently wrong about the SIZE: an edit to a path the last survey did not name — created by
+        # the coder's own shell, by `cargo new`, or living inside a folded directory — was recorded
+        # as `0`, and the workspace inventory then printed `app.py (0 B)` under a header calling
+        # itself on-disk ground truth. `read()` correctly answers None for the same file; the size
+        # has to as well (#23c).
+        self._files.setdefault(rel, (None, time.time()))
 
 
 def _parents(rel: str) -> list[str]:

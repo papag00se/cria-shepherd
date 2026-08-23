@@ -245,6 +245,11 @@ _INVENTORY_EXCLUDE = BUILD_ARTIFACT_DIRS
 INSTALL_PREFIXES = frozenset({"vendor/bundle"})
 
 
+def _entry_line(rel: str, size) -> str:
+    """One file's line in the listing. An unknown size says so rather than printing `0 B` (#23c)."""
+    return f"  {rel} ({size} B)" if size is not None else f"  {rel} (size not known)"
+
+
 def _fold_install_prefixes(entries):
     """Split a walked listing into (kept, folded) — folded being one line per install prefix.
 
@@ -293,7 +298,7 @@ def _spill_rel() -> str:
 _SPILL_REL = _spill_rel()
 
 
-def _walk_entries(view, root: str) -> list[tuple[float, str, int]] | None:
+def _walk_entries(view, root: str) -> list[tuple[float, str, int | None]] | None:
     """``(mtime, relpath, size)`` for every file in the workspace, or None when nobody has surveyed
     it yet. ONE walk for the two readers that answer the same question one level apart — what
     exists, and what is in it — so they can never see different trees (#11b)."""
@@ -305,7 +310,10 @@ def _walk_entries(view, root: str) -> list[tuple[float, str, int]] | None:
         for name in filenames:
             path = os.path.join(dirpath, name)
             rel = os.path.relpath(path, root)
-            out.append((view.mtime(path) or 0.0, rel, view.size(path) or 0))
+            # SIZE MAY BE None, AND IT TRAVELS THAT WAY. `or 0` printed "(0 B)" for a file whose
+            # size cria does not know — an edited path the last survey never named — under a header
+            # calling itself on-disk ground truth (#5b).
+            out.append((view.mtime(path) or 0.0, rel, view.size(path)))
     return out
 
 
@@ -435,7 +443,7 @@ def workspace_inventory(root: str | None, flavor: str = "judge") -> str:
         # The post-compaction files list for the CODER (operator's design: content lives on disk +
         # in read_file range; the compacted view carries the LIST, not the bytes).
         lines = [labels["coder_header"]]
-        lines += [f"  {rel} ({size} B)" for _, rel, size in entries] + fold_lines
+        lines += [_entry_line(rel, size) for _, rel, size in entries] + fold_lines
         # THE READ-FILE INSTRUCTION IS NOT THE COMPLETENESS CLAUSE. "the disk is the only current
         # version — do not reconstruct content from the summary" is true of a bounded or overtaken
         # listing too, and was being dropped along with the clause it happened to share a line with.
@@ -447,11 +455,11 @@ def workspace_inventory(root: str | None, flavor: str = "judge") -> str:
         # The rolling/harness compaction writer. Same complete listing, wording that says why it is
         # here: the transcript's file mentions may be stale, this is not. See the header's own note.
         lines = [labels["briefing_header"]]
-        lines += [f"  {rel} ({size} B)" for _, rel, size in entries] + fold_lines
+        lines += [_entry_line(rel, size) for _, rel, size in entries] + fold_lines
         lines.append(labels["complete" if complete else caveat])
         return "\n".join(lines)
     lines = [prompts.fill(labels["planner_header" if flavor == "planner" else "header"], root=root)]
-    lines += [f"  {rel} ({size} B)" for _, rel, size in entries] + fold_lines
+    lines += [_entry_line(rel, size) for _, rel, size in entries] + fold_lines
     lines.append(labels["complete" if complete else caveat])
     return "\n".join(lines)
 
