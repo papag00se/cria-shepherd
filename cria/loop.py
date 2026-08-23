@@ -5209,9 +5209,15 @@ def _write_path(fn: dict) -> str | None:
     # `>` as one and reported `FILE FOLD_AT — does NOT exist on disk` to the model, naming one of
     # cria's own constants as a file (feed-pipeline-java x nemotron-elastic 1787346816). The
     # sentinel holds the call that was actually made, exactly, so ask it (#12).
-    original = writeproxy.original_call(_command_text(fn.get("arguments") or "") or "")
+    lowered = _command_text(fn.get("arguments") or "") or ""
+    original = writeproxy.original_call(lowered)
     if original is not None:
         fn, name = original, original.get("name")
+    elif writeproxy.is_crias_own(lowered):
+        # cria's own composition that is nobody's tool call — the gate script. Scanning it for a
+        # redirect target reads cria's text as the coder's work; the survey program it carries ends
+        # up named as a file the coder wrote (#5b).
+        return None
     if _is_write_tool(name):
         return _path_of_args(fn.get("arguments") or "", patch_ok=name == "apply_patch")
     if is_shell_tool_name(name):

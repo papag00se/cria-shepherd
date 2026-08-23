@@ -64,12 +64,26 @@ def _visible_web_calls(messages: list) -> tuple[list, list]:
     (post-represent_inbound, so the calls are labeled web_fetch/web_search). Feeds the exact-repeat
     gate so it refuses a repeat only while the model can still read that result — not after
     compaction elided it."""
+    from . import denial
     from .toolargs import parse_args
+    # A CALL THAT WAS REFUSED NEVER RAN, so its result is not in the conversation and cannot be
+    # "still present" in it. This scanned assistant tool_calls only, and a refused call is still an
+    # assistant tool_call — so cria recorded a query it had itself blocked as one the coder had run,
+    # then refused the NEXT attempt with "You already ran web_search … Its results are already in
+    # this conversation above — use them". The query never ran; the results exist nowhere. Walked on
+    # shipping-rates-rb x nemotron-elastic 1787432916, three refusals deep. The sibling branch — the
+    # one that names a spill file — carries a comment describing this same failure costing 8 refusals
+    # in an earlier run; the fix was applied there and not here (#5b).
+    refused = {tc_id for m in messages if isinstance(m, dict) and m.get("role") == "tool"
+               and denial.is_denied(str(m.get("content") or ""))
+               for tc_id in (str(m.get("tool_call_id") or ""),) if tc_id}
     fetch_keys, queries = [], []
     for m in messages:
         if not isinstance(m, dict) or m.get("role") != "assistant":
             continue
         for tc in m.get("tool_calls") or []:
+            if str(tc.get("id") or "") in refused:
+                continue
             fn = tc.get("function") or {}
             name = fn.get("name")
             if name == "web_fetch":

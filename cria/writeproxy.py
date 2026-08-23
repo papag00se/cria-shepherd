@@ -1362,6 +1362,24 @@ def _command_of(args) -> str:
     return str(v or "")
 
 
+def is_crias_own(command: str) -> bool:
+    """Did cria compose this command, whatever it composed it FOR?
+
+    ONE QUESTION, ONE OWNER (#23). `original_call` answers a narrower one — "which coder tool did
+    this lowering come from" — and returns None for a cria composition that is nobody's tool call:
+    the gate script, which carries its own sentinel. Every caller that used `original_call` as a
+    stand-in for this question therefore fell through to scanning cria's own bytes on the gate leg.
+    That is how `FILE FOLD_AT — does NOT exist on disk` kept reaching the steer author: the workspace
+    survey program contains `if len(files) > FOLD_AT:`, and the redirect matcher read the `>` as a
+    write to a file named after one of cria's own constants. Fixed once for the writeproxy sentinel
+    and still live on the gate leg at ef8ee77 — hence one owner rather than one sentinel's reader."""
+    text = command or ""
+    if not text:
+        return False
+    from . import probegate
+    return _SENTINEL in text or probegate.GATE_SENTINEL in text
+
+
 def original_call(command: str) -> dict | None:
     """The tool call a lowered command was made FROM — ``{"name":…, "arguments":…}`` — or None when
     this is not one of cria's.
