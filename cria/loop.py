@@ -1225,9 +1225,26 @@ _VETO_FACT_MAX_BYTES = 200_000   # past this, state existence only — a count f
 # A FILE PATH or a VERSION in a directive — the two classes of invention the walks caught. Both are
 # checkable against the text the directive was written FROM, which is what makes them worth checking:
 # cria cannot judge whether a paraphrase is faithful, and can always tell whether a name was there.
-_GROUNDABLE_NAME = re.compile(r"(?:[\w.-]*/[\w./-]+)"          # anything with a path separator
-                              r"|(?:\b[\w-]+\.(?:py|rb|go|java|js|ts|rs|php|json|toml|ya?ml|md|txt|cfg|ini|xml|lock)\b)"
-                              r"|(?:\bv?\d+\.\d+(?:\.\d+)?\b)")
+# THE PATH ARM SWALLOWED A SENTENCE'S FULL STOP AND MATCHED ENGLISH. `lib/shipping/rates.rb.` read
+# as invented while the path itself was right there in the source; so did `target/.`. And a slash
+# between two words is prose, not a path: `I/O`, `trim/normalise`, `problems/risks`,
+# `blank/non-numeric`, `SKU/quantity/price.`. Thirteen of the thirty-two invented-name refusals on
+# the re-orientation seat — 41% — were solely one of those two artifacts, each one discarding a whole
+# model call and replacing its answer with the canned text.
+#
+# So a path segment may not END on a separator or a dot, and a bare word/word with no dot and no
+# further separator is not a path.
+_GROUNDABLE_NAME = re.compile(
+    r"(?:[\w.-]*/(?:[\w.-]+/)*[\w-]+(?:\.[A-Za-z][\w-]*)?)"   # a path, ending on a real segment
+    r"|(?:\b[\w-]+\.(?:py|rb|go|java|js|ts|rs|php|json|toml|ya?ml|md|txt|cfg|ini|xml|lock)\b)"
+    r"|(?:\bv?\d+\.\d+(?:\.\d+)?\b)")
+
+# A SLASH BETWEEN WORDS WITH NO DOT ANYWHERE IS PROSE, NOT A PATH. `I/O`, `trim/normalise`,
+# `problems/risks`, `blank/non-numeric`, `SKU/quantity/price` — cria cannot tell those from a real
+# dotless directory path like `test/fixtures`, and the measured cost of guessing is 41% of this
+# seat's refusals thrown away with a whole model call behind each. Abstaining is the safe direction:
+# the guard exists to catch an INVENTED FILE, and a file has an extension (#3 — silence over noise).
+_PROSE_PAIRING = re.compile(r"^[A-Za-z][\w-]*(?:/[A-Za-z][\w-]*)+$")
 
 
 def _invented_names(text: str, source: str) -> list[str]:
@@ -1239,6 +1256,8 @@ def _invented_names(text: str, source: str) -> list[str]:
     out: list[str] = []
     for m in _GROUNDABLE_NAME.finditer(text or ""):
         tok = m.group(0)
+        if _PROSE_PAIRING.fullmatch(tok):
+            continue
         if tok.lower() not in hay and tok not in out:
             out.append(tok)
     return out
@@ -4067,7 +4086,8 @@ class Loop:
                 _insert_after_system(framed["messages"], facts), sess, rlog)}  # duplicates collapse
         extra = []
         if rewritten:  # first turn after a harness compaction → re-orient (a REASONED continuation).
-            extra.append({"role": "user", "content": prompts.render("nudge", reason=self._reasoned_reanchor(body, rlog))})
+            extra.append({"role": "user", "content": prompts.render(
+                "nudge", reason=self._reasoned_reanchor(body, rlog, sess.workspace_root or ""))})
             self._store.clear_rewrite(session_key)  # acted on it (framing rebuilt each turn)
         if steer:  # inject the steer into the coder framing this turn
             extra.append({"role": "user", "content": prompts.render("nudge", reason=steer)})
@@ -4197,7 +4217,7 @@ class Loop:
         rlog.emit("loop.done_critic", plan_off=True, satisfied=satisfied)
         return "" if satisfied else (reason or prompts.load("done_no_named_gap"))
 
-    def _reasoned_reanchor(self, body: dict, rlog) -> str:
+    def _reasoned_reanchor(self, body: dict, rlog, workspace_root: str = "") -> str:
         """A REASONED continuation after a harness compaction (parity with the loop's re-plan from the
         summary): the reasoner reads the compaction SUMMARY and authors a grounded 'what's done / what
         remains / inspect before creating' directive. Falls back to the canned reanchor when there is no
@@ -4228,8 +4248,21 @@ class Loop:
                         and CONTINUATION_MARKER in _content_text(m.get("content"))), "")
         if self._ctx.reasoner_role is None or not summary.strip():
             return canned
+        # …AND THE DISK. The sibling seat — the self-compaction briefing writer — was given this
+        # exact fix, and its comment says why: "This inventory was already gathered on the line
+        # below, but only to CORRECT the briefing after the fact. The writer never saw it and
+        # invented files that never existed. Same fact, given before the question."
+        #
+        # This seat never got it, and it is the one asked point-blank to "state what has already been
+        # built". Measured over 136 answers: 22 (16%) name a file path absent from their input, and
+        # replaying both guards below over the 126 non-empty ones discards 36 — 29% of a full model
+        # call each, on the seat withheld the fact it invents. The inventory is also what makes the
+        # answer USEFUL: the prompt's own instruction is "tell it to INSPECT the existing files on
+        # disk", which cria can simply show.
+        inventory = workspace_inventory(workspace_root or "", flavor="briefing")
+        grounding = summary if not inventory else summary + "\n\n" + inventory
         text = summarize(self._ctx.reasoner_chat, self._ctx.reasoner_role,
-                         prompts.load("reanchor_reasoned"), summary, rlog, phase="reasoner")
+                         prompts.load("reanchor_reasoned"), grounding, rlog, phase="reasoner")
         if not text:
             return canned
         # A SCRIPT IS NOT A RE-ORIENTATION. This seat is asked for one short directive — "here is
@@ -4267,7 +4300,9 @@ class Loop:
         #     six of its last twenty calls finding the real path, at minute 27 of 30.
         # A path or a version the summary does not contain is an invention, and the canned reanchor
         # is always available (#5b, #1).
-        invented = _invented_names(text, summary)
+        # Grounded against BOTH sources — a file named by the disk listing is grounded, and
+        # refusing it would be the guard punishing the seat for using the fact cria just gave it.
+        invented = _invented_names(text, grounding)
         if invented:
             rlog.emit("loop.reanchor_ungrounded", level="warn",
                       names=prompts.named_list(invented, 4, "name(s)"), head=_clip(text, 120))
@@ -7854,7 +7889,16 @@ _IDENTLIKE = re.compile(r"[A-Za-z_][A-Za-z0-9_]{2,}[?!]?")
 # `setSkipInitialNewline`, `Cargo.toml` all qualify; the words above do not. Shape, not a stoplist
 # (#20) — a list of English words to exclude would be a rule needing an exception list, which is the
 # tell that it should have been a question.
+# A VERSION IS NOT A NAME. `v1.0.0`, `2.11.0`, `v1.4.0` all carry dots, so the dotted-name test
+# accepted them — and a directive that says "replace v1.0.0 with v1.4.0" then shares a "symbol" with
+# a `go.mod` line that names the same version, and is refused as prescribing. The shape is exact:
+# every segment after the first is digits.
+_VERSIONISH = re.compile(r"^v?\d+(?:\.\d+)+$")
+
+
 def _looks_like_a_symbol(tok: str) -> bool:
+    if _VERSIONISH.fullmatch(tok):
+        return False
     return ("." in tok or ":" in tok or "_" in tok
             or bool(re.search(r"[a-z][A-Z]", tok)))
 
@@ -7868,8 +7912,21 @@ def _shared_symbols(directive: str, findings: str) -> list[str]:
     rather than an incidental filename that happens to appear in both."""
     def toks(t: str) -> set:
         out = set()
-        for run in re.findall(r"[A-Za-z_][A-Za-z0-9_.:?!]*", t or ""):
-            out.add(run.strip(".:"))
+        # A PATH IS NOT A SYMBOL, AND NEITHER ARE ITS SEGMENTS. `/` was outside the character class,
+        # so `github.com/shopspring/decimal` arrived as three separate runs and `github.com` — which
+        # has a dot, so `_looks_like_a_symbol` accepts it — became a shared "symbol". Three of the
+        # eleven post-fix judgements were on a bare domain, and the directives they killed were
+        # "Run go mod tidy…", "Replace the line github.com/shopspring/decimal v1.0.0 with require…"
+        # and "Add the OpenCSV dependency to pom.xml now". The same shape swallowed cria's own run
+        # directory: `…/suite-shipping-rates-rb_ternary-bonsai_codex_poff_1787480733-abc/src/main.rs`
+        # gave up `bonsai_codex_poff_1787480733` as a symbol, four more times.
+        #
+        # Reading the slash is the whole fix: a run that contains one is a path or a module
+        # coordinate, and neither it nor its parts is a name a checker is rejecting.
+        for run in re.findall(r"[A-Za-z_][A-Za-z0-9_.:?!/\\-]*", t or ""):
+            if "/" in run or "\\" in run:
+                continue
+            out.add(run.strip(".:-"))
             out.update(p for p in re.split(r"[.:]+", run) if _IDENTLIKE.fullmatch(p))
         return {x for x in out if len(x) > 3 and _looks_like_a_symbol(x)}
     shared = toks(directive) & toks(findings) - _positional_only(findings)
@@ -7881,13 +7938,20 @@ def _shared_symbols(directive: str, findings: str) -> list[str]:
 # `CsvValidationException` — a directive naming one is quoting the failure, which is the case this
 # guard exists to distinguish and kept getting backwards. Two of the guard's eighteen historical
 # fires are exactly this, and both killed a correct directive.
-_NAMES_A_FAILURE = re.compile(r"\w*(?:Error|Exception|Failure|Warning)$")
+# `\w` DOES NOT MATCH A NAMESPACE SEPARATOR, so `LoadError` was filtered and `Gem::LoadError` was
+# not — five captured calls asked the judge whether a directive was prescribing Ruby's exception
+# class. The test is on the LAST segment, which is where the class name lives in every language that
+# has namespaces.
+_NAMES_A_FAILURE = re.compile(r"(?:\w+(?:::|\.))*\w*(?:Error|Exception|Failure|Warning)$")
 
 
 # WHERE the checker is pointing, as opposed to WHAT it is rejecting.
 _POSITIONAL = (
     re.compile(r"^\s*-->\s*(\S+)", re.M),                          # rustc/cargo's span line
-    re.compile(r"^\s*([\w./\\-]+\.\w{1,5}):\d+", re.M),            # file:line: prefixes
+    # NOT ANCHORED AT COLUMN ZERO. `proberun` renders every finding as `$ <command> — <path>:<line>:
+    # <message>`, so the path never starts the line and NOTHING was ever classified positional —
+    # measured across all eleven post-fix judgements. The anchor is a word boundary instead.
+    re.compile(r"(?:^|[\s(\[`'\"])([\w./\\-]+\.\w{1,5}):\d+", re.M),    # file:line: anywhere
     re.compile(r"(?i)(?:can'?t find|cannot find|could not find|no such file|not found)"
                r"[^\n]*?[`'\"]?([\w./\\-]+\.\w{1,5})[`'\"]?", re.M),   # the MISSING thing
 )

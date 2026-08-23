@@ -102,8 +102,13 @@ class TheOrienterReadsTheMarkedTurnTests(unittest.TestCase):
 class ThePromptForbidsInventingTests(unittest.TestCase):
     BODY = prompts.load("reanchor_reasoned")
 
-    def test_it_may_say_only_what_the_summary_says(self):
-        self.assertIn("Say ONLY what the summary itself states", self.BODY)
+    def test_it_may_say_only_what_it_was_given(self):
+        """The seat is now given the summary AND the workspace listing — the same fix its sibling,
+        the self-compaction briefing writer, already had. The rule names both sources, because a
+        file the disk listing names IS grounded and refusing it would punish the seat for using the
+        fact cria just handed it."""
+        self.assertIn("Say ONLY what the summary and the file listing beneath it state", self.BODY)
+        self.assertIn("neither the summary nor the file listing already names", self.BODY)
 
     def test_a_missing_answer_is_disclosed_not_guessed(self):
         self.assertIn("Never fill either gap with a guess", self.BODY)
@@ -141,6 +146,71 @@ class TheCannedTextIsTheAbstentionTests(unittest.TestCase):
         canned = prompts.load("reanchor")
         self.assertNotIn("already built", canned)
         self.assertNotIn("remains", canned)
+
+
+
+class TheOrienterIsGivenTheDiskTests(unittest.TestCase):
+    """The one seat asked point-blank "state what has already been built" was shown no workspace.
+
+    Its sibling — the self-compaction briefing writer — was given this exact fix, and its comment
+    says why: *"This inventory was already gathered on the line below, but only to CORRECT the
+    briefing after the fact. The writer never saw it and invented files that never existed. Same
+    fact, given before the question."* This seat never got it, while `sess.workspace_root` was in
+    scope at the call site.
+
+    Measured over 136 real answers: 22 (16%) name a file path absent from their input, and replaying
+    both of the seat's guards over the 126 non-empty ones discards 36 — **29%** of a full model call
+    each, thrown away on the seat withheld the fact it invents.
+
+    The listing is also what makes the answer useful: the prompt's own instruction is "tell it to
+    INSPECT the existing files on disk", which cria can simply show.
+    """
+
+    def _seat(self, tree, answer):
+        import json
+        import types
+        from cria import wsview
+        from cria.config import Role
+
+        class _Chat:
+            def __init__(self):
+                self.seen = []
+
+            def __call__(self, body, rlog):
+                self.seen.append(body)
+                return json.dumps({"choices": [{"message": {"role": "assistant",
+                                                            "content": answer}}]}).encode()
+
+        from tests.test_loop import _Rlog
+        chat = _Chat()
+        lp = loop.Loop.__new__(loop.Loop)
+        lp._ctx = types.SimpleNamespace(reasoner_chat=chat,
+                                        reasoner_role=Role(name="reasoner", backend="local"))
+        view = wsview.View("/ws", "s")
+        view._ingest_tree(tree, complete=True)
+        self.addCleanup(wsview.unbind, wsview.bind(view))
+        body = {"messages": [{"role": "user",
+                              "content": loop.CONTINUATION_MARKER + " earlier work: the gem was added"}]}
+        return lp._reasoned_reanchor(body, _Rlog(), "/ws"), json.dumps(chat.seen)
+
+    TREE = "D\t\nD\tlib\nD\tlib/shipping\nF\t5\t300\tlib/shipping/rates.rb\n"
+
+    def test_the_listing_reaches_the_seat(self):
+        _out, sent = self._seat(self.TREE, "anything")
+        self.assertIn("rates.rb", sent)
+
+    def test_a_file_the_listing_names_is_not_refused_as_invented(self):
+        """The guard is grounded against BOTH sources — refusing a name cria just handed over would
+        be the guard punishing the seat for using it."""
+        out, _ = self._seat(self.TREE,
+                            "You have built lib/shipping/rates.rb. Remaining: the EU zone lookup. "
+                            "Inspect the files on disk before creating anything.")
+        self.assertTrue(out.startswith("You have built"), out[:80])
+
+    def test_a_file_neither_source_names_is_still_refused(self):
+        out, _ = self._seat(self.TREE,
+                            "You have built lib/shipping.rb. Remaining: nothing. Inspect first.")
+        self.assertEqual(out, prompts.load("reanchor"))
 
 
 if __name__ == "__main__":

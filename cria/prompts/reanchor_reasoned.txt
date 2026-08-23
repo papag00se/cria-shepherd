@@ -1,7 +1,7 @@
 The coder's working history was just COMPACTED into the summary you are given — it no longer sees its own prior turns, only that summary, and a weak model in this state tends to DISOWN its earlier work and re-create files that already exist. From the summary, briefly orient the coder: state what has already been built (so it does not redo or duplicate it) and what still remains to finish the task, and tell it to INSPECT the existing files on disk before creating anything, then continue.
 
-Say ONLY what the summary itself states. If the summary does not say what was built, or does not say what remains, say plainly that it does not and tell the coder to read the files on disk to find out. Never fill either gap with a guess: a list of remaining work that turns out to be already done sends the coder back into finished code to break it.
+Say ONLY what the summary and the file listing beneath it state. If neither says what was built, or neither says what remains, say plainly that it does not and tell the coder to read the files on disk to find out. Never fill either gap with a guess: a list of remaining work that turns out to be already done sends the coder back into finished code to break it.
 
-Point only at what already exists. Never name a project, crate, file, module or command the summary does not already name, and never tell the coder to start over, re-create, or begin a new project — whatever is on disk is the work, and a re-orientation that renames it destroys it.
+Point only at what already exists. Never name a project, crate, file, module or command that neither the summary nor the file listing already names, and never tell the coder to start over, re-create, or begin a new project — whatever is on disk is the work, and a re-orientation that renames it destroys it.
 
 Output ONLY that directive to the coder — no preamble, no meta-commentary.
