@@ -17,12 +17,21 @@ Two curation moves, both on the OUTBOUND request to the model:
 from __future__ import annotations
 
 from . import prompts
-from .shelltool import find_shell_tool, is_shell_tool_name
+from .shelltool import find_shell_tool, is_file_tool_name, is_shell_tool_name
 from .writeproxy import _EDIT_NAMES, _LIST_NAMES, _READ_NAMES, _WRITE_NAMES
 
 # The file-op tool FAMILIES cria recognizes (write/edit/read/list, incl. aliases like create_file /
 # str_replace), sourced from writeproxy so the focus menu never DROPS a differently-named essential a
 # harness advertises natively — the keep-set must match what needs_translation treats as first-class.
+# …AND BY SHAPE, like the shell beside it. This was a six-name literal set under a comment calling
+# them FAMILIES. Simulated through the real gate (`needs_translation` → `advertise` → `focus_tools`):
+# Gemini CLI's menu lost `replace`, `list_directory`, `glob` and `search_file_content`; Cline's lost
+# `search_files` and `list_code_definition_names`. Every one is a file operation the coder needs, and
+# `shelltool.is_write_tool_name` — a real shape rule that already matches `replace`, `write_to_file`
+# and `replace_in_file` — was sitting unused one import away (#20).
+#
+# The literal set is kept as well, because it is what `needs_translation` treats as first-class and
+# the keep-set must not be narrower than that.
 _FILE_OP_NAMES = _WRITE_NAMES | _EDIT_NAMES | _READ_NAMES | _LIST_NAMES
 
 # The curated coder menu — the coding essentials a small local model actually needs
@@ -40,6 +49,11 @@ FOCUS_TOOL_NAMES = frozenset({
     "web_search", "local_web_search", "web_fetch",
     "request_permissions",
 })
+# Tools cria withholds from the model even though they ARE file operations. The shape rule above
+# matches `apply_patch` (a "patch" verb on the workspace) and it must still be dropped — see the
+# note below: it is the LOWERING TARGET, not something the coder is asked to write.
+_NEVER_ADVERTISED = frozenset({"apply_patch"})
+
 # apply_patch is deliberately NOT model-facing (ported from codex-local): a 9B can't produce
 # matching diff context, so it's replaced by content-based write_file/edit_file. It stays only as
 # the LOWERING TARGET (massage.lower_edit_file rewrites edit_file → apply_patch), executed by the
@@ -88,7 +102,11 @@ def focus_tools(body: dict, rlog=None) -> None:
     kept, dropped = [], []
     for t in tools:
         nm = _tool_name(t)
-        if nm in FOCUS_TOOL_NAMES or is_shell_tool_name(nm) or nm in _FILE_OP_NAMES:
+        if nm in _NEVER_ADVERTISED:
+            dropped.append(nm)
+            continue
+        if (nm in FOCUS_TOOL_NAMES or is_shell_tool_name(nm)
+                or nm in _FILE_OP_NAMES or is_file_tool_name(nm)):
             kept.append(t)
         else:
             dropped.append(nm)

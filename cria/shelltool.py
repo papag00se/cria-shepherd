@@ -146,6 +146,41 @@ def is_write_tool_name(name: str | None) -> bool:
     return False
 
 
+# A tool that READS the workspace — the other half of the file-op family. Same part-prefix rule.
+_READ_TOOL_PARTS = ("read", "cat", "view", "open", "show", "list", "ls", "dir", "glob", "find",
+                    "search", "grep")
+
+
+def is_read_tool_name(name: str | None) -> bool:
+    """The tool's NAME says it inspects the workspace without changing it."""
+    for part in re.split(r"[_\-. ]+", (name or "").lower()):
+        if any(part.startswith(p) for p in _READ_TOOL_PARTS):
+            return True
+    return False
+
+
+# …AND NOT ABOUT SOMETHING THAT IS NOT THE WORKSPACE. `create`, `list` and `read` are also how a
+# harness names its goal store, its MCP registry and its memory — `create_goal`, `list_mcp_resources`,
+# `read_mcp_resource`, `save_memory` — which is the exact firehose the focus menu exists to drop.
+# The shape rule says "this verb touches something"; this says which somethings are not files.
+_NOT_WORKSPACE_PARTS = ("goal", "mcp", "resource", "resources", "memory", "plugin", "connector",
+                        "todo", "browser", "notification")
+
+
+def is_file_tool_name(name: str | None) -> bool:
+    """A file operation of either kind — the family the focus menu must never drop.
+
+    `toolmenu` kept a six-name LITERAL set for this (`write_file`, `create_file`, `edit_file`,
+    `str_replace`, `read_file`, `list_dir`) under a comment calling them "FAMILIES", while the shell
+    beside them was matched by shape. Simulated through the real gate: Gemini CLI's menu lost
+    `replace`, `list_directory`, `glob` and `search_file_content`, and Cline's lost `search_files`
+    and `list_code_definition_names` — every one a file operation the coder needs."""
+    parts = re.split(r"[_\-. ]+", (name or "").lower())
+    if any(p in _NOT_WORKSPACE_PARTS for p in parts):
+        return False
+    return is_write_tool_name(name) or is_read_tool_name(name)
+
+
 def writes_something(name: str | None, command: str | None = None) -> bool:
     """Could this tool call have CHANGED the workspace?
 
