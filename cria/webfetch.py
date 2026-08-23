@@ -543,6 +543,37 @@ def spill_reading_hint(path: str, limit: int) -> str:
     return ""
 
 
+# A URL PATH THAT NAMES A SOURCE FILE. A forge's `/blob/` view serves the HTML page ABOUT a file
+# under a url that ends in the file's own name, so the spill lands as `…_decimal.go.txt` holding
+# stylesheets. Walked on cart-billing-go x nemotron-elastic 1787434778: 46,389 bytes of GitHub chrome
+# — 39 `<link rel="stylesheet">` tags, zero occurrences of `func NewFromString` — saved under that
+# name, described as the document, and grepped five times for an API that could never be in it.
+_CODE_URL = re.compile(r"\.(?:go|py|rb|rs|java|js|ts|c|h|cpp|cs|php|kt|swift|scala|ex|erl|lua|pl|sh)"
+                       r"(?:[?#].*)?$", re.I)
+
+
+def html_page_about_a_file(url: str, content: str) -> bool:
+    """The fetch returned a WEB PAGE while the url named a source file — so what was saved is the
+    page, not the file. Both halves are facts cria holds: the url it asked for, and the bytes that
+    came back."""
+    return bool(url) and bool(_CODE_URL.search(url)) and _doc_format(content or "") == "HTML"
+
+
+def page_not_file_for_spill_path(path: str) -> bool:
+    """Is the spill at ``path`` a WEB PAGE saved under a source file's name?
+
+    The read-refusal for that file says "grep it for what you need". Without this the reader greps a
+    page's stylesheets for the code and reads the absence as the library's — five empty greps on
+    cart-billing-go x nemotron-elastic 1787434778, on the question the whole run turned on."""
+    base = os.path.basename(os.path.normpath((path or "").strip()))
+    if not base:
+        return False
+    for url, cached in _DOC_CACHE.items():
+        if os.path.basename(_spill_name(url)) == base:
+            return html_page_about_a_file(url, _greppable(cached[2], cached[3], cached[1]))
+    return False
+
+
 def format_for_spill_path(path: str) -> str:
     """The sniffed format of the spilled doc at ``path`` — "" when it is not cached (rule 5b: cria
     states the format it has actually seen, never a guess from the file extension)."""
@@ -585,10 +616,15 @@ def oversized_spill(url: str) -> Optional[tuple[int, str, str, str]]:
     # appends its own honest note — so this message claiming "saved IN FULL" put a flat
     # contradiction in the same tool result. The composer holds both numbers; it picks the sentence.
     whole = len(content.encode("utf-8", "replace")) <= SPILL_CONTENT_MAX
+    fmt_clause = f" It is {fmt}." if fmt else ""
+    if html_page_about_a_file(url, content):
+        # SAY WHAT WAS SAVED. The next message tells the reader to grep this file; without this it
+        # greps a page's markup for the file's own code and reads the absence as the library's.
+        fmt_clause += " " + _guard_msg("spill_is_the_page_not_the_file")
     msg = _guard_msg("spill", status_label=status_label(status), url=url,
                      chars=f"{len(content):,}", target=target,
                      extent=_guard_msg("spill_extent_full" if whole else "spill_extent_cut"),
-                     format=(f" It is {fmt}." if fmt else ""),
+                     format=fmt_clause,
                      outline=_spill_outline(parsed, target))
     return status, target, content, msg
 

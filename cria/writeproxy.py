@@ -774,8 +774,11 @@ def _spill_read_command(path: str) -> str:
     # refused, and never opened the file again — the file that defines the method it then guessed
     # wrong. See webfetch.spill_reading_hint; "" when cria holds no such doc.
     extent = webfetch.spill_reading_hint(path, READ_INLINE_MAX)
+    fmt_clause = f" It is {fmt}." if fmt else ""
+    if webfetch.page_not_file_for_spill_path(path):
+        fmt_clause += " " + prompts.load_map("webfetch_guards")["spill_is_the_page_not_the_file"]
     steer = prompts.render("spill_read_steer", path=path,
-                           format=(f" It is {fmt}." if fmt else ""),
+                           format=fmt_clause,
                            extent=(f" {extent}\n" if extent else ""),
                            outline=webfetch.outline_for_spill_path(path))
     # The refuse branch goes through the ONE refusal owner, so it keeps this guard's non-zero exit.

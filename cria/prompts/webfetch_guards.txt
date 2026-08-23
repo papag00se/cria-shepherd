@@ -41,3 +41,7 @@ spill_extent_cut = as much of it as one step can carry (the file itself says whe
 # …and when cria no longer holds the document it cannot say which of the two happened. The file's
 # own footer can, so the sentence points there instead of picking one (#5b).
 spill_extent_unknown = there (the file's own last line says how much of the document reached it)
+# The url named a source file and the server answered with a web page, so the spill holds the
+# PAGE's markup and not the file's text. Saying so is what stops the reader grepping stylesheets
+# for the code and reading the absence as the library's (#5b).
+spill_is_the_page_not_the_file = This is the web PAGE at that address, not the file's own text — its markup, navigation and styles, with the file's content buried in it or not present at all. If you need the file itself, fetch the address that serves it raw.
