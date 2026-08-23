@@ -592,16 +592,10 @@ def _payload_chars(tc: dict) -> int:
                 and isinstance(v, str)), default=0)
 
 
-def _write_path(tc: dict) -> str:
-    """The path a write-ish tool call targets, or ""."""
-    fn = tc.get("function") or {}
-    if fn.get("name") not in ("write_file", "create_file", "edit_file", "apply_patch"):
-        return ""
-    try:
-        args = json.loads(fn.get("arguments") or "{}")
-    except ValueError:
-        return ""
-    return str((args or {}).get("path") or (args or {}).get("file_path") or "") if isinstance(args, dict) else ""
+# `_write_path` LIVED HERE AND WAS THE FOURTH COPY of "which tool call writes, and to what". It had
+# no caller — `_drop_superseded_writes` moved to `toolargs.write_target`, whose own comment records
+# there having been "three implementations with three different tool-name lists (#23)" — and this
+# one was left behind with a four-name list of its own.
 
 
 # Below this a payload is not worth a pointer — the stub would be as long as the thing it replaces.

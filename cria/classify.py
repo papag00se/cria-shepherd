@@ -146,7 +146,9 @@ class Classifier:
             rlog.phase = "classifier" + ("-noreason" if reasoning_off else "")
             raw = self._provider.chat(body, rlog)
         except Exception as e:  # upstream unreachable, timeout, etc.
-            rlog.emit("route.classify_error", level="warn", error=str(e))
+            # ONE record per failure. `095e4c8` replaced `return self._fallback(...)` with
+            # `return None` and left a copy of the preceding emit standing in its place, so every
+            # upstream failure was logged twice.
             rlog.emit("route.classify_error", level="warn", error=str(e))
             return None
 

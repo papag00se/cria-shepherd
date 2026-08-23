@@ -108,8 +108,12 @@ class TheScoreIsAccountableTests(unittest.TestCase):
         base = shellshape.confidence("mvn compile")
         self.assertGreaterEqual(shellshape.confidence("mvn compile 2>&1 | tail -5"), base)
 
-    def test_the_two_bars_are_ordered_and_the_gap_is_real(self):
-        self.assertLess(shellshape.RESTATE_BAR, shellshape.REFUSE_BAR)
+    def test_the_bar_separates_prose_from_a_real_command(self):
+        """The only assertion here that could ever fail for a real reason.
+
+        It also compared `RESTATE_BAR < REFUSE_BAR` — and `REFUSE_BAR` had no reader anywhere in the
+        package, so that could only fail if someone reordered two constants, one of which nothing
+        read. It is gone; this is the property that is actually load-bearing."""
         top_prose = max(shellshape.confidence(t) for t in PROSE)
         low_cmd = min(shellshape.confidence(t) for t in COMMANDS)
         self.assertLess(top_prose, shellshape.RESTATE_BAR, "prose reaches the bar")

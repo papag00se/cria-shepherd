@@ -227,10 +227,6 @@ class GuardState:
     # had dropped, the model re-read the spec a 7th time instead)
     steer_source: str = ""  # human label of which guard produced the pending steer (for the ⟦cria⟧ note)
     coder_turns: int = 0  # acting coder turns since the last gate — drives the PERIODIC check-in
-    # The set of sources the reading check last judged. It re-judges the moment new reading lands
-    # instead of waiting out a ten-turn clock, and never judges the same evidence twice — a cadence
-    # was gating a fact, and a step satisfied at turn 4 stayed pinned until turn 10.
-    research_evidence: tuple = ()
     # THE DRIVE THE PERIODIC STEP CHECK LAST RAN ON. It used to stamp a `coder_turns` TICK, which the
     # gate zeroes every 15 turns: 12 was the only multiple of 12 that counter could hold, so the memo
     # matched forever and the check fired once per SESSION. Same stamp-what-ran shape as
@@ -340,11 +336,6 @@ class PlanSession(GuardState):
     # twice in a prompt whose newest check block showed failing tests, while the honest `never_ran`
     # wording the prompt file already carries fired zero times.
     last_gate_ran: bool = False
-    # The last exec-intent question and its answer, keyed on what the question was BUILT from. The
-    # question is "how does this project run itself"; it moves only when the task or the workspace
-    # moves, and re-asking an unchanged one is the repeat #9's bound forbids.
-    exec_intent_key: str = ""
-    exec_intent_reply: str = ""
     # The highest PASSING test count any green gate has reported this session. Regression-only (#2):
     # it exists so cria can state, as a fact from the runner's own tally (#12), that the suite used
     # to pass more tests than it does now. See `passing_test_regression`.
@@ -947,7 +938,6 @@ def _judge_completion(chat_fn, role, system: str, user: str, rlog, *, phase: str
     while True:
         body: dict = {"stream": False, "temperature": 0, "max_tokens": max_tokens,
                       "messages": list(messages)}
-        sent_chars = sum(len(str(m.get("content") or "")) for m in messages)
         # THE CHARACTER BUDGET IS GONE (operator, 2026-08-19: "get rid of the judge budget, let it go
         # free"). It bounded how much a judge could pull in, and when it tripped cria withdrew the
         # tools mid-look and then DISCARDED whatever the judge said next. Walked on
@@ -6420,22 +6410,18 @@ def guard_canned_redirect(gs: GuardState, outcome) -> str:
 # reply ON_TRACK (the detector was a false positive) → we inject nothing (silence over a bad steer).
 # One-line description of WHAT tripped, per condition — the only condition-specific text. Grounded in gs
 # so the reasoner knows the concrete signal; the rest of the bundle (session/disk/truth) is uniform.
+# THE SENTENCES LIVE IN prompts/steer_triggers.txt (#22), and none of them names the supervisor
+# (#17) — the refusal line did, and was the last live occurrence of that token in model-facing text.
+# The incident each one encodes is recorded beside it in that file.
 _STEER_TRIGGER = {
-    # THE SENTENCE THE STEER AUTHOR READS AS ESTABLISHED FACT. It hardcoded the threshold and the
-    # word "repeating" for BOTH routes into this detector, so a fire on cria's own refusal count
-    # was reported as an action repeated three times. Walked: the coder had issued that command
-    # ONCE, the author wrote back "you've already confirmed they're unavailable (three failed
-    # attempts)", and on that premise ordered a hardcode the task forbids. This seat is the one
-    # place a false count does the most damage, because whatever it says arrives as evidence.
-    "refusal": lambda gs, step: (
-        f"cria REFUSED {gs.repeat_count} of its recent calls, so none of them ran — the most "
-        f"recent was: {gs.repeat_action}"),
-    "wheel_spin": lambda gs, step: (
-        f"It has rewritten the file `{gs.spin_path}` at least {WHEEL_SPIN_WRITES} times with varying "
-        f"content and it still is not converging."),
-    "thrash": lambda gs, step: (
-        f"The repo's own checks have failed with the SAME error for {gs.gate_stall} rounds while it kept "
-        f"editing — it is not converging."),
+    "refusal": lambda gs, step: prompts.fill(
+        prompts.load_map("steer_triggers")["refusal"],
+        count=gs.repeat_count, action=gs.repeat_action),
+    "wheel_spin": lambda gs, step: prompts.fill(
+        prompts.load_map("steer_triggers")["wheel_spin"],
+        path=gs.spin_path, writes=WHEEL_SPIN_WRITES),
+    "thrash": lambda gs, step: prompts.fill(
+        prompts.load_map("steer_triggers")["thrash"], rounds=gs.gate_stall),
 }
 
 

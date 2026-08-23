@@ -2404,7 +2404,7 @@ class RefusalRedirectTests(unittest.TestCase):
         # ...and the reasoner SAW the evidence: the trigger, the refused call, the session, ground truth
         self.assertIn("WHAT TRIPPED THE DETECTOR", captured["user"])
         self.assertIn("THE CODING SESSION SO FAR", captured["user"])
-        self.assertIn("REFUSED 3", captured["user"])
+        self.assertIn("3 of its recent calls were refused", captured["user"])
         self.assertIn("gem install eu_countries", captured["user"])   # a call that WAS refused
         self.assertIn("SyntaxError", captured["user"])
 

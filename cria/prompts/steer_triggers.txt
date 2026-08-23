@@ -1,0 +1,20 @@
+# WHAT TRIPPED THE DETECTOR — one line per condition, read by the steer author as established fact.
+# The only condition-specific text in that bundle; everything else it sees (session, disk, checks)
+# is uniform. Parsed by prompts.load_map.
+#
+# THE MODEL NEVER SEES THE WORD "cria" (#17). These were inline f-strings in loop.py and the refusal
+# line named the supervisor outright — the last live occurrence of the token in model-facing text,
+# 47 times in the post-fix capture window and still firing on 2026-08-23. The author writes the
+# steer the coder then reads, so the token had a path onward. It is also #22: every model-facing
+# string belongs in a file, and this one carried a measured incident in its own comment while
+# sitting in code.
+#
+# The COUNT is load-bearing and was wrong once: it hardcoded the threshold and the word "repeating"
+# for both routes into this detector, so a fire on the refusal count was reported as an action
+# repeated three times. The coder had issued that command ONCE; the author wrote back "you've
+# already confirmed they're unavailable (three failed attempts)" and on that premise ordered a
+# hardcode the task forbids. This seat is the one place a false count does the most damage, because
+# whatever it says arrives as evidence.
+refusal = {{COUNT}} of its recent calls were refused, so none of them ran — the most recent was: {{ACTION}}
+wheel_spin = It has rewritten the file `{{PATH}}` at least {{WRITES}} times with varying content and it still is not converging.
+thrash = The repo's own checks have failed with the SAME error for {{ROUNDS}} rounds while it kept editing — it is not converging.

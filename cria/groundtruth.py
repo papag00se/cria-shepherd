@@ -269,8 +269,12 @@ def _fold_install_prefixes(entries):
 
 
 # How much of the workspace a JUDGE is handed outright, before it starts asking for files.
-# A third of `verifytools.VERIFY_MAX_CHARS`, so the inspection loop keeps most of its budget for
-# whatever this does not cover.
+#
+# ITS STATED DERIVATION NO LONGER EXISTED. This read "a third of `verifytools.VERIFY_MAX_CHARS`, so
+# the inspection loop keeps most of its budget" — and that budget was removed when the loop stopped
+# bounding itself by characters (`tests/test_the_judge_looks_until_it_is_done.py` pins that
+# `_judge_completion` does not reference it). So the number was justified by a constant nothing
+# read. It is justified by the measurement below instead, which is what actually chose it.
 #
 # WHY IT EXISTS. The judge's inspection is a tool-use loop: it names one file, cria reads it, the
 # whole conversation is re-sent, repeat. Measured across every captured session: 1,511 rounds, 87%

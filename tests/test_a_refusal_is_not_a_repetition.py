@@ -54,8 +54,22 @@ def _gs(count, action="exec_command {\"cmd\":\"which bundler\"}"):
 class TheSentenceDescribesTheTriggerThatFiredTests(unittest.TestCase):
     def test_a_refusal_is_reported_as_a_refusal(self):
         said = loop._STEER_TRIGGER["refusal"](_gs(3), 1)
-        self.assertIn("REFUSED 3", said)
+        self.assertIn("3 of its recent calls were refused", said)
         self.assertNotIn("repeating the SAME action", said)
+
+    def test_the_supervisor_is_never_named_to_the_model(self):
+        """#17. This sentence said "cria REFUSED …" and was the last live occurrence of the token in
+        model-facing text — 47 in the post-fix capture window, still firing on 2026-08-23. The steer
+        author reads it as established fact and writes the steer the coder then reads."""
+        for cond, gs in (("refusal", _gs(3)), ("wheel_spin", loop.GuardState()),
+                         ("thrash", loop.GuardState())):
+            with self.subTest(condition=cond):
+                self.assertNotIn("cria", loop._STEER_TRIGGER[cond](gs, 1).lower())
+
+    def test_the_sentences_live_in_a_prompt_file(self):
+        """#22 — and all three were inline f-strings carrying measured incidents in their comments."""
+        keys = prompts.load_map("steer_triggers")
+        self.assertEqual(set(keys), {"refusal", "wheel_spin", "thrash"})
 
     def test_the_number_is_the_one_measured_not_the_threshold(self):
         """The walked failure in one line: five refusals must not be reported as three."""

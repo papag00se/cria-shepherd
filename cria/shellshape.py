@@ -106,9 +106,10 @@ _SIGNALS = (
 # are a command: `echo done > out.txt` is both, and is not a sentence anyone writes.
 _NEEDS_CORROBORATION = {"word-binary", "redirect"}
 
-# The bar a caller should use when the consequence is REFUSING to deliver something. High, because
-# a false positive here costs the coder a real message.
-REFUSE_BAR = 0.75
+# THE REFUSE BAR IS GONE. It was declared for "a caller whose consequence is refusing to deliver
+# something" and no caller ever had that consequence — zero readers in the package. Its only test
+# asserted `RESTATE_BAR < REFUSE_BAR`, which can fail only if someone reorders two constants, one of
+# which nothing reads. A bar with no scale behind it is a number waiting to be picked wrongly (#1).
 # The bar when the consequence is spending one reasoner call to restate. Low, because a false
 # positive costs a call and the restater can only say less, never something different.
 RESTATE_BAR = 0.45
