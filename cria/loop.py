@@ -1885,7 +1885,8 @@ def _fix_text(obj: dict) -> str:
 
 def judge_satisfaction(task: str, evidence: str, reasoner_chat, reasoner_role, rlog, coder_tools: str = "",
                        workspace_root: str = "", routes: str = "",
-                       gate_findings: str = "") -> tuple[bool, str]:
+                       gate_findings: str = "", messages: list | None = None,
+                       sess=None) -> tuple[bool, str]:
     """Reasoner critic for the WHOLE user task (task-level, unlike the step-level _verify): is the user's
     original request satisfied by the REAL work (the coder's tool output — ground truth, not its claim)?
     Returns (satisfied, reason). Reasoning-ON first, then reasoning-OFF on a parse miss (the reasoner
@@ -1935,7 +1936,8 @@ def judge_satisfaction(task: str, evidence: str, reasoner_chat, reasoner_role, r
         # withheld is the invented reason, so the caller falls back to the plain instruction rather
         # than sending the coder to fix work that is already right (#3, #5b).
         return satisfied, _verdict_nudge(obj, satisfied, routes, evidence=user,
-                                         workspace_root=workspace_root, rlog=rlog), _fix_text(obj)
+                                         workspace_root=workspace_root, rlog=rlog,
+                                         messages=messages, sess=sess), _fix_text(obj)
     # No parseable careful verdict (the reasoner over-thought, or leaked a spurious tool call instead of
     # the JSON). A reasoning-OFF retry can RECOVER a verdict, but a reasoning-off judge is a rubber
     # stamp — competent to REJECT, not to APPROVE. So use it only to confirm NOT-satisfied; a
@@ -1951,7 +1953,8 @@ def judge_satisfaction(task: str, evidence: str, reasoner_chat, reasoner_role, r
         rlog.emit("loop.satisfaction_failclosed", level="info")
         return False, "unverified — the careful check could not confirm completion; keep working", ""
     return False, _verdict_nudge(retry, False, routes, evidence=user,
-                                 workspace_root=workspace_root, rlog=rlog), \
+                                 workspace_root=workspace_root, rlog=rlog,
+                                 messages=messages, sess=sess), \
         str(retry.get("proposed_fix") or "").strip()
 
 
@@ -2648,7 +2651,8 @@ class Loop:
                                                rlog, coder_tools=_coder_tools_summary(body.get("tools"), params=False),
                                                workspace_root=sess.workspace_root or "",
                                                routes=known_routes(body.get("messages", []), sess),
-                                               gate_findings=getattr(sess, "last_gate_flag", "") or "")
+                                               gate_findings=getattr(sess, "last_gate_flag", "") or "",
+                                               messages=body.get("messages", []), sess=sess)
         rlog.emit("loop.done_critic", plan_off=False, satisfied=satisfied, check=sess.completion_checks)
         if satisfied:
             return None
@@ -3389,7 +3393,8 @@ class Loop:
             satisfied, _, _fix = judge_satisfaction(sess.plan.task, evidence, self._ctx.reasoner_chat,
                                               self._ctx.reasoner_role, rlog, coder_tools=judge_tools,
                                               workspace_root=sess.workspace_root or "",
-                                              routes=known_routes(body.get("messages", []), sess))
+                                              routes=known_routes(body.get("messages", []), sess),
+                                              messages=body.get("messages", []), sess=sess)
             if not satisfied:  # not actually done → keep the remaining steps, let them verify normally
                 rlog.emit("loop.replan_empty_declined", step=idx)
                 return
@@ -3881,7 +3886,8 @@ class Loop:
             coder_tools=_coder_tools_summary(body.get("tools"), params=False),
             workspace_root=sess.workspace_root or "",
             routes=known_routes(body.get("messages", []), sess),
-            gate_findings=getattr(sess, "last_gate_flag", "") or "")
+            gate_findings=getattr(sess, "last_gate_flag", "") or "",
+            messages=body.get("messages", []), sess=sess)
         rlog.emit("loop.satisfaction_check", plan_off=plan_off, drive=sess.drive_count,
                   satisfied=satisfied)
         if not satisfied:
@@ -4213,7 +4219,8 @@ class Loop:
             coder_tools=_coder_tools_summary(body.get("tools"), params=False),
             workspace_root=sess.workspace_root or "",
             routes=known_routes(body.get("messages", []), sess),
-            gate_findings=getattr(sess, "last_gate_flag", "") or "")
+            gate_findings=getattr(sess, "last_gate_flag", "") or "",
+            messages=body.get("messages", []), sess=sess)
         rlog.emit("loop.done_critic", plan_off=True, satisfied=satisfied)
         return "" if satisfied else (reason or prompts.load("done_no_named_gap"))
 
@@ -8207,8 +8214,13 @@ def _grounded_steer_or_none(directive: str | None, evidence: str, rlog, ask=None
                 return None       # refused whole, like every other guard in this function
             directive = restated
         else:
+            # `invented=0` MUST MEAN "CHECKED, AND NONE" — never "could not check". With no
+            # conversation, `_observed_code(None)` is "" and `_invented_code_spans` short-circuits on
+            # "nothing to check against → nothing is invented": the same 0, from a check that did not
+            # run. Of 25 such log lines, 10 were preceded by a `satisfaction` call, the seat that
+            # passed no messages, and nothing in the record told them apart (#12).
             rlog.emit("loop.steer_dictated_code", level="info", delivered=True,
-                      invented=0, head=_clip(directive, 120))
+                      invented=0, checked=messages is not None, head=_clip(directive, 120))
     if sess is not None and _blames_a_service_that_answered(
             directive, sess, messages or [], rlog, (lambda sysm: ask(sysm, "")) if ask else None):
         return None
@@ -9402,7 +9414,8 @@ def _label_spill_entries(disk: str) -> str:
 
 
 def _verdict_nudge(obj: dict, done: bool, routes: str = "", *,
-                   evidence: str = "", workspace_root: str | None = None, rlog=None) -> str:
+                   evidence: str = "", workspace_root: str | None = None, rlog=None,
+                   messages: list | None = None, sess=None) -> str:
     """The coder-facing nudge from a critic verdict dict: the ``reason``, plus the ``proposed_fix`` (a
     concrete next action the critic named) when the step is NOT done — so the coder is handed a move,
     not just a diagnosis. ``proposed_fix`` is meaningless on a pass (nothing to fix), so it is dropped
@@ -9419,8 +9432,10 @@ def _verdict_nudge(obj: dict, done: bool, routes: str = "", *,
     it legitimately READ is still allowed through; the check is against what cria composed, exactly.
 
     ``ask`` is deliberately not threaded: the reasoner-backed arms of that function stay off here, so
-    this costs no model call. Only the deterministic guards run. The REASON always survives — the step
-    really was not done; only the invented move is dropped."""
+    this costs no model call. Only the deterministic guards run — and they need the session and the
+    conversation, which were not being passed either, so five of the twelve were inert while the log
+    recorded a verdict from them. The REASON always survives — the step really was not done; only the
+    invented move is dropped."""
     reason = str(obj.get("reason", "")).strip()
     fix = str(obj.get("proposed_fix", "")).strip()
     if done or not fix:
@@ -9431,7 +9446,18 @@ def _verdict_nudge(obj: dict, done: bool, routes: str = "", *,
     # that literal string across 322 calls on one step.
     if routes and urlgrounding.ungrounded_routes(fix, routes):
         return reason
-    if rlog is not None and _grounded_steer_or_none(fix, evidence, rlog,
+    # THE SESSION AND THE CONVERSATION, because five of the twelve guards cannot run without them.
+    # With `messages=None`, `_observed_code(None)` is "" and `_invented_code_spans` short-circuits on
+    # "nothing to check against → nothing is invented" — so the dictated-code arm DELIVERED the fix
+    # verbatim and logged `invented=0`, a number that reads as a verdict and was never a check.
+    # Replayed against the live code with `messages=None`: `Change line 289 to: req += f"\r\n\r\n..."`
+    # ships, `delivered=True invented=0`. Of 25 such log lines, 10 were immediately preceded by a
+    # `satisfaction` upstream call — this seat, where the check could not have run.
+    #
+    # `sess` brings `_field_the_ledger_denies`, `_blames_a_service_that_answered`,
+    # `_prescribes_what_the_checks_reject` and `_steer_auth_refuted` with it. `ask` stays out, as the
+    # docstring says: the reasoner-backed arms remain off here, so this still costs no model call.
+    if rlog is not None and _grounded_steer_or_none(fix, evidence, rlog, sess=sess, messages=messages,
                                                     workspace_root=workspace_root) is None:
         return reason
     return f"{reason}\nProposed fix: {fix}" if reason else f"Proposed fix: {fix}"
