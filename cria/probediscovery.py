@@ -103,6 +103,9 @@ RELEVANT_EXACT = (
     "Dockerfile",
 )
 
+# More than one command in a script body: a chain, a background job, a pipeline. See build_js.
+_COMPOUND_SCRIPT = re.compile(r"&&|\|\||[;&|]")
+
 # JS script names worth considering as probes, checked in this order.
 GOOD_SCRIPTS = ("typecheck", "type-check", "tsc", "lint", "check", "test",
                 "test:unit", "unit", "verify", "ci", "format:check", "fmt:check")
@@ -689,12 +692,34 @@ def build_js(_root: Path, p: ProjectDir, out: list[ProbeCandidate]) -> None:
         if body is None:
             continue
         vet = probeclassify.classify_command(body)
-        if vet.kind is probeclassify.ProbeKind.UNKNOWN:
-            continue  # Only recognized probe scripts become candidates.
+        unknown = vet.kind is probeclassify.ProbeKind.UNKNOWN
+        # A COMPOUND SCRIPT IS WHERE THE DANGER LIVES, and on an unrecognised body cria has no vet
+        # to lean on — `vet.may_need_services` and friends come from the classifier that just said
+        # UNKNOWN, so they are absent rather than false. `node server.js & node t.js` is exactly the
+        # shape `has_unsafe_segment` does not catch. So the name-fallback below applies only to a
+        # SINGLE simple command, which is what `scripts.test` normally is.
+        if unknown and (probeclassify.has_unsafe_segment(body) or _COMPOUND_SCRIPT.search(body)):
+            continue     # unrecognised AND compound (or unsafe) — no basis to run it
+        # THE NAME IS THE PROJECT'S OWN DECLARATION. This used to `continue` on UNKNOWN, and node is
+        # the only ecosystem whose declared test command cria throws away: `probeclassify` knows
+        # `node --test` and nothing else node-shaped, so `node cli.test.js`,
+        # `node test/lookup.test.js` and `node test/run-tests.js` all classify UNKNOWN. Measured
+        # across the 9 archived handles-cli-node workspaces: 7 declare `scripts.test`, 0 of those 7
+        # reach the gate, and 8 of 9 get ZERO test probes — the only such workspaces in the archive.
+        # Compare `build_php`, which composes `vendor/bin/phpunit` on a bare `composer.json` with no
+        # evidence at all, and `build_elixir`, which composes `mix test` on `mix.exs` alone.
+        #
+        # `GOOD_SCRIPTS` is an allowlist of NAMES, and npm's own convention is that `test` runs the
+        # tests. `map_kind`'s UNKNOWN arm already falls back to `name_kind` and its docstring calls
+        # itself "unreachable from build_js" — the mechanism existed and could not fire. The safety
+        # vet above still applies, and the lower confidence says the classifier did not endorse it.
         kind = map_kind(vet.kind, name)
-        c = cand(kind, [pm, "run", name], d, pm_conf, value_for(kind),
-                 cost_for(kind),
-                 f"package.json script `{name}` → `{short(body)}`")
+        conf = min(pm_conf, 55) if unknown else pm_conf
+        reason = (f"package.json script `{name}` → `{short(body)}`"
+                  + (" — runner not recognised; the script NAME is the project's declaration"
+                     if unknown else ""))
+        c = cand(kind, [pm, "run", name], d, conf, value_for(kind),
+                 cost_for(kind), reason)
         c.mutates_code = vet.mutates_code
         c.may_hang = vet.may_hang
         c.may_need_services = vet.may_need_services
