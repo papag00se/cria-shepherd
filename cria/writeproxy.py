@@ -1941,6 +1941,12 @@ def _note_dependency_search(messages: list[dict], own_cmds: dict[str, str],
         return
     eco = _workspace_ecosystem(workspace_root)
     root = probeparse.dependency_source_root(eco, workspace_root or "") if eco else ""
+    if root is None:
+        # cria has not been told where this ecosystem keeps its source yet — the candidates are
+        # queued for the next survey. Saying "no installed source root can be found on this machine"
+        # from an unasked question is the false fact the `absent` wording is built on, and its remedy
+        # sends the coder away from source that may be one directory over (#23c, #3).
+        return
     words = prompts.load_map("dependency_source_root")
     # …AND NOT A PARENT OF WHERE IT JUST LOOKED. The `found` wording says "you looked in the wrong
     # root; the real one is <root>" — false when the token is already inside that root, and its

@@ -1427,7 +1427,15 @@ def fetch_nav(url: str, *, find: Optional[str] = None, cursor: Optional[str] = N
             c_status, _ct, c_reduced, _parsed, _trunc = cached
             if not (isinstance(c_status, int) and 200 <= c_status < 300):
                 return _guard_msg("fetch_repeat_failed", url=url, status=status_label(c_status))
-            if len(c_reduced) > OVERSIZE_CHARS:
+            if len(c_reduced) > OVERSIZE_CHARS and already_spilled(session, url, workspace_root):
+                # THE FILE HAS TO BE THERE. This wording says "and that file is still there", and
+                # this return site — unlike its twin thirty lines up — asserted it from the DOC
+                # CACHE alone. `already_spilled`'s own docstring records what that costs: "the spill
+                # exec was refused, and for twenty-six turns cria told the model 'that file is still
+                # there' in one paragraph while its own read guard answered 'is not there — nothing
+                # was read' in the next." The check is the same one, at the site that did not have
+                # it (#23). Without the file, the honest answer is the plain repeat refusal below,
+                # which claims nothing about a spill.
                 return _guard_msg("fetch_repeat_spilled", url=url, target=_spill_name(url),
                                   extent=spill_extent_of(url), outline=outline_for_url(url))
         return _guard_msg("fetch_repeat", url=url)

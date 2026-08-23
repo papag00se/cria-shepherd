@@ -185,6 +185,14 @@ class GuardState:
     probe_reissues: int = 0  # probes re-issued after a history rewrite erased their result (capped)
     gate_plan: object = None  # probegate.GatePlan for the in-flight gate (maps result → reports)
     recent_writes: list = None  # rolling window: written path (or None) per forwarded tool call
+    # …AND THE CALL IDS BEHIND THEM, so a write cria REFUSED can be taken back out. The window is
+    # filled from the model's OUTBOUND completion, before anything runs, and a syntax/dirguard
+    # refusal is decided later in the lowered command — so a refused write counted as a rewrite.
+    # Walked at 20260820T131719: six `write_file cart.go` calls, THREE of them refused ("write_file
+    # REFUSED (not written): this would replace a currently-valid cart.go"), `loop.wheel_spinning`
+    # fired with `writes: 5`, and the steer told the coder "you have rewritten cart.go repeatedly".
+    # `denial.is_denied` already answers this from the prior turn's results (#12, #5b).
+    recent_write_ids: list = None
     spin_path: str = ""  # the file whose windowed rewrite count tripped wheel-spinning
     spin_probe_due: bool = False  # wheel-spinning tripped → run the gate before the next coder turn
     spin_probe: bool = False  # the in-flight gate is a spin probe (insert results, don't judge)
@@ -3320,7 +3328,7 @@ class Loop:
         sess.thrash_replanned = False  # a new step-position may earn its own one-shot thrash re-derive
         sess.verify_replanned = False  # ...and its own one-shot verify-fail re-derive
         sess.leg0_nudged = False
-        sess.recent_writes, sess.spin_path = [], ""
+        sess.recent_writes, sess.recent_write_ids, sess.spin_path = [], [], ""
         sess.spin_probe_due = False
         sess.redirect_due = False
         # Convergence tracking is per step — EXCEPT while the repo is still RED. This string is the
@@ -5515,7 +5523,7 @@ def guard_track_refusals(gs: GuardState, coder: dict, rlog, *, step=None,
                 # flush the write window too: one intervention consumes the evidence — the writes in
                 # flight must not ALSO count toward a wheel-spin right after the coder complies (that
                 # steer would point away from the very file it just fixed).
-                gs.recent_writes = []
+                gs.recent_writes, gs.recent_write_ids = [], []
                 # BOUND IT, and quote a call that was actually refused. Walked on
                 # ada-handles_fabliq_codex_pon_1785732102 call 0079: the retired route pasted the
                 # WHOLE 3.2 KB of handle_resolver.py back under the words "Choose a DIFFERENT next
@@ -5550,6 +5558,21 @@ def _repeat_observation(gs: GuardState) -> dict:
 REPEAT_ACTION_CHARS = 200
 
 
+def _refused_call_ids(messages: list) -> set:
+    """Tool call ids whose result is cria's own refusal — the call never ran.
+
+    `denial.is_denied` is the authoritative record, applied at the site that decided to refuse, so
+    this reads the mark rather than matching any wording (#12)."""
+    out = set()
+    for m in messages or []:
+        if not isinstance(m, dict) or m.get("role") != "tool":
+            continue
+        cid = m.get("tool_call_id") or m.get("call_id")
+        if cid and denial.is_denied(str(m.get("content") or "")):
+            out.add(cid)
+    return out
+
+
 def guard_track_write_streak(gs: GuardState, coder: dict, rlog, *, step=None, messages=None) -> None:
     """Wheel-spinning detection, WINDOWED (operator, 2026-07-12): the same file written
     WHEEL_SPIN_WRITES times — ANY content — within the last WRITE_WINDOW forwarded tool
@@ -5561,6 +5584,23 @@ def guard_track_write_streak(gs: GuardState, coder: dict, rlog, *, step=None, me
     call, not more rewriting. Operates on GuardState — shared by both paths."""
     if gs.recent_writes is None:
         gs.recent_writes = []
+    if gs.recent_write_ids is None:
+        gs.recent_write_ids = []
+    # TAKE BACK THE ONES THAT NEVER RAN. This window is filled from the OUTBOUND completion, so at
+    # the time a write is recorded cria does not yet know whether it will refuse it. It knows one
+    # turn later, from the marked result — so the correction happens here, before this turn accrues.
+    refused = _refused_call_ids(messages or [])
+    if refused:
+        kept_w, kept_i = [], []
+        for path, cid in zip(gs.recent_writes, gs.recent_write_ids):
+            if cid is not None and cid in refused:
+                continue
+            kept_w.append(path)
+            kept_i.append(cid)
+        if len(kept_w) != len(gs.recent_writes):
+            rlog.emit("loop.write_streak_corrected", level="info",
+                      dropped=len(gs.recent_writes) - len(kept_w))
+        gs.recent_writes, gs.recent_write_ids = kept_w, kept_i
     for ch in coder.get("choices", []):
         for tc in (ch.get("message") or {}).get("tool_calls") or []:
             if (gs.redirect_due or gs.redirect_probe
@@ -5572,7 +5612,9 @@ def guard_track_write_streak(gs: GuardState, coder: dict, rlog, *, step=None, me
                 # it away from the file it just fixed)
             path = _write_path(tc.get("function") or {})
             gs.recent_writes.append(path)  # None for non-writes — the window is CALLS
+            gs.recent_write_ids.append(tc.get("id"))
             del gs.recent_writes[:-WRITE_WINDOW]
+            del gs.recent_write_ids[:-WRITE_WINDOW]
             if (path is not None
                     and gs.recent_writes.count(path) >= WHEEL_SPIN_WRITES
                     and not gs.spin_probe_due and not gs.spin_probe
@@ -5587,7 +5629,7 @@ def guard_track_write_streak(gs: GuardState, coder: dict, rlog, *, step=None, me
                 # flush the write window (one intervention at a time — a pending redirect's
                 # gate would otherwise be hijacked and its reasoner-authored nudge
                 # overwritten by the spin renudge)
-                gs.recent_writes = []
+                gs.recent_writes, gs.recent_write_ids = [], []
                 rlog.emit("loop.wheel_spinning", steer="wheel-spin", step=step, path=path,
                           writes=WHEEL_SPIN_WRITES)
 

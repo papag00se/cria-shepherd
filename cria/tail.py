@@ -23,6 +23,8 @@ import time
 from collections import deque
 from pathlib import Path
 
+from . import events
+
 LEVELS = {"debug": 10, "info": 20, "warn": 30, "error": 40}
 
 _C = {  # ANSI, applied only to a tty
@@ -35,7 +37,6 @@ _C = {  # ANSI, applied only to a tty
     "warn": "\033[33m",
     "error": "\033[31m",
 }
-_HEADER_FIELDS = {"ts", "iso", "level", "kind", "session", "turn", "msg", "decision", "choice", "reason"}
 
 
 def latest_log(log_dir: str) -> str | None:
@@ -61,7 +62,7 @@ def render(rec: dict, *, color: bool = False) -> str:
     c = _C if color else {k: "" for k in _C}
     clock = str(rec.get("iso", ""))[11:23] or "--:--:--.---"
     turn = str(rec.get("turn", "-"))
-    tail = _fields(rec)
+    tail = _fields(rec, decision=rec.get("kind") == "decision")
 
     if rec.get("kind") == "decision":
         head = f"{clock} {c['dim']}{turn:>8}{c['reset']}  {c['cyan']}{c['bold']}DECIDE{c['reset']} "
@@ -79,16 +80,13 @@ def render(rec: dict, *, color: bool = False) -> str:
     return head + (f"  {tail}" if tail else "")
 
 
-def _fields(rec: dict) -> str:
-    return " ".join(f"{k}={_fmt(v)}" for k, v in rec.items() if k not in _HEADER_FIELDS)
+def _fields(rec: dict, *, decision: bool = False) -> str:
+    """The key=val tail — from `events`, which owns which fields the header already showed.
 
-
-def _fmt(v) -> str:
-    if isinstance(v, float):
-        return f"{v:.1f}"
-    if isinstance(v, str):
-        return v if v and " " not in v else json.dumps(v)
-    return json.dumps(v, default=str)
+    This file kept its own copy of that set, three names longer, and printed those three back only
+    on a `decision` record. Every other record silently lost `reason`: 597 of them across 12 days,
+    including every `loop.step_incomplete`."""
+    return events.tail_fields(rec, header=events._DECISION_HEADER_FIELDS if decision else None)
 
 
 def main(argv: list[str] | None = None) -> int:

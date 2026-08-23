@@ -221,8 +221,26 @@ class BoundLog:
         self._log.decide(name, choice, reason, session=self._session, turn=self._turn, **kw)
 
 
-# Fields already shown in the console header — don't repeat them in the key=val tail.
+# Fields already shown in the console header — don't repeat them in the key=val tail. ONE OWNER:
+# `cria.tail` renders the same records and kept its own copy of this set, three names longer
+# ("decision", "choice", "reason"), and printed those three back only inside its `kind == "decision"`
+# branch. Every OTHER record lost them: 597 records across 12 days carry `reason` — 525
+# `server.stop`, 31 `loop.verdict_from_reasoning`, 20 `loop.step_incomplete`, 14
+# `loop.periodic_step_check`, 3 `loop.gate_red_advance` — so an operator reading the log with
+# `cria.tail` could not see WHY a step was judged incomplete, while the live console showed it.
+# Both copies date to the first commit; this was an original divergence, not drift (#23).
 _HEADER_FIELDS = {"ts", "iso", "level", "kind", "session", "turn", "msg"}
+# The three a DECISION record shows in its own header line, and nowhere else.
+_DECISION_HEADER_FIELDS = {"decision", "choice", "reason"}
+
+
+def tail_fields(rec: dict, *, header: set | None = None) -> str:
+    """The `key=val` tail for one record — every field the header did not already show.
+
+    Shared with `cria.tail` so the console and the log reader can never disagree about which fields
+    are payload."""
+    skip = _HEADER_FIELDS | (header or set())
+    return " ".join(f"{k}={_fmt(v)}" for k, v in rec.items() if k not in skip)
 
 
 def _console_line(rec: dict) -> str:
@@ -232,9 +250,7 @@ def _console_line(rec: dict) -> str:
     parts = [f"{clock} {level:<4} [{turn}] {rec['kind']}"]
     if rec.get("msg"):
         parts.append(str(rec["msg"]))
-    tail = " ".join(
-        f"{k}={_fmt(v)}" for k, v in rec.items() if k not in _HEADER_FIELDS
-    )
+    tail = tail_fields(rec)
     if tail:
         parts.append(tail)
     return "  ".join(parts)

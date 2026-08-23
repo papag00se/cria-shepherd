@@ -1569,29 +1569,47 @@ _DEPENDENCY_SOURCE_ROOTS = {
 }
 
 
-def dependency_source_root(eco: str, workspace_root: str) -> str:
-    """The directory on THIS machine holding this ecosystem's dependency source — "" when none exists.
+def dependency_source_root(eco: str, workspace_root: str) -> str | None:
+    """The directory on THIS machine holding this ecosystem's dependency source.
 
     Deterministic: the candidates are a fixed table, and the answer is the first that is really on
     disk (#8 — cria gathers the fact, it does not guess it). A workspace-relative candidate is
     resolved against ``workspace_root`` so the project-scoped install wins when it is present, which
-    is the honest answer to "is there a vendored copy here"."""
+    is the honest answer to "is there a vendored copy here".
+
+    THREE-VALUED. `""` means every candidate was ASKED about and none is there; **None** means at
+    least one has not been answered yet. `view.outside_kind` and `view.isdir` both return None until
+    a survey carries the answer, and folding that into "" made the caller render:
+
+        Nothing matched under <path>, and no installed source root can be found for this project's
+        dependencies on this machine either. Do not keep searching the same way — read the
+        dependency's published documentation…
+
+    …from a question cria had not asked. Logged 14 times, 6 of them with `root: ""` in one session
+    (2026-08-23 08:05-08:20), and the remedy it gives — stop searching, go read the docs — is the
+    wrong one when the source is one directory over. Its sibling `dependency_note` is guarded for
+    exactly this and this seat was not (#23c, #5b)."""
     import os
     from . import wsview
     view = wsview.current()
+    unanswered = False
     for cand in _DEPENDENCY_SOURCE_ROOTS.get((eco or "").lower(), ()):
         if cand.startswith("~"):
             # OUTSIDE THE WORKSPACE, so there is no listing to consult — cria names the exact path
             # and the harness answers about its OWN home directory. `~` is left unexpanded here on
             # purpose: expanding it would resolve cria's home, and the question is about the
             # coder's.
-            if view.outside_kind(cand) == "d":
+            kind = view.outside_kind(cand)
+            if kind == "d":
                 return os.path.expanduser(cand)
+            unanswered = unanswered or kind is None
         else:
             path = os.path.join(workspace_root or "", cand)
-            if view.isdir(path) is True:
+            here = view.isdir(path)
+            if here is True:
                 return path
-    return ""
+            unanswered = unanswered or here is None
+    return None if unanswered else ""
 
 
 def install_flavour(eco: str, workspace_root: str) -> str:
