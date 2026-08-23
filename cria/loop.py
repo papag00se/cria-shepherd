@@ -395,6 +395,11 @@ class PlanSession(GuardState):
 # How many session SHAPES to retain (conversation-root fingerprints, for harness-compaction
 # detection). Cheap (a hash + an int each); evicted oldest-first.
 _MAX_SHAPES = 256
+# The live plan sessions kept server-side. Same bound as the shapes, for the same reason and with
+# the same eviction: a cria process sees at most a handful of sessions before it restarts (measured
+# over 325 process lifetimes: max 4), so this is a backstop against unbounded growth, not a working
+# limit. Without it the store reached 494 sessions and 1 MB, re-serialised on every single turn.
+_MAX_SESSIONS = 256
 # The gate normally fires only on a "done" claim or a guard trip, so an acting-heavy model can edit
 # for a long stretch with NO ground truth (it circled on a broken pyproject.toml for ~90 turns). Run
 # the checks every N acting coder turns too and INSERT the result (no verdict) so the model sees the
@@ -2130,7 +2135,9 @@ class LoopStore:
             if prev is not None and _stable_session(key) and getattr(prev, "fetched_pages", None):
                 sess.fetched_pages = _merge_fetches(dict(sess.fetched_pages or {}),
                                                     prev.fetched_pages)
+            self._sessions.pop(key, None)          # re-put refreshes recency
             self._sessions[key] = sess
+            self._bound_sessions_locked()
             self._save_locked()
 
     def persist(self, key: str) -> None:
@@ -2140,6 +2147,22 @@ class LoopStore:
         with self._lock:
             if key in self._sessions:
                 self._save_locked()
+
+    def _bound_sessions_locked(self) -> None:
+        """Evict the least recently put sessions past the bound.
+
+        `_shapes` is capped on write AND on load; `_sessions` was capped nowhere, and its only
+        eviction site is the plan-ON `loop.done` path, which fired ZERO times in twelve days of
+        logs. Measured on the live `loopstate.json`: **494 sessions, every one `in_progress`,
+        1,015,017 bytes**, accumulating since 2026-07-27 — 105 of them had already completed the
+        plan-off gate. `persist()` runs every turn and re-serialises all of them under the lock:
+        4.08 ms to dump plus 3.43 ms to write, per turn, growing linearly, for state that is stale.
+        It also keeps every task's text and every step verbatim, forever.
+
+        Bounded the way the shapes beside it are, oldest-put first, so a live session is never the
+        one evicted."""
+        while len(self._sessions) > _MAX_SESSIONS:
+            self._sessions.pop(next(iter(self._sessions)))
 
     def drop(self, key: str) -> None:
         with self._lock:
@@ -2230,7 +2253,9 @@ class LoopStore:
                                 if isinstance(v, dict) and isinstance(v.get("fp"), str)}
             sessions = state.get("sessions") if isinstance(state, dict) else None
             if isinstance(sessions, dict):
-                for k, v in sessions.items():
+                # BOUNDED ON LOAD TOO, like the shapes above — otherwise a file that grew before the
+                # write bound existed carries its whole history back into memory on every start.
+                for k, v in list(sessions.items())[-_MAX_SESSIONS:]:
                     sess = _session_from_dict(v)
                     if sess is not None:
                         self._sessions[str(k)] = sess
@@ -4003,6 +4028,22 @@ class Loop:
         # A completion-gate probe we emitted last turn (to verify a 'done') has now run.
         if sess.done_probe:
             sess.done_probe = False
+            # THE HELD PIECES BELONG TO THIS PROBE, AND THEY WERE CLEARED ON ONE EXIT OF THREE.
+            # `pending_done_parts` is set by the periodic satisfaction check and is meant to be
+            # recomposed when the gate's own answer arrives — but the red and critic-rejected exits
+            # below left it in place, and `pending_done` is re-set every time the coder claims done.
+            # So a satisfaction reason from an earlier turn REPLACED the coder's own closing text.
+            #
+            # Walked on session 01a00ade (2026-08-16, Go cart task): satisfied at 14:15:49.553 →
+            # parts set; the satisfaction probe came back RED 250 ms later; three more `task_complete`
+            # claims and a rejecting critic followed; and at 14:19:15 a green gate released the parts,
+            # so the session's closing message was "All tests pass, build and vet succeed" — from a
+            # verdict whose very next gate was red, 3.5 minutes and ~35 model calls earlier. Rare
+            # (1 of 233 satisfaction checks) and in the worst direction: a stale claim of success in
+            # cria's own voice, as the last word.
+            #
+            # Consumed here, once, by the probe they were held for — the way `done_probe` itself is.
+            parts, sess.pending_done_parts = sess.pending_done_parts, ()
             errors = guard_gate_verdict(sess, body, rlog)
             if errors:  # a check FAILED → steer to fix (pass the FULL output; the context floor bounds it)
                 rlog.emit("loop.gate", plan_off=True, blocked=True)
@@ -4020,10 +4061,20 @@ class Loop:
                 sess.pending_done = ""
             else:  # green + (satisfied / already critiqued / no reasoner) → trust the objective gate, END
                 rlog.emit("loop.gate", plan_off=True, blocked=False)
-                parts, sess.pending_done_parts = sess.pending_done_parts, ()
                 held, sess.pending_done, sess.leg0_nudged = sess.pending_done, "", False
                 if parts:   # recompose now that the gate's own answer is in
                     held = satisfaction_done_note(*parts, checks_ran=bool(sess.last_gate_ran))
+                # THE SESSION IS OVER, AND THIS PATH NEVER SAID SO. The plan-ON completion marks the
+                # shape done and drops the session; this one — the only completion a real run
+                # reaches — simply returned. Consequences measured over 12 days: `loop.done` fired 0
+                # times, so the store's only eviction site never ran and `loopstate.json` reached
+                # 494 sessions / 1 MB, all `in_progress`, 105 of them already finished here; and
+                # `shape_done()` answered False 256 times out of 256, so the post-compaction pure
+                # handoff has never once had that half of its evidence (`loop.start` fired 265
+                # times, 0 with `continued=True`).
+                if _stable_session(session_key):
+                    self._store.mark_done(session_key)
+                self._store.drop(session_key)
                 return _completion_final(held or "Done.")
         # A PERIODIC check-in probe's result → insert the ground truth as a steer (no verdict).
         if sess.periodic_probe:

@@ -47,6 +47,19 @@ class _Ctx:
     workspace_root = None
 
 
+class _Store:
+    """Just enough LoopStore for the completion path: it records what it was told."""
+
+    def __init__(self):
+        self.marked, self.dropped = [], []
+
+    def mark_done(self, key):
+        self.marked.append(key)
+
+    def drop(self, key):
+        self.dropped.append(key)
+
+
 def _plan():
     return Plan(id="x", task="build it", created="c", items=[PlanItem("step 1")])
 
@@ -97,6 +110,10 @@ class TheNoShellPathStopsClaimingItTests(unittest.TestCase):
         try:
             lp = loop.Loop.__new__(loop.Loop)
             lp._ctx = _Ctx()
+            # The completion path now MARKS THE SESSION DONE and drops it — the plan-ON path always
+            # did, and this one, the only completion a real run reaches, simply returned. The stub
+            # records the calls so the release behaviour above is exercised with them in place.
+            lp._store = _Store()
             sess = loop.PlanSession(plan=_plan())
             sess.drive_count = 1
             body = {"messages": [{"role": "user", "content": "t"}], "tools": []}   # no shell tool
@@ -120,6 +137,10 @@ class TheHeldNoteIsRecomposedAtReleaseTests(unittest.TestCase):
         try:
             lp = loop.Loop.__new__(loop.Loop)
             lp._ctx = _Ctx()
+            # The completion path now MARKS THE SESSION DONE and drops it — the plan-ON path always
+            # did, and this one, the only completion a real run reaches, simply returned. The stub
+            # records the calls so the release behaviour above is exercised with them in place.
+            lp._store = _Store()
             sess = loop.PlanSession(plan=_plan())
             sess.done_probe = True
             sess.probe_call_id = "probe1"
@@ -154,6 +175,10 @@ class TheHeldNoteIsRecomposedAtReleaseTests(unittest.TestCase):
         try:
             lp = loop.Loop.__new__(loop.Loop)
             lp._ctx = _Ctx()
+            # The completion path now MARKS THE SESSION DONE and drops it — the plan-ON path always
+            # did, and this one, the only completion a real run reaches, simply returned. The stub
+            # records the calls so the release behaviour above is exercised with them in place.
+            lp._store = _Store()
             sess = loop.PlanSession(plan=_plan())
             sess.drive_count = 1
             _SHELL = {"type": "function", "function": {"name": "shell",
