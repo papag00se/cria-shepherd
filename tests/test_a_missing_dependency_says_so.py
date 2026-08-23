@@ -56,7 +56,14 @@ class EveryEcosystemIsRecognisedTests(unittest.TestCase):
             with self.subTest(ecosystem=eco):
                 note = proberun.dependency_note(report(f"exited 1: {line}"))
                 self.assertIn(name, note)
-                self.assertIn("not what failed here", note)
+                # It must still steer away from the call site — but only where that is true. The
+                # note now names BOTH branches, because cria cannot tell an undeclared real
+                # dependency from an invented name, and asserting the first cost a whole go cell.
+                # BOTH BRANCHES, whatever the ecosystem calls the first one ("the dependency",
+                # "the loading"). cria cannot tell an undeclared real dependency from an invented
+                # name, and asserting the first as fact cost a whole go cell.
+                self.assertIn("not the code that uses it", note)
+                self.assertIn("the fix is the name", note)
 
     def test_every_ecosystem_has_a_note_and_none_is_a_hole(self):
         notes = prompts.load_map("dependency_note")

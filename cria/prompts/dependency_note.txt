@@ -7,7 +7,7 @@
 # installed, `require` failing, and twenty minutes spent on the package manager instead of the task.
 # Each line says WHERE the ecosystem looks, because "install it" was never the missing step.
 
-ruby = Note: `{{NAME}}` did not load. `require` only sees gems on ruby's load path, and an install that landed somewhere else — a `--install-dir` directory, or a bundle — stays invisible to it until the load path reaches that directory. Fix the loading; the code that uses it is not what failed here.
+ruby = Note: `{{NAME}}` did not load. `require` only sees gems on ruby's load path, and an install that landed somewhere else — a `--install-dir` directory, or a bundle — stays invisible to it until the load path reaches that directory. If that name is right, the fix is the loading and not the code that uses it. If it is not right — a name that does not exist fails in exactly this way — the fix is the name.
 
 # THE GENERAL LINE NAMES NO MECHANISM, because it is the line cria uses when it could not tell
 # which one applies. It used to assert `--install-dir` outright, so abstaining still stated an
@@ -22,20 +22,26 @@ ruby = Note: `{{NAME}}` did not load. `require` only sees gems on ruby's load pa
 # That line raises TypeError with GEM_HOME unset and aborted `rake test` until it was backed out.
 # The model's own reasoning had the right answer — "bundler isolates gems and doesn't include
 # system-installed gems like minitest" — and it deferred to cria's note anyway.
-ruby_install_dir = Note: `{{NAME}}` did not load. This project's gems were installed with --install-dir, and a gem installed that way is not on the load path by default — add its `lib` directory to $LOAD_PATH from your code, or set GEM_HOME to that directory when you run. Fix the loading; the code that uses it is not what failed here.
+ruby_install_dir = Note: `{{NAME}}` did not load. This project's gems were installed with --install-dir, and a gem installed that way is not on the load path by default — add its `lib` directory to $LOAD_PATH from your code, or set GEM_HOME to that directory when you run. If that name is right, the fix is the loading and not the code that uses it. If it is not right — a name that does not exist fails in exactly this way — the fix is the name.
 
 ruby_bundler = Note: `{{NAME}}` did not load. This project's gems are installed with bundler, and a bundler install is only on the load path under bundler — `require "bundler/setup"` at the top of the file that needs it, or run the command under `bundle exec`. If `{{NAME}}` is not in the `Gemfile`, that is the reason: a gem outside the bundle is invisible to it even when it is installed on this machine.
 
-python = Note: `{{NAME}}` cannot be imported. If it is a third-party package it is not installed for the interpreter that ran this — check you are running the same one you installed into (a venv's ./.venv/bin/python is not the system python3). Fix the import path; the code that uses it is not what failed here.
+python = Note: `{{NAME}}` cannot be imported. If it is a third-party package it is not installed for the interpreter that ran this — check you are running the same one you installed into (a venv's ./.venv/bin/python is not the system python3). If that name is right, the fix is the dependency and not the code that uses it. If it is not right — a name, path or version that does not exist fails in exactly this way — the fix is the name.
 
-node = Note: `{{NAME}}` cannot be resolved. Node loads from this project's own node_modules — being present in package.json is not the same as being installed. Fix the resolution; the code that uses it is not what failed here.
+node = Note: `{{NAME}}` cannot be resolved. Node loads from this project's own node_modules — being present in package.json is not the same as being installed. If that name is right, the fix is the dependency and not the code that uses it. If it is not right — a name, path or version that does not exist fails in exactly this way — the fix is the name.
 
-rust = Note: the crate `{{NAME}}` is not available to this build. A crate has to be in Cargo.toml's [dependencies] before `use` can see it — `cargo add {{NAME}}` puts it there. Fix the dependency; the code that uses it is not what failed here.
+rust = Note: the crate `{{NAME}}` is not available to this build. A crate has to be in Cargo.toml's [dependencies] before `use` can see it — `cargo add {{NAME}}` puts it there. If that name is right, the fix is the dependency and not the code that uses it. If it is not right — a name, path or version that does not exist fails in exactly this way — the fix is the name.
 
-go = Note: no module in this project provides `{{NAME}}`. `go get {{NAME}}` records it in go.mod so the import resolves. Fix the dependency; the code that uses it is not what failed here.
+go = Note: no module in this project provides `{{NAME}}`. `go get {{NAME}}` records it in go.mod so the import can resolve. If that name is right, the fix is the dependency and not the code that uses it. If it is not right — a name, path or version that does not exist fails in exactly this way — the fix is the name.
 
-java = Note: the build could not resolve `{{NAME}}`. Check the groupId, artifactId and version in pom.xml against what the repository actually publishes — a version that does not exist fails exactly like this. Fix the dependency; the code that uses it is not what failed here.
+java = Note: the build could not resolve `{{NAME}}`. Check the groupId, artifactId and version in pom.xml against what the repository actually publishes. If that name is right, the fix is the dependency and not the code that uses it. If it is not right — a name, path or version that does not exist fails in exactly this way — the fix is the name.
 
+# WHICH BRANCH IT IS, cria CANNOT KNOW — so it names both. These three lines used to end "Fix the
+# dependency; the code that uses it is not what failed here", which is true when a real dependency is
+# merely undeclared and false when the name itself is invented. Walked on cart-billing-go x
+# nemotron-elastic 1787434778: the coder imported `github.com/oklog/decimal`, a repository that does
+# not exist and that cria's OWN facts block listed under "THESE FETCHES FAILED — HTTP 404" in the
+# same prompt, and cria told it twenty calls running that the code was not what failed (#5b, #11b).
 # …AND THE OPPOSITE FACT, for when cria can see that no install has landed at all. The lines above
 # say how to put an INSTALLED library on the load path, which is right after an install and a false
 # description of the world before one — see probeparse.install_landed for the two cells it cost.

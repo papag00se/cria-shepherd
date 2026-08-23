@@ -1358,8 +1358,15 @@ _DEPENDENCY_MISSING = (
     ("rust", re.compile(r"can't find crate for `([\w-]+)`")),
     # go: no required module provides package example.com/x
     ("go", re.compile(r"no required module provides package (\S+)")),
-    # maven: Could not resolve dependencies for project … commons-csv:jar:1.10.0
-    ("java", re.compile(r"Could not resolve dependencies[^\n]*?([\w.-]+:[\w.-]+:[\w.:-]+)")),
+    # maven: `Could not resolve dependencies for project <THIS PROJECT>: <THE MISSING ONE> was not
+    # found in <repo>`. The first coordinate on that line is ALWAYS the project's own — it names whose
+    # build failed, not what is missing. A non-greedy scan therefore captured `com.example:feed-importer:jar:1.0`
+    # every time, and cria told the coder to check ITS OWN groupId "against what the repository
+    # actually publishes" — of a local artifact no repository has ever published. Walked on
+    # feed-pipeline-java x nemotron-elastic 1787436645, where it sent the run's only research turn to
+    # a Maven coordinate lookup instead of the library API the build was actually missing (#5b).
+    ("java", re.compile(r"Could not resolve dependencies for project\s+\S+:\s+"
+                        r"([\w.-]+:[\w.-]+:[\w.:-]+)")),
 )
 
 
