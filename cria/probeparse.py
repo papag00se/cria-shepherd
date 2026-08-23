@@ -182,6 +182,11 @@ _TALLIES = (
      _TALLY_TOTAL_FAILED, False),
     # ExUnit · `12 tests, 1 failure` (also `doctests`)
     ("exunit", re.compile(r"(?im)^\s*(?:\d+ doctests?,\s*)?(\d+) tests?,\s*(\d+) failures?"), _TALLY_TOTAL_FAILED, False),
+    # phpunit GREEN · `OK (2 tests, 2 assertions)`. The `Tests:` row below is printed only on a
+    # failure or a skip, so a passing PHP suite had NO tally at all: `gate_passing_tests` returned
+    # -1 and `passing_test_regression` — the only detector that sees a coder delete a passing test —
+    # was structurally silent for PHP. Ran phpunit 9.6 to confirm both spellings.
+    ("phpunit", re.compile(r"(?im)^\s*OK \((\d+) tests?,"), None, False),
     # phpunit · `Tests: 12, Assertions: 30, Failures: 1`
     ("phpunit", re.compile(r"(?im)^\s*Tests:\s*(\d+),\s*Assertions:\s*\d+"
                            r"(?:,\s*Errors:\s*(\d+))?(?:,\s*Failures:\s*(\d+))?"),
@@ -830,7 +835,27 @@ _RUNNER_LOCATIONS = (
     # shipping-rates-rb x nemotron-elastic 1787475117, where `NameError: undefined local variable or
     # method 'surcharge'` at rates.rb:19 parsed as nothing and cria fell back to quoting the tally.
     re.compile(r"^\s+(?:from\s+)?(\S+\.rb):(\d+):in\b", re.M),
+    # node's built-in runner prints the failure's place as a TAP key — `location:
+    # '/w/t.test.js:3:1'` — and every JS stack frame is `at <fn> (/w/t.js:3:1)`. Neither had a row,
+    # so a failing `node --test` produced ZERO findings and `ERRORISH_KEYWORDS` picked the YAML key
+    # `name: 'AssertionError'` as the summary, bottom-up, while the real message
+    # ("Expected values to be strictly equal: 5 !== 6") and the real location were both in the
+    # output. Ran node 22 to confirm.
+    re.compile(r"^\s*location:\s*'([^']+\.(?:m|c)?[jt]s):(\d+)", re.M),
+    re.compile(r"^\s*at\b[^\n(]*\(([^)\s:]+\.(?:m|c)?[jt]s):(\d+)", re.M),
 )
+
+# A JVM stack frame — `at pipeline.ImporterTest.adds(ImporterTest.java:4)`. The note beside the maven
+# rows says its console output "carries NO location whatsoever", which is true of the `Failed tests:`
+# summary line and false of the trace printed beside it by java, gradle and surefire 3. Ran JUnit
+# 4.13: zero findings before, the frame now.
+#
+# ONLY THE LAST FRAME OF EACH TRACE. A JVM stack is innermost-first, so the frames above the test's
+# own are the framework's — `at org.junit.Assert.fail(Assert.java:88)` is the first thing printed and
+# is the one line in the trace the coder can do nothing about. `_FOREIGN_FRAME` cannot help here: it
+# reads PATHS (site-packages, .venv) and a JVM frame carries a bare basename. Innermost-first is a
+# property of the language's traces, not a list of frameworks, so the rule is "the last one".
+_JVM_FRAME = re.compile(r"^\s*at\s+[\w.$]+\(([\w$]+\.java):(\d+)\)", re.M)
 
 
 # A RUN TALLY IS NEVER A DIAGNOSIS. Every runner ends with a count — `7 runs, 7 assertions, 1
@@ -870,12 +895,25 @@ def _with_runner_continuation(msg: str, lines: list, at: int) -> str:
     return " / ".join(got)
 
 
+# A STRUCTURED FIELD IS NOT A SENTENCE. node's built-in runner prints its failure as TAP-YAML —
+# `failureType: 'testCodeFailure'`, `code: 'ERR_ASSERTION'`, `name: 'AssertionError'`, `error: |-` —
+# and every one of those carries a diagnostic WORD while saying nothing about what went wrong. The
+# message is the block indented under `error:`. Same principle as `_TALLY_SHAPED`: a line that
+# classifies the failure is not the line that describes it.
+# NARROW ON PURPOSE: a QUOTED scalar or a YAML block indicator, and nothing else. minitest's
+# `Expected: 12.0` is the same `key: value` shape and IS the diagnosis — half of an expected/actual
+# pair — so a rule that reads any `key: value` as metadata would throw away the commonest real
+# message there is.
+_METADATA_FIELD = re.compile(r"^\s*[A-Za-z_][\w.]*:\s*(?:'[^']*'|\"[^\"]*\"|\|-?|>-?)\s*$")
+
+
 def _says_what_went_wrong(line: str) -> bool:
-    """Does this line state a DEFECT, rather than count how many there were?
+    """Does this line state a DEFECT, rather than count how many there were or name its type?
 
     Order matters: a tally can contain a diagnostic word (`1 failures`) and still say nothing about
-    what failed, so the tally test comes first and wins."""
-    if _TALLY_SHAPED.search(line):
+    what failed, so the tally test comes first and wins. A TAP-YAML metadata field is the same
+    shape of nothing."""
+    if _TALLY_SHAPED.search(line) or _METADATA_FIELD.match(line):
         return False
     return bool(_DIAGNOSTIC_WORD.search(line))
 
@@ -888,8 +926,9 @@ def parse_runner_locations(s: str) -> list[Finding]:
     lines = s.splitlines()
     out: list[Finding] = []
     seen: set[tuple[str, int]] = set()
-    for rx in _RUNNER_LOCATIONS:
-        for m in rx.finditer(s):
+    for rx in _RUNNER_LOCATIONS + (_JVM_FRAME,):
+        found = list(rx.finditer(s))
+        for m in (found[-1:] if rx is _JVM_FRAME and found else found):
             file, line = m.group(1), parse_u32(m.group(2))
             if line is None or not looks_like_path(file) or (file, line) in seen:
                 continue
@@ -1327,7 +1366,7 @@ def names_a_location(text: str) -> bool:
         if not stripped or _TALLY_SHAPED.search(stripped):
             continue          # a run count says how many, never where (#see _TALLY_SHAPED)
         if split_diag(stripped) is not None or _LOCATION_ANYWHERE.search(line) \
-                or any(rx.search(line) for rx in _RUNNER_LOCATIONS):
+                or any(rx.search(line) for rx in _RUNNER_LOCATIONS + (_JVM_FRAME,)):
             return True
     return False
 
