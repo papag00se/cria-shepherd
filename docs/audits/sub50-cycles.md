@@ -72,4 +72,22 @@ What each fix is expected to change, so the result can falsify it:
   correct and already delivered, and `eu_countries 0.0.2` is unwinnable: its own `require "iso3166"`
   no longer resolves against today's `countries` gem. Reproduced with the full remedy applied.
 
-Results land here as each cell finishes.
+### Results
+
+| cell | cycle 1 | cycle 2 | what changed underneath |
+|---|---|---|---|
+| nemotron × ruby | 20% | **0%** | It fixed the seeded bug and wrote 58 lines of real implementation, then unpacked `europe-0.0.28.gem` into the project ROOT — `cache/`, `doc/`, `gems/`, `specifications/` and a stray `lib/europe.rb` — and pointed its Gemfile at it with `gem 'europe', path: 'gems'`. `lib` is on the Rakefile's load path, so `require 'europe'` finds that half-extracted file and dies on `require "europe/version"`. Every test fails at load, including the ones green at seed. The implementation was worth 2–3; the self-inflicted LoadError took all of it. |
+| nemotron × go | 20% | 20% | The invented API is GONE: `RoundingMode*` 4 uses → 0. It now calls `decimal.NewFromString(priceStr)` capturing both returns, `Mul`, `Add` — the library as it actually exists, which is what the empty-grep and page-not-file fixes were aimed at. What remains is ordinary Go: `cannot use nil as decimal.Decimal value`, `2 variables but p.Mul returns 1 value`. Same score, shallower failure. |
+| nemotron × java | 0% | running | |
+| ternary × ruby | 20% | pending | |
+
+### Reading so far
+
+Two of the three predictions have held where they could be tested. The go cell stopped inventing an
+API — the specific thing cycle 1 aimed at — and the score did not move, because this cell scores
+nothing until the build compiles. The ruby cell got FURTHER than cycle 1 and scored LOWER, which the
+number alone hides: it wrote the code and then broke its own load path.
+
+Both of those are cycle-3 walk questions: did anything cria said push the ruby coder toward unpacking
+a gem by hand, and is there anything in the go context that would have caught `nil` for a struct
+return.
