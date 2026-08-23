@@ -816,14 +816,29 @@ _RAKE_TEST_TASK = re.compile(r"^\s*(?:Rake::TestTask\.new|task\s+:test\b|task\s+
 _BUNDLED_RAKE = re.compile(r'^\s*gem\s+["\']rake["\']', re.M)
 
 
+# A GEM THE PROJECT DECLARES, not one cria hopes for. Same test `_BUNDLED_RAKE` applies to rake, for
+# the same reason given above it: the declaration is what makes `bundle exec <tool>` this project's
+# own command rather than a guess about one.
+def _bundled(gemfile: str, gem: str) -> bool:
+    return bool(re.search(r'^\s*gem\s+["\']' + re.escape(gem) + r'["\']', gemfile, re.M))
+
+
 def build_ruby(p: ProjectDir, out: list[ProbeCandidate]) -> None:
-    # Unconditional once the ecosystem is detected — no Gemfile-content check.
     d = p.dir
     gemfile = read_text(Path(d) / "Gemfile") or ""
-    out.append(cand(ProbeKind.Lint, ["bundle", "exec", "rubocop"], d, 70, 82,
-                    ProbeCost.Cheap, "rubocop if in Gemfile"))
-    out.append(cand(ProbeKind.Test, ["bundle", "exec", "rspec"], d, 70, 88,
-                    ProbeCost.Moderate, "rspec if in Gemfile"))
+    # THESE WERE COMPOSED UNCONDITIONALLY, under reason strings that said "if in Gemfile". The Gemfile
+    # was read into a variable and never consulted. So every Ruby project got `bundle exec rspec` and
+    # `bundle exec rubocop`, and a project that declares neither had their absence reported to the
+    # coder as `LATEST CHECK RESULTS (the repo's own checks, most recent run)` — 49 consecutive calls
+    # on shipping-rates-rb x nemotron-elastic 1787432916, whose repo has no rspec anywhere and whose
+    # real check, `rake test`, was green throughout. The compaction prompt then told the model to
+    # believe that over its own transcript. A tool the project does not declare is not its check (#5b).
+    if _bundled(gemfile, "rubocop"):
+        out.append(cand(ProbeKind.Lint, ["bundle", "exec", "rubocop"], d, 70, 82,
+                        ProbeCost.Cheap, "rubocop declared in Gemfile"))
+    if _bundled(gemfile, "rspec"):
+        out.append(cand(ProbeKind.Test, ["bundle", "exec", "rspec"], d, 70, 88,
+                        ProbeCost.Moderate, "rspec declared in Gemfile"))
     for name in ("Rakefile", "rakefile"):
         body = read_text(Path(d) / name)
         if body is None:

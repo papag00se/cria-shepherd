@@ -734,6 +734,49 @@ _RUNNER_LOCATIONS = (
 )
 
 
+# A RUN TALLY IS NEVER A DIAGNOSIS. Every runner ends with a count — `7 runs, 7 assertions, 1
+# failures`, `12 examples, 1 failure`, `Tests run: 12, Failures: 1` — and several print a throughput
+# banner beside it. Those lines carry the words a failure carries and none of the information: they
+# say how MANY, never what. Minitest's is the one that bit — `Finished in 0.011386s, 614.8036 runs/s,
+# 614.8036 assertions/s.` contains "assert" inside "assertions", so a substring test picked cria's
+# stopwatch reading over `Expected: 12.0 / Actual: 0.0` and shipped it as "the checker's OWN message
+# and the line it flagged". Walked on both ruby cells of the 2026-08-22 batch.
+_TALLY_SHAPED = re.compile(r"(?i)\b\d+\s+(?:runs?|tests?|examples?|assertions?|failures?|errors?|"
+                           r"skips?|skipped|pending|passed)\b|\b(?:runs?|assertions?)/s\b|"
+                           r"^\s*Finished in\b|^\s*Tests run:")
+# The words a diagnostic uses, as WORDS — `assertions/s` is not an assertion. Plus the shape a
+# runtime uses for the type itself: every ecosystem names them `<Something>Error` / `<Something>Exception`
+# / `<Something>Failure` as ONE token, so a bare word-boundary list misses `AssertionError` and
+# `NullPointerException`, which are the commonest diagnostics there are (#20 — shape, not vocabulary).
+_DIAGNOSTIC_WORD = re.compile(r"(?i)\b(?:assert|asserted|assertion|expected|expecting|actual|"
+                              r"failed|failure|error|errors|panic|panicked|undefined|unexpected)\b"
+                              r"|\b\w*(?:Error|Exception|Failure)\b")
+
+
+def _with_runner_continuation(msg: str, lines: list, at: int) -> str:
+    """``msg`` plus the lines indented under it — the other half of an expected/actual pair."""
+    try:
+        i = next(j for j in range(at, min(at + 5, len(lines))) if lines[j].strip() == msg)
+    except StopIteration:
+        return msg
+    got = [msg]
+    for nxt in lines[i + 1:i + 4]:
+        if not nxt.strip() or not continues_previous(nxt, lines[i]) or _TALLY_SHAPED.search(nxt):
+            break
+        got.append(nxt.strip())
+    return " / ".join(got)
+
+
+def _says_what_went_wrong(line: str) -> bool:
+    """Does this line state a DEFECT, rather than count how many there were?
+
+    Order matters: a tally can contain a diagnostic word (`1 failures`) and still say nothing about
+    what failed, so the tally test comes first and wins."""
+    if _TALLY_SHAPED.search(line):
+        return False
+    return bool(_DIAGNOSTIC_WORD.search(line))
+
+
 def parse_runner_locations(s: str) -> list[Finding]:
     """Locations printed by TEST runners whose shape ``file:line: message`` does not match.
 
@@ -753,11 +796,19 @@ def parse_runner_locations(s: str) -> list[Finding]:
             at = s[:m.start()].count("\n")
             # The LOCATION line itself is not the diagnosis — cargo prints `panicked at src/lib.rs:7`
             # and the assertion on the NEXT line. Look around it, never at it.
-            near = [x.strip() for i, x in enumerate(lines[max(0, at - 3):at + 4], max(0, at - 3))
+            near = [(i, x.strip()) for i, x in enumerate(lines[max(0, at - 3):at + 4], max(0, at - 3))
                     if i != at and x.strip() and not x.strip().startswith(("#", "-", "="))]
-            msg = next((x for x in near if any(w in x.lower() for w in
-                                               ("assert", "expected", "failed", "error"))),
-                       (near[0] if near else "test failure"))
+            # BELOW THE LOCATION FIRST. A runner prints its header and then says what went wrong
+            # underneath it — minitest's `Expected:`/`Actual:`, pytest's `E   AssertionError`, JUnit's
+            # `expected:<x> but was:<y>`. Scanning in file order let a line ABOVE the header win, and
+            # what sits above minitest's header is its timing banner.
+            below = [x for i, x in near if i > at]
+            above = [x for i, x in near if i < at]
+            msg = next((x for x in below + above if _says_what_went_wrong(x)),
+                       ((below + above)[0] if near else "test failure"))
+            # EXPECTED WITHOUT ACTUAL IS HALF A FACT. Runners state the comparison over two lines and
+            # indent the second under the first; the same shape the compiler paths already keep whole.
+            msg = _with_runner_continuation(msg, lines, at)
             # MARKED. This is the runner's assertion message — expected-vs-got lives in its tail —
             # and it was cut with a bare slice the reader cannot see.
             out.append(Finding(file, line, None, clip(msg, 200)))

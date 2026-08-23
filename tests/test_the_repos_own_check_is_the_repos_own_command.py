@@ -68,5 +68,40 @@ class TheRunnerComesFromTheManifestTests(unittest.TestCase):
                 self.assertEqual(bool(pd._BUNDLED_RAKE.search(gemfile)), bundled)
 
 
+class OnlyTheToolsTheProjectDeclaresTests(unittest.TestCase):
+    """`bundle exec rspec` and `bundle exec rubocop` were composed for EVERY ruby project, under
+    reason strings that read "if in Gemfile" — while the Gemfile was read into a variable and never
+    consulted. On shipping-rates-rb x nemotron-elastic 1787432916 the repo has no rspec anywhere, and
+    the failure of a command it does not own was reported to the coder as `LATEST CHECK RESULTS (the
+    repo's own checks, most recent run)` for 49 consecutive calls, while its real check — `rake test`
+    — was green throughout."""
+
+    def setUp(self):
+        self.addCleanup(wsview.unbind, wsview.bind(wsview.DirectView()))
+
+    def _tools(self, gemfile):
+        out = []
+        pd.build_ruby(pd.ProjectDir(_project(gemfile), {"Gemfile", "Rakefile"}), out)
+        return {c.command[2] for c in out if c.command[:2] == ["bundle", "exec"]} - {"rake"}
+
+    def test_a_project_that_declares_neither_gets_neither(self):
+        self.assertEqual(self._tools('source "x"\ngem "rake"\n'), set())
+
+    def test_a_project_that_declares_them_still_gets_them(self):
+        self.assertEqual(self._tools('source "x"\ngem "rspec"\ngem "rubocop"\n'), {"rspec", "rubocop"})
+
+    def test_each_is_gated_on_its_own_declaration(self):
+        self.assertEqual(self._tools('source "x"\ngem "rspec"\n'), {"rspec"})
+
+    def test_a_gemfile_cria_could_not_read_claims_nothing(self):
+        """Unknown is not a declaration. A probe cria cannot justify is not the repo's own check."""
+        d = Path(tempfile.mkdtemp())
+        (d / "Rakefile").write_text("task :test do\nend\n")
+        out = []
+        pd.build_ruby(pd.ProjectDir(d, {"Rakefile"}), out)
+        self.assertEqual([c for c in out if c.command[:2] == ["bundle", "exec"]
+                          and c.command[2] != "rake"], [])
+
+
 if __name__ == "__main__":
     unittest.main()
