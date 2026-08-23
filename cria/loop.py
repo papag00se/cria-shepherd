@@ -44,7 +44,7 @@ from enum import Enum, auto
 from pathlib import Path
 
 from . import bodykeys, wsview
-from . import callcapture, dedup, denial, editrecovery, execcheck, focustrim, groundtruth, indicators, massage, probegate, proberun, prompts, selfcompact, shellshape, toolmenu, urlgrounding, verifytools, webfetch
+from . import callcapture, dedup, denial, editrecovery, execcheck, focustrim, groundtruth, indicators, massage, probegate, probeparse, proberun, prompts, selfcompact, shellshape, toolmenu, urlgrounding, verifytools, webfetch
 from .classify import _task_key, latest_user_text
 from . import jsontext, planner, writeproxy
 from .jsontext import extract_json_object, strip_think
@@ -5937,7 +5937,20 @@ def gate_error_text(outcome) -> str:
     if findings:
         return findings
     if failed:
-        return prompts.render("ground_truth_failed", failed="\n".join(failed))
+        # "A SPECIFIC LINE COULD NOT BE PARSED" IS A CLAIM, AND IT HAS TO BE TRUE. cria has two
+        # readers of one gate: `probegate.guard_ground_truth` keeps raw lines, `parse_output` builds
+        # structured findings, and where the second misses what the first kept, one prompt carries
+        # both "each is the checker's OWN message and the line it flagged" and "a specific line
+        # could not be parsed from the output" — same command, same tally, opposite claims.
+        # Measured at 176 prompts across 54 sessions, 5 of them on 2026-08-23.
+        #
+        # A parser gap is not an unparseable output (#5b). `probeparse.names_a_location` is the one
+        # owner of the shape question, so the two readers cannot disagree about whether a line is
+        # there — only about whether cria managed to structure it.
+        key = ("ground_truth_failed_located"
+               if any(probeparse.names_a_location(f) for f in failed)
+               else "ground_truth_failed")
+        return prompts.render(key, failed="\n".join(failed))
     return ""
 
 

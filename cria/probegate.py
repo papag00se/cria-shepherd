@@ -1028,6 +1028,42 @@ def _strip_gate_plumbing(cmd: str) -> str:
     return "\n".join(p for p in (probes or []) if p.strip())
 
 
+def cria_authored_call_ids(m: dict) -> set:
+    """The ids of this turn's tool calls that, once the gate plumbing is stripped, hold NOTHING.
+
+    `_strip_gate_plumbing` returns "" when no probe in the script is retypable — "a cria-authored
+    call the model never made has nothing in it for the model", in its own words. The command was
+    emptied and the CALL was left standing, so the model's history read:
+
+        <function=exec_command><parameter=cmd>
+        </parameter>
+        …
+        <tool_response>⟦ctx:checks⟧ the repo's own checks that ran reported no error-class problems.
+
+    — an empty command attributed to the model, and cria answering it. Measured at 188 prompts, all
+    on 2026-08-22, on the node cell, where every probe is a `node --check` cria composed and so
+    nothing is retypable."""
+    ids = set()
+    for tc in m.get("tool_calls") or []:
+        fn = tc.get("function") or {}
+        raw = fn.get("arguments")
+        if not (isinstance(raw, str) and SECTION_PREFIX in raw):
+            continue
+        try:
+            a = jsontext.loads(raw)
+        except (ValueError, TypeError):
+            continue
+        if not isinstance(a, dict):
+            continue
+        for field in ("cmd", "command"):
+            v = a.get(field)
+            text = v if isinstance(v, str) else ("\n".join(str(x) for x in v) if isinstance(v, list) else "")
+            if SECTION_PREFIX in text and not _strip_gate_plumbing(text).strip():
+                if tc.get("id"):
+                    ids.add(tc["id"])
+    return ids
+
+
 def _strip_command_plumbing(m: dict) -> dict:
     """If an assistant tool call carries a gate-scaffolded command, rewrite the command in place to drop
     the plumbing (markers/git-sha/cd-guard). Shape-preserving: str ``cmd`` or list ``command``."""
@@ -1073,6 +1109,11 @@ def clean_gate_results(messages: list, plan: "GatePlan | None" = None) -> list:
     model stops re-reading the same error N times (which reinforced its fixation)."""
     out = []
     drop_ids: set = set()          # tool_call ids whose result we dropped → drop the calling turn too
+    # THE CALL WAS CRIA'S AND THE MODEL NEVER MADE IT. When the whole gate script is
+    # composed-by-cria, `_strip_gate_plumbing` empties the command and the empty call used to stay
+    # in the model's own history with cria's answer under it. Its RESULT is real ground truth and
+    # is kept — as a plain message, which is what it always was.
+    own_ids: set = set()
     last_gate = max((i for i, m in enumerate(messages)
                      if isinstance(m, dict)
                      and (m.get("role") == "tool" or m.get("type") == "function_call_output")
@@ -1107,9 +1148,19 @@ def clean_gate_results(messages: list, plan: "GatePlan | None" = None) -> list:
                         if tid:
                             drop_ids.add(tid)
                         continue
-                    out.append({**m, key: cleaned})
+                    if (m.get("tool_call_id") or m.get("call_id")) in own_ids:
+                        # Its call is gone (cria composed the whole script, so nothing in it was the
+                        # model's), and a result with no call is not a result. Kept whole as a plain
+                        # message — the checks block is the ground truth the gate exists to deliver.
+                        out.append({"role": "user", "content": cleaned})
+                    else:
+                        out.append({**m, key: cleaned})
                     continue
             if m.get("role") == "assistant" and m.get("tool_calls"):
+                empties = cria_authored_call_ids(m)
+                if empties and len(m["tool_calls"]) == len(empties):
+                    own_ids |= empties
+                    continue
                 m = _strip_command_plumbing(m)
         out.append(m)
     if drop_ids:  # remove the assistant call(s) whose only result was a dropped no-signal gate probe

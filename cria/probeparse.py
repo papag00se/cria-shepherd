@@ -489,6 +489,22 @@ def parse_rustc(s: str) -> list[Finding]:
         if t.startswith("error"):
             rest = t[len("error"):]
         elif t.startswith("warning"):
+            # ...AND THE SAME FOR `warning`, for the same reason. Stripping the severity word turned
+            # `warning: this \`if let\` can be collapsed into the outer \`match\`` into a bare
+            # message, and `is_advisory` — which recognises a line that OPENS with `warning:` —
+            # flipped from True to False. So clippy's style advice survived `_error_class_only` and
+            # shipped as a red finding, while `probegate.guard_ground_truth`, which runs the same
+            # test on the RAW line that still says `warning:`, dropped it and rendered
+            # "the repo's own checks that ran reported no error-class problems".
+            #
+            # One clippy run, two blocks, opposite verdicts, in one prompt — measured at
+            # 20260820T140931 call 0014, where `⟦ctx:checks⟧ … no error-class problems` and
+            # `⟦ctx:steer⟧ not done yet — the repo's own checks are failing` sit as the last two
+            # turns before the model speaks (7 prompts, 3 sessions).
+            #
+            # `error` keeps its bare message: the word decides nothing there — an error is never
+            # advisory — and prefixing it would reword every rust error the coder reads.
+            severity = "warning"
             rest = t[len("warning"):]
         # `note:` / `help:` carry their OWN `-->` span. They matched no header, so that span fell to
         # the "compile error" stand-in — inventing a phantom error at a line rustc was only pointing to
@@ -1284,6 +1300,36 @@ def is_advisory(message: str, flagged_line: Optional[str] = None) -> bool:
     return (low.startswith(("note:", "warning:", "hint:", "info:", "convention:", "refactor:"))
             or bool(_STYLE_CODE.match(m))
             or any(p in low for p in _ADVISORY_PHRASES))
+
+
+# A FILE AND A LINE, ANYWHERE ON THE LINE. `split_diag` is anchored at the start because it also
+# has to return the message; this only has to answer yes or no, and the text it is asked about is
+# already wrapped (`$ <command> — <summary>`), so the location never sits at column zero.
+_LOCATION_ANYWHERE = re.compile(r"[\w./\\-]*[\w/\\-]\.\w+:\[?\d+")
+
+
+def names_a_location(text: str) -> bool:
+    """Does this text hold a line any of cria's readers would call a location?
+
+    ONE OWNER for the question two of them answer differently. `probegate.guard_ground_truth` keeps
+    raw lines and `parse_output` builds structured findings, and where the second misses what the
+    first kept, cria says in one prompt both *"each is the checker's OWN message and the line it
+    flagged"* and *"the repo's own checks FAILED, but a specific line could not be parsed"* — with
+    the identical command and the identical tally under each. Measured at 176 prompts across 54
+    sessions, 5 of them on 2026-08-23.
+
+    A parser gap is not an unparseable output, and cria may not report the one as the other (#5b).
+    Uses `split_diag`, which already reads every location format in use — gcc/clang/rustc
+    `file:line:col:`, MSVC `file(line,col):`, Maven `file:[line,col]` — plus the indented stack
+    frame shape, so the answer cannot drift from what the parsers actually accept."""
+    for line in (text or "").splitlines():
+        stripped = line.strip()
+        if not stripped or _TALLY_SHAPED.search(stripped):
+            continue          # a run count says how many, never where (#see _TALLY_SHAPED)
+        if split_diag(stripped) is not None or _LOCATION_ANYWHERE.search(line) \
+                or any(rx.search(line) for rx in _RUNNER_LOCATIONS):
+            return True
+    return False
 
 
 def _error_class_only(findings: list, read_source_line=None) -> list:

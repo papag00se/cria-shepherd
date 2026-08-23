@@ -1,0 +1,3 @@
+the repo's own checks FAILED. This is what they printed:
+{{FAILED}}
+Fix the real cause at the line it names — do not rewrite the whole file, and do not treat this as done.
