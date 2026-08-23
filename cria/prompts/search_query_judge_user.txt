@@ -3,5 +3,6 @@ THE TASK:
 
 THE QUERY IT IS ABOUT TO SEARCH:
 {{QUERY}}
+{{TRIED}}
 
 Is that query on-target for the task? Give on_target and a grounded recommendation. Reply with ONE JSON object only.

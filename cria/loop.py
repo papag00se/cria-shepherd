@@ -608,15 +608,24 @@ def _satisfaction_verdict(system: str, user: str, reasoner_chat, reasoner_role, 
         return None
 
 
-def judge_query(reasoner_chat, reasoner_role, task: str, query: str, rlog, coder_tools: str = "") -> tuple[bool, str]:
+def judge_query(reasoner_chat, reasoner_role, task: str, query: str, rlog, coder_tools: str = "",
+                tried: str = "") -> tuple[bool, str]:
     """Judge an OUTGOING web_search query BEFORE it runs: is it searching for what the task needs? Returns
     (on_target, recommendation) — recommendation is the better search string OR a concrete URL to fetch
     instead (the caller substitutes a web_fetch when it's a URL). Fails OPEN (on_target True, no
     recommendation) on a parse miss or no reasoner — never derail a search we couldn't judge."""
     if reasoner_role is None or not (task.strip() and query.strip()):
         return True, ""
+    # WHAT THIS SESSION HAS ALREADY LEARNED. The judge was given the task and the query and nothing
+    # else, so it could not know that the thing it was about to endorse had already 404'd. On
+    # cart-billing-go x nemotron-elastic it called a query for `github.com/mitchellh/decimal`
+    # on-target TWICE while cria's own record held two `remote: Repository not found` and two
+    # `404: Not Found` for that exact repo — and cria then substituted a fetch of it, charged the
+    # coder GitHub's 404 page, and told it the failure was its own. A judge that decides whether
+    # research is on target must see the research already done (#11b).
     vtext = summarize(reasoner_chat, reasoner_role, prompts.load("search_query_judge"),
-                      prompts.render("search_query_judge_user", task=task, query=query), rlog,
+                      prompts.render("search_query_judge_user", task=task, query=query,
+                                     tried=tried), rlog,
                       phase="reasoner", coder_tools=coder_tools) or ""
     obj = extract_json_object(strip_think(vtext))
     if not isinstance(obj, dict):
@@ -8597,7 +8606,8 @@ def guard_search_query(sess: GuardState, coder: dict, body: dict,
         on_target, rec = sess.query_verdicts[query]
     else:
         on_target, rec = judge_query(reasoner_chat, reasoner_role, task, query, rlog,
-                                     coder_tools=tools_summary)
+                                     coder_tools=tools_summary,
+                                     tried=_fetch_ground_truth(body.get("messages", []), sess))
         sess.query_verdicts[query] = (on_target, rec)
     # A CONCRETE URL IS WORTH ACTING ON EVEN WHEN THE QUERY IS FINE. The judge's own prompt says: "make
     # the recommendation a concrete URL to fetch (the API's .../openapi.json, or the docs page) — the
