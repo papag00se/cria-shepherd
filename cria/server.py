@@ -209,6 +209,16 @@ def _session_cwd(sess_key: str, messages: list, rlog=None, *, lexical: bool = Fa
     return cwd or _CWD_BY_SESSION.get(sess_key)
 
 
+def _remember_session_cwd(sess_key: str, cwd: str) -> str:
+    """Record a workspace root learned from somewhere other than `<cwd>`, under the same key
+    `_session_cwd` reads. One owner for "the harness's workspace for this session"."""
+    if cwd and cwd != ".":
+        if len(_CWD_BY_SESSION) > 512:
+            _CWD_BY_SESSION.clear()
+        _CWD_BY_SESSION[sess_key] = cwd
+    return cwd
+
+
 def _proxy_body(body: dict) -> dict:
     """The proxy (relay) path — used when cria isn't orchestrating (a question, or an aux
     harness call the loop declined, e.g. Codex's UI title-generation) — still DROPS the
@@ -872,6 +882,23 @@ class CriaHandler(BaseHTTPRequestHandler):
             represent_inbound(body.get("messages", []), rlog,
                               workspace_root=getattr(self, "_workspace_root", None)),
             [self._brave_key])
+        # THE SURVEY KNOWS WHERE IT RAN, and cria was throwing that away. `wsview.apply_survey`
+        # adopts the reported root when the view has none — "which is how a session whose harness
+        # never announced a cwd still gets a workspace", in its own docstring — and `survey_root`
+        # has exactly one caller, inside that function. It never reached the session, so 51 call
+        # sites across 8 modules went on abstaining on a missing root while the View beside them
+        # knew the answer, and `_external_refusal` returned None on its first line
+        # (`if level == "write" or not workspace`), making `[safety] external_dir_permission = "none"`
+        # enforce nothing at all on a harness that sends no `<cwd>` — against principles.md's flat
+        # "File access remains bounded to the workspace even under --yolo".
+        #
+        # `represent_inbound` above is the pass that folds surveys in, so the answer is here now if
+        # it is anywhere. Remembered under the session key, which is the ONE owner of this fact.
+        if not self._workspace_root:
+            learned = (wsview.current().root or "").strip()
+            if learned:
+                self._workspace_root = _remember_session_cwd(sess_key, learned)
+                rlog.emit("wsview.root_adopted", level="info", root=learned)
         if self._shell_tool is not None:
             self._native_search = native_search_name(body.get("tools"))
             self._synthetic = advertise(body, rlog, brave_key=self._brave_key)

@@ -324,15 +324,31 @@ class StreamMassageTests(unittest.TestCase):
         self.assertEqual([c["index"] for c in calls], [0, 1])
 
 
+_APPLY_PATCH = [{"type": "function", "function": {"name": "apply_patch"}}]
+
+
 class EditFileTests(unittest.TestCase):
     def test_edit_file_becomes_apply_patch(self):
-        c = lower_edit_file(_completion(tool_calls=[_tc("edit_file", json.dumps({"path": "h.py", "old_string": "a\nb", "new_string": "a\nc"}))]))
+        c = lower_edit_file(_completion(tool_calls=[_tc("edit_file", json.dumps({"path": "h.py", "old_string": "a\nb", "new_string": "a\nc"}))]), _APPLY_PATCH)
         tc = _first(c)["message"]["tool_calls"][0]
         self.assertEqual(tc["function"]["name"], "apply_patch")
         patch = json.loads(tc["function"]["arguments"])["input"]
         self.assertIn("*** Update File: h.py", patch)
         self.assertIn("-b", patch)
         self.assertIn("+c", patch)
+
+    def test_passthrough_when_the_harness_cannot_run_apply_patch(self):
+        """The lowering emits a tool name the harness never advertised. On Codex that is fine — it
+        executes `apply_patch` regardless, which `toolmenu` states in the open — and it is a
+        Codex-only guarantee. Everywhere else the model gets a call it cannot run.
+
+        Measured: `massage.edit_to_patch` fired 0 times in 440,198 logged events, because Codex's
+        `advertise` always injects a synthetic `edit_file` and the branch is unreachable there. The
+        path existed only where it was broken (#18)."""
+        gemini = [{"type": "function", "function": {"name": "write_file"}},
+                  {"type": "function", "function": {"name": "run_shell_command"}}]
+        c = lower_edit_file(_completion(tool_calls=[_tc("edit_file", json.dumps({"path": "h.py", "old_string": "a", "new_string": "b"}))]), gemini)
+        self.assertEqual(_first(c)["message"]["tool_calls"][0]["function"]["name"], "edit_file")
 
     def test_passthrough_when_harness_has_edit_file(self):
         tools = [{"type": "function", "function": {"name": "edit_file"}}]

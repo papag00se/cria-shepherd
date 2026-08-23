@@ -241,8 +241,17 @@ def coerce_text_answer(completion: dict, rlog=None) -> dict:
 def lower_edit_file(completion: dict, tools=None, rlog=None) -> dict:
     """Rewrite an `edit_file`/`str_replace` find-replace as a native `apply_patch`
     Update hunk (old lines `-`, new lines `+`) — so an edit is escaping-proof too.
-    Only when the harness doesn't run edit_file itself."""
+    Only when the harness doesn't run edit_file itself — AND only when it runs `apply_patch`.
+
+    The guard asked one half of that. `apply_patch` is deliberately not in the advertised menu (a 9B
+    cannot produce matching diff context), and on Codex the harness executes it anyway — a
+    Codex-only guarantee that `toolmenu` states in the open. Every other harness gets a tool call by
+    a name it never advertised and cannot run. Measured: `massage.edit_to_patch` fired **0 times in
+    440,198 logged events**, because on Codex `advertise` always injects a synthetic `edit_file` and
+    the branch is unreachable there. The path exists only where it is broken (#18)."""
     if _has_tool("edit_file", tools) or _has_tool("str_replace", tools):
+        return completion
+    if not _has_tool("apply_patch", tools):
         return completion
     for choice in completion.get("choices", []):
         for tc in (choice.get("message") or {}).get("tool_calls") or []:
