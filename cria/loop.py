@@ -2425,6 +2425,18 @@ class Loop:
                         rlog.emit("loop.start", id=plan.id, steps=len(plan.items), continued=bool(briefing))
                         self._persist_plan(plan, rlog)  # mirror to cria's OWN dir (never the workspace)
 
+        # THE KEY WEBFETCH'S PER-SESSION GATES USE, recorded ONCE for both drivers.
+        # It is the SAME key the loop drives under (server passes one `sk` to both drive() and the
+        # outbound translation), so the search judge asks about exactly the prior those gates would
+        # refuse against. It lived inside `_work` — the multi-item driver — which
+        # `_plan_off_session` has not reached since 2026-08-19, so on every real run it stayed "".
+        # Measured over 12 days: `loop.search_judge_skipped why="no query"` fired 11 times, 11 of 11
+        # in synthetic sessions; `loop.search_rehunt_cleared` fired 10 times, 10 of 10 in the
+        # non-synthetic sessions that no longer occur, and 0 since. Four readers degraded silently —
+        # the rehunt judge, the search-read judge, the "cria chose this URL, not you" note (0 of 253
+        # sessions ever carried it), and the spilled-search lookup (#23).
+        sess.web_session = session_key
+
         # PLAN-OFF HAND-BACK: the reading step was the ONLY plan machinery plan-off is entitled to.
         # The moment the current item IS the raw task (the reading step verified, or was never
         # authored and a resume lands here), the session becomes the degenerate single-item drive —
@@ -2486,10 +2498,6 @@ class Loop:
         # final fallback — so the gate/steer target the harness's repo, never cria's own dir. (_ctx.
         # workspace_root is shared across sessions/None in prod; the per-session copy is the live source.)
         sess.workspace_root = _extract_cwd(body.get("messages", [])) or sess.workspace_root or self._ctx.workspace_root
-        # The key webfetch's per-session gates use is the SAME key the loop drives under (server passes
-        # one `sk` to both drive() and the outbound translation), so recording it here lets the search
-        # judge ask about exactly the prior those gates would refuse against.
-        sess.web_session = key
         body = {**body, "messages": self._judge_search_reads(sess, body, rlog)}  # strip off-target search reads
         item = sess.plan.current()
         if item is None:  # every step verified INDIVIDUALLY — but is the WHOLE task actually done?

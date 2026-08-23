@@ -32,6 +32,7 @@ sentence to match, no second shape to miss, and nothing a reworded prompt can br
 The pointers still name their query — for the CODER, who is told which search a file holds.
 """
 
+import types
 import unittest
 
 from cria import loop, prompts, webfetch
@@ -118,6 +119,73 @@ class NoQueryMeansNoVerdictTests(unittest.TestCase):
         self.assertEqual(calls["n"], 1)
         self.assertIn("off-target", out[-1]["content"])
 
+
+
+class TheWebSessionIsRecordedOnEveryDriverTests(unittest.TestCase):
+    """Four web mechanisms were keyed on a field only the dead driver ever wrote.
+
+    `sess.web_session` is the key webfetch's per-session gates use. It was assigned inside `_work`,
+    the multi-item driver — and `_plan_off_session` has returned `synthetic=True` unconditionally
+    since 2026-08-19, so `_drive_locked` dispatches to `_drive_single_item` before `_work` is
+    reachable. Every real run left it "".
+
+    Measured over 12 days of logs: `loop.search_judge_skipped why="no query"` fired 11 times, all 11
+    in synthetic sessions; `loop.search_rehunt_cleared` fired 10 times, all 10 in the non-synthetic
+    sessions that no longer happen, and none since. The "that fetch was not yours — it replaced the
+    search you asked for" correction, which needs this key to fire, appears in 0 of 253 captured
+    sessions while the wording that blames the coder for cria's own 404 appears in 377.
+
+    Pinned on the DISPATCHER, not on either driver, so a third driver cannot be added without it."""
+
+    class _Rlog:
+        phase = ""
+
+        def emit(self, kind, **kw):
+            pass
+
+    def _sess(self):
+        from cria.plan import Plan, PlanItem
+        sess = loop.PlanSession(plan=Plan(id="p", task="do the thing", created="c",
+                                          items=[PlanItem(text="do the thing")]))
+        sess.synthetic = True
+        return sess
+
+    def _loop_with_captured_drivers(self, sess):
+        seen = {}
+        lp = loop.Loop.__new__(loop.Loop)
+        lp._ctx = types.SimpleNamespace(planner_enabled=False, planner=None, workspace_root="")
+        lp._store = types.SimpleNamespace(get=lambda k: sess, put=lambda k, v: None,
+                                          clear_rewrite=lambda k: None, shape_done=lambda k: False,
+                                          observe_shape=lambda *a, **k: (False, 0))
+
+        def _single(s, body, key, rlog, rewritten=False):
+            seen["single"] = s.web_session
+            return {"ok": True}
+
+        def _work(s, key, body, rlog, rewritten=False):
+            seen["work"] = s.web_session
+            return {"ok": True}
+
+        lp._drive_single_item, lp._work = _single, _work
+        return lp, seen
+
+    def _body(self):
+        return {"messages": [{"role": "user", "content": "do the thing"}],
+                "tools": [{"type": "function", "function": {"name": "exec_command",
+                                                            "parameters": {"properties": {"cmd": {}}}}}]}
+
+    def test_the_single_item_driver_is_told_which_session_it_is(self):
+        sess = self._sess()
+        lp, seen = self._loop_with_captured_drivers(sess)
+        lp._drive_locked(self._body(), "sid:abc123", None, self._Rlog())
+        self.assertEqual(seen.get("single"), "sid:abc123")
+
+    def test_the_multi_item_driver_is_told_too(self):
+        sess = self._sess()
+        sess.synthetic = False
+        lp, seen = self._loop_with_captured_drivers(sess)
+        lp._drive_locked(self._body(), "sid:abc123", None, self._Rlog())
+        self.assertEqual(seen.get("work"), "sid:abc123")
 
 if __name__ == "__main__":
     unittest.main()

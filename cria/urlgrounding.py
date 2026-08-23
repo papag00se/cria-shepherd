@@ -79,12 +79,23 @@ def url_is_grounded(url: str, evidence: str) -> bool:
     Walked on shipping-rates-rb x nemotron-elastic 1787344941. The coder ran a web_search for an EU
     gem; cria substituted a fetch of `https://rubygems.org/gems/eu-membership`. `rubygems.org` was in
     the evidence, so the host test passed. The gem does not exist and never has. The coder read a 404
-    attributed to itself, twice in one run, and its own search never ran."""
+    attributed to itself, twice in one run, and its own search never ran.
+    BOUNDED, like every other reader in this module. A bare substring test calls a url grounded when
+    the evidence merely holds something that STARTS with it, and the last path segment is exactly
+    where an invented name sits. Walked again on 20260822T140849 call 0143, the day after the host
+    narrowing landed: the judge proposed `https://rubygems.org/gems/eu`, made up on the spot ("that
+    is a concrete URL. That seems appropriate"), the evidence held `rubygems.org/gems/eu_countries`,
+    the prefix matched, and cria replaced the coder's search with a fetch that 404s. Over 12 days:
+    47 substitutions, 25 of them returning a 4xx, on names like `/gems/eu-membership-detector` and
+    `github.com/oklog/decimal`.
+
+    `ungrounded_urls`, one screen down, has answered this correctly the whole time — it calls
+    `_seen_bounded`. This was the copy that did not (#23)."""
     u = (url or "").strip().rstrip("/")
     if not u:
         return False
     ev = (evidence or "")
-    return u in ev or u.split("://", 1)[-1] in ev
+    return _seen_bounded(u, ev) or _seen_bounded(u.split("://", 1)[-1], ev)
 
 
 _METHOD_ROUTE = re.compile(r"\b(GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS)\s+(/[^\s\"'`,;)\]}]*)")
