@@ -121,3 +121,67 @@ Each band carried the established facts and one question, so it explained rather
 from memory, then used from memory. cria has guards for repeating a call, a search, a fetch and a
 thought, and none for "you are writing against a library you have never opened." Every existing
 mechanism that should have helped has now been fixed; whether to ADD one is a decision, not a bug.
+
+---
+
+## The one addition, put to the operator rather than built
+
+Three cycles, thirty-seven root fixes, and three cells sit at 20% for one unchanged reason: **a real
+library, chosen from memory, then used from memory.**
+
+| cycle | ruby | go | java | ternary |
+|---|---|---|---|---|
+| 1 | 20% | 20% | 0% | 20% |
+| 2 | 0% | 20% | 20% | 40% |
+| 3 | 0% | 20% | 20% | — |
+
+Cycle 2's go cell looked like progress on this axis — the invented API vanished — and I read it as the
+fixes working. That was too generous, and the walk had said so plainly: *"The fix worked. It worked in
+spite of the harness, not because of it."* A web search happened to run at call 0048 and returned the
+real library. Cycle 3 it did not happen, and `Quantize` and `RoundHalfUp` came straight back. That was
+variance, not a mechanism.
+
+What is left, in cycle 3, in each cell's own words:
+
+* **java** — `symbol: class CSVRecord` / `location: package com.opencsv`. It declared opencsv in
+  pom.xml and wrote *commons-csv's* class names against it. Two libraries blended from memory.
+* **go** — `taxedDec.Quantize undefined (type decimal.Decimal has no field or method Quantize)`. One
+  search, four fetches, and the real signature `func (d Decimal) Round` in zero prompts.
+* **ternary ruby (cycle 2)** — `NoMethodError: undefined method 'new' for Countries:Module`, with the
+  gem's source installed on disk in the same workspace.
+
+### Why no existing mechanism reaches it
+
+Every adjacent one has now been fixed and verified: the elision that deleted the message, the parser
+that could not read a Ruby frame, the guard that refused reads of the vendored source, the notes that
+said a library was uninstalled when it was not, the judge that endorsed a repository it had already
+404'd. None of them is this. cria has guards for repeating a call, a search, a fetch and a thought —
+and none for *"you are writing against a library you have never opened."*
+
+### What it would be
+
+A FACT, not a directive, and deterministic — no reasoner, no guess, no prescription:
+
+> the checker reports a missing symbol in `com.opencsv`, and nothing this session has read comes from
+> that package.
+
+Feasibility checked, all three inputs already in hand at one seat:
+
+* the finding carries the package — `location: variable parser of type com.opencsv.CSVParser`
+  survives whole in `Finding.message`
+* `loop._fetch_ground_truth` — what was fetched
+* `loop._read_ground_truth` — what was read off disk
+
+It names no class, no fix and no library to use; it states what the checker said and what the session
+has read, and stops. That is the shape of #8 (deterministic gathers, the reader judges) and #11b (it
+speaks only about what it reached).
+
+### Why it is the operator's call and not mine
+
+Doctrine #1 says assists are footguns and the bar to ADD is high, and `research.py`'s own history
+records a mechanism built for this exact failure and later deleted for being a step nobody needed. The
+argument for it now is that the bar has been met by elimination rather than by assertion: three cycles
+of fixing everything adjacent has bounded the residue to this one thing. The argument against is that
+it is still an ADD, on a shape that has been tried before.
+
+Not built. Awaiting a decision.
