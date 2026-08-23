@@ -162,6 +162,35 @@ def msg_digest(m: dict) -> str:
     return " ".join(p for p in parts if p)
 
 
+# A HARNESS PREAMBLE BY THE SHAPE OF ITS TAG, not by two literal spellings. It was
+# `"<environment_context>" in c or "<user_instructions>" in c` — Codex's two, and nobody else's.
+# Cline and Roo send `<environment_details>`; the same idea, a different word.
+#
+# Both consumers get the question wrong in a way that matters. `contextfloor._protected_mask` picks
+# the first NON-preamble user message as the task and protects it — with an unrecognised preamble it
+# protects the banner and leaves the real task droppable, which its own docstring records costing
+# "53 of 1,475 coder prompts shipped with no task in them, in 8 of 22 sessions". And
+# `loop.session_key` keys on the first non-preamble user message: an unrecognised preamble is stable
+# across a whole workspace, so every conversation in one repo collides onto ONE `task:` key — which
+# `session_key`'s own docstring describes as a fixed bug.
+#
+# The kernel is the tag NAME: a harness names its preamble for what it is. cria matches an XML-ish
+# BLOCK — an opening tag whose name carries `environment`, `instructions`, `system` or `context`,
+# and its matching close — which is what every convention observed does.
+#
+# THE CLOSE IS WHAT KEEPS IT SAFE. A task can legitimately mention such a name: "Fix the bug in
+# <Context> so it renders" is a React component, and reading it as a preamble would tell both
+# consumers that this message is NOT the task — the exact damage, from the other direction.
+# Requiring the closing tag means the match is a block a harness wrapped, not a word a coder typed.
+#
+# It is still a bound and cria only claims what it reached (#11b): a harness that names its preamble
+# something else has its first user message read as the task, which is the right default and is
+# exactly what happened before.
+_ENV_PREAMBLE_TAG = re.compile(
+    r"<\s*([\w.-]*(?:environment|instructions|system|context)[\w.-]*)\s*>"
+    r"[\s\S]*?</\s*\1\s*>", re.I)
+
+
 def is_env_context(m: dict) -> bool:
     """A harness-injected environment/instructions preamble (not the real task) that some
     harnesses prepend as a user message. cria recognizes the known conventions — e.g. Codex's
@@ -178,7 +207,7 @@ def is_env_context(m: dict) -> bool:
     if isinstance(c, list):
         c = " ".join(p.get("text", "") for p in c if isinstance(p, dict))
     c = c or ""
-    return "<environment_context>" in c or "<user_instructions>" in c
+    return bool(_ENV_PREAMBLE_TAG.search(c))
 
 
 def serialize(messages: list[dict], defang: bool = False) -> str:

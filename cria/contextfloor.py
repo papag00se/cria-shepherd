@@ -32,6 +32,7 @@ figure so the real rendered prompt lands under the window.
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field
 
 from . import bodykeys
@@ -393,13 +394,15 @@ def _reduce_tool_outputs(messages: list[dict], msg_budget: int) -> tuple[list[di
 
 # The harness's environment/instructions preamble — a user-role turn that is NOT the task. Mirrors
 # selfcompact.is_env_context; contextfloor imports nothing (see _PROTECT_MARKERS above) and a test
-# asserts the two stay in sync.
-_ENV_PREAMBLE = ("<environment_context>", "<user_instructions>")
+# asserts the two stay in sync. Matched by the shape of the TAG NAME rather than by two literal
+# spellings — see the note beside the owner in `selfcompact`.
+_ENV_PREAMBLE = re.compile(
+    r"<\s*([\w.-]*(?:environment|instructions|system|context)[\w.-]*)\s*>"
+    r"[\s\S]*?</\s*\1\s*>", re.I)
 
 
 def _is_env_preamble(m: dict) -> bool:
-    t = _msg_text(m)
-    return any(tok in t for tok in _ENV_PREAMBLE)
+    return bool(_ENV_PREAMBLE.search(_msg_text(m)))
 
 
 def _protected_mask(messages: list[dict]) -> list[bool]:
