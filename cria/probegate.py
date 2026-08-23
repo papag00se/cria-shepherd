@@ -912,10 +912,30 @@ def _offline_fact(sections: dict, plan: "GatePlan | None" = None) -> str:
     if online_code != 0 or offline_code != 0:
         return ""
     on_tally, off_tally = runner_tally(online_text), runner_tally(offline_text)
+    # AND THE SKIP COUNT, because for half the fleet the tally cannot move when a test steps aside.
+    # The comparison above is the whole mechanism — "a live test can SKIP instead of fail when the
+    # service is gone" — and it only works where the total EXCLUDES skips, which is pytest's and
+    # jest's convention and nobody else's. minitest's `runs`, phpunit's `Tests:`, surefire's
+    # `Tests run:` and gradle's `tests completed` all COUNT the skipped test, so the two tallies
+    # match and the strong sentence ships. Reproduced with real ruby, one test that skips when the
+    # network is gone:
+    #
+    #   online  : 2 runs, 2 assertions, 0 failures, 0 errors, 0 skips  -> 0f/2p
+    #   offline : 2 runs, 1 assertions, 0 failures, 0 errors, 1 skips  -> 0f/2p   EQUAL
+    #
+    # and the sentence then reads "nothing in them reaches a service on the internet" about the one
+    # test that did not run (#5b). The sentence appears in 5,120 captured prompts. `skipped_count`
+    # reads all eight runners' spellings, so asking it is the same question in the dimension the
+    # tally cannot see.
+    on_skips, off_skips = probeparse.skipped_count(online_text), probeparse.skipped_count(offline_text)
     if on_tally and off_tally:
-        if on_tally != off_tally:
+        if on_tally != off_tally or on_skips != off_skips:
             return ""      # a test stepped aside offline — cria cannot claim the suite is self-contained
         return prompts.render("tests_pass_offline", tally=on_tally)
+    if off_skips > on_skips:
+        # No readable tally, but the runner still said how many it stepped past, and more of them
+        # stepped past offline. That is the same evidence, and it refuses the weaker sentence too.
+        return ""
     return prompts.render("tests_pass_offline_uncounted")
 
 

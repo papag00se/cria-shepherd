@@ -29,9 +29,36 @@ _lock = threading.Lock()
 _seq: dict[str, int] = {}
 
 
-def _next_seq(session: str) -> int:
+_SEQ_NAME = re.compile(r"^(\d{4})-")
+
+
+def _resume_seq(d: Path) -> int:
+    """The highest ``NNNN`` already written in this session's folder, or 0.
+
+    THE FOLDER IS RESTART-STABLE AND THE COUNTER WAS NOT. `session_dirname` is deliberately
+    deterministic — "identical for every call of a session and across restarts, with no stored
+    state" — while this counter lived only in memory, so a restart mid-session began writing
+    `0001-*` over the first call's capture. cria restarts about 53 times a day (the
+    restart-after-every-change rule), and 21 of 293 sessions in the log window span one.
+
+    Counted exactly from `upstream.dump`, which carries its own path: **25,823 distinct capture
+    paths written, 189 written more than once, 274 captures destroyed** across 22 session folders,
+    one path written eleven times. One folder holds three interleaved runs of a single session id
+    whose first calls are simply gone. This is the evidence store the project diagnoses from, and it
+    was being corrupted silently."""
+    try:
+        return max((int(m.group(1)) for f in d.iterdir()
+                    if (m := _SEQ_NAME.match(f.name))), default=0)
+    except OSError:
+        return 0
+
+
+def _next_seq(session: str, d: Path) -> int:
     with _lock:
-        n = _seq.get(session, 0) + 1
+        n = _seq.get(session)
+        if n is None:
+            n = _resume_seq(d)
+        n += 1
         _seq[session] = n
         return n
 
@@ -104,9 +131,9 @@ def capture(body: dict, rlog, *, calls_dir, phase: str | None = None, url: str =
         session = getattr(rlog, "session", None)
         turn = getattr(rlog, "_turn", None) or getattr(rlog, "turn", None)
         sess = session_dirname(session)  # <timestamp>-<session>, sortable; stable per session
-        seq = _next_seq(sess)
         d = Path(calls_dir).expanduser() / sess
         d.mkdir(parents=True, exist_ok=True)
+        seq = _next_seq(sess, d)  # seeded from what is already there, so a restart cannot overwrite
         now = time.time()
         stats = _stats(body)
         label = re.sub(r"[^A-Za-z0-9._-]+", "-", phase) if phase else "call"
