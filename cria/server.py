@@ -699,6 +699,9 @@ class CriaHandler(BaseHTTPRequestHandler):
         # the model re-reads them (they were injected only for the human's view).
         messages = body.get("messages")
         if isinstance(messages, list):
+            # The view first: `reframe_compaction` asks it whether the workspace is empty, and an
+            # unbound view answers "not surveyed" to everything (see _bind_workspace_view).
+            self._bind_workspace_view(body, session_key(self.headers, messages))
             cleaned, stripped = strip_history(messages)
             cleaned, reframed = reframe_compaction(cleaned)  # reattribute the harness compaction turn
             if stripped or reframed:
@@ -817,6 +820,29 @@ class CriaHandler(BaseHTTPRequestHandler):
                 self.server.stats_store.reset(sess_key)
         return completion
 
+    def _bind_workspace_view(self, body: dict, sess_key: str) -> None:
+        """THE WORKSPACE VIEW FOR THIS REQUEST. cria answers every question about the coder's files
+        from facts the HARNESS gathered — never from its own disk, which is the same machine only by
+        accident. Bound before `represent_inbound`, which is the pass that fills it: it walks the
+        whole conversation, and every file tool in there is one cria lowered itself.
+
+        AND BEFORE `reframe_compaction`, which is why it lives here rather than inside
+        `_setup_translation`. That pass asks `loop._workspace_is_empty` in order to choose between
+        two reframes, and the alternative — `compaction_reframe_empty` — is the one whose docstring
+        calls the other "the drift ROOT: a fresh/restarted session over an empty cwd took that claim
+        at face value and sent the model hunting for its 'prior work' in sibling directories".
+        `wsview.bind` is the only bind site in the package and it ran AFTER the reframe on both POST
+        paths, so `current()` returned an empty unbound view, `_workspace_is_empty` answered False by
+        its own conservative rule, and the empty variant fired **0 times in 8,226 reframes**.
+
+        Called TWICE per request on purpose: once here, early, with the best key the path has at
+        that moment, so the reframe has a view to ask; then again from `_setup_translation` under
+        the definitive session key. The early view accumulates nothing — `represent_inbound`, the
+        pass that fills it, runs after the second bind — so re-binding costs nothing and keeps the
+        per-session key exact."""
+        self._workspace_root = _session_cwd(sess_key, body.get("messages", []), lexical=True)
+        wsview.bind(wsview.View(self._workspace_root, sess_key))
+
     def _setup_translation(self, body: dict, sess_key: str, rlog) -> None:
         """Set up the synthetic-tool ↔ shell round-trip for this request: STATELESSLY re-present prior
         shell translations as the tool the model called (from the sentinel in history), then advertise
@@ -835,12 +861,7 @@ class CriaHandler(BaseHTTPRequestHandler):
         self._brave_key = brave.api_key()
         # The workspace root (from the harness env-context <cwd>) — the boundary the external-dir
         # guard classifies paths against when it bounds a fledgling model on the --yolo harness.
-        self._workspace_root = _session_cwd(sess_key, body.get("messages", []), lexical=True)
-        # THE WORKSPACE VIEW FOR THIS REQUEST. cria answers every question about the coder's files
-        # from facts the HARNESS gathered — never from its own disk, which is the same machine only
-        # by accident. Bound before `represent_inbound`, which is the pass that fills it: it walks
-        # the whole conversation, and every file tool in there is one cria lowered itself.
-        wsview.bind(wsview.View(self._workspace_root, sess_key))
+        self._bind_workspace_view(body, sess_key)   # definitive key; re-binds a fresh view
         # Re-present prior lowered shell calls as the synthetic tool the model actually called —
         # UNCONDITIONALLY, before the shell-tool gate. A harness compaction/summarize turn arrives with
         # tools:[] (no shell tool), yet its history still holds cria's ⟦ctx:tool⟧-lowered write_file/
@@ -1179,6 +1200,9 @@ class CriaHandler(BaseHTTPRequestHandler):
         # plan task on this (the Responses) path, which Codex speaks.
         messages = body.get("messages")
         if isinstance(messages, list):
+            # The view first: `reframe_compaction` asks it whether the workspace is empty, and an
+            # unbound view answers "not surveyed" to everything (see _bind_workspace_view).
+            self._bind_workspace_view(body, sess_key)
             cleaned, stripped = strip_history(messages)
             cleaned, reframed = reframe_compaction(cleaned)  # reattribute the harness compaction turn
             if stripped or reframed:

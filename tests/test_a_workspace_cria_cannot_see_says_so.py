@@ -96,10 +96,35 @@ class TheContainmentBoundaryStillHoldsTests(unittest.TestCase):
     valid against a workspace on another machine, and the first repair broke it."""
 
     def test_dirguard_is_given_the_announced_path(self):
-        import inspect
-        src = inspect.getsource(srv.CriaHandler._setup_translation)
-        self.assertIn("_session_cwd(sess_key", src)
-        self.assertIn("self._workspace_root", src)
+        """The path the HARNESS announced, verbatim — never one cria checked against its own disk.
+
+        Driven rather than grepped: the lines this used to scan for moved into
+        `_bind_workspace_view` when the view had to be bound before `reframe_compaction`, and a
+        source scan cannot survive a move it has no opinion about."""
+        handler = srv.CriaHandler.__new__(srv.CriaHandler)
+        handler.headers = {}
+        announced = "/not/a/directory/on/this/machine/ws"
+        body = {"messages": [{"role": "user",
+                              "content": f"<environment_context><cwd>{announced}</cwd>"
+                                         "</environment_context>"}]}
+        handler._bind_workspace_view(body, "sid:test-containment")
+        try:
+            self.assertEqual(handler._workspace_root, announced)
+            self.assertEqual(wsview.current().root, announced)
+        finally:
+            wsview.bind(None)
+
+    def test_a_stray_dot_is_never_adopted_as_the_workspace(self):
+        """`.` IS cria's own working directory — a reader pointed at it inspects cria's source."""
+        handler = srv.CriaHandler.__new__(srv.CriaHandler)
+        handler.headers = {}
+        body = {"messages": [{"role": "user",
+                              "content": "<environment_context><cwd>.</cwd></environment_context>"}]}
+        handler._bind_workspace_view(body, "sid:test-dot")
+        try:
+            self.assertFalse(handler._workspace_root)
+        finally:
+            wsview.bind(None)
 
 
 if __name__ == "__main__":
