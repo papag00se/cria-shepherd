@@ -277,6 +277,13 @@ class GuardState:
     # punt-floor was a deterministic fallback behind a reasoner call — both are what the doctrine forbids
     # (principles #1, #2, #4). The search gate still REFUSES a near-duplicate search and steers "read the
     # source you named" — a steer the coder can disregard, not an action taken for it.
+    read_files: dict = None     # path -> "N bytes, M lines": DURABLE record of the WORKSPACE files the
+    # coder has already read. The fetch ledger below survives compaction and this did not, so a
+    # compacted coder kept its web history and lost every file it had opened — on
+    # shipping-rates-rb x nemotron-elastic 1787432916 it had the gem's source read at call 0091, was
+    # guessing gem names from memory by 0094, and collapsed at 0097 repeating "there is a gem called
+    # `eu`… I'm not sure" twenty times, with that source on disk in its own workspace throughout.
+    # Paths and sizes only — the contents stay where they are, and re-reading one is a single call.
     fetched_pages: dict = None  # url -> (status, routes): DURABLE fetch facts a steer cites after the
     # real result has been floored out of the window (else a steer can't counter a late spiral)
     same_checks_relooked: bool = False  # the ONE second look at unchanged findings has been spent
@@ -2457,6 +2464,7 @@ class Loop:
         # repetition/write-streak guards see what's actually FORWARDED.
         coder = guard_search_query(sess, coder, body, self._ctx.reasoner_chat, self._ctx.reasoner_role, rlog)
         _track_fetched_pages(sess, body.get("messages", []))  # durable fetch facts for later steers
+        _track_read_files(sess, body.get("messages", []))     # …and the files it opened on disk
         if _has_tool_calls(coder):  # the coder ACTED → track it for the refusal/spin guards
             guard_track_refusals(sess, coder, rlog, step=step,
                                  messages=body.get("messages"))
@@ -6547,6 +6555,69 @@ def _track_fetched_pages(sess, messages: list[dict]) -> None:
     _merge_fetches(sess.fetched_pages, _extract_fetches(messages))
 
 
+# The read tools by their canonical names — `massage.normalize_tool_names` has already mapped a
+# harness's spelling onto these by the time the loop sees a message.
+_READ_TOOL_NAMES = ("read_file", "cat_file", "view_file")
+
+
+def _extract_reads(messages: list[dict]) -> dict:
+    """path -> "N bytes, M lines" for every workspace read that actually returned content.
+
+    TOOL RESULTS ONLY, the same rule the fetch ledger follows: a read the coder merely SAID it did
+    proves nothing, and a refused read returned no content to remember."""
+    from . import denial
+    calls: dict = {}
+    out: dict = {}
+    for m in messages or []:
+        if not isinstance(m, dict):
+            continue
+        for tc in m.get("tool_calls") or []:
+            fn = tc.get("function") or {}
+            if fn.get("name") in _READ_TOOL_NAMES and tc.get("id"):
+                p = _path_of_args(fn.get("arguments") or "")
+                if p:
+                    calls[tc["id"]] = p
+        tid = m.get("tool_call_id") or m.get("call_id")
+        if tid in calls:
+            c = m.get("content") if m.get("content") is not None else m.get("output")
+            if not isinstance(c, str) or not c.strip() or denial.is_denied(c):
+                continue
+            raw = c.encode("utf-8", "replace")
+            out[calls[tid]] = f"{len(raw):,} bytes, {c.count(chr(10)) + 1} lines"
+    return out
+
+
+def _track_read_files(sess, messages: list[dict]) -> None:
+    """Accumulate the workspace files the coder has read, durably — the sibling of
+    :func:`_track_fetched_pages`, for the half of its research that lives on disk."""
+    if sess is None:
+        return
+    if getattr(sess, "read_files", None) is None:
+        sess.read_files = {}
+    sess.read_files.update(_extract_reads(messages))
+
+
+def _read_ground_truth(sess, messages: list[dict]) -> str:
+    """The workspace files the coder has already read — paths and sizes, never contents.
+
+    Contents are not repeated: they are on disk, one call away, and re-stating them here would put a
+    copy of the workspace in every prompt. What the coder loses at compaction is not the bytes, it is
+    the KNOWLEDGE THAT IT HAS ALREADY LOOKED — and that is one line per file."""
+    seen = dict(getattr(sess, "read_files", None) or {})
+    seen.update(_extract_reads(messages or []))
+    if not seen:
+        return ""
+    labels = prompts.load_map("fetched_facts_sections")
+    lines = "\n".join(f"- {p} ({size})" for p, size in sorted(seen.items())[:_READ_LEDGER_CAP])
+    rest = max(0, len(seen) - _READ_LEDGER_CAP)
+    more = prompts.fill(labels["read_more"], count=rest) if rest else ""
+    return "\n\n" + prompts.fill(labels["read_header"], files=lines, more=more)
+
+
+# Files named in the durable read ledger; the rest are counted, never dropped silently (#R2).
+_READ_LEDGER_CAP = 20
+
+
 def _fetched_facts_anchor(sess, messages: list[dict] | None = None) -> dict | None:
     """A ⟦ctx:facts⟧ anchor carrying cria's DURABLE fetch ledger (url→status→endpoints), re-injected into
     the coder's OUTBOUND view every turn there are facts — so the coder KEEPS the real endpoints/fields it
@@ -6570,6 +6641,9 @@ def _fetched_facts_anchor(sess, messages: list[dict] | None = None) -> dict | No
     own docstring says it exists because "four separate steers instead told the coder the sandbox
     blocked the network" — and it could never have prevented that from here."""
     ledger = _fetch_ground_truth(messages or [], sess, header="PAGES YOU HAVE ALREADY FETCHED")
+    # …AND THE HALF OF ITS RESEARCH THAT LIVES ON DISK. The fetch ledger survives compaction and the
+    # reads did not, so a compacted coder kept its web history and lost every file it had opened.
+    ledger = (ledger + _read_ground_truth(sess, messages or [])).strip("\n")
     if not ledger.strip():
         return None
     return {"role": "user", "content": prompts.render("fetched_facts_anchor",

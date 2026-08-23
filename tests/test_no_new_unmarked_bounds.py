@@ -21,6 +21,8 @@ _ALLOWED = {
     ("loop.py", "sentences[start:]"): "keeps everything from the match onward — a tail, not a cut",
     ("loop.py", "_task_key(task)[:8]"): "a short id for a filename/log, not prose",
     ("loop.py", "d[1:]"): "strips one leading character",
+    ("loop.py", "sorted(seen.items())[:_READ_LEDGER_CAP]"):
+        "the read ledger; the remainder is counted in the line right after it (read_more)",
     ("plan.py", "lines[i + 1:]"): "parsing: the remainder of a block",
     ("planner.py", "key[:8]"): "a short id, not prose",
     ("planner_tools.py", "ln[:2]"): "reads the first two characters to classify a line",
