@@ -20,7 +20,9 @@ speak about what it reached). Proof is one of two things, and no name is guessed
   writes lives there, and the name means the same thing in every language;
 * the directory CONTAINS a marker a tool wrote: ``pyvenv.cfg`` (a virtualenv under any name — the
   ``handle_resolver/`` case), ``CACHEDIR.TAG`` (the cross-tool cache standard, cargo's ``target/``),
-  a ``site-packages`` or ``maven-status`` child, a setuptools ``bdist.*``.
+  a ``site-packages`` or ``maven-status`` child, a setuptools ``bdist.*``, or a PAIR that
+  means something neither name does alone (``gems`` beside ``specifications`` is a RubyGems
+  install root; ``composer`` beside ``autoload.php`` is composer's ``vendor/``).
 
 An ambiguously-named directory with no marker — ``lib``, ``build``, ``dist``, ``out``, ``target``,
 ``env`` — is WALKED. Reading a stale build copy costs a duplicate finding; not reading the author's
@@ -48,6 +50,21 @@ _TOOL_OWNED = (
 _MARKER_FILES = ("pyvenv.cfg", "CACHEDIR.TAG")
 _MARKER_DIRS = ("site-packages", "dist-packages", "maven-status", "maven-archiver")
 _MARKER_PREFIXES = ("bdist.",)  # setuptools' build/bdist.linux-x86_64
+# A PAIR that means something no single name does. `gems` and `specifications` are each plausible on
+# their own; together they are a RubyGems install root, which is what `bundle install --path` writes
+# at `vendor/bundle/ruby/<abi>/`. `composer` plus `autoload.php` is the same shape for PHP.
+#
+# Ruby and PHP were the two ecosystems with no proof here at all, and it destroyed their gates.
+# Measured across the 87 archived run workspaces: 26 of 35 `shipping-rates-rb` workspaces compose a
+# gate whose sections cannot fit one result. Worst case 370 `.rb` files collected of which 363 are
+# under `vendor/`, 372 probes, a 551,045-byte script, each section floored at 700 bytes against a
+# 9,000-byte cap. Every other language: 0 over budget, 3 to 7 probes. Reproduced identically for an
+# ordinary composer tree: 425 `.php` files, 423 under `vendor/`, 426 probes, 645,956 bytes.
+# `MAX_FLOOR_FILES_PER_LANG = 100_000` is not a bound on anything.
+_MARKER_PAIRS = (
+    ("gems", "specifications"),      # bundle install --path → vendor/bundle/ruby/<abi>/
+    ("composer", "autoload.php"),    # composer install → vendor/
+)
 
 Children = Callable[[], Optional[list[str]]]
 
@@ -73,4 +90,8 @@ def generated(name: str, children: Children) -> Optional[str]:
         for n in names:
             if n.startswith(p):
                 return f"{name} (contains {n})"
+    have = set(names)
+    for pair in _MARKER_PAIRS:
+        if have.issuperset(pair):
+            return f"{name} (contains {pair[0]} and {pair[1]})"
     return None

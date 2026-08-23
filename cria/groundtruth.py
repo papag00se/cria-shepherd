@@ -237,6 +237,11 @@ _INVENTORY_EXCLUDE = BUILD_ARTIFACT_DIRS
 # exist" always holds (the docstring calls that the one clause that makes it decisive, and it is the
 # operator's call). One summary line keeps the clause true — the directory is still reported, with
 # its file count — while costing tokens proportional to nothing.
+# COMPOSER IS NOT HERE, DELIBERATELY. Its tree is the same shape and the same cost — reproduced with
+# an ordinary install: 425 `.php` files, 423 of them under `vendor/` — but composer writes packages
+# to `vendor/<vendor>/<package>/`, so no fixed prefix catches it, and a bare `vendor` would fold a
+# directory an author wrote. The proof for that tree lives in `ignore.generated` (`composer` beside
+# `autoload.php`); giving this walker the same proof rule is the fix, and it is not a path entry.
 INSTALL_PREFIXES = frozenset({"vendor/bundle"})
 
 
