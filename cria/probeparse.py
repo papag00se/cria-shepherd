@@ -1555,6 +1555,13 @@ _DEPENDENCY_MISSING = (
     # a Maven coordinate lookup instead of the library API the build was actually missing (#5b).
     ("java", re.compile(r"Could not resolve dependencies for project\s+\S+:\s+"
                         r"([\w.-]+:[\w.-]+:[\w.:-]+)")),
+    # php: composer's autoloader is a plain `require`, so a project with no `composer install` fails
+    # with PHP's own message, and a class from a package that IS installed but not required fails
+    # with the class-not-found one. Both were absent while the machinery around them already named
+    # PHP — `install_remedy`'s `composer_local` route, `_DEPENDENCY_SOURCE_ROOTS["php"]` — so the
+    # ecosystem was refused and remediated and never diagnosed. Ran php 8.3 for both.
+    ("php", re.compile(r"Failed opening required ['\"]([^'\"]+)['\"]")),
+    ("php", re.compile(r"Class ['\"]([\\\w]+)['\"] not found")),
 )
 
 
@@ -1565,6 +1572,9 @@ _INSTALL_EVIDENCE = {
     "ruby": ("Gemfile.lock", "vendor", ".bundle"),
     "node": ("node_modules",),
     "python": (".venv", "venv", "site-packages", ".tox"),
+    # composer writes `vendor/` and `composer.lock`; without them the `<eco>_none` branch could not
+    # be reached for PHP even once the row above existed.
+    "php": ("vendor", "composer.lock"),
 }
 
 

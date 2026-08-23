@@ -19,6 +19,8 @@ capture_rendered = true            # also capture the template-rendered prompt
 
 [indicators]
 enabled = true                     # master switch for all cria decoration
+connect = true                     # one-line banner on the first turn of a session
+status = true                      # live status line while a turn is in flight
 metrics = true                     # "· N tok/s" suffix
 route = true                       # "⟦cria⟧ <role> · <model>" banner
 assists = true                     # "⟦cria⟧ <note>" guard lines
@@ -48,6 +50,13 @@ max_gather_rounds = 12             # cap the planner investigate loop
 
 [engagement]
 bias = "task"                      # unsure classifier → task | simple | question
+# THE CONTROL FOR "WHAT ARE THE ASSISTS WORTH". false = cria never drives: no planner, no steers,
+# no gates, no critics, no completion judging. The PLUMBING stays — Responses↔chat translation,
+# window fitting, tool-menu curation, per-model sampling and reasoning, template repair and
+# tool-call dialect recovery — because without it Codex and llama.cpp cannot exchange a message at
+# all, so "measure the model without cria" has no honest literal reading. Removing the plumbing
+# measures the protocol gap; removing the ASSISTS measures the assists.
+drive = true
 
 [defaults]
 base_url = "http://127.0.0.1:18084"   # shared by http backends that omit their own
@@ -78,6 +87,24 @@ base_url = "http://127.0.0.1:18084"   # omit → [defaults].base_url
 # cwd = "..."                      # where it runs; omit → cria's cwd
 
 # --- Roles: HOW cria uses a backend. backend + sampling + reasoning ---
+# THREE PORTABILITY KNOBS, set per ROLE because cria's backends are ENDPOINTS and the model swaps
+# behind them. Every one defaults to the permissive setting, so a template that needs none is
+# unaffected — and a template that needs one rejects cria outright without it.
+#
+#   think_protocol = "chat_template"   how reasoning on/off is expressed. "system_directive" for a
+#                                      template with no reasoning switch of its own.
+#   collapse_system_prompt = false     true folds cria's system message into the first user turn.
+#                                      DeepSeek-R1's distills need it: their template emits the
+#                                      system message BARE, before the first user marker, so
+#                                      thousands of characters of instruction arrive unframed.
+#   merge_consecutive_turns = false    true merges consecutive same-side turns. Meta's Llama
+#                                      chat-template lineage raises an exception on the first
+#                                      violation, and cria's anchors ARE consecutive user turns —
+#                                      measured on Llama-3.1-Nemotron-Nano: the first coder call
+#                                      returned 400 twice and the run died in 24 seconds.
+#
+# See docs/model-settings.md.
+
 [roles.classifier]
 backend = "local"                  # names a [backends.*]
 reasoning = "on"                   # on | off | auto
@@ -101,7 +128,11 @@ temperature = 0.1
 top_p = 0.95
 top_k = 64
 repeat_penalty = 1.1
-output_reserve = 8192              # input-side reserve; keeps a big write_file uncut
+output_reserve = 8192              # input-side reserve; keeps a big write_file uncut. It ALSO
+#                                  seeds the rumination budget: a turn is aborted once its
+#                                  reasoning passes this many tokens, and half of it is the
+#                                  warning gate. One knob, two behaviours — raising it for a
+#                                  bigger write also gives a spiralling turn longer to spiral.
 # min_p = 0.0                      # sampling floor
 # max_tokens = 4096                # HARD output cap; don't set on the coder. On a
 #                                  reasoning/judge role it is a CEILING only: an internal

@@ -34,6 +34,7 @@ rust = Note: the crate `{{NAME}}` is not available to this build. A crate has to
 
 go = Note: no module in this project provides `{{NAME}}`. `go get {{NAME}}` records it in go.mod so the import can resolve. If that name is right, the fix is the dependency and not the code that uses it. If it is not right — a name, path or version that does not exist fails in exactly this way — the fix is the name.
 
+php = Note: `{{NAME}}` could not be loaded. Composer installs into this project's own `vendor/` and everything reaches it through `vendor/autoload.php` — a `require` of that file at the top of the entry point, and the package declared in composer.json. If that name is right, the fix is the dependency and not the code that uses it. If it is not right — a name, path or version that does not exist fails in exactly this way — the fix is the name.
 java = Note: the build could not resolve `{{NAME}}`. Check the groupId, artifactId and version in pom.xml against what the repository actually publishes. If that name is right, the fix is the dependency and not the code that uses it. If it is not right — a name, path or version that does not exist fails in exactly this way — the fix is the name.
 
 # WHICH BRANCH IT IS, cria CANNOT KNOW — so it names both. These three lines used to end "Fix the
@@ -51,6 +52,7 @@ ruby_none = Note: `{{NAME}}` is not installed anywhere — this project has no G
 
 node_none = Note: `{{NAME}}` is not installed — this project has no node_modules/, so nothing has been installed here yet. Being listed in package.json is not the same as being installed. Installing it is the step that still has to succeed.
 
+php_none = Note: `{{NAME}}` is not installed — this project has no `vendor/` and no composer.lock, so nothing has been installed here yet. Being listed in composer.json is not the same as being installed. Installing it is the step that still has to succeed.
 python_none = Note: `{{NAME}}` is not installed — there is no virtualenv or site-packages tree in this project, so nothing has been installed here yet. Installing it is the step that still has to succeed; the code that imports it has not been reached.
 
 # THE NAME RESOLVES TO THE PROJECT'S OWN FILE. Not a missing dependency at all — a shadow, and
