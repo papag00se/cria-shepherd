@@ -52,3 +52,9 @@ ruby_none = Note: `{{NAME}}` is not installed anywhere — this project has no G
 node_none = Note: `{{NAME}}` is not installed — this project has no node_modules/, so nothing has been installed here yet. Being listed in package.json is not the same as being installed. Installing it is the step that still has to succeed.
 
 python_none = Note: `{{NAME}}` is not installed — there is no virtualenv or site-packages tree in this project, so nothing has been installed here yet. Installing it is the step that still has to succeed; the code that imports it has not been reached.
+
+# THE NAME RESOLVES TO THE PROJECT'S OWN FILE. Not a missing dependency at all — a shadow, and
+# the one failure of this class that neither the runtime's error nor the package manager will ever
+# mention. cria walked the tree and holds the path, so it says which file (#8: the deterministic
+# part gathers, the reader judges).
+shadowed = Note: `{{NAME}}` is not resolving to an installed library — it resolves to `{{PATH}}`, a file in this project. A source directory is searched before installed libraries, so a file whose name matches a library's will be loaded instead of it. If that file is not meant to BE that library, the fix is the file, not the install.

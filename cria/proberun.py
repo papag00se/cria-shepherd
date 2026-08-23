@@ -742,6 +742,15 @@ def dependency_note(report: "ProbeReport", workspace_root: str = "") -> str:
             continue
         eco, name = hit
         if workspace_root and probeparse.names_a_workspace_file(name, workspace_root):
+            # …AND WHEN cria CAN NAME THE FILE, SILENCE IS THE WRONG ANSWER. "Say nothing rather than
+            # call the project's own module a missing dependency" is right where cria is guessing. It
+            # is not guessing here: it walked the tree and found the file. That file is a SHADOW — the
+            # name the coder typed resolves to its own file instead of the library — which is the one
+            # dependency failure neither the error nor the package manager ever mentions.
+            own = probeparse.resolves_to_workspace_file(name, workspace_root)
+            if own:
+                return "\n" + prompts.fill(prompts.load_map("dependency_note")["shadowed"],
+                                            name=name, path=own)
             return ""
         return "\n" + prompts.fill(dependency_line(eco, workspace_root), name=name)
     return ""
@@ -908,8 +917,16 @@ def compose_probe_command(c: ProbeCandidate, timeout_s: float, cap: int | None =
         # and state the two numbers. `grep -c` and `grep -m` are the same matcher as the line below,
         # so the count and the shown set cannot disagree (#12).
         f"__cria_dn=$(printf '%s' \"$__cria_out\" | grep -E -c {shlex.quote(_DIAG_LINE_RE)}); "
+        # DISTINCT ONES FIRST. The band is bounded, and it kept whichever diagnostics came first —
+        # so a file with the same missing import reported twice spent two of six slots on one fact
+        # while the errors that appeared once were cut. Measured on feed-pipeline-java x
+        # nemotron-elastic 1787469110: of the six kept, two were the same `ConcurrentHashMap`, while
+        # `method parse()` and the constructor candidate list — the two that say what the library's
+        # API really is — were among the fifteen cut. `awk` drops a repeat of a line already shown
+        # and keeps the first of each, so the same budget carries more distinct facts.
         f"__cria_ds=$(printf '%s' \"$__cria_out\" | grep -E -B{_DIAG_BEFORE_LINES} "
-        f"-A{_DIAG_CONTEXT_LINES} {shlex.quote(_DIAG_LINE_RE)} | head -c {middle} | sed '$d'); "
+        f"-A{_DIAG_CONTEXT_LINES} {shlex.quote(_DIAG_LINE_RE)} "
+        f"| awk '!seen[$0]++' | head -c {middle} | sed '$d'); "
         f"printf '%s\\n' \"$__cria_ds\"; "
         f"__cria_dshown=$(printf '%s' \"$__cria_ds\" | grep -E -c {shlex.quote(_DIAG_LINE_RE)}); "
         f"if [ \"$__cria_dshown\" -lt \"$__cria_dn\" ]; then "

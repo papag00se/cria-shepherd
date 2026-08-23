@@ -1640,6 +1640,38 @@ def names_a_workspace_file(name: str, workspace_root: str) -> bool:
                 return True
     return False
 
+
+def resolves_to_workspace_file(name: str, workspace_root: str) -> str:
+    """The workspace-relative FILE this import name resolves to, or "" — the same walk as
+    :func:`names_a_workspace_file`, answering with WHICH file rather than merely that there is one.
+
+    That distinction is a whole run. On shipping-rates-rb x nemotron-elastic 1787465385 the coder
+    wrote a scratch file to `lib/europe.rb`; `lib` is on the Rakefile's load path, so `require
+    "europe"` found it instead of the installed gem and died on its first line. cria KNEW: the
+    dependency note asks this exact question, got True, and used the answer only to fall silent —
+    "the safe direction", which is right when cria is guessing and wrong when it is not. Silence let
+    three of cria's own voices fill the gap with "the gem is not installed", which sent the model
+    through eight more install attempts.
+
+    A shadowing file is the one dependency failure where cria holds the answer outright and the
+    coder cannot see it: the name it typed is real, the gem it installed is real, and the file in
+    between is the one thing neither the error nor the package manager mentions."""
+    from . import wsview
+    raw = (name or "").strip("'\"")
+    if not raw or not workspace_root:
+        return ""
+    head = next((x for x in re.split(r"[./\\:]", raw) if x), "")
+    if not head:
+        return ""
+    tree = wsview.current(workspace_root).walk(workspace_root, skip_hidden=True)
+    if tree is None:
+        return ""
+    for dirpath, _dirnames, filenames in tree:
+        for f in filenames:
+            if f == head or f.rsplit(".", 1)[0] == head:
+                return os.path.relpath(os.path.join(dirpath, f), workspace_root)
+    return ""
+
 # A COMMAND THAT WENT LOOKING FOR DEPENDENCY SOURCE. Shape-level, not per-language (a rule keyed to
 # one ecosystem's phrasing is inert on the other eight): the command names a package-cache directory
 # and is a search/read verb. `~` and `$HOME` are excluded on purpose — a model that already searched

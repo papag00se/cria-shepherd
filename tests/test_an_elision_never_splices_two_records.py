@@ -241,5 +241,31 @@ class TheCutDiagnosticsAreCounted(unittest.TestCase):
         self.assertNotIn("located diagnostics shown here", out)
 
 
+class TheBandSpendsItsBudgetOnDistinctFacts(unittest.TestCase):
+    """The recovered band kept whichever diagnostics came FIRST, duplicates included.
+
+    Measured on feed-pipeline-java x nemotron-elastic 1787469110: of the six that fit, two were the
+    same missing `ConcurrentHashMap` import, while `method parse()` and javac's constructor candidate
+    list — the two lines that say what the library's API really is — were among the fifteen cut. The
+    model read what survived and concluded it had one bad import."""
+
+    def _dupes(self):
+        noise = "\n".join(f"[INFO] step {i}" for i in range(80))
+        errs = ("[ERROR] /w/A.java:[17,5] cannot find symbol\n  symbol:   class ConcurrentHashMap\n"
+                "[ERROR] /w/A.java:[17,5] cannot find symbol\n  symbol:   class ConcurrentHashMap\n"
+                "[ERROR] /w/A.java:[116,48] cannot find symbol\n  symbol:   method parse()\n"
+                "[ERROR] /w/A.java:[114,33] no suitable constructor found for CSVParser(Reader)\n")
+        return noise + "\n" + errs + noise
+
+    def test_a_repeated_diagnostic_takes_one_slot_not_two(self):
+        out = run_with_cap(self._dupes(), 700)
+        self.assertEqual(out.count("class ConcurrentHashMap"), 1)
+
+    def test_the_unique_ones_survive(self):
+        out = run_with_cap(self._dupes(), 700)
+        self.assertIn("method parse()", out)
+        self.assertIn("no suitable constructor", out)
+
+
 if __name__ == "__main__":
     unittest.main()
