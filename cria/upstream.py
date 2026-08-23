@@ -405,8 +405,29 @@ class Upstream:
         never sees the 400 (its blind same-body retries can't converge fast enough). Returns the
         open ``(resp, sent_estimate, capture_path)``; raises ``UpstreamError`` on any other failure."""
         safety_override: float | None = None
+        sent_data: bytes | None = None
+        last_err: BaseException | None = None
         for attempt in range(2):
             data, sent_estimate, capture_path = self._prep(body, stream, rlog, safety_override=safety_override)
+            if attempt and data == sent_data:
+                # A REFIT THAT CHANGES NOTHING IS NOT A RETRY. The floor's lever is dropping whole
+                # oldest turns, and a COMPOSED two-message prompt — a compaction request, a judge
+                # question — has none to drop, so re-prepping it against any density returns the same
+                # bytes. Measured over 12 days: 59 `context.refit` events and 59 HTTP 400s, an exact
+                # match, with the re-run floor logging `msg_before == msg_after` and `over_budget` on
+                # 59 of 59. Byte-identical proof in the captures: 20260820T133651 calls 0005 and 0006,
+                # 379,391 bytes each, `cmp` clean; 20260813T180510 sent the same 167,617-byte prompt
+                # 12 times in ~70 seconds. 3,230,841 prompt tokens re-sent to a guaranteed 400.
+                #
+                # The window learned from the 400 is kept — that is the durable half of the refit and
+                # it makes every LATER turn fit. Only the re-send is dropped.
+                rlog.emit("upstream.refit_no_change", level="warn", bytes=len(data),
+                          model=body.get("model"), est=sent_estimate)
+                rlog.emit("upstream.error", level="error", url=self._chat_url, error=str(last_err))
+                err = UpstreamError(str(last_err))
+                err.code = getattr(last_err, "code", None)
+                raise err from last_err
+            sent_data = data
             req = urllib.request.Request(self._chat_url, data=data, method="POST", headers=self._headers(sse=stream))
             rlog.emit("upstream.request", url=self._chat_url, model=body.get("model"),
                       stream=stream, n_messages=len(body.get("messages", [])), refit=(attempt > 0))
@@ -437,6 +458,7 @@ class Upstream:
                 return (urllib.request.urlopen(req, timeout=max(read_deadline, 1.0)),
                         sent_estimate, capture_path)
             except urllib.error.URLError as e:
+                last_err = e
                 refit = self._overflow_refit(e, sent_estimate, body.get("model"), rlog) if attempt == 0 else None
                 if refit is not None:
                     safety_override = refit  # re-prep tighter against the server's real count, retry

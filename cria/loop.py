@@ -3457,11 +3457,23 @@ class Loop:
     # ------------------------------------------------------------------ helpers
 
     def _reasoner(self):
-        """``(chat_fn, role)`` for this Loop, or ``(None, None)``. The evidence builders take the
-        reasoner so an oversized log can be SUMMARISED rather than clipped (#5's second exception);
-        without one they carry the log whole, which is the same safe answer."""
+        """``(chat_fn, role)`` for this Loop, or ``(None, None)``. The evidence builders take it so an
+        oversized log can be SUMMARISED rather than clipped (#5's second exception); without one they
+        carry the log whole, which is the same safe answer.
+
+        THE ROLE IS THE COMPACTOR'S, because the work this does is compaction. Every one of the four
+        callers hands it to `_summarised_evidence`, which calls `summarize(..., phase="compactor")` —
+        so the call was LABELLED compactor and SAMPLED as the reasoner. Verified in the captures:
+        all 85 compactor request bodies carry `enable_thinking: true` and `temperature: 0.6`, while
+        `[roles.compactor]` says `reasoning = "off"`, `temperature = 0.0`. What it cost over 12 days:
+        26 of 84 compactor calls (31%) hit `finish_reason=length` at max_tokens, 12 of them returning
+        ZERO content after spending the whole budget on reasoning; 31 triggered a no-reason retry
+        worth 508,437 input + 212,992 output tokens; two single calls ran 846 s and 761 s to be cut.
+        The three sibling sites (`loop.py:2949`, `:2994`, `:3746`) already read `compactor_role or
+        reasoner_role` — this is the fourth (#23)."""
         ctx = getattr(self, "_ctx", None)
-        return (getattr(ctx, "reasoner_chat", None), getattr(ctx, "reasoner_role", None))
+        return (getattr(ctx, "reasoner_chat", None),
+                getattr(ctx, "compactor_role", None) or getattr(ctx, "reasoner_role", None))
 
     def _grounded_evidence(self, sess: PlanSession, body: dict, rlog=None) -> str:
         """The critic's / re-derivation's ground truth: the coder's recent tool actions (the work log)
