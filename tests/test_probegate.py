@@ -41,7 +41,11 @@ class PlanTests(unittest.TestCase):
         self.assertTrue(any("pyflakes" in " ".join(c.command) for c in plan.candidates))
         for i in range(len(plan.candidates)):
             self.assertIn(f"{probegate.SECTION_PREFIX}probe-{i}", plan.script)
-        self.assertIn(probegate.SECTION_PREFIX + "git", plan.script)
+        # The litter listing is what the gate still has to bring home besides the probes — cria
+        # removes what its own checks created. The `git` sha1sum section that used to sit beside it
+        # is gone: it ran on every gate and was read by nothing (see plan_gate).
+        self.assertIn(probegate.SECTION_PREFIX + probegate.LITTER_SECTION, plan.script)
+        self.assertNotIn(probegate.SECTION_PREFIX + "git" + probegate.SECTION_SUFFIX, plan.script)
 
     def test_multi_language_workspace_gets_each_floor(self):
         t = _ws()
@@ -55,11 +59,14 @@ class PlanTests(unittest.TestCase):
         self.assertTrue(any(c.startswith("node --check") for c in cmds))  # JS floor
         self.assertTrue(any(c.startswith("ruby -c") for c in cmds))       # Ruby floor — CONGRUENT
 
-    def test_empty_workspace_arg_composes_minimal_git_only_gate(self):
+    def test_empty_workspace_arg_composes_a_gate_that_asks_for_nothing_it_cannot_reach(self):
+        """No workspace → no probes, no `cd`, and no bookkeeping sections either. What still rides
+        is the workspace survey, which is how a rootless session ever learns anything at all."""
         plan = plan_gate("")
         self.assertEqual(plan.candidates, [])
         self.assertNotIn("cd ", plan.script)
-        self.assertIn(probegate.SECTION_PREFIX + "git", plan.script)
+        self.assertNotIn(probegate.SECTION_PREFIX + "git" + probegate.SECTION_SUFFIX, plan.script)
+        self.assertIn("___CRIA_SURVEY_CMD___", plan.script)
 
     def test_split_sections_roundtrip(self):
         text = "banner noise\n___CRIA_GATE_a___\nline1\nline2\n___CRIA_GATE_b___\nEXIT:0"
@@ -90,7 +97,6 @@ class InterpretTests(unittest.TestCase):
         nudge = completion_block_nudge(out.report)
         self.assertIsNotNone(nudge)
         self.assertIn("x.py:3", nudge)                     # exact file:line, like every other tool
-        self.assertEqual(out.git_state, "abc123")
 
     def test_syntax_failure_blocks_even_when_output_defeats_parsers(self):
         # The congruence exception: a tier-0 check that RAN red is itself the diagnosis.

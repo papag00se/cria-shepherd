@@ -6,6 +6,7 @@ import types
 import unittest
 from pathlib import Path
 
+from cria.probegate import GATE_SENTINEL
 from cria.loop import (Loop, LoopContext, LoopStore, PlanSession, TASK_COMPLETE_TOOL, _add_completion_tool,
                        _frame_for_item, _has_tool_calls, _completion_text, _normalize_completion,
                        completion_to_sse, guard_rumination, guard_truncation, session_key)
@@ -865,7 +866,7 @@ def _result_for(completion, first: str = "EXIT:0", git: str = "abc") -> str:
     asserting the green path over checks that were never read (#13)."""
     import json as _json
     import re as _re
-    from cria.probegate import SECTION_PREFIX as P, SECTION_SUFFIX as S
+    from cria.probegate import GATE_SENTINEL, SECTION_PREFIX as P, SECTION_SUFFIX as S
     args = completion["choices"][0]["message"]["tool_calls"][0]["function"]["arguments"]
     script = _json.loads(args) if isinstance(args, str) else args
     script = script.get("cmd") or script.get("command") or ""
@@ -969,10 +970,13 @@ class GuardTests(unittest.TestCase):
         self.assertNotIn("cria_rumination", out)                             # internal marker stripped
 
     def test_rumination_exhausted_normalizes_and_stops(self):
-        rec = _Recorder([_ruminating()])  # never focuses
+        rec = _Recorder([_ruminating()])  # never focuses, and always on the SAME arm
         rlog = _Rlog()
         out = self._rum(rec, _ruminating(), 4, rlog)
-        self.assertEqual(rec.calls, 3)
+        # ONE retry, not three. The notice is the same text for the same arm, so attempt 2 would
+        # have re-sent a byte-identical prompt to the model that had just aborted on it — measured
+        # at 20 of 230 focus retries. The retry budget still applies when the ARM changes.
+        self.assertEqual(rec.calls, 1)
         self.assertEqual(out["choices"][0]["finish_reason"], "stop")         # sentinel normalized on exit
         self.assertNotIn("cria_rumination", out)
 
@@ -1234,7 +1238,7 @@ class HistoryRewriteTests(unittest.TestCase):
         self.assertIn("loop.probe_reissued", rlog.kinds())
         from cria.probegate import SECTION_PREFIX
         args = json.loads(out["choices"][0]["message"]["tool_calls"][0]["function"]["arguments"])
-        self.assertIn(SECTION_PREFIX, " ".join(args["command"]))        # a fresh ground-truth gate
+        self.assertIn(GATE_SENTINEL, " ".join(args["command"]))   # a fresh ground-truth gate
         self.assertNotIn("loop.step_done", rlog.kinds())                # nothing passed silently
 
     def test_probe_absent_without_rewrite_keeps_fail_open(self):
@@ -2709,14 +2713,14 @@ class LoopDriveTests(unittest.TestCase):
 
         # 2: coder claims done → cria emits the GROUND-TRUTH gate (a shell tool call)
         c2 = loop.drive(_body(), "k", _Classification(), rlog)
-        self.assertIn(SECTION_PREFIX, json.loads(c2["choices"][0]["message"]["tool_calls"][0]["function"]["arguments"])["command"][-1])
+        self.assertIn(GATE_SENTINEL, json.loads(c2["choices"][0]["message"]["tool_calls"][0]["function"]["arguments"])["command"][-1])
 
         # 3: no-marker result → fail-open → critic verifies item 0 → advance → item 1: coder proses,
         #    the no-tools leg nudges once, coder proses again → item 1's gate is emitted
         c3 = loop.drive(_body_with_probe(_tc_id(c2), "PROBE_EXIT=0"), "k", _Classification(), rlog)
         self.assertIn("loop.step_done", rlog.kinds())
         self.assertIn("loop.probe", rlog.kinds())
-        self.assertIn(SECTION_PREFIX, json.loads(c3["choices"][0]["message"]["tool_calls"][0]["function"]["arguments"])["command"][-1])
+        self.assertIn(GATE_SENTINEL, json.loads(c3["choices"][0]["message"]["tool_calls"][0]["function"]["arguments"])["command"][-1])
 
         # 4: gate result → critic verifies item 1 → all steps done → a final answer ends the harness turn
         c4 = loop.drive(_body_with_probe(_tc_id(c3), "PROBE_EXIT=0"), "k", _Classification(), rlog)
@@ -2787,7 +2791,7 @@ class LoopDriveTests(unittest.TestCase):
         c2 = loop.drive(_body_with_probe(_tc_id(c1), "PROBE_EXIT=0"), "k", _Classification(), rlog)  # gate absent → critic rejects → re-drive → prose → GATE again
         # c2 MUST carry a tool call (a fresh gate), never a bare/prose completion
         self.assertTrue(c2["choices"][0]["message"].get("tool_calls"))
-        self.assertIn(SECTION_PREFIX, json.loads(c2["choices"][0]["message"]["tool_calls"][0]["function"]["arguments"])["command"][-1])
+        self.assertIn(GATE_SENTINEL, json.loads(c2["choices"][0]["message"]["tool_calls"][0]["function"]["arguments"])["command"][-1])
         self.assertIn("loop.step_incomplete", rlog.kinds())
 
     def test_unparseable_verdict_fails_closed_not_open(self):

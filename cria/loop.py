@@ -370,7 +370,6 @@ class PlanSession(GuardState):
     # swapped" -> "addresses cut off mid-string") while the diff itself sat in the coder's context
     # naming the exact character.
     steered_checks_text: str = ""
-    gate_git: str = ""  # last gate's git-status hash (workspace-change signal across gates)
     pending_coder_text: str = ""  # the coder's "done" claim, held for the critic after the probe
 
     def __post_init__(self) -> None:
@@ -3166,7 +3165,6 @@ class Loop:
             if not prior or prior[-1] != sig:
                 prior.append(sig)
                 del prior[:-GATE_SIGNATURE_WINDOW]
-        sess.gate_git = outcome.git_state
         # The plan-ON extras on top of the shared mirror (record_gate_state, called above with the
         # reading): the repo-wide regression check, which needs the report and only makes sense on a
         # gate that came back GREEN.
@@ -8987,6 +8985,7 @@ def guard_rumination(coder: dict, body: dict, coder_chat, rlog, *, step=None, ph
     attempt = 0
     conv = list(body.get("messages") or [])
     _last_notice = None   # the guard notice this loop appended, so a retry REPLACES it
+    _last_sent = None     # the conversation the previous attempt actually sent
     while massage.is_ruminating(coder) and attempt < MAX_RUMINATION_RETRIES:
         v = coder.get(bodykeys.RUMINATION) or {}
         attempt += 1
@@ -9042,6 +9041,22 @@ def guard_rumination(coder: dict, body: dict, coder_chat, rlog, *, step=None, ph
         # room — window_exhausted and dead_stream — a longer prompt makes the next attempt more
         # likely to fail the same way, not less.
         conv = (conv[:-1] if attempt > 1 and conv and conv[-1] is _last_notice else conv) + [notice]
+        # AND NEVER THE SAME PROMPT TWICE. Replacing the notice instead of stacking it fixed the
+        # growth — and when two consecutive aborts come from the SAME arm the notice is the same
+        # text, so the replacement produced a byte-identical retry of the prompt that had just
+        # aborted. Measured across the log window: 0 byte-identical focus retries in the six days
+        # before the replace landed (2026-08-18), 20 of 230 (8.7%) in the five days after,
+        # 1,006,908 bytes re-sent, 3 of them on 2026-08-23. `20260823T001200` calls 0008 and 0009
+        # are 26,674 bytes each and `cmp` clean.
+        #
+        # A model that just ran itself into the ground on this exact prompt will do it again, and
+        # for the two arms that are ABOUT running out of room the retry cannot help by construction.
+        # cria has nothing new to say, so it stops saying it (#3).
+        if _last_sent is not None and conv == _last_sent:
+            rlog.emit("loop.rumination_retry_identical", level="warn", attempt=attempt,
+                      arm=v.get("arm", ""))
+            break
+        _last_sent = list(conv)
         _last_notice = notice
         rlog.phase = f"{phase}-focus{attempt}"
         coder = massage.apply(

@@ -15,6 +15,17 @@ Repetition is not emphasis (#3). And for the two aborts that are ABOUT running o
 same way, which is the opposite of what a retry is for.
 
 The notice is replaced now, not stacked: one copy, current, describing the abort that just happened.
+
+AND REPLACING IT TRADED ONE FAULT FOR ANOTHER, found by the 2026-08-23 sweep: when two consecutive
+aborts come from the SAME arm the notice is the same text, so the replacement produced a
+BYTE-IDENTICAL retry of the prompt that had just aborted. 0 identical focus retries in the six days
+before the replace landed, 20 of 230 (8.7%) in the five days after, 1,006,908 bytes re-sent, 3 of
+them on 2026-08-23 — `20260823T001200` calls 0008 and 0009 are 26,674 bytes each and `cmp` clean.
+
+A model that just ran itself into the ground on this exact prompt will do it again, and for the two
+arms that are ABOUT running out of room the retry cannot help by construction. So an unchanged
+conversation ends the loop. A retry whose abort arm CHANGED still runs — that prompt is different,
+and it is the case the retry budget exists for.
 """
 
 import unittest
@@ -72,8 +83,36 @@ class OneNoticeAtATimeTests(unittest.TestCase):
         """The failure this is about: for an abort that IS running out of room, a longer prompt is
         the wrong direction."""
         sizes = [sum(len(str(m.get("content", ""))) for m in conv) for conv in self._run("dead_stream")]
-        self.assertGreater(len(sizes), 1, "the guard did not retry at all")
         self.assertEqual(len(set(sizes)), 1, f"prompt sizes across retries: {sizes}")
+
+    def test_the_same_prompt_is_never_sent_twice(self):
+        """The retry exists to give the model something it did not have. An identical body gives it
+        nothing, and it had just aborted on that exact body."""
+        for kind in ("rumination", "dead_stream", "window_exhausted", "degenerate"):
+            with self.subTest(abort=kind):
+                sent = self._run(kind)
+                self.assertEqual(len(sent), len({repr(c) for c in sent}),
+                                 "an identical conversation was sent more than once")
+
+    def test_one_real_retry_still_happens(self):
+        """Stopping early must not mean never trying — the first retry carries a notice the aborted
+        turn did not have."""
+        sent = self._run("dead_stream")
+        self.assertEqual(len(sent), 1)
+        self.assertTrue(any(_is_notice(m) for m in sent[0]))
+
+    def test_a_changed_abort_arm_still_gets_its_own_attempt(self):
+        """Different arm, different notice, different prompt — the case the retry budget is for."""
+        import json
+        sent, arms = [], ["dead_stream", "window_exhausted", "degenerate"]
+
+        def chat(body, rlog):
+            sent.append(list(body.get("messages") or []))
+            return json.dumps(ruminating(arms[min(len(sent), len(arms) - 1)])).encode()
+
+        body = {"messages": [{"role": "user", "content": "task"}], "tools": []}
+        loop.guard_rumination(ruminating("rumination"), body, chat, _Rlog())
+        self.assertGreater(len(sent), 1)
 
     def test_every_attempt_still_carries_a_notice(self):
         """Replacing must not mean dropping — the model is told why its turn was stopped, every time."""

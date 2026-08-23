@@ -84,7 +84,6 @@ class GatePlan:
 class GateOutcome:
     ran: bool = False  # False → no markers came back; keep don't-wedge semantics
     report: ProbeReport | None = None
-    git_state: str = ""  # `git status --porcelain | sha1sum` — changed-files signal
     unran: list = field(default_factory=list)  # selected checks whose section never came back — a GAP,
     #                                            not a pass: without this, a truncated gate read clean
     refused: str = ""  # the harness REFUSED to run the gate (sandbox policy) — its own words, for the log
@@ -223,10 +222,16 @@ def plan_gate(workspace: str, session: str = "", rlog=None) -> GatePlan:
         parts.append('if [ -z "$__cria_pre" ]; then __cria_new=$__cria_post; '
                      'else __cria_new=$(printf \'%s\\n\' "$__cria_post" | grep -vxF "$__cria_pre"); fi')
         parts.append('printf \'%s\\n\' "$__cria_new"')
-    parts.append(f"echo {_marker('git')}")
-    # Changed-files signal: one line summarizing the working tree (porcelain is stable);
-    # hashing keeps it tiny and diffable across gate runs. Absent git → empty (no signal).
-    parts.append("git status --porcelain 2>/dev/null | sha1sum 2>/dev/null | cut -d' ' -f1")
+    # THE CHANGED-FILES SIGNAL IS GONE, and it never was one. `git status --porcelain | sha1sum` ran
+    # on EVERY gate — roughly 1,500 round trips over twelve days of logs — was parsed into
+    # `GateOutcome.git_state`, stored on `GuardState.gate_git`, and read by NOTHING: `grep -rn
+    # git_state\|gate_git` over the package returns the write, the store and one test assertion.
+    # Untouched since the original port on 2026-07-11. Its stated job — "workspace-change signal
+    # across gates" — is answered by two live mechanisms that came later, `wsview.may_have_changed`
+    # and `_writes_since_last_gate`, both from facts cria already holds.
+    #
+    # The section marker goes with it: the survey is stripped before `split_sections` runs, so the
+    # last real section simply runs to the end of the text, as it would have anyway.
     # THE WORKSPACE SURVEY RIDES HOME WITH THE GATE. This is already a harness round trip, so it
     # costs nothing extra, and it is the one place guaranteed to happen in a session where the
     # harness offers its own file tools and cria lowers nothing. Appended AFTER the last marker and
@@ -578,6 +583,8 @@ def clean_gate_output(raw: str, plan: "GatePlan | None" = None, *, annotate: boo
     timed_out_output: list[str] = []
     _sections = split_sections(raw)
     for sid, body in _sections.items():
+        # `git` is no longer EMITTED (see plan_gate), but a gate result already in a session's
+        # history still carries that section, and it must never read as a probe's output.
         if sid in ("git", LITTER_SECTION):  # cria's own bookkeeping — signal for cria, noise for the model
             continue
         # The offline re-run is an INSTRUMENT READING, not a check. It is the same suite with the
@@ -1362,5 +1369,4 @@ def interpret_gate(plan: GatePlan, result_text: str, rlog=None) -> GateOutcome:
     if any(c.kind is probediscovery.ProbeKind.Test for c in plan.candidates):
         out.offline_ran = bool(sections.get("offline", "").strip())
 
-    out.git_state = sections.get("git", "").strip().splitlines()[-1].strip() if sections.get("git") else ""
     return out

@@ -16,6 +16,7 @@ from tempfile import TemporaryDirectory
 
 from cria.config import Backend, Config, IndicatorsConfig, LoggingConfig, Role, ServerConfig, UpstreamConfig
 from cria.events import EventLog
+from cria.probegate import GATE_SENTINEL
 from cria.server import CriaServer, _has_visible_output, _proxy_body
 from cria.upstream import Upstream
 
@@ -392,8 +393,13 @@ class PlanningTests(unittest.TestCase):
         # into the workspace (cria's plan mirror lives in its OWN dir). The coder here produces no
         # tool call, so (after the one no-tools nudge) the loop emits its ground-truth GATE.
         self.assertIn("tool_calls", out)
-        from cria.probegate import SECTION_PREFIX
-        self.assertIn(SECTION_PREFIX, out)   # the composed gate is running
+        from cria import wsview
+        # The gate's own SENTINEL is non-ASCII and arrives \u-escaped in the SSE body, so this asks
+        # for the survey block, which every composed gate carries and which is plain ASCII. It used
+        # to ask for a `___CRIA_GATE_` section marker — but with no workspace root there are no
+        # probes and no litter to bring home, and the `git` sha1sum section that used to guarantee
+        # one marker was removed for having no reader at all.
+        self.assertIn(wsview.SURVEY_CMD_OPEN, out)   # the composed gate is running
         self.assertNotIn("cd . ||", out)     # unknown cwd NEVER discovers cria's own repo
         self.assertNotIn(".cria/", out)      # cria's scratch never leaks into the workspace
         events = [json.loads(l) for l in Path(self.log.path).read_text().splitlines() if l.strip()]
