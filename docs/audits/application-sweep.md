@@ -4,7 +4,7 @@ Second run of this sweep (the first was 2026-08-16). Twenty agents, one orthogon
 
 Every lens also carried the previous sweep's findings in its area, so it reports *still live / fixed / now fires into nothing* rather than rediscovering. Findings that turned out to be deliberate are recorded as such. Several lenses came back partly empty and said so.
 
-**Nine root fixes landed while the sweep ran** — verified by running the code, not by reading it. They are marked ✅ below and listed in full at the end.
+**Eighteen root fixes landed while the sweep ran** — every one verified by running the code, not by reading it. They are marked ✅ below and listed in full at the end.
 
 ---
 
@@ -23,7 +23,7 @@ Every lens also carried the previous sweep's findings in its area, so it reports
 | 9 | Ordering | what is written after it is read |
 | 10 | Cross-harness | what silently dies outside Codex |
 | 11 | Cross-language | what silently dies outside Python and Ruby |
-| 12 | Tests | which tests cannot fail for a real reason |
+| 12 | Tests | which tests cannot fail for a real reason (217 mutations, 119 survivors) |
 | 13 | Prompt collisions | what does cria inject that contradicts itself in one prompt |
 | 14 | Unknown as false | where does "could not see" become "is not there" |
 | 15 | Refusals | is every refusal true, and does it name a route the reader has |
@@ -53,7 +53,17 @@ Same shape elsewhere: `tests/conftest.py` binds a `DirectView` globally, so ever
 
 `GuardState.gate_git` is computed by a `sha1sum` on **every** gate round trip (~1,500 in 12 days), parsed, stored, and read by nothing — untouched since the original port six weeks ago.
 
-### 3. The generalising fix that half-landed
+### 3. The test cannot fail, because nothing drives the place the code runs
+
+Lens 12 ran **217 mutations** — each applied to an isolated copy of the repo, full suite, reverted, revert asserted. **119 survived (55%).**
+
+The sharpest group is rule 24's own: `Upstream._prep` is the last thing before the JSON goes on the wire, and 3 of its 5 message transforms could be **deleted** with no test noticing. Every test for the three survivors calls the function directly; the one test whose *name* asserts the wire property — "converts orphan to user unconditionally" — is exactly the one that cannot see whether the unconditional call site exists. Each repairs a structural 400 that poisons every later turn of a session. ✅
+
+Second: two bounds whose whole job is to end something could be set to `10**9` and stay green — `MAX_COMPLETION_CHECKS`, one of the two fail-open exits AGENTS.md names by name, and `RED_HOLDS_SATISFACTION_FOR`. Their neighbours in the same file are all pinned, so this was a gap, not a policy. ✅ (Whole-repo figure: **90 of 145 module-level numeric constants survive tripling.**)
+
+Third, still open: `test_reasoners_see_the_same_gate.py` guards `clean_gate_results(messages, gate_plan)` with a parenthesis filter that qualifies **1 of the 4 call sites** — and the miss is `_frame_for_item`, the coder frame, the path the original incident depended on being right. `denial.mark` has 9 producers and 3 that can be removed silently, because every reader test bakes the mark into its own fixture. `test_refusal_exit_code.py` pins an AST count of `_refusal_command` calls at the literal 10.
+
+### 4. The generalising fix that half-landed
 
 Repeatedly, a rule was generalised at its trigger and left keyed to one tool at the point that decides what happens next.
 
@@ -66,7 +76,7 @@ Repeatedly, a rule was generalised at its trigger and left keyed to one tool at 
 
 ## HIGH — live, measured, not yet fixed
 
-### The gate result is over budget on a third of real workspaces
+### The gate result is over budget on a third of real workspaces ✅
 
 `plan_gate` appends the workspace survey to the gate script, so both ride home in **one** tool result. The budget that decides whether that result survives (`MARKER_OVERHEAD_BYTES = 1100`) enumerates the section echoes, the litter listing, the git digest and the offline leg — and not the survey. Its comment last changed 2026-08-14; the survey was added on 2026-08-20.
 
@@ -84,7 +94,7 @@ The two families over the bound are the two that have been running. The root is 
 
 Compounding it, both `apply_survey` call sites **discard its boolean**, and `wsview` has no emit sites at all — so a survey rejected for arriving cut is invisible by construction, and the view silently degrades to never-surveyed. That is the state `_confirm_completion` fails **open** on.
 
-### Ruby and PHP dependency trees flood the gate; JS and Python do not
+### Ruby and PHP dependency trees flood the gate; JS and Python do not ✅
 
 `ignore.generated` proves JS install dirs and Python venvs. Nothing proves a bundler or composer `vendor/`. The per-file floors then emit one probe per gem file, and `MAX_FLOOR_FILES_PER_LANG = 100_000` is not a bound.
 
@@ -94,7 +104,7 @@ Measured: **26 of 35 `shipping-rates-rb` workspaces produce a gate whose section
 
 ✅ **Fixed.** Recorded here because of its blast radius: all 15 archived `feed-pipeline-java` workspaces ship exactly one `.java` file and zero tests, select `mvn test`, and were telling the satisfaction judge that tests had run.
 
-### The offline-test claim is defeated by every runner whose total counts skipped tests
+### The offline-test claim is defeated by every runner whose total counts skipped tests ✅
 
 `_offline_fact` compares the tally online vs offline; unequal → silence, equal → *"The same tests pass with the network switched off — nothing in them reaches a service on the internet."* That works for pytest. It cannot work for minitest, phpunit, surefire or gradle, whose totals **include** the skipped test. Reproduced with real Ruby:
 
@@ -105,13 +115,13 @@ offline : 2 runs, 1 assertions, 0 failures, 0 errors, 1 skips  -> 0f/2p   EQUAL
 
 The sentence appears in **5,120 captured prompts**. Separately, `0f/0p` shipped the strong sentence **170 times** — zero tests establishing that nothing reaches the network. (The skip-count half of this is now fixable: `skipped_count` reads all eight runners as of this sweep.)
 
-### The install refusal ships with no alternative for the first nine firings of a session
+### The install refusal ships with no alternative for the first nine firings of a session ✅
 
 `_local_install_advice` picks a route only when `toolpath.resolved(t)` names one, and `View.program` *queues* the question and returns `None` the first time. So the refusal is a full stop: *"an install must land inside the project directory … and this one would not."*
 
 Verified in session `20260823T032555`: the first **nine** install refusals in coder prompt 0084 are routeless; the tenth onward carries a route. **580 of 3,704 renderings (16%) carry no route.** Downstream in that same session: 14 consecutive refused installs, then the escalation reasoner authored *"Stop trying to install the countries gem — it cannot be installed in this sandbox … Replace the require with a hardcoded set of EU two-letter codes."* `countries (8.1.0)` is installed on this box, and `gem install --install-dir vendor/bundle countries` passes cria's own guard.
 
-### The install guard tests flag spelling, not destination
+### The install guard tests flag spelling, not destination ✅
 
 Any one of eight flag spellings, appended to any manager, disables the guard:
 
@@ -124,7 +134,7 @@ cargo install --path .                           ALLOWED   (--path is the SOURCE
 
 And the mirror image, live at call 0040 of the session above: the coder named the project directory verbatim (`gem install countries --user-dir <the workspace>`) and was told *"an install must land inside the project directory (<the same path>), and this one would not."* Bypass prevalence in 4,303 captured commands: **0**. The false refusal is what has actually cost runs.
 
-### A rejected write's payload is replaced by cria's English, and the coder writes it to disk
+### A rejected write's payload is replaced by cria's English, and the coder writes it to disk ✅
 
 `_collapse_rejected_payload` stubs any `content`/`old_string` over 400 characters with `[985 characters — this edit was REJECTED, nothing was written to <path>]`. `focustrim` records the operator's ruling on this exact shape after a corruption incident — *"There is not supposed to be any elision. It's all or nothing"* — and was fixed by **removing the call**. This site still stubs, and so does its second owner in `selfcompact`.
 
@@ -143,7 +153,7 @@ The em dash in the stub is `—`; the documented downstream symptom is `Importer
 
 `_shapes` is capped on write and on load. `_sessions` has no cap anywhere and exactly one eviction site — the plan-ON `loop.done` path, which fired **0 times in 12 days**. On disk: **494 sessions, all `in_progress`, 1,015,017 bytes**, accumulating since 2026-07-27. `persist()` runs every turn and re-serialises all 494 under the lock — measured **4.08 ms to dump + 3.43 ms to write, per turn**, ≈17 GB written over 12 days for state that is 100% stale. `mark_done` is unreachable from the live path, so `shape_done()` has returned False 256 times out of 256, and the post-compaction continuation has never had that half of its evidence.
 
-### A restart silently overwrites call captures
+### A restart silently overwrites call captures ✅
 
 The capture folder name is deliberately restart-stable; the sequence counter inside it is memory-only. Counted exactly from `upstream.dump` events: **25,823 distinct capture paths written, 189 written more than once, 274 captures destroyed** across 22 session folders, one path written 11 times. This is the evidence store the project's own doctrine says to diagnose from, and every lens in this sweep was reading it.
 
@@ -153,7 +163,7 @@ The capture folder name is deliberately restart-stable; the sequence counter ins
 
 - **Node is the only ecosystem whose own declared test command is thrown away.** `build_js` drops `scripts.test` when the classifier does not recognise the runner; `node cli.test.js`, `node test/lookup.test.js` are all UNKNOWN. **7 of 9 node workspaces declare `scripts.test`; 0 reach the gate; 8 of 9 get zero test probes** — the only such workspaces in the archive. Half-fixed: the warning now exists and shipped in 2,305 prompts across 42 sessions.
 - **JS's undefined-name rung has never run.** `eslint` does not resolve on this box, so `program_is_installed` drops it: 35 syntax probes, 1 test, **zero lint** across 9 node workspaces. Reproduced the defect it exists for — a broken `rates.js` using an undefined name produced *"no problems reported"* from every probe cria ran.
-- **Only JUnit's tally row reads the ERROR count.** A pytest run with `1 passed, 1 error` parses to `0f/1p` and reads as green; `_checks_superseded_by_coder_run` then drops cria's real cached findings. The `0 failures, N errors` shape occurs **1,749 times across 9 sessions**.
+- ✅ **Only JUnit's tally row reads the ERROR count.** A pytest run with `1 passed, 1 error` parses to `0f/1p` and reads as green; `_checks_superseded_by_coder_run` then drops cria's real cached findings. The `0 failures, N errors` shape occurs **1,749 times across 9 sessions**.
 - **A green PHPUnit run has no tally at all** (`OK (2 tests, 2 assertions)` matches no row), so the passing-test-regression detector is structurally silent for PHP.
 - **A failing `node --test` run yields zero findings and a YAML key as its summary** — `exited 1: name: 'AssertionError'` — while the real message and `location:` are both in the output. Java stack frames are likewise unparsed.
 - **The compaction reframe cannot see an empty workspace.** `reframe_compaction` reads the view before `wsview.bind` runs, on both POST paths, so `compaction_reframe_empty` — the template whose docstring calls the alternative *"the drift ROOT"* — has fired **0 of 8,226 times**.
@@ -198,6 +208,13 @@ The capture folder name is deliberately restart-stable; the sequence counter ins
 | `34de0b7` | The forced-answer closer asks for the key the judge declares. The satisfaction judge was asked for `{"done": …}` while declaring `satisfied` — 78 prompts, 7 replies keyed wrong, each rescued only by an inference that would have inverted a `proposed_fix: ""` into satisfied. A fail-open on completion. |
 | `7c34b4c` | A listing may not outlive the look that made it. *"This list is complete — a file not listed here does not exist"* shipped **674 times** and its honest counterpart 0 times, gated on the survey's bound and on nothing about when it ran. A separate `stale` clause now also withdraws the header's "right now". |
 | `97f6b8c` | Two measurable wastes: a refit that cannot shrink the body is no longer re-sent (59 refits, 59 400s, 3.2M prompt tokens), and the evidence summariser runs under the compactor's role instead of the reasoner's (85 of 85 captured bodies had reasoning on against a config that says off). |
+| — | The survey now fits the result it rides home in. `TREE_MAX_BYTES` was 48,000 against a 9,000-byte result cap and a measured 10,212-byte harness retention; 10 of 10 rust and 22 of 35 ruby workspaces produced a survey that was cut in transit and refused wholesale, leaving the view NEVER surveyed — the state `_confirm_completion` fails open on. The gate now passes what is left of its own budget, self-balancing because an unsurveyed view yields no probes. A refused or uncarried survey is an event at both readers. |
+| — | `ignore.generated` gained proof for bundler and composer trees — a PAIR (`gems` beside `specifications`, `composer` beside `autoload.php`), because neither name means anything alone. Driving the real `plan_gate` over 35 archived ruby workspaces: **26 of 35 over budget with a worst plan of 372 probes → 1 of 35, worst plan 28.** |
+| — | cria's sentence no longer sits where a file body sits. Both the rejected-edit stub and the compaction stub replaced an oversized payload IN PLACE, and models wrote the sentence to disk — `javac` answered `illegal character: '—'` on the em dash and a 357-line file was lost. The payload leaves; what cria has to say is said in the assistant turn's own prose. |
+| — | A skipped test is not a self-contained suite (5,120 prompts), and a restart no longer overwrites call captures (274 destroyed). |
+| — | An error is not a pass: only JUnit's tally row read the runner's ERROR count, so a run with errors and no failures read as `0f/…` — which is what lets a coder's own run DROP cria's cached findings. |
+| — | The install guard judges the DESTINATION, not the flag spelling (15 cases verified), and a refusal with no route yet says so instead of reading as "this cannot be done" (580 of 3,704 renderings were silent; one run hardcoded the data a gem would have provided). |
+| — | Three wire repairs and two fail-open bounds now have tests that fail when the code is deleted. |
 
 ---
 
