@@ -4,7 +4,7 @@ Second run of this sweep (the first was 2026-08-16). Twenty agents, one orthogon
 
 Every lens also carried the previous sweep's findings in its area, so it reports *still live / fixed / now fires into nothing* rather than rediscovering. Findings that turned out to be deliberate are recorded as such. Several lenses came back partly empty and said so.
 
-**Eighteen root fixes landed while the sweep ran** — every one verified by running the code, not by reading it. They are marked ✅ below and listed in full at the end.
+**Every finding in this report has now been acted on.** 39 root fixes landed across 29 commits, each verified by running the code rather than reading it, plus 12 new regression tests and ~180 new assertions. The handful deliberately NOT fixed are listed at the end with the measurement that decided it.
 
 ---
 
@@ -197,26 +197,72 @@ The capture folder name is deliberately restart-stable; the sequence counter ins
 
 ---
 
-## The nine fixes that landed during the sweep
+## What was fixed
 
-| commit | what it closed |
+Grouped by what was wrong, not by module. Every row was measured before and verified after.
+
+### cria said something it had not established (#5b)
+
+| | |
 |---|---|
-| `3ff2b35` | A runner that says "no tests" in words is heard. Three callers asked the vacuous-green question of a field that is a fixed string on green runs, so go's marker was invisible for six weeks; four more runners print prose and no count, so the tally arm was silent for them too; the skip count read one runner's spelling. One owner (`says_nothing_ran`), a shape rule, and the fixture now builds its result the way production does. |
-| `1a87c55` | The recovered diagnostics band dedups **records**, not lines. The one-day-old `awk '!seen[$0]++'` deleted javac's `symbol:`/`location:` from 78 of 210 errors in the only session that had run since — under a header promising the opposite. The unconditional `sed '$d'` that ate the band's last line is now conditional on there being something to cut. |
-| `ab57963` | cria stops replacing a search with a fetch of an invented name. `url_is_grounded` was the module's one unbounded matcher; `sess.web_session` was written only by the driver that no longer runs, silently disabling four web mechanisms. |
-| `8a4c071` | A refusal is not a file's contents — a refused whole read was being ingested as the file's bytes, including into judge prompts headed *"this is what is actually there"*, and it made non-existent files answer `isfile → True`. Plus: 23 emit sites passed a level the table does not know (or a config value), demoting **828 records** including every rumination abort; an unknown level is now the loudest, and an AST test refuses the next one. |
-| `34de0b7` | The forced-answer closer asks for the key the judge declares. The satisfaction judge was asked for `{"done": …}` while declaring `satisfied` — 78 prompts, 7 replies keyed wrong, each rescued only by an inference that would have inverted a `proposed_fix: ""` into satisfied. A fail-open on completion. |
-| `7c34b4c` | A listing may not outlive the look that made it. *"This list is complete — a file not listed here does not exist"* shipped **674 times** and its honest counterpart 0 times, gated on the survey's bound and on nothing about when it ran. A separate `stale` clause now also withdraws the header's "right now". |
-| `97f6b8c` | Two measurable wastes: a refit that cannot shrink the body is no longer re-sent (59 refits, 59 400s, 3.2M prompt tokens), and the evidence summariser runs under the compactor's role instead of the reasoner's (85 of 85 captured bodies had reasoning on against a config that says off). |
-| — | The survey now fits the result it rides home in. `TREE_MAX_BYTES` was 48,000 against a 9,000-byte result cap and a measured 10,212-byte harness retention; 10 of 10 rust and 22 of 35 ruby workspaces produced a survey that was cut in transit and refused wholesale, leaving the view NEVER surveyed — the state `_confirm_completion` fails open on. The gate now passes what is left of its own budget, self-balancing because an unsurveyed view yields no probes. A refused or uncarried survey is an event at both readers. |
-| — | `ignore.generated` gained proof for bundler and composer trees — a PAIR (`gems` beside `specifications`, `composer` beside `autoload.php`), because neither name means anything alone. Driving the real `plan_gate` over 35 archived ruby workspaces: **26 of 35 over budget with a worst plan of 372 probes → 1 of 35, worst plan 28.** |
-| — | cria's sentence no longer sits where a file body sits. Both the rejected-edit stub and the compaction stub replaced an oversized payload IN PLACE, and models wrote the sentence to disk — `javac` answered `illegal character: '—'` on the em dash and a 357-line file was lost. The payload leaves; what cria has to say is said in the assistant turn's own prose. |
-| — | A skipped test is not a self-contained suite (5,120 prompts), and a restart no longer overwrites call captures (274 destroyed). |
-| — | An error is not a pass: only JUnit's tally row read the runner's ERROR count, so a run with errors and no failures read as `0f/…` — which is what lets a coder's own run DROP cria's cached findings. |
-| — | The install guard judges the DESTINATION, not the flag spelling (15 cases verified), and a refusal with no route yet says so instead of reading as "this cannot be done" (580 of 3,704 renderings were silent; one run hardcoded the data a gem would have provided). |
-| — | Three wire repairs and two fail-open bounds now have tests that fail when the code is deleted. |
+| A runner that says "no tests" in WORDS | Three callers asked the vacuous-green question of a field that is a fixed string on green runs, so go's marker was invisible for six weeks; four more runners print prose and no count, so the tally arm was silent for them too. All 15 archived java workspaces ship zero tests and were telling the satisfaction judge otherwise. |
+| "This list is complete" over a stale listing | 674 prompts; the honest counterpart shipped 0 times. Gated on the survey's BOUND and on nothing about WHEN it ran. A separate `stale` clause now also withdraws the header's "right now". |
+| A bound read as an absence | `listdir`/`scandir`/`walk` return what cria KNOWS; five readers turned that into "empty", "0 B", "no tests". On a real 420-file folded root both model-facing `list_dir` tools said "empty directory". `View.listed_everything` is the one owner now. |
+| "a specific line could not be parsed" over a line | 176 prompts, 54 sessions. Two readers of one gate; a parser gap is not an unparseable output. `probeparse.names_a_location` is the one owner, and the neutral branch drops "run that exact check yourself", which the system prompt contradicts in 733 prompts. |
+| A clippy advisory that was red and clean at once | `parse_rustc` kept rustc's severity for `note`/`help` — explicitly, so the filter could work — and threw it away for `warning`. One run, two blocks, opposite verdicts, last two turns before the model speaks. |
+| A refusal recorded as a file's contents | Every whole read cria refused was ingested as that file's bytes, including into judge prompts headed "this is what is actually there". It also made non-existent files answer `isfile → True`. |
+| "and that file is still there" from a cache | The second of two identical returns asserted a spill file's presence from the doc cache; its twin thirty lines up asks the filesystem. |
+| "no installed source root … on this machine" | From a question cria had not asked. Three-valued now. |
+| A verified fact about the wrong thing | "The filesystem AGREES with the report above" attached to `REVIEW.md: EXISTS on disk` under a report about a compiler error. And `api.handle.me` / `e.g` were printed as workspace paths 11 times. |
+| A tally that called an error a pass | Only JUnit's row read the runner's ERROR count, so `0 failures, N errors` began `0f/` — which is what lets a coder's own run drop cria's cached findings. 1,749 occurrences. |
+| A skipped test inside a self-contained suite | 5,120 prompts. Four of six battery runners count the skipped test in their total, so the online/offline tallies matched. |
+| A briefing that denied a file cria could see | The self-compaction path has had this repair since it was written; the HARNESS path — whose reply becomes the session's entire remembered past — never called it. Landed 2026-08-23 and the coder adopted it. |
 
----
+### a mechanism that could not fire, or fired into nothing
+
+| | |
+|---|---|
+| The gate's own survey | 48,000-byte bound against a 9,000-byte result and a measured 10,212-byte harness cut. 10 of 10 rust and 22 of 35 ruby workspaces produced a survey that was cut in transit and correctly refused — leaving the view NEVER surveyed, the state `_confirm_completion` fails open on and `collect_files` finds no probes in. |
+| A gate that read less than it was asked | `outcome.unran` had one reader, on a path that has not run in the whole log window, so a cut gate recorded GREEN. |
+| Four web mechanisms | `sess.web_session` was written only by the driver that stopped running on 2026-08-19. The "that fetch was not yours" correction appears in 0 of 253 sessions; the wording that blames the coder for cria's own 404 appears in 377. |
+| The empty-workspace reframe | `wsview.bind` ran AFTER the reframe that reads the view, on both POST paths. 0 fires in 8,226. |
+| Five of twelve proposed-fix guards | `_verdict_nudge` passed no `messages` and no `sess`, and logged `invented=0` from a check that could not run. |
+| The completion that never said it finished | `shape_done()` answered False 256 times out of 256; `loop.start` fired 265 times, 0 with `continued=True`. |
+| `lower_edit_file` | 0 fires in 440,198 events: unreachable on Codex, and broken everywhere else because it never asked whether the harness has `apply_patch`. |
+| The workspace root a rootless harness reports | `survey_root` had one caller, inside the adoption itself. 51 abstain-sites, and `[safety] external_dir_permission = "none"` enforcing nothing. |
+| node's declared test command | 7 of 9 workspaces declare `scripts.test`; 0 reached the gate. `map_kind`'s fallback described itself as "unreachable". |
+| Three wire repairs and two fail-open bounds | Deletable with the suite green. Rule 24 is the only rule about WHERE code runs, and 3 of its 5 instances were tested only for what they compute. |
+
+### a rule keyed to one tool's spelling (#20)
+
+`_tally_says_zero` (four runners print prose), the skip count (pytest's spelling only), the env preamble (two Codex tags — which also collided every conversation in a workspace onto one session key), the file-op menu (six literals while the shell beside it was a shape rule), `shellshape` (no PHP, no path-invoked runner), the jest tally row (could not match vitest, whose name is in its own comment), three test-convention markers (`@ParameterizedTest`, `\PHPUnit\Framework\TestCase`, `node:test`), the install guard (flag SPELLING rather than destination), and the dependency-missing table (no PHP at all).
+
+### cria's own words where the model's belong
+
+The rejected-edit stub and the compaction stub both replaced an oversized payload IN PLACE — the exact position a file body occupies — and models wrote the sentence back to disk. `javac` answered `illegal character: '—'` on the em dash and a 357-line file was lost. `focustrim` was fixed by removing the call under the operator's 2026-08-19 ruling ("There is not supposed to be any elision. It's all or nothing"); these two were not. And an empty command was attributed to the model in 188 prompts, with cria's own answer underneath it.
+
+### waste
+
+| | |
+|---|---|
+| A refit that could not shrink the body | 59 refits, 59 HTTP 400s, an exact match. 3,230,841 prompt tokens re-sent to a guaranteed failure. |
+| The evidence summariser | Labelled `compactor`, sampled as the reasoner: 85 of 85 captured bodies had reasoning ON against a config that says off. 26 of 84 hit the token cap; 12 returned nothing at all. |
+| An identical rumination retry | 20 of 230 focus retries were byte-identical to the prompt that had just aborted. |
+| The session store | 494 sessions, 1,015,017 bytes, all `in_progress`, re-serialised on EVERY turn — 7.5 ms of lock-held work per turn for state that is stale. |
+| A ruby gate | 26 of 35 workspaces over budget, worst plan 372 probes and 551 KB of script → 1 of 35, worst plan 28. |
+| Nine identical refusals in one prompt | The fold keyed on raw bytes while the harness envelope varies per call. 11.6 KB of a 79.2 KB prompt. |
+| ~1,500 `sha1sum` round trips | `gate_git`: computed on every gate, parsed, stored, read by nothing since the original port. |
+
+### the record itself
+
+274 call captures destroyed by restarts (the folder name was restart-stable; the counter inside it was not — and this is the evidence store every lens in this sweep was reading). 828 log records demoted to `info` by a level the table does not know, including every rumination abort. 597 records that lost `reason=` in `cria.tail`. The last live occurrence of the literal token `cria` in model-facing text. Eight dead constants, fields and prompt texts with no reader at all.
+
+## Measured and deliberately NOT fixed
+
+* **A guard refusing a proposed fix that names a library.** Both judge prompts forbid it in prose and nothing enforces it. Sampled the last 1,500 coder prompts: 39 proposed fixes reached the coder, 2 named a backticked token, 0 of those were absent from the evidence the judge was shown. The one verified harm on record (`node:fetch`, not a Node builtin) would not have been caught by a grounding rule either — a judge in that same session had named it 230 calls earlier, so it WAS in the evidence. A guard that refuses a whole fix at this prevalence is a footgun (#1, #15).
+* **Ruby running its suite twice** (the zero-config floor plus the ranked `rake test`). The two invocations genuinely disagree sometimes — the floor green, `bundle exec rake test` red — and the gate names each command, so the reader can tell them apart. Suppressing the floor per language needs a language↔runner mapping that does not exist, and dropping it unconditionally would silence a language whose ranked probe belongs to a different one.
+* **`Node.js` read as a filename.** `.js` is a real extension and a file may genuinely be called that; 1 occurrence against the 11 the suffix rule removes.
+* **`eslint`'s undefined-name rung**, which never runs because eslint is not installed on this box. That is a fact about the machine, not about cria.
 
 ## What each lens read and found correct
 
