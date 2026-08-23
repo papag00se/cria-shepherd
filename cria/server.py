@@ -34,6 +34,7 @@ from .heartbeat import Heartbeat
 from .indicators import MARKER, Indicator, inject_buffered, strip_history, strip_note_lines, wrap_stream
 from .loop import (
     Loop,
+    _briefing_disk_truth,
     _drop_harness_frame,
     LoopContext,
     LoopStore,
@@ -477,6 +478,22 @@ def _harden_compaction_reply(comp: dict, body: dict, provider, server, rlog, ses
     # creating, didn't — and wrote a DUPLICATE test suite beside the one it had already built.
     # A name-only listing (top level + one level down) is re-derivable truth, judgment-free.
     inventory = _workspace_listing(ws)
+    # THE SAME REPAIR THE OTHER COMPACTION PATH HAS. `_briefing_disk_truth` appends a ground-truth
+    # line when a briefing DENIES a file cria can see — never deletes — and the self-compaction path
+    # has called it since it was written. This one, the HARNESS handshake, never did, and it is the
+    # path whose reply becomes the session's entire remembered past.
+    #
+    # Landed on 2026-08-23: `20260823T025404/0078` listed `REVIEW.md (4746 B)` under "This list is
+    # complete", and the briefing it returned said "The `REVIEW.md` file has not yet been created or
+    # updated with the detailed risk list; it must be added". Nothing corrected it, and at 0080 the
+    # coder adopted it: *"then create/update REVIEW.md with risks."*
+    #
+    # Precision on this path, measured over its 224 briefings: 4 flags, 1 of them that case and 3
+    # about a file's CONTENTS rather than its existence. A false flag appends "these files DO exist
+    # on disk right now" — a TRUE sentence that is merely beside the point — so the failure
+    # direction is an irrelevant fact, never a deletion and never a falsehood (#2).
+    if text and inventory:
+        text = _briefing_disk_truth(text, inventory, rlog)
     checks = _last_checks_note(server, sk)
     facts = "\n\n".join(t for t in (facts, inventory, checks) if t)
     # Rewrite when there is anything to append OR when the reply's own prose was DROPPED above —

@@ -2047,7 +2047,10 @@ _DENIES_FILE = re.compile(
 
 def _briefing_denies_real_files(briefing: str, files_list: str) -> list[str]:
     """Files the briefing says are missing that cria's OWN disk listing shows exist."""
-    present = {m.lower() for m in re.findall(r"[\w./-]+\.\w{1,5}", files_list or "")}
+    # THE LISTING'S OWN SPELLING, not a lowercased copy. The name goes into a sentence the coder
+    # reads — "these files DO exist on disk right now: review.md" — and `REVIEW.md` is what is
+    # actually there. Matching stays case-insensitive; only the reported name is the real one.
+    present = {m.lower(): m for m in re.findall(r"[\w./-]+\.\w{1,5}", files_list or "")}
     if not present:
         return []
     named = []
@@ -2056,8 +2059,12 @@ def _briefing_denies_real_files(briefing: str, files_list: str) -> list[str]:
         if not m:
             continue
         f = (m.group(1) or m.group(2) or "").lower()
-        if f and any(f == q or q.endswith("/" + f) for q in present) and f not in named:
-            named.append(f)
+        if not f:
+            continue
+        hit = next((real for low, real in present.items()
+                    if low == f or low.endswith("/" + f)), "")
+        if hit and hit not in named:
+            named.append(hit)
     return named
 
 
