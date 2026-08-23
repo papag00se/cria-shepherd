@@ -164,6 +164,34 @@ MIN_PROBE_SECTION_BYTES = 700
 # `[[` a portability check forbids. A path token in a diagnostic never contains a space, and the
 # optional `[` covers Maven's `path:[12,30]` beside everyone else's `path:12`.
 _DIAG_LINE_RE = r"[^ :]+:\[?[0-9]+"
+
+# The same shape again, spelled for `awk -v`. `-v` expands escape sequences in the value before the
+# regex engine sees it, so a bare `\[` arrives as a plain `[` and awk warns about it on stderr —
+# straight into the gate result. Doubled here, it arrives as `\[`.
+_DIAG_AWK_RE = r"[^ :]+:\\[?[0-9]+"
+
+# DROP A REPEAT OF A DIAGNOSTIC, NOT A REPEAT OF A LINE.
+#
+# This was `awk '!seen[$0]++'` for one day. That drops a repeat of any LINE, globally, across the
+# whole `-B/-A` stream — and a compiler's continuation lines are identical by design. javac prints
+# `symbol:` and `location:` under every error; rustc prints `  |` and `  ^`; gcc prints its caret
+# row. Every one of them survived under the FIRST diagnostic and was deleted from all the rest.
+# Measured on session 20260823T025404, the only run since the change landed: 78 of 210
+# `cannot find symbol` headers arrived with no `symbol:` line, and one arrived with neither —
+# a compile error whose whole message was the words "cannot find symbol". The block ships under a
+# sentence promising "each with the lines just above and below it" (#5b).
+#
+# So the unit is the RECORD, in the shape every checker in every language prints it: a line carrying
+# `path:line`, followed by the lines under it that do not. A record ends where the next one begins.
+# Key it on its whole text and print it the first time that key appears — so the repeated
+# `ConcurrentHashMap` import collapses to one slot while a second error that merely SHARES a
+# `symbol:` line keeps its own copy of it. Not grep's `--` groups: javac prints repeats back to back,
+# so the duplicates the bound was losing budget to all arrive inside one group.
+_DIAG_RECORD_DEDUP = (
+    'function flush(){ if (b != "" && (k == "" || !(k in s))) { s[k]; printf "%s", b } b=""; k="" } '
+    '$0 ~ d { if (k != "") flush(); b = b $0 "\\n"; k = k $0 "\\n"; next } '
+    '{ b = b $0 "\\n"; if (k != "") k = k $0 "\\n" } '
+    'END { flush() }')
 # javac and rustc put the symbol, the location and the note on the lines UNDER the header.
 _DIAG_CONTEXT_LINES = 3
 # …AND EVERY TEST RUNNER PUTS THE MESSAGE ABOVE THE FIRST FRAME. minitest, JUnit, RSpec, pytest and
@@ -936,9 +964,17 @@ def compose_probe_command(c: ProbeCandidate, timeout_s: float, cap: int | None =
         # `method parse()` and the constructor candidate list — the two that say what the library's
         # API really is — were among the fifteen cut. `awk` drops a repeat of a line already shown
         # and keeps the first of each, so the same budget carries more distinct facts.
-        f"__cria_ds=$(printf '%s' \"$__cria_out\" | grep -E -B{_DIAG_BEFORE_LINES} "
+        f"__cria_dall=$(printf '%s' \"$__cria_out\" | grep -E -B{_DIAG_BEFORE_LINES} "
         f"-A{_DIAG_CONTEXT_LINES} {shlex.quote(_DIAG_LINE_RE)} "
-        f"| awk '!seen[$0]++' | head -c {middle} | sed '$d'); "
+        f"| awk -v d={shlex.quote(_DIAG_AWK_RE)} {shlex.quote(_DIAG_RECORD_DEDUP)}); "
+        # `sed '$d'` DELETES A REAL LINE WHEN NOTHING WAS CUT. It is there to drop the half-line
+        # `head -c` leaves behind, and on the head and tail legs `head -c` always cuts so it is
+        # always right. This band is a FILTERED subset and usually fits whole — so the unconditional
+        # `$d` was eating its last line, and when that line was a `symbol:`/`location:` the loss was
+        # silent (the counted headers were all still there). Cut only when there is something to cut.
+        f"if [ \"$(printf '%s' \"$__cria_dall\" | wc -c)\" -gt {middle} ]; then "
+        f"__cria_ds=$(printf '%s' \"$__cria_dall\" | head -c {middle} | sed '$d'); "
+        f"else __cria_ds=$__cria_dall; fi; "
         f"printf '%s\\n' \"$__cria_ds\"; "
         f"__cria_dshown=$(printf '%s' \"$__cria_ds\" | grep -E -c {shlex.quote(_DIAG_LINE_RE)}); "
         f"if [ \"$__cria_dshown\" -lt \"$__cria_dn\" ]; then "

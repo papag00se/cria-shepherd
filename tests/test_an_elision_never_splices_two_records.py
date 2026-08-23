@@ -267,5 +267,55 @@ class TheBandSpendsItsBudgetOnDistinctFacts(unittest.TestCase):
         self.assertIn("no suitable constructor", out)
 
 
+class ADiagnosticKeepsItsOwnMessage(unittest.TestCase):
+    """Deduping LINES deletes the part that says what is wrong.
+
+    The dedup above shipped for one day as `awk '!seen[$0]++'`, which drops a repeat of any line
+    across the whole stream — and a compiler's continuation lines are identical by design. javac
+    prints `symbol:` and `location:` under every error; both survived under the FIRST one and were
+    deleted from all the rest. Measured on session 20260823T025404, the only run since it landed:
+    78 of 210 `cannot find symbol` headers arrived with no `symbol:` line, and one arrived with
+    neither — a compile error whose entire message was the words "cannot find symbol". The block
+    ships under a sentence promising "each with the lines just above and below it" (#5b).
+
+    The unit is the RECORD — a located line plus the lines under it — not the line."""
+
+    def _javac_sharing_lines(self):
+        noise = "\n".join(f"[INFO] fetching artifact {i}" for i in range(80))
+        errs = "\n".join(
+            f"[ERROR] /w/{f}:[{ln},22] cannot find symbol\n"
+            f"  symbol:   method {sym}\n"
+            f"  location: class pipeline.Importer"
+            for f, ln, sym in [("Importer.java", 97, "setSkipLines(int)"),
+                               ("Importer.java", 99, "setEscapeChar(char)"),
+                               ("Importer.java", 101, "setAllowQuotes(boolean)"),
+                               # SAME `symbol:` line as the first error, different file and line.
+                               ("Row.java", 10, "setSkipLines(int)")])
+        return noise + "\n" + errs + "\n" + noise
+
+    def test_every_diagnostic_keeps_the_line_that_says_what_is_wrong(self):
+        out = run_with_cap(self._javac_sharing_lines(), 4000)
+        band = out[out.find("NOT continuous"):]
+        self.assertEqual(band.count("cannot find symbol"), 4)
+        self.assertEqual(band.count("symbol:"), 4)
+        self.assertEqual(band.count("location: class pipeline.Importer"), 4)
+
+    def test_a_shared_continuation_line_is_not_a_repeat(self):
+        """Two errors naming the same missing method share a `symbol:` line and are not duplicates."""
+        out = run_with_cap(self._javac_sharing_lines(), 4000)
+        band = out[out.find("NOT continuous"):]
+        self.assertEqual(band.count("symbol:   method setSkipLines(int)"), 2)
+
+    def test_the_band_keeps_its_last_line_when_nothing_was_cut(self):
+        """`head -c | sed '$d'` drops the half-line `head -c` leaves. Applied when nothing was cut,
+        it eats a whole real line — and when that line is a `symbol:` the loss is silent, because
+        every counted header is still present."""
+        out = run_with_cap(self._javac_sharing_lines(), 4000)
+        self.assertNotIn("located diagnostics shown here", out)   # they all fit
+        band = out[out.find("NOT continuous"):]
+        self.assertIn("[ERROR] /w/Row.java:[10,22] cannot find symbol", band)
+        self.assertIn("  location: class pipeline.Importer", band.split("Row.java")[-1])
+
+
 if __name__ == "__main__":
     unittest.main()
