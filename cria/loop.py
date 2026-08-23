@@ -44,7 +44,7 @@ from enum import Enum, auto
 from pathlib import Path
 
 from . import bodykeys, wsview
-from . import callcapture, dedup, denial, editrecovery, execcheck, focustrim, groundtruth, indicators, massage, probegate, probeparse, proberun, prompts, selfcompact, shellshape, toolmenu, urlgrounding, verifytools, webfetch
+from . import callcapture, dedup, denial, editrecovery, execcheck, focustrim, groundtruth, indicators, massage, probediscovery, probegate, probeparse, proberun, prompts, selfcompact, shellshape, toolmenu, urlgrounding, verifytools, webfetch
 from .classify import _task_key, latest_user_text
 from . import jsontext, planner, writeproxy
 from .jsontext import extract_json_object, strip_think
@@ -1220,6 +1220,35 @@ _VETO_MISSING = re.compile(r"(?i)\b(?:does not exist|not founds?|missing|no such
 # filename — always followed by space, quote, comma or end — still does (#5b, #20).
 _VETO_PATH = re.compile(r"(/?[\w][\w./-]*\.[A-Za-z][A-Za-z0-9]{0,4})(?![\w-])")
 
+# …AND THE SUFFIX HAS TO BE ONE A FILE ACTUALLY USES. "A word, a dot, a short suffix" is also a
+# HOSTNAME and an abbreviation, and cria printed both as verified facts about the workspace:
+#
+#     - api.handle.me: NOT on disk        (5 times — the task's own API host)
+#     - e.g: NOT on disk                  (6 times — the judge's own prose)
+#
+# under `veto_disk_confirms`'s sentence "That part is a verified fact about the workspace as it
+# stands, not one reader's opinion." The source extensions come from `probediscovery.TEST_CONVENTIONS`
+# — the same table every language claim is made from, so there is no second list to drift (#23) —
+# plus the config and document suffixes a workspace also holds.
+#
+# STILL A BOUND (#11b): `Node.js` survives it, because `.js` is a real extension and a file may
+# genuinely be called that. Measured at 1 occurrence against the 11 this removes.
+_VETO_SUFFIXES = frozenset(
+    e for c in probediscovery.TEST_CONVENTIONS for e in c.exts) | frozenset({
+        "c", "h", "cc", "cpp", "hpp", "cs", "kt", "swift", "scala", "ex", "exs", "sh", "bash",
+        "json", "toml", "yaml", "yml", "ini", "cfg", "conf", "xml", "lock", "md", "txt", "csv",
+        "sql", "html", "css", "gradle", "mod", "sum", "gemspec", "cabal", "dockerfile",
+    })
+
+
+def _veto_paths(text: str) -> list[str]:
+    """Path-shaped tokens cria may make an on-disk claim about, in order."""
+    out = []
+    for tok in _VETO_PATH.findall(text or ""):
+        if tok.rsplit(".", 1)[-1].lower() in _VETO_SUFFIXES and tok not in out:
+            out.append(tok)
+    return out
+
 
 _VETO_FACT_MAX_BYTES = 200_000   # past this, state existence only — a count from a clip is false
 
@@ -1289,6 +1318,22 @@ def _basename_matches(root: str, name: str) -> list[str] | None:
             for d, _subs, names in walked for n in names if n == want]
 
 
+def _facts_agree_with_a_missing_claim(facts: str) -> bool:
+    """Do these disk facts SUPPORT the report's missing/empty claim, or merely sit beside it?
+
+    The confirmation wording opens "The filesystem was checked just now and AGREES with the report
+    above", and it was attached whenever any fact resolved at all. So a report saying "the code
+    compilation failed (mvn compile error on InterruptedException)" was corroborated with
+    `- REVIEW.md: EXISTS on disk` (walked at 20260822T174652 call 0454) — a true fact, presented as
+    agreement with a claim it has nothing to do with (#5b).
+
+    A veto is triggered by `_VETO_MISSING`, so what agrees with it is a file that is NOT there, or
+    one that is there and empty. Everything else is still worth telling the coder — it is exact and
+    freshly checked — under wording that says only what cria did."""
+    empty = re.compile(r"\b0 (?:bytes|non-comment code lines)\b")
+    return any(("NOT on disk" in ln) or empty.search(ln) for ln in (facts or "").splitlines())
+
+
 def _veto_refuted_by_disk(why: str, workspace_root: str, ask=None, rlog=None) -> tuple[str, str]:
     """``(refuted_path, disk_facts)`` for a NOT-consistent veto — ``("", "")`` when nothing applies.
 
@@ -1317,10 +1362,11 @@ def _veto_refuted_by_disk(why: str, workspace_root: str, ask=None, rlog=None) ->
         return "", ""
     facts, first_existing = [], ""
     view = wsview.current(workspace_root)
-    for m in _VETO_PATH.finditer(why):
-        tok = m.group(1)
+    for tok in _veto_paths(why):
         # …AND A ONE-LETTER STEM IS NOT A FILE. `e.g.,` out of the judge's own prose matched as `e.g`
-        # and shipped beside the line above it, as a verified fact about the workspace.
+        # and shipped beside the line above it, as a verified fact about the workspace. (The suffix
+        # filter in `_veto_paths` now removes that one too; both bounds stay — they are different
+        # mistakes.)
         if len(os.path.splitext(os.path.basename(tok))[0]) < 2:
             continue
         try:
@@ -1576,7 +1622,9 @@ def _confirm_completion(claim: str, reason: str, workspace_root: str, reasoner_c
             # verified does not reach the coder labelled one reader's opinion (#5b, #2).
             rlog.emit("loop.confirm_confirmed_by_disk", level="info", phase=phase,
                       head=_clip(why or "", 120))
-            return verdict, why + "\n\n" + prompts.render("veto_disk_confirms", facts=disk_facts)
+            key = ("veto_disk_confirms" if _facts_agree_with_a_missing_claim(disk_facts)
+                   else "veto_disk_checked")
+            return verdict, why + "\n\n" + prompts.render(key, facts=disk_facts)
     return verdict, why
 
 
@@ -3978,7 +4026,9 @@ class Loop:
                 if disk_facts:
                     rlog.emit("loop.satisfaction_gap_confirmed_by_disk", level="info",
                               head=_clip(named, 120))
-                    reason = reason + "\n\n" + prompts.render("veto_disk_confirms", facts=disk_facts)
+                    key = ("veto_disk_confirms" if _facts_agree_with_a_missing_claim(disk_facts)
+                           else "veto_disk_checked")
+                    reason = reason + "\n\n" + prompts.render(key, facts=disk_facts)
                 sess.last_gap_named = named
                 sess.nudge_reason = prompts.render("periodic_gap", reason=reason)
                 sess.steer_source = "completion check (deliverable not found)"
