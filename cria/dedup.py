@@ -137,29 +137,40 @@ def fold_repeated_messages(msgs: list[dict], note: str, *, protect: "tuple[str, 
     times, which is itself signal when the repeat is a refusal it kept re-earning."""
     if not msgs:
         return msgs, 0
-    keep: dict[str, int] = {}
-    for i, m in enumerate(msgs):
+
+    def _candidate(m) -> bool:
         c = m.get("content")
-        if (m.get("role") in ("user", "tool") and isinstance(c, str)
-                and len(c.strip()) >= min_chars
-                and not any(mark in c for mark in protect)):
-            keep[c.strip()] = i          # last write wins → the newest copy is the keeper
-    if len(keep) == len([1 for m in msgs
-                         if isinstance(m.get("content"), str)
-                         and m.get("role") in ("user", "tool")
-                         and len(m["content"].strip()) >= min_chars
-                         and not any(mark in m["content"] for mark in protect)]):
+        return bool(m.get("role") in ("user", "tool") and isinstance(c, str)
+                    and len(c.strip()) >= min_chars
+                    and not any(mark in c for mark in protect))
+
+    # KEYED ON `volatile_key`, NOT ON THE RAW BYTES. `volatile_key` is this module's own answer to
+    # "is this the same thing again?" and the two other duplicate detectors (focustrim's tool-result
+    # groups, probegate's gate collapse) both use it — this one did not, and it is the one that folds
+    # cria's REFUSALS. A lowered command's result carries the harness's per-call envelope
+    # (`Chunk ID:`, `Wall time:`, `Original token count:`), so nine identical install refusals in one
+    # prompt carried nine different Chunk IDs and no two were byte-identical. Measured at
+    # 20260823T032555 prompt 0084: the same 1,529-byte refusal SIX times plus a 272-byte variant
+    # nine more — 11.6 KB of a 79.2 KB prompt (#23).
+    keep: dict[str, int] = {}
+    n_candidates = 0
+    for i, m in enumerate(msgs):
+        if _candidate(m):
+            n_candidates += 1
+            keep[volatile_key(m["content"].strip()) or m["content"].strip()] = i
+    if len(keep) == n_candidates:
         return msgs, 0                   # every candidate was unique — same list, no copy
     out, folded = [], 0
     for i, m in enumerate(msgs):
         c = m.get("content")
+        key = volatile_key(c.strip()) or c.strip() if isinstance(c, str) else None
         # THE ROLE FILTER GATES THE WRITE. It guarded only the index build above, so any message —
         # including an `assistant` turn and a `system` message — whose content matched a later
         # user/tool payload had its content replaced by cria's third-person pointer. Reproduced both
         # ways. The docstring says the opposite: "NEVER an assistant turn (the model's own words are
         # never rewritten), never a system message (cria's frame)."
         if (m.get("role") in ("user", "tool") and isinstance(c, str)
-                and keep.get(c.strip(), i) != i):
+                and keep.get(key, i) != i):
             out.append({**m, "content": note})
             folded += 1
             continue

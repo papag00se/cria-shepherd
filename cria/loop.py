@@ -6921,7 +6921,15 @@ def _fetched_facts_anchor(sess, messages: list[dict] | None = None) -> dict | No
 
 # An anchor block is the DESIGNATED single copy of its content: folding it into a pointer at a later
 # duplicate would move the content out of the protected head. Mirrors selfcompact._ANCHOR_MARKERS
-# (a test asserts sync) plus the denial marker, whose repetition IS the signal.
+# (a test asserts sync).
+#
+# THE DENIAL MARKER IS NOT HERE, and the comment used to claim it was — "plus the denial marker,
+# whose repetition IS the signal" — describing a tuple that has never contained it. The code was
+# right and the sentence was wrong: `fold_repeated_messages` is aggregate-lossless by design, "n
+# pointers plus one full copy, so the coder can still SEE it happened n+1 times, which is itself
+# signal when the repeat is a refusal it kept re-earning". Protecting refusals from the fold would
+# ship the same 1,529-byte paragraph nine times instead (measured, 20260823T032555 prompt 0084:
+# 11.6 KB of a 79.2 KB prompt) while telling the reader exactly as much.
 _ANCHOR_MARKERS_FOR_DEDUP = (selfcompact.FACTS_MARKER, selfcompact.TASK_MARKER,
                              selfcompact.SUMMARY_MARKER, BRIEFING_OPEN, CONTINUATION_MARKER)
 
