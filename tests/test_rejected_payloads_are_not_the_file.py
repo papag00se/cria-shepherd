@@ -11,8 +11,22 @@ Item struct with ID, Name, PricePerUnit float64 … Perhaps the original code is
 restore that structure" — and rebuilt a struct that never existed in the project.
 
 The asymmetry is the defect: model-authored text that never reached disk persisted verbatim, while
-verified content was dropped by compaction. This is disclosure rather than deletion — the model
-still sees that it attempted an edit on that path and that the attempt failed.
+verified content was dropped by compaction. The model still sees that it attempted an edit on that
+path and that the attempt failed.
+
+AND THE REPLACEMENT MAY NOT BE PROSE. The first fix put a sentence — `[985 characters — this edit
+was REJECTED, nothing was written to <path>]` — into the `content` slot, which is the exact position
+a file body occupies, and the model read it as one. `20260819T063347` calls 0046/0047 emitted
+`write_file {"content": "[2254 characters — this edit was REJECTED…]"}` twice in a row: cria's
+sentence WAS the file it wrote. `20260817T020431/0012` reasoned "The current pom.xml is: ```[1107
+characters — this edit was REJECTED…]```". `20260822T001226/0078` attributed the sentence to a
+read_file result. The stub's em dash is the documented cause of `Importer.java:[1,20] illegal
+character: '\u2014'`. 858 prompt files, 1,770 occurrences, 85 coder prompts on 2026-08-22/23.
+
+Operator, 2026-08-19, on the identical shape in `focustrim`: *"There is not supposed to be any
+elision. It's all or nothing."* There the whole call could go, because a superseded write loses
+nothing. Here the failure is information the coder needs, so the CALL stays and only the payload
+leaves — the same rule applied to the only part of it that can be misread.
 """
 import json
 import unittest
@@ -24,15 +38,28 @@ SMALL = "func (c *Cart) Total() float64 {"
 
 
 class ARejectedPayloadIsNotFileContentTests(unittest.TestCase):
-    def test_a_large_rejected_old_string_is_collapsed(self):
+    def test_a_large_rejected_old_string_is_removed(self):
         tc = {"id": "e1", "type": "function", "function": {
             "name": "edit_file",
             "arguments": json.dumps({"path": "cart.go", "old_string": BIG, "new_string": "x"})}}
         out = writeproxy._collapse_rejected_payload(tc, "cart.go")
         args = json.loads(out["function"]["arguments"])
-        self.assertNotIn("PricePerUnit", args["old_string"])
-        self.assertIn("REJECTED", args["old_string"])
-        self.assertIn("cart.go", args["old_string"])
+        self.assertNotIn("old_string", args)
+        self.assertNotIn("PricePerUnit", out["function"]["arguments"])
+
+    def test_no_sentence_is_left_where_a_file_body_goes(self):
+        """The whole of the second defect: nothing readable as content, in any payload slot."""
+        for key in ("content", "old_string", "new_string"):
+            with self.subTest(key=key):
+                tc = {"id": "w1", "type": "function", "function": {
+                    "name": "write_file",
+                    "arguments": json.dumps({"path": "cart.go", key: BIG})}}
+                out = writeproxy._collapse_rejected_payload(tc, "cart.go")
+                args = json.loads(out["function"]["arguments"])
+                self.assertNotIn(key, args)
+                self.assertNotIn("REJECTED", out["function"]["arguments"])
+                self.assertNotIn("\u2014", out["function"]["arguments"])
+                self.assertNotIn("—", out["function"]["arguments"])
 
     def test_the_attempt_itself_is_still_visible(self):
         """Disclosure, not deletion: the path and the fact of the failed edit survive."""

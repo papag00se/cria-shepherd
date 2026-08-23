@@ -286,8 +286,12 @@ class CompactedViewTests(unittest.TestCase):
         out = stub_old_write_args(msgs)
         old_args = j.loads(out[0]["tool_calls"][0]["function"]["arguments"])
         new_args = j.loads(out[2]["tool_calls"][0]["function"]["arguments"])
-        self.assertIn("on disk at old.py", old_args["content"])   # older write → reference
-        self.assertIn("read_file", old_args["content"])
+        # THE PAYLOAD LEAVES; the sentence about it is said in the turn's own prose, not in the
+        # slot a file body occupies. (The stub used to replace the argument in place, and models
+        # read it as content and wrote it back — see ThePointerIsNeverInTheContentSlotTests.)
+        self.assertNotIn("content", old_args)
+        self.assertIn("on disk at old.py", out[0]["content"])      # older write → reference
+        self.assertIn("read_file", out[0]["content"])
         self.assertEqual(new_args["content"], big)                # the LAST tool call keeps content
         self.assertEqual(msgs[0]["tool_calls"][0]["function"]["arguments"],
                          j.dumps({"path": "old.py", "content": big}))  # originals never mutated
@@ -305,7 +309,8 @@ class CompactedViewTests(unittest.TestCase):
                  "content": editrecovery.EDITFAIL + "eyJtb2RlIjogIndvdWxkX2JyZWFrIn0="},
                 self._write_call("new.py", big, "w2")]
         out = stub_old_write_args(msgs)
-        stub = j.loads(out[0]["tool_calls"][0]["function"]["arguments"])["content"]
+        self.assertNotIn("content", j.loads(out[0]["tool_calls"][0]["function"]["arguments"]))
+        stub = out[0]["content"]
         self.assertIn("REFUSED", stub)
         self.assertIn("never reached disk", stub)
         self.assertNotIn("on disk at", stub)
@@ -506,6 +511,69 @@ class EmptyRollupHeaderTests(unittest.TestCase):
         self.assertEqual(state.summary, "Built the resolver.")
         self.assertTrue(any((m.get("content") or "").startswith(selfcompact.SUMMARY_MARKER)
                             for m in out))
+
+
+
+class ThePointerIsNeverInTheContentSlotTests(unittest.TestCase):
+    """cria's own sentence sat where a file body sits, and models wrote it to disk.
+
+    `_stub_write_args` replaced an older write's payload IN PLACE with
+    `[elided 8031 chars — an EARLIER version of X, replaced by a later write…]`. That is the exact
+    position a file's content occupies in a tool call, and weak models read it as content.
+
+    `focustrim` records the incident and the ruling. feed-pipeline-java x qwen35, 2026-08-19, call
+    0095: the coder emitted `write_file` with cria's stub as the content; javac answered
+    `Importer.java:[1,20] illegal character: '\u2014'` — the em dash in cria's sentence — and the
+    model's own reasoning read *"The file got corrupted with placeholder text."* A 357-line file
+    became one line of cria's note. Reproduced across five more sessions and five languages
+    (`20260819T122006` rust ×3, `20260819T063347` node, `20260819T012527` python,
+    `20260817T200939` ruby). Operator, 2026-08-19: *"There is not supposed to be any elision. It's
+    all or nothing."* `focustrim` was fixed by removing the call; this owner was not.
+
+    The payload now leaves and the sentence is said in the assistant turn's own prose, beside the
+    call — the same place `focustrim` puts its note, and a place no file body ever occupies."""
+
+    def _msgs(self, big):
+        import json as j
+        from cria.writeproxy import _WROTE
+        call = {"role": "assistant", "tool_calls": [{"id": "w1", "type": "function", "function": {
+            "name": "write_file", "arguments": j.dumps({"path": "lib/app.rb", "content": big})}}]}
+        later = {"role": "assistant", "tool_calls": [{"id": "w2", "type": "function", "function": {
+            "name": "write_file", "arguments": j.dumps({"path": "other.rb", "content": big})}}]}
+        return [call, {"role": "tool", "tool_call_id": "w1", "content": _WROTE + " lib/app.rb"}, later]
+
+    def test_no_argument_slot_holds_a_sentence_cria_wrote(self):
+        import json as j
+        from cria.selfcompact import stub_old_write_args
+        out = stub_old_write_args(self._msgs("x = 1\n" * 200))
+        raw = out[0]["tool_calls"][0]["function"]["arguments"]
+        self.assertNotIn("elided", raw)
+        self.assertNotIn("read_file", raw)
+        self.assertNotIn("\u2014", raw)
+        self.assertEqual(set(j.loads(raw)), {"path"})
+
+    def test_what_cria_has_to_say_is_still_said(self):
+        """Removal, not silence: the reader still learns the content is on disk and how to get it."""
+        from cria.selfcompact import stub_old_write_args
+        out = stub_old_write_args(self._msgs("x = 1\n" * 200))
+        self.assertIn("lib/app.rb", out[0]["content"])
+        self.assertIn("read_file", out[0]["content"])
+
+    def test_an_existing_assistant_message_keeps_its_own_words(self):
+        from cria.selfcompact import stub_old_write_args
+        msgs = self._msgs("x = 1\n" * 200)
+        msgs[0]["content"] = "Writing the shipping module now."
+        out = stub_old_write_args(msgs)
+        self.assertIn("Writing the shipping module now.", out[0]["content"])
+        self.assertIn("lib/app.rb", out[0]["content"])
+
+    def test_the_caller_s_messages_are_never_mutated(self):
+        import json as j
+        from cria.selfcompact import stub_old_write_args
+        big = "x = 1\n" * 200
+        msgs = self._msgs(big)
+        stub_old_write_args(msgs)
+        self.assertEqual(j.loads(msgs[0]["tool_calls"][0]["function"]["arguments"])["content"], big)
 
 
 if __name__ == "__main__":

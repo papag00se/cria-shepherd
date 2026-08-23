@@ -1615,24 +1615,43 @@ def _failed_edit_ids(messages: list[dict]) -> set[str]:
     return ids
 
 
-def _collapse_rejected_payload(tc: dict, path: str) -> dict:
-    """Replace a REJECTED edit's verbatim payload with a one-line statement of what was attempted.
+def _collapse_rejected_payload(tc: dict, path: str, rlog=None) -> dict:
+    """Take a REJECTED edit's verbatim payload OUT of the call, rather than replacing it with prose.
 
-    Disclosure, not deletion (#5): the model still sees that it tried to edit this path and that the
-    attempt failed. What it no longer sees is its own invented file text rendered as though it were
-    the file. Only large payloads are collapsed — a short snippet is real context for the retry."""
+    The model no longer sees its own invented file text rendered as though it were the file. What it
+    still sees is the call it made, the path it aimed at, and — in the tool RESULT, which is cria's
+    own marked refusal — that nothing was written. None of that lives in an argument slot.
+
+    NO SENTENCE GOES IN THE CONTENT SLOT. This used to write
+    `[985 characters — this edit was REJECTED, nothing was written to <path>]` into `content`, which
+    is the exact position a file body occupies, and the model read it as one. In the captures:
+    `20260819T063347` calls 0046 and 0047 emitted `write_file {"content": "[2254 characters — this
+    edit was REJECTED…]"}` twice in a row — cria's sentence WAS the file it wrote;
+    `20260817T020431/0012` reasoned *"The current pom.xml is: ```[1107 characters — this edit was
+    REJECTED…]```"*; `20260822T001226/0078` attributed the same sentence to a read_file result. The
+    stub's em dash is the documented cause of `Importer.java:[1,20] illegal character: '\u2014'`.
+    It shipped in 858 prompt files, 1,770 times, including 85 coder prompts on 2026-08-22/23.
+
+    `focustrim` reached the same place from the other side and the operator ruled on it,
+    2026-08-19: *"There is not supposed to be any elision. It's all or nothing."* There the whole
+    call could go, because a superseded write loses nothing. Here the failure is information the
+    coder needs, so the CALL stays and only the payload leaves — which is the same rule applied to
+    the only part of it that can be misread."""
     fn = tc.get("function") or {}
     args = _parse(fn.get("arguments"))
     if not isinstance(args, dict):
         return tc
-    changed = False
+    dropped = []
     for key in ("old_string", "new_string", "content"):
         val = args.get(key)
         if isinstance(val, str) and len(val) > _REJECTED_PAYLOAD_CHARS:
-            args[key] = f"[{len(val)} characters — this edit was REJECTED, nothing was written to {path}]"
-            changed = True
-    if not changed:
+            del args[key]
+            dropped.append((key, len(val)))
+    if not dropped:
         return tc
+    if rlog is not None:
+        rlog.emit("writeproxy.rejected_payload_dropped", level="info", path=path,
+                  keys=[k for k, _ in dropped], chars=sum(n for _, n in dropped))
     return {**tc, "function": {**fn, "arguments": json.dumps(args)}}
 
 
@@ -1739,7 +1758,7 @@ def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | Non
                                 if body_arg is not None:
                                     written[tc.get("id")] = body_arg
                             if tc.get("id") in failed_ids:
-                                tc = _collapse_rejected_payload(tc, _tool_path(p) or "")
+                                tc = _collapse_rejected_payload(tc, _tool_path(p) or "", rlog)
                         elif orig["name"] in (_READ_NAMES | _LIST_NAMES | _FETCH_NAMES | _SEARCH_NAMES):
                             strip_ids.add(tc.get("id"))
                             if orig["name"] in _READ_NAMES:

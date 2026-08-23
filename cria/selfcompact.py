@@ -594,7 +594,8 @@ def _stub_write_args(m: dict, landed=None, idx: int = -1, last_by_path: dict | N
     keeps the full text rather than risk either claim. Returns ``m`` unchanged when nothing
     qualifies."""
     changed = False
-    new_calls = []
+    new_calls: list = []
+    stub_notes: list[str] = []
     for tc in m.get("tool_calls") or []:
         fn = tc.get("function") or {}
         raw = fn.get("arguments") or ""
@@ -616,7 +617,7 @@ def _stub_write_args(m: dict, landed=None, idx: int = -1, last_by_path: dict | N
             stub_key = "write_stub_superseded"   # it landed, then a later write replaced it
         else:
             stub_key = "write_stub"
-        touched = False
+        notes, touched = [], False
         for key in _WRITE_ARG_KEYS:
             v = args.get(key)
             if isinstance(v, str) and len(v) >= _STUB_MIN_CHARS:
@@ -624,14 +625,33 @@ def _stub_write_args(m: dict, landed=None, idx: int = -1, last_by_path: dict | N
                 # <path>" would be a small false fact about what the model is looking at.
                 words = prompts.load_map("compact_view")
                 use = "write_stub_replaced" if key in _REPLACED_ARG_KEYS and stub_key != "write_stub_refused" else stub_key
-                args[key] = prompts.fill(words[use], chars=str(len(v)), path=path)
+                # THE SENTENCE DOES NOT GO WHERE A FILE BODY GOES. It used to replace the argument
+                # in place, which puts cria's prose in the exact slot a file's content occupies —
+                # and models read it as content and wrote it back. `focustrim` records the incident
+                # (feed-pipeline-java x qwen35, call 0095: a 357-line file became one line of cria's
+                # note, `javac` answered `illegal character: '\u2014'`, recovery was git checkout to
+                # the seed) and the operator's ruling on it, 2026-08-19: "There is not supposed to
+                # be any elision. It's all or nothing." Reproduced across five more sessions and
+                # five languages. So the payload LEAVES, and what cria has to say about it is said
+                # in the assistant turn's own prose, beside the call — the same place focustrim puts
+                # its note, and a place no file body ever occupies.
+                notes.append(prompts.fill(words[use], chars=str(len(v)), path=path))
+                del args[key]
                 touched = True
         if touched:
             changed = True
             new_calls.append({**tc, "function": {**fn, "arguments": json.dumps(args)}})
+            stub_notes.extend(notes)
         else:
             new_calls.append(tc)
-    return {**m, "tool_calls": new_calls} if changed else m
+    if not changed:
+        return m
+    out = {**m, "tool_calls": new_calls}
+    if stub_notes:
+        existing = out.get("content")
+        out["content"] = "\n".join(([existing] if isinstance(existing, str) and existing else [])
+                                    + stub_notes)
+    return out
 
 
 def _write_outcomes(msgs: list[dict]) -> dict:
