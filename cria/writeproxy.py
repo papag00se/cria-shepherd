@@ -834,7 +834,18 @@ def _read_command(args: dict) -> str | None:
     # with the bytes — see the SIZE note in `_ranged_read`.
     # Through the ONE refusal owner (see _ranged_read): the `cat` never runs, so this must not
     # report success.
-    steer = _oversize_command(prompts.render("large_read_steer", path=str(path)))
+    # …AND HOW LONG IT IS. The refusal tells the coder to read a line RANGE and did not say how many
+    # lines there are, so the first window is a guess — while its own sibling for a spilled document
+    # (`spill_extent`) says "It is N lines — read_file with start_line=1 end_line=F fits in one
+    # read". 420 renderings of the version without it. The shell running this knows the number, the
+    # same way `_list_command` already fills its entry count, so cria says it rather than making the
+    # coder discover it.
+    text = denial.mark(prompts.render("large_read_steer", path=str(path)))
+    head, _, tail = text.partition("{{LINES}}")
+    # Two quoted literals with the shell's own substitution between them — the same shape
+    # `_list_command` uses for its entry count.
+    steer = (f"printf '%s%s%s' {_qbash(head)} "
+             f'"$(wc -l < {q} 2>/dev/null | tr -cd 0-9)" {_qbash(tail)}')
     return (f"{_read_failure_branches(q, str(path))}"
             f'if [ "$(wc -c < {q} 2>/dev/null || echo 0)" -gt {READ_INLINE_MAX} ]; '
             f"then {steer}; else cat {q}; fi")
