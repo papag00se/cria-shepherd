@@ -83,14 +83,22 @@ def _loop_with(answer):
     return lp
 
 
-def _body(summary):
+# A REAL continuation summary names the files it describes — that is what a summary IS, and the
+# re-orientation's prompt tells it to name nothing the summary does not. The old fixture said only
+# "earlier work", so every path in a GOOD directive read as an invention.
+SUMMARY = ("earlier work: the CSV importer is in src/main/java/pipeline/Importer.java, commons-csv "
+           "is declared in pom.xml, the tests are run with `mvn test` and pass, and REVIEW.md has "
+           "not been created yet.")
+
+
+def _body(summary=SUMMARY):
     return {"messages": [{"role": "user", "content": loop.CONTINUATION_MARKER + " " + summary}]}
 
 
 class AScriptIsRefusedTests(unittest.TestCase):
     def test_the_walked_answer_does_not_reach_the_coder(self):
         rlog = _Rlog()
-        out = _loop_with(SCRIPT)._reasoned_reanchor(_body("earlier work"), rlog)
+        out = _loop_with(SCRIPT)._reasoned_reanchor(_body(), rlog)
         self.assertNotIn("```", out)
         self.assertNotIn("mvn compile", out)
         self.assertIn("loop.reanchor_refused", rlog.kinds())
@@ -98,14 +106,14 @@ class AScriptIsRefusedTests(unittest.TestCase):
     def test_the_coder_is_still_re_oriented(self):
         """Refusing must not leave a just-compacted model with nothing — that would be worse than a
         bad note. The canned reanchor was always the fallback here."""
-        out = _loop_with(SCRIPT)._reasoned_reanchor(_body("earlier work"), _Rlog())
+        out = _loop_with(SCRIPT)._reasoned_reanchor(_body(), _Rlog())
         self.assertEqual(out, prompts.load("reanchor"))
         self.assertTrue(out.strip())
 
     def test_a_fence_alone_is_enough(self):
         rlog = _Rlog()
         out = _loop_with("Here is what to do:\n```bash\nls -la\n```")._reasoned_reanchor(
-            _body("earlier work"), rlog)
+            _body(), rlog)
         self.assertIn("loop.reanchor_refused", rlog.kinds())
         self.assertEqual(out, prompts.load("reanchor"))
 
@@ -113,7 +121,7 @@ class AScriptIsRefusedTests(unittest.TestCase):
 class AGoodDirectiveIsUntouchedTests(unittest.TestCase):
     def test_it_reaches_the_coder_verbatim(self):
         rlog = _Rlog()
-        out = _loop_with(GOOD)._reasoned_reanchor(_body("earlier work"), rlog)
+        out = _loop_with(GOOD)._reasoned_reanchor(_body(), rlog)
         self.assertEqual(out, GOOD)
         self.assertNotIn("loop.reanchor_refused", rlog.kinds())
 
@@ -122,7 +130,7 @@ class AGoodDirectiveIsUntouchedTests(unittest.TestCase):
         then another; three is a listing."""
         one = ("The tests are run with `mvn test` and they currently pass. What remains is "
                "REVIEW.md. Inspect the files on disk before creating anything.")
-        out = _loop_with(one)._reasoned_reanchor(_body("earlier work"), _Rlog())
+        out = _loop_with(one)._reasoned_reanchor(_body(), _Rlog())
         self.assertEqual(out, one)
 
 
@@ -135,8 +143,42 @@ class TheFallbackContractIsUnchangedTests(unittest.TestCase):
         self.assertEqual(out, prompts.load("reanchor"))
 
     def test_an_empty_answer_still_yields_the_canned_note(self):
-        out = _loop_with("")._reasoned_reanchor(_body("earlier work"), _Rlog())
+        out = _loop_with("")._reasoned_reanchor(_body(), _Rlog())
         self.assertEqual(out, prompts.load("reanchor"))
+
+
+class ADirectiveNamesNothingTheSummaryDoesNotTests(unittest.TestCase):
+    """The prompt says "Never name a project, crate, file, module or command the summary does not
+    already name" and "Never fill either gap with a guess" — in prose, to a small model, with nothing
+    checking. Both walked failures are exactly that shape:
+
+    * cart-billing-go x nemotron-elastic 1787434778 — "upgrade to a version that includes those
+      methods (e.g. `v1.5.0` or later)". No version of that library has the method. It turned an
+      answerable question into an unanswerable one and cost eleven calls and a `go get`.
+    * shipping-rates-rb x nemotron-elastic 1787432916 — "Existing files in the workspace:
+      - lib/shipping.rb". The file is lib/shipping/rates.rb. The coder read the phantom, was refused,
+      and spent six of its last twenty calls finding the real path, at minute 27 of 30."""
+
+    def test_an_invented_file_path_is_refused(self):
+        out = _loop_with("Existing files in the workspace: - lib/shipping.rb. Inspect before "
+                         "creating anything.")._reasoned_reanchor(_body(), _Rlog())
+        self.assertNotIn("lib/shipping.rb", out)
+
+    def test_an_invented_version_is_refused(self):
+        out = _loop_with("Upgrade to a version that includes those methods (e.g. v1.5.0 or later)."
+                         )._reasoned_reanchor(_body(), _Rlog())
+        self.assertNotIn("v1.5.0", out)
+
+    def test_a_shortened_path_is_still_grounded(self):
+        """`Importer.java` is a substring of the path the summary names — that is a paraphrase, not
+        an invention, and it must reach the coder."""
+        good = "Importer.java already exists. Inspect the files on disk before creating anything."
+        self.assertEqual(_loop_with(good)._reasoned_reanchor(_body(), _Rlog()), good)
+
+    def test_the_refusal_is_logged_with_what_it_caught(self):
+        rlog = _Rlog()
+        _loop_with("Read lib/shipping.rb now.")._reasoned_reanchor(_body(), rlog)
+        self.assertTrue(any(k == "loop.reanchor_ungrounded" for k, _ in rlog.events))
 
 
 if __name__ == "__main__":

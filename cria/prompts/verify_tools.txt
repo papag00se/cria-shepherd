@@ -7,7 +7,13 @@ answer_now = Answer NOW with ONLY the JSON verdict: {"done": true|false, "reason
 outside = [refused: {{PATH}} is outside the workspace — the judge inspects only the workspace under {{ROOT}}]
 unknown_tool = [refused: {{NAME}} is not one of your tools — you have list_dir and read_file; the coder's tools are listed only so the fix you name is one IT can carry out]
 missing = [{{PATH}} does not exist]
-unknown = [{{PATH}} could not be read right now — this is NOT evidence that it is absent, and you must not treat it as such. Ask again on your next round, or judge from what you do have.]
+# ASKING AGAIN CANNOT WORK HERE, and the old wording told the judge to do it. A body miss is
+# served by the next workspace survey, and a survey rides along on a command sent to the
+# harness — but a judge's rounds are back-to-back model calls with no such command between
+# them, so the answer can never change inside this check. Three of the four sub-50% walks found
+# judges spending 5 of 6 rounds obeying it and then ruling from memory, which is the failure
+# these tools exist to prevent (#5b, #11b).
+unknown = [{{PATH}} could not be read — this is NOT evidence that it is absent, and you must not treat it as such. It will not become readable later in this check, so do not spend another round on it: judge from what you do have, and say plainly in your reason that you could not read it.]
 # read_file on a DIRECTORY must state the truth, not "does not exist" — walked on maple
 # 1785956867 call 0054: the steer author read __pycache__/ (which existed), was told it did
 # not exist, and built a wrong stale-cache theory on that false fact (rule 5b).

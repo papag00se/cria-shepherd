@@ -1202,6 +1202,28 @@ _VETO_PATH = re.compile(r"(/?[\w][\w./-]*\.[A-Za-z][A-Za-z0-9]{0,4})(?![\w-])")
 _VETO_FACT_MAX_BYTES = 200_000   # past this, state existence only — a count from a clip is false
 
 
+# A FILE PATH or a VERSION in a directive — the two classes of invention the walks caught. Both are
+# checkable against the text the directive was written FROM, which is what makes them worth checking:
+# cria cannot judge whether a paraphrase is faithful, and can always tell whether a name was there.
+_GROUNDABLE_NAME = re.compile(r"(?:[\w.-]*/[\w./-]+)"          # anything with a path separator
+                              r"|(?:\b[\w-]+\.(?:py|rb|go|java|js|ts|rs|php|json|toml|ya?ml|md|txt|cfg|ini|xml|lock)\b)"
+                              r"|(?:\bv?\d+\.\d+(?:\.\d+)?\b)")
+
+
+def _invented_names(text: str, source: str) -> list[str]:
+    """Names in ``text`` that do not appear in ``source`` — a directive's inventions, in order.
+
+    Case-insensitive substring, so a directive may shorten `lib/shipping/rates.rb` to `rates.rb`
+    (still grounded) but not lengthen `rates.rb` into `lib/shipping.rb` (not grounded)."""
+    hay = (source or "").lower()
+    out: list[str] = []
+    for m in _GROUNDABLE_NAME.finditer(text or ""):
+        tok = m.group(0)
+        if tok.lower() not in hay and tok not in out:
+            out.append(tok)
+    return out
+
+
 def _basename_matches(root: str, name: str) -> list[str] | None:
     """Workspace-relative paths whose basename is ``name`` — ``None`` when cria cannot say.
 
@@ -4173,6 +4195,23 @@ class Loop:
         if "```" in text or len(shellshape.command_lines(text)) >= _REANCHOR_MAX_COMMAND_LINES:
             rlog.emit("loop.reanchor_refused", level="warn",
                       lines=len(shellshape.command_lines(text)), head=_clip(text, 120))
+            return canned
+        # …AND THE PROMPT'S OWN RULE, ENFORCED. It says "Never name a project, crate, file, module or
+        # command the summary does not already name" and "Never fill either gap with a guess" — in
+        # prose, to a small model, with nothing checking. Both failures the walks found are of exactly
+        # this shape and both were expensive:
+        #   * cart-billing-go 1787434778 — "upgrade to a version that includes those methods (e.g.
+        #     `v1.5.0` or later)". No version of that library has the method; the directive converted
+        #     an answerable question into an unanswerable one and cost eleven calls and a `go get`.
+        #   * shipping-rates-rb 1787432916 — "Existing files in the workspace: - lib/shipping.rb".
+        #     The file is lib/shipping/rates.rb. The coder read the phantom, was refused, and spent
+        #     six of its last twenty calls finding the real path, at minute 27 of 30.
+        # A path or a version the summary does not contain is an invention, and the canned reanchor
+        # is always available (#5b, #1).
+        invented = _invented_names(text, summary)
+        if invented:
+            rlog.emit("loop.reanchor_ungrounded", level="warn",
+                      names=prompts.named_list(invented, 4, "name(s)"), head=_clip(text, 120))
             return canned
         return text
 
