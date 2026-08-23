@@ -15,7 +15,7 @@ fetch_repeat_failed = You already fetched web_fetch {{URL}} with these exact par
 # grep FOR, and 47% of refusal-carrying calls in the corpus had no outline left in the prompt. The
 # closing instructions are true with or without an outline, and the outline ends with its own grep line
 # naming REAL routes — so no "<keyword>" placeholder for a weak model to echo back into find=.
-fetch_repeat_spilled = You already fetched web_fetch {{URL}} with these exact params. It was too large to inline, so it was saved IN FULL to {{TARGET}}, and that file is still there.\n{{OUTLINE}}Read it — do NOT re-fetch the whole url. Grep the file for what you need (grep -n on {{TARGET}}), read a line range with read_file start_line/end_line, or call web_fetch again with a find= argument to get just that section back inline.
+fetch_repeat_spilled = You already fetched web_fetch {{URL}} with these exact params. It was too large to inline, so it was saved {{EXTENT}} to {{TARGET}}, and that file is still there.\n{{OUTLINE}}Read it — do NOT re-fetch the whole url. Grep the file for what you need (grep -n on {{TARGET}}), read a line range with read_file start_line/end_line, or call web_fetch again with a find= argument to get just that section back inline.
 guess_hint = \n\n⚠ {{STREAK}} fetches in a row failed (non-2xx). If you're guessing URLs, stop — find the right one via search, or take a different step.
 spill = {{STATUS_LABEL}} · {{URL}}\nThis document is larger than can be returned in one read ({{CHARS}} chars) — it was saved {{EXTENT}} to {{TARGET}}, a path relative to the project directory you are working in.{{FORMAT}}\n{{OUTLINE}}Read it — do NOT re-fetch the whole url. Grep the file for what you need (grep -n on {{TARGET}}), read a line range with read_file start_line/end_line, or call web_fetch again with a find= argument to get just that section back inline.
 find_large = \n\n⚠ This find="{{FIND}}" match is large ({{CHARS}} chars) and is only part of the document — narrow it (a more specific keyword), or grep {{TARGET}} for exact lines, or fetch this URL again WITHOUT find= to get the document's full route/shape outline.
@@ -38,3 +38,6 @@ spill_extent = It is {{LINES}} lines — read_file with start_line=1 end_line={{
 # is and picks the clause (#5b).
 spill_extent_full = IN FULL
 spill_extent_cut = as much of it as one step can carry (the file itself says where it stops)
+# …and when cria no longer holds the document it cannot say which of the two happened. The file's
+# own footer can, so the sentence points there instead of picking one (#5b).
+spill_extent_unknown = there (the file's own last line says how much of the document reached it)

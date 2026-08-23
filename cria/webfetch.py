@@ -521,7 +521,16 @@ def spill_reading_hint(path: str, limit: int) -> str:
     for url, cached in _DOC_CACHE.items():
         if os.path.basename(_spill_name(url)) != os.path.basename(os.path.normpath((path or "").strip())):
             continue
+        # MEASURE THE ARTIFACT THE SENTENCE IS ABOUT. The cached body is the WHOLE document; the file
+        # this sentence names is the spill, which stops at SPILL_CONTENT_MAX. Counting the first and
+        # naming the second told a coder "It is 2,414 lines" about a 1,656-line file and invited it to
+        # page past the end (cart-billing-go x nemotron-elastic 1787434778). The docstring above says
+        # nothing is measured on the filesystem, which is exactly why it has to measure the bytes that
+        # were WRITTEN rather than the ones that were fetched (#5b, #11b).
         body = _greppable(cached[2], cached[3], cached[1])
+        raw = body.encode("utf-8", "replace")
+        if len(raw) > SPILL_CONTENT_MAX:
+            body = raw[:SPILL_CONTENT_MAX].decode("utf-8", "ignore")
         lines = body.count("\n") + 1
         if lines < 2 or not body:
             return ""
@@ -582,6 +591,24 @@ def oversized_spill(url: str) -> Optional[tuple[int, str, str, str]]:
                      format=(f" It is {fmt}." if fmt else ""),
                      outline=_spill_outline(parsed, target))
     return status, target, content, msg
+
+
+def spill_extent_of(url: str) -> str:
+    """The clause naming HOW MUCH of ``url`` is in its spill file — the same question the first spill
+    message answers, asked again by every later refusal that names that file.
+
+    `spill` branches on the byte count; `fetch_repeat_spilled` hardcoded "IN FULL", so cria said both
+    things about one file in one conversation. Walked twice: cart-billing-go x nemotron-elastic
+    1787434778 at call 0058 ("holds the first 46,080 characters of a 67,564-character document") and
+    at 0062 ("saved IN FULL"), and shipping-rates-rb x nemotron-elastic 1787432916 on a file holding
+    14% of its document. The coder then grepped the part cria kept and read the absence as the
+    library's, not the file's (#5b)."""
+    cached = _DOC_CACHE.get(url)
+    if cached is None:
+        return _guard_msg("spill_extent_unknown")
+    content = _greppable(cached[2], cached[3], cached[1])
+    whole = len(content.encode("utf-8", "replace")) <= SPILL_CONTENT_MAX
+    return _guard_msg("spill_extent_full" if whole else "spill_extent_cut")
 
 
 def _ref_map(parsed: Any) -> dict:
@@ -1351,7 +1378,7 @@ def fetch_nav(url: str, *, find: Optional[str] = None, cursor: Optional[str] = N
         # step 1 unclosable in run 0802-184308 — 981 of 2,074 refusal-carrying calls across the corpus
         # had no outline in the prompt at all.
         return _guard_msg("fetch_repeat_spilled", url=url, target=_spill_name(url),
-                          outline=outline_for_url(url))
+                          extent=spill_extent_of(url), outline=outline_for_url(url))
     # Refuse ONLY while the identical result is still in the conversation (set_visible); once
     # compaction elides it the model may legitimately re-read it — the footgun fix.
     if session and external and seen_key in _FETCH_SEEN.get(session, ()):
@@ -1366,7 +1393,7 @@ def fetch_nav(url: str, *, find: Optional[str] = None, cursor: Optional[str] = N
                 return _guard_msg("fetch_repeat_failed", url=url, status=status_label(c_status))
             if len(c_reduced) > OVERSIZE_CHARS:
                 return _guard_msg("fetch_repeat_spilled", url=url, target=_spill_name(url),
-                                  outline=outline_for_url(url))
+                                  extent=spill_extent_of(url), outline=outline_for_url(url))
         return _guard_msg("fetch_repeat", url=url)
     out, status, discovered = _fetch_and_render(url, find, cursor, cap_tokens, user_agent, raw,
                                                ours=was_substituted(session, url))
