@@ -103,7 +103,53 @@ class Finding:
 # Summing is for runners that print one line PER package or binary (cargo, go, .NET per-project);
 # first-match is for runners that print one summary. Ordered most-specific first — the guard is that
 # every pattern is anchored on that runner's own distinctive words, so two cannot claim one line.
-_SKIPPED_RE = re.compile(r"(\d+) skipped")   # the runner's own skip count
+# THE RUNNER'S OWN SKIP COUNT. `(\d+) skipped` is pytest's and jest's spelling and nobody else's:
+# ran all six battery languages with one genuinely skipped test and minitest ("1 skips"), node
+# ("# skipped 1"), phpunit/surefire ("Skipped: 1") and go ("--- SKIP: TestB") every one reported 0.
+# The kernel is a count sitting next to a stepped-aside word, on either side of it; go prints no
+# count at all, so its per-test line is counted instead.
+_SKIPPED_RE = re.compile(r"(?i)(\d+)\s+(?:skipped|skips|skip|ignored|pending)\b"
+                         r"|(?:skipped|skips)\s*[:=]\s*(\d+)\b"
+                         r"|#\s*skipped\s+(\d+)\b")
+_SKIP_LINE_RE = re.compile(r"(?im)^\s*---\s*SKIP:")   # go test -v — one line per skipped test, no count
+
+
+def skipped_count(text: str) -> int:
+    """How many tests the runner said it stepped past. ONE owner (#23); 0 when it said nothing."""
+    n = sum(int(g) for m in _SKIPPED_RE.finditer(text or "") for g in m.groups() if g)
+    return n or len(_SKIP_LINE_RE.findall(text or ""))
+
+# THE RUNNER SAYING, IN ITS OWN WORDS, THAT IT COLLECTED NOTHING TO RUN.
+#
+# `_tally_says_zero` reads COUNTS and is the kernel reading of this question wherever a count is
+# printed. Four of the fleet's runners print none: maven-surefire says `No tests to run.` and exits
+# 0, phpunit says `No tests executed!`, gradle says `> Task :test NO-SOURCE`, dotnet says `No test is
+# available in ...`. Ran all four: every one produced tally "" — so the counts arm is structurally
+# silent and an empty suite answered "tests ran" to the satisfaction judge, which is the vacuous
+# green the whole family exists to stop (#5b to a judge). Go's `[no test files]` is the same shape
+# and was the only phrase anyone had written down.
+#
+# NOT A PHRASE TABLE PER RUNNER (#20). The kernel is one English sentence — the word `no` governing
+# the word `test`, with a ran/found/available verb on the same line — which is what every runner
+# that speaks instead of counting actually prints. The two bracketed forms are the two that are not
+# sentences.
+_NOTHING_RAN = re.compile(
+    r"(?im)^[^\n]*?\bno\b[^\n]{0,30}?\btests?\b[^\n]{0,40}?"
+    r"\b(?:to\s+run|ran|run|executed|found|available|collected|discovered|detected)\b"
+    r"|\[\s*no\s+test\s+files?\s*\]"
+    r"|^\s*>?\s*Task\s+:[\w:]*[Tt]est\w*\s+NO-SOURCE\b")
+
+
+def says_nothing_ran(text: str) -> bool:
+    """The runner stated, in words, that it collected nothing to run.
+
+    ONE owner: proberun's vacuous-green check and probegate's stranded-test scan both ask this and
+    used to carry separate literal lists, one phrase long and three phrases long (#23).
+
+    Weaker evidence than a count, so callers that hold a parsed tally consult that first — a suite
+    that really ran can print anything, including these words."""
+    return bool(_NOTHING_RAN.search(text or ""))
+
 _TALLY_FAILED_PASSED = "fp"     # groups are (failed, passed)
 _TALLY_PASSED_FAILED = "pf"     # groups are (passed, failed)
 _TALLY_TOTAL_FAILED = "tf"      # groups are (total, failed) — passed is total - failed
@@ -262,6 +308,10 @@ class ProbeResult:
     # `tally` is `Nf/Np` ("" when no runner printed one); `skipped` is the runner's own skip count.
     tally: str = ""
     skipped: int = 0
+    # Same reason as `tally`: the runner's "I found nothing to run" sentence lives in the raw text
+    # and a green run's `summary` is the fixed CLEAN_SUMMARY string. Three callers re-scanned
+    # `summary` for it and therefore never once saw it.
+    no_tests: bool = False
     timed_out: bool = False            # the command RAN and did NOT finish (timeout) — distinct from a
     #                                    launch failure (exit_code is None for BOTH, but a timeout is a
     #                                    positive did-not-verify signal → the completion gate fails CLOSED)
@@ -1268,7 +1318,8 @@ def parse_output(command: str, family: str, exit_code: Optional[int],
     # were reading a string that can never contain a tally.
     return ProbeResult(command=command, exit_code=exit_code, summary=summary, findings=findings,
                        tally=runner_tally(combined),
-                       skipped=sum(int(n) for n in _SKIPPED_RE.findall(combined)))
+                       skipped=skipped_count(combined),
+                       no_tests=says_nothing_ran(combined))
 
 
 # ---------------------------------------------------------------------------

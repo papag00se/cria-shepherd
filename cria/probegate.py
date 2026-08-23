@@ -821,9 +821,6 @@ def _advisory_note(count: int) -> list[str]:
     return [prompts.fill(prompts.load_map("gate_notes")["advisory_dropped"], count=count)]
 
 
-# The runner-said-nothing-ran shapes, per supported runner — consulted only to decide whether the
-# stranded-test disk scan is worth asking for; the scan result, not the marker, is the finding.
-_ZERO_TESTS_MARKERS = ("no tests ran", "[no test files]", "no tests found")
 
 
 def gate_passing_tests(report: ProbeReport) -> int:
@@ -903,8 +900,10 @@ def _offline_fact(sections: dict, plan: "GatePlan | None" = None) -> str:
 
 
 def _zero_tests_marker(text: str) -> bool:
-    low = (text or "").lower()
-    return any(m in low for m in _ZERO_TESTS_MARKERS)
+    """The runner said it collected nothing — consulted only to decide whether the stranded-test disk
+    scan is worth asking for; the scan result, not the marker, is the finding. ONE owner, shared with
+    proberun's vacuous-green check, which carried a shorter list of the same phrases (#23)."""
+    return probeparse.says_nothing_ran(text)
 
 
 CHECKS_MARKER = "⟦ctx:checks⟧"

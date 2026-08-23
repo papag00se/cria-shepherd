@@ -223,28 +223,41 @@ PYTEST_NO_TESTS_EXIT = 5
 _NO_TESTS_MARKERS = ("no tests ran", "no tests collected", "collected 0 items")
 
 
-# A RUNNER SAYING, IN ITS OWN WORDS, THAT IT FOUND NOTHING TO RUN — and exiting 0 while it does.
-# pytest signals this with exit code 5, which is why the check below was built on the code; `go test`
-# signals it with this line and exits 0, so an empty Go package answered "tests ran" to the
-# satisfaction judge. The string is go's alone and appears in no other runner's output, so it is a
-# trigger here rather than a confirmation. Its siblings are covered by the TALLY instead — see
-# `_tally_says_zero` — which is the kernel-level reading and already knows twelve runners; this list
-# is only for the runners that print no count at all.
-_ZERO_TEST_MARKERS = ("[no test files]",)
-
-
 def is_no_tests_collected(exit_code: Optional[int], command: str = "", output: str = "") -> bool:
-    """True when a probe result says the runner collected NOTHING to run. Callers treat it as a
+    """True when RAW runner output says the runner collected NOTHING to run. Callers treat it as a
     neutral non-signal, never a failure.
 
-    Two shapes: pytest's exit 5 plus a pytest fingerprint, and a runner that prints so in words while
-    exiting 0. Everything else is read from the parsed tally by :func:`_tally_says_zero`."""
-    hay = f"{command}\n{output}".lower()
-    if any(m in hay for m in _ZERO_TEST_MARKERS):
+    Two shapes: pytest's exit 5 plus a pytest fingerprint, and a runner that says so in words while
+    exiting 0 — the second read by :func:`probeparse.says_nothing_ran`, which owns that question for
+    every caller. Everything else is read from the parsed tally by :func:`_tally_says_zero`.
+
+    THIS WANTS THE RUNNER'S OWN TEXT. A ProbeResult no longer carries it (a green run's ``summary``
+    is the fixed string "no problems reported"), so a caller holding a result asks
+    :func:`result_collected_nothing` instead."""
+    if probeparse.says_nothing_ran(output):
         return True
     if exit_code != PYTEST_NO_TESTS_EXIT:
         return False
+    hay = f"{command}\n{output}".lower()
     return "pytest" in hay or any(m in hay for m in _NO_TESTS_MARKERS)
+
+
+def result_collected_nothing(result: "ProbeResult") -> bool:
+    """The same question, asked of a PARSED result rather than raw output.
+
+    The three callers below used to pass ``r.summary`` to :func:`is_no_tests_collected`, and on a
+    green run that string is the constant "no problems reported" — so the go marker the function was
+    written for was never once seen, and `gate_ran_tests` told the satisfaction judge that an empty
+    Go package had executed tests. Same trap, and same fix, as the one already applied to ``tally``
+    and ``skipped``: the fact is taken at parse time and carried on the result.
+
+    A PARSED COUNT OUTRANKS A SENTENCE. A suite that really ran can print anything, these words
+    included, so the prose is consulted only when no runner tally was read."""
+    if (getattr(result, "tally", "") or "").strip():
+        return _tally_says_zero(result)
+    if getattr(result, "no_tests", False):
+        return True
+    return is_no_tests_collected(result.exit_code, result.command, result.summary)
 
 
 @dataclass
@@ -518,8 +531,8 @@ def failed_unparsed_probes(report: ProbeReport) -> list[str]:
     kinds = _kind_by_command(report)
     out: list[str] = []
     for r in report.results:
-        if is_no_tests_collected(r.exit_code, r.command, r.summary):
-            continue  # pytest collected nothing — benign, not a failing test
+        if result_collected_nothing(r):
+            continue  # the runner collected nothing — benign, not a failing test
         if r.exit_code not in (None, 0) and not r.findings \
                 and kinds.get(r.command) in _HARD_FAILURE_KINDS:
             out.append(f"$ {r.command} — {r.summary or f'exited {r.exit_code}'}")
@@ -538,8 +551,7 @@ def gate_ran_tests(report: ProbeReport) -> bool:
     for r in report.results:
         if kinds.get(r.command) is probediscovery.ProbeKind.Test \
                 and not r.timed_out \
-                and not is_no_tests_collected(r.exit_code, r.command, r.summary) \
-                and not _tally_says_zero(r):
+                and not result_collected_nothing(r):
             return True                # M3: a TIMED-OUT test probe did NOT execute a full run → not "ran tests"
     return False
 
@@ -553,9 +565,11 @@ def _tally_says_zero(result: "ProbeResult") -> bool:
     answered `gate_ran_tests` -> True in five of six languages, and cria told the satisfaction judge
     tests had executed when none had (#5b to a judge, #20 keyed to one runner's convention).
 
-    The tally is the kernel-level reading of the same question and it already covers twelve runners:
-    `0f/0p` from minitest, cargo, rspec, phpunit, junit, jest, gradle, exunit, dotnet. It is asked
-    here instead of adding a second per-runner phrase table beside the first (#4).
+    The tally is the kernel-level reading of the same question wherever a count is printed:
+    `0f/0p` from minitest, cargo, rspec, jest, exunit, mocha and node. It does NOT cover the four
+    that print prose and no count at all on an empty suite — maven-surefire, phpunit, gradle and
+    dotnet all yield tally "" — and this docstring used to claim it did. Those are read by
+    :func:`probeparse.says_nothing_ran` from the runner's own words instead.
 
     POSITIVE KNOWLEDGE ONLY. No tally parsed means cria could not read the runner, not that nothing
     ran — plain `go test` prints one verdict per package and deliberately produces no tally — so an
@@ -567,8 +581,6 @@ def _tally_says_zero(result: "ProbeResult") -> bool:
         return False
     return all(int(n) == 0 for n in re.findall(r"(\d+)[fp]", tally)) and bool(re.search(r"\d", tally))
 
-
-_SKIPPED_RE = re.compile(r"(\d+) skipped")
 
 
 def gate_skipped_count(report: ProbeReport) -> int:
@@ -794,8 +806,8 @@ def completion_probe_digest(report: ProbeReport, floor: LinterReport | None = No
         for r in report.results:
             if r.exit_code == 0:
                 exit_txt = DIGEST_EXIT_CLEAN
-            elif is_no_tests_collected(r.exit_code, r.command, r.summary):
-                exit_txt = DIGEST_EXIT_NO_TESTS  # exit 5 = nothing collected, NOT a failing test
+            elif result_collected_nothing(r):
+                exit_txt = DIGEST_EXIT_NO_TESTS  # nothing collected, NOT a failing test
             elif r.exit_code is not None:
                 exit_txt = f"exit {r.exit_code}"
             elif LAUNCH_FAILURE_MARKER in (r.summary or ""):

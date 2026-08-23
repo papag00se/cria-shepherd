@@ -45,8 +45,12 @@ def _report(command, exit_code, output, kind=None):
         working_dir=pathlib.Path("/tmp"), confidence=100, expected_value=100,
         cost=probediscovery.ProbeCost.Cheap, mutates_code=False, may_hang=False,
         may_need_services=False, reason="t")
-    res = proberun.ProbeResult(command=command, exit_code=exit_code, summary=output,
-                               tally=probeparse.runner_tally(output))
+    # BUILT THE WAY PRODUCTION BUILDS IT. This fixture used to hand-assemble the result with
+    # `summary=output`, and no run cria has ever made looks like that: `parse_output` replaces the
+    # runner's text with CLEAN_SUMMARY ("no problems reported") on a green run and drops the raw
+    # bytes. So the go marker the check was written for was invisible in production and visible in
+    # the test, and the test passed over the bug for six weeks.
+    res = probeparse.parse_output(command, probeparse.family_of(command), exit_code, output, "")
     return proberun.ProbeReport(project_type=["x"], selected=[cand], results=[res])
 
 
@@ -56,6 +60,14 @@ EMPTY = {
     "cargo":    ("cargo test", 0, "test result: ok. 0 passed; 0 failed; 0 ignored"),
     "rspec":    ("rspec", 0, "0 examples, 0 failures"),
     "go":       ("go test ./...", 0, "ok  \tz\t[no test files]"),
+    # THE FOUR THAT SAY IT IN PROSE AND PRINT NO COUNT AT ALL. Ran every one: each yields tally ""
+    # so `_tally_says_zero` is structurally silent, and each exits 0 — so before
+    # `probeparse.says_nothing_ran` all four answered "tests ran" to the satisfaction judge. All 15
+    # archived feed-pipeline-java workspaces ship zero test files and select `mvn test`.
+    "maven":    ("mvn -q test", 0, "[INFO] --- surefire:3.2.5:test ---\n[INFO] No tests to run."),
+    "phpunit":  ("vendor/bin/phpunit", 0, "PHPUnit 10.5.0.\n\nNo tests executed!"),
+    "gradle":   ("gradle test", 0, "> Task :test NO-SOURCE\nBUILD SUCCESSFUL in 1s"),
+    "dotnet":   ("dotnet test", 0, "No test is available in /ws/bin/app.dll."),
 }
 REAL = {
     "pytest":   ("pytest", 0, "===== 7 passed in 0.05s ====="),
@@ -139,12 +151,29 @@ class OneOwnerPerQuestionTests(unittest.TestCase):
         unparsed_but_zero_looking_summary = _result("0 tests, nothing ran", "")
         self.assertFalse(proberun._tally_says_zero(unparsed_but_zero_looking_summary))
 
-        self.assertEqual(len(proberun._ZERO_TEST_MARKERS), 1)   # only the runner that prints no count
+    def test_the_prose_reading_is_only_asked_where_no_count_exists(self):
+        """The prose arm and the tally arm must not both claim one runner. Every sentence
+        `says_nothing_ran` recognises comes from a runner that prints NO tally on an empty suite —
+        if one of them ever gained a count, the count is what should be read."""
+        for name in ("maven", "phpunit", "gradle", "dotnet", "go"):
+            with self.subTest(runner=name):
+                out = EMPTY[name][2]
+                self.assertTrue(probeparse.says_nothing_ran(out))
+                self.assertEqual(probeparse.runner_tally(out), "")
 
-    def test_the_marker_list_holds_only_runners_with_no_tally(self):
-        for marker in proberun._ZERO_TEST_MARKERS:
-            with self.subTest(marker=marker):
-                self.assertEqual(probeparse.runner_tally(f"ok z {marker}"), "")
+    def test_a_counted_run_outranks_a_sentence(self):
+        """A suite that really ran can print anything, these words included. The parsed count wins."""
+        res = proberun.ProbeResult(command="rspec", exit_code=0,
+                                   summary="ok", tally="0f/9p", no_tests=True)
+        self.assertFalse(proberun.result_collected_nothing(res))
+
+    def test_the_green_summary_constant_cannot_answer_this(self):
+        """The trap that hid the bug: on a green run `summary` is a fixed string, so anything
+        re-scanning it answers the same way for every run cria has ever made."""
+        res = proberun.ProbeResult(command="go test ./...", exit_code=0,
+                                   summary=probeparse.CLEAN_SUMMARY, tally="", no_tests=True)
+        self.assertFalse(proberun.is_no_tests_collected(0, res.command, res.summary))
+        self.assertTrue(proberun.result_collected_nothing(res))
 
 
 if __name__ == "__main__":
