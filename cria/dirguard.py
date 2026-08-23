@@ -99,6 +99,14 @@ _LOCAL_INSTALL_SCOPE = re.compile(
     # and bundler's --path are Ruby's form, composer's --working-dir is PHP's. Without these the
     # guard refuses the very route its own remediation now recommends.
     r"|--install-dir(?:=|\s)|--path(?:=|\s)|--working-dir(?:=|\s)"
+    # …AND GEM'S SHORT FORM. `gem install -i local_gems europe` lands in ./local_gems, inside the
+    # project, and was REFUSED with "an install must land inside the project directory, and this one
+    # would not" — false about the world. The coder then found the spelling the guard accepts,
+    # `--install-dir=.`, which is the project ROOT, and that command unpacked the gem over the repo:
+    # cache/, doc/, gems/, specifications/, build_info/, extensions/, plugins/. The guard tested
+    # spelling, not destination, and its accept/reject ran backwards to the blast radius.
+    # (shipping-rates-rb x nemotron-elastic 1787465385, calls 0085 and 0088.)
+    r"|(?:^|\s)-i(?:=|\s)"
     r"|(?:^|[\s;&|(])(?:source|\.)\s+\.{0,2}/?[\w.-]*(?:venv|env)[\w.-]*/bin/activate",
     re.IGNORECASE)
 
@@ -307,7 +315,14 @@ def _already_here(command: str, found: dict, routes: dict) -> str:
         # The refused command names this very tool as its package — `gem install bundler` for the
         # route that runs `bundle3.2`. Matched on the tool's stem so `bundler`/`bundle` are one word.
         stem = tool.rstrip("0123456789.")
-        m = re.search(rf"install\s+(?:--?\S+\s+)*({re.escape(stem)}\w*)\b", command, re.I)
+        # A BARE PACKAGE NAME, not a path that happens to start with the tool's letters. `\w*` let
+        # `gems/europe-0.0.28.gem` match `gem` + `s`, so cria answered `gem install --local
+        # gems/europe-0.0.28.gem` with "gems is already installed on this machine — the executable is
+        # named `gem`, so type that instead of `gems`. You do not need to install it." There is no
+        # package called `gems`; the coder had typed a FILE PATH. Walked on shipping-rates-rb x
+        # nemotron-elastic 1787465385, and the model spent the next eight calls on installs (#5b).
+        m = re.search(rf"install\s+(?:--?\S+(?:=\S+)?\s+)*({re.escape(stem)}\w*)(?![\w./-])",
+                      command, re.I)
         if m:
             # The coder's OWN word for it — it typed `bundler`, and a message that answers with
             # `bundle` reads as being about something else.
@@ -367,9 +382,25 @@ def _after_unresolved_expansion(command: str, start: int) -> bool:
     comes from a command cria never ran, so whether the result is inside the workspace is unknown —
     and #11b is explicit that a mechanism which cannot observe the thing it is judging must abstain
     rather than answer. It answered: 11 distinct commands, 263 occurrences, all refused for a suffix.
-    Together with the parameter-value case that is 492 of 1,242 captured refusals, 40%."""
+    Together with the parameter-value case that is 492 of 1,242 captured refusals, 40%.
+
+    A GLOB IS THE SAME SHAPE. `*` is excluded from the path-token character class, so it TERMINATES
+    the token before it and the remainder starts at the following `/` — which then reads as rooted.
+    `ls vendor/bundle/ruby/*/gems/countries/lib/` was refused with "The path '/gems/countries/lib/'
+    is outside it", a path the coder never wrote, about a directory inside its own workspace.
+
+    Walked on shipping-rates-rb x ternary-bonsai 1787471013: the gem had installed to vendor/bundle,
+    the coder probed its API from memory, got two NameErrors, correctly decided to go and read the
+    gem's source — and cria refused that three times, on this. At 0038 it concluded "maybe I should
+    just use a simpler gem or embed the EU list directly" and wrote `Countries.new(code)` from
+    memory, which is the four-error NoMethodError the cell scored on. cria did not merely fail to
+    help here; it closed the one route to the answer, with a false statement (#5b, #11b)."""
     i = start - 1
-    if i < 0 or command[i] not in ")}":
+    if i < 0:
+        return False
+    if command[i] == "*" or (i > 0 and command[i] == "/" and command[i - 1] == "*"):
+        return True
+    if command[i] not in ")}":
         return False
     close, opener = command[i], "(" if command[i] == ")" else "{"
     depth = 0

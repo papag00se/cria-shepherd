@@ -166,6 +166,21 @@ MIN_PROBE_SECTION_BYTES = 700
 _DIAG_LINE_RE = r"[^ :]+:\[?[0-9]+"
 # javac and rustc put the symbol, the location and the note on the lines UNDER the header.
 _DIAG_CONTEXT_LINES = 3
+# …AND EVERY TEST RUNNER PUTS THE MESSAGE ABOVE THE FIRST FRAME. minitest, JUnit, RSpec, pytest and
+# `go test` print the exception class and its text, then the stack. `-A` context alone therefore kept
+# the frames and threw away the reason — under a header that reads "each is the checker's OWN message
+# and the line it flagged", which is then the one thing it does not contain.
+#
+# Walked on shipping-rates-rb x ternary-bonsai 1787471013. Four identical errors reached the coder as
+# `rates.rb:21` sixteen times with no message; `NoMethodError: undefined method 'new' for
+# Countries:Module` sat in the 394 elided bytes. The model spent 25 minutes on load-path theories,
+# eventually ran the check itself with a plain command cria had not composed, read the message, and
+# named the real cause in ONE turn — 90 seconds later it had the correct fix. The run was killed on
+# that call.
+#
+# Two shapes, one filter: the compiler's message is below its location, the runner's is above its
+# frames, and the located line is the anchor either way (#20).
+_DIAG_BEFORE_LINES = 2
 # The offline re-run's own window. Named, because every other budget in this file is.
 OFFLINE_TAIL_BYTES = 600
 # A RUNNER'S TALLY, BY SHAPE. `7 runs, 1 failures`, `12 passed, 1 failed`, `ok 3 - …`, `FAIL` — the
@@ -861,8 +876,8 @@ def compose_probe_command(c: ProbeCandidate, timeout_s: float, cap: int | None =
         # continuation lines, which rustc routinely prints. A claim cria cannot keep is a false fact
         # in cria's own voice (#5b), so the sentence says what it actually does.
         f"printf '\\n...[%d bytes elided here — the lines above and below are NOT continuous. The "
-        f"lines from the removed middle that carry a file and a line number follow, each with up to "
-        f"{_DIAG_CONTEXT_LINES} lines indented under it]...\\n' "
+        f"lines from the removed middle that carry a file and a line number follow, each with the "
+        f"lines just above and below it]...\\n' "
         f"\"$((__cria_n - {budget}))\"; "
         # THE DIAGNOSTICS ARE THE POINT OF RUNNING THE PROBE, AND THEY LIVE IN THE MIDDLE.
         # A blind head+tail cut removes exactly the part a checker exists to produce. Measured on
@@ -893,8 +908,8 @@ def compose_probe_command(c: ProbeCandidate, timeout_s: float, cap: int | None =
         # and state the two numbers. `grep -c` and `grep -m` are the same matcher as the line below,
         # so the count and the shown set cannot disagree (#12).
         f"__cria_dn=$(printf '%s' \"$__cria_out\" | grep -E -c {shlex.quote(_DIAG_LINE_RE)}); "
-        f"__cria_ds=$(printf '%s' \"$__cria_out\" | grep -E -A{_DIAG_CONTEXT_LINES} "
-        f"{shlex.quote(_DIAG_LINE_RE)} | head -c {middle} | sed '$d'); "
+        f"__cria_ds=$(printf '%s' \"$__cria_out\" | grep -E -B{_DIAG_BEFORE_LINES} "
+        f"-A{_DIAG_CONTEXT_LINES} {shlex.quote(_DIAG_LINE_RE)} | head -c {middle} | sed '$d'); "
         f"printf '%s\\n' \"$__cria_ds\"; "
         f"__cria_dshown=$(printf '%s' \"$__cria_ds\" | grep -E -c {shlex.quote(_DIAG_LINE_RE)}); "
         f"if [ \"$__cria_dshown\" -lt \"$__cria_dn\" ]; then "

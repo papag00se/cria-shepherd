@@ -1,3 +1,2 @@
 {{MARKER}} {{LEDGER}}
-
-This is your real fetch record for this session and it persists here even after older turns scroll away. Where an entry lists endpoints or response fields, those came back from the real source — code against THOSE rather than re-fetching the page to rediscover them. Where an entry came back with an error, read its status, anything the server returned with it, and any note on that line before deciding what it means.
+{{TAIL}}

@@ -59,7 +59,9 @@ class WhatReplacedItTests(unittest.TestCase):
     def test_the_three_now_send_the_model_to_read_what_came_back(self):
         from cria import prompts
         for text in (prompts.load_map("fetched_facts_sections")["failed"],
-                     prompts.load("fetched_facts_anchor"),
+                     # The tail moved into a section so it renders only when a fetch is in the
+                     # block — a list of local files is not a fetch record (#11b).
+                     prompts.load_map("fetched_facts_sections")["anchor_tail_fetches"],
                      prompts.load_map("webfetch_guards")["fetch_repeat_failed"]):
             self.assertIn("status", text.lower())
             self.assertRegex(text, r"(?i)anything|whatever")   # …and whatever came back with it

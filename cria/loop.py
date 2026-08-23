@@ -6646,8 +6646,14 @@ def _fetched_facts_anchor(sess, messages: list[dict] | None = None) -> dict | No
     ledger = (ledger + _read_ground_truth(sess, messages or [])).strip("\n")
     if not ledger.strip():
         return None
+    # THE TAIL IS ABOUT FETCHES, so it goes only where a fetch is. With the read ledger appended to
+    # this same anchor, a session that fetched nothing still rendered it — and told the model to
+    # "code against THOSE rather than re-fetching" while its own list held nothing but local files.
+    tail = (prompts.load_map("fetched_facts_sections")["anchor_tail_fetches"]
+            if _fetch_ground_truth(messages or [], sess).strip() else "")
     return {"role": "user", "content": prompts.render("fetched_facts_anchor",
-                                                       marker=selfcompact.FACTS_MARKER, ledger=ledger)}
+                                                      marker=selfcompact.FACTS_MARKER,
+                                                      ledger=ledger, tail=tail)}
 
 
 # An anchor block is the DESIGNATED single copy of its content: folding it into a pointer at a later

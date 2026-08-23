@@ -198,7 +198,9 @@ class TheRecoveredMiddleIsWholeLinesToo(unittest.TestCase):
         out = run_with_cap(self._long_javac(), 1233)
         marker = next(l for l in out.splitlines() if "elided here" in l)
         self.assertNotIn("Every line", marker)
-        self.assertIn("up to", marker)      # names the per-diagnostic context bound it actually uses
+        # Names the context it actually keeps — on BOTH sides of the located line, because a compiler
+        # writes its message below and a test runner writes it above the first frame.
+        self.assertIn("above and below", marker)
 
 
 class TheCutDiagnosticsAreCounted(unittest.TestCase):

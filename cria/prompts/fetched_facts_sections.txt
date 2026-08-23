@@ -79,3 +79,10 @@ descriptions = this page is a catalogue — it names where each API's descriptio
 # and re-reading one is a single call; what compaction destroys is the knowledge that it looked.
 read_header = FILES YOU HAVE ALREADY READ FROM THIS WORKSPACE — you have seen these; their contents are not repeated here. If you need what one of them holds, read it again rather than working it out from memory.\n{{FILES}}{{MORE}}
 read_more = \n- …and {{COUNT}} more file(s) you have read this session.
+# The closing sentence of the durable anchor. It is about FETCHES, so it may only be said when the
+# block holds one. Appending the read ledger to the same anchor made it render with zero fetches
+# and this tail still attached — 43 of 46 coder prompts on feed-pipeline-java x nemotron-elastic
+# 1787469110 called a list of local files 'your real fetch record' and closed by telling the model
+# to code against those rather than re-fetching, in a run that fetched nothing and needed to (#5b,
+# #11b). The anchor's own docstring already promised it fires only when real fetches exist.
+anchor_tail_fetches = \nThis is your real fetch record for this session and it persists here even after older turns scroll away. Where an entry lists endpoints or response fields, those came back from the real source — code against THOSE rather than re-fetching the page to rediscover them. Where an entry came back with an error, read its status, anything the server returned with it, and any note on that line before deciding what it means.

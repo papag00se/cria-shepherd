@@ -731,6 +731,15 @@ _RUNNER_LOCATIONS = (
     re.compile(r"^\s*#\s+(\.?[^\s:]+):(\d+)(?::in\b|\s*$)", re.M),  # rspec backtrace line
     re.compile(r"^\s*(/[^\s:]+\.php):(\d+)\s*$", re.M),            # phpunit failure location
     re.compile(r"^\s*\S+#\S+\s+\[([^\]\s:]+):(\d+)\]", re.M),        # minitest failure location
+    # A PLAIN RUBY BACKTRACE FRAME — `	from /w/lib/europe.rb:3:in \`<top (required)>'`. This is the
+    # shape of EVERY non-assertion Ruby failure (a LoadError, a NameError, a NoMethodError raised
+    # outside a test body), and it was the only shape with no pattern here. Walked on
+    # shipping-rates-rb x nemotron-elastic 1787465385: the head line of the trace names
+    # `europe/version`, a path inside a gem; the NEXT line names `lib/europe.rb`, the coder's own
+    # stray file that was shadowing it. cria quoted the head 31 times and dropped the frame every
+    # time, so its own ground-truth block said "a specific line could not be parsed from the output"
+    # about a trace whose second line is a file and a line number.
+    re.compile(r"^\s*from\s+(\S+\.rb):(\d+):in\b", re.M),
 )
 
 
@@ -1347,6 +1356,14 @@ def run_candidate(runner: Runner, tokens: Sequence[str], cwd: str,
 # error class (#12), not a guess about prose. Rows are only included where the message can mean
 # nothing else — an ambiguous one ("package X does not exist", which is equally a typo in the
 # project's own code) is left out rather than risk mislabelling a real bug (#3).
+# MAVEN'S MODEL ERRORS SPELL THE LOCATION IN PROSE — `… @ /w/pom.xml, line 17, column 13` — where
+# every compiler writes `file:line:`. `split_diag` knows only the colon form, so a malformed POM
+# parsed as nothing and cria fell back to quoting Maven's closing boilerplate ("read the following
+# articles"), then told the model "a specific line could not be parsed from the output" about a line
+# that names a file, a line and a column. Walked on feed-pipeline-java x nemotron-elastic 1787469110.
+_PROSE_LOCATION = re.compile(r"([^\s,@]+):?\s*(?:@\s*)?([^\s,]+\.\w+)?,?\s*line\s+(\d+),\s*column\s+(\d+)")
+
+
 _DEPENDENCY_MISSING = (
     # ruby: cannot load such file -- countries (LoadError)
     ("ruby", re.compile(r"cannot load such file -- (\S+)\s*\(LoadError\)")),

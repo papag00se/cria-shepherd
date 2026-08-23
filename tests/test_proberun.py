@@ -457,7 +457,10 @@ class TestComposeProbeCommand(unittest.TestCase):
         self.assertIn(f"head -c {quarter}", line)              # an EARLY failure survives
         self.assertIn(f"tail -c {quarter}", line)              # ...and a late one
         self.assertIn(f"head -c {middle}", line)               # ...and the diagnostics between them
-        self.assertIn("grep -E -A", line)                      # kept by SHAPE: path:line, any language
+        # Kept by SHAPE — path:line, any language — with context on BOTH sides: a compiler puts its
+        # message under the location, a test runner puts it above the first frame.
+        self.assertIn("grep -E -B", line)
+        self.assertIn("-A", line)
         self.assertIn("elided", line)                          # middle-elision disclosed, never silent
         self.assertIn(PROBE_EXIT_SENTINEL, line)               # exit-code sentinel
 
