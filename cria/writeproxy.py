@@ -39,6 +39,10 @@ from .toolargs import PATH_KEYS as _PATH_KEYS, parse_args as _parse, tool_path a
 
 # A tool-protocol tag line, any dialect seen in captures: XML-ish (</tool_call>, <function=...>,
 # <parameter=...>), gemma pipes (<|tool_call>, <tool_call|>, <|channel>thought), bare <think> forms.
+# How far back a fused call's ARGUMENT may run before the protocol tags that opened it. A second call
+# carries a path, a command, or a short body; a whole file does not.
+_FUSED_TAIL_MAX_LINES = 40
+
 _PROTOCOL_TAG_LINE = re.compile(
     r"^\s*(?:</?(?:tool_call|function|parameter|think|channel)\b[^\n]*?>?"
     r"|<\|[^|>\n]+\|?>|<[a-z_]+\|>)\s*$")
@@ -97,13 +101,26 @@ def trim_fused_tail(content: str) -> str:
         if _PROTOCOL_TAG_LINE.match(ln):
             saw_tag, cut = True, i     # the cut may only ever land ON a tag
             continue
-        # A bare single token is SCANNED PAST but never becomes the cut. Both ends of the debris need
-        # this and for opposite reasons: it trails the tags (the next call's `path` VALUE, met first
-        # going backwards), and it also precedes them in ordinary markup (`</project>`, `}`), where
-        # cutting at it would eat the file. Only a tag marks where the junk starts.
-        if len(ln.split()) == 1:
-            continue
-        break
+        # A VALUE LINE IS SCANNED PAST but never becomes the cut. Both ends of the debris need this
+        # and for opposite reasons: it trails the tags (the next call's argument, met first going
+        # backwards), and it also precedes them in ordinary markup (`</project>`, `}`), where cutting
+        # at it would eat the file. Only a tag marks where the junk starts.
+        #
+        # ANY value, not just a bare token. The single-token rule fitted the walked case, where the
+        # fused second call was a `write_file` and its `path` is one word — and missed the same
+        # failure when the second call is an `exec_command`, because `mvn -q compile` is three words
+        # and the scan broke on it before it ever met a tag. Verified against the four captured
+        # payloads from feed-pipeline-java x nemotron-elastic 1787436645: all four returned unchanged,
+        # cria refused its own write four times as malformed XML pointing at `line 34: </function>`,
+        # and the model could not see the payload it had sent.
+        #
+        # This is safe because `_PROTOCOL_TAG_LINE` matches only tokens that never appear in real
+        # content — `</function>`, `<tool_call>`, `<parameter=…>` — so a file with no fused call has
+        # no tag to find and comes back untouched however far the scan walks. The bound keeps it to
+        # an argument's worth of lines rather than the whole file.
+        if not saw_tag and (len(lines) - i) > _FUSED_TAIL_MAX_LINES:
+            break
+        continue
     if not saw_tag or cut == 0:
         return content          # nothing to cut, or the whole thing is debris (that is _protocol_debris)
     return "\n".join(lines[:cut]).rstrip("\n") + "\n"

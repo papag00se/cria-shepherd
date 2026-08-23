@@ -220,6 +220,15 @@ _VOLATILE = (
     (re.compile(r"\b\d+\.\d+\s?(?:s|secs?|seconds?)\b"), ""),
     # …and sub-second units, where runners drop the decimal — mocha `(123ms)`
     (re.compile(r"\b\d+(?:\.\d+)?\s?(?:ns|µs|us|ms)\b"), ""),
+
+    # ── a runner's THROUGHPUT, which is elapsed time wearing a different unit ──
+    # minitest `614.8036 runs/s, 614.8036 assertions/s`, and the same shape wherever a runner divides
+    # its count by its clock. The elapsed-time rule above cannot see it: `\s?s` does not match ` runs/s`.
+    (re.compile(r"\b\d+(?:\.\d+)?\s*(?:runs?|tests?|assertions?|examples?|specs?)/s\b"), ""),
+    # ── and a randomised run ORDER, which changes nothing about what happened ──
+    # minitest `Run options: --seed 33602`, rspec `--seed 1234`, `go test -shuffle=on` echoes one,
+    # pytest-randomly prints `Using --randomly-seed=…`. Two runs of one suite differ only here.
+    (re.compile(r"(?i)(--?(?:randomly-)?seed[= ])\d+"), r"\1"),
 )
 
 
@@ -228,7 +237,14 @@ def volatile_key(content) -> str:
 
     ONE owner. Both the tool-result duplicate groups (focustrim) and the gate's repeat-collapse
     (probegate) key on this, so "is this the same thing again?" has a single answer across cria.
-    Not a normalizer for DISPLAY — the text the model reads is always the original bytes."""
+    Not a normalizer for DISPLAY — the text the model reads is always the original bytes.
+
+    WHAT A RUN VARIES IS NOT WHAT A RUN SAID. This scrubbed wall-clock and object identities but not
+    a runner's SEED or its throughput banner, so two byte-equivalent `rake test` runs keyed
+    differently and the repeat guard never fired. Walked on shipping-rates-rb x nemotron-elastic
+    1787432916: four identical green runs — `7 runs, 7 assertions, 0 failures` every time — each got
+    its own group, and the coder was never told it had already run this. Generalises to RSpec,
+    `go test -shuffle` and pytest-randomly, which all print one."""
     if not isinstance(content, str):
         return ""
     for pat, repl in _VOLATILE:

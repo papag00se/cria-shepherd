@@ -341,5 +341,43 @@ class VolatileKeyTests(unittest.TestCase):
         self.assertIn("3 failed, 1 passed in 0.28s", out[1]["content"])  # last kept in full
 
 
+class ARepeatedTestRunIsARepeatTests(unittest.TestCase):
+    """`volatile_key` scrubbed wall-clock and object identities but not a runner's SEED or its
+    throughput banner, so two byte-equivalent `rake test` runs keyed differently and the repeat guard
+    never fired.
+
+    Walked on shipping-rates-rb x nemotron-elastic 1787432916: four identical green runs — `7 runs,
+    7 assertions, 0 failures` every time — each landed in its own group, and the coder was never told
+    it had already run this. Generalises to RSpec, `go test -shuffle` and pytest-randomly."""
+
+    def _minitest(self, seed, secs, rate, failures=0):
+        return (f"Run options: --seed {seed}\n\n# Running:\n\n.......\n\n"
+                f"Finished in {secs}s, {rate} runs/s, {rate} assertions/s.\n\n"
+                f"7 runs, 7 assertions, {failures} failures, 0 errors, 0 skips\n")
+
+    def test_two_runs_of_one_green_suite_are_one_result(self):
+        self.assertEqual(dedup.volatile_key(self._minitest(33602, "0.008369", "836.4139")),
+                         dedup.volatile_key(self._minitest(62, "0.011790", "593.5075")))
+
+    def test_a_run_whose_result_changed_is_not(self):
+        self.assertNotEqual(dedup.volatile_key(self._minitest(1, "0.01", "800.0", failures=0)),
+                            dedup.volatile_key(self._minitest(2, "0.02", "700.0", failures=1)))
+
+    def test_the_seed_spellings_other_runners_use(self):
+        for line in ("Run options: --seed 33602", "rspec --seed 1234",
+                     "Using --randomly-seed=99887766"):
+            with self.subTest(line=line):
+                a = dedup.volatile_key(line)
+                b = dedup.volatile_key(line.replace("33602", "1").replace("1234", "5")
+                                           .replace("99887766", "7"))
+                self.assertEqual(a, b)
+
+    def test_a_number_that_is_content_survives(self):
+        """The scrub may not eat a count, an amount or an id the reader needs."""
+        key = dedup.volatile_key("7 runs, 7 assertions, 1 failures — expected 30s got 12")
+        self.assertIn("7 runs", key)
+        self.assertIn("1 failures", key)
+
+
 if __name__ == "__main__":
     unittest.main()
