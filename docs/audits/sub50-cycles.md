@@ -124,6 +124,31 @@ mechanism that should have helped has now been fixed; whether to ADD one is a de
 
 ---
 
+## Cycle 3 results
+
+| cell | c1 | c2 | c3 | what it ended on |
+|---|---|---|---|---|
+| ternary × ruby | 20% | 40% | **100%** | `require "countries"` / `ISO3166::Country#in_eu?` — the real API, suite green 16/22 |
+| nemotron × java | 0% | 20% | 20% | declared opencsv, wrote *commons-csv's* `CSVRecord` against it |
+| nemotron × go | 20% | 20% | 20% | `Quantize` and `RoundHalfUp` back; the real `Round` in zero prompts |
+| nemotron × ruby | 20% | 0% | 0% | `NameError: undefined ... 'surcharge'` — its own code, but the workspace is CLEAN: no unpacked gem, no shadow file, good gem choice |
+
+**ternary is the headline and the caveat.** First perfect score this cell has had. The failures that
+were cria's own are verifiably gone from it — no dead 2013 gem, no phantom `rspec`, no "not installed
+anywhere" while the gems sat on disk, no `/gems/...` refusal (0 this run, 3 last). But it got the API
+from `rubydoc.info`, not from the vendored source, so removing the refusal is not *proven* to be what
+freed it. One run cannot separate that from taking a different path.
+
+**nemotron × ruby is 0% for the third cycle and it is not the same 0%.** Cycle 2 unpacked a gem over
+the repo root and shadowed the load path; cycle 3's workspace holds one modified file and a Gemfile
+naming the right gem. What is left is an ordinary bug in its own code.
+
+Found by watching rather than walking, and fixed at `19d0210`: minitest's ERROR frames have no `from`
+prefix, so they parsed as nothing, and the fallback then took the tally as the failure — 33 of 81
+prompts said "a specific line could not be parsed" and quoted a count.
+
+---
+
 ## The one addition, put to the operator rather than built
 
 Three cycles, thirty-seven root fixes, and three cells sit at 20% for one unchanged reason: **a real
