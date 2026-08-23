@@ -76,11 +76,29 @@ class TheSearchForDependencySourceIsRecognisedTests(unittest.TestCase):
 
     def test_every_ecosystem_shape_is_seen(self):
         for cmd in ("ls node_modules/commander",
-                    "grep -rn parse /ws/vendor/bundle/ruby/3.2.0/gems",
+                    "find /ws/vendor/bundle/ruby/3.2.0/gems -name '*.rb'",
                     "find /ws/.m2/repository -name pom.xml",
                     "ls /ws/site-packages/requests"):
             with self.subTest(cmd=cmd):
                 self.assertTrue(probeparse.searched_for_dependency_source(cmd))
+
+    def test_a_content_search_is_not_a_path_lookup(self):
+        """`grep`, `rg`, `cat`, `head` and `tail` read INSIDE files, so an empty result from one is an
+        answer about CONTENT — the string is not in these files — and "you looked in the wrong root"
+        is false. Walked on shipping-rates-rb x nemotron-elastic 1787432916: a grep of the installed
+        gem's own lib/ came back empty and cria replied "this project keeps no vendored copy there …
+        Search there instead", about a directory the model had read two files out of in the same
+        prompt, naming a PARENT of the one it had just searched."""
+        for cmd in ("grep -rn parse /ws/vendor/bundle/ruby/3.2.0/gems",
+                    "cat /ws/node_modules/commander/index.js",
+                    "head -50 /ws/site-packages/requests/api.py"):
+            with self.subTest(cmd=cmd):
+                self.assertEqual(probeparse.searched_for_dependency_source(cmd), "")
+
+    def test_the_note_is_never_a_parent_of_the_path_just_searched(self):
+        self.assertTrue(probeparse.searched_under(
+            "/ws/vendor/bundle/ruby/3.2.0/gems/europe/lib", "/ws/vendor/bundle"))
+        self.assertFalse(probeparse.searched_under("/ws/lib", "/ws/vendor/bundle"))
 
     def test_a_search_already_in_the_home_root_is_left_alone(self):
         """It has found the right root. Naming it again is noise (#3)."""

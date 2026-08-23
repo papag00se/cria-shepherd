@@ -1472,6 +1472,24 @@ def _binary_fact(blob: str) -> str:
                                           content_reduce_mod.binary_kind(head))
 
 
+# A SEARCH COMMAND, by shape. These read a file or a tree and answer with the lines that matched;
+# every one of them exits 1 and prints nothing when the answer is "none", which is a FACT and not a
+# failure. Deliberately excludes the pipe case — `_blind_pipe_failure` owns that one, where the
+# model's own filter ate someone else's error.
+_SEARCH_CMD = re.compile(r"(?:^|[;&|(]\s*)\s*(?:grep|egrep|fgrep|rg|ag|ack)\b")
+
+
+def _found_nothing(command: str, content: str) -> bool:
+    """The model ran a search, it matched nothing, and the envelope shows that as a blank."""
+    cmd = command or ""
+    if not cmd or not _SEARCH_CMD.search(cmd) or _FILTER_PIPE.search(cmd):
+        return False
+    m = _EXIT_CODE.search(content or "")
+    if not m or m.group(1) != "1":       # 1 is "no match"; 2+ is a real error, with its own message
+        return False
+    return not _strip_exec_envelope(content or "").strip()
+
+
 def _blind_pipe_failure(command: str, content: str) -> bool:
     """True when the model's own command failed (nonzero exit), printed NOTHING, and contains a
     line-filter pipe — the three computable facts behind 'your filter ate the error'. Anything less
@@ -1748,6 +1766,16 @@ def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | Non
                 # (observed: Fabliq wedged a whole step re-running pip). Append the remedy (stdlib /
                 # --break-system-packages / venv) ONCE — grounded in the real error, not invented.
                 out.append({**m, "content": content + "\n\n" + prompts.load("pep668_remedy")})
+            elif _found_nothing(own_cmds.get(tid, ""), content):
+                # AN EMPTY RESULT FROM A SEARCH IS AN ANSWER. `grep` exits 1 and prints nothing when
+                # the string is not there, and the harness envelope renders that as `Process exited
+                # with code 1 / Output:` with a blank beneath it — indistinguishable, to a reader,
+                # from a command that failed to run. Walked on cart-billing-go x nemotron-elastic
+                # 1787434778: the coder grepped the library for `Quantize` six times, got the blank
+                # each time, and read it as "the command did not work" rather than "the method does
+                # not exist" — which was the whole question of the run. Its own words at 0072: "in our
+                # fetch we didn't see that snippet; maybe it's later in the file."
+                out.append({**m, "content": content + "\n\n" + prompts.load("search_found_nothing")})
             elif _blind_pipe_failure(own_cmds.get(tid, ""), content):
                 # The model's OWN filter pipe ate the error: `pytest … | grep -E 'passed|failed'` on a
                 # collection error prints NOTHING (grep exits 1 on no match), and a weak model re-ran
@@ -1854,6 +1882,13 @@ def _note_dependency_search(messages: list[dict], own_cmds: dict[str, str],
     eco = _workspace_ecosystem(workspace_root)
     root = probeparse.dependency_source_root(eco, workspace_root or "") if eco else ""
     words = prompts.load_map("dependency_source_root")
+    # …AND NOT A PARENT OF WHERE IT JUST LOOKED. The `found` wording says "you looked in the wrong
+    # root; the real one is <root>" — false when the token is already inside that root, and its
+    # remedy names a directory the search was already under. Walked on shipping-rates-rb x
+    # nemotron-elastic 1787432916: cria answered a search of the installed gem's own lib/ with "this
+    # project keeps no vendored copy there … Search there instead", naming the parent (#5b).
+    if root and probeparse.searched_under(searched, root):
+        return
     note = (prompts.fill(words["found"], searched=searched, root=root) if root
             else prompts.fill(words["absent"], searched=searched))
     if note in last["content"]:

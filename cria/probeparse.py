@@ -1630,7 +1630,13 @@ def names_a_workspace_file(name: str, workspace_root: str) -> bool:
 _PKG_DIR_SHAPE = re.compile(
     r"(?:\.cargo/registry|node_modules|site-packages|vendor/bundle|"
     r"\.m2/repository|\.gradle/caches|go/pkg/mod|\.nuget/packages|\.hex/packages)")
-_LOOKUP_VERB = re.compile(r"\b(?:find|ls|grep|rg|cat|head|tail|fd|locate|tree)\b")
+# A PATH LOOKUP, not a content search. `grep`, `rg`, `cat`, `head` and `tail` read INSIDE files, so an
+# empty result from one of them is an answer about content — "the string is not in these files" — and
+# telling the reader it looked in the wrong root is false. Only the verbs that enumerate a tree can be
+# answered with "you are in the wrong place". Walked on shipping-rates-rb x nemotron-elastic
+# 1787432916: a grep of the installed gem's lib/ returned nothing and cria replied "this project keeps
+# no vendored copy there", about a directory the model had read two files out of in the same prompt.
+_LOOKUP_VERB = re.compile(r"\b(?:find|ls|fd|locate|tree)\b")
 
 
 def searched_for_dependency_source(command: str) -> str:
@@ -1651,6 +1657,18 @@ def searched_for_dependency_source(command: str) -> str:
     token = text[start:end if end > 0 else len(text)].strip().strip("'\"")
     # ALREADY LOOKING IN THE HOME ROOT — telling it where the home root is would be noise (#3).
     return "" if token.startswith(("~", "$HOME")) else token
+
+
+def searched_under(token: str, root: str) -> bool:
+    """Is the path the command searched already INSIDE the root cria is about to name?
+
+    The note's whole content is "you looked in the wrong root; the real one is <root>". When the
+    token is a descendant of that root the sentence is not just unhelpful, it is false — and the
+    remedy names a parent of the directory just searched, which cannot change the answer."""
+    if not token or not root:
+        return False
+    t, r = os.path.normpath(token), os.path.normpath(root)
+    return t == r or t.startswith(r.rstrip(os.sep) + os.sep)
 
 
 def continues_previous(line: str, head: str) -> bool:

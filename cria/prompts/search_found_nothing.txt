@@ -1,0 +1,1 @@
+That search matched nothing — it ran, it read what you pointed it at, and the text you searched for is not in there. That is an answer, not a failed command: if you were checking whether something exists, this is the evidence that it does not.
