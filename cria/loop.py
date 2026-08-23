@@ -1188,7 +1188,15 @@ _VETO_MISSING = re.compile(r"(?i)\b(?:does not exist|not founds?|missing|no such
                            r"|is empty|are empty|contains nothing|no actual)\b")
 # Path tokens including ABSOLUTE ones — _STEP_ARTIFACT starts at \w and silently drops a leading
 # slash, which would re-root an absolute path under the workspace and miss the file.
-_VETO_PATH = re.compile(r"(/?[\w][\w./-]*\.[A-Za-z][A-Za-z0-9]{0,4})")
+#
+# THE TRAILING BOUNDARY IS LOAD-BEARING. "A word, a dot, a short suffix" is also every method
+# reference in every dotted language, and without a boundary the suffix bound bites the tail off the
+# longer name: `Shipping.zone_for` matched as `Shipping.zone`, which cria then printed as
+# `- Shipping.zone: NOT on disk` under "a verified fact about the workspace as it stands, not one
+# reader's opinion" (shipping-rates-rb x ternary-bonsai 1787442206, call 0024). Requiring the match to
+# END at a non-identifier character means a dotted identifier does not match at all, while a real
+# filename — always followed by space, quote, comma or end — still does (#5b, #20).
+_VETO_PATH = re.compile(r"(/?[\w][\w./-]*\.[A-Za-z][A-Za-z0-9]{0,4})(?![\w-])")
 
 
 _VETO_FACT_MAX_BYTES = 200_000   # past this, state existence only — a count from a clip is false
@@ -1242,6 +1250,10 @@ def _veto_refuted_by_disk(why: str, workspace_root: str, ask=None, rlog=None) ->
     view = wsview.current(workspace_root)
     for m in _VETO_PATH.finditer(why):
         tok = m.group(1)
+        # …AND A ONE-LETTER STEM IS NOT A FILE. `e.g.,` out of the judge's own prose matched as `e.g`
+        # and shipped beside the line above it, as a verified fact about the workspace.
+        if len(os.path.splitext(os.path.basename(tok))[0]) < 2:
+            continue
         try:
             path = tok if os.path.isabs(tok) else groundtruth.resolve(workspace_root, tok)
         except (OSError, ValueError):
