@@ -1501,7 +1501,17 @@ def install_landed(eco: str, workspace_root: str) -> bool | None:
     from . import wsview
     if not ev or not workspace_root:
         return None
-    tree = wsview.current(workspace_root).walk(workspace_root)
+    view = wsview.current(workspace_root)
+    # SURVEYED ONCE, A LONG TIME AGO. The only abstain path here was "nobody has surveyed at all", so
+    # a snapshot taken before an install landed answered a confident False about the world after it.
+    # Walked on shipping-rates-rb x ternary-bonsai 1787442206: `bundle install` put four gems into
+    # vendor/bundle at 16:56, the coder's own `ls` listed them, and cria went on telling it
+    # "`eu_countries` is not installed anywhere — this project has no Gemfile.lock, no vendor/ and no
+    # .bundle/" six times, while the model's own reasoning said "the gem IS installed in
+    # vendor/bundle but Ruby can't find it". Unknown is its own answer (#23c, #11b).
+    if view.may_have_changed:
+        return None
+    tree = view.walk(workspace_root)
     # A workspace nobody has surveyed yields NOTHING, so without this the answer to "is anything
     # installed" would be a confident False about a workspace cria cannot see — the same class of
     # false fact this function exists to stop.

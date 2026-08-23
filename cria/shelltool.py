@@ -114,7 +114,18 @@ _SHELL_WRITE = re.compile(
     # A package manager's SUBCOMMAND, by shape rather than by a list of managers: `gem install`,
     # `npm add`, `pip uninstall`, `cargo add`, `apt remove`, `go get`. Every one of them changes
     # state — a global install writes outside the project, a local one populates it.
-  | """ + _CMD_POS + r"""\S+\s+(?:install|uninstall|add|remove|update|upgrade|get)\b
+    #
+    # The second row is the same verb family for the managers that POPULATE from a lockfile rather
+    # than adding to it: `go mod download`, `go mod vendor`, `npm ci`, `dotnet restore`, `uv sync`.
+    # Missing them cost a go cell eleven calls — `go mod download` created go.sum, cria's staleness
+    # ledger saw no change, and the gate went on reporting `missing go.sum entry` as a current fact.
+    #
+    # The optional middle token carries the managers that put the verb third — `go mod download`,
+    # `go mod vendor`, `git submodule update`. It may not begin with `-`, which is what keeps
+    # `grep -n install README.md` and `grep -rn touch src/` out: a FLAG there means the word after it
+    # is an argument, not a subcommand.
+  | """ + _CMD_POS + r"""\S+\s+(?:[^-\s]\S*\s+)?(?:install|uninstall|add|remove|update|upgrade|get
+                                                 |download|fetch|restore|sync|vendor|ci)\b
   | \bopen\s*\([^)]*['"][wax]                 # python/ruby open(path, 'w')
   | \b(?:writeFileSync|writeFile|appendFileSync)\s*\(
   | \bFile\.(?:write|open)\b

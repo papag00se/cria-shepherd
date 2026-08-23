@@ -269,6 +269,38 @@ _FLAGGED_LINE_RE = re.compile(r"^(.+?):(\d+)(?::\d+)?:")
 _AT_LINE_RE = re.compile(r"^(.+?): .*\(at line (\d+), column \d+\)")
 
 
+# A TOOL THAT CAN CHANGE THE WORKSPACE, not a tool that writes A FILE. The staleness ledger counted
+# `write_file` and `edit_file` only, so a change made through the shell was invisible to it: on
+# cart-billing-go x nemotron-elastic 1787434778 `go mod download` created go.sum, the ledger saw
+# nothing, the "these checks ran BEFORE your edit" note never rendered, and the checks block went on
+# asserting `missing go.sum entry` as present-tense ground truth for eleven consecutive coder calls —
+# with the "the flagged line on disk" annotation re-attached each time, which makes a stale finding
+# read as freshly re-verified. Same shape for npm install, go get, cargo add, bundle install.
+def _a_command_could_have_changed_things_after(messages: list, start: int) -> bool:
+    """Did the coder run a command that could have moved the workspace since the checks ran?
+
+    The ledger above names FILES, and it can only name the ones cria lowered — so a change made
+    through the shell is invisible to it. Nothing needs naming here: the question is only whether
+    these findings can still be current, and the answer to that is the same for one file or ten."""
+    from . import shelltool
+    for m in messages[start + 1:]:
+        if not isinstance(m, dict):
+            continue
+        for tc in m.get("tool_calls") or []:
+            fn = tc.get("function") or {}
+            name = str(fn.get("name") or "")
+            if not shelltool.is_shell_tool_name(name):
+                continue
+            try:
+                args = json.loads(fn.get("arguments") or "{}")
+            except ValueError:
+                continue
+            cmd = str((args or {}).get("cmd") or (args or {}).get("command") or "")
+            if cmd and shelltool.writes_something(name, cmd):
+                return True
+    return False
+
+
 def _paths_written_after(messages: list, start: int) -> "frozenset[str]":
     """Basenames of files a LANDED write/edit touched in messages after ``start``.
 
@@ -483,7 +515,8 @@ def _is_hard_failure(plan, sid: str) -> bool:
 
 
 def clean_gate_output(raw: str, plan: "GatePlan | None" = None, *, annotate: bool = True,
-                      changed_paths: "frozenset[str]" = frozenset()) -> str | None:
+                      changed_paths: "frozenset[str]" = frozenset(),
+                      a_command_ran_since: bool = False) -> str | None:
     """A raw gate-probe RESULT → a compact, error-class-only summary for the MODEL to read.
 
     The raw result is cria's internal gate protocol wrapped in the harness's exec noise:
@@ -701,6 +734,11 @@ def clean_gate_output(raw: str, plan: "GatePlan | None" = None, *, annotate: boo
         if changed_paths:
             stale = prompts.render("checks_are_stale",
                                    files=", ".join(f"`{p}`" for p in sorted(changed_paths)))
+        elif a_command_ran_since:
+            # NAMED WHERE cria CAN NAME IT, STATED WHERE IT CANNOT. `go mod download` created go.sum
+            # and the file ledger saw nothing, so this note never rendered and the block asserted
+            # `missing go.sum entry` as present-tense ground truth for eleven more coder calls.
+            stale = prompts.load("checks_are_stale_command")
         return prompts.render("checks_error_class",
                               seeded_test_rule=prompts.load("seeded_test_rule").strip(),
                               stale=stale.rstrip("\n"),
@@ -1019,9 +1057,11 @@ def clean_gate_results(messages: list, plan: "GatePlan | None" = None) -> list:
                 # assertion and re-applied an import it already had. Three calls, on a 15-minute wall.
                 # The guard was added the same morning (bdd68bc) to stop the model GUESSING at an
                 # unquoted line; on a file that has moved it manufactures the guess instead.
-                cleaned = clean_gate_output(c, plan, annotate=(i == last_gate),
-                                            changed_paths=_paths_written_after(messages, i)
-                                            if i == last_gate else frozenset())
+                cleaned = clean_gate_output(
+                    c, plan, annotate=(i == last_gate),
+                    changed_paths=_paths_written_after(messages, i) if i == last_gate else frozenset(),
+                    a_command_ran_since=(i == last_gate
+                                         and _a_command_could_have_changed_things_after(messages, i)))
                 if cleaned is not None:
                     if _NO_SIGNAL_CHECK in cleaned:   # no signal → drop the result AND its command turn
                         tid = m.get("tool_call_id") or m.get("call_id")

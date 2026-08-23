@@ -1678,7 +1678,15 @@ def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | Non
                 if is_shell_tool_name(name):
                     orig = _read_sentinel(_command_of(fn.get("arguments")))
                     if orig is None:
-                        own_cmds[tc.get("id")] = _command_of(fn.get("arguments"))
+                        own = _command_of(fn.get("arguments"))
+                        own_cmds[tc.get("id")] = own
+                        # THE DISK MOVED AND THE SURVEY DID NOT. A survey rides along on a
+                        # cria-composed write/edit/list, so a run of the coder's own shell commands
+                        # changes the workspace while the view stands still. Recording that here is
+                        # what lets a caller tell "cria saw no vendor/" from "there is no vendor/".
+                        from . import shelltool as _shelltool
+                        if _shelltool.writes_something(name, own):
+                            view.note_a_mutator_ran()
                     if orig is not None:
                         tc = {**tc, "function": {"name": orig["name"], "arguments": orig["arguments"]}}
                         swapped += 1

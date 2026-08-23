@@ -126,7 +126,8 @@ class View:
     gathered — from a survey the harness ran, or from a tool call in the conversation."""
 
     __slots__ = ("root", "_files", "_dirs", "_folded", "_bodies", "_stale",
-                 "_progs", "_outside", "_undeliverable", "_surveyed", "_complete", "_sess")
+                 "_progs", "_outside", "_undeliverable", "_surveyed", "_complete", "_sess",
+                 "_ran_a_mutator")
 
     def __init__(self, root: str | None, sess: str = "") -> None:
         self.root: str = _posix(root or "").rstrip("/") if root else ""
@@ -146,6 +147,11 @@ class View:
         # measured as a survey riding on EVERY lowered call, forever, for one 36 KB file.
         self._undeliverable: dict[str, int] = {}
         self._surveyed = False
+        # A COMMAND THAT COULD HAVE CHANGED ANYTHING RAN, and no survey has landed since. The view
+        # still answers about the tree it last saw, which is correct for "what did cria see" and
+        # wrong for "what is there now" — and the callers that turn a False into a sentence about the
+        # world need to be able to tell the two apart (#11b, #23c).
+        self._ran_a_mutator = False
         # Whether the last listing named EVERY file. A survey that hit its own entry bound is still
         # worth having — what it listed is real — but "not listed" stops meaning "not there", and
         # every predicate downgrades accordingly.
@@ -452,6 +458,7 @@ class View:
                 except ValueError:
                     self._files[rel] = (0, 0.0)
         self._surveyed = True
+        self._ran_a_mutator = False
         self._drop_stale_bodies()
 
     def _drop_stale_bodies(self) -> None:
@@ -536,6 +543,22 @@ class View:
         """A whole-file read result — the same proof as a write, from the other direction."""
         self.note_written(path, content)
 
+    @property
+    def may_have_changed(self) -> bool:
+        """Has something run that could have changed the workspace since the last survey landed?
+
+        A survey rides along on a cria-composed write/edit/list, so a stretch of the coder's own
+        `exec_command`s moves the disk while the view stands still. `bundle install` put four gems in
+        vendor/bundle at 16:56, no survey followed, and cria went on telling the coder `eu_countries`
+        is "not installed anywhere — this project has no Gemfile.lock, no vendor/ and no .bundle/"
+        (shipping-rates-rb x ternary-bonsai 1787442206, six times, while the coder's own `ls` had
+        just listed the gems)."""
+        return self._ran_a_mutator
+
+    def note_a_mutator_ran(self) -> None:
+        """A command that could have changed the workspace ran; the survey is now behind the disk."""
+        self._ran_a_mutator = True
+
     def note_changed(self, path) -> None:
         """An edit landed. cria knows the file changed and does NOT know what it now holds, which
         is a different thing from knowing nothing at all: existence survives, the body does not."""
@@ -570,6 +593,7 @@ class DirectView(View):
     def __init__(self, root: str | None = None, sess: str = "") -> None:
         super().__init__(root or "/", sess)
         self._surveyed = True
+        self._ran_a_mutator = False
 
     def rel(self, path) -> str | None:
         p = _posix(path)
