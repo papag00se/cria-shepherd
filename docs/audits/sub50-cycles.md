@@ -91,3 +91,33 @@ number alone hides: it wrote the code and then broke its own load path.
 Both of those are cycle-3 walk questions: did anything cria said push the ruby coder toward unpacking
 a gem by hand, and is there anything in the go context that would have caught `nil` for a struct
 return.
+
+---
+
+## Cycle 3 — walked cycle 2, fixed to `3ce7fcb`
+
+**Walk:** 8 agents over 393 coder prompts of all four cells, every prompt and reasoning file in order.
+Each band carried the established facts and one question, so it explained rather than re-derived.
+
+**Found and fixed — 13 roots, every one reproduced by executing the code:**
+
+| root | evidence |
+|---|---|
+| The elision dropped every test runner's MESSAGE | `-A3` keeps context after a `path:line`; compilers write the message there, minitest/JUnit/RSpec/pytest/`go test` write it ABOVE the first frame. The ternary coder saw `rates.rb:21` sixteen times and never `NoMethodError: undefined method 'new' for Countries:Module` |
+| The Ruby backtrace frame had no pattern at all | `from /w/lib/europe.rb:3:in …` — the shape of every non-assertion Ruby failure. cria said "a specific line could not be parsed" 31 times about a trace whose second line names a file and a line |
+| dirguard refused the command that would have saved the run | `ls vendor/bundle/ruby/*/gems/x/lib/` → "The path '/gems/x/lib/' is outside it". `*` terminates the path token, so the tail reads as rooted. Three refusals, on a directory inside the workspace |
+| `gem install -i local_gems` refused, `--install-dir=.` allowed | The guard tested spelling, not destination — and the one it waved through unpacked a gem tree over the repo root |
+| "gems is already installed on this machine" | `\w*` let the path `gems/europe-0.0.28.gem` match the tool's own name |
+| The external-path refusal named no safe place | "use a path within the project instead" → the coder wrote `lib/europe.rb`, which the load path finds ahead of the gem |
+| A shadowing file was known and unsaid | `names_a_workspace_file` walked the tree, found `lib/europe.rb`, and used it only to fall silent |
+| The fetch tail on a fetchless block (MY cycle-2 regression) | 43 of 46 java prompts called a list of local files "your real fetch record" and said "code against THOSE rather than re-fetching" |
+| The band kept duplicates | Two of six slots on one repeated import; `method parse()` and the constructor candidate list cut |
+| The supervisor prompt contradicted itself | "You cannot run commands" + "command it NOW with a tool call" — most of a 21KB trace spent there, fabrications at the end of the spiral |
+| The search judge could not see the session | Endorsed `github.com/oklog/decimal` twice while cria held two 404s for it |
+| Maven's prose location unparsed | `@ file, line N, column M` |
+| The degenerate notice lacked the library clause | Its two siblings carry it; it fires most often |
+
+**Not fixed, needs the operator's call:** three cells now end the same way — a real library, chosen
+from memory, then used from memory. cria has guards for repeating a call, a search, a fetch and a
+thought, and none for "you are writing against a library you have never opened." Every existing
+mechanism that should have helped has now been fixed; whether to ADD one is a decision, not a bug.
