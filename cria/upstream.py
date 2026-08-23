@@ -230,7 +230,7 @@ class Upstream:
         self._window = _FALLBACK_WINDOW
         self._window_guessed = True
         if self._props_attempts == _MAX_PROPS_ATTEMPTS:
-            rlog.emit("context.window", level="warning", source="fallback", n_ctx=_FALLBACK_WINDOW,
+            rlog.emit("context.window", level="warn", source="fallback", n_ctx=_FALLBACK_WINDOW,
                       retry_every=_PROPS_RETRY_EVERY)
         return self._window
 
@@ -273,7 +273,7 @@ class Upstream:
             # process. The cost of guessing is every message the guess threw away, permanently and
             # silently (#5, #5b, #23c: unknown is not a small number, it is unknown).
             if window and self._window_guessed:
-                rlog.emit("context.floor_skipped", level="warning", why="window is a guess",
+                rlog.emit("context.floor_skipped", level="warn", why="window is a guess",
                           guess=window)
                 window = None
             if window:
@@ -344,7 +344,7 @@ class Upstream:
             return
         if self._window is _UNSET or self._window is None or prompt_tokens > self._window:
             was = None if self._window is _UNSET else self._window
-            rlog.emit("context.window", level="warning", source="accepted-prompt",
+            rlog.emit("context.window", level="warn", source="accepted-prompt",
                       n_ctx=prompt_tokens, was=was)
             self._window = prompt_tokens
             self._window_guessed = False   # measured, not invented — even though it is a lower bound
@@ -386,7 +386,7 @@ class Upstream:
         tokenratio.record(model, real, sent_estimate)  # also nudge the running per-model average
         density = float(real) / float(sent_estimate)
         n_ctx = inner.get("n_ctx") if isinstance(inner, dict) else None
-        rlog.emit("context.refit", level="warning", model=model, real=real, est=sent_estimate,
+        rlog.emit("context.refit", level="warn", model=model, real=real, est=sent_estimate,
                   n_ctx=n_ctx, safety=round(density, 2))
         # THE SERVER JUST STATED ITS WINDOW. It was being logged and thrown away while the floor ran
         # against a guess. This is the same class of authority as /props — the server's own number
@@ -720,12 +720,12 @@ class Upstream:
                 if aborted is None and window_room > 0 and \
                         chunks_seen >= window_room * rumination.WINDOW_EXHAUSTED_FRACTION:
                     aborted = {"window_exhausted": True, "room": window_room, "frames": chunks_seen}
-                    rlog.emit("rumination.abort", steer="rumination", level="warning", window_exhausted=True,
+                    rlog.emit("rumination.abort", steer="rumination", level="warn", window_exhausted=True,
                               room=window_room, frames=chunks_seen)
                     break
                 if aborted is None and streamed_chars == 0 and chunks_seen >= rumination.DEAD_STREAM_CHUNKS:
                     aborted = {"dead_stream": True, "chunks": chunks_seen}
-                    rlog.emit("rumination.abort", steer="rumination", level="warning", dead_stream=True,
+                    rlog.emit("rumination.abort", steer="rumination", level="warn", dead_stream=True,
                               chunks=chunks_seen)
                     break
                 # …AND THE SAME DEATH WITH TOO FEW CHUNKS TO COUNT. The condition above needs 400
@@ -737,7 +737,7 @@ class Upstream:
                         time.monotonic() - t0 >= rumination.DEAD_STREAM_SECONDS:
                     elapsed = round(time.monotonic() - t0, 1)
                     aborted = {"dead_stream": True, "chunks": chunks_seen, "seconds": elapsed}
-                    rlog.emit("rumination.abort", steer="rumination", level="warning", dead_stream=True,
+                    rlog.emit("rumination.abort", steer="rumination", level="warn", dead_stream=True,
                               chunks=chunks_seen, seconds=elapsed)
                     break
                 # THE WIDE UNIT, on a stride. The cheap check above cannot see a repeating block
@@ -748,7 +748,7 @@ class Upstream:
                     wide_evaled = len(wide_tail)
                     if rumination.degenerate_wide(wide_tail):
                         aborted = {"degenerate": True, "chars": len(wide_tail)}
-                        rlog.emit("rumination.abort", steer="rumination", level="warning", degenerate=True,
+                        rlog.emit("rumination.abort", steer="rumination", level="warn", degenerate=True,
                                   chars=len(wide_tail), wide=True)
                         break
                 if aborted is None and rumination.degenerate_tail(gen_tail):
@@ -757,7 +757,7 @@ class Upstream:
                     # and the notice built from that told the coder it "hit 0 second-guessing phrases
                     # after ~2048 reasoning tokens". A guard must not invent the numbers it fired on.
                     aborted = {"degenerate": True, "chars": len(gen_tail)}
-                    rlog.emit("rumination.abort", steer="rumination", level="warning", degenerate=True, chars=len(gen_tail))
+                    rlog.emit("rumination.abort", steer="rumination", level="warn", degenerate=True, chars=len(gen_tail))
                     break
                 if watch is not None and aborted is None:
                     # Watch reasoning if the server splits it out; else the content stream (a
@@ -768,7 +768,7 @@ class Upstream:
                         verdict = watch(watch_text, len(watch_text) // 4)
                         if verdict:
                             aborted = verdict
-                            rlog.emit("rumination.abort", steer="rumination", level="warning",
+                            rlog.emit("rumination.abort", steer="rumination", level="warn",
                                       hits=verdict.get("hits"), reasoning_tokens=verdict.get("reasoning_tokens"))
                             break  # drop the receiver → server stops generating, slot freed
         except TimeoutError as e:
@@ -779,7 +779,7 @@ class Upstream:
             # the body that just stalled (#13, fail open toward continuing work).
             elapsed = round(time.monotonic() - t0, 1)
             aborted = {"dead_stream": True, "chunks": chunks_seen, "seconds": elapsed, "wire": True}
-            rlog.emit("rumination.abort", steer="rumination", level="warning", dead_stream=True, wire=True,
+            rlog.emit("rumination.abort", steer="rumination", level="warn", dead_stream=True, wire=True,
                       chunks=chunks_seen, seconds=elapsed, error=str(e))
             self._save_reasoning(capture_path, "".join(reasoning), aborted, rlog,
                                  ending=f"the wire went silent for {elapsed}s and the read was cut")
@@ -805,7 +805,7 @@ class Upstream:
             # repairing the fragment, it is discarding it and asking again down a path that works.
             # The watcher is forfeited for this turn (nothing to watch in a buffered call), which is
             # the right trade: a whole lost turn costs more than one unwatched one.
-            rlog.emit("upstream.stream_error", level="warning", error=stream_error,
+            rlog.emit("upstream.stream_error", level="warn", error=stream_error,
                       dropped_tool_arg_chars=sum(len("".join(s["args"])) for s in tool_acc.values()),
                       dropped_content_chars=len("".join(content)))
             return self.chat({k: v for k, v in body.items() if k != "stream_options"}, rlog)

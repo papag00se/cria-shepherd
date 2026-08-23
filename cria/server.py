@@ -454,12 +454,12 @@ def _harden_compaction_reply(comp: dict, body: dict, provider, server, rlog, ses
                 # both passes produced no usable prose (observed: two pseudo write_file dumps in a
                 # row, run g1 0093/0094) — the summary will be the deterministic appendices ONLY.
                 # Without this emit that fact was invisible in the events.
-                rlog.emit("route.compaction_no_briefing", level="warning", retry_leak=bool(text2))
+                rlog.emit("route.compaction_no_briefing", level="warn", retry_leak=bool(text2))
                 text = ""   # this comment's own claim, now true in the code: a leaked or cut-off
                             # summary was still MERGED with the appendices and shipped as the
                             # session's entire remembered past. Ship the re-derivable facts alone.
         except Exception:  # noqa: BLE001 — best-effort: a failed retry must never break the reply
-            rlog.emit("route.compaction_retry_failed", level="warning")
+            rlog.emit("route.compaction_retry_failed", level="warn")
             text = ""
     facts = _fetch_ground_truth(body.get("messages", []))
     # WORKSPACE LEDGER — the fetch-facts pattern extended to files. g1's compaction summary carried

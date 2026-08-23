@@ -1218,7 +1218,7 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
             elif (reason := _external_refusal(name, args, fn, injected, external_dir_permission, workspace_root)) is not None:
                 cmd = _refusal_command(reason)
                 if rlog is not None:
-                    rlog.emit("writeproxy.blocked_external", tool=name, level=external_dir_permission)
+                    rlog.emit("writeproxy.blocked_external", tool=name, permission=external_dir_permission)
             # cria's own dir is off-limits: refuse a synthetic read/write/edit/list whose path lands
             # in ~/.cria BEFORE lowering it, so cria never cats its secrets to the model or lets a
             # stray write corrupt its state. The refusal is a normal tool result the model reads.
@@ -1770,7 +1770,24 @@ def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | Non
                     view.note_written(write_paths[tid], written[tid])
                 elif tid in edited:
                     view.note_changed(write_paths[tid])
-            elif tid in read_whole:
+            elif tid in read_whole and not denial.is_denied(content):
+                # A REFUSAL IS NOT THE FILE. The write path two lines up requires proof the call
+                # landed (`_WROTE`); this one had no equivalent, so every whole read cria itself
+                # refused — oversize, spilled, missing, unreadable, a directory — was recorded as
+                # that file's BYTES. Found in the captures: 20260822T174652 call 0112, the
+                # satisfaction judge, under a header saying "read from disk just now … what is
+                # actually there, not a claim by anyone":
+                #
+                #     ----- src/main/java/pipeline/Importer.java -----
+                #     ⟦ctx:denied⟧ src/main/java/pipeline/Importer.java is larger than can be
+                #     returned in one read, so nothing is shown.
+                #
+                # It is worse than a bad body: `note_read` delegates to `note_written`, so a refused
+                # read of a file that does not exist ADDS it to the view — `isfile` then answers
+                # True and `_veto_refuted_by_disk` prints "EXISTS on disk — 52 bytes" as a verified
+                # fact. It also re-opens the incident `loop.search_file_text` records as fixed
+                # (searching cria's own pointer instead of the file). The mark is on the text
+                # already, applied at the site that decided to refuse — this just reads it.
                 view.note_read(read_whole[tid], _strip_exec_envelope(content))
             if tid in strip_ids:                          # read/nav result → drop the shell envelope
                 out.append({**m, "content": _strip_exec_envelope(content)})

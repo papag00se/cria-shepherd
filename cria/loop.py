@@ -1469,7 +1469,7 @@ def _confirm_completion(claim: str, reason: str, workspace_root: str, reasoner_c
                          else verdict_from_unclosed(vtext, "consistent", rlog, phase))
             if recovered is not None:
                 return False, str(recovered.get("why") or recovered.get("reason") or "").strip()
-            rlog.emit("loop.confirm_unparsed", level="warning", phase=phase)
+            rlog.emit("loop.confirm_unparsed", level="warn", phase=phase)
             return None, ""
         return obj["consistent"], str(obj.get("why") or "").strip()
 
@@ -1490,10 +1490,10 @@ def _confirm_completion(claim: str, reason: str, workspace_root: str, reasoner_c
     # and if it still answers without opening anything, the approval does not stand. Fail CLOSED is
     # the safe direction on completion (#13): the cost is a work turn cria has already paid for.
     if verdict is True and not looked[0]:
-        rlog.emit("loop.confirm_without_looking", level="warning", phase=phase)
+        rlog.emit("loop.confirm_without_looking", level="warn", phase=phase)
         verdict, why = ask("\n\n" + labels["restate"])
         if verdict is True and not looked[0]:
-            rlog.emit("loop.confirm_without_looking_twice", level="warning", phase=phase)
+            rlog.emit("loop.confirm_without_looking_twice", level="warn", phase=phase)
             verdict = None
     if verdict is False and _restates_the_verdict(why, reason):
         # ONE re-ask, escalated — the checker is told that echoing the reason answers nothing and
@@ -1502,10 +1502,10 @@ def _confirm_completion(claim: str, reason: str, workspace_root: str, reasoner_c
         # neutral on the answer (it demands the missing artifact OR the contradiction OR consistent)
         # and asserts nothing about what the judge did — cria cannot see whether it looked, and a
         # "you did not look" it cannot check would be the false fact principle 5b forbids.
-        rlog.emit("loop.confirm_restated_claim", level="warning", phase=phase, head=_clip(why, 120))
+        rlog.emit("loop.confirm_restated_claim", level="warn", phase=phase, head=_clip(why, 120))
         verdict, why = ask("\n\n" + labels["restate"])
         if verdict is False and _restates_the_verdict(why, reason):
-            rlog.emit("loop.confirm_restated_twice", level="warning", phase=phase)
+            rlog.emit("loop.confirm_restated_twice", level="warn", phase=phase)
             verdict = None
     if verdict is None:
         # The coder-facing reason is the plain keep-working instruction, never cria's bookkeeping and
@@ -3072,7 +3072,7 @@ class Loop:
         # converging. codex-local ACCEPTS at that point with an UNRESOLVED banner; cria's operator
         # chose no-cap (a step never advances unverified), so a stall is LOGGED loudly instead.
         if nudge and nudge == prev_flag:
-            rlog.emit("loop.gate_stalled", level="warning", step=idx)
+            rlog.emit("loop.gate_stalled", level="warn", step=idx)
         # OSCILLATION: this exact finding-set has been here before, with a different one in between.
         # Two errors that are each other's cause — clearing A re-creates B — and every individual fix
         # is locally correct, so nothing else in cria can see it. Walked on
@@ -3094,7 +3094,7 @@ class Loop:
         # gate that came back GREEN.
         if not sess.last_gate_red and (lost := passing_test_regression(sess, outcome.report)):
             sess.nudge_reason = sess.nudge_reason or lost
-            rlog.emit("loop.tests_regressed", level="warning", step=idx,
+            rlog.emit("loop.tests_regressed", level="warn", step=idx,
                       high=sess.tests_passed_high)
         rlog.emit("loop.probe", step=idx, passed=nudge is None)
 
@@ -5635,7 +5635,7 @@ def guard_periodic_result(gs: GuardState, body: dict, rlog) -> str | None:
     record_gate_state(gs, outcome, err)
     gs.gate_fresh = fresh_before
     if not err and outcome.ran and (lost := passing_test_regression(gs, outcome.report)):
-        rlog.emit("loop.tests_regressed", level="warning", high=gs.tests_passed_high)
+        rlog.emit("loop.tests_regressed", level="warn", high=gs.tests_passed_high)
         return prompts.render("periodic_gate", truth=lost)
     # a couldn't-run probe leaves last_gate_red + the streak unchanged — no evidence either way
     if not err:

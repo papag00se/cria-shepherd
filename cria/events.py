@@ -32,6 +32,15 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 _LEVELS = {"debug": 10, "info": 20, "warn": 30, "error": 40}
+# THE VOCABULARY IS CLOSED, AND AN UNKNOWN NAME MUST NOT HIDE A RECORD. 22 fire sites spelled the
+# level "warning"; the table knows "warn", so `.get(level, 20)` scored every one of them as info.
+# Measured over 12 days: 828 records demoted, including all 517 `rumination.abort`s and all 235
+# over-budget `context.floor`s — an operator running the console at `warn` to watch for trouble saw
+# none of cria's loudest signals. The JSONL sink is never level-filtered, so this was invisible
+# there. An unrecognised name now scores as the LOUDEST rather than the quietest: a typo can make a
+# record noisier, never silent, and `tests/test_a_log_level_cannot_hide_a_record.py` refuses the
+# typo at the source.
+_UNKNOWN_LEVEL = _LEVELS["error"]
 
 
 class EventLog:
@@ -44,7 +53,7 @@ class EventLog:
         jsonl: bool = True,
     ) -> None:
         self._console = console
-        self._console_level = _LEVELS.get(level, 20)
+        self._console_level = _LEVELS.get(level, _UNKNOWN_LEVEL)
         self._lock = threading.Lock()
         self._fh = None
         self._dir: Path | None = None
@@ -102,7 +111,7 @@ class EventLog:
                 if day != self._day:
                     self._open_for(day)
                 self._fh.write(line + "\n")
-            if self._console and _LEVELS.get(level, 20) >= self._console_level:
+            if self._console and _LEVELS.get(level, _UNKNOWN_LEVEL) >= self._console_level:
                 sys.stderr.write(_console_line(rec) + "\n")
                 sys.stderr.flush()
 
