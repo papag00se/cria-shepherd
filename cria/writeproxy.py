@@ -1763,7 +1763,11 @@ def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | Non
             # did not ask for, and fold what it says into the view.
             content, survey = wsview.strip_survey(content)
             if survey:
-                wsview.apply_survey(view, survey)
+                # Same as the gate's copy: a rejected survey is the one failure `wsview` cannot show
+                # from the outside, and both readers used to drop the answer on the floor (#12).
+                if not wsview.apply_survey(view, survey) and rlog is not None:
+                    rlog.emit("wsview.survey_rejected", level="warn", bytes=len(survey),
+                              closed=wsview.SURVEY_CLOSE in survey)
             if tid in write_paths and write_paths[tid] and tid not in failed_ids \
                     and any(ln.strip() == _WROTE for ln in content.splitlines()):
                 if tid in written:

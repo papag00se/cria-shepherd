@@ -66,11 +66,28 @@ _SEC_SUFFIX = "___"
 # inside it answer "unknown" rather than "no".
 # The listing rides home inside one tool result, which passes through the HARNESS's own output cap.
 # Overrun it and the result is cut in transit — and a listing cut in transit is indistinguishable
-# from a listing of a smaller repo, so every file past the cut would read as deleted. These bounds
-# keep the whole survey comfortably inside a normal cap; what does not fit is FOLDED (named, with
-# its interior marked unknown) rather than dropped.
+# from a listing of a smaller repo, so every file past the cut would read as deleted. What does not
+# fit is FOLDED (named, with its interior marked unknown) rather than dropped.
+#
+# 48,000 WAS 4.7x THE CAP IT CLAIMED TO FIT INSIDE. Measured two ways: across 401 real
+# harness-truncated results in the captures the retained size is 9,292 min / 10,212 median / 10,223
+# p90, and cria's own bound on a tool result (`content_reduce.INLINE_RESULT_MAX_BYTES`) is 9,000.
+# Ran the real survey program against all 87 archived run workspaces: 10 of 10 rust and 22 of 35
+# ruby workspaces produced a survey over the bound (median 40-49 KB), and this repo surveys at
+# 55,289 bytes. Those are the two task families that have been running. A survey cut in transit is
+# rejected wholesale by `apply_survey` — correctly — so on those workspaces the view was NEVER
+# surveyed, and an unsurveyed view is what `_confirm_completion` fails open on and what makes
+# `linterprobe.collect_files` return no probes at all.
+#
+# The bound is now the same one every other tool result is held to, less room for the survey's other
+# sections (bodies, programs, outside paths) and for whatever command it rode home on. Folding
+# harder is a real answer — a folded directory is named and its interior reads as unknown, which
+# every downstream reader already handles. Being cut in transit is not.
 TREE_MAX_ENTRIES = 1200
-TREE_MAX_BYTES = 48_000
+TREE_MAX_BYTES = 6_000
+# The smallest tree budget worth asking for. Below this the survey would carry little more than its
+# own markers, and the caller is better off not spending the bytes — see `survey_command(budget=)`.
+TREE_MIN_BYTES = 400
 FOLD_AT = 400
 # When the tree bound is reached, the directories still queued are FOLDED — named, with their
 # interiors marked unknown — rather than dropped, so `isdir` stays right and nothing inside them is
@@ -936,7 +953,7 @@ W("{close}\n")
 _HEREDOC = "__CRIA_SV_PY__"
 
 
-def survey_command(sess: str = "", *, cd: str = "") -> str:
+def survey_command(sess: str = "", *, cd: str = "", budget: int | None = None) -> str:
     """One shell block the HARNESS runs to answer everything the view could not.
 
     ``python3`` is not a new dependency: cria's lowered ``write_file`` has always been a
@@ -946,12 +963,18 @@ def survey_command(sess: str = "", *, cd: str = "") -> str:
 
     The whole block is wrapped so it can be appended to a command cria already composed without
     changing that command's exit status — the caller's result must read exactly as it would have.
+
+    ``budget`` is how many bytes of TREE this particular ride home can afford. A caller that is
+    already spending most of the result on something else — the gate, whose probe sections divide a
+    shared budget — passes what is left, and the survey folds to fit instead of being cut in transit.
+    Omitted, the survey takes :data:`TREE_MAX_BYTES`, which is one ordinary tool result's worth.
     """
     bodies, progs, outside = pending(sess)
     bodies, progs, outside = bodies[:BLOB_FILES_MAX], progs[:PROG_MAX], outside[:OUTSIDE_MAX]
     clear_pending(sess, bodies, progs, outside)
     body = _SURVEY_PY.format(
-        tree_max=TREE_MAX_ENTRIES, tree_bytes=TREE_MAX_BYTES, fold_at=FOLD_AT,
+        tree_max=TREE_MAX_ENTRIES, tree_bytes=max(int(budget), TREE_MIN_BYTES) if budget else TREE_MAX_BYTES,
+        fold_at=FOLD_AT,
         drain_max=FOLD_DRAIN_MAX, prune=set(PRUNE_DIRS),
         blob_files=BLOB_FILES_MAX, blob_bytes=BLOB_BYTES_MAX, blob_file=BLOB_FILE_MAX,
         want=list(bodies), progs=list(progs), outside=list(outside),

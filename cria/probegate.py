@@ -136,7 +136,7 @@ def _checks_ran_elsewhere(workspace: str, candidates: list) -> str:
     return "" if where.startswith("..") or os.path.isabs(where) else where
 
 
-def plan_gate(workspace: str, session: str = "") -> GatePlan:
+def plan_gate(workspace: str, session: str = "", rlog=None) -> GatePlan:
     """Inspect the workspace read-only and compose the gate script.
 
     Selection is re-run on EVERY gate (like upstream's ``discover`` per gate run):
@@ -231,7 +231,27 @@ def plan_gate(workspace: str, session: str = "") -> GatePlan:
     # costs nothing extra, and it is the one place guaranteed to happen in a session where the
     # harness offers its own file tools and cria lowers nothing. Appended AFTER the last marker and
     # taken back off by `interpret_gate`, so no section ever contains a byte of it.
-    parts.append(wsview.survey_command(session, cd=workspace))
+    #
+    # IT SHARES THE RESULT WITH THE PROBES, so it is budgeted with them. The probe sections and the
+    # marker overhead are already sized to fill one result on their own, and the survey was being
+    # appended on top with a bound of its own that was five times larger — so on the two task
+    # families that have been running (22 of 35 ruby workspaces, 10 of 10 rust) the survey was cut in
+    # transit and rejected wholesale, and the view was never surveyed at all.
+    #
+    # The arithmetic is self-balancing, which is what makes it safe: an unsurveyed view yields NO
+    # probe candidates (`linterprobe.collect_files` reads the view), so the first gate of a session
+    # spends almost the whole result on the survey; once the survey has landed and the probes exist,
+    # the survey folds to what is left and reports itself incomplete — which every reader downstream
+    # already handles as unknown rather than absent.
+    survey_bytes = (content_reduce.INLINE_RESULT_MAX_BYTES
+                    - (section_cap * len(plan.candidates)) - proberun.MARKER_OVERHEAD_BYTES)
+    if survey_bytes >= wsview.TREE_MIN_BYTES:
+        parts.append(wsview.survey_command(session, cd=workspace, budget=survey_bytes))
+    elif rlog is not None:
+        # Say it (#12). The survey not riding is a real gap in what cria will know next turn, and it
+        # used to happen silently — by being destroyed in transit rather than by not being sent.
+        rlog.emit("gate.survey_not_carried", level="info", probes=len(plan.candidates),
+                  left=survey_bytes, need=wsview.TREE_MIN_BYTES)
     # STATE IT NOW, while cria still knows. A probe the coder could retype is one line of argv; a
     # manifest check cria composed is a multi-line inline program. The distinction is free here and
     # unrecoverable downstream — see GATE_SENTINEL.
@@ -1209,14 +1229,22 @@ def sweep_litter(plan: GatePlan, sections: dict) -> list[str]:
     return removed
 
 
-def interpret_gate(plan: GatePlan, result_text: str) -> GateOutcome:
+def interpret_gate(plan: GatePlan, result_text: str, rlog=None) -> GateOutcome:
     """Replay the harness's gate output through the ported interpreters."""
     # The workspace survey rode home on this result (see plan_gate). Take it off first — it is
     # cria's own instrumentation, it belongs to no probe, and left in place it would land inside
     # whichever section happened to be open when it started.
     result_text, survey = wsview.strip_survey(result_text)
     if survey:
-        wsview.apply_survey(wsview.current(), survey)
+        # A SURVEY THAT DID NOT LAND IS AN EVENT, NOT AN ABSENCE (#12). `apply_survey` refuses a
+        # survey that arrived cut, or that is about a different tree, and refusing is right — but
+        # both call sites threw the answer away and `wsview` emits nothing at all, so the one failure
+        # this module cannot notice from the outside was also the one nobody was told about. An
+        # unsurveyed view is what `_confirm_completion` fails open on and what leaves
+        # `linterprobe.collect_files` with no probes to compose.
+        if not wsview.apply_survey(wsview.current(), survey) and rlog is not None:
+            rlog.emit("gate.survey_rejected", level="warn", bytes=len(survey),
+                      closed=wsview.SURVEY_CLOSE in survey)
     sections = split_sections(result_text)
     # Before anything else: take back what the probes left behind. Runs even when the gate FAILED —
     # a suite that errors halfway still wrote its fixtures, and the next gate would inherit them.

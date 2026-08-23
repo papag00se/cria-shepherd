@@ -5362,7 +5362,7 @@ def guard_gate_op(gs: GuardState, body: dict, rlog, *, workspace_root=None) -> d
         # turn (a file body, a program on the coder's PATH). Without it the gate would re-ask
         # nothing and a harness with native file tools — where cria lowers no command of its own —
         # would never get an answer to any of them.
-        plan = probegate.plan_gate(root, getattr(gs, "web_session", "") or "")
+        plan = probegate.plan_gate(root, getattr(gs, "web_session", "") or "", rlog)
     except OSError as e:  # unreadable workspace → no gate; the caller still fails open
         rlog.emit("loop.gate_error", level="warn", error=str(e))
         gs.gate_plan = None
@@ -5890,7 +5890,7 @@ def read_gate(plan, probe_text: str, rlog) -> "probegate.GateOutcome":
     Also reports what the sweep took back, so litter removal is visible rather than assumed."""
     if plan is None:
         return probegate.GateOutcome(ran=False)
-    outcome = probegate.interpret_gate(plan, probe_text)
+    outcome = probegate.interpret_gate(plan, probe_text, rlog)
     if outcome.refused:
         rlog.emit("loop.gate_refused", level="warn", reason=outcome.refused)
     if outcome.swept:
