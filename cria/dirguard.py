@@ -89,26 +89,73 @@ _GLOBAL_INSTALL = re.compile(
     r"|(?:apt|apt-get|dnf|yum|pacman|apk|brew)\s+(?:install|add)\b"
     r")", re.IGNORECASE)
 
-# The same command made workspace-local. Any ONE of these means the install lands inside the
-# project, so it is ordinary work: an interpreter/pip run from a RELATIVE path (`./.venv/bin/pip`),
-# an explicit destination flag, or a venv activated in the same command line.
-_LOCAL_INSTALL_SCOPE = re.compile(
+# The same command made workspace-local. TWO shapes, and only two: an interpreter or pip run from a
+# path inside the project (`./.venv/bin/pip`, a venv activated in the same line), or an explicit
+# DESTINATION flag whose VALUE is a path inside the project.
+_LOCAL_INSTALL_VENV = re.compile(
     r"(?:^|[\s;&|(])\.{0,2}/?[\w.-]*(?:venv|env|virtualenv)[\w.-]*/bin/"   # ./.venv/bin/pip …
-    r"|--target(?:=|\s)|--prefix(?:=|\s)|--root(?:=|\s)"
-    # The same idea in the other ecosystems: a destination inside the project. gem's --install-dir
-    # and bundler's --path are Ruby's form, composer's --working-dir is PHP's. Without these the
-    # guard refuses the very route its own remediation now recommends.
-    r"|--install-dir(?:=|\s)|--path(?:=|\s)|--working-dir(?:=|\s)"
-    # …AND GEM'S SHORT FORM. `gem install -i local_gems europe` lands in ./local_gems, inside the
-    # project, and was REFUSED with "an install must land inside the project directory, and this one
-    # would not" — false about the world. The coder then found the spelling the guard accepts,
-    # `--install-dir=.`, which is the project ROOT, and that command unpacked the gem over the repo:
-    # cache/, doc/, gems/, specifications/, build_info/, extensions/, plugins/. The guard tested
-    # spelling, not destination, and its accept/reject ran backwards to the blast radius.
-    # (shipping-rates-rb x nemotron-elastic 1787465385, calls 0085 and 0088.)
-    r"|(?:^|\s)-i(?:=|\s)"
     r"|(?:^|[\s;&|(])(?:source|\.)\s+\.{0,2}/?[\w.-]*(?:venv|env)[\w.-]*/bin/activate",
     re.IGNORECASE)
+
+# WHICH FLAG MEANS "PUT IT HERE" IS A FACT ABOUT THE MANAGER, not about the letter. This was one
+# alternation of eight spellings applied to every manager at once, and it tested SPELLING rather
+# than DESTINATION — which its own note two commits ago said was the bug, in those words. Run
+# against the previous rule:
+#
+#   pip install -i https://pypi.org/simple flask   ALLOWED   (-i is pip's --index-url; the install
+#                                                             still lands in shared site-packages)
+#   apt-get install -y vim --root x                ALLOWED
+#   cargo install --path .                         ALLOWED   (--path is cargo's SOURCE; the binary
+#                                                             goes to ~/.cargo/bin)
+#   pip install -t ./libs requests                 REFUSED   (pip's own --target short form)
+#
+# And the mirror image, live at 20260823T032555 call 0040: the coder ran
+# `gem install countries --user-dir <the workspace>` and was told "an install must land inside the
+# project directory (<the same path>), and this one would not."
+#
+# A manager with no project-local destination — apt, dnf, yum, pacman, apk, brew — is absent on
+# purpose: there is no flag that makes a system install local, so none is accepted.
+_DEST_FLAGS = (
+    (re.compile(r"\b(?:pip|pip3|python3?\s+-m\s+pip)\b", re.I), ("--target", "-t", "--prefix", "--root")),
+    (re.compile(r"\bgem\b", re.I), ("--install-dir", "-i", "--bindir", "-n")),
+    (re.compile(r"\bbundle\b", re.I), ("--path",)),
+    (re.compile(r"\bcomposer\b", re.I), ("--working-dir", "-d")),
+    (re.compile(r"\b(?:npm|pnpm|yarn)\b", re.I), ("--prefix",)),
+    (re.compile(r"\bcargo\b", re.I), ("--root",)),      # --path is the SOURCE, not the destination
+    (re.compile(r"\bgo\b", re.I), ()),                   # GOBIN is an env var, not a flag
+)
+
+
+def _flag_value(command: str, flag: str) -> str | None:
+    """The value given to ``flag``, or None when the flag is absent or has none."""
+    m = re.search(r"(?:^|\s)" + re.escape(flag) + r"(?:=|\s+)([^\s;&|]+)", command)
+    return m.group(1) if m else None
+
+
+def _lands_in_the_project(value: str, workspace: str | None) -> bool:
+    """Is this destination inside the workspace? A URL is not a destination at all — which is the
+    whole of pip's `-i https://pypi.org/simple`, the flag that used to wave a global install through.
+
+    ONE OWNER for the containment question: :func:`is_external`, the same lexical answer every other
+    guard here uses. A relative value resolves against the workspace and is internal by that rule."""
+    if not value or "://" in value:
+        return False
+    return not is_external(value, workspace)
+
+
+def _installs_into_the_project(command: str, workspace: str | None) -> bool:
+    """The install names a destination inside the project — the ONE thing that makes a
+    shared-by-default manager ordinary workspace work."""
+    if _LOCAL_INSTALL_VENV.search(command):
+        return True
+    for manager, flags in _DEST_FLAGS:
+        if not manager.search(command):
+            continue
+        for flag in flags:
+            value = _flag_value(command, flag)
+            if value is not None and _lands_in_the_project(value, workspace):
+                return True
+    return False
 
 
 # A KILL THAT SELECTS BY PATTERN, NAME OR PORT reaches every matching process on the machine, not
@@ -160,7 +207,7 @@ def install_refusal(command: str, level: str, workspace: str | None) -> str | No
         return None
     if not _GLOBAL_INSTALL.search(command):
         return None
-    if _LOCAL_INSTALL_SCOPE.search(command):
+    if _installs_into_the_project(command, workspace):
         return None
     return prompts.fill(prompts.load("external_install_refusal"),
                         root=f" ({workspace})" if workspace else "",
@@ -220,7 +267,7 @@ def installs_outside_workspace(command: str) -> bool:
     mutator word, so the word scan called it progress on new ground and FLUSHED the loop it was in
     the middle of."""
     return bool(command and _GLOBAL_INSTALL.search(command)
-                and not _LOCAL_INSTALL_SCOPE.search(command))
+                and not _installs_into_the_project(command, None))
 
 
 def _tool_present(name: str) -> bool:
@@ -229,12 +276,17 @@ def _tool_present(name: str) -> bool:
     On the CODER's path, not cria's: this advice is a sentence telling the coder which command to
     run, so the only PATH that can make it true is the one the coder's commands use. cria's service
     PATH has none of the user's toolchains, which turned every route through them into "no route"
-    (#5b — see :mod:`cria.toolpath`)."""
-    return _resolved_tool(name) is not None
+    (#5b — see :mod:`cria.toolpath`).
+
+    A BOOL VIEW OF A THREE-VALUED ANSWER, and both of the falsy values mean "do not build a route on
+    this": `""` is "their shell resolves nothing" and None is "nobody has asked". The caller that
+    needs to tell those apart asks `_resolved_tool` directly (#23c)."""
+    return bool(_resolved_tool(name))
 
 
 def _resolved_tool(name: str) -> str | None:
-    """The name the coder must actually TYPE for this tool, or None when it is not on their PATH.
+    """The name the coder must actually TYPE for this tool: the resolved name, "" when their
+    shell resolves nothing, and None until anybody has asked.
 
     The plain name when the coder's shell resolves it, otherwise the versioned executable that does
     — distros version the binary rather than the package (`bundle3.2`, `python3.12`, `pip3`), and
@@ -242,21 +294,30 @@ def _resolved_tool(name: str) -> str | None:
     PATH the whole time. Keeping the resolved answer is what stops cria selecting a route on the
     strength of `bundle3.2` and then telling the coder to run `bundle` (#5b).
 
-    UNANSWERED IS NOT PRESENT. `toolpath.resolved` returns None until the harness has been asked
-    about this name, and this function feeds a sentence that tells the coder what to type. Naming a
-    command on an unanswered question is exactly the false fact the whole route-selection exists to
-    avoid, so unsure withholds the advice (#3) rather than risking it."""
-    got = toolpath.resolved(name)
-    return got or None
+    THREE-VALUED, AND IT STAYS THAT WAY. `toolpath.resolved` answers a name, `""` when the coder's
+    shell resolves nothing, and **None** until anybody has asked — and this used to end
+    `return got or None`, folding the last two together. Naming a command on an unanswered question
+    is the false fact the whole route-selection exists to avoid (#3), and so is telling a coder there
+    is no route when the question has simply not come back yet (#23c). The caller needs both."""
+    return toolpath.resolved(name)
 
 
 def _local_install_advice(command: str) -> str:
     """The project-local route for the manager that was actually refused, or "" when there is none.
 
-    An empty string is a real answer, and now for two reasons. apt, dnf, brew and pacman install to
-    the machine and have no project-local form. And an ecosystem whose tools are not installed has
-    no route cria can honestly offer either — better to state only what is forbidden than to send
-    the coder after a command that cannot run (#3, #5b).
+    An empty string is a real answer, and for two reasons. apt, dnf, brew and pacman install to the
+    machine and have no project-local form. And an ecosystem whose tools were ASKED about and are
+    not installed has no route cria can honestly offer either — better to state only what is
+    forbidden than to send the coder after a command that cannot run (#3, #5b).
+
+    A THIRD STATE, WHICH USED TO RENDER AS THE SECOND. The tools are discovered by asking the
+    workspace view, which answers None until a survey lands — so early in a session nothing is
+    known, and silence there reads as "this cannot be done". At 20260823T032555 the first NINE
+    install refusals in one coder prompt were routeless and the tenth onward had a route; the
+    escalation reasoner then read those nine and told the coder to hardcode the data the gem would
+    have provided, while `countries (8.1.0)` sat installed on the box and
+    `gem install --install-dir vendor/bundle countries` passed this very guard. 580 of 3,704
+    renderings (16%) are routeless. Unanswered now says so (#23c).
 
     THE ROUTE NAMES THE BINARY THAT WAS ACTUALLY FOUND. `_tool_present` answers a bool, so the route
     used to be selected on the strength of `bundle3.2` and then printed with the literal `bundle` —
@@ -270,8 +331,15 @@ def _local_install_advice(command: str) -> str:
     for pat, options in _INSTALL_REMEDY:
         if not pat.search(command):
             continue
+        unanswered = False
         for key, needs in options:
-            found = {t: _resolved_tool(t) for t in needs}
+            # THREE-VALUED, NOT TWO. `toolpath.resolved` answers a name, "" for "this shell resolves
+            # nothing", and None for "nobody has asked yet" — and collapsing the last two is what
+            # turns a question into "there is no way to do this here". Kept apart so the fall-through
+            # below can say which of the two happened (#23c).
+            raw = {t: _resolved_tool(t) for t in needs}
+            unanswered = unanswered or any(v is None for v in raw.values())
+            found = {t: (v or None) for t, v in raw.items()}
             if all(found.values()) and routes.get(key):
                 # THE TWO ANSWER DIFFERENT QUESTIONS, so they must not be glued together. The route
                 # says how to add a DEPENDENCY to the project; `_already_here` fires only when the
@@ -285,8 +353,26 @@ def _local_install_advice(command: str) -> str:
                     return here
                 return " " + prompts.fill(routes[key],
                                           **{t.upper(): n for t, n in found.items()})
-        return ""      # the ecosystem is refused, and nothing here can carry out the alternative
-    return ""
+        # THIS ECOSYSTEM HAS ROUTES AND NOT ONE OF THEM COULD BE CONFIRMED. That is three-valued:
+        # "there is no way to do this here" (apt, brew — the branch below) is a different fact from
+        # "the way has not been established yet", and both used to render as silence.
+        #
+        # It matters because the answer arrives LATE. `_resolved_tool` asks the workspace view, which
+        # queues the question for the next survey and answers None until one lands — and a survey
+        # rides only on a composed write/edit/list or on a gate, so a coder stuck in a loop of raw
+        # `gem install` shell commands triggers none. Measured at 20260823T032555: the first NINE
+        # install refusals in coder prompt 0084 carried no route at all and the tenth onward did;
+        # 580 of 3,704 renderings across the corpus (16%) are routeless. Then the refusal escalation
+        # read those nine and authored: "Stop trying to install the countries gem — it cannot be
+        # installed in this sandbox … Replace the require with a hardcoded set of EU two-letter
+        # codes." `countries (8.1.0)` is installed on this box and
+        # `gem install --install-dir vendor/bundle countries` passes this very guard.
+        #
+        # Saying "not established yet" costs one clause and denies that conclusion its premise (#23c).
+        if unanswered and routes.get("route_unknown_yet"):
+            return " " + routes["route_unknown_yet"]
+        return ""      # every route was ASKED about and none of its tools is here (#3, #5b)
+    return ""      # the ecosystem installs to the machine and has no project-local form (#3)
 
 
 def _already_here(command: str, found: dict, routes: dict) -> str:

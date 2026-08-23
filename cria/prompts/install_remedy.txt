@@ -75,3 +75,12 @@ maven_dep = A library your code imports is a dependency, not an install: add it 
 # settled it. The coder never learned bundler was installed and spent the rest of the run on
 # transport.
 already_present = {{PACKAGE}} is already installed on this machine — the executable is named `{{TOOL}}`, so type that instead of `{{PACKAGE}}`. You do not need to install it.
+
+# WHEN THE ROUTE IS NOT KNOWN YET, WHICH IS NOT THE SAME AS THERE BEING NONE. The routes above are
+# chosen by asking which binaries are on the CODER's PATH, and that answer arrives on a workspace
+# survey — so the first refusals of a session have nothing to offer. They used to say nothing at
+# all, which reads as "this cannot be done": at 20260823T032555 the escalation reasoner read nine
+# routeless refusals and told the coder to hardcode the data the gem would have provided, while the
+# gem was installed on the box and the project-local form passed cria's own guard. 580 of 3,704
+# renderings (16%) were routeless. This clause says which of the two is true (#23c).
+route_unknown_yet = A project-local way to install this may well exist — which command this machine has is not established yet, so no exact one is named here. Do not conclude the package is unobtainable: install it INTO the project (a directory inside the workspace, e.g. `vendor/`, `.venv/`, `node_modules/`), not into the shared environment.

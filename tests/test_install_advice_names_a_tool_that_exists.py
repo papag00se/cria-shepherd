@@ -31,8 +31,14 @@ def _with_tools(*present):
     Patches `_resolved_tool`, which is now the single owner of both halves of the question — is the
     tool there, and what is it called. `_tool_present` is a bool view of it and patching that alone
     would leave the NAME coming from the real machine, which is the exact split that let cria select
-    the bundler route on `bundle3.2` and then print `bundle` (cycle 2, −60 points)."""
-    return mock.patch.object(dirguard, "_resolved_tool", lambda t: t if t in present else None)
+    the bundler route on `bundle3.2` and then print `bundle` (cycle 2, −60 points).
+
+    ABSENT IS "", NOT None. `toolpath.resolved` — the real thing this stands in for — answers a
+    name, `""` when the coder's shell resolves nothing, and None until anybody has asked. This stub
+    returned None for absent, which is now the UNASKED answer, so the fixture was asserting a state
+    production never reaches at this point in a session. Same trap the sweep found four times over:
+    a fixture that is not the production shape certifies whatever the code happens to do."""
+    return mock.patch.object(dirguard, "_resolved_tool", lambda t: t if t in present else "")
 
 
 class ARouteIsOnlyOfferedIfItsToolExistsTests(unittest.TestCase):

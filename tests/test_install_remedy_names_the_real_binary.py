@@ -72,8 +72,12 @@ class RouteNamesTheDiscoveredBinary(unittest.TestCase):
         self.assertEqual("gem", dirguard._resolved_tool("gem"))
         self._box({"gem": "gem3.2"})
         self.assertEqual("gem3.2", dirguard._resolved_tool("gem"))
+        # ASKED AND ABSENT IS "", NOT None. The two used to collapse here (`return got or None`),
+        # and that is what made "the route has not been established yet" indistinguishable from
+        # "there is no route" — 580 of 3,704 install refusals shipped with no alternative at all.
         self._box({})
-        self.assertIsNone(dirguard._resolved_tool("gem"))
+        self.assertEqual("", dirguard._resolved_tool("gem"))
+        self.assertFalse(dirguard._tool_present("gem"))
 
 
 if __name__ == "__main__":
