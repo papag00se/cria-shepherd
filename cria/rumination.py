@@ -325,6 +325,14 @@ class Detector:
             return None
         hits = count_markers(reasoning_so_far)
         dense = hits >= MIN_MARKERS and (hits / max(reasoning_tokens, 1)) * 1000 >= self.rate_per_1k
-        if reasoning_tokens >= self.budget or dense:
-            return {"hits": hits, "reasoning_tokens": reasoning_tokens}
+        if dense or reasoning_tokens >= self.budget:
+            # WHICH ARM FIRED, because the two are different failures and the notice that follows
+            # says why the turn was stopped. Both arms returned the same dict, so every abort was
+            # described to the model as second-guessing — including the ones that were simply long.
+            # Measured on feed-pipeline-java x nemotron-elastic 1787436645: four aborts, marker
+            # densities 2.50, 1.65, 1.28 and 0.73 per 1k against a threshold of 10.0. Not one was
+            # dense; every one hit the token ceiling; and each was told "you hit N second-guessing
+            # phrases … Stop re-examining", which is a stated cause the numbers refute (#5b, #12).
+            return {"hits": hits, "reasoning_tokens": reasoning_tokens,
+                    "arm": "second_guessing" if dense else "length"}
         return None

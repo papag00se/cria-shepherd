@@ -1,3 +1,3 @@
 [OUTPUT LOOP] Your last turn stopped generating new text — the tail of it was one short passage repeating over and over — and it was aborted before it produced a tool call.
 
-This is not about thinking too hard; it is that the same words kept coming out. Do not re-examine and do not restart from scratch. Take the simplest concrete next step you already know, and take it NOW as a single tool call.
+This is not about thinking too hard; it is that the same words kept coming out. None of that turn survived, so start fresh with the smallest concrete step and take it NOW as a single tool call. If the passage that kept repeating was a question you could not answer from memory, answer it with a tool instead — a read or a search settles it in one call.

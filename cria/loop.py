@@ -8643,6 +8643,16 @@ def guard_rumination(coder: dict, body: dict, coder_chat, rlog, *, step=None, ph
             if v.get("window_exhausted") else
             prompts.load("rumination_guard_dead_stream") if v.get("dead_stream") else
             prompts.load("rumination_guard_degenerate") if v.get("degenerate") else
+            # WHICH ARM FIRED. The phrase watcher and the length backstop are different failures and
+            # the notice states a cause; blaming second-guessing for a length abort is a stated cause
+            # the numbers refute — measured at densities of 2.50, 1.65, 1.28 and 0.73 per 1k against
+            # a threshold of 10.0, all four described to the model as second-guessing. The advice
+            # differed too: "just pick one and proceed" is right for a model circling a decision it
+            # can already make, and wrong for one circling because it has not read the thing it needs
+            # (feed-pipeline-java 1787436645 — `CSVParserBuilder` appears in the turn after it).
+            prompts.render("rumination_guard_length",
+                           tokens=v.get("reasoning_tokens", "many"))
+            if v.get("arm") == "length" else
             prompts.render("rumination_guard", hits=v.get("hits", "several"),
                            tokens=v.get("reasoning_tokens", "many")))}
         # ONE NOTICE, REPLACED — never a stack. Each retry used to APPEND, so attempt 3 carried three
