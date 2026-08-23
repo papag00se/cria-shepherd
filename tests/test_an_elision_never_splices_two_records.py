@@ -180,8 +180,11 @@ class TheRecoveredMiddleIsWholeLinesToo(unittest.TestCase):
 
     def test_the_recovered_band_ends_on_a_line_boundary(self):
         out = run_with_cap(self._long_javac(), 1233)      # the six-probe share
-        i = out.find("recovered from the middle")
+        # Either closing marker: the band ends with a COUNT when the diagnostics themselves
+        # overran the budget, and with a plain end-of-band note when they all fit.
+        i = max(out.find("located diagnostics shown here"), out.find("recovered from the middle"))
         self.assertGreater(i, 0, "the closing marker is missing")
+        i = out.rfind("...[", 0, i)
         # The last thing before the marker must be a COMPLETE line of the compiler's output, not a
         # fragment the marker is then glued onto.
         band = out[:i].rstrip("\n.[")
@@ -196,6 +199,44 @@ class TheRecoveredMiddleIsWholeLinesToo(unittest.TestCase):
         marker = next(l for l in out.splitlines() if "elided here" in l)
         self.assertNotIn("Every line", marker)
         self.assertIn("up to", marker)      # names the per-diagnostic context bound it actually uses
+
+
+class TheCutDiagnosticsAreCounted(unittest.TestCase):
+    """The recovered band had its own byte cap and no count, so when the diagnostics themselves
+    overran it the block closed with "there may be more of them than fit here" — a maybe, about a
+    number cria was holding.
+
+    Walked on feed-pipeline-java x nemotron-elastic 1787436645, prompt 0086: `class Row` reached the
+    model ZERO times while `CSVParserBuilder` reached it fifteen. The three that were cut are the
+    three that say plainest that the API does not exist, and the model concluded it had one bad
+    import line."""
+
+    def _javac(self, n):
+        noise = "\n".join(f"[INFO] downloading part {i}" for i in range(80))
+        errs = "\n".join(
+            f"[ERROR] /w/A{i}.java:[{i},3] cannot find symbol\n"
+            f"  symbol:   class VeryLongClassNameNumber{i}\n"
+            f"  location: package com.example.deep" for i in range(n))
+        return noise + "\n" + errs + "\n" + noise
+
+    def test_the_block_says_how_many_it_left_out(self):
+        out = run_with_cap(self._javac(40), 1233)
+        self.assertRegex(out, r"\[\d+ of \d+ located diagnostics shown here — the other \d+ were cut")
+        self.assertNotIn("There may be more of them", out)
+
+    def test_the_two_numbers_agree_with_what_is_printed(self):
+        import re
+        out = run_with_cap(self._javac(40), 1233)
+        m = re.search(r"\[(\d+) of (\d+) located diagnostics", out)
+        self.assertIsNotNone(m, out[-400:])
+        shown, total = int(m.group(1)), int(m.group(2))
+        self.assertEqual(total, 40)
+        band = out[out.find("NOT continuous"):m.start()]
+        self.assertEqual(band.count("cannot find symbol"), shown)
+
+    def test_when_they_all_fit_there_is_no_count_to_state(self):
+        out = run_with_cap(self._javac(2), 4000)
+        self.assertNotIn("located diagnostics shown here", out)
 
 
 if __name__ == "__main__":

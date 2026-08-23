@@ -882,10 +882,26 @@ def compose_probe_command(c: ProbeCandidate, timeout_s: float, cap: int | None =
         # That is the same splice the head and tail legs carry `sed '$d'`/`sed '1d'` to prevent, and
         # this leg shipped without it for a day. A shortened record is missing information; a spliced
         # one is information that was never true.
-        f"printf '%s' \"$__cria_out\" | grep -E -A{_DIAG_CONTEXT_LINES} "
-        f"{shlex.quote(_DIAG_LINE_RE)} | head -c {middle} | sed '$d'; "
-        f"printf '\\n...[end of the lines recovered from the middle. There may be more of them than "
-        f"fit here; what is above is the earliest of them, in order]...\\n'; "
+        # COUNTED, NOT JUST CAPPED. The filtered band had its own byte cap and no count, so when the
+        # diagnostics themselves overran it the block ended "there may be more of them than fit here"
+        # — a maybe, about a number cria was holding. Walked on feed-pipeline-java x nemotron-elastic
+        # 1787436645 prompt 0086: `class Row` reached the model ZERO times while `CSVParserBuilder`
+        # reached it fifteen, and the three errors that were cut are the three that say plainest that
+        # the API does not exist. The model concluded it had one bad import line.
+        #
+        # So: count the matching headers first, show as many WHOLE diagnostics as the budget allows,
+        # and state the two numbers. `grep -c` and `grep -m` are the same matcher as the line below,
+        # so the count and the shown set cannot disagree (#12).
+        f"__cria_dn=$(printf '%s' \"$__cria_out\" | grep -E -c {shlex.quote(_DIAG_LINE_RE)}); "
+        f"__cria_ds=$(printf '%s' \"$__cria_out\" | grep -E -A{_DIAG_CONTEXT_LINES} "
+        f"{shlex.quote(_DIAG_LINE_RE)} | head -c {middle} | sed '$d'); "
+        f"printf '%s\\n' \"$__cria_ds\"; "
+        f"__cria_dshown=$(printf '%s' \"$__cria_ds\" | grep -E -c {shlex.quote(_DIAG_LINE_RE)}); "
+        f"if [ \"$__cria_dshown\" -lt \"$__cria_dn\" ]; then "
+        f"printf '...[%d of %d located diagnostics shown here — the other %d were cut for space. "
+        f"Re-run this check yourself to see them all]...\\n' "
+        f"\"$__cria_dshown\" \"$__cria_dn\" \"$((__cria_dn - __cria_dshown))\"; "
+        f"else printf '...[end of the located lines recovered from the middle]...\\n'; fi; "
         f"printf '%s' \"$__cria_out\" | tail -c {end} | sed '1d'; printf '\\n'; fi; "
         f"printf '{PROBE_EXIT_SENTINEL}%d\\n' \"$__cria_ec\""
     )
