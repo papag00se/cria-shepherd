@@ -856,6 +856,28 @@ def _tc_id(completion):
     return completion["choices"][0]["message"]["tool_calls"][0]["id"]
 
 
+def _result_for(completion, first: str = "EXIT:0", git: str = "abc") -> str:
+    """A gate result built from the SCRIPT the loop actually emitted — one section per marker it
+    echoes, which is what the harness sends back.
+
+    A hand-built result naming only `probe-0` is a gate CUT IN TRANSIT. cria now reads that as a gap
+    rather than as a pass (`probegate.gate_is_partial`), so a fixture that answers a subset is
+    asserting the green path over checks that were never read (#13)."""
+    import json as _json
+    import re as _re
+    from cria.probegate import SECTION_PREFIX as P, SECTION_SUFFIX as S
+    args = completion["choices"][0]["message"]["tool_calls"][0]["function"]["arguments"]
+    script = _json.loads(args) if isinstance(args, str) else args
+    script = script.get("cmd") or script.get("command") or ""
+    if isinstance(script, list):
+        script = "\n".join(str(x) for x in script)
+    names = _re.findall(_re.escape(P) + r"(probe-\d+)" + _re.escape(S), script)
+    if not names:
+        names = ["probe-0"]
+    parts = [f"{P}{n}{S}\n" + (first if i == 0 else "EXIT:0") + "\n" for i, n in enumerate(names)]
+    return "".join(parts) + f"{P}git{S}\n{git}\n"
+
+
 class _Recorder:
     """A coder stub that records the bodies it's handed and returns scripted completions."""
 
@@ -1693,6 +1715,20 @@ class LoopSelfCompactTests(unittest.TestCase):
         self.assertIn("400 != 200", rollup)
 
 
+
+def _gate_result(gs, first: str = "EXIT:0", git: str = "abc") -> str:
+    """A gate result with a section for EVERY probe the plan selected — which is what the real
+    script emits, because it echoes a marker per candidate.
+
+    A fixture that answers only `probe-0` is a gate CUT IN TRANSIT, and cria now reads that as a gap
+    rather than as a pass (`probegate.gate_is_partial`). The old fixtures were partial by accident
+    and were certifying the green path over a subset (#13 on the completion side)."""
+    from cria.probegate import SECTION_PREFIX as P, SECTION_SUFFIX as S
+    n = len((gs.gate_plan.candidates if gs.gate_plan else []) or [])
+    parts = [f"{P}probe-{i}{S}\n" + (first if i == 0 else "EXIT:0") + "\n" for i in range(max(n, 1))]
+    return "".join(parts) + f"{P}git{S}\n{git}\n"
+
+
 class PeriodicGateTests(unittest.TestCase):
     _SHELL = {"tools": [{"type": "function", "function": {"name": "shell",
               "parameters": {"properties": {"command": {"type": "array"}}}}}], "messages": []}
@@ -1714,7 +1750,7 @@ class PeriodicGateTests(unittest.TestCase):
             f.write("print(1)\n")                              # a .py → probe-0 is the compile floor
         gs = GuardState(coder_turns=15)
         guard_periodic_gate(gs, self._SHELL, _Rlog(), workspace_root=ws)   # arms a real gate
-        result = f'{P}probe-0{S}\n  File "x.py", line 1\nSyntaxError: bad\nEXIT:1\n{P}git{S}\nabc\n'
+        result = _gate_result(gs, '  File "x.py", line 1\nSyntaxError: bad\nEXIT:1')
         body = {"messages": [{"role": "tool", "tool_call_id": gs.probe_call_id, "content": result}]}
         truth = guard_periodic_result(gs, body, _Rlog())
         self.assertIsNotNone(truth)
@@ -1734,7 +1770,7 @@ class PeriodicGateTests(unittest.TestCase):
         from cria.loop import guard_periodic_result
         ws = tempfile.mkdtemp(); open(os.path.join(ws, "x.py"), "w").write("print(1)\n")
         gs = self._armed(ws); gs.last_gate_red = True          # a prior red
-        result = f'{P}probe-0{S}\nEXIT:0\n{P}git{S}\nabc\n'     # ran, no findings → GREEN
+        result = _gate_result(gs)                              # ran, every section back, no findings → GREEN
         body = {"messages": [{"role": "tool", "tool_call_id": gs.probe_call_id, "content": result}]}
         self.assertIsNone(guard_periodic_result(gs, body, _Rlog()))   # stays silent on a pass
         self.assertFalse(gs.last_gate_red)                     # GREEN → judge may run again
@@ -1886,7 +1922,7 @@ class WheelSpinTests(unittest.TestCase):
         for _ in range(WHEEL_SPIN_WRITES):
             loop.drive(_body(), "k", _Classification(), rlog)
         gate = loop.drive(_body(), "k", _Classification(), rlog)
-        result = f"{P}probe-0{S}\nEXIT:0\n{P}git{S}\nabc\n"
+        result = _result_for(gate)
         loop.drive(_body_with_probe(_tc_id(gate), result), "k", _Classification(), rlog)
         # the reasoner SAW the clean ground truth, free of any "elsewhere" premise it could parrot
         self.assertIn("no error-class", captured["user"].lower())
@@ -2397,7 +2433,7 @@ class RefusalRedirectTests(unittest.TestCase):
         rlog = _Rlog()
         loop.drive(_body_with_refusals(), "k", _Classification(), rlog)
         gate = loop.drive(_body(), "k", _Classification(), rlog)
-        result = f"{P}probe-0{S}\nEXIT:0\n{P}git{S}\nabc\n"
+        result = _result_for(gate)
         loop.drive(_body_with_probe(_tc_id(gate), result), "k", _Classification(), rlog)
         for blob in (seen["system"].lower(), seen["user"].lower()):
             self.assertNotIn("not in the file", blob)
@@ -2413,7 +2449,7 @@ class RefusalRedirectTests(unittest.TestCase):
         rlog = _Rlog()
         loop.drive(_body_with_refusals(), "k", _Classification(), rlog)
         gate = loop.drive(_body(), "k", _Classification(), rlog)
-        result = f"{P}probe-0{S}\nEXIT:0\n{P}git{S}\nabc\n"
+        result = _result_for(gate)
         loop.drive(_body_with_probe(_tc_id(gate), result), "k", _Classification(), rlog)
         self.assertIn("[REDIRECT]", coder.last_user())
         self.assertIn(_CANNED_TAIL, coder.last_user())            # canned fallback
@@ -2481,7 +2517,7 @@ class RefusalRedirectTests(unittest.TestCase):
         rlog = _Rlog()
         loop.drive(_body_with_refusals(), "k", _Classification(), rlog)   # refusals → redirect due
         gate = loop.drive(_body(), "k", _Classification(), rlog)
-        result = f"{P}probe-0{S}\nEXIT:0\n{P}git{S}\nabc\n"
+        result = _result_for(gate)
         loop.drive(_body_with_probe(_tc_id(gate), result), "k", _Classification(), rlog)
         loop.drive(_body(), "k", _Classification(), rlog)   # the compliance write is forwarded
         self.assertNotIn("loop.wheel_spinning", rlog.kinds())
@@ -3381,11 +3417,11 @@ class DirectCompletionGateTests(unittest.TestCase):
                     "messages": [{"role": "user", "content": f"<environment_context><cwd>{tmp}</cwd></environment_context>"}]}
             gs = GuardState(); guard_gate_op(gs, body, _Rlog())
             red = {"messages": [{"role": "tool", "tool_call_id": gs.probe_call_id,
-                                 "content": f'{P}probe-0{S}\n  File "h.py", line 1\nSyntaxError: bad\nEXIT:1\n{P}git{S}\nz\n'}]}
+                                 "content": _gate_result(gs, '  File "h.py", line 1\nSyntaxError: bad\nEXIT:1', git="z")}]}
             self.assertIsNotNone(guard_gate_verdict(gs, red, _Rlog()))
             self.assertTrue(gs.last_gate_red)               # a failing done-gate → RED
             clean = {"messages": [{"role": "tool", "tool_call_id": gs.probe_call_id,   # reuse the same plan
-                                   "content": f'{P}probe-0{S}\nEXIT:0\n{P}git{S}\nz\n'}]}
+                                   "content": _gate_result(gs, git="z")}]}
             self.assertIsNone(guard_gate_verdict(gs, clean, _Rlog()))
             self.assertFalse(gs.last_gate_red)              # ran and clean → GREEN
 

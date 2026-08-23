@@ -261,6 +261,22 @@ def plan_gate(workspace: str, session: str = "", rlog=None) -> GatePlan:
     return plan
 
 
+def gate_is_partial(outcome) -> bool:
+    """A section cria selected never came back, so this gate verified LESS than it was asked to.
+
+    `unran` was recorded and then read by exactly one caller — `_verify_after_probe`, the plan-ON
+    per-step gate. `loop.gate` events carrying `probes_run` (the plan-ON reading) per day over the
+    log window: 2, 5, 4, 6, 3, 1, 0, 0, 0, 0, 0, 0 — zero on every day since the survey started
+    riding the gate result. The three LIVE readers all read `outcome.report` only, and
+    `proberun.unran_probes` answers a different question (a probe that launched and returned no exit
+    code), so a section cut in transit is not in `results` at all.
+
+    With no reader, `findings` came back "" and `record_gate_state` wrote GREEN — a gate that
+    verified a subset reading as a gate that verified everything, which is the completion side of
+    #13 failing open. `ran` cannot carry this: it is True as long as ANY section came back."""
+    return bool(getattr(outcome, "unran", None))
+
+
 def split_sections(text: str) -> dict[str, str]:
     """Marker-delimited output → {section_id: body}. Unknown text before the first
     marker is ignored (harness banners etc.)."""

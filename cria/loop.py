@@ -1436,6 +1436,18 @@ def _confirm_completion(claim: str, reason: str, workspace_root: str, reasoner_c
     still to withhold approval. The only thing lost is the specific wording; the boolean is
     identical. Nothing can advance that would not have advanced before."""
     if not workspace_root or not wsview.current(workspace_root).surveyed:
+        # THE BRAKE LETS GO, AND IT USED TO DO SO IN SILENCE. This function's own docstring calls a
+        # fail-open here "the fail-open on missing ground truth this whole file treats as the root of
+        # early exits", and `True` is CONFIRMED. The same condition also strips the judge's tools and
+        # its seeded files one screen down (`inspectable`), so the seat that approves the work is
+        # blinded by the same fact that disables its brake.
+        #
+        # It is still the right call — cria's own inability must not veto a real completion — but an
+        # unmeasurable one is not (#12). An unsurveyed view is a state cria can be IN for a whole
+        # session: the gate's survey used to overrun the shared result on a third of real workspaces
+        # and be refused wholesale, and `linterprobe.collect_files` then found nothing to probe.
+        rlog.emit("loop.confirm_unchecked", level="warn", phase=phase,
+                  why="no workspace root" if not workspace_root else "workspace not surveyed")
         return True, ""
     absent = step_names_absent_artifact(claim, workspace_root)
     if absent:
@@ -3044,7 +3056,7 @@ class Loop:
         # because the stall signal is "the same finding as last time" and comparing the new flag with
         # itself is always true.
         prev_flag = sess.last_gate_flag
-        record_gate_state(sess, outcome, gate_error_text(outcome))
+        record_gate_state(sess, outcome, gate_error_text(outcome), rlog)
         if not outcome.ran:
             # The script never ran (harness declined / no markers). Don't wedge — the pre-existing
             # fail-open: the critic still judges, told explicitly that no diagnostics ran.
@@ -5648,7 +5660,7 @@ def guard_periodic_result(gs: GuardState, body: dict, rlog) -> str | None:
     # pre-satisfy the completion backstop for a 'done' that comes later. That is the one field this
     # path owns differently, and it is restored right after.
     fresh_before = gs.gate_fresh
-    record_gate_state(gs, outcome, err)
+    record_gate_state(gs, outcome, err, rlog)
     gs.gate_fresh = fresh_before
     if not err and outcome.ran and (lost := passing_test_regression(gs, outcome.report)):
         rlog.emit("loop.tests_regressed", level="warn", high=gs.tests_passed_high)
@@ -5809,7 +5821,7 @@ def _check_state_words(gs) -> str:
     return words["passed"] if getattr(gs, "last_gate_ran", False) else words["never_ran"]
 
 
-def record_gate_state(gs: GuardState, outcome, findings: str) -> None:
+def record_gate_state(gs: GuardState, outcome, findings: str, rlog=None) -> None:
     """A gate reading becomes session state HERE, and only here. Every reader calls this.
 
     There were three readers and two of them wrote the state inline, in their own words, with their
@@ -5826,12 +5838,29 @@ def record_gate_state(gs: GuardState, outcome, findings: str) -> None:
     if not outcome.ran:
         gs.gate_fresh = True     # ATTEMPTED — cria's own inability must never wedge a real 'done'
         return
+    # A FOUND ERROR IS A FOUND ERROR, whether or not every section came back. Red first.
     if findings:
         gs.last_gate_red = True
         gs.gate_fresh = False    # red never satisfies the completion backstop
         track_gate_progress(gs, findings)
         return
-    gs.last_gate_red = False     # ran and genuinely clean → GREEN
+    # A CLEAN PARTIAL GATE IS NOT A GREEN GATE. `ran` is True as long as ANY section came back, so a
+    # script cut in transit — the survey used to overrun the shared result on a third of real
+    # workspaces — left `results` a silent subset of `selected`, `findings` empty, and this function
+    # writing GREEN over checks that were never read. `outcome.unran` has recorded the gap since it
+    # was added and had exactly one reader, on the plan-ON path, which has not run in the whole log
+    # window (`loop.gate` with `probes_run`: 2,5,4,6,3,1,0,0,0,0,0,0 per day).
+    #
+    # Treated exactly as a gate that could not run: ATTEMPTED, so cria's own inability never wedges a
+    # real 'done', and neutral — it may not clear a previous red, because it did not re-read what
+    # made that red (#13 on the completion side).
+    if probegate.gate_is_partial(outcome):
+        if rlog is not None:
+            rlog.emit("loop.gate_partial", level="warn", missing=len(outcome.unran),
+                      checks=outcome.unran[:6])
+        gs.gate_fresh = True
+        return
+    gs.last_gate_red = False     # ran, complete, and genuinely clean → GREEN
     gs.gate_fresh = True         # fresh ground truth — the completion backstop is satisfied
     gs.last_gate_testless = not proberun.gate_ran_tests(outcome.report)  # vacuous-green evidence
     gs.last_gate_skipped = proberun.gate_skipped_count(outcome.report)
@@ -5858,7 +5887,7 @@ def guard_gate_verdict(gs: GuardState, body: dict, rlog) -> str | None:
     # line could not be parsed" while a ⟦ctx:checks⟧ block in the same prompt quoted the located
     # error. Its wording lives in prompts (#22); the old one was an inline f-string here.
     findings = gate_error_text(outcome)
-    record_gate_state(gs, outcome, findings)
+    record_gate_state(gs, outcome, findings, rlog)
     if not outcome.ran:
         rlog.emit("loop.gate", plan_off=True, blocked=False, gate_ran=False)  # #12: say which happened
         return None  # the checks couldn't run → accept the 'done' (fail-open, like the loop)
@@ -6219,8 +6248,10 @@ def guard_ground_truth(outcome) -> str:
     err = gate_error_text(outcome)
     if err:
         return err   # a check ran and found a real error-class problem — surface it
-    if not outcome.ran or proberun.unran_probes(outcome.report):
-        return ""    # never ran / a probe couldn't launch → no clean signal → stay silent
+    if not outcome.ran or probegate.gate_is_partial(outcome) or proberun.unran_probes(outcome.report):
+        # …or a section cria selected never came back. Three ways to have read LESS than was asked
+        # for, and none of them is a clean signal — the third one used to read as one.
+        return ""    # never ran / a probe couldn't launch / a section is missing → stay silent
     return prompts.load("ground_truth_clean")
 
 
