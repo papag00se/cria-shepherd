@@ -73,7 +73,23 @@ class TheCloserAsksForTheSchemaTheJudgeDeclaresTests(unittest.TestCase):
 
     def test_the_default_closer_still_asks_for_done(self):
         # the step critic really does answer `done` — this is not a rename, it is a routing fix
-        self.assertIn('"done"', verifytools.ANSWER_NOW)
+        self.assertIn('"done"', verifytools.answer_now())
+
+    def test_the_closer_asks_for_the_key_the_judge_declares(self):
+        """The template no longer names one judge's key for all three. The satisfaction judge
+        declares `satisfied`, hands in no template of its own, and was asked for `done` anyway —
+        measured at 78 prompts, 7 of which came back keyed `done`. Each was rescued only by the
+        empty-`proposed_fix` inference, so `{"done": false, …, "proposed_fix": ""}` would have
+        inverted to satisfied: a fail-open on completion (#13)."""
+        for key in ("done", "satisfied", "consistent"):
+            with self.subTest(key=key):
+                self.assertIn(f'"{key}"', verifytools.answer_now(key))
+        self.assertNotIn('"done"', verifytools.answer_now("satisfied"))
+
+    def test_no_placeholder_survives_the_fill(self):
+        for key in ("", "done", "satisfied"):
+            with self.subTest(key=key):
+                self.assertNotIn("{{", verifytools.answer_now(key))
 
 
 class ASentinelAtTheEndIsADecisionTests(unittest.TestCase):

@@ -201,16 +201,38 @@ class ThePolicyIsUnchangedTests(unittest.TestCase):
         self.assertIn("verdict", careful)
         self.assertIn("read_file", careful)
 
-    def test_the_verdict_key_itself_is_cleared_for_the_retry(self):
-        """The tools-offered check above can't see this on its own: `_satisfaction_verdict` ALSO
-        zeroes `workspace_root` for the toolless retry, so today no tool is ever offered there
-        regardless of `verdict_key` — this specific ternary is currently unreachable from any input
-        (the guard the process doc names for keeping a source check). It stays defensive: if the
-        workspace_root zeroing is ever relaxed, a wrong key here would silently reopen the tool
-        channel a toolless pass has nothing to answer on."""
-        import inspect
-        src = inspect.getsource(loop._satisfaction_verdict)
-        self.assertIn('verdict_key="" if reasoning_off else "satisfied"', src)
+    def test_both_passes_are_asked_for_the_key_this_judge_answers_under(self):
+        """The key does two jobs: it declares the verdict tool, and it is what the forced-answer
+        closer demands. Withholding it from the toolless retry to keep the tool away also aimed the
+        closer at the wrong schema — the retry was told to answer `{"done": …}` under a prompt that
+        specifies `satisfied`. The tool is kept away by `workspace_root=""` (the pass above proves
+        it: zero tools offered), so the key is free to mean one thing.
+
+        Measured before the fix: 78 satisfaction prompts carried the `done` closer and 7 replies
+        came back keyed `done`, rescued only by the empty-`proposed_fix` inference — so a
+        `{"done": false, …, "proposed_fix": ""}` would have inverted to satisfied (#13)."""
+        for reasoning_off in (False, True):
+            with self.subTest(reasoning_off=reasoning_off):
+                closer = self._forced_answer_text(reasoning_off)
+                self.assertIn('"satisfied"', closer)
+                self.assertNotIn('"done"', closer)
+
+    def _forced_answer_text(self, reasoning_off):
+        """The closing instruction the judge is given when its round budget runs out."""
+        import tempfile
+        sent = []
+
+        def chat(body, _rlog):
+            sent.append(body)
+            # never answer — keep asking to look, so the loop spends its rounds and closes
+            return json.dumps({"choices": [{"message": {"content": None, "tool_calls": [
+                {"id": "c", "type": "function",
+                 "function": {"name": "list_dir", "arguments": '{"path": "."}'}}]}}]}).encode()
+
+        with tempfile.TemporaryDirectory() as ws:
+            loop._satisfaction_verdict("sys", "usr", chat, self._role(), Rlog(),
+                                       reasoning_off=reasoning_off, workspace_root=ws)
+        return sent[-1]["messages"][-1]["content"]
 
     def test_the_retry_still_only_confirms_not_satisfied(self):
         """A 'satisfied' that exists ONLY because the careful (reasoning-ON) pass failed to parse is

@@ -42,7 +42,23 @@ VERIFY_MAX_ROUNDS = 6
 VERIFY_MAX_CHARS = 60_000
 
 # The closing instruction appended when the round budget is spent — the next call carries no tools.
-ANSWER_NOW = _TD["answer_now"]
+# KEYED BY THE JUDGE THAT IS ANSWERING. Three judges share the inspection loop and they answer under
+# three different keys — `done`, `satisfied`, `consistent` — and this template used to name `done`
+# for all of them. The fix at the round cap routed `answer_now_simple or answer_now or ANSWER_NOW`,
+# which only helps a caller that remembers to hand in a matching template; the satisfaction judge
+# hands in neither, so it kept asking for `done` while declaring `satisfied`. Measured: 78
+# satisfaction prompts carried the `done` closer and 7 replies came back keyed `done` — the entire
+# population of `loop.verdict_flag_inferred`. Each survived only because
+# `_fill_missing_verdict_flag` infers the flag from an empty `proposed_fix`, so a
+# `{"done": false, …, "proposed_fix": ""}` would have inverted to satisfied=True: a fail-OPEN on
+# completion (#13). The key is no longer something a caller can forget — it comes from the same
+# `verdict_key` the judge already declares (#23).
+_ANSWER_NOW = _TD["answer_now"]
+
+
+def answer_now(verdict_key: str = "done") -> str:
+    """The forced-answer instruction, demanding the key THIS judge declares."""
+    return prompts.fill(_ANSWER_NOW, key=verdict_key or "done")
 # The STEER AUTHOR borrows the same inspection loop, but the judge-shaped forced answer told it to
 # emit the CRITIC's JSON — cria itself instructing the role collapse it then had to guard against
 # (g2-0104's prompt ends with "Answer NOW with ONLY the JSON verdict"; 0141's {"done": true,

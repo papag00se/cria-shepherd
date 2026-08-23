@@ -568,8 +568,11 @@ def _satisfaction_verdict(system: str, user: str, reasoner_chat, reasoner_role, 
             phase="satisfaction" + ("-noreason" if reasoning_off else ""),
             workspace_root="" if reasoning_off else workspace_root,
             # The careful pass may answer through the verdict tool — same channel it inspects on.
-            # The toolless retry has no channel to answer on but text, and declares no key.
-            verdict_key="" if reasoning_off else "satisfied",
+            # The toolless retry has no channel but text, and gets no tool either way (`inspectable`
+            # is False without a workspace_root) — but it still DECLARES the key, because the key is
+            # also what the forced-answer closer asks for. Withholding it here is how the retry ended
+            # up being told to answer `{"done": …}` under a prompt that specifies `satisfied`.
+            verdict_key="satisfied",
             seed_files=True,
             force_think_off=reasoning_off)
         if massage.is_truncated(comp):
@@ -997,7 +1000,7 @@ def _judge_completion(chat_fn, role, system: str, user: str, rlog, *, phase: str
                         messages.append({"role": "tool", "tool_call_id": tc.get("id") or "vt",
                                          "content": "[not executed — no further inspection rounds]"})
                 ask_text = (answer_now_simple if forced_rounds == 2
-                            else (answer_now or verifytools.ANSWER_NOW))
+                            else (answer_now or verifytools.answer_now(verdict_key)))
                 # WHY IT STOPPED, and it was not because the reader had seen enough: the reader
                 # just asked to look at something and cria did not run it. Only on the FIRST forced
                 # round — round 2 exists because round 1 came back unreadable, and its whole design
@@ -1061,7 +1064,8 @@ def _judge_completion(chat_fn, role, system: str, user: str, rlog, *, phase: str
             # same verdict, four times; the only variable was which key came back.
             messages.append({"role": "user",
                              "content": verifytools.closing_reason("rounds_spent", rounds) + " "
-                                        + (answer_now_simple or answer_now or verifytools.ANSWER_NOW)})
+                                        + (answer_now_simple or answer_now
+                                           or verifytools.answer_now(verdict_key))})
 
 
 def _consistent_word(text: str) -> bool | None:

@@ -3,7 +3,7 @@
 # the result goes back as protocol. Tool descriptions + steers. Parsed by prompts.load_map.
 list_dir = List a directory INSIDE the workspace: entries with sizes (dirs marked with /). Call with no path (or ".") for the workspace root. Use this to check what actually exists before ruling on a step that promises a file.
 read_file = Read a file INSIDE the workspace and see its REAL content (optionally only lines start_line..end_line, 1-based inclusive). Use this to check that a claimed artifact actually contains what the step requires — a file can exist and still be empty or a stub.
-answer_now = Answer NOW with ONLY the JSON verdict: {"done": true|false, "reason": "<short>", "proposed_fix": "<brief fix prose>"}. If you did not manage to read something you needed, SAY THAT in the reason — "could not verify X" — and do not state as fact anything you did not actually read. A guess written as an observation is worse than no answer: it is handed to the coder as work to do.
+answer_now = Answer NOW with ONLY the JSON verdict: {"{{KEY}}": true|false, "reason": "<short>", "proposed_fix": "<brief fix prose>"}. If you did not manage to read something you needed, SAY THAT in the reason — "could not verify X" — and do not state as fact anything you did not actually read. A guess written as an observation is worse than no answer: it is handed to the coder as work to do.
 outside = [refused: {{PATH}} is outside the workspace — the judge inspects only the workspace under {{ROOT}}]
 unknown_tool = [refused: {{NAME}} is not one of your tools — you have list_dir and read_file; the coder's tools are listed only so the fix you name is one IT can carry out]
 missing = [{{PATH}} does not exist]
