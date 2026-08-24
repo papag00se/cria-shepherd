@@ -2370,6 +2370,19 @@ class LoopContext:
     # box (compactor_upstream.chat) like the plan-off _summarize did, so a compactor on its own base_url
     # is honored. None → fall back to reasoner_chat (the summarize sampling still uses compactor_role).
     compactor_chat: object = None  # (body, rlog) -> bytes | None
+    # THE ENGAGEMENT LADDER, at the two rungs the loop owns. The loop is built at level 4 and above.
+    #
+    #   assists = False  (level 4, DONE_REFUSALS_ENABLED)  cria answers a completion CLAIM and does
+    #       nothing else: the model tries to stop, the repo's checks decide, and cria says what is
+    #       still outstanding. No steers, no periodic gate, no periodic satisfaction check, no
+    #       detectors, no planner. It never speaks first.
+    #   assists = True   (level 5, ASSISTS_ENABLED)        everything the driver knows how to do.
+    #
+    # THE SPLIT IS THE TRIGGER, NOT THE MACHINERY. The same judge and the same gate are reached from
+    # both sides; what decides the rung is who started it. The model tried to stop → level 4. A turn
+    # counter fired → level 5. So `done_critic` and the completion probe are 4 while
+    # `satisfaction_check` and `periodic_gate` are 5, though they call the same functions.
+    assists: bool = True
 
 
 class Loop:
@@ -2805,7 +2818,12 @@ class Loop:
         # budget. Measured on ada-handles_nemotron-elastic_codex_pon_1785629694: 145 driven turns,
         # all four deliverables complete and hand-verified at 15 minutes, 15 step_incomplete events,
         # and zero satisfaction checks where four were due.
-        done_now = self._periodic_satisfaction(
+        # LEVEL 5 — ASSISTS_ENABLED. This check is SCHEDULED: a turn counter fires it, the model
+        # asked for nothing, and cria volunteers what it thinks is missing. The trigger decides the
+        # rung (see LoopContext.assists), so the level is weighed HERE rather than inside the check —
+        # `_periodic_satisfaction` has a deliberate contract that `blocked` is its first word, tested
+        # against a Loop with no context at all, and a gate in front of that would break it.
+        done_now = None if not self._ctx.assists else self._periodic_satisfaction(
             sess, body, rlog, plan_off=False,
             blocked=_satisfaction_blocker(steer=sess.nudge_reason, rewritten=False,
                                           done_probe=sess.done_probe, gate_red=sess.last_gate_red,
@@ -4162,7 +4180,12 @@ class Loop:
         if steer is None and sess.nudge_reason:
             steer, sess.nudge_reason = sess.nudge_reason, ""
         # PERIODIC SATISFACTION CHECK — the off-ramp for a session that finished but cannot stop.
-        done_now = self._periodic_satisfaction(
+        # LEVEL 5 — ASSISTS_ENABLED. This check is SCHEDULED: a turn counter fires it, the model
+        # asked for nothing, and cria volunteers what it thinks is missing. The trigger decides the
+        # rung (see LoopContext.assists), so the level is weighed HERE rather than inside the check —
+        # `_periodic_satisfaction` has a deliberate contract that `blocked` is its first word, tested
+        # against a Loop with no context at all, and a gate in front of that would break it.
+        done_now = None if not self._ctx.assists else self._periodic_satisfaction(
             sess, body, rlog, plan_off=True,
             blocked=_satisfaction_blocker(steer=steer, rewritten=rewritten,
                                           done_probe=sess.done_probe, gate_red=sess.last_gate_red,

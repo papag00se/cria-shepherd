@@ -177,6 +177,7 @@ class _MultiCtx:
     satisfaction_check_start = 10 ** 9
     satisfaction_check_every = 0
     workspace_root = None
+    assists = True          # the engagement ladder's top rung; this double drives the full loop
 
 
 class TheSessionFieldTests(unittest.TestCase):

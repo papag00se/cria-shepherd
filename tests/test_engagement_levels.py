@@ -24,8 +24,8 @@ from tempfile import TemporaryDirectory
 import urllib.request
 
 from cria import config as cfgmod
-from cria.config import (Config, IndicatorsConfig, LoggingConfig, RoutingConfig, ServerConfig,
-                         UpstreamConfig)
+from cria.config import (Backend, Config, ContextConfig, IndicatorsConfig, LoggingConfig,
+                         PlannerConfig, Role, RoutingConfig, ServerConfig, UpstreamConfig)
 from cria.events import EventLog
 from cria.server import CriaServer
 from cria.upstream import Upstream
@@ -59,11 +59,15 @@ RUNG_KINDS: dict[int, tuple[str, ...]] = {
         "loop.compaction_reframed", "summarize.",
     ),
     cfgmod.DONE_REFUSALS_ENABLED: (
+        # The driver EXISTING is level 4: below this rung there is no loop at all, so its start,
+        # its per-step bookkeeping and its completion verdict all belong here.
+        "loop.start", "loop.step_incomplete", "loop.item", "loop.drive",
         "loop.done_critic", "loop.completion_probe", "loop.task_complete",
         "loop.satisfaction_confirm", "loop.verdict_by_tool",
     ),
     cfgmod.ASSISTS_ENABLED: (
         "loop.",   # everything else the driver does
+        "plan.",   # the planner and its rounds — decomposition is an assist
     ),
 }
 
@@ -92,18 +96,32 @@ class _Harness:
         self.fake = ThreadingHTTPServer(("127.0.0.1", 0), _FakeUpstream)
         _serve(self.fake)
         port = self.fake.server_address[1]
+        # A coder AND a reasoner role, both pointed at the fake upstream, because the loop is only
+        # built when a coder exists (and, with the planner on, a reasoner too). Without these the
+        # top two rungs are unreachable and the test would pass by never running them — which is the
+        # failure mode this whole file exists to prevent.
+        base = f"http://127.0.0.1:{port}"
+        backend = Backend(name="local", transport="http", base_url=base)
+        # A classifier too: without one `_classify` returns None and a fresh turn never enters the
+        # loop, so levels 4 and 5 would silently measure the proxy and report "this rung adds
+        # nothing" about code that never ran.
+        roles = {"coder": Role(name="coder", backend="local"),
+                 "reasoner": Role(name="reasoner", backend="local"),
+                 "classifier": Role(name="classifier", backend="local")}
         cfg = Config(
             server=ServerConfig(host="127.0.0.1", port=0),
-            upstream=UpstreamConfig(base_url=f"http://127.0.0.1:{port}"),
+            upstream=UpstreamConfig(base_url=base),
             logging=LoggingConfig(dir=self.tmp.name, capture_dir=self.tmp.name, console=False),
             indicators=IndicatorsConfig(enabled=False),
-            routing=RoutingConfig(engagement_level=level),
+            planner=PlannerConfig(enabled=planner),
+            # The periodic satisfaction check starts at drive 100 in production. A fixture that
+            # cannot reach it would report "level 5 adds nothing" about the rung's most characteristic
+            # mechanism, so the cadence is pulled to the first drive — the knob is operator-tunable
+            # for exactly this reason.
+            context=ContextConfig(satisfaction_check_start=1, satisfaction_check_every=1),
+            routing=RoutingConfig(engagement_level=level, backends={"local": backend},
+                                  roles=roles, defaults_base_url=base),
         )
-        if hasattr(cfg, "planner"):
-            try:
-                object.__setattr__(cfg.planner, "enabled", planner)
-            except Exception:
-                pass
         self.log = EventLog(dir=cfg.logging.dir, console=False)
         # Built the way __main__ builds it: the level rides INTO the transport, because two rungs
         # (tool-call repair at 1, the context floor at 3) live on that path.

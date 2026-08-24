@@ -573,10 +573,11 @@ class CriaServer(ThreadingHTTPServer):
         _warn_config(cfg, has_reasoner, has_coder, log)
         # Always build the loop when a coder exists; require a reasoner only when the planner is ON.
         # Planner OFF → the loop drives the synthetic 1-item path (guards but no decomposition).
-        # `[engagement] drive = false` → the loop is never built and cria is a plain proxy:
-        # plumbing only, zero assists. That is the BASELINE arm of the matrix (see
-        # RoutingConfig.engagement_drive for why 'no cria at all' is not a runnable control).
-        if cfg.routing.engagement_drive and has_coder and (has_reasoner or not cfg.planner.enabled):
+        # LEVEL 4 — DONE_REFUSALS_ENABLED — is where the loop first exists. Below it cria is a plain
+        # proxy and never drives. At exactly 4 the loop answers a completion CLAIM and nothing else;
+        # at 5 it does everything. Which of the two is decided ONCE here, by the `assists` flag on
+        # the context, so no stage has to re-derive it (see LoopContext.assists for the 4/5 rule).
+        if cfg.routing.done_refusals and has_coder and (has_reasoner or not cfg.planner.enabled):
             # The web-search key comes from the fixed BRAVE_SEARCH_API_KEY env var (never stored in
             # config); brave.api_key() reads it normalized (CRLF-safe) — the CRLF was the illegal-
             # header footgun, fixed once at the source (envfile) rather than stripped per-consumer.
@@ -616,7 +617,6 @@ class CriaServer(ThreadingHTTPServer):
                     # The compactor ENDPOINT's chat for the single-item self-compaction (rides the
                     # compactor box like the plan-off _summarize did); None-safe (falls back to reasoner).
                     compactor_chat=self.compactor_upstream.chat,
-                    planner_enabled=cfg.planner.enabled,
                     satisfaction_check_start=cfg.context.satisfaction_check_start,
                     satisfaction_check_every=cfg.context.satisfaction_check_every,
                     # ONE folder per run: plan mirror + verify dumps join the call captures
@@ -625,6 +625,12 @@ class CriaServer(ThreadingHTTPServer):
                     focus_trim=cfg.context.focus_trim,
                     self_compact=cfg.context.self_compact,
                     trigger_compaction=cfg.context.trigger_compaction,
+                    assists=cfg.routing.assists_enabled,
+                    # THE PLANNER IS AN ASSIST, so below level 5 the loop always drives the
+                    # synthetic single-item path however `[planner] enabled` is set. This is also
+                    # what makes levels 0-4 planner-AGNOSTIC by construction rather than by
+                    # discipline: there is no plan-on branch to diverge from at those rungs.
+                    planner_enabled=cfg.planner.enabled and cfg.routing.assists_enabled,
                 ),
                 # Completed-work briefings + session shapes survive a cria restart (the restarts this
                 # project makes constantly were wiping the context a follow-up / a post-compaction
