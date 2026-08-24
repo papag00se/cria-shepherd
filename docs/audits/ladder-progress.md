@@ -50,7 +50,7 @@ Judged usefulness per cell. `·` not run, `—` run but not judged.
 
 | model | level | shipping | cart | orders | feed | handles | rust | mean |
 |---|---|---|---|---|---|---|---|---|
-| gemma4 | L0 pure proxy | **85** | — | · | · | · | · | 85 |
+| gemma4 | L0 pure proxy | **85** | **92** | · | · | · | · | 88 |
 | gemma4 | L1 TOOL_CALL_FI | · | · | · | · | · | · | · |
 | gemma4 | L2 SIMPLE_TOOLS | · | · | · | · | · | · | · |
 | gemma4 | L3 CONTEXT_FIXE | · | · | · | · | · | · | · |
@@ -75,18 +75,4 @@ Judged usefulness per cell. `·` not run, `—` run but not judged.
 | nemotron-elastic | L4 DONE_REFUSAL | · | · | · | · | · | · | · |
 | nemotron-elastic | L5 ASSISTS_ENAB | · | · | · | · | · | · | · |
 
-_updated 2026-08-24 13:35_
-
-## How the strict verifier keeps being wrong
-
-The judged number is the measure. Sightings so far of the strict grid disagreeing with what was
-actually delivered:
-
-1. **It credits tests that test a copy of themselves.** gemma4's node and rust cells passed their
-   test checks with tests that re-implement the logic inside the test file and never call the
-   program (2026-08-24 campaign).
-2. **It scores a complete working program as zero** for one wrong symbol — ternary-bonsai's rust
-   cell, blocked on two enum variant names, strict 0/4 and judged 19.
-3. **A decorative import passes a dependency check.** L0 gemma4 shipping-rates-rb requires
-   `iso_country_codes` on line 6, never calls it, hardcodes a 26-element EU array, and ships no
-   Gemfile — the task forbade all three. Strict scored it 5/5.
+_updated 2026-08-24 13:39_
