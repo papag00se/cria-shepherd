@@ -44,22 +44,49 @@ construction rather than by discipline — there is no plan-on branch left to di
 that `blocked` is its first word, asserted against a Loop with no context at all. A level gate in
 front of that broke six test files before the gate moved to the two call sites instead.
 
-## Cells — 0 / 144
+## Cells — 2 / 144
 
-6 levels x 4 models x 6 tasks, planner off, prompt revision `p4`, so the level-5 column is
-comparable to the CRIA arm of 2026-08-24.
+Judged usefulness per cell. `·` not run, `—` run but not judged.
 
-Expect levels 0 and 1 to produce dead cells on some models: a bare assistant turn is a structural
-400 on the gemma template, and one malformed historical tool call 500s every later turn. That is
-the size of the protocol gap, measured instead of asserted. It is not a bug to repair upward.
+| model | level | shipping | cart | orders | feed | handles | rust | mean |
+|---|---|---|---|---|---|---|---|---|
+| gemma4 | L0 pure proxy | **85** | — | · | · | · | · | 85 |
+| gemma4 | L1 TOOL_CALL_FI | · | · | · | · | · | · | · |
+| gemma4 | L2 SIMPLE_TOOLS | · | · | · | · | · | · | · |
+| gemma4 | L3 CONTEXT_FIXE | · | · | · | · | · | · | · |
+| gemma4 | L4 DONE_REFUSAL | · | · | · | · | · | · | · |
+| gemma4 | L5 ASSISTS_ENAB | · | · | · | · | · | · | · |
+| qwen35 | L0 pure proxy | · | · | · | · | · | · | · |
+| qwen35 | L1 TOOL_CALL_FI | · | · | · | · | · | · | · |
+| qwen35 | L2 SIMPLE_TOOLS | · | · | · | · | · | · | · |
+| qwen35 | L3 CONTEXT_FIXE | · | · | · | · | · | · | · |
+| qwen35 | L4 DONE_REFUSAL | · | · | · | · | · | · | · |
+| qwen35 | L5 ASSISTS_ENAB | · | · | · | · | · | · | · |
+| ternary-bonsai | L0 pure proxy | · | · | · | · | · | · | · |
+| ternary-bonsai | L1 TOOL_CALL_FI | · | · | · | · | · | · | · |
+| ternary-bonsai | L2 SIMPLE_TOOLS | · | · | · | · | · | · | · |
+| ternary-bonsai | L3 CONTEXT_FIXE | · | · | · | · | · | · | · |
+| ternary-bonsai | L4 DONE_REFUSAL | · | · | · | · | · | · | · |
+| ternary-bonsai | L5 ASSISTS_ENAB | · | · | · | · | · | · | · |
+| nemotron-elastic | L0 pure proxy | · | · | · | · | · | · | · |
+| nemotron-elastic | L1 TOOL_CALL_FI | · | · | · | · | · | · | · |
+| nemotron-elastic | L2 SIMPLE_TOOLS | · | · | · | · | · | · | · |
+| nemotron-elastic | L3 CONTEXT_FIXE | · | · | · | · | · | · | · |
+| nemotron-elastic | L4 DONE_REFUSAL | · | · | · | · | · | · | · |
+| nemotron-elastic | L5 ASSISTS_ENAB | · | · | · | · | · | · | · |
 
-## Judged — 0 / 144
+_updated 2026-08-24 13:35_
 
-Every cell gets a usefulness verdict from the worklist, against the fixed rubric. The strict
-verifier is not the measure: in the 2026-08-24 campaign it credited tests that tested a copy of
-themselves and scored a complete working program as zero for one wrong symbol.
+## How the strict verifier keeps being wrong
 
-## The headline this is all for
+The judged number is the measure. Sightings so far of the strict grid disagreeing with what was
+actually delivered:
 
-*(filled when the cells are in)* — what each of the six layers is worth, per model, and which of
-them are worth nothing.
+1. **It credits tests that test a copy of themselves.** gemma4's node and rust cells passed their
+   test checks with tests that re-implement the logic inside the test file and never call the
+   program (2026-08-24 campaign).
+2. **It scores a complete working program as zero** for one wrong symbol — ternary-bonsai's rust
+   cell, blocked on two enum variant names, strict 0/4 and judged 19.
+3. **A decorative import passes a dependency check.** L0 gemma4 shipping-rates-rb requires
+   `iso_country_codes` on line 6, never calls it, hardcodes a 26-element EU array, and ships no
+   Gemfile — the task forbade all three. Strict scored it 5/5.
