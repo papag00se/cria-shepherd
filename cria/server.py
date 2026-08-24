@@ -747,13 +747,6 @@ class CriaHandler(BaseHTTPRequestHandler):
         # represent_inbound).
         self._setup_translation(body, session_key(self.headers, body.get("messages", [])), rlog)
 
-        # Tool-menu FOCUS: curate the harness's menu to the coding essentials (drop the
-        # goal/MCP/connector firehose) — after advertise so cria's write_file survives.
-        if self.server.cfg.tools.focus:
-            focus_tools(body, rlog)
-        # Tool cheat-sheet: a terse per-tool usage note for the (now curated) tools.
-        if self.server.cfg.tools.cheatsheet:
-            add_cheatsheet(body, rlog)
 
         # Honest token accounting for the connected harness (see _report_context_usage): the size
         # of the context IT sent, not cria's internal call usages. cria fits it to the window itself.
@@ -882,9 +875,18 @@ class CriaHandler(BaseHTTPRequestHandler):
         checks under another. On the Responses path the reader key is ``sid:<sess>`` (from the body's
         cache key), NOT ``session_key(headers, messages)`` — so passing the caller's sess_key here is
         what lets the 'you already fetched this' refusal fire (it re-fetched openapi.json 10+ times)."""
-        self._shell_tool = needs_translation(body.get("tools"))
+        self._shell_tool = None
         self._synthetic: set[str] = set()
         self._native_search = None
+        self._brave_key = None
+        # LEVEL 2 — SIMPLE_TOOLS. Below this rung cria alters no toolset: the harness's own tools go
+        # up exactly as they arrived, nothing is lowered to shell, nothing is re-presented, and the
+        # menu is not curated. ONE owner for the whole tool layer, both call sites, so a rung cannot
+        # be half-applied on one path (the chat and Responses paths ran identical copies of this,
+        # which is precisely how a level gate written once ends up honoured once).
+        if not self.server.cfg.routing.simple_tools:
+            return
+        self._shell_tool = needs_translation(body.get("tools"))
         self._brave_key = brave.api_key()
         # The workspace root (from the harness env-context <cwd>) — the boundary the external-dir
         # guard classifies paths against when it bounds a fledgling model on the --yolo harness.
@@ -924,6 +926,13 @@ class CriaHandler(BaseHTTPRequestHandler):
             # spec the model needs to re-read) can be re-fetched instead of blocked forever.
             fk, sq = _visible_web_calls(body.get("messages", []))
             webfetch.set_visible(sess_key, fk, sq)
+        # Tool-menu FOCUS: curate the harness's menu to the coding essentials (drop the goal/MCP/
+        # connector firehose), then a terse per-tool cheat-sheet for the curated set. AFTER advertise,
+        # so cria's write_file survives the curation.
+        if self.server.cfg.tools.focus:
+            focus_tools(body, rlog)
+        if self.server.cfg.tools.cheatsheet:
+            add_cheatsheet(body, rlog)
 
     def _translate_out(self, completion: dict, sess_key: str, rlog) -> dict:
         """Lower the model's synthetic-tool calls to shell, when translation is active for this
@@ -1260,10 +1269,6 @@ class CriaHandler(BaseHTTPRequestHandler):
         # sess_key (sid:<sess>) so the fetch gate's visible-set is recorded under the SAME key the
         # outbound lowering reads — without this the exact-repeat gate is dead on the Responses path.
         self._setup_translation(body, sess_key, rlog)
-        if self.server.cfg.tools.focus:
-            focus_tools(body, rlog)
-        if self.server.cfg.tools.cheatsheet:
-            add_cheatsheet(body, rlog)
 
         self._ctx_tokens = _incoming_ctx_tokens(body, rlog)  # honest token accounting for the harness
         stream = bool(rbody.get("stream"))
