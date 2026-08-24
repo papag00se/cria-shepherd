@@ -24,6 +24,26 @@ from pathlib import Path
 from . import bodykeys
 from . import prompts, reasoning
 
+# --- The engagement ladder ---------------------------------------------------------------
+# Named here rather than as bare integers at every call site: a level test reads as
+# `level >= SIMPLE_TOOLS`, which says what is being asked for, where `level >= 2` does not.
+# See RoutingConfig.engagement_level for what each rung turns on and why the bottom one exists.
+PURE_PROXY = 0
+TOOL_CALL_FIXES = 1
+SIMPLE_TOOLS = 2
+CONTEXT_FIXES = 3
+DONE_REFUSALS_ENABLED = 4
+ASSISTS_ENABLED = 5
+MAX_ENGAGEMENT_LEVEL = ASSISTS_ENABLED
+ENGAGEMENT_LEVEL_NAMES = {
+    PURE_PROXY: "pure proxy",
+    TOOL_CALL_FIXES: "TOOL_CALL_FIXES",
+    SIMPLE_TOOLS: "SIMPLE_TOOLS",
+    CONTEXT_FIXES: "CONTEXT_FIXES",
+    DONE_REFUSALS_ENABLED: "DONE_REFUSALS_ENABLED",
+    ASSISTS_ENABLED: "ASSISTS_ENABLED",
+}
+
 # Where ``Config.load(None)`` looks, in order, when no explicit path is given.
 # cria's config lives in exactly two places: the user's HOME (global defaults) and the CURRENT
 # DIRECTORY (per-workspace overrides). Both are read and DEEP-MERGED, with the cwd file winning
@@ -370,18 +390,85 @@ class RoutingConfig:
     roles: Mapping[str, Role] = field(default_factory=dict)
     failover: Mapping[str, tuple[str, ...]] = field(default_factory=dict)  # task_type -> role chain
     engagement_bias: str = "task"
-    # BASELINE SWITCH. False = cria never drives: no planner, no steers, no gates, no critics, no
-    # completion judging. It stays a plain proxy and keeps only the PLUMBING a local model needs to
-    # be reachable at all — Responses↔chat translation, window fitting, tool-menu curation, per-model
-    # sampling and reasoning, template repair, and tool-call dialect recovery.
+    # THE ENGAGEMENT LADDER. One ordered integer, 0..5, and every level implies the ones below it.
+    # An integer rather than five booleans because the levels are cumulative BY CONSTRUCTION: there
+    # is no such thing as assists with the tool layer off, and a set of independent flags can express
+    # that combination while nothing can run it.
     #
-    # This exists because "measure the model without cria" has no honest literal reading: Codex
-    # speaks the Responses API and llama.cpp does not, so unplugging cria does not produce a weaker
-    # setup, it produces one that cannot exchange a single message. Removing the plumbing measures
-    # the protocol gap; removing the ASSISTS measures what the assists are worth. This flag is the
-    # second experiment, and it is the control the suite's numbers should be read against.
-    engagement_drive: bool = True
+    #   0  pure proxy              Responses↔chat wire translation and nothing else. No indicators,
+    #                              no tool changes, no context changes, no repairs, no loop.
+    #   1  TOOL_CALL_FIXES         make the many dialects a model emits homogeneous: template repair,
+    #                              tool-call dialect recovery, malformed-history repair, fenced-JSON,
+    #                              tool-name normalisation. The harness's OWN toolset is untouched,
+    #                              cria offers no tools of its own, and nothing is lowered to shell.
+    #   2  SIMPLE_TOOLS            cria's tool menu, lowered to shell and represented back, plus the
+    #                              minor context edits those calls need to stay coherent.
+    #   3  CONTEXT_FIXES           the context surgery that is not an assist: floor, focus-trim,
+    #                              repeat-dedup, ledger-dedup, harness-compaction reframing.
+    #   4  DONE_REFUSALS_ENABLED   refusing a completion CLAIM — the model tries to stop and cria
+    #                              says what is still outstanding: done-critic, the completion probe,
+    #                              task_complete handling, and the on-disk brake on an approval.
+    #   5  ASSISTS_ENABLED         everything else and the context work each assist needs: steers,
+    #                              periodic gates, the periodic satisfaction check, every detector,
+    #                              the planner.
+    #
+    # WHY THE BOTTOM RUNG MOVED. The old switch was a bool, and False was called "the model on its
+    # own". It never was. Counting events inside the 24 baseline windows of the 2026-08-24 campaign:
+    # tool-menu curation 1,011, write-proxy translation 980, indicator stripping 991, reasoning-call
+    # repair 333, context focus-trim 514, compaction reframing 136, and the context floor — which
+    # DROPS OLDEST CONTENT — 54. The comment here justified all of it as plumbing on the strength of
+    # one true fact: Codex speaks the Responses API and llama.cpp does not, so with zero cria not one
+    # message is exchanged. That is true of WIRE TRANSLATION. Tool curation, context surgery and
+    # template repair were grandfathered in behind it and have been present in every arm of every
+    # comparison ever run, so what they are worth has never been measured once. The single time a
+    # piece of this layer was checked it was destroying 24% of every command result for a whole
+    # campaign (writeproxy.note_harness_cuts). Level 0 is the control that was missing.
+    #
+    # 4 vs 5 IS THE TRIGGER, NOT THE MACHINERY. The same judge and the same gate are reached from two
+    # directions. The model tried to stop → 4. A turn counter fired → 5. So done_critic and the
+    # completion probe are 4 while satisfaction_check and periodic_gate are 5, though they call into
+    # the same functions. Gate at the call site.
+    #
+    # PLANNER-AGNOSTIC. Levels 0-4 must behave identically with the planner on and off; plan-off is
+    # already a synthetic single-item plan through the same driver. The level is checked ONCE, where
+    # the capability is invoked, never inside a plan-on/plan-off branch. The one honest exception is
+    # at level 5: replanning and step re-derivation exist only when there are steps, so plan-on has
+    # two assists plan-off cannot have.
+    engagement_level: int = MAX_ENGAGEMENT_LEVEL
     defaults_base_url: str = "http://127.0.0.1:18084"
+
+    # Read-only views of the one integer. Every call site asks one of these rather than comparing
+    # numbers, so "is this allowed here?" is answered in the vocabulary of the ladder.
+    @property
+    def tool_call_fixes(self) -> bool:
+        """Homogenise the dialects a model emits. NOT permission to change the toolset."""
+        return self.engagement_level >= TOOL_CALL_FIXES
+
+    @property
+    def simple_tools(self) -> bool:
+        """cria's own tool menu, lowered to shell and represented back."""
+        return self.engagement_level >= SIMPLE_TOOLS
+
+    @property
+    def context_fixes(self) -> bool:
+        """Context surgery that is not an assist: floor, trims, dedups, compaction reframing."""
+        return self.engagement_level >= CONTEXT_FIXES
+
+    @property
+    def done_refusals(self) -> bool:
+        """Refuse a completion CLAIM. Reactive only — a scheduled check is an assist, see level 5."""
+        return self.engagement_level >= DONE_REFUSALS_ENABLED
+
+    @property
+    def assists_enabled(self) -> bool:
+        """Steers, periodic gates, the periodic satisfaction check, detectors, the planner."""
+        return self.engagement_level >= ASSISTS_ENABLED
+
+    @property
+    def engagement_drive(self) -> bool:
+        """LEGACY NAME for the old boolean. Kept reading — never writing — so callers and configs
+        that predate the ladder mean what they always meant: the full driver, top of the ladder."""
+        return self.assists_enabled
 
 
 @dataclass(frozen=True)
@@ -607,6 +694,32 @@ def _indicators(d: dict) -> IndicatorsConfig:
     )
 
 
+def _engagement_level(eng: dict) -> int:
+    """`[engagement] level = 0..5`, or the legacy `drive = true|false` when no level is given.
+
+    OUT OF RANGE IS AN ERROR, NOT A CLAMP. A campaign that asks for level 7 has a bug in the thing
+    setting it, and silently running level 5 for six hours would report the wrong column as the
+    right one — the exact class of mistake the ladder exists to stop.
+
+    `drive` maps to the two ends it always meant: true = the full driver, false = the plain proxy.
+    It is a WORSE control than it looked (see RoutingConfig.engagement_level), so it is honoured for
+    old configs and never written back."""
+    if not isinstance(eng, dict):
+        return MAX_ENGAGEMENT_LEVEL
+    if "level" in eng:
+        raw = eng["level"]
+        try:
+            lvl = int(raw)
+        except (TypeError, ValueError):
+            raise ValueError(f"[engagement] level must be an integer 0..{MAX_ENGAGEMENT_LEVEL}, got {raw!r}")
+        if not PURE_PROXY <= lvl <= MAX_ENGAGEMENT_LEVEL:
+            raise ValueError(f"[engagement] level must be 0..{MAX_ENGAGEMENT_LEVEL}, got {lvl}")
+        return lvl
+    if "drive" in eng:
+        return MAX_ENGAGEMENT_LEVEL if bool(eng["drive"]) else PURE_PROXY
+    return MAX_ENGAGEMENT_LEVEL
+
+
 def _routing(data: dict, defaults_base_url: str) -> RoutingConfig:
     backends = {str(n): _backend(str(n), bd) for n, bd in data.get("backends", {}).items()}
     roles = {str(n): _role(str(n), rd, backends) for n, rd in data.get("roles", {}).items()}
@@ -629,7 +742,7 @@ def _routing(data: dict, defaults_base_url: str) -> RoutingConfig:
         roles=roles,
         failover=failover,
         engagement_bias=bias,
-        engagement_drive=bool(data.get("engagement", {}).get("drive", True)),
+        engagement_level=_engagement_level(data.get("engagement", {})),
         defaults_base_url=defaults_base_url,
     )
 
