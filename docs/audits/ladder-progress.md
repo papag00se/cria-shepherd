@@ -44,13 +44,13 @@ construction rather than by discipline — there is no plan-on branch left to di
 that `blocked` is its first word, asserted against a Loop with no context at all. A level gate in
 front of that broke six test files before the gate moved to the two call sites instead.
 
-## Cells — 2 / 144
+## Cells — 6 / 144
 
 Judged usefulness per cell. `·` not run, `—` run but not judged.
 
 | model | level | shipping | cart | orders | feed | handles | rust | mean |
 |---|---|---|---|---|---|---|---|---|
-| gemma4 | L0 pure proxy | **85** | **92** | · | · | · | · | 88 |
+| gemma4 | L0 pure proxy | **85** | **92** | **89** | **100** | **93** | **86** | 91 |
 | gemma4 | L1 TOOL_CALL_FI | · | · | · | · | · | · | · |
 | gemma4 | L2 SIMPLE_TOOLS | · | · | · | · | · | · | · |
 | gemma4 | L3 CONTEXT_FIXE | · | · | · | · | · | · | · |
@@ -75,4 +75,4 @@ Judged usefulness per cell. `·` not run, `—` run but not judged.
 | nemotron-elastic | L4 DONE_REFUSAL | · | · | · | · | · | · | · |
 | nemotron-elastic | L5 ASSISTS_ENAB | · | · | · | · | · | · | · |
 
-_updated 2026-08-24 13:39_
+_updated 2026-08-24 13:47_
