@@ -16,6 +16,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import re
+import signal
 import subprocess
 import sys
 import time
@@ -59,6 +62,58 @@ def worklist() -> list[tuple[int, str, str]]:
             if (lvl, m, t) not in have]
 
 
+def leaked_listeners() -> list[tuple[int, str, str]]:
+    """Processes still LISTENING whose cwd is inside a suite workspace — a server a cell started and
+    never stopped. Returns (pid, cwd, cmdline).
+
+    SCOPED BY CWD, DELIBERATELY. The obvious version of this walks the listening ports and kills
+    whatever holds one the next cell might want, and that is how a measurement harness comes to
+    kill an operator's own services. A process is this run's to stop only if it is standing in this
+    run's workspace; everything else on the machine is somebody else's and is left alone even when
+    it is inconvenient.
+    """
+    out = []
+    try:
+        pids = {int(x) for x in re.findall(rb"pid=(\d+)",
+                subprocess.run(["ss", "-ltnp"], capture_output=True).stdout)}
+    except Exception:
+        return out
+    runs = (SUITE.parent / "runs").resolve()
+    for pid in pids:
+        try:
+            cwd = Path(f"/proc/{pid}/cwd").resolve()
+            if runs not in cwd.parents and cwd != runs:
+                continue
+            cmd = Path(f"/proc/{pid}/cmdline").read_bytes().replace(b"\0", b" ").decode(errors="replace")
+        except (OSError, ValueError):
+            continue
+        out.append((pid, str(cwd), cmd.strip()))
+    return out
+
+
+def reap_leaked_listeners() -> None:
+    """Stop servers a finished cell left listening, so the next cell does not inherit its port.
+
+    Walked on the ladder run of 2026-08-24: a cell's own test fixture pinned port 8081, found it
+    occupied, and went looking for something to kill — `fuser -k 8081/tcp`, then `kill -9` on two
+    PIDs by number. Below level 2 nothing stops that, because the guard that refuses it lives in the
+    write proxy. Cleaning up after ourselves removes the provocation; it does not remove the hazard,
+    which is recorded in docs/audits/ladder-progress.md.
+    """
+    for pid, cwd, cmd in leaked_listeners():
+        print(f"[ladder] reaping leaked listener pid={pid} cwd={cwd} :: {cmd[:90]}", flush=True)
+        for sig in (signal.SIGTERM, signal.SIGKILL):
+            try:
+                os.kill(pid, sig)
+            except ProcessLookupError:
+                break
+            time.sleep(1.0)
+            try:
+                os.kill(pid, 0)
+            except ProcessLookupError:
+                break
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--dry-run", action="store_true")
@@ -79,6 +134,7 @@ def main() -> int:
                              "--level", str(lvl), "--model", model, "--task", task]).returncode
         print(f"[{time.strftime('%H:%M:%S')}] ({i}/{len(todo)}) L{lvl} {task} x {model} — exit {rc}",
               flush=True)
+        reap_leaked_listeners()
         # The worklist is re-derived next pass, so a failed cell simply stays outstanding. Nothing
         # here decides to retry: a cell that keeps failing is a finding for the operator to read,
         # not a loop to spin in.
