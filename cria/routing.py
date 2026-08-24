@@ -51,8 +51,12 @@ class Router:
         # A pinned window applies to every HTTP backend that inherits [defaults] — same server.
         self._context_window = context_window
         self._provider_factory = provider_factory or (
+            # The ladder level rides to EVERY backend, not just [defaults]: a level-0 run that
+            # routed one role to a second endpoint would otherwise get the full treatment there and
+            # the arm would be contaminated by the thing it exists to isolate.
             lambda base_url, key: Upstream(base_url, timeout, api_key=key,
-                                           context_window=context_window or None)
+                                           context_window=context_window or None,
+                                           engagement_level=cfg.engagement_level)
         )
         self._claude_factory = claude_factory or (
             lambda b: ClaudeCliProvider(b.binary, b.cwd, timeout)

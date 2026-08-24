@@ -47,6 +47,9 @@ RUNG_KINDS: dict[int, tuple[str, ...]] = {
     cfgmod.TOOL_CALL_FIXES: (
         # Making dialects homogeneous. NOT permission to change the toolset.
         "massage.", "indicators.stripped",
+        # An orphaned `tool` message 400s a strict template every turn; converting it to `user` is
+        # structural repair of a tool call, not surgery on what the conversation says.
+        "context.deorphaned",
     ),
     cfgmod.SIMPLE_TOOLS: (
         "toolmenu.", "writeproxy.",
@@ -102,7 +105,10 @@ class _Harness:
             except Exception:
                 pass
         self.log = EventLog(dir=cfg.logging.dir, console=False)
-        self.cria = CriaServer(cfg, self.log, Upstream(cfg.upstream.base_url))
+        # Built the way __main__ builds it: the level rides INTO the transport, because two rungs
+        # (tool-call repair at 1, the context floor at 3) live on that path.
+        self.cria = CriaServer(cfg, self.log,
+                               Upstream(cfg.upstream.base_url, engagement_level=level))
         _serve(self.cria)
         self.base = f"http://127.0.0.1:{self.cria.server_address[1]}"
 
@@ -149,6 +155,13 @@ def exercise_body() -> dict:
                 {"id": "c2", "type": "function",
                  "function": {"name": "shell", "arguments": '{"command":"ls"}'}}]},
             {"role": "tool", "tool_call_id": "c2", "content": "a.py\nb.py"},
+            # A malformed tool_call in REPLAYED history: over-escaped nested quotes, the shape that
+            # 500s a strict template on every later turn. Level 1 repairs it; level 0 must not.
+            {"role": "assistant", "content": "", "tool_calls": [
+                {"id": "c3", "type": "function",
+                 "function": {"name": "shell", "arguments": '{"command":"echo \\"hi\\" > x"'}}]},
+            # …and an ORPHAN tool result, whose assistant call is gone. Also level 1.
+            {"role": "tool", "tool_call_id": "gone", "content": "orphaned output"},
             {"role": "assistant", "content": "I am done — everything is finished."},
             {"role": "user", "content": "continue"},
         ],

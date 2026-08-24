@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Iterator
 
 from . import bodykeys
-from . import callcapture, contextfloor, failover, massage, rumination, tokenratio
+from . import callcapture, config, contextfloor, failover, massage, rumination, tokenratio
 
 # Sentinel for "window not yet resolved" (distinct from None = "no window / skip floor").
 _UNSET = object()
@@ -89,7 +89,14 @@ class Upstream:
     the same wire protocol, so one client serves both roles."""
 
     def __init__(self, base_url: str, timeout_seconds: int = 600, api_key: str | None = None,
-                 context_window: int | None = None, capture_dir=None, capture_rendered: bool = True) -> None:
+                 context_window: int | None = None, capture_dir=None, capture_rendered: bool = True,
+                 engagement_level: int = config.MAX_ENGAGEMENT_LEVEL) -> None:
+        # THE ENGAGEMENT LADDER reaches in here because two of its rungs live on this path: the
+        # tool-call repairs are level 1 and the context floor is level 3. Passed as a number rather
+        # than a Config so the transport keeps knowing nothing about roles, backends or the loop.
+        # Defaults to the top of the ladder: an Upstream built without an opinion behaves as it
+        # always did, so nothing outside a ladder run changes.
+        self._engagement_level = engagement_level
         self._base_url = base_url.rstrip("/")
         self._chat_url = self._base_url + "/v1/chat/completions"
         self._timeout = timeout_seconds
@@ -234,6 +241,14 @@ class Upstream:
                       retry_every=_PROPS_RETRY_EVERY)
         return self._window
 
+    @property
+    def _tool_call_fixes(self) -> bool:
+        return self._engagement_level >= config.TOOL_CALL_FIXES
+
+    @property
+    def _context_fixes(self) -> bool:
+        return self._engagement_level >= config.CONTEXT_FIXES
+
     def _prep(self, body: dict, stream: bool, rlog, safety_override: float | None = None) -> tuple[bytes, int, str | None]:
         """Serialize the request and return ``(bytes, sent_estimate)``: apply the CONTEXT FLOOR
         (guarantee it fits the window, budgeting with the model's LEARNED density ratio), force the
@@ -272,7 +287,13 @@ class Upstream:
             # after which the window is measured and the floor runs normally for the rest of the
             # process. The cost of guessing is every message the guess threw away, permanently and
             # silently (#5, #5b, #23c: unknown is not a small number, it is unknown).
-            if window and self._window_guessed:
+            # LEVEL 3 — CONTEXT_FIXES. Below this rung cria performs no surgery on the context: it
+            # sends what it was given and lets the server answer for the fit. The floor is the most
+            # consequential thing on this path — it DROPS OLDEST CONTENT — and it ran 54 times inside
+            # the arm the suite called "the model on its own".
+            if not self._context_fixes:
+                window = None
+            elif window and self._window_guessed:
                 rlog.emit("context.floor_skipped", level="warn", why="window is a guess",
                           guess=window)
                 window = None
@@ -290,12 +311,18 @@ class Upstream:
             # A malformed tool_call in the REPLAYED history (a weak model's over-escaped nested-quote
             # shell command) makes a strict template's JSON re-parse 500 on EVERY turn — poisoning the
             # whole session, not just the turn that produced it. Repair the history's args before send.
-            msgs = massage.repair_history_tool_args(msgs, rlog)
+            # LEVEL 1 — TOOL_CALL_FIXES. Both of these make a conversation structurally acceptable
+            # to a strict template rather than changing what it says: a malformed tool_call in
+            # REPLAYED history 500s every later turn, and an orphaned `tool` message 400s every turn.
+            # Neither alters the toolset, and neither is an assist.
+            if self._tool_call_fixes:
+                msgs = massage.repair_history_tool_args(msgs, rlog)
             # UNCONDITIONAL tool-integrity: an orphan `tool` (its assistant call folded by self-compaction,
             # or dropped) 400s a strict template EVERY turn — and the floor's orphan strip runs only when
             # the request is OVER budget, so a fitting request ships the orphan. Convert it to `user` here,
             # on every request, so no orphan ever reaches the model.
-            msgs, deorphaned = contextfloor.ensure_tool_integrity(msgs)
+            msgs, deorphaned = (contextfloor.ensure_tool_integrity(msgs) if self._tool_call_fixes
+                                else (msgs, 0))
             if deorphaned:
                 rlog.emit("context.deorphaned", reshape="deorphan", count=deorphaned, level="info")
             msgs = _merge_consecutive_assistant(msgs)

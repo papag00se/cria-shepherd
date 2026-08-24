@@ -949,8 +949,10 @@ class CriaHandler(BaseHTTPRequestHandler):
     def _focus_trim(self, framed: dict, rlog) -> tuple[dict, bool]:
         """Collapse exact-duplicate tool calls in the OUTBOUND coder body so the model stays focused
         on current state — applied to the FRAMED copy, never the history cria's detectors read.
-        Gated by [context] focus_trim. Returns (body, applied?)."""
-        if not self.server.cfg.context.focus_trim:
+        Gated by [context] focus_trim, and by LEVEL 3 — CONTEXT_FIXES: below that rung cria performs
+        no surgery on the context at all, and folding duplicate tool calls is surgery however
+        harmless it looks. Returns (body, applied?)."""
+        if not self.server.cfg.routing.context_fixes or not self.server.cfg.context.focus_trim:
             return framed, False
         msgs = framed.get("messages")
         if not isinstance(msgs, list):

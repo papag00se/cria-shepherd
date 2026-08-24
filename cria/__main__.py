@@ -74,6 +74,7 @@ def main(argv: list[str] | None = None) -> int:
         context_window=cfg.upstream.context_window or None,
         capture_dir=cfg.logging.capture_dir_path if cfg.logging.capture_calls else None,
         capture_rendered=cfg.logging.capture_rendered,
+        engagement_level=cfg.routing.engagement_level,
     )
     if cfg.logging.capture_calls:
         log.emit("capture.enabled", dir=str(cfg.logging.capture_dir_path))
