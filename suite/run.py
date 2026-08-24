@@ -344,6 +344,10 @@ def main() -> None:
     ap.add_argument("--harness", default="codex", choices=sorted(HARNESSES))
     ap.add_argument("--planner", required=True, choices=["on", "off"])
     ap.add_argument("--note", default="")
+    # The engagement level this cell ran at, recorded as a FIELD rather than parsed back out of the
+    # note. The note is prose and has been reformatted twice; a column that a status command counts
+    # must not depend on a regex over prose surviving the next edit.
+    ap.add_argument("--level", type=int, default=None)
     ap.add_argument("--milestone-minutes", type=int, default=0,
                     help="minutes allowed per deliverable. 0 (default) keeps the flat 30-minute "
                          "wall. When set, the run must hold score >= 1 after the first interval, "
@@ -478,6 +482,7 @@ def main() -> None:
     row = {
         "run_id": run_id, "task": args.task, "model": args.model, "harness": args.harness,
         "planner": args.planner, "note": args.note, "sampling": spec,
+        **({"level": args.level} if args.level is not None else {}),
         "started": t0, "wall_seconds": round(t1 - t0, 1), "terminal": terminal,
         "milestone_minutes": args.milestone_minutes or None, "milestones": milestones or None,
         "success": bool(verdict.get("success")), "score": verdict.get("score"),
