@@ -2801,7 +2801,11 @@ class Loop:
         # GATE_EVERY_CODER_TURNS acting turns, run the repo's checks so a step that edits many DIFFERENT
         # things for dozens of turns (never spiraling, never claiming done) still gets ground truth — the
         # exact case the per-step gate + wheel-spin detectors miss. Only when nothing else steers this turn.
-        if not sess.nudge_reason:
+        # LEVEL 5 — ASSISTS_ENABLED. The periodic gate is SCHEDULED: a turn counter fires it and the
+        # model asked for nothing, which is the same trigger test that puts the periodic satisfaction
+        # check at level 5 (see LoopContext.assists). The gate MACHINERY is shared with the level-4
+        # completion probe; what decides the rung is who started it.
+        if self._ctx.assists and not sess.nudge_reason:
             periodic = guard_periodic_gate(sess, body, rlog, workspace_root=sess.workspace_root)
             if periodic is not None:
                 return periodic
@@ -4194,7 +4198,8 @@ class Loop:
             return done_now
         # PERIODIC gate: every N acting turns, run the checks and insert ground truth — only when nothing
         # else is steering this turn (a guard steer / re-anchor takes precedence).
-        if steer is None and not rewritten:
+        # LEVEL 5 — ASSISTS_ENABLED, same rule as the other call site: scheduled, so it is an assist.
+        if self._ctx.assists and steer is None and not rewritten:
             periodic = guard_periodic_gate(sess, body, rlog, workspace_root=sess.workspace_root)
             if periodic is not None:
                 return periodic
