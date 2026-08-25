@@ -149,3 +149,9 @@ L0 rung verified clean: zero `loop.*`, `massage.*`, tool or context events in th
 **Judged 7.** `milestone-miss-30min` after 49 calls. The coder wrote 622 lines — express zone constants, an EU-membership lookup, the lot — and every line is dead, because line 6 is `require "all_countries"` and no such gem exists. No Gemfile was written either. The box has `countries`, `eu_countries` and `iso_country_codes` installed; the model invented a fourth name.
 
 Worth recording against the rung question: ternary-bonsai scored 54 on this task at L0 and 7 at L1. The failure is a hallucinated dependency name, which is not something any rung of the ladder touches.
+
+### Pass 2 — cell 12/76 — L1 cart-billing-go × ternary-bonsai
+
+**Judged 32.** `milestone-miss-30min` after only 11 model calls. Does not compile. Three invented library APIs in one file — `decimal.NewFromInt64`, `decimal.RoundingHalfEven`, and a two-argument `Round` — plus `Discounts` read but never defined and `sub.Float64()` used in single-value context when it returns two.
+
+Second ternary-bonsai cell in a row lost to hallucinated API surface rather than to reasoning. At L0 this model scored 90 on the same task.
