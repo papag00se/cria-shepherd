@@ -143,3 +143,9 @@ L0 rung verified clean: zero `loop.*`, `massage.*`, tool or context events in th
 ### Pass 2 — cell 10/76 — L0 rust-toml-cli × ternary-bonsai
 
 **Judged 98** in 30.4 minutes and 75 calls. Recursive table walk with correct `None` on a non-table intermediate, six integration tests that cover the failure paths, and a table-valued key path that exits 1 instead of printing a table. Deducted 5 on `lookup` for `{:.10}` float printing — over-precise, but no float exists in the config, so nothing exercises it. This completes ternary-bonsai's L0 row.
+
+### Pass 2 — cell 11/76 — L1 shipping-rates-rb × ternary-bonsai
+
+**Judged 7.** `milestone-miss-30min` after 49 calls. The coder wrote 622 lines — express zone constants, an EU-membership lookup, the lot — and every line is dead, because line 6 is `require "all_countries"` and no such gem exists. No Gemfile was written either. The box has `countries`, `eu_countries` and `iso_country_codes` installed; the model invented a fourth name.
+
+Worth recording against the rung question: ternary-bonsai scored 54 on this task at L0 and 7 at L1. The failure is a hallucinated dependency name, which is not something any rung of the ladder touches.
