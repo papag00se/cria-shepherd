@@ -123,3 +123,11 @@ All four superseded L4 gemma4 cells are now re-run at their own rung: 100, 100, 
 ### Pass 2 — cell 6/76 — L3 cart-billing-go × qwen35
 
 **Judged 100** in 1.9 minutes and 34 calls. Decimal arithmetic end to end with a single `Round(2)` at the last step — the shape the task is actually testing — plus a named rounding regression test and a discounts file the program survives without. Rung clean in the strongest possible form: **zero `loop.*` events in the window**, which is what level 3 should look like, since every loop event belongs to level 4 or above.
+
+### Pass 2 — cell 7/76 — L0 orders-api-py × ternary-bonsai (previously wrote no row)
+
+**Judged 89**, `milestone-miss-60min` after 135 calls and 60.7 minutes. Route, schema and injection fix all fully delivered; the integration suite is well built — subprocess server, socket wait, four route cases — but red, and the cause is one Python defect in the coder's own code:
+
+`orders/db.py` binds `def create_order(..., path=DB_PATH)`. Default arguments bind at import, so `serve()`'s `db.DB_PATH = db_path` never reaches it. Point the app at a custom database and `init()` creates the table in the new file while every query still writes to the old one — which is why `orders.db` is 0 bytes on disk. Single-token-class defect, same family as the others this campaign has surfaced.
+
+L0 rung verified clean: zero `loop.*`, `massage.*`, tool or context events in the window.
