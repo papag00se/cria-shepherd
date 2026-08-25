@@ -105,3 +105,7 @@ The runner died overnight taking cell 75 with it; relaunched 06:09 with the re-d
 ### Pass 2 — cell 2/76 — L4 orders-api-py × gemma4 (re-run of a superseded cell)
 
 **Judged 100.** Parameterised SQL in both query paths, a real index on `customer`, and integration tests that start the server on a thread and speak HTTP to it. Session ended on its own after 63 calls in 15.4 minutes. Rung clean — no level-5 mechanism fired; the one `loop.rumination` is a level-4 recovery. A duplicate `orders.db` at the workspace root is untidy but outside every deliverable.
+
+### Pass 2 — cell 3/76 — L4 feed-pipeline-java × gemma4 (re-run of a superseded cell)
+
+**Judged 100**, in 8.3 minutes and 30 calls. Notable because the concurrency fix is the correct one, not the near-miss that has sunk other cells on this task: `totals.merge(sku, value, Double::sum)` on a `ConcurrentHashMap` is atomic, where a lock wrapped around a read-modify-write pair is not. Speed bar cleared 32.2× against 4.0×. Rung clean — no level-5 mechanism fired.
