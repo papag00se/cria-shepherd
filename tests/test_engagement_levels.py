@@ -76,6 +76,13 @@ RUNG_KINDS: dict[int, tuple[str, ...]] = {
         # The driver EXISTING is level 4: below this rung there is no loop at all, so its start,
         # its per-step bookkeeping and its completion verdict all belong here.
         "loop.start", "loop.step_incomplete", "loop.item", "loop.drive",
+        # RECOVERING A DEAD TURN belongs to the rung where the loop exists at all, not to assists.
+        # `guard_rumination` and `guard_truncation` both key off a finish_reason the streaming layer
+        # already set — runaway thinking, and a cut-off write — and re-prompt so the turn produces
+        # something instead of nothing. Neither is triggered by a completion claim or by a turn
+        # counter, so neither fits the 4/5 trigger test; what settles it is that a loop which cannot
+        # recover an aborted turn is not a working loop. Seen once on L4 shipping-rates-rb x qwen35.
+        "loop.rumination", "loop.truncation",
         "loop.done_critic", "loop.completion_probe", "loop.task_complete",
         "loop.satisfaction_confirm", "loop.verdict_by_tool",
     ),
