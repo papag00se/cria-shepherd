@@ -122,27 +122,43 @@ def main() -> int:
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args()
 
-    todo = worklist()
     total = len(LEVELS) * len(MODELS) * len(TASKS)
-    print(f"[ladder] {total - len(todo)}/{total} already done; {len(todo)} to run", flush=True)
     if args.dry_run:
+        todo = worklist()
+        print(f"[ladder] {total - len(todo)}/{total} already done; {len(todo)} to run", flush=True)
         for lvl, m, t in todo:
             print(f"  L{lvl}  {m:18s} {t}")
         return 0
 
-    for i, (lvl, model, task) in enumerate(todo, 1):
-        stamp = time.strftime("%H:%M:%S")
-        print(f"[{stamp}] ({i}/{len(todo)}) L{lvl} {task} x {model} — start", flush=True)
-        rc = subprocess.run([sys.executable, str(SUITE / "battery_run.py"),
-                             "--level", str(lvl), "--model", model, "--task", task]).returncode
-        print(f"[{time.strftime('%H:%M:%S')}] ({i}/{len(todo)}) L{lvl} {task} x {model} — exit {rc}",
-              flush=True)
-        reap_leaked_listeners()
-        # The worklist is re-derived next pass, so a failed cell simply stays outstanding. Nothing
-        # here decides to retry: a cell that keeps failing is a finding for the operator to read,
-        # not a loop to spin in.
-    print(f"[ladder] pass complete at {time.strftime('%H:%M:%S')}", flush=True)
-    return 0
+    # RE-DERIVED EVERY ROUND, not once at startup. A cell can become outstanding again WHILE this
+    # process runs: four level-4 cells were superseded mid-run on 2026-08-25 when a level-5 mechanism
+    # was found leaking into them, and a list computed at launch could never have offered them again.
+    # The gap was invisible from inside — the counter said 33 cells and the grid had eight holes.
+    #
+    # The round ends when the worklist stops shrinking, so a cell that keeps failing is reported and
+    # left alone rather than retried forever: it is a finding for the operator to read, not a loop.
+    seen_outstanding = None
+    while True:
+        todo = worklist()
+        if not todo:
+            print(f"[ladder] {total}/{total} done at {time.strftime('%H:%M:%S')}", flush=True)
+            return 0
+        if seen_outstanding is not None and set(todo) == seen_outstanding:
+            print(f"[ladder] {len(todo)} cell(s) still outstanding after a full round and none of "
+                  f"them moved — stopping rather than retrying. Outstanding:", flush=True)
+            for lvl, m, t in todo:
+                print(f"  L{lvl}  {m:18s} {t}", flush=True)
+            return 1
+        seen_outstanding = set(todo)
+        print(f"[ladder] {total - len(todo)}/{total} already done; {len(todo)} to run", flush=True)
+        for i, (lvl, model, task) in enumerate(todo, 1):
+            stamp = time.strftime("%H:%M:%S")
+            print(f"[{stamp}] ({i}/{len(todo)}) L{lvl} {task} x {model} — start", flush=True)
+            rc = subprocess.run([sys.executable, str(SUITE / "battery_run.py"),
+                                 "--level", str(lvl), "--model", model, "--task", task]).returncode
+            print(f"[{time.strftime('%H:%M:%S')}] ({i}/{len(todo)}) L{lvl} {task} x {model} "
+                  f"— exit {rc}", flush=True)
+            reap_leaked_listeners()
 
 
 if __name__ == "__main__":
