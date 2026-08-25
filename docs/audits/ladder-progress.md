@@ -135,3 +135,7 @@ L0 rung verified clean: zero `loop.*`, `massage.*`, tool or context events in th
 ### Pass 2 — cell 8/76 — L0 feed-pipeline-java × ternary-bonsai (previously wrote no row)
 
 **Judged 0.** `exited` after 10 model calls and 83 seconds. `git status` shows the tree clean apart from a `target/` build directory — the coder compiled the seed and stopped without writing a line. Both previously row-less cells now have rows.
+
+### Pass 2 — cell 9/76 — L0 handles-cli-node × ternary-bonsai
+
+**Judged 100** in 13.7 minutes and 40 calls. Notable for the test suite: `test/run-tests.js` spawns the real CLI as a child process across nine scenarios and asserts on exit codes and parsed output. Compare gemma4's L4 cell on the same task, judged 93, whose live test re-implemented the fetch inline and would pass against a broken CLI. Same check met by both; only one of them actually tests the program.
