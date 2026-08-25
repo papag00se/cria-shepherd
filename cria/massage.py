@@ -180,8 +180,37 @@ def strip_debris_from_args(completion: dict, rlog=None) -> dict:
     return completion
 
 
-def apply(completion: dict, tools=None, rlog=None) -> dict:
-    """Run all output massages, in order."""
+# LEVEL 1 — TOOL_CALL_FIXES, held as ONE process-wide fact rather than threaded through seven call
+# sites in three modules. cria runs one config per process, so the engagement level is genuinely a
+# property of the process; and a rung gate that has to be written at seven sites is a rung gate that
+# gets honoured at six. Three leaks on this ladder were exactly that shape — the tool menu, the
+# periodic gate, compaction reframing — each duplicated at two call sites and each fixed at one.
+# `CriaServer` sets it once at startup from `[engagement] level`; the default is the full behaviour,
+# so any caller that predates the ladder is unaffected.
+_TOOL_CALL_FIXES = True
+
+
+def set_tool_call_fixes(enabled: bool) -> None:
+    """Called once, from the server's construction. See `_TOOL_CALL_FIXES`."""
+    global _TOOL_CALL_FIXES
+    _TOOL_CALL_FIXES = bool(enabled)
+
+
+def apply(completion: dict, tools=None, rlog=None, *, tool_call_fixes: bool | None = None) -> dict:
+    """Run all output massages, in order.
+
+    LEVEL 1 — TOOL_CALL_FIXES. Every pass in this chain exists to make the many ways a model emits a
+    tool call homogeneous: a dialect leaked into text or the reasoning channel, a fused tail, a
+    misspelled tool name, fenced JSON arguments. None of it changes the TOOLSET and none of it is an
+    assist, but all of it is a change to what the model said, so at the pure proxy it must not run.
+    `tool_call_fixes=False` returns the completion untouched.
+
+    Measured on the ladder, 2026-08-25: qwen35's first level-0 cell logged 66
+    `massage.reasoning_call_recovered` — level 1's headline mechanism, running in the arm that is
+    supposed to be without it. gemma4 never exposed it because it emits 6 of these in a whole
+    campaign; qwen35 emits hundreds, which is exactly why the ladder runs more than one model."""
+    if not (_TOOL_CALL_FIXES if tool_call_fixes is None else tool_call_fixes):
+        return completion
     completion = recover_leaked_tool_calls(completion, tools, rlog)  # text → real tool_calls
     completion = strip_debris_from_args(completion, rlog)  # fused-call tail off EVERY string arg
     completion = normalize_tool_names(completion, tools, rlog)  # EditFile/edit-file → edit_file (case/sep)

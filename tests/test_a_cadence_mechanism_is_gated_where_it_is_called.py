@@ -76,5 +76,46 @@ class CompactionReframingIsLevelThree(unittest.TestCase):
                                  f"compaction reframing did NOT run at level {level}")
 
 
+
+class OutputMassagesAreLevelOne(unittest.TestCase):
+    """The output massage chain — dialect recovery, fused-tail trimming, tool-name normalisation,
+    argument repair — is TOOL_CALL_FIXES. It ran at every level until 2026-08-25, and gemma4 never
+    exposed it because it emits six of these in a whole campaign. qwen35's first level-0 cell logged
+    66 `massage.reasoning_call_recovered`: level 1's headline mechanism, in the arm defined as being
+    without it. Running more than one model is what found it."""
+
+    def _leaky(self):
+        return {"choices": [{"finish_reason": "stop", "message": {
+            "role": "assistant", "content": "",
+            "reasoning_content": "<|tool_call_start|>[read_file(path=\"a.py\")]<|tool_call_end|>"}}]}
+
+    TOOLS = [{"type": "function", "function": {"name": "read_file", "description": "read",
+                                               "parameters": {"type": "object",
+                                                              "properties": {"path": {"type": "string"}}}}}]
+
+    def test_the_chain_is_inert_when_tool_call_fixes_is_off(self):
+        from cria import massage
+        out = massage.apply(self._leaky(), self.TOOLS, None, tool_call_fixes=False)
+        self.assertNotIn("tool_calls", out["choices"][0]["message"],
+                         "a dialect leak was promoted at a level that has no dialect repair")
+
+    def test_the_chain_runs_when_it_is_on(self):
+        from cria import massage
+        out = massage.apply(self._leaky(), self.TOOLS, None, tool_call_fixes=True)
+        self.assertIn("tool_calls", out["choices"][0]["message"],
+                      "level 1 must still recover a call the model left in the reasoning channel")
+
+    def test_the_server_sets_it_from_the_level(self):
+        """One process-wide flag, set at construction — not threaded through seven call sites."""
+        from cria import massage
+        for level, want in ((cfgmod.PURE_PROXY, False), (cfgmod.TOOL_CALL_FIXES, True),
+                            (cfgmod.MAX_ENGAGEMENT_LEVEL, True)):
+            with self.subTest(level=level):
+                massage.set_tool_call_fixes(Config(routing=RoutingConfig(
+                    engagement_level=level)).routing.tool_call_fixes)
+                out = massage.apply(self._leaky(), self.TOOLS, None)
+                self.assertEqual("tool_calls" in out["choices"][0]["message"], want)
+        massage.set_tool_call_fixes(True)   # leave the process as we found it
+
 if __name__ == "__main__":
     unittest.main()

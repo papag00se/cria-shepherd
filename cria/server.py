@@ -570,6 +570,9 @@ class CriaServer(ThreadingHTTPServer):
         self.loop = None
         # Surface a misconfigured-looking feature at startup instead of silently degrading — the
         # class of failure that hid the Brave-key bug (web_search just quietly never ran).
+        # The output massages are level 1; set the one process-wide flag before anything can call
+        # them (see massage._TOOL_CALL_FIXES for why this is not threaded through the call sites).
+        massage.set_tool_call_fixes(cfg.routing.tool_call_fixes)
         _warn_config(cfg, has_reasoner, has_coder, log)
         # Always build the loop when a coder exists; require a reasoner only when the planner is ON.
         # Planner OFF → the loop drives the synthetic 1-item path (guards but no decomposition).
