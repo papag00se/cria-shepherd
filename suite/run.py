@@ -218,8 +218,16 @@ def codex_pids():
     return pids
 
 
-def collect_capture(session_dir: Path) -> dict:
-    calls = sorted(session_dir.glob("*.response.json"))
+def collect_capture(session_dirs) -> dict:
+    """Every call the run made, across ALL of its capture directories.
+
+    cria opens a fresh capture directory per server session, and one cell can span several: the
+    harness reconnects, or the run trails a short session after the main one. Reading only the
+    newest directory reports that tail as the whole run. L2 cart-billing-go x ternary-bonsai
+    recorded `calls: 2` against 93 real calls in the directory next to it, which reads in the
+    report as a model that produced nothing in half an hour. Sum them.
+    """
+    calls = sorted(f for d in session_dirs for f in d.glob("*.response.json"))
     phases, tok_n, tok_ms = {}, 0, 0.0
     for f in calls:
         m = re.match(r"\d+-(.+?)(?:-s\d+.*)?\.response\.json$", f.name)
@@ -450,8 +458,10 @@ def main() -> None:
 
     new_sessions = [CALLS_DIR / n for n in
                     set(p.name for p in CALLS_DIR.glob("2*")) - before_sessions]
-    session_dir = max(new_sessions, key=lambda p: p.stat().st_mtime) if new_sessions else None
-    capture = collect_capture(session_dir) if session_dir else \
+    # The primary directory is the one that carries the work, not the one that finished last.
+    session_dir = max(new_sessions, key=lambda p: len(list(p.glob("*.response.json"))),
+                      default=None) if new_sessions else None
+    capture = collect_capture(new_sessions) if new_sessions else \
         {"calls": 0, "phases": {}, "avg_tok_s": None, "output_tokens_timed": 0}
 
     # EVIDENCE PRESERVATION (operator directive 2026-07-29): every run's artifacts are evidence
@@ -493,6 +503,7 @@ def main() -> None:
         "archive": str(archive),
         "user_install_leak": sorted(user_install_listing() - installs_before),
         "capture_dir": str(session_dir) if session_dir else None,
+        "capture_dirs": sorted(str(d) for d in new_sessions) or None,
         "harness_log": str(log_path),
     }
     throttled = throttled_mid_run(session_dir)

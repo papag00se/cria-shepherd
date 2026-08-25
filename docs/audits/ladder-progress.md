@@ -191,3 +191,11 @@ Sharpest instance yet of the pattern: this model's own L0 cell on the same task 
 **Judged 100** in 32.6 minutes and 112 calls. Real `ISO3166::Country#in_eu?` lookup behind a declared Gemfile, complete README table, and 21 self-written tests covering boundaries the prompt never named — oversize surcharge interacting with free shipping, the oversize kilo threshold, negative weight, unknown zone. Rung clean: no `loop.*`, context-floor, focus-trim or compaction events.
 
 Same model, same task: 54 at L0, 7 at L1, 100 at L2.
+
+### Pass 2 — cell 18/76 — L2 cart-billing-go × ternary-bonsai
+
+**Judged 33.** `milestone-miss-30min`. Root cause is a hallucinated version number: `go.mod` requires `github.com/shopspring/decimal v1.30.0`, which does not exist, so `go.sum` can never be written and the package never builds. Confirmed by hand — `go get` reports `unknown revision v1.30.0`. Behind it waits a second invented name, `decimal.RoundModeHalfUp`. Third ternary-bonsai cell lost to invented dependency coordinates.
+
+**Metrics bug found and fixed (`suite/run.py`).** This row recorded `calls: 2` and `avg_tok_s: 51.4`. The run actually made **101 calls at 43.5 tok/s**. `collect_capture` read only the newest capture directory, and cria had opened five during the cell; the newest held a two-call tail. `calls` and `avg_tok_s` feed the `avg calls` and `avg min` columns of every level grid, so the report was carrying a false fact about how hard a model worked.
+
+Fix: sum every capture directory created inside the run window, and pick the primary by call count rather than mtime. Row repaired in place with a `metrics_repaired` note. Swept all other ladder rows against their own capture directories — **this was the only one wrong**.
