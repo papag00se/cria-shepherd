@@ -63,7 +63,7 @@ four L4 cells were superseded for. It also would not have saved this cell: `list
 off-menu, so a recovered call is refused, and the fact that the tool does not exist is spoken by the
 LOOP, which is level 4. Below level 4 an off-menu call is silence either way.
 
-## Cells — 72 / 144
+## Cells — 73 / 144
 
 Judged usefulness per cell. `·` not run, `—` run but not judged.
 
@@ -81,7 +81,7 @@ Judged usefulness per cell. `·` not run, `—` run but not judged.
 | qwen35 | L3 CONTEXT_FIXE | **93** | · | **83** | **80** | **58** | **74** | 78 |
 | qwen35 | L4 DONE_REFUSAL | **86** | **45** | **79** | **100** | **83** | **100** | 82 |
 | qwen35 | L5 ASSISTS_ENAB | **100** | **63** | **29** | **96** | **58** | **100** | 74 |
-| ternary-bonsai | L0 pure proxy | **54** | · | · | · | · | · | 54 |
+| ternary-bonsai | L0 pure proxy | **54** | **90** | · | · | · | · | 72 |
 | ternary-bonsai | L1 TOOL_CALL_FI | · | · | · | · | · | · | · |
 | ternary-bonsai | L2 SIMPLE_TOOLS | · | · | · | · | · | · | · |
 | ternary-bonsai | L3 CONTEXT_FIXE | · | · | · | · | · | · | · |
@@ -94,4 +94,10 @@ Judged usefulness per cell. `·` not run, `—` run but not judged.
 | nemotron-elastic | L4 DONE_REFUSAL | · | · | · | · | · | · | · |
 | nemotron-elastic | L5 ASSISTS_ENAB | · | · | · | · | · | · | · |
 
-_updated 2026-08-25 05:29_
+_updated 2026-08-25 05:38_
+
+### Pass 2 — cell 1/76 — L4 shipping-rates-rb × gemma4 (re-run of a superseded cell)
+
+The runner died overnight taking cell 75 with it; relaunched 06:09 with the re-deriving worklist, which offered the four superseded L4 gemma4 cells for the first time. Left behind: an orphaned codex still calling the single-slot model server, and `[engagement] level = 0` in the live config — a killed runner never restores it. Both cleared before relaunch.
+
+**Judged 100.** All five checks met with real work behind each: `countries ~> 8.1` in the Gemfile and `ISO3166::Country#in_eu?` actually called in `lib/shipping/rates.rb`, README table complete, coder-written tests added. Rung clean — no level-5 mechanism fired in the cell's window (`loop.periodic_gate`, `loop.wheel_spinning`, `loop.satisfaction_check` all absent). `loop.rumination` fired once, which is a level-4 recovery and belongs here.

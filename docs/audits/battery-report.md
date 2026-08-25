@@ -1,6 +1,6 @@
 # Battery — the engagement ladder
 
-**Last updated 2026-08-24 22:29** — newest row `shipping-rates-rb_qwen35_codex_poff_1787635145`, scored 2026-08-24 22:27.
+**Last updated 2026-08-25 06:37** — newest row `shipping-rates-rb_gemma4_codex_poff_1787663355`, scored 2026-08-25 06:34.
 
 Tables only. Findings, walks and the retired two-arm campaign: [`battery-history.md`](battery-history.md).
 Per-cell judging: [`ladder-progress.md`](ladder-progress.md). Status: `python3 suite/engagement_status.py`.
@@ -13,7 +13,7 @@ Per-cell judging: [`ladder-progress.md`](ladder-progress.md). Status: `python3 s
 |---|---|---|---|---|---|---|---:|---:|---:|
 | 🟢 gemma4 | 85% | 92% | 89% | 100% | 93% | 86% | 91% | 2 | 20 |
 | 🔴 qwen35 | · | 21% | 0% | 0% | 0% | 0% | 4% | 1 | 10 |
-| ternary-bonsai | · | · | · | · | · | · | · | — | — |
+| 🟡 ternary-bonsai | 54% | 90% | · | · | · | · | 72% | 23 | 70 |
 | nemotron-elastic | · | · | · | · | · | · | · | — | — |
 
 ### Level 1 — TOOL_CALL_FIXES — dialect and template repair
@@ -30,7 +30,7 @@ Per-cell judging: [`ladder-progress.md`](ladder-progress.md). Status: `python3 s
 | model | ruby | go | python | java | node | rust | total | avg min | avg calls |
 |---|---|---|---|---|---|---|---:|---:|---:|
 | 🟡 gemma4 | 11% | 89% | 81% | 76% | 66% | 100% | 70% | 9 | 71 |
-| 🟡 qwen35 | 76% | · | · | · | · | · | 76% | 8 | 95 |
+| 🟡 qwen35 | 76% | 89% | 88% | 100% | 63% | 100% | 86% | 6 | 50 |
 | ternary-bonsai | · | · | · | · | · | · | · | — | — |
 | nemotron-elastic | · | · | · | · | · | · | · | — | — |
 
@@ -39,7 +39,7 @@ Per-cell judging: [`ladder-progress.md`](ladder-progress.md). Status: `python3 s
 | model | ruby | go | python | java | node | rust | total | avg min | avg calls |
 |---|---|---|---|---|---|---|---:|---:|---:|
 | 🟡 gemma4 | 85% | 88% | 84% | 96% | 78% | 86% | 86% | 6 | 27 |
-| qwen35 | · | · | · | · | · | · | · | — | — |
+| 🟡 qwen35 | 93% | · | 83% | 80% | 58% | 74% | 78% | 10 | 58 |
 | ternary-bonsai | · | · | · | · | · | · | · | — | — |
 | nemotron-elastic | · | · | · | · | · | · | · | — | — |
 
@@ -47,8 +47,8 @@ Per-cell judging: [`ladder-progress.md`](ladder-progress.md). Status: `python3 s
 
 | model | ruby | go | python | java | node | rust | total | avg min | avg calls |
 |---|---|---|---|---|---|---|---:|---:|---:|
-| 🟡 gemma4 | · | 73% | · | · | · | 86% | 80% | 5 | 27 |
-| qwen35 | · | · | · | · | · | · | · | — | — |
+| 🟡 gemma4 | 100% | 73% | · | · | · | 86% | 86% | 12 | 51 |
+| 🟡 qwen35 | 86% | 45% | 79% | 100% | 83% | 100% | 82% | 17 | 140 |
 | ternary-bonsai | · | · | · | · | · | · | · | — | — |
 | nemotron-elastic | · | · | · | · | · | · | · | — | — |
 
@@ -57,7 +57,7 @@ Per-cell judging: [`ladder-progress.md`](ladder-progress.md). Status: `python3 s
 | model | ruby | go | python | java | node | rust | total | avg min | avg calls |
 |---|---|---|---|---|---|---|---:|---:|---:|
 | 🟡 gemma4 | 73% | 89% | 92% | 100% | 91% | 51% | 83% | 24 | 86 |
-| qwen35 | · | · | · | · | · | · | · | — | — |
+| 🟡 qwen35 | 100% | 63% | 29% | 96% | 58% | 100% | 74% | 31 | 172 |
 | ternary-bonsai | · | · | · | · | · | · | · | — | — |
 | nemotron-elastic | · | · | · | · | · | · | · | — | — |
 
