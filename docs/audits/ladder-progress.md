@@ -155,3 +155,13 @@ Worth recording against the rung question: ternary-bonsai scored 54 on this task
 **Judged 32.** `milestone-miss-30min` after only 11 model calls. Does not compile. Three invented library APIs in one file — `decimal.NewFromInt64`, `decimal.RoundingHalfEven`, and a two-argument `Round` — plus `Discounts` read but never defined and `sub.Float64()` used in single-value context when it returns two.
 
 Second ternary-bonsai cell in a row lost to hallucinated API surface rather than to reasoning. At L0 this model scored 90 on the same task.
+
+### Pass 2 — cell 13/76 — L1 orders-api-py × ternary-bonsai
+
+**Judged 61.** `milestone-miss-30min` after 49 calls. Three one-line defects, all of a kind:
+
+- `/customers/alice/orders` → `self.path[12:]`. The prefix is 11 characters and the `/orders` suffix is never stripped, so it looks up a customer named `lice/orders`.
+- `/orders/1` → `self.path[7:]` leaves the leading slash, so the id is `/1` and every fetch 404s. This is what makes the verifier's "old rows readable" flag false — the migration is sound (guarded `ALTER TABLE ADD COLUMN`, index created); the reader is broken.
+- The integration helper signals readiness from inside the request handler, then waits for that signal before sending a request. Ten tests each burn the full 10-second timeout waiting for a request they are blocking.
+
+Scored `schema_migrated` at 85 rather than 0: the data survives, and the check that reads it back was defeated by a different deliverable's bug.
