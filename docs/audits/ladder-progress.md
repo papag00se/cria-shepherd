@@ -44,7 +44,26 @@ construction rather than by discipline — there is no plan-on branch left to di
 that `blocked` is its first word, asserted against a Loop with no context at all. A level gate in
 front of that broke six test files before the gate moved to the two call sites instead.
 
-## Cells — 45 / 144
+## Open finding: dialect recovery cannot parse a call with no parameters
+
+`massage._reasoning_call_spans` matches `<function=X><parameter=…>…</parameter></function>` and
+returns NOTHING for `<function=X></function>`. Verified directly:
+
+    spans for a NO-PARAMETER call:   []
+    spans for a call WITH a parameter: [(14, 81, 'xml-function', [('read_file', {'path': 'a.py'})])]
+
+Walked on L1 handles-cli-node x qwen35 (2026-08-25), judged 0. Recovery fired once, then the model
+emitted `<function=list_mcp_resources></function>` and the turn came back empty — the call was
+neither recovered, nor refused as off-menu, nor logged. A lost action with no trace, which is the
+class doctrine 12 exists for.
+
+NOT FIXED MID-CAMPAIGN, deliberately. Changing what level 1 does while its cells are running would
+mean qwen35's L1 arm was measured under two different level-1 behaviours — the same contamination
+four L4 cells were superseded for. It also would not have saved this cell: `list_mcp_resources` is
+off-menu, so a recovered call is refused, and the fact that the tool does not exist is spoken by the
+LOOP, which is level 4. Below level 4 an off-menu call is silence either way.
+
+## Cells — 47 / 144
 
 Judged usefulness per cell. `·` not run, `—` run but not judged.
 
@@ -57,7 +76,7 @@ Judged usefulness per cell. `·` not run, `—` run but not judged.
 | gemma4 | L4 DONE_REFUSAL | **26** | **73** | — | — | — | **86** | 62 |
 | gemma4 | L5 ASSISTS_ENAB | **73** | **89** | **92** | **100** | **91** | **51** | 83 |
 | qwen35 | L0 pure proxy | — | **21** | **0** | **0** | **0** | **0** | 4 |
-| qwen35 | L1 TOOL_CALL_FI | **55** | **92** | **83** | · | · | · | 77 |
+| qwen35 | L1 TOOL_CALL_FI | **55** | **92** | **83** | **62** | **0** | · | 58 |
 | qwen35 | L2 SIMPLE_TOOLS | · | · | · | · | · | · | · |
 | qwen35 | L3 CONTEXT_FIXE | · | · | · | · | · | · | · |
 | qwen35 | L4 DONE_REFUSAL | · | · | · | · | · | · | · |
@@ -75,4 +94,4 @@ Judged usefulness per cell. `·` not run, `—` run but not judged.
 | nemotron-elastic | L4 DONE_REFUSAL | · | · | · | · | · | · | · |
 | nemotron-elastic | L5 ASSISTS_ENAB | · | · | · | · | · | · | · |
 
-_updated 2026-08-24 21:28_
+_updated 2026-08-24 22:17_
