@@ -734,15 +734,7 @@ class CriaHandler(BaseHTTPRequestHandler):
         if isinstance(messages, list):
             # The view first: `reframe_compaction` asks it whether the workspace is empty, and an
             # unbound view answers "not surveyed" to everything (see _bind_workspace_view).
-            self._bind_workspace_view(body, session_key(self.headers, messages))
-            cleaned, stripped = strip_history(messages)
-            cleaned, reframed = reframe_compaction(cleaned)  # reattribute the harness compaction turn
-            if stripped or reframed:
-                body["messages"] = cleaned
-                if stripped:
-                    rlog.emit("indicators.stripped", lines=stripped)
-                if reframed:
-                    rlog.emit("loop.compaction_reframed", reshape="reframe")
+            self._strip_and_reframe_inbound(body, session_key(self.headers, messages), rlog)
 
         # write_file↔shell: if the harness has shell but not write_file, re-present
         # our prior shell translations as write_file (so the model sees its own
@@ -868,6 +860,38 @@ class CriaHandler(BaseHTTPRequestHandler):
         per-session key exact."""
         self._workspace_root = _session_cwd(sess_key, body.get("messages", []), lexical=True)
         wsview.bind(wsview.View(self._workspace_root, sess_key))
+
+    def _strip_and_reframe_inbound(self, body: dict, sess_key: str, rlog) -> None:
+        """Strip cria's own indicator lines from the history, and — at CONTEXT_FIXES and above —
+        reattribute the harness's compaction turn.
+
+        ONE OWNER. This was two byte-identical copies, one per transport path, and the level gate
+        below had to be written into both. A rung gate at two call sites is honoured at one of them
+        the first time someone edits in a hurry; the tool layer had the same shape and the same fix.
+
+        The view is bound FIRST: `reframe_compaction` asks it whether the workspace is empty, and an
+        unbound view answers "not surveyed" to everything (see `_bind_workspace_view`).
+        """
+        messages = body.get("messages")
+        if not isinstance(messages, list):
+            return
+        self._bind_workspace_view(body, sess_key)
+        cleaned, stripped = strip_history(messages)
+        # LEVEL 3 — CONTEXT_FIXES. Reattributing the harness's compaction turn REWRITES a message the
+        # harness wrote, which is surgery on the context by any reading, so it belongs to the rung
+        # that owns surgery. It ran at EVERY level including the pure proxy until 2026-08-25, and
+        # escaped notice because a level-0 session is short enough that the harness never compacts —
+        # the same blind spot that hid the periodic gate. A mechanism that needs a long conversation
+        # to fire cannot be proven gated by a test that sends one short request.
+        reframed = 0
+        if self.server.cfg.routing.context_fixes:
+            cleaned, reframed = reframe_compaction(cleaned)
+        if stripped or reframed:
+            body["messages"] = cleaned
+            if stripped:
+                rlog.emit("indicators.stripped", lines=stripped)
+            if reframed:
+                rlog.emit("loop.compaction_reframed", reshape="reframe")
 
     def _setup_translation(self, body: dict, sess_key: str, rlog) -> None:
         """Set up the synthetic-tool ↔ shell round-trip for this request: STATELESSLY re-present prior
@@ -1263,15 +1287,7 @@ class CriaHandler(BaseHTTPRequestHandler):
         if isinstance(messages, list):
             # The view first: `reframe_compaction` asks it whether the workspace is empty, and an
             # unbound view answers "not surveyed" to everything (see _bind_workspace_view).
-            self._bind_workspace_view(body, sess_key)
-            cleaned, stripped = strip_history(messages)
-            cleaned, reframed = reframe_compaction(cleaned)  # reattribute the harness compaction turn
-            if stripped or reframed:
-                body["messages"] = cleaned
-                if stripped:
-                    rlog.emit("indicators.stripped", lines=stripped)
-                if reframed:
-                    rlog.emit("loop.compaction_reframed", reshape="reframe")
+            self._strip_and_reframe_inbound(body, sess_key, rlog)
 
         # Same context-shaping as the chat path: write_file↔shell + cheat-sheet. Pass THIS path's
         # sess_key (sid:<sess>) so the fetch gate's visible-set is recorded under the SAME key the
