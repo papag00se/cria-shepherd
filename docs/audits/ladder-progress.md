@@ -165,3 +165,9 @@ Second ternary-bonsai cell in a row lost to hallucinated API surface rather than
 - The integration helper signals readiness from inside the request handler, then waits for that signal before sending a request. Ten tests each burn the full 10-second timeout waiting for a request they are blocking.
 
 Scored `schema_migrated` at 85 rather than 0: the data survives, and the check that reads it back was defeated by a different deliverable's bug.
+
+### Pass 2 — cell 14/76 — L1 feed-pipeline-java × ternary-bonsai
+
+**Judged 14.** `milestone-miss-30min` after 59 calls. 13,441 bytes of Java, none of it compiling. Verified by patching a copy: adding the six missing `java.util.concurrent` imports still leaves two errors — `java.util.Arrays` also unimported, and `if (WORKERS_ENABLED && !rows.length > 0)`, which applies logical-not to an int. Even fixing the imports, the worker branch could never have been entered.
+
+Fourth ternary-bonsai L1 cell, fourth loss to mechanical defects the rung has no bearing on. Running L1 row for this model: 7, 32, 61, 14.
