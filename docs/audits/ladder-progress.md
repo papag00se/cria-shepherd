@@ -199,3 +199,11 @@ Same model, same task: 54 at L0, 7 at L1, 100 at L2.
 **Metrics bug found and fixed (`suite/run.py`).** This row recorded `calls: 2` and `avg_tok_s: 51.4`. The run actually made **101 calls at 43.5 tok/s**. `collect_capture` read only the newest capture directory, and cria had opened five during the cell; the newest held a two-call tail. `calls` and `avg_tok_s` feed the `avg calls` and `avg min` columns of every level grid, so the report was carrying a false fact about how hard a model worked.
 
 Fix: sum every capture directory created inside the run window, and pick the primary by call count rather than mtime. Row repaired in place with a `metrics_repaired` note. Swept all other ladder rows against their own capture directories — **this was the only one wrong**.
+
+### Pass 2 — cell 19/76 — L2 orders-api-py × ternary-bonsai
+
+**Judged 100.** `budget-killed` at 60.6 minutes after 130 calls, with the work already finished. 15 tests green, including the coder's own SQL-injection case and a multi-customer isolation case. Both route slices that broke its L1 attempt on this task are correct here.
+
+Metrics repaired for this row too (125 → 130 calls, 38.3 → 38.8 tok/s): it launched two minutes before the `collect_capture` fix landed, so it still ran the newest-dir-only code. Every row from here on is counted correctly at write time.
+
+Same model, same task: 89 at L0, 61 at L1, 100 at L2.
