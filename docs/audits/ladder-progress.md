@@ -207,3 +207,9 @@ Fix: sum every capture directory created inside the run window, and pick the pri
 Metrics repaired for this row too (125 → 130 calls, 38.3 → 38.8 tok/s): it launched two minutes before the `collect_capture` fix landed, so it still ran the newest-dir-only code. Every row from here on is counted correctly at write time.
 
 Same model, same task: 89 at L0, 61 at L1, 100 at L2.
+
+### Pass 2 — cell 20/76 — L2 feed-pipeline-java × ternary-bonsai
+
+**Judged 94** in 25 minutes and 74 calls. Every check met, 53.2× speedup against a 4× bar. Docked 25 on the race deliverable for a defect the checks cannot see: the accumulation strategy is right — per-worker local maps merged only after `join()` — but the `ArrayList` collecting those workers is mutated from all four threads inside the `Runnable`. Eight runs agreed, so the check passed; the code is still not race-free.
+
+Exactly the sort of thing the strict score cannot express — 5.0/5.0 either way.
