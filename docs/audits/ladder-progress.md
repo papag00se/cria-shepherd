@@ -240,3 +240,11 @@ Every test body is `async`, so `fn()` returns a Promise the runner never awaits.
 **Judged 1.** `milestone-miss-30min` after 71 calls. The entire session went into dependency plumbing: a Gemfile pinning `countries ~> 2.0`, `BUNDLE_PATH: ./vendor/bundle`, and 77 MB of vendored gems successfully installed. `lib/shipping/rates.rb` is byte-identical to the seed. Not one line of source was edited in half an hour.
 
 A different failure mode from this model's other losses — not a wrong token, a wrong allocation of the whole session.
+
+### Pass 2 — cell 24/76 — L3 cart-billing-go × ternary-bonsai
+
+**Judged 78.** The application is correct; its tests are not. All four tests compute the right answer — the failure lines literally read `Total() = 48.58, want 48.58` — and fail because they compare `decimal.Decimal` values with `!=` instead of `.Equal()`. Two decimals holding 15 (exponent 0) and 1500 (exponent −2) are numerically equal and structurally different.
+
+Verified: deleting `discounts.json` still builds, and with the comparison corrected the suite goes green. So `discounts_from_file` reads False only because the model's own tests are red — the loader is properly guarded with defaults behind an `err == nil` check. Scored 90 rather than 0.
+
+Strict score 3.0/5.0 for a program that does everything the task asked.
