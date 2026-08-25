@@ -213,3 +213,18 @@ Same model, same task: 89 at L0, 61 at L1, 100 at L2.
 **Judged 94** in 25 minutes and 74 calls. Every check met, 53.2× speedup against a 4× bar. Docked 25 on the race deliverable for a defect the checks cannot see: the accumulation strategy is right — per-worker local maps merged only after `join()` — but the `ArrayList` collecting those workers is mutated from all four threads inside the `Runnable`. Eight runs agreed, so the check passed; the code is still not race-free.
 
 Exactly the sort of thing the strict score cannot express — 5.0/5.0 either way.
+
+### Pass 2 — cell 21/76 — L2 handles-cli-node × ternary-bonsai
+
+**Judged 76** in 8 minutes. CLI, dependency removal and Dockerfile all correct. The test suite scores 5: twelve tests that cannot fail.
+
+```js
+function test(name, fn) {
+  try { fn(); console.log(`  ✓ ${name}`); passed++ }
+  catch (e) { failed++ }
+}
+```
+
+Every test body is `async`, so `fn()` returns a Promise the runner never awaits. `passed++` runs before any assertion does, and the summary prints and exits 0 before the microtasks settle. Confirmed by hand: the suite reports `12 passed, 0 failed` with the network removed, including both tests named "real API request". It would report the same against a deleted `lookup.js`.
+
+**Verifier detail corrected.** The check reported "passes with the network BLOCKED — mocked, not live". Nothing was mocked. The verdict was right and the score unchanged, but the wording named a cause the check never established — the same class of false account the function's own comment block records fixing once before, for the zero-collected-tests case. Now: "nothing here proves a live call (mocked, vacuous, or offline-only)". Detail only; `ok` and scoring untouched, so no cell measures anything different.

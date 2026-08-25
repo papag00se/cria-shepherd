@@ -160,7 +160,13 @@ def main() -> None:
         if b_code != 0:
             live_ok, live_detail = True, f"{' '.join(cmd)}: passes with network, fails without"
             break
-        live_detail = f"{' '.join(cmd)}: passes with the network BLOCKED — mocked, not live"
+        # "mocked" was a guess about WHY, and it has been wrong. L2 handles-cli-node x
+        # ternary-bonsai passed blocked with nothing mocked at all: its homemade runner calls
+        # async test bodies without awaiting them, so every test counted as passed before a
+        # single assertion ran. The verdict (nothing here proves a live call) is the same; the
+        # detail should not name a cause the check did not establish.
+        live_detail = (f"{' '.join(cmd)}: passes with the network BLOCKED — nothing here proves "
+                       "a live call (mocked, vacuous, or offline-only)")
     r["parts"]["tests_incl_live"] = {"ok": live_ok, "detail": live_detail}
 
     # --- Dockerfile rides with the CLI point: a container that cannot be built is not a delivery.
