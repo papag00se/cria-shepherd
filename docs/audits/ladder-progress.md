@@ -185,3 +185,9 @@ This model's L1 row now reads 7, 32, 61, 14, 99: four mechanical collapses and o
 Sharpest instance yet of the pattern: this model's own L0 cell on the same task scored 98 and its source carries a comment explaining precisely this deref — `k is &&str, so *k gives &str which implements Borrow<str>`. Same model, same task, one rung apart, and it got right at L0 what it got wrong at L1.
 
 **ternary-bonsai L1 row complete: 7, 32, 61, 14, 99, 11 → 37.** Against 72 at L0. Every loss is a mechanical defect — a hallucinated gem, three invented Go APIs, two off-by-one slices, missing Java imports, one missing deref. Level 1 repairs tool-call syntax and touches none of them.
+
+### Pass 2 — cell 17/76 — L2 shipping-rates-rb × ternary-bonsai
+
+**Judged 100** in 32.6 minutes and 112 calls. Real `ISO3166::Country#in_eu?` lookup behind a declared Gemfile, complete README table, and 21 self-written tests covering boundaries the prompt never named — oversize surcharge interacting with free shipping, the oversize kilo threshold, negative weight, unknown zone. Rung clean: no `loop.*`, context-floor, focus-trim or compaction events.
+
+Same model, same task: 54 at L0, 7 at L1, 100 at L2.

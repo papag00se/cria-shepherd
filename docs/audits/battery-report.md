@@ -1,6 +1,6 @@
 # Battery — the engagement ladder
 
-**Last updated 2026-08-25 12:01** — newest row `rust-toml-cli_ternary-bonsai_codex_poff_1787681715`, scored 2026-08-25 12:01.
+**Last updated 2026-08-25 12:34** — newest row `shipping-rates-rb_ternary-bonsai_codex_poff_1787684473`, scored 2026-08-25 12:34.
 
 Tables only. Findings, walks and the retired two-arm campaign: [`battery-history.md`](battery-history.md).
 Per-cell judging: [`ladder-progress.md`](ladder-progress.md). Status: `python3 suite/engagement_status.py`.
@@ -31,7 +31,7 @@ Per-cell judging: [`ladder-progress.md`](ladder-progress.md). Status: `python3 s
 |---|---|---|---|---|---|---|---:|---:|---:|
 | 🟡 gemma4 | 11% | 89% | 81% | 76% | 66% | 100% | 70% | 9 | 71 |
 | 🟡 qwen35 | 76% | 89% | 88% | 100% | 63% | 100% | 86% | 6 | 50 |
-| ternary-bonsai | · | · | · | · | · | · | · | — | — |
+| 🟢 ternary-bonsai | 100% | · | · | · | · | · | 100% | 33 | 112 |
 | nemotron-elastic | · | · | · | · | · | · | · | — | — |
 
 ### Level 3 — CONTEXT_FIXES — floor, trims, dedups, compaction reframing
