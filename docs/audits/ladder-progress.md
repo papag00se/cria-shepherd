@@ -171,3 +171,9 @@ Scored `schema_migrated` at 85 rather than 0: the data survives, and the check t
 **Judged 14.** `milestone-miss-30min` after 59 calls. 13,441 bytes of Java, none of it compiling. Verified by patching a copy: adding the six missing `java.util.concurrent` imports still leaves two errors — `java.util.Arrays` also unimported, and `if (WORKERS_ENABLED && !rows.length > 0)`, which applies logical-not to an int. Even fixing the imports, the worker branch could never have been entered.
 
 Fourth ternary-bonsai L1 cell, fourth loss to mechanical defects the rung has no bearing on. Running L1 row for this model: 7, 32, 61, 14.
+
+### Pass 2 — cell 15/76 — L1 handles-cli-node × ternary-bonsai
+
+**Judged 99** in 13.7 minutes. Test drives the real CLI via `execSync` and asserts on exit codes, stderr text and parsed JSON field types. Docked 5 on the Dockerfile for a no-op multi-stage build — a `builder` stage that copies three files and produces nothing, since the project has no build step.
+
+This model's L1 row now reads 7, 32, 61, 14, 99: four mechanical collapses and one clean pass, on the rung that only repairs tool-call syntax.
