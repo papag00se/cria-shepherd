@@ -287,7 +287,11 @@ def pending(rows: list[dict]) -> list[dict]:
     and a compaction: a cell is judged when its verdict file exists, and unjudged otherwise. A run
     that is interrupted, resumed, or picked up by a different session recomputes the same list."""
     return [r for r in rows
-            if (r.get("archive") or packet_path(r.get("run_id", "")).is_file())
+            # A SUPERSEDED row measured a rung that was not the one running; the cell re-runs and the
+            # replacement is what gets judged. Judging the old one would spend the effort and then
+            # attach a verdict to a measurement the grid already ignores.
+            if not r.get("superseded")
+            and (r.get("archive") or packet_path(r.get("run_id", "")).is_file())
             and _needs_judging(r)
             # …and only when the evidence can still be built: an archive on disk, or a packet frozen
             # at run time. A row with neither is unjudgeable for good and must not sit in the

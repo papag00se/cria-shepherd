@@ -2617,13 +2617,23 @@ class Loop:
             _clean_completion(coder, self._ctx.coder_role)
         # Judge an outgoing web_search's query (off-target → a better query). Before the tracking, so the
         # repetition/write-streak guards see what's actually FORWARDED.
-        coder = guard_search_query(sess, coder, body, self._ctx.reasoner_chat, self._ctx.reasoner_role, rlog)
-        _track_fetched_pages(sess, body.get("messages", []))  # durable fetch facts for later steers
-        _track_read_files(sess, body.get("messages", []))     # …and the files it opened on disk
-        if _has_tool_calls(coder):  # the coder ACTED → track it for the refusal/spin guards
-            guard_track_refusals(sess, coder, rlog, step=step,
-                                 messages=body.get("messages"))
-            guard_track_write_streak(sess, coder, rlog, step=step, messages=framed.get("messages"))
+        # LEVEL 5 — ASSISTS_ENABLED, and gated HERE rather than at each intervention. These are the
+        # DETECTORS: they judge an outgoing query, remember what was fetched and read, and arm
+        # `redirect_due` / `spin_probe_due` for the interventions downstream. Gating detection is
+        # what makes the whole family inert at level 4 — guard_intervene, the redirect probe, the
+        # wheel-spin probe and their steers all become no-ops because nothing ever arms them.
+        #
+        # Gating each intervention instead was tried first and leaked: the periodic gate was missed
+        # for two call sites, and the wheel-spin detector went on firing at level 4 in production.
+        # One chokepoint, at the point the state is SET, is the version that cannot be half-applied.
+        if self._ctx.assists:
+            coder = guard_search_query(sess, coder, body, self._ctx.reasoner_chat, self._ctx.reasoner_role, rlog)
+            _track_fetched_pages(sess, body.get("messages", []))  # durable fetch facts for later steers
+            _track_read_files(sess, body.get("messages", []))     # …and the files it opened on disk
+            if _has_tool_calls(coder):  # the coder ACTED → track it for the refusal/spin guards
+                guard_track_refusals(sess, coder, rlog, step=step,
+                                     messages=body.get("messages"))
+                guard_track_write_streak(sess, coder, rlog, step=step, messages=framed.get("messages"))
         return coder
 
     def _work(self, sess: PlanSession, key: str, body: dict, rlog, rewritten: bool = False) -> dict:

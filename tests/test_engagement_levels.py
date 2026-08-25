@@ -9,6 +9,19 @@ So the contract is stated as OBSERVED BEHAVIOUR, not as configuration: drive a r
 each level and read its own event log. A mechanism that ran, logged. A level that lets something
 above it through fails here, and the campaign never starts against a contaminated arm.
 
+WHAT THIS TEST CANNOT DO, stated so nobody trusts it further than it goes.
+
+It reads the event log of a real server, so it only sees mechanisms that actually FIRE in its
+fixture. A mechanism on a cadence — the periodic gate comes due every N acting turns — never
+triggers inside one short request, and one leaked into level 4 in production for three cells while
+this file stayed green. It proves the absence of leaks it can PROVOKE. Prefer gating where a
+mechanism's state is SET over gating each place it is read, because that shape cannot be
+half-applied and does not depend on this test noticing.
+
+It is also occasionally flaky on `test_levels_zero_to_four_ignore_the_planner`: two runs of the same
+level can differ by a timing-dependent event. Seen once, not reproduced in three re-runs. A failure
+there is worth re-running before believing.
+
 The families below are keyed to `cria.config` levels. Adding a mechanism means adding its event
 kind to the rung that owns it; a kind nobody claims is a failure, not a pass, so a new mechanism
 cannot slip in unassigned (see `test_every_logged_mechanism_is_claimed_by_a_rung`).
@@ -17,6 +30,7 @@ from __future__ import annotations
 
 import json
 import threading
+import time
 import unittest
 from http.server import ThreadingHTTPServer
 from pathlib import Path
@@ -147,7 +161,22 @@ class _Harness:
             return r.read()
 
     def kinds(self) -> set[str]:
+        """The event kinds this server logged, read once the log has STOPPED GROWING.
+
+        `urlopen` returns when the response body is complete, which is before the handler has
+        finished emitting its own bookkeeping — `response.sent` is written after the bytes go out.
+        Reading immediately made the planner-parity assertion flake: one run in six differed by
+        exactly {response.sent} and nothing else, which reads as a level behaving differently with
+        the planner on. Settling first removes the race for every event rather than excusing one."""
         assert self.log.path is not None
+        prev, stable = -1, 0
+        for _ in range(60):
+            size = Path(self.log.path).stat().st_size
+            stable = stable + 1 if size == prev else 0
+            if stable >= 3:
+                break
+            prev = size
+            time.sleep(0.05)
         return {json.loads(l)["kind"]
                 for l in Path(self.log.path).read_text().splitlines() if l.strip()}
 
