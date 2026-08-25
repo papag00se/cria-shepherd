@@ -1,6 +1,6 @@
 # Battery — the engagement ladder
 
-**Last updated 2026-08-25 06:37** — newest row `shipping-rates-rb_gemma4_codex_poff_1787663355`, scored 2026-08-25 06:34.
+**Last updated 2026-08-25 06:50** — newest row `orders-api-py_gemma4_codex_poff_1787664847`, scored 2026-08-25 06:49.
 
 Tables only. Findings, walks and the retired two-arm campaign: [`battery-history.md`](battery-history.md).
 Per-cell judging: [`ladder-progress.md`](ladder-progress.md). Status: `python3 suite/engagement_status.py`.
@@ -47,7 +47,7 @@ Per-cell judging: [`ladder-progress.md`](ladder-progress.md). Status: `python3 s
 
 | model | ruby | go | python | java | node | rust | total | avg min | avg calls |
 |---|---|---|---|---|---|---|---:|---:|---:|
-| 🟡 gemma4 | 100% | 73% | · | · | · | 86% | 86% | 12 | 51 |
+| 🟢 gemma4 | 100% | 73% | 100% | · | · | 86% | 90% | 13 | 54 |
 | 🟡 qwen35 | 86% | 45% | 79% | 100% | 83% | 100% | 82% | 17 | 140 |
 | ternary-bonsai | · | · | · | · | · | · | · | — | — |
 | nemotron-elastic | · | · | · | · | · | · | · | — | — |
