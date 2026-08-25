@@ -363,20 +363,21 @@ def _level_grid(rs: list[dict], level: int) -> list[str]:
     langs = [language(t) for t in TASKS]
     out = [f"| model | " + " | ".join(langs) + " | total | avg min | avg calls |",
            "|---|" + "---|" * len(TASKS) + "---:|---:|---:|"]
-    rows = []
+    # ALWAYS IN `MODELS` ORDER, never ranked. Six of these tables sit one under another and the
+    # question they exist to answer is "what did THIS model do as the rung changed" — which means
+    # reading straight down a column. Sorting each table by its own score moves a model between
+    # rows from one rung to the next, and the column stops being one model's story. A model with no
+    # cells yet keeps its row, so the rows line up before the grid is full.
     for m in MODELS:
         cells = [level_cell(rs, level, m, t) for t in TASKS]
         have = [c for c in cells if c]
+        got = " | ".join(score_of(c) if c else "·" for c in cells)
         if not have:
+            out.append(f"| {m} | {got} | · | — | — |")
             continue
         overall = _overall_pct(have) or 0.0
-        rows.append((overall, m, cells, have))
-    for overall, m, cells, have in sorted(rows, key=lambda x: -x[0]):
-        got = " | ".join(score_of(c) if c else "·" for c in cells)
         out.append(f"| {_badge(overall)} {m} | {got} | {overall:.0f}% "
                    f"| {_avg(have, 'wall_seconds', 1 / 60)} | {_avg(have, 'calls')} |")
-    if len(out) == 2:
-        out.append("| _not run yet_ |" + " |" * (len(TASKS) + 2))
     return out
 
 
