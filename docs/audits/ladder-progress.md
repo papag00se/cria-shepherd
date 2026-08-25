@@ -234,3 +234,9 @@ Every test body is `async`, so `fn()` returns a Promise the runner never awaits.
 **Judged 11.** `milestone-miss-30min` after 21 calls. Four mismatched delimiters — `&[ ... ];` for `&[ ... ]);` — stop the crate parsing. Verified on a copy: closing them builds a working CLI that prints usage, rejects missing arguments and reports a missing key correctly. The program was never the problem; its inline test module was, and behind the syntax it carries nine further type errors. No README.
 
 **ternary-bonsai L2 row complete: 100, 33, 100, 94, 76, 11 → 69.** Against 72 at L0 and 37 at L1.
+
+### Pass 2 — cell 23/76 — L3 shipping-rates-rb × ternary-bonsai
+
+**Judged 1.** `milestone-miss-30min` after 71 calls. The entire session went into dependency plumbing: a Gemfile pinning `countries ~> 2.0`, `BUNDLE_PATH: ./vendor/bundle`, and 77 MB of vendored gems successfully installed. `lib/shipping/rates.rb` is byte-identical to the seed. Not one line of source was edited in half an hour.
+
+A different failure mode from this model's other losses — not a wrong token, a wrong allocation of the whole session.
