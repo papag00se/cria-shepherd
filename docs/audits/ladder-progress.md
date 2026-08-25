@@ -115,3 +115,7 @@ The runner died overnight taking cell 75 with it; relaunched 06:09 with the re-d
 **Judged 93** in 3.6 minutes and 32 calls. CLI, dependency removal and Dockerfile are all fully delivered. The live test scores 70: it passes with network and fails without, so the check is honestly met, but it re-implements the fetch inline instead of invoking `lookup.js` — a broken CLI would still pass it. Rung clean.
 
 All four superseded L4 gemma4 cells are now re-run at their own rung: 100, 100, 100, 93.
+
+### Pass 2 — cell 5/76 — L0 shipping-rates-rb × qwen35
+
+**Judged 0.** `crashed-early` after 3 model calls and 21 seconds; `git status` in the workspace is clean, so the tree is byte-identical to the seed. This is the L0 qwen35 pattern the campaign already established — 5 of 6 of its pure-proxy cells die in well under a minute — and it is the whole reason level 1 is worth +61 to this model.
