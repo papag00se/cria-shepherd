@@ -228,3 +228,9 @@ function test(name, fn) {
 Every test body is `async`, so `fn()` returns a Promise the runner never awaits. `passed++` runs before any assertion does, and the summary prints and exits 0 before the microtasks settle. Confirmed by hand: the suite reports `12 passed, 0 failed` with the network removed, including both tests named "real API request". It would report the same against a deleted `lookup.js`.
 
 **Verifier detail corrected.** The check reported "passes with the network BLOCKED — mocked, not live". Nothing was mocked. The verdict was right and the score unchanged, but the wording named a cause the check never established — the same class of false account the function's own comment block records fixing once before, for the zero-collected-tests case. Now: "nothing here proves a live call (mocked, vacuous, or offline-only)". Detail only; `ok` and scoring untouched, so no cell measures anything different.
+
+### Pass 2 — cell 22/76 — L2 rust-toml-cli × ternary-bonsai
+
+**Judged 11.** `milestone-miss-30min` after 21 calls. Four mismatched delimiters — `&[ ... ];` for `&[ ... ]);` — stop the crate parsing. Verified on a copy: closing them builds a working CLI that prints usage, rejects missing arguments and reports a missing key correctly. The program was never the problem; its inline test module was, and behind the syntax it carries nine further type errors. No README.
+
+**ternary-bonsai L2 row complete: 100, 33, 100, 94, 76, 11 → 69.** Against 72 at L0 and 37 at L1.
