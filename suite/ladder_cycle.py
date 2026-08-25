@@ -94,6 +94,45 @@ def leaked_listeners() -> list[tuple[int, str, str]]:
     return out
 
 
+def orphaned_harnesses() -> list[tuple[int, str, str]]:
+    """Harness processes standing in a suite workspace whose parent is gone — (pid, cwd, cmdline).
+
+    `run.py` launches codex with `start_new_session=True`, so a run that dies without reaching its
+    own `stop_run()` leaves the harness ALIVE and detached. Walked on the ladder of 2026-08-25: cell
+    75 was SIGKILLed at 06:04 and its codex was still running 28 minutes later, in the workspace of a
+    cell that no longer existed, making calls to a single-slot model server while the NEXT cell was
+    being measured on it. Nothing was listening, so the leaked-listener reaper could not see it.
+
+    Scoped the same way and for the same reason: cwd inside `runs/` is what makes a process this
+    run's to stop. A harness working in the CURRENT cell has a live parent and is left alone.
+    """
+    out = []
+    runs = (SUITE.parent / "runs").resolve()
+    for entry in Path("/proc").iterdir():
+        if not entry.name.isdigit():
+            continue
+        pid = int(entry.name)
+        try:
+            cmd = (entry / "cmdline").read_bytes().replace(b"\0", b" ").decode(errors="replace")
+            if "codex" not in cmd:
+                continue
+            cwd = (entry / "cwd").resolve()
+            if runs not in cwd.parents:
+                continue
+            ppid = 0
+            for line in (entry / "status").read_text().splitlines():
+                if line.startswith("PPid:"):
+                    ppid = int(line.split()[1])
+                    break
+        except (OSError, ValueError):
+            continue
+        # A live run's harness has run.py as an ancestor; an orphan's parent has been reaped to init
+        # or to the session leader. Only the parentless are ours to stop.
+        if ppid <= 1 or not Path(f"/proc/{ppid}").exists():
+            out.append((pid, str(cwd), cmd.strip()))
+    return out
+
+
 def reap_leaked_listeners() -> None:
     """Stop servers a finished cell left listening, so the next cell does not inherit its port.
 
@@ -103,8 +142,8 @@ def reap_leaked_listeners() -> None:
     write proxy. Cleaning up after ourselves removes the provocation; it does not remove the hazard,
     which is recorded in docs/audits/ladder-progress.md.
     """
-    for pid, cwd, cmd in leaked_listeners():
-        print(f"[ladder] reaping leaked listener pid={pid} cwd={cwd} :: {cmd[:90]}", flush=True)
+    for pid, cwd, cmd in leaked_listeners() + orphaned_harnesses():
+        print(f"[ladder] reaping pid={pid} cwd={cwd} :: {cmd[:90]}", flush=True)
         for sig in (signal.SIGTERM, signal.SIGKILL):
             try:
                 os.kill(pid, sig)
