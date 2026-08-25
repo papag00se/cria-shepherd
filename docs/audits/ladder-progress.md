@@ -44,7 +44,7 @@ construction rather than by discipline — there is no plan-on branch left to di
 that `blocked` is its first word, asserted against a Loop with no context at all. A level gate in
 front of that broke six test files before the gate moved to the two call sites instead.
 
-## Cells — 24 / 144
+## Cells — 25 / 144
 
 Judged usefulness per cell. `·` not run, `—` run but not judged.
 
@@ -54,7 +54,7 @@ Judged usefulness per cell. `·` not run, `—` run but not judged.
 | gemma4 | L1 TOOL_CALL_FI | **28** | **92** | **34** | **33** | **6** | **51** | 41 |
 | gemma4 | L2 SIMPLE_TOOLS | **11** | **89** | **81** | **76** | **66** | **100** | 70 |
 | gemma4 | L3 CONTEXT_FIXE | **85** | **88** | **84** | **96** | **78** | **86** | 86 |
-| gemma4 | L4 DONE_REFUSAL | · | · | · | · | · | · | · |
+| gemma4 | L4 DONE_REFUSAL | **26** | · | · | · | · | · | 26 |
 | gemma4 | L5 ASSISTS_ENAB | · | · | · | · | · | · | · |
 | qwen35 | L0 pure proxy | · | · | · | · | · | · | · |
 | qwen35 | L1 TOOL_CALL_FI | · | · | · | · | · | · | · |
@@ -75,4 +75,4 @@ Judged usefulness per cell. `·` not run, `—` run but not judged.
 | nemotron-elastic | L4 DONE_REFUSAL | · | · | · | · | · | · | · |
 | nemotron-elastic | L5 ASSISTS_ENAB | · | · | · | · | · | · | · |
 
-_updated 2026-08-24 16:53_
+_updated 2026-08-24 17:39_
