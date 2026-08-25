@@ -109,3 +109,9 @@ The runner died overnight taking cell 75 with it; relaunched 06:09 with the re-d
 ### Pass 2 — cell 3/76 — L4 feed-pipeline-java × gemma4 (re-run of a superseded cell)
 
 **Judged 100**, in 8.3 minutes and 30 calls. Notable because the concurrency fix is the correct one, not the near-miss that has sunk other cells on this task: `totals.merge(sku, value, Double::sum)` on a `ConcurrentHashMap` is atomic, where a lock wrapped around a read-modify-write pair is not. Speed bar cleared 32.2× against 4.0×. Rung clean — no level-5 mechanism fired.
+
+### Pass 2 — cell 4/76 — L4 handles-cli-node × gemma4 (re-run of a superseded cell)
+
+**Judged 93** in 3.6 minutes and 32 calls. CLI, dependency removal and Dockerfile are all fully delivered. The live test scores 70: it passes with network and fails without, so the check is honestly met, but it re-implements the fetch inline instead of invoking `lookup.js` — a broken CLI would still pass it. Rung clean.
+
+All four superseded L4 gemma4 cells are now re-run at their own rung: 100, 100, 100, 93.
