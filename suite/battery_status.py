@@ -326,6 +326,60 @@ def cycle_start(rs: list[dict], arm: str) -> float:
     return float(first[-1]["started"]) if first else 0.0
 
 
+LEVEL_NAMES = {
+    0: "pure proxy — wire translation only",
+    1: "TOOL_CALL_FIXES — dialect and template repair",
+    2: "SIMPLE_TOOLS — cria's tool menu, lowered to shell",
+    3: "CONTEXT_FIXES — floor, trims, dedups, compaction reframing",
+    4: "DONE_REFUSALS_ENABLED — refusing a completion CLAIM",
+    5: "ASSISTS_ENABLED — steers, periodic gates, detectors, planner",
+}
+
+
+def level_cell(rs: list[dict], level: int, model: str, task: str) -> dict | None:
+    """The STANDING row for one ladder cell. Superseded rows are evidence, not results — a cell that
+    ran with a higher rung leaking into it measured something other than the rung it claims."""
+    for r in reversed(rs):
+        if r.get("superseded") or r.get("level") is None:
+            continue
+        try:
+            lvl = int(r["level"])
+        except (TypeError, ValueError):
+            continue
+        if lvl == level and r.get("model") == model and r.get("task") == task:
+            return r
+    return None
+
+
+def _level_grid(rs: list[dict], level: int) -> list[str]:
+    """One row per model, one column per language, for a single rung of the ladder.
+
+    NO DELTA COLUMN, deliberately. An arm grid compares a cell against its own previous run, which
+    is the same question asked twice. A rung is not a re-run of the rung below it: levels 0 and 1
+    scored 91 and 41 for gemma4 while five of six cells ran a byte-identical code path, because the
+    mechanism level 1 adds fired exactly once. Printing that as a -50 delta would assert a rung
+    difference the data does not contain. The rungs are laid out to be read against each other by
+    eye, with the per-cell noise stated once, below."""
+    langs = [language(t) for t in TASKS]
+    out = [f"| model | " + " | ".join(langs) + " | total | avg min | avg calls |",
+           "|---|" + "---|" * len(TASKS) + "---:|---:|---:|"]
+    rows = []
+    for m in MODELS:
+        cells = [level_cell(rs, level, m, t) for t in TASKS]
+        have = [c for c in cells if c]
+        if not have:
+            continue
+        overall = _overall_pct(have) or 0.0
+        rows.append((overall, m, cells, have))
+    for overall, m, cells, have in sorted(rows, key=lambda x: -x[0]):
+        got = " | ".join(score_of(c) if c else "·" for c in cells)
+        out.append(f"| {_badge(overall)} {m} | {got} | {overall:.0f}% "
+                   f"| {_avg(have, 'wall_seconds', 1 / 60)} | {_avg(have, 'calls')} |")
+    if len(out) == 2:
+        out.append("| _not run yet_ |" + " |" * (len(TASKS) + 2))
+    return out
+
+
 def _arm_grid(rs: list[dict], arm: str) -> list[str]:
     """One row per model, one column per language. The shape the operator reads first."""
     langs = [language(t) for t in TASKS]
@@ -434,21 +488,20 @@ def _ladder_banner(rs: list[dict]) -> list[str]:
         return []
     levels = sorted({int(r["level"]) for r in lad})
     return [
-        "> **SUPERSEDED BY THE ENGAGEMENT LADDER.** The two arms below compare `[engagement] drive`",
-        "> on and off, and that switch only governs the LOOP — planner, steers, gates, critics,",
-        "> completion judging. Tool-menu curation, write-proxy translation, template repair and the",
-        "> context floor ran in BOTH arms, so every Δ in this file is the loop layer's alone and none",
-        "> of it measures what the rest of cria is worth. Counted inside the BASE arm's own run",
-        "> windows: tool menu 1,011 fires, write proxy 980, reasoning-call repair 333, focus-trim 514,",
-        "> context floor 54.",
+        "> **THE TWO-ARM COMPARISON IS RETIRED.** `[engagement] drive` on/off governed only the LOOP —",
+        "> planner, steers, gates, critics, completion judging. Tool-menu curation, write-proxy",
+        "> translation, template repair and the drop-oldest context floor ran in BOTH arms, so the arm",
+        "> called \"assists OFF\" never was. Counted inside its own 24 run windows: tool menu 1,011",
+        "> fires, write proxy 980, reasoning-call repair 333, focus-trim 514, context floor 54. Those",
+        "> deltas measured one sixth of cria and were read as all of it.",
         ">",
-        f"> The ladder replaces it with six cumulative levels, 0 (pure proxy) to 5 (everything), and is",
-        f"> **{len(lad)} cells in across levels {levels[0]}-{levels[-1]}**. Live grid and findings:",
+        f"> The ladder below replaces it: six cumulative levels, 0 (pure proxy) to 5 (everything),",
+        f"> **{len(lad)} cells in across levels {levels[0]}-{levels[-1]}**. Per-cell findings:",
         "> [`docs/audits/ladder-progress.md`](ladder-progress.md). Status: `python3 suite/engagement_status.py`.",
         ">",
-        "> Keep reading below for the six-language history — the per-model failure modes it",
-        "> established (gemma4 drops finishing work, qwen35 leaves work unfinished, ternary-bonsai",
-        "> cannot satisfy a compiler, nemotron-elastic quits) are what the ladder is built to price.",
+        "> The old arm rows stay in `results.jsonl` and in *Every run* below. The six-language history",
+        "> further down is what the ladder is built to price — gemma4 drops finishing work, qwen35",
+        "> leaves work unfinished, ternary-bonsai cannot satisfy a compiler, nemotron-elastic quits.",
         "",
     ]
 
@@ -456,65 +509,22 @@ def _ladder_banner(rs: list[dict]) -> list[str]:
 def report(rs: list[dict], now: float | None = None) -> str:
     """Render the campaign tables. Numbers come from results.jsonl every time; the prose below
     NOTES_MARKER is carried over untouched, because a finding is not derivable from a score."""
-    out = ["# Battery campaign — what the assists are worth, across six languages", "",
-           _stamp(rs, now), ""]
-    out += _ladder_banner(rs)
-    out += ["Regenerated by `python3 suite/battery_status.py --write` after every run. Every table",
-           "is derived from `suite/results/results.jsonl`; the notes below are written by hand.", "",
-           "One kind of work per language, so a finding that only shows up in one language is",
-           "visible as such. Task-to-language mapping: `docs/task-battery.md`.", "",
-           "## Baseline — assists OFF", "",
-           "cria translating only: no planner, no steers, no gates, no critics, no completion",
-           "judging. What each model does on its own.", ""]
-    out += _arm_grid(rs, "BASE")
-    out += ["", "## Assisted — assists ON", ""]
-    out += _arm_grid(rs, "CRIA")
+    out = ["# Battery — the engagement ladder", "",
+           _stamp(rs, now), "",
+           "Tables only. Findings, walks and the retired two-arm campaign: "
+           "[`battery-history.md`](battery-history.md).",
+           "Per-cell judging: [`ladder-progress.md`](ladder-progress.md). "
+           "Status: `python3 suite/engagement_status.py`.", "",
+           "`[engagement] level = 0..5`, each rung implying every rung below it. "
+           "`·` = not run. Superseded cells are excluded and re-run.", ""]
+    for _lvl in range(0, 6):
+        out += [f"### Level {_lvl} — {LEVEL_NAMES[_lvl]}", ""]
+        out += _level_grid(rs, _lvl)
+        out += [""]
     out += ["",
-            "**A trailing `ˢ` means the cell is still scored STRICTLY** — all-or-nothing per",
-            "deliverable, the old question (\"was this perfect?\"). An unmarked number is the judged",
-            "answer to the question the campaign is actually asking: how much of what they asked for",
-            "did the person actually get. The two are not comparable, so a Δ between them is left",
-            "blank rather than computed. The JUDGE phase is in `docs/goals/hundred-goal.md` and the",
-            "rubric in `suite/prompts/usefulness_judge.txt`.",
-            "",
-            "**Bold marks a cell measured in the run currently in progress**; everything else is",
-            "carried over from the previous pass. Every number carries its movement since that",
-            "cell's previous run, in percentage points.",
-            "",
-            # ONE LINE: a generated markdown paragraph is never hand-edited, and hard wraps in it
-            # only make it a misery for anyone who ever does (operator's standing rule).
-            "**A delta smaller than one check is not evidence that anything changed** — one check "
-            "flips between runs of the SAME code. " + repeat_evidence(rs) +
-            "Such a delta is printed plainly but never bolded, so the eye-catch stays on real "
-            "movement. Two single runs differing by one check say nothing about the code between "
-            "them; only a gap bigger than that, or the same gap repeated, is a result.",
-            "The **total** is one vote per judged cell, and checks-passed over checks-attempted",
-            "across any cells still scored strictly; its delta is computed only over cells that have",
-            "both a current and a previous run, so a part-finished cycle compares like with like."]
-
-    pairs = [(t, m, cell(rs, "BASE", m, t), cell(rs, "CRIA", m, t)) for t in TASKS for m in MODELS]
-    pairs = [(t, m, b, c) for t, m, b, c in pairs if b and c]
-    if pairs:
-        out += ["", "## What the assists were worth", "",
-                "Δ is in percentage POINTS. Read it next to the calls and minutes columns — a gain",
-                "bought with 15× the calls is not the same result as one bought with fewer",
-                "(`docs/goals/battery-goal.md`).", "",
-                "| task | language | model | BASE | CRIA | Δ | calls B→C | min B→C |",
-                "|---|---|---|---|---|---|---|---|"]
-        for t, m, b, c in pairs:
-            # THROUGH THE ONE OWNER. This table subtracted `pct` itself and so bypassed the
-            # cross-measure guard in `delta_of`: `shipping-rates-rb ruby qwen35` read
-            # `80%ˢ | 15% | -65`, which is a strict baseline minus a judged assisted cell — a number
-            # that is not movement in anything. Blank until both sides are the same measure.
-            d = delta_of(c, b).strip().strip("()")
-            # Bold is the operator's eye-catch for "this cell moved". A one-check delta did not move
-            # — it flips between runs of the SAME binary — so it must not shout.
-            emph = d if (d in ("", "0") or within_noise(c, b)) else f"**{d}**"
-            out.append(f"| {t} | {language(t)} | {m} | {score_of(b).strip()} | "
-                       f"{score_of(c).strip()} | {emph or '—'} | "
-                       f"{_n(b,'calls')}→{_n(c,'calls')} | "
-                       f"{_n(b,'wall_seconds')}→{_n(c,'wall_seconds')} |")
-
+            "`ˢ` = still scored strictly (all-or-nothing per deliverable); unmarked = judged. "
+            "The two are not comparable. Per-cell noise on this suite is wide: gemma4's L0 and L1 "
+            "scored 91 and 41 while five of six cells ran an identical code path.", ""]
     out += ["", "## Every run", "",
             "| task | language | model | arm | score | min | calls | tok/s | terminal |",
             "|---|---|---|---|---:|---:|---:|---:|---|"]
@@ -528,14 +538,15 @@ def report(rs: list[dict], now: float | None = None) -> str:
                 out.append(f"| {task} | {language(task)} | {model} | {arm} | "
                            f"{score_of(c).strip()} | {_n(c,'wall_seconds')} | {_n(c,'calls')} | "
                            f"{f'{tok:.1f}' if tok else '—'} | {c.get('terminal','')} |")
-    return "\n".join(out) + "\n\n" + NOTES_MARKER + "\n"
+    # TABLES ONLY (operator, 2026-08-24): "I really don't need that document to have anything
+    # else in it but the tables. I look at nothing else." Prose lives in battery-history.md, which
+    # nothing regenerates, so a finding can never be destroyed by a --write either.
+    return "\n".join(out) + "\n"
 
 
 def write_report(rs: list[dict]) -> Path:
     path = SUITE.parent / "docs" / "audits" / "battery-report.md"
     body = report(rs)
-    if path.exists() and NOTES_MARKER in (old := path.read_text()):
-        body += old.split(NOTES_MARKER, 1)[1].lstrip("\n")
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(body)
     return path

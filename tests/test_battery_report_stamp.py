@@ -63,7 +63,10 @@ class ReportCarriesALastUpdatedStamp(unittest.TestCase):
                "score": 1.0, "max_score": 5.0, "note": f"{bs.NOTE_PREFIX} CRIA gemma4 x p4",
                "capture_dir": "/tmp/x"}]
         self.assertIn("no scored rows yet", bs._stamp(rs, now=WRITTEN_AT))
-        self.assertIn("# Battery campaign", bs.report(rs, now=WRITTEN_AT))
+        # The report is TABLES ONLY since 2026-08-24 and its H1 named the two-arm campaign;
+        # what this test is about is that an old row cannot crash the render, so it
+        # asserts the render happened rather than pinning a title.
+        self.assertIn("| model | ruby |", bs.report(rs, now=WRITTEN_AT))
 
 
 if __name__ == "__main__":

@@ -29,6 +29,7 @@ cannot move less than 20.
 """
 
 import unittest
+from pathlib import Path
 
 from suite import battery_status as bs
 
@@ -119,12 +120,14 @@ class TheClaimBehindTheMarkIsCheckableTests(unittest.TestCase):
     def test_no_repeats_makes_no_claim(self):
         self.assertEqual(bs.repeat_evidence([_row("t", "m", "CRIA", 2)]), "")
 
-    def test_the_real_report_carries_it(self):
-        rs = bs.rows()
-        body = bs.report(rs)
+    def test_the_claim_is_written_down_where_the_prose_lives(self):
+        """battery-report.md is TABLES ONLY since 2026-08-24 (operator: "I look at nothing else"),
+        so this claim moved to battery-history.md. It still has to be written somewhere: a grid whose
+        deltas are smaller than its own noise, with the noise unstated, is the defect this guards."""
+        hist = Path(__file__).resolve().parents[1] / "docs" / "audits" / "battery-history.md"
+        body = hist.read_text()
         self.assertIn("one check flips", body)
-        if bs.repeat_evidence(rs):
-            self.assertIn("IDENTICAL CODE", body)
+        self.assertIn("IDENTICAL CODE", body)
 
 
 class NothingElseSubtractsScoresTests(unittest.TestCase):

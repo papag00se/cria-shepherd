@@ -71,9 +71,14 @@ class BoldMeansMeasuredThisRun(unittest.TestCase):
         self.assertEqual(0.0, bs.cycle_start(rs, "CRIA"))
         self.assertNotIn("**", self._grid(rs)[0].split("|")[2])
 
-    def test_the_report_says_what_bold_means(self):
-        body = bs.report([row(M0, T0, 4.0, 1000)], now=1000.0)
-        self.assertIn("Bold marks a cell measured in the run currently in progress", body)
+    def test_the_meaning_of_bold_is_written_down_where_the_prose_lives(self):
+        """battery-report.md is TABLES ONLY since 2026-08-24 (operator: "I look at nothing else"),
+        so the legend moved to battery-history.md. The claim still has to be checkable — a marker
+        whose meaning is written nowhere is the defect this test was created for."""
+        hist = Path(__file__).resolve().parents[1] / "docs" / "audits" / "battery-history.md"
+        self.assertTrue(hist.is_file(), "battery-history.md is where the prose went")
+        self.assertIn("Bold marks a cell measured in the run currently in progress",
+                      hist.read_text())
 
 
 if __name__ == "__main__":
