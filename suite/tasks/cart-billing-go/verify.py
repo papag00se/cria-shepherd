@@ -32,6 +32,16 @@ import _seedtests  # noqa: E402
 HERE = Path(__file__).resolve().parent
 TIMEOUT = 300
 
+# GO'S OWN TEST TIMEOUT, well under the verifier's per-command 300s and the runner's 600s outer
+# limit. A model can write a test that never returns — walked on L3 cart-billing-go x qwen35
+# (2026-08-25), whose TestStderrLogging swaps os.Stderr for a pipe, then does buf.ReadFrom(r) BEFORE
+# w.Close(), so the read waits for an EOF that the unreached close would have produced. Without this
+# flag `go test` sits on its own 10-minute default, the verifier's 300s expires on each of four
+# invocations, the runner's 600s expires first, and the cell produces NO RESULTS ROW AT ALL — a lost
+# measurement where a scored failure was available. With it, Go aborts the hung test, prints the
+# goroutine stack, and exits non-zero, which is simply a red check.
+GO_TEST = ["go", "test", "-count=1", "-timeout", "45s"]
+
 
 def run(cmd, cwd, timeout=TIMEOUT):
     try:
@@ -87,7 +97,7 @@ def main() -> None:
     ws = Path(sys.argv[1]).resolve()
     r = {"task": "cart-billing-go", "score": 0.0, "max_score": 4.0, "success": False, "parts": {}}
 
-    code, out = run(["go", "test", "-count=1", "./..."], ws)
+    code, out = run(GO_TEST + ["./..."], ws)
     suite_ok = code == 0 and not re.search(r"^(FAIL|---\s+FAIL)", out, re.M)
 
     # Per-test-function integrity, NOT a file hash. The two checks below used to be unsatisfiable
@@ -133,11 +143,11 @@ def main() -> None:
     hidden_ok, hidden_detail = False, "hidden tests not run"
     try:
         shutil.copy(HERE / "hidden" / "hidden_cart_test.go", hidden)
-        code, out = run(["go", "test", "-count=1", "-run",
+        code, out = run(GO_TEST + ["-run",
                          "TestRoundingAcrossManyCarts|TestReportedCartRoundsUp", "./..."], ws)
         hidden_ok = code == 0 and not re.search(r"^(FAIL|---\s+FAIL)", out, re.M)
         hidden_detail = out.strip().splitlines()[-1] if out.strip() else "no output"
-        code2, out2 = run(["go", "test", "-count=1", "-run", "TestUnknownCodeStillErrors", "./..."], ws)
+        code2, out2 = run(GO_TEST + ["-run", "TestUnknownCodeStillErrors", "./..."], ws)
         untouched_ok = code2 == 0 and not re.search(r"^(FAIL|---\s+FAIL)", out2, re.M)
         untouched_detail = out2.strip().splitlines()[-1] if out2.strip() else "no output"
     finally:
@@ -164,7 +174,7 @@ def main() -> None:
         stash = cfg.with_suffix(".json.hidden")
         try:
             cfg.rename(stash)
-            code_nf, out_nf = run(["go", "test", "-count=1", "./..."], ws)
+            code_nf, out_nf = run(GO_TEST + ["./..."], ws)
             fallback_ok = code_nf == 0 and not re.search(r"^(FAIL|---\s+FAIL)", out_nf, re.M)
         finally:
             stash.rename(cfg)
