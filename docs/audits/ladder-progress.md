@@ -63,7 +63,7 @@ four L4 cells were superseded for. It also would not have saved this cell: `list
 off-menu, so a recovered call is refused, and the fact that the tool does not exist is spoken by the
 LOOP, which is level 4. Below level 4 an off-menu call is silence either way.
 
-## Cells — 63 / 144
+## Cells — 66 / 144
 
 Judged usefulness per cell. `·` not run, `—` run but not judged.
 
@@ -79,8 +79,8 @@ Judged usefulness per cell. `·` not run, `—` run but not judged.
 | qwen35 | L1 TOOL_CALL_FI | **55** | **92** | **83** | **62** | **0** | **100** | 65 |
 | qwen35 | L2 SIMPLE_TOOLS | **76** | **89** | **88** | **100** | **63** | **100** | 86 |
 | qwen35 | L3 CONTEXT_FIXE | **93** | · | **83** | **80** | **58** | **74** | 78 |
-| qwen35 | L4 DONE_REFUSAL | **86** | **45** | **79** | **100** | · | · | 78 |
-| qwen35 | L5 ASSISTS_ENAB | · | · | · | · | · | · | · |
+| qwen35 | L4 DONE_REFUSAL | **86** | **45** | **79** | **100** | **83** | **100** | 82 |
+| qwen35 | L5 ASSISTS_ENAB | **100** | · | · | · | · | · | 100 |
 | ternary-bonsai | L0 pure proxy | · | · | · | · | · | · | · |
 | ternary-bonsai | L1 TOOL_CALL_FI | · | · | · | · | · | · | · |
 | ternary-bonsai | L2 SIMPLE_TOOLS | · | · | · | · | · | · | · |
@@ -94,4 +94,4 @@ Judged usefulness per cell. `·` not run, `—` run but not judged.
 | nemotron-elastic | L4 DONE_REFUSAL | · | · | · | · | · | · | · |
 | nemotron-elastic | L5 ASSISTS_ENAB | · | · | · | · | · | · | · |
 
-_updated 2026-08-25 01:25_
+_updated 2026-08-25 02:32_
