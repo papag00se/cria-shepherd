@@ -1,6 +1,6 @@
 # Battery — the engagement ladder
 
-**Last updated 2026-08-24 21:34** — newest row `orders-api-py_qwen35_codex_poff_1787631060`, scored 2026-08-24 21:28.
+**Last updated 2026-08-24 22:29** — newest row `shipping-rates-rb_qwen35_codex_poff_1787635145`, scored 2026-08-24 22:27.
 
 Tables only. Findings, walks and the retired two-arm campaign: [`battery-history.md`](battery-history.md).
 Per-cell judging: [`ladder-progress.md`](ladder-progress.md). Status: `python3 suite/engagement_status.py`.
@@ -21,7 +21,7 @@ Per-cell judging: [`ladder-progress.md`](ladder-progress.md). Status: `python3 s
 | model | ruby | go | python | java | node | rust | total | avg min | avg calls |
 |---|---|---|---|---|---|---|---:|---:|---:|
 | 🟠 gemma4 | 28% | 92% | 34% | 33% | 6% | 51% | 41% | 15 | 130 |
-| 🟡 qwen35 | 55% | 92% | 83% | · | · | · | 77% | 11 | 78 |
+| 🟡 qwen35 | 55% | 92% | 83% | 62% | 0% | 100% | 65% | 14 | 73 |
 | ternary-bonsai | · | · | · | · | · | · | · | — | — |
 | nemotron-elastic | · | · | · | · | · | · | · | — | — |
 
@@ -30,7 +30,7 @@ Per-cell judging: [`ladder-progress.md`](ladder-progress.md). Status: `python3 s
 | model | ruby | go | python | java | node | rust | total | avg min | avg calls |
 |---|---|---|---|---|---|---|---:|---:|---:|
 | 🟡 gemma4 | 11% | 89% | 81% | 76% | 66% | 100% | 70% | 9 | 71 |
-| qwen35 | · | · | · | · | · | · | · | — | — |
+| 🟡 qwen35 | 76% | · | · | · | · | · | 76% | 8 | 95 |
 | ternary-bonsai | · | · | · | · | · | · | · | — | — |
 | nemotron-elastic | · | · | · | · | · | · | · | — | — |
 
@@ -62,4 +62,5 @@ Per-cell judging: [`ladder-progress.md`](ladder-progress.md). Status: `python3 s
 | nemotron-elastic | · | · | · | · | · | · | · | — | — |
 
 
-`ˢ` = still scored strictly (all-or-nothing per deliverable); unmarked = judged. 
+`ˢ` = still scored strictly (all-or-nothing per deliverable); unmarked = judged. The two are not comparable. Per-cell noise on this suite is wide: gemma4's L0 and L1 scored 91 and 41 while five of six cells ran an identical code path.
+

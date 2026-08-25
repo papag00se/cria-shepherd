@@ -526,19 +526,6 @@ def report(rs: list[dict], now: float | None = None) -> str:
             "`ˢ` = still scored strictly (all-or-nothing per deliverable); unmarked = judged. "
             "The two are not comparable. Per-cell noise on this suite is wide: gemma4's L0 and L1 "
             "scored 91 and 41 while five of six cells ran an identical code path.", ""]
-    out += ["", "## Every run", "",
-            "| task | language | model | arm | score | min | calls | tok/s | terminal |",
-            "|---|---|---|---|---:|---:|---:|---:|---|"]
-    for task in TASKS:
-        for model in MODELS:
-            for arm in ARMS:
-                c = cell(rs, arm, model, task)
-                if not c:
-                    continue
-                tok = c.get("avg_tok_s")
-                out.append(f"| {task} | {language(task)} | {model} | {arm} | "
-                           f"{score_of(c).strip()} | {_n(c,'wall_seconds')} | {_n(c,'calls')} | "
-                           f"{f'{tok:.1f}' if tok else '—'} | {c.get('terminal','')} |")
     # TABLES ONLY (operator, 2026-08-24): "I really don't need that document to have anything
     # else in it but the tables. I look at nothing else." Prose lives in battery-history.md, which
     # nothing regenerates, so a finding can never be destroyed by a --write either.
