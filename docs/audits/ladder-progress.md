@@ -119,3 +119,7 @@ All four superseded L4 gemma4 cells are now re-run at their own rung: 100, 100, 
 ### Pass 2 — cell 5/76 — L0 shipping-rates-rb × qwen35
 
 **Judged 0.** `crashed-early` after 3 model calls and 21 seconds; `git status` in the workspace is clean, so the tree is byte-identical to the seed. This is the L0 qwen35 pattern the campaign already established — 5 of 6 of its pure-proxy cells die in well under a minute — and it is the whole reason level 1 is worth +61 to this model.
+
+### Pass 2 — cell 6/76 — L3 cart-billing-go × qwen35
+
+**Judged 100** in 1.9 minutes and 34 calls. Decimal arithmetic end to end with a single `Round(2)` at the last step — the shape the task is actually testing — plus a named rounding regression test and a discounts file the program survives without. Rung clean in the strongest possible form: **zero `loop.*` events in the window**, which is what level 3 should look like, since every loop event belongs to level 4 or above.
