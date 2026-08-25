@@ -47,7 +47,10 @@ def done() -> set[tuple[int, str, str]]:
             r = json.loads(line)
         except ValueError:
             continue
-        if r.get("level") is None:
+        # A SUPERSEDED row measured a rung that was not the one running — a level-5 mechanism
+        # leaking into level 4, say. It stays in the file as evidence and does NOT count as done,
+        # so the worklist offers the cell again.
+        if r.get("level") is None or r.get("superseded"):
             continue
         try:
             out.add((int(r["level"]), r.get("model", ""), r.get("task", "")))

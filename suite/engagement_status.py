@@ -67,7 +67,9 @@ def ladder_rows(rs: list[dict]) -> dict[tuple[int, str, str], dict]:
     best: dict[tuple[int, str, str], dict] = {}
     for r in sorted(rs, key=lambda x: x.get("started", 0)):
         lvl = r.get("level")
-        if lvl is None or r.get("model") not in MODELS or r.get("task") not in TASKS:
+        # Superseded rows are evidence, not measurements — see ladder_cycle.done().
+        if (lvl is None or r.get("superseded")
+                or r.get("model") not in MODELS or r.get("task") not in TASKS):
             continue
         try:
             lvl = int(lvl)
