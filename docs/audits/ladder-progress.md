@@ -131,3 +131,7 @@ All four superseded L4 gemma4 cells are now re-run at their own rung: 100, 100, 
 `orders/db.py` binds `def create_order(..., path=DB_PATH)`. Default arguments bind at import, so `serve()`'s `db.DB_PATH = db_path` never reaches it. Point the app at a custom database and `init()` creates the table in the new file while every query still writes to the old one — which is why `orders.db` is 0 bytes on disk. Single-token-class defect, same family as the others this campaign has surfaced.
 
 L0 rung verified clean: zero `loop.*`, `massage.*`, tool or context events in the window.
+
+### Pass 2 — cell 8/76 — L0 feed-pipeline-java × ternary-bonsai (previously wrote no row)
+
+**Judged 0.** `exited` after 10 model calls and 83 seconds. `git status` shows the tree clean apart from a `target/` build directory — the coder compiled the seed and stopped without writing a line. Both previously row-less cells now have rows.
