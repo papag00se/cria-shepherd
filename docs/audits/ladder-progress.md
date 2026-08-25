@@ -63,7 +63,7 @@ four L4 cells were superseded for. It also would not have saved this cell: `list
 off-menu, so a recovered call is refused, and the fact that the tool does not exist is spoken by the
 LOOP, which is level 4. Below level 4 an off-menu call is silence either way.
 
-## Cells — 47 / 144
+## Cells — 52 / 144
 
 Judged usefulness per cell. `·` not run, `—` run but not judged.
 
@@ -76,8 +76,8 @@ Judged usefulness per cell. `·` not run, `—` run but not judged.
 | gemma4 | L4 DONE_REFUSAL | **26** | **73** | — | — | — | **86** | 62 |
 | gemma4 | L5 ASSISTS_ENAB | **73** | **89** | **92** | **100** | **91** | **51** | 83 |
 | qwen35 | L0 pure proxy | — | **21** | **0** | **0** | **0** | **0** | 4 |
-| qwen35 | L1 TOOL_CALL_FI | **55** | **92** | **83** | **62** | **0** | · | 58 |
-| qwen35 | L2 SIMPLE_TOOLS | · | · | · | · | · | · | · |
+| qwen35 | L1 TOOL_CALL_FI | **55** | **92** | **83** | **62** | **0** | **100** | 65 |
+| qwen35 | L2 SIMPLE_TOOLS | **76** | **89** | **88** | **100** | · | · | 88 |
 | qwen35 | L3 CONTEXT_FIXE | · | · | · | · | · | · | · |
 | qwen35 | L4 DONE_REFUSAL | · | · | · | · | · | · | · |
 | qwen35 | L5 ASSISTS_ENAB | · | · | · | · | · | · | · |
@@ -94,4 +94,4 @@ Judged usefulness per cell. `·` not run, `—` run but not judged.
 | nemotron-elastic | L4 DONE_REFUSAL | · | · | · | · | · | · | · |
 | nemotron-elastic | L5 ASSISTS_ENAB | · | · | · | · | · | · | · |
 
-_updated 2026-08-24 22:17_
+_updated 2026-08-24 22:47_
