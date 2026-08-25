@@ -177,3 +177,11 @@ Fourth ternary-bonsai L1 cell, fourth loss to mechanical defects the rung has no
 **Judged 99** in 13.7 minutes. Test drives the real CLI via `execSync` and asserts on exit codes, stderr text and parsed JSON field types. Docked 5 on the Dockerfile for a no-op multi-stage build — a `builder` stage that copies three files and produces nothing, since the project has no build step.
 
 This model's L1 row now reads 7, 32, 61, 14, 99: four mechanical collapses and one clean pass, on the rung that only repairs tool-call syntax.
+
+### Pass 2 — cell 16/76 — L1 rust-toml-cli × ternary-bonsai
+
+**Judged 11.** `milestone-miss-45min` after 113 calls. The dotted-path resolver is written correctly; the build dies on `map.get(head)` passing a `&&str` where `&str` is wanted. Verified on a copy: changing it to `map.get(*head)` compiles the project clean. One asterisk, 45.8 minutes.
+
+Sharpest instance yet of the pattern: this model's own L0 cell on the same task scored 98 and its source carries a comment explaining precisely this deref — `k is &&str, so *k gives &str which implements Borrow<str>`. Same model, same task, one rung apart, and it got right at L0 what it got wrong at L1.
+
+**ternary-bonsai L1 row complete: 7, 32, 61, 14, 99, 11 → 37.** Against 72 at L0. Every loss is a mechanical defect — a hallucinated gem, three invented Go APIs, two off-by-one slices, missing Java imports, one missing deref. Level 1 repairs tool-call syntax and touches none of them.

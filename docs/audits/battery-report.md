@@ -1,6 +1,6 @@
 # Battery — the engagement ladder
 
-**Last updated 2026-08-25 11:38** — newest row `handles-cli-node_ternary-bonsai_codex_poff_1787680876`, scored 2026-08-25 11:15.
+**Last updated 2026-08-25 12:01** — newest row `rust-toml-cli_ternary-bonsai_codex_poff_1787681715`, scored 2026-08-25 12:01.
 
 Tables only. Findings, walks and the retired two-arm campaign: [`battery-history.md`](battery-history.md).
 Per-cell judging: [`ladder-progress.md`](ladder-progress.md). Status: `python3 suite/engagement_status.py`.
@@ -22,7 +22,7 @@ Per-cell judging: [`ladder-progress.md`](ladder-progress.md). Status: `python3 s
 |---|---|---|---|---|---|---|---:|---:|---:|
 | 🟠 gemma4 | 28% | 92% | 34% | 33% | 6% | 51% | 41% | 15 | 130 |
 | 🟡 qwen35 | 55% | 92% | 83% | 62% | 0% | 100% | 65% | 14 | 73 |
-| 🟠 ternary-bonsai | 7% | 32% | 61% | 14% | 99% | · | 43% | 28 | 41 |
+| 🔴 ternary-bonsai | 7% | 32% | 61% | 14% | 99% | 11% | 37% | 31 | 53 |
 | nemotron-elastic | · | · | · | · | · | · | · | — | — |
 
 ### Level 2 — SIMPLE_TOOLS — cria's tool menu, lowered to shell
