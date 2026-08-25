@@ -139,3 +139,7 @@ L0 rung verified clean: zero `loop.*`, `massage.*`, tool or context events in th
 ### Pass 2 — cell 9/76 — L0 handles-cli-node × ternary-bonsai
 
 **Judged 100** in 13.7 minutes and 40 calls. Notable for the test suite: `test/run-tests.js` spawns the real CLI as a child process across nine scenarios and asserts on exit codes and parsed output. Compare gemma4's L4 cell on the same task, judged 93, whose live test re-implemented the fetch inline and would pass against a broken CLI. Same check met by both; only one of them actually tests the program.
+
+### Pass 2 — cell 10/76 — L0 rust-toml-cli × ternary-bonsai
+
+**Judged 98** in 30.4 minutes and 75 calls. Recursive table walk with correct `None` on a non-table intermediate, six integration tests that cover the failure paths, and a table-valued key path that exits 1 instead of printing a table. Deducted 5 on `lookup` for `{:.10}` float printing — over-precise, but no float exists in the config, so nothing exercises it. This completes ternary-bonsai's L0 row.
