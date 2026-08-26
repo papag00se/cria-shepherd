@@ -386,3 +386,7 @@ Highest rung is the top one, but the spread within every column swamps the diffe
 ### Pass 2 — cell 41/76 — L0 shipping-rates-rb × nemotron-elastic
 
 **Judged 0.** `crashed-early` after 7 model calls and 30 seconds; `git status` clean, so the workspace is byte-identical to the seed. First cell for this model, and it matches qwen35's pure-proxy pattern exactly — quit inside a minute having written nothing. Throughput was fine at 137 tok/s, so this is not a speed problem.
+
+### Pass 2 — cell 42/76 — L0 cart-billing-go × nemotron-elastic
+
+**Judged 0.** `exited` after 7 model calls and 6.4 minutes, tree clean against the seed. Second nemotron cell, second one that wrote nothing at all — same call count as the first (7), so the model is stopping at the same point rather than failing at different places.
