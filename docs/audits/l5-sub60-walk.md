@@ -34,11 +34,13 @@ cria has no synchronous channel to the harness, so it asks the workspace questio
 
 > The survey is appended to write/edit/list translations, **whose own output is one bounded line**.
 
-That is true of writes and edits. It is false of `list_dir`, whose lowering caps its listing at `READ_INLINE_MAX` — **9,000 bytes on its own** — against a survey measured at 6.6–10 KB in these sessions. One result could reach ~19 KB against the ~10 KB a harness keeps.
+That is true of writes and edits. It is not true of `list_dir`. **cria does not truncate a listing** — over `READ_INLINE_MAX` (9,000 bytes) it refuses the whole thing and tells the model the entry count and how to narrow, which is the never-truncate rule working. But a listing just *under* 9,000 is handed over whole, and the survey riding on it measured 6.6–10 KB, so one result could reach ~19 KB against the ~10 KB a harness keeps. An earlier draft of this report said "capped at 9,000 bytes", which was wrong and read as if cria clipped it.
 
 The harness then cuts the middle. The survey's closing marker is in the tail and survives; the records in the middle do not, so the entry count it declares no longer matches the records that arrived. `wsview.apply_survey` refuses it — correctly, because a listing cut in transit is indistinguishable from a listing of a smaller repo. cria then runs on with a stale workspace view, and the readers that lose it are the gate probes and `_confirm_completion`.
 
-Measured across all 144 cells: **449 refused surveys in 11 cells**, and the refusals track the harness's own cut markers almost one for one.
+Measured across all 144 cells: **449 refused surveys in 11 cells**, in the same cells that carry the harness's own cut markers.
+
+**The cause of those refusals is not established.** `apply_survey` refuses on four different checks and returned nothing but False, so the log recorded a count and no reason — and the harness-cut counts it appeared to track turn out to be re-counts of the same few markers across later turns (the gemma4 rust cell: 46 refusals, but only about four distinct cut results, of 396–1,000 tokens each). Truncation in transit is one of the four checks and a plausible reading of the arithmetic below; it is not proven, and this report should not have asserted it. `apply_survey` now names which check refused, so the next run answers it from the log instead of from inference.
 
 | cell | surveys refused | harness cuts |
 |---|---:|---:|
@@ -49,9 +51,11 @@ Measured across all 144 cells: **449 refused surveys in 11 cells**, and the refu
 | L2 qwen35 × shipping-rates-rb | 29 | 29 |
 | L2 qwen35 × rust-toml-cli | 17 | 17 |
 
+(The right-hand column counts cut *markers seen per turn*, not distinct cut results — the same marker is re-counted on every later request that still carries it. It is an upper bound, not an event count.)
+
 Eight of the eleven affected cells are L5 runs — the rung where the view has the most readers. Two of them are in this walk's below-60 list.
 
-Each half was bounded and their **sum** was not, which is the whole bug. Fixed by dropping `list_dir` from `_SURVEYABLE`: writes and edits really do answer in one line and keep carrying the survey, and a `list_dir` changes nothing on disk, so a view that waits for the next write is not stale about anything that happened in between. `tests/test_the_survey_never_outgrows_one_result.py` asserts the property — no surveyable tool may be a read, list, fetch or search — rather than today's four tool names.
+Each half was bounded and their **sum** was not. That arithmetic is a real defect on its own terms — cria composing a result larger than cria's own notion of one result's worth, which invites the harness to cut the model's content to pay for cria's instrumentation — and it is fixed on those grounds rather than on the unproven claim above. Fixed twice: the ride-along now sizes the survey against what is left of one result, the way the gate already did (`probegate: survey_bytes`), and `list_dir` is dropped from `_SURVEYABLE`: writes and edits really do answer in one line and keep carrying the survey, and a `list_dir` changes nothing on disk, so a view that waits for the next write is not stale about anything that happened in between. `tests/test_the_survey_never_outgrows_one_result.py` asserts the property — no surveyable tool may be a read, list, fetch or search — rather than today's four tool names.
 
 ## Not a defect, but the operator's call — `/tmp` scratch is refused
 

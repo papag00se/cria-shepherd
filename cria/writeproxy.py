@@ -1146,6 +1146,12 @@ def _external_refusal(name, args, fn, injected, level: str, workspace: str | Non
 # waits for the next write is not stale about anything that happened in between.
 _SURVEYABLE = _WRITE_NAMES | _EDIT_NAMES
 
+# What a carrier's OWN result may take before the survey is sized against what is left. Every tool
+# in _SURVEYABLE answers in one line ("wrote N bytes to <path>"), so this is generous for them and
+# is here to keep the arithmetic honest if a chattier carrier is ever added: the survey shrinks to
+# fit, and below TREE_MIN_BYTES it does not ride at all rather than overflowing the result.
+_RIDE_ALONG_HOST_RESERVE = 1_000
+
 # How many surveyable calls pass between surveys once the view is populated. The tree is re-walked
 # on the harness's side each time, so this is a cost on the CODER's box, not cria's; four is often
 # enough to see the file the coder wrote two turns ago without re-listing the repo every turn.
@@ -1373,7 +1379,19 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
                 # `represent_inbound` strips it back out, so the model sees its own call's result
                 # and nothing else.
                 if name in _SURVEYABLE and _survey_due(session, name):
-                    cmd = f"{cmd}\n{wsview.survey_command(session or '', cd=workspace_root or '')}"
+                    # BUDGETED, the way the gate budgets its own copy (probegate: survey_bytes).
+                    # Riding along without one is how cria's instrumentation came to push a result
+                    # past what a harness keeps — and the half the harness then cut was the MODEL'S
+                    # content, on a result cria itself composed. cria does not truncate; asking for
+                    # more than a result's worth let something else do it on cria's behalf, which
+                    # the never-truncate rule covers just the same.
+                    room = (content_reduce_mod.INLINE_RESULT_MAX_BYTES
+                            - _RIDE_ALONG_HOST_RESERVE - proberun.MARKER_OVERHEAD_BYTES)
+                    if room >= wsview.TREE_MIN_BYTES:
+                        cmd = (f"{cmd}\n{wsview.survey_command(session or '', cd=workspace_root or '', budget=room)}")
+                    elif rlog is not None:
+                        rlog.emit("wsview.survey_not_carried", level="info", left=room,
+                                  need=wsview.TREE_MIN_BYTES)
                 # AND TAKE CRIA'S OWN LITTER OUT WITH IT. The gate's probes create untracked files in
                 # the coder's workspace; cria cannot unlink them itself (that filesystem is the
                 # harness's), so the removal rides on a command cria composes. The next GATE carries
@@ -1810,7 +1828,7 @@ def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | Non
                 # from the outside, and both readers used to drop the answer on the floor (#12).
                 if not wsview.apply_survey(view, survey) and rlog is not None:
                     rlog.emit("wsview.survey_rejected", level="warn", bytes=len(survey),
-                              closed=wsview.SURVEY_CLOSE in survey)
+                              closed=wsview.SURVEY_CLOSE in survey, **wsview.last_reject())
             if tid in write_paths and write_paths[tid] and tid not in failed_ids \
                     and any(ln.strip() == _WROTE for ln in content.splitlines()):
                 if tid in written:

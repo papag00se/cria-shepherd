@@ -1075,6 +1075,24 @@ def tree_entries(body: str) -> int:
     return sum(1 for ln in (body or "").splitlines() if ln[:2] in ("D\t", "F\t", "X\t"))
 
 
+# WHY THE LAST SURVEY WAS REFUSED, for the caller that logs it. `apply_survey` answered True/False
+# and nothing else, so a walk that found 46 refusals in one session (L5 rust-toml-cli x gemma4) could
+# not tell a tree cut in transit from a survey about a different directory — and guessing which is
+# how a hypothesis gets written down as a cause (#5b). Four distinct checks refuse; each one names
+# itself here and the caller puts it in the event.
+_LAST_REJECT: dict = {}
+
+
+def _note_reject(reason: str, **detail) -> None:
+    _LAST_REJECT.clear()
+    _LAST_REJECT.update(reason=reason, **{k: str(v)[:200] for k, v in detail.items()})
+
+
+def last_reject() -> dict:
+    """Why the most recent `apply_survey` returned False — `{}` if none has."""
+    return dict(_LAST_REJECT)
+
+
 def apply_survey(view: View, survey_text: str) -> bool:
     """Fold one survey's output into ``view``. False when it carried no tree (a truncated or failed
     run) — then the view keeps whatever it already knew instead of being emptied.
@@ -1085,6 +1103,7 @@ def apply_survey(view: View, survey_text: str) -> bool:
     whose harness never announced a cwd still gets a workspace."""
     secs = sections(survey_text)
     if "tree" not in secs:
+        _note_reject("no-tree-section")
         return False
     # IT MUST HAVE ARRIVED WHOLE. The result this rode home on passes through the harness's own
     # output cap, and a listing cut in transit is indistinguishable from a listing of a smaller
@@ -1093,14 +1112,19 @@ def apply_survey(view: View, survey_text: str) -> bool:
     # not match, or a missing close, means what came back is not the answer to anything.
     done = dict(ln.split("\t", 1) for ln in (secs.get("done") or "").splitlines() if "\t" in ln)
     if SURVEY_CLOSE not in survey_text or "entries" not in done:
+        _note_reject("cut-in-transit" if SURVEY_CLOSE not in survey_text else "no-entry-count")
         return False
     try:
         if int(done["entries"]) != tree_entries(secs["tree"]):
+            _note_reject("entry-count-mismatch",
+                         declared=done["entries"], arrived=tree_entries(secs["tree"]))
             return False
     except ValueError:
+        _note_reject("entry-count-unparseable")
         return False
     ran_in = survey_root(survey_text)
     if ran_in and view.root and ran_in.rstrip("/") != view.root:
+        _note_reject("different-tree", ran_in=ran_in.rstrip("/"), view_root=view.root)
         return False
     if ran_in and not view.root:
         view.root = ran_in.rstrip("/")

@@ -1338,7 +1338,7 @@ def interpret_gate(plan: GatePlan, result_text: str, rlog=None) -> GateOutcome:
         # `linterprobe.collect_files` with no probes to compose.
         if not wsview.apply_survey(wsview.current(), survey) and rlog is not None:
             rlog.emit("gate.survey_rejected", level="warn", bytes=len(survey),
-                      closed=wsview.SURVEY_CLOSE in survey)
+                      closed=wsview.SURVEY_CLOSE in survey, **wsview.last_reject())
     sections = split_sections(result_text)
     # Before anything else: take back what the probes left behind. Runs even when the gate FAILED —
     # a suite that errors halfway still wrote its fixtures, and the next gate would inherit them.
