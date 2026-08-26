@@ -1,6 +1,6 @@
 # Battery — the engagement ladder
 
-**Last updated 2026-08-25 19:39** — newest row `cart-billing-go_ternary-bonsai_codex_poff_1787709307`, scored 2026-08-25 19:38.
+**Last updated 2026-08-25 20:27** — newest row `orders-api-py_ternary-bonsai_codex_poff_1787711939`, scored 2026-08-25 20:25.
 
 Tables only. Findings, walks and the retired two-arm campaign: [`battery-history.md`](battery-history.md).
 Per-cell judging: [`ladder-progress.md`](ladder-progress.md). Status: `python3 suite/engagement_status.py`.
@@ -49,7 +49,7 @@ Per-cell judging: [`ladder-progress.md`](ladder-progress.md). Status: `python3 s
 |---|---|---|---|---|---|---|---:|---:|---:|
 | 🟢 gemma4 | 100% | 73% | 100% | 100% | 93% | 86% | 92% | 10 | 46 |
 | 🟡 qwen35 | 86% | 45% | 79% | 100% | 83% | 100% | 82% | 17 | 140 |
-| 🟢 ternary-bonsai | 100% | 97% | · | · | · | · | 98% | 44 | 120 |
+| 🟡 ternary-bonsai | 100% | 97% | 64% | · | · | · | 87% | 45 | 103 |
 | nemotron-elastic | · | · | · | · | · | · | · | — | — |
 
 ### Level 5 — ASSISTS_ENABLED — steers, periodic gates, detectors, planner

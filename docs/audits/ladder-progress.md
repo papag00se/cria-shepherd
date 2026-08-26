@@ -295,3 +295,9 @@ This model's five attempts at this one task now read **54, 7, 100, 1, 100**. Sam
 **Judged 97** in 43.7 minutes and 76 calls. Every check met. Tests compare with `got.Equal(want)` — the correct decimal comparison, where this model's L3 cell on the same task used `!=` and failed four tests that had computed the right answer.
 
 Docked 15 on logging: `%.2f` prints `subtotal=44.98` where the value is 44.9775. A log written to debug a rounding bug that rounds the number under investigation is weaker than the L3 attempt, which logged full precision.
+
+### Pass 2 — cell 31/76 — L4 orders-api-py × ternary-bonsai
+
+**Judged 64.** `milestone-miss-45min` after 70 calls. Migration and injection fix both correct. The customer route fails on half of the bug it had at L1: that run used `self.path[12:]` when the prefix is 11 characters *and* never stripped the trailing `/orders`. This run fixed the offset and still never strips the suffix, so the lookup asks for a customer named `alice/orders`.
+
+Eight of ten tests red — two genuinely catching that route bug, six dying in the suite's own readiness probe.
