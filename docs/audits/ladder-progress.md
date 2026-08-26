@@ -269,3 +269,9 @@ Second cell running where the model's own test setup, not its program, produced 
 Between `Line` and `238` sit a colon, two asterisks, a space and a tilde — **five** non-word characters against a matcher window of **four**. A correctly located finding scored as unlocated because of how it was punctuated.
 
 This is the third instance of the same class in this one check, and the file's own comments record the previous two: case-sensitive `REVIEW.md`, and a markdown table needing five characters against the same four-wide window. Widened the post-`line` window from 4 to 8 — enough for a bolded, punctuated label, not enough to span a sentence. Checked against every `REVIEW.md` on disk: two counts move, one verdict changes (this cell, 0 → 7); qwen35's goes 11 → 12 and was already passing. Row re-verified: 4.0 → 5.0/5.0.
+
+### Pass 2 — cell 27/76 — L3 handles-cli-node × ternary-bonsai
+
+**Judged 94** in 4.4 minutes and 16 calls — the fastest clean cell this model has produced. Nine tests driving the real CLI through `execSync`; synchronous, so the try/catch actually catches. Verified: exits 1 with the network removed, 0 with it. Directly contrast its L2 cell on this task, where an unawaited async runner made twelve tests unfailable.
+
+Docked on the Dockerfile: it works, but carries a builder stage whose output is discarded and two `npm ci ... || true` lines for a project with no dependencies and no lockfile — in a runtime image that installs nodejs without npm, so the command could never succeed and is silenced rather than removed.
