@@ -534,3 +534,14 @@ The README check passes on real content — all four zones, 8/8 rate values. `zo
 **First cell where this model connected its own artifact to its own code.** Its L1 and L2 cells wrote a correct `discounts.json` that `cart.go` never mentioned; here `os.ReadFile("discounts.json")` reads it, with a documented fall-back to a default map.
 
 Killed by two invented names on one line: `taxed.Quantize(2, decimal.ROUND_HALF_UP)`. Both belong to Python's `decimal` module, not shopspring's — the real API is `Round(int32)`. The subtotal is also still computed in float before reaching decimal, so the rounding would be wrong even if it compiled.
+
+### Pass 2 — cell 67/76 — L4 orders-api-py × nemotron-elastic
+
+**Judged 40.** `milestone-miss-30min` after 134 calls — third consecutive L4 cell running long where L0–L3 averaged 6 calls.
+
+Two single-token defects:
+
+- `CUSTOMER_RE = re.compile(r"^/customers/([^/]+)$")` — the `$` forbids the trailing `/orders`, so the route it exists to serve never matches. Third rung in a row where this model builds the query layer and cannot reach it.
+- `_schema_version()` returns `SELECT COUNT(*) FROM sqlite_master WHERE type='table'` — a table count, not a version. On a seeded database that is ≥ 1, so the `if cur_version < 1` branch holding the `ALTER TABLE` never runs. `init_version` is defined twice, both bodies `pass`.
+
+Its two seed tests are red again on `no such table`, repeating the L3 regression.
