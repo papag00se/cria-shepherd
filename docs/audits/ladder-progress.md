@@ -444,3 +444,7 @@ First non-zero deliverable from this model in seven cells, and it is an orphan a
 ### Pass 2 — cell 53/76 — L2 shipping-rates-rb × nemotron-elastic
 
 **Judged 0.** `crashed-early` after 4 model calls and 12 seconds. Level 2 hands the model cria's own tool menu lowered to shell — the rung that lifted ternary-bonsai from 7 to 100 on this exact task. No effect here.
+
+### Pass 2 — cell 54/76 — L2 cart-billing-go × nemotron-elastic
+
+**Judged 6.** `exited` after 8 calls and 2.2 minutes. Identical outcome to its L1 cell on this task: a correct `discounts.json` with all three codes, and `cart.go` containing no reference to it. Twice now, one rung apart, the model has produced exactly one artifact on this task and left it unwired.
