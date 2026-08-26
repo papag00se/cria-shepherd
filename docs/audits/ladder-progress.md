@@ -416,3 +416,9 @@ Three nemotron cells, three zeros, 7 / 7 / 5 model calls. It is not attempting t
 ### Pass 2 — cell 47/76 — L1 shipping-rates-rb × nemotron-elastic
 
 **Judged 0.** `crashed-early` after 3 model calls and **12 seconds**. Workspace identical to the seed. First L1 cell for this model; the tool-call repair rung did not change the outcome on this task.
+
+### Pass 2 — cell 48/76 — L1 cart-billing-go × nemotron-elastic
+
+**Judged 6.** `exited` after 13 calls and 5.8 minutes. It wrote a correct `discounts.json` — all three codes, right rates — and never wired it in: `cart.go` contains no reference to the filename. The check `discounts_from_file` reads met, and its second half ("still builds and passes without the file") passes precisely because nothing depends on the file.
+
+First non-zero deliverable from this model in seven cells, and it is an orphan artifact.

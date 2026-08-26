@@ -1,6 +1,6 @@
 # Battery — the engagement ladder
 
-**Last updated 2026-08-26 03:12** — newest row `shipping-rates-rb_nemotron-elastic_codex_poff_1787739099`, scored 2026-08-26 03:12.
+**Last updated 2026-08-26 03:18** — newest row `cart-billing-go_nemotron-elastic_codex_poff_1787739121`, scored 2026-08-26 03:17.
 
 Tables only. Findings, walks and the retired two-arm campaign: [`battery-history.md`](battery-history.md).
 Per-cell judging: [`ladder-progress.md`](ladder-progress.md). Status: `python3 suite/engagement_status.py`.
@@ -23,7 +23,7 @@ Per-cell judging: [`ladder-progress.md`](ladder-progress.md). Status: `python3 s
 | 🟠 gemma4 | 28% | 92% | 34% | 33% | 6% | 51% | 41% | 15 | 130 |
 | 🟡 qwen35 | 55% | 92% | 83% | 62% | 0% | 100% | 65% | 14 | 73 |
 | 🔴 ternary-bonsai | 7% | 32% | 61% | 14% | 99% | 11% | 37% | 31 | 53 |
-| 🔴 nemotron-elastic | 0% | · | · | · | · | · | 0% | 0 | 3 |
+| 🔴 nemotron-elastic | 0% | 6% | · | · | · | · | 3% | 3 | 8 |
 
 ### Level 2 — SIMPLE_TOOLS — cria's tool menu, lowered to shell
 
