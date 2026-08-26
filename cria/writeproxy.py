@@ -1131,7 +1131,20 @@ def _external_refusal(name, args, fn, injected, level: str, workspace: str | Non
 # Lowered tools whose own result is ONE bounded line, so appending the workspace survey to them
 # cannot push the model's own content past the harness's output cap. Reads, fetches and searches
 # are deliberately absent — see the ride-along note in translate_outbound.
-_SURVEYABLE = _WRITE_NAMES | _EDIT_NAMES | _LIST_NAMES
+#
+# AND SO IS `list_dir`, WHICH WAS HERE AND IS NOT ONE LINE. Its lowering caps the listing at
+# READ_INLINE_MAX (9,000 bytes) and the survey it carried measured 6.6-10 KB, so a single result
+# could reach ~19 KB — well past the ~10 KB a harness keeps. The harness then cut the middle, which
+# is exactly where the survey's head sits; `apply_survey` refused the remains (entry count no longer
+# matches the records that survived) and the workspace view went stale for the rest of the session.
+# Measured across the 144-cell engagement ladder: 449 refused surveys in 11 cells, and the refusals
+# track the harness's own cut markers almost one for one — 94/94, 46/47, 29/29, 17/17. Eight of the
+# eleven are L5 runs, where the gate and the assists are the readers that lose the view.
+#
+# Each half was bounded and their SUM was not, which is the whole bug. Writes and edits really do
+# answer in one line, so they keep carrying it; a `list_dir` changes nothing on disk, so a view that
+# waits for the next write is not stale about anything that happened in between.
+_SURVEYABLE = _WRITE_NAMES | _EDIT_NAMES
 
 # How many surveyable calls pass between surveys once the view is populated. The tree is re-walked
 # on the harness's side each time, so this is a cost on the CODER's box, not cria's; four is often
