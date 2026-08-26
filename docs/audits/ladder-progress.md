@@ -518,3 +518,11 @@ The dependency coordinates themselves are right, and the worker chunking is writ
 Built the inner crate alone to see how far it gets: three errors — `?` used twice inside a `main()` that returns unit, and a call to `Value::walk()`, which does not exist. It also hardcodes `config.toml` while its own usage string promises a file argument.
 
 **nemotron-elastic L3 row complete: 0, 0, 50, 12, 0, 15 → 13.** Rows: L0 0, L1 1, L2 12, L3 13.
+
+### Pass 2 — cell 65/76 — L4 shipping-rates-rb × nemotron-elastic
+
+**Judged 26** — this model's first passing check and its first self-written tests, in 153 calls over 30.8 minutes (`milestone-miss-30min`). Its most engaged cell by a wide margin: previous cells averaged 6 calls.
+
+Everything is dead behind one wrong path. `rates.rb:6` reads `require 'vendor/europe'`; the gem was genuinely fetched and unpacked to `vendor/gems/europe/europe-0.0.28`. The dependency is present, the require names a path that does not exist, and every test errors before any code runs.
+
+The README check passes on real content — all four zones, 8/8 rate values. `zone_for` is written sensibly against `Europe::Country#european?` with GB special-cased.
