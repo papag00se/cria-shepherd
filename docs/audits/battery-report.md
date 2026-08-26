@@ -1,6 +1,6 @@
 # Battery — the engagement ladder
 
-**Last updated 2026-08-25 23:31** — newest row `cart-billing-go_ternary-bonsai_codex_poff_1787724858`, scored 2026-08-25 23:30.
+**Last updated 2026-08-26 00:17** — newest row `orders-api-py_ternary-bonsai_codex_poff_1787725850`, scored 2026-08-26 00:16.
 
 Tables only. Findings, walks and the retired two-arm campaign: [`battery-history.md`](battery-history.md).
 Per-cell judging: [`ladder-progress.md`](ladder-progress.md). Status: `python3 suite/engagement_status.py`.
@@ -58,7 +58,7 @@ Per-cell judging: [`ladder-progress.md`](ladder-progress.md). Status: `python3 s
 |---|---|---|---|---|---|---|---:|---:|---:|
 | 🟡 gemma4 | 73% | 89% | 92% | 100% | 91% | 51% | 83% | 24 | 86 |
 | 🟡 qwen35 | 100% | 63% | 29% | 96% | 58% | 100% | 74% | 31 | 172 |
-| 🟢 ternary-bonsai | 100% | 97% | · | · | · | · | 98% | 22 | 57 |
+| 🟢 ternary-bonsai | 100% | 97% | 74% | · | · | · | 90% | 30 | 57 |
 | nemotron-elastic | · | · | · | · | · | · | · | — | — |
 
 

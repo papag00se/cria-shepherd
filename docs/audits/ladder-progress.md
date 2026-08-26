@@ -337,3 +337,13 @@ This task across all six rungs for ternary-bonsai: **54, 7, 100, 1, 100, 100.**
 Docked 15 on logging for the same reason as its L4 cell: `Float64()` then `%.2f` prints `subtotal=44.98` for a true 44.9775. Two rungs apart, the same weakness — a log written to expose a rounding bug that rounds the number away.
 
 Go column for this model: **90, 32, 33, 78, 97, 97.**
+
+### Pass 2 — cell 37/76 — L5 orders-api-py × ternary-bonsai
+
+**Judged 74.** `milestone-miss-45min` after 57 calls. The customer route crashes every request: the guard uses `self.path.split("/", 2)` (3 parts, passes) and the body then uses `self.path.split("/")` (4 parts) unpacked into three names — `ValueError: too many values to unpack`. Connection closes with no response, hence the check's `-> 0`.
+
+Worth noting against the earlier cells: this run finally abandoned index slicing for splitting, which is the correct approach. The guard and the body just disagree about the maxsplit.
+
+Its three red tests are **correct** — they hit the route and catch the crash. Scored 75 rather than penalised: unlike its L2 and L4 node cells, these tests are not the bug, they are what found it.
+
+Python column for this model: **89, 61, 100, 93, 64, 74.**
