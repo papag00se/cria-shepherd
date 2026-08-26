@@ -313,3 +313,11 @@ Same model wrote a 607-word review with seven located findings on this task at L
 **Judged 76** in 31.8 minutes. CLI, dependency removal and Dockerfile correct. The tests score 5: two near-duplicate files, 132 and 136 lines, and **neither ever runs**. Both end `module.exports = { ... }` — a suite object nothing invokes — so `node test/run-tests.js` exits 0 having executed no assertion. Two more bugs behind it: `path.join(__dirname, '..', 'lookup.js', ...args)` joins the arguments into the path, and `result.code` is read where `spawnSync` returns `result.status`.
 
 **The verifier wording fix from cell 21 earned itself here.** The check now reports "nothing here proves a live call (mocked, vacuous, or offline-only)". Under the old wording this would have read "mocked, not live" — and there is no mock anywhere in 268 lines. Second cell in this campaign whose cause the old string would have misnamed.
+
+### Pass 2 — cell 34/76 — L4 rust-toml-cli × ternary-bonsai
+
+**Judged 16.** `milestone-miss-30min` after 53 calls. Three errors inside eight lines: `part.as_str()` on a `&&str` (unstable; `*part` is the stable form), a `Vec<&str>` collected from `&&str` without `.copied()`, and that vector printed with `{}`. Verified on a copy — correcting the three compiles the crate. No README; `src/lib.rs` left as a 0-byte file.
+
+**The rust column for this model now reads 98, 11, 11, 18, 16 across five rungs**, and four of the five failures involve the same `&str` reference confusion. Its L0 source carries a comment explaining the fix.
+
+**ternary-bonsai L4 row complete: 100, 97, 64, 80, 76, 16 → 72.** Its L0 row was also 72.
