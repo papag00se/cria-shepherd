@@ -591,3 +591,16 @@ The README is the strongest artifact this model has produced in the campaign: 27
 | L4 | 26 | 28 | 40 | 19 | 40 | 20 | **29** | **141** |
 
 **The call count is the finding.** L0–L3 average 6–8 calls per cell; L4 averages 141. Level 4 is where cria begins refusing the model's claim to be finished, and this model stops quitting after thirty seconds and works for half an hour instead. Every cell in the row produced real code; none of it compiles, and the causes are the same class throughout — invented library names and single wrong identifiers.
+
+### Pass 2 — cell 71/76 — L5 shipping-rates-rb × nemotron-elastic
+
+**Judged 8.** `milestone-miss-30min` after 163 calls. The entire diff is one character:
+
+```ruby
+-    return surcharge if order_total > FREE_SHIPPING_THRESHOLD
++    return surcharge if order_total >= FREE_SHIPPING_THRESHOLD
+```
+
+It is a genuine fix — at-or-above is the boundary the task describes — and it turns the seed suite green. Nothing else was attempted: no express zone, README untouched, and a Gemfile declaring `countries` and `eu` that no source file requires.
+
+Assists were firing heavily: `loop.compaction_reframed` ×80, `write_streak_corrected` ×27, `satisfaction_blocked` ×25, `periodic_gate` ×6. Half an hour of engagement for one character.
