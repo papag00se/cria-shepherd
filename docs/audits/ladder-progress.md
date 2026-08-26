@@ -497,3 +497,12 @@ if not conn.execute("SELECT name FROM sqlite_master WHERE ... name='orders'"):
 **Two of the four failing tests are the seed's own, which passed before this run.** This is the first nemotron cell to actively break something that was working.
 
 `app.py` is still byte-for-byte the seed's, so the customer route 404s exactly as at L2 — the query layer exists, nothing routes to it.
+
+### Pass 2 — cell 62/76 — L3 feed-pipeline-java × nemotron-elastic
+
+**Judged 12.** `exited` after 11 calls and 10.1 minutes. Two independent structural errors:
+
+1. `pom.xml` places a `<dependency>` block directly under `<project>` with no `<dependencies>` wrapper — Maven rejects the file outright.
+2. Behind that, `Importer.java` imports `CSVSyntaxException` and `CSVStream`, neither of which exists in commons-csv. Verified by repairing the pom on a copy: the compile then fails on those symbols.
+
+The dependency coordinates themselves are right, and the worker chunking is written correctly. Nothing reaches the compiler.
