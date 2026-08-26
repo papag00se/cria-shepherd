@@ -321,3 +321,11 @@ Same model wrote a 607-word review with seven located findings on this task at L
 **The rust column for this model now reads 98, 11, 11, 18, 16 across five rungs**, and four of the five failures involve the same `&str` reference confusion. Its L0 source carries a comment explaining the fix.
 
 **ternary-bonsai L4 row complete: 100, 97, 64, 80, 76, 16 → 72.** Its L0 row was also 72.
+
+### Pass 2 — cell 35/76 — L5 shipping-rates-rb × ternary-bonsai
+
+**Judged 100** in 28 minutes and 71 calls. Cleanest dependency handling of this model's six attempts at the task: current major version, `rake` scoped to a development group, country codes upcased before lookup.
+
+First L5 cell for this model, and the assists are visibly active — `loop.satisfaction_blocked` ×25, `loop.periodic_gate` ×2, `loop.write_streak_corrected` ×3, `loop.gate` ×4. Those are exactly the mechanisms absent from every rung below, so the level boundary holds.
+
+This task across all six rungs for ternary-bonsai: **54, 7, 100, 1, 100, 100.**
