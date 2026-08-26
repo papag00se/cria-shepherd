@@ -426,3 +426,7 @@ First non-zero deliverable from this model in seven cells, and it is an orphan a
 ### Pass 2 — cell 49/76 — L1 orders-api-py × nemotron-elastic
 
 **Judged 0.** `exited` after 7 model calls and one minute; every source file as the seed left it, SQL injection still live.
+
+### Pass 2 — cell 50/76 — L1 feed-pipeline-java × nemotron-elastic
+
+**Judged 0.** `crashed-early` after 3 model calls and 18 seconds.
