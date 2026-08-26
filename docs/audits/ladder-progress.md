@@ -623,3 +623,9 @@ setattr(db, "DB_PATH", DB_PATH)                     # dicts take no attributes
 `AttributeError: 'dict' object has no attribute 'DB_PATH'` fires at import, so the service never starts, the tests error out, and the verifier's own SQL-injection probe dies before it can run. It invented a module-like dict to stand in for a module, then treated it as one.
 
 Its worst L4/L5 cell on this task despite 115 calls of engagement — the L4 attempt at least reached the point of serving a 404.
+
+### Pass 2 — cell 74/76 — L5 feed-pipeline-java × nemotron-elastic
+
+**Judged 22.** `milestone-miss-30min` after 74 calls. 39 compile errors from two invented class locations: `com.opencsv.CSVRecord` (that class belongs to commons-csv; opencsv has no such type) and `com.opencsv.exceptions.CsvParseException` (the real name is `CsvException`).
+
+Its review passes the check with 199 words and 7 located findings, and what it contains is worth recording: **the findings are its own unfixed compile errors**, each with file and line — a `ConcurrentMap` type mismatch, a missing `java.util.concurrent` import. It diagnosed them correctly, wrote them up as the deliverable, and never fixed them.
