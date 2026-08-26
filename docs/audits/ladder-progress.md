@@ -506,3 +506,7 @@ if not conn.execute("SELECT name FROM sqlite_master WHERE ... name='orders'"):
 2. Behind that, `Importer.java` imports `CSVSyntaxException` and `CSVStream`, neither of which exists in commons-csv. Verified by repairing the pom on a copy: the compile then fails on those symbols.
 
 The dependency coordinates themselves are right, and the worker chunking is written correctly. Nothing reaches the compiler.
+
+### Pass 2 — cell 63/76 — L3 handles-cli-node × nemotron-elastic
+
+**Judged 0.** `crashed-early` after 2 model calls and 30 seconds — the third time this model has stopped at exactly 2 calls on this task (L0, L1, L3). Node column: 0, 0, 0, 0.
