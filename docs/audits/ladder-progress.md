@@ -460,3 +460,7 @@ Same shape as its go cells, one layer up: it completes a single self-contained p
 ### Pass 2 — cell 56/76 — L2 feed-pipeline-java × nemotron-elastic
 
 **Judged 0.** `exited` after 11 calls and 7.3 minutes, importer untouched. Third attempt at this task from this model, third zero.
+
+### Pass 2 — cell 57/76 — L2 handles-cli-node × nemotron-elastic
+
+**Judged 0.** `exited` after 5 calls and 6.6 minutes, seed unchanged. Third attempt at this task, third zero.
