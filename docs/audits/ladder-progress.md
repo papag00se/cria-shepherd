@@ -390,3 +390,9 @@ Highest rung is the top one, but the spread within every column swamps the diffe
 ### Pass 2 — cell 42/76 — L0 cart-billing-go × nemotron-elastic
 
 **Judged 0.** `exited` after 7 model calls and 6.4 minutes, tree clean against the seed. Second nemotron cell, second one that wrote nothing at all — same call count as the first (7), so the model is stopping at the same point rather than failing at different places.
+
+### Pass 2 — cell 43/76 — L0 orders-api-py × nemotron-elastic
+
+**Judged 0.** `exited` after 5 model calls and 6.4 minutes. Only `__pycache__` bytecode differs from the seed — the model ran the existing tests and stopped. SQL injection still live.
+
+Three nemotron cells, three zeros, 7 / 7 / 5 model calls. It is not attempting the work at the pure-proxy rung.
