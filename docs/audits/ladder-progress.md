@@ -478,3 +478,7 @@ README is real (1692 B), so this is the model's first cell to deliver a written 
 ### Pass 2 — cell 59/76 — L3 shipping-rates-rb × nemotron-elastic
 
 **Judged 0.** `crashed-early` after 5 model calls and 18 seconds. Fourth attempt at this task from this model; scores so far 0, 0, 0, 0.
+
+### Pass 2 — cell 60/76 — L3 cart-billing-go × nemotron-elastic
+
+**Judged 0.** `exited` after 6 calls and 6.5 minutes, tree clean. Its L1 and L2 cells on this task both produced an orphaned `discounts.json`; this one produced nothing at all. Go column: 0, 6, 6, 0.
