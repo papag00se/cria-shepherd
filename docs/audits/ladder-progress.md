@@ -301,3 +301,9 @@ Docked 15 on logging: `%.2f` prints `subtotal=44.98` where the value is 44.9775.
 **Judged 64.** `milestone-miss-45min` after 70 calls. Migration and injection fix both correct. The customer route fails on half of the bug it had at L1: that run used `self.path[12:]` when the prefix is 11 characters *and* never stripped the trailing `/orders`. This run fixed the offset and still never strips the suffix, so the lookup asks for a customer named `alice/orders`.
 
 Eight of ten tests red — two genuinely catching that route bug, six dying in the suite's own readiness probe.
+
+### Pass 2 — cell 32/76 — L4 feed-pipeline-java × ternary-bonsai
+
+**Judged 80.** `milestone-miss-75min` after 75 calls and 76.4 minutes — the longest cell of the campaign. Code deliverables all correct, including the atomic `totals.merge(sku, value, Double::sum)` with nothing unsafe behind it. The review was simply never written: the workspace holds README, pom, src and data, and no review file under any name.
+
+Same model wrote a 607-word review with seven located findings on this task at L3, in 18.5 minutes.
