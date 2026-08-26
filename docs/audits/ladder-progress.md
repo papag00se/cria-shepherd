@@ -456,3 +456,7 @@ First non-zero deliverable from this model in seven cells, and it is an orphan a
 It never opened `app.py`. The route those queries exist to serve still 404s.
 
 Same shape as its go cells, one layer up: it completes a single self-contained piece and never connects it. Three cells on two tasks now, all the same pattern.
+
+### Pass 2 — cell 56/76 — L2 feed-pipeline-java × nemotron-elastic
+
+**Judged 0.** `exited` after 11 calls and 7.3 minutes, importer untouched. Third attempt at this task from this model, third zero.
