@@ -1,6 +1,6 @@
 # Battery — the engagement ladder
 
-**Last updated 2026-08-25 16:16** — newest row `cart-billing-go_ternary-bonsai_codex_poff_1787697713`, scored 2026-08-25 16:15.
+**Last updated 2026-08-25 17:17** — newest row `orders-api-py_ternary-bonsai_codex_poff_1787699725`, scored 2026-08-25 17:16.
 
 Tables only. Findings, walks and the retired two-arm campaign: [`battery-history.md`](battery-history.md).
 Per-cell judging: [`ladder-progress.md`](ladder-progress.md). Status: `python3 suite/engagement_status.py`.
@@ -40,7 +40,7 @@ Per-cell judging: [`ladder-progress.md`](ladder-progress.md). Status: `python3 s
 |---|---|---|---|---|---|---|---:|---:|---:|
 | 🟡 gemma4 | 85% | 88% | 84% | 96% | 78% | 86% | 86% | 6 | 27 |
 | 🟡 qwen35 | 93% | 100% | 83% | 80% | 58% | 74% | 81% | 9 | 54 |
-| 🟠 ternary-bonsai | 1% | 78% | · | · | · | · | 40% | 32 | 58 |
+| 🟠 ternary-bonsai | 1% | 78% | 93% | · | · | · | 57% | 42 | 70 |
 | nemotron-elastic | · | · | · | · | · | · | · | — | — |
 
 ### Level 4 — DONE_REFUSALS_ENABLED — refusing a completion CLAIM

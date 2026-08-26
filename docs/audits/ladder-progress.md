@@ -248,3 +248,9 @@ A different failure mode from this model's other losses — not a wrong token, a
 Verified: deleting `discounts.json` still builds, and with the comparison corrected the suite goes green. So `discounts_from_file` reads False only because the model's own tests are red — the loader is properly guarded with defaults behind an `err == nil` check. Scored 90 rather than 0.
 
 Strict score 3.0/5.0 for a program that does everything the task asked.
+
+### Pass 2 — cell 25/76 — L3 orders-api-py × ternary-bonsai
+
+**Judged 93.** `milestone-miss-60min` after 93 calls. Nine of ten HTTP tests green. The tenth fails on its own fixture: it builds a V1 database, inserts alice, and calls `close()` without `commit()`, so the row is discarded before the server ever starts. bob's insert then takes id 1 and the assertion reads `assert 'bob' == 'alice'`. Confirmed in isolation — close-without-commit leaves the table empty.
+
+Second cell running where the model's own test setup, not its program, produced the red. The migration it was trying to test passes the verifier's independent probe.
