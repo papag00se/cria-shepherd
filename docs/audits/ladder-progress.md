@@ -448,3 +448,11 @@ First non-zero deliverable from this model in seven cells, and it is an orphan a
 ### Pass 2 — cell 54/76 — L2 cart-billing-go × nemotron-elastic
 
 **Judged 6.** `exited` after 8 calls and 2.2 minutes. Identical outcome to its L1 cell on this task: a correct `discounts.json` with all three codes, and `cart.go` containing no reference to it. Twice now, one rung apart, the model has produced exactly one artifact on this task and left it unwired.
+
+### Pass 2 — cell 55/76 — L2 orders-api-py × nemotron-elastic
+
+**Judged 45** — this model's first substantial score in fourteen cells. `exited` after 10 calls and 1.4 minutes, and in that time it rewrote `orders/db.py` properly: guarded `ALTER TABLE ADD COLUMN status`, `CREATE INDEX IF NOT EXISTS` on customer, bound parameters everywhere, and a `get_customer_orders` with a COALESCE'd total.
+
+It never opened `app.py`. The route those queries exist to serve still 404s.
+
+Same shape as its go cells, one layer up: it completes a single self-contained piece and never connects it. Three cells on two tasks now, all the same pattern.
