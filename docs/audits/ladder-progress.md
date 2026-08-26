@@ -604,3 +604,9 @@ The README is the strongest artifact this model has produced in the campaign: 27
 It is a genuine fix — at-or-above is the boundary the task describes — and it turns the seed suite green. Nothing else was attempted: no express zone, README untouched, and a Gemfile declaring `countries` and `eu` that no source file requires.
 
 Assists were firing heavily: `loop.compaction_reframed` ×80, `write_streak_corrected` ×27, `satisfaction_blocked` ×25, `periodic_gate` ×6. Half an hour of engagement for one character.
+
+### Pass 2 — cell 72/76 — L5 cart-billing-go × nemotron-elastic
+
+**Judged 24.** `milestone-miss-30min` after 78 calls. Discounts are wired properly this time — `os.Stat` guard, `os.ReadFile`, default map behind it.
+
+The rounding fails on three invented names stacked together: an import of `github.com/shopspring/decimal/quantize`, a subpackage that does not exist, which breaks resolution before compilation. Stripping it on a copy exposes `taxed.Quantize(...)` and `decimal.RoundHalfUp` behind it — **the same two names its L4 cell on this task invented**, one rung earlier, spelled `ROUND_HALF_UP` there.
