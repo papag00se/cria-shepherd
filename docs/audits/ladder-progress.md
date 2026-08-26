@@ -482,3 +482,18 @@ README is real (1692 B), so this is the model's first cell to deliver a written 
 ### Pass 2 — cell 60/76 — L3 cart-billing-go × nemotron-elastic
 
 **Judged 0.** `exited` after 6 calls and 6.5 minutes, tree clean. Its L1 and L2 cells on this task both produced an orphaned `discounts.json`; this one produced nothing at all. Go column: 0, 6, 6, 0.
+
+### Pass 2 — cell 61/76 — L3 orders-api-py × nemotron-elastic
+
+**Judged 50.** `exited` after 12 calls and 3.1 minutes. Its best cell yet and its first HTTP tests, undone by one truthiness bug:
+
+```python
+if not conn.execute("SELECT name FROM sqlite_master WHERE ... name='orders'"):
+    conn.executescript(SCHEMA)
+```
+
+`conn.execute()` returns a Cursor, which is always truthy, so the CREATE branch never runs and a fresh database has no table. Six lines later the same check is written correctly with `cur.fetchone()` for the index. The verifier's migration probe passes because it starts from a seeded database; every test starts from a temp file and hits `no such table: orders`.
+
+**Two of the four failing tests are the seed's own, which passed before this run.** This is the first nemotron cell to actively break something that was working.
+
+`app.py` is still byte-for-byte the seed's, so the customer route 404s exactly as at L2 — the query layer exists, nothing routes to it.
