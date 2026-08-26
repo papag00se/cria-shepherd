@@ -307,3 +307,9 @@ Eight of ten tests red — two genuinely catching that route bug, six dying in t
 **Judged 80.** `milestone-miss-75min` after 75 calls and 76.4 minutes — the longest cell of the campaign. Code deliverables all correct, including the atomic `totals.merge(sku, value, Double::sum)` with nothing unsafe behind it. The review was simply never written: the workspace holds README, pom, src and data, and no review file under any name.
 
 Same model wrote a 607-word review with seven located findings on this task at L3, in 18.5 minutes.
+
+### Pass 2 — cell 33/76 — L4 handles-cli-node × ternary-bonsai
+
+**Judged 76** in 31.8 minutes. CLI, dependency removal and Dockerfile correct. The tests score 5: two near-duplicate files, 132 and 136 lines, and **neither ever runs**. Both end `module.exports = { ... }` — a suite object nothing invokes — so `node test/run-tests.js` exits 0 having executed no assertion. Two more bugs behind it: `path.join(__dirname, '..', 'lookup.js', ...args)` joins the arguments into the path, and `result.code` is read where `spawnSync` returns `result.status`.
+
+**The verifier wording fix from cell 21 earned itself here.** The check now reports "nothing here proves a live call (mocked, vacuous, or offline-only)". Under the old wording this would have read "mocked, not live" — and there is no mock anywhere in 268 lines. Second cell in this campaign whose cause the old string would have misnamed.
