@@ -430,3 +430,7 @@ First non-zero deliverable from this model in seven cells, and it is an orphan a
 ### Pass 2 — cell 50/76 — L1 feed-pipeline-java × nemotron-elastic
 
 **Judged 0.** `crashed-early` after 3 model calls and 18 seconds.
+
+### Pass 2 — cell 51/76 — L1 handles-cli-node × nemotron-elastic
+
+**Judged 0.** `crashed-early` after 2 model calls and 30 seconds — same 2-call stop as its L0 cell on this task.
