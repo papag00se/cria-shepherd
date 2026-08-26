@@ -440,3 +440,7 @@ First non-zero deliverable from this model in seven cells, and it is an orphan a
 **Judged 0.** `exited` after 4 model calls and 1.7 minutes, empty workspace.
 
 **nemotron-elastic L1 row complete: 0, 6, 0, 0, 0, 0 → 1.** Against 0 at L0. Twelve cells, one non-zero deliverable — an orphaned `discounts.json` no code reads.
+
+### Pass 2 — cell 53/76 — L2 shipping-rates-rb × nemotron-elastic
+
+**Judged 0.** `crashed-early` after 4 model calls and 12 seconds. Level 2 hands the model cria's own tool menu lowered to shell — the rung that lifted ternary-bonsai from 7 to 100 on this exact task. No effect here.
