@@ -582,9 +582,31 @@ def _typo_fold(s: str) -> str:
     return os.path.normpath(os.path.expanduser(s.strip())).lower().replace("_", "-")
 
 
+def _within_one_edit(a: str, b: str) -> bool:
+    """True when ``a`` and ``b`` differ by at most ONE insertion, deletion, substitution or
+    transposition of adjacent characters. Damerau-Levenshtein distance <= 1, decided without
+    building a matrix: the lengths bound the shape, so each case is a single scan."""
+    if a == b:
+        return True
+    la, lb = len(a), len(b)
+    if abs(la - lb) > 1:
+        return False
+    if la == lb:                                   # substitution or transposition
+        diff = [i for i in range(la) if a[i] != b[i]]
+        if len(diff) == 1:
+            return True
+        return (len(diff) == 2 and diff[1] == diff[0] + 1
+                and a[diff[0]] == b[diff[1]] and a[diff[1]] == b[diff[0]])
+    long, short = (a, b) if la > lb else (b, a)    # one insertion / deletion
+    i = 0
+    while i < len(short) and long[i] == short[i]:
+        i += 1
+    return long[i + 1:] == short[i:]
+
+
 def _case_typo_of_workspace(path: str, workspace: str | None) -> bool:
-    """True when ``path`` IS the workspace (or a path under it) up to LETTER CASE or a
-    DASH/UNDERSCORE swap — i.e. the model typed its own project directory one glyph wrong.
+    """True when ``path`` IS the workspace (or a path under it) up to ONE TYPED GLYPH — i.e. the
+    model typed its own project directory wrong by a single character.
 
     Walked on ada-handles_gemma4_codex_poff_1785869053: the coder wrote ``…-8Ibs7re8`` (capital I)
     for its real ``…-8ibs7re8`` workspace 106 times, drew this refusal 50+ times — the message
@@ -593,11 +615,32 @@ def _case_typo_of_workspace(path: str, workspace: str | None) -> bool:
     ada-handles_mellum2_codex_poff_1785880114 hit the SAME loop one glyph over: ``suite-ada_handles``
     (underscore) for ``suite-ada-handles`` — the note never fired because the fix was
     letter-case-only. The comparison is exact ground truth cria already holds; naming the
-    difference is the one sentence that ends the loop at its first firing."""
+    difference is the one sentence that ends the loop at its first firing.
+
+    THIRD INSTANCE, and the reason this no longer enumerates glyph classes. L5
+    shipping-rates-rb x nemotron-elastic (1787754910) typed ``…-zpis1_t`` for its real ``…-zpsis1_t``
+    — a DROPPED letter, which neither case-folding nor dash/underscore collapsing can see. It drew
+    this refusal on 42 of its 115 coder calls, from the second call to the last, and scored 8.
+    Case, dash/underscore and a dropped/doubled/transposed character are all the same event — one
+    mistyped glyph — so the test is now one edit on the segment that should have been the workspace,
+    which covers every class of them and any fourth nobody has walked yet. Bounded to a sibling of
+    the real workspace (same parent, one edit in the name) so a genuinely different directory two
+    levels away can never draw the note."""
     if not workspace:
         return False
     p, ws = _typo_fold(path), _typo_fold(workspace)
-    return p == ws or p.startswith(ws + os.sep)
+    if p == ws or p.startswith(ws + os.sep):
+        return True
+    ws_parent, ws_name = os.path.split(ws)
+    # Walk the path's own ancestors: the typo'd segment may be the whole path (`list_dir <typo>`)
+    # or an ancestor of it (`read_file <typo>/Gemfile`), and both drew this refusal in the walk.
+    cur = p
+    while cur and cur != os.sep:
+        parent, name = os.path.split(cur)
+        if parent == ws_parent and _within_one_edit(name, ws_name):
+            return True
+        cur = parent
+    return False
 
 
 def _refusal(verb: str, path: str, workspace: str | None = None) -> str:

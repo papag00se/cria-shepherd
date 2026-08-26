@@ -291,3 +291,44 @@ class CaseTypoNoteTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class WorkspaceTypoIsOneGlyph(unittest.TestCase):
+    """The near-miss note must fire for ANY single mistyped glyph, not an enumerated list of them.
+
+    Three walks, three glyph classes, one loop: a capital letter (1785869053), an underscore for a
+    dash (1785880114), and a DROPPED letter (L5 shipping-rates-rb x nemotron-elastic, 1787754910,
+    which drew the refusal on 42 of 115 coder calls and scored 8). Each earlier fix widened the fold
+    by exactly the class just walked, so the next class walked in fresh. The property is "one typed
+    glyph wrong", and this asserts the property rather than today's three examples."""
+
+    WS = "/home/jesse/src/cria-shepherd/runs/suite-rates_m_codex_poff_1787754910-zpsis1_t"
+
+    def _fires(self, path):
+        from cria import dirguard
+        return dirguard._case_typo_of_workspace(path, self.WS)
+
+    def test_every_one_glyph_class_draws_the_note(self):
+        for label, path in [
+            ("dropped letter", self.WS.replace("zpsis1_t", "zpis1_t")),
+            ("doubled letter", self.WS.replace("zpsis1_t", "zpssis1_t")),
+            ("transposed pair", self.WS.replace("zpsis1_t", "zspis1_t")),
+            ("wrong letter", self.WS.replace("zpsis1_t", "zpxis1_t")),
+            ("letter case", self.WS.replace("zpsis1_t", "zpsis1_T")),
+            ("underscore for dash", self.WS.replace("suite-rates", "suite_rates")),
+            ("file under the typo", self.WS.replace("zpsis1_t", "zpis1_t") + "/Gemfile"),
+            ("the workspace itself", self.WS),
+        ]:
+            with self.subTest(label):
+                self.assertTrue(self._fires(path), label)
+
+    def test_a_genuinely_different_path_does_not(self):
+        for label, path in [
+            ("unrelated scratch", "/tmp/test.db"),
+            ("a dependency's source", "/home/jesse/.cargo/registry/src/idx/toml-0.8.23/src/value.rs"),
+            ("another run's workspace", "/home/jesse/src/cria-shepherd/runs/suite-other_m_codex_poff_1787999999-qqqqqqqq"),
+            ("two edits away", self.WS.replace("zpsis1_t", "zpi1_t")),
+            ("the parent directory", "/home/jesse/src/cria-shepherd/runs"),
+        ]:
+            with self.subTest(label):
+                self.assertFalse(self._fires(path), label)
