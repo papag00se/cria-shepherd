@@ -422,3 +422,7 @@ Three nemotron cells, three zeros, 7 / 7 / 5 model calls. It is not attempting t
 **Judged 6.** `exited` after 13 calls and 5.8 minutes. It wrote a correct `discounts.json` — all three codes, right rates — and never wired it in: `cart.go` contains no reference to the filename. The check `discounts_from_file` reads met, and its second half ("still builds and passes without the file") passes precisely because nothing depends on the file.
 
 First non-zero deliverable from this model in seven cells, and it is an orphan artifact.
+
+### Pass 2 — cell 49/76 — L1 orders-api-py × nemotron-elastic
+
+**Judged 0.** `exited` after 7 model calls and one minute; every source file as the seed left it, SQL injection still live.
