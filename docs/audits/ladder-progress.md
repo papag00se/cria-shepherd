@@ -553,3 +553,23 @@ Its two seed tests are red again on `no such table`, repeating the L3 regression
 The review fails its check on locations only: 1 finding names a line where 2 are required, and it is written as a summary of changes rather than remaining problems.
 
 **Incidental observation, not a defect in the run:** the model set the project's `artifactId` to `cria-shepherd`. The suite creates run workspaces under `runs/` inside this repo, so the harness's own directory name is visible in the model's cwd and it named the project after it. Nothing to fix for the campaign — the workspace is the seed plus its own writes — but worth recording that the model reads its path and will name things after it.
+
+### Pass 2 — cell 69/76 — L4 handles-cli-node × nemotron-elastic
+
+**Judged 40.** `milestone-miss-45min` after **267 model calls** — its most engaged cell of the campaign, against an L0–L3 average of 6.
+
+The CLI is one identifier from working:
+
+```js
+const flags = ['--json', '--help'];
+const args  = process.argv.slice(2);
+const handle = args.find(arg => !flags.includes(arg));   // correct
+const jsonMode = flags.includes('--json');               // wrong list
+const help     = flags.includes('--help');               // wrong list
+```
+
+`flags` is the constant catalogue of known flags and always contains both, so `help` is always true and every invocation prints usage. The line above it uses `args` correctly — right variable once, wrong variable twice, three lines apart.
+
+Its live test passes the check and is worth 30, not 100: it re-implements the fetch inline with a hardcoded expected holder address and never invokes `lookup.js`. It passed against a CLI that does nothing but print help — which is precisely the failure it was written to catch.
+
+**nemotron L4 row so far: 26, 28, 40, 19, 40** — against 0, 1, 12, 13 for the rungs below.
