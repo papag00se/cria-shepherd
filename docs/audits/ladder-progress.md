@@ -610,3 +610,16 @@ Assists were firing heavily: `loop.compaction_reframed` ×80, `write_streak_corr
 **Judged 24.** `milestone-miss-30min` after 78 calls. Discounts are wired properly this time — `os.Stat` guard, `os.ReadFile`, default map behind it.
 
 The rounding fails on three invented names stacked together: an import of `github.com/shopspring/decimal/quantize`, a subpackage that does not exist, which breaks resolution before compilation. Stripping it on a copy exposes `taxed.Quantize(...)` and `decimal.RoundHalfUp` behind it — **the same two names its L4 cell on this task invented**, one rung earlier, spelled `ROUND_HALF_UP` there.
+
+### Pass 2 — cell 73/76 — L5 orders-api-py × nemotron-elastic
+
+**Judged 5.** `milestone-miss-30min` after 115 calls. The package cannot be imported at all:
+
+```python
+db = { 'connect': connect, 'init': init, ... }      # a plain dict
+setattr(db, "DB_PATH", DB_PATH)                     # dicts take no attributes
+```
+
+`AttributeError: 'dict' object has no attribute 'DB_PATH'` fires at import, so the service never starts, the tests error out, and the verifier's own SQL-injection probe dies before it can run. It invented a module-like dict to stand in for a module, then treated it as one.
+
+Its worst L4/L5 cell on this task despite 115 calls of engagement — the L4 attempt at least reached the point of serving a 404.
