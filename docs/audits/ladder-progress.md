@@ -545,3 +545,11 @@ Two single-token defects:
 - `_schema_version()` returns `SELECT COUNT(*) FROM sqlite_master WHERE type='table'` — a table count, not a version. On a seeded database that is ≥ 1, so the `if cur_version < 1` branch holding the `ALTER TABLE` never runs. `init_version` is defined twice, both bodies `pass`.
 
 Its two seed tests are red again on `no such table`, repeating the L3 regression.
+
+### Pass 2 — cell 68/76 — L4 feed-pipeline-java × nemotron-elastic
+
+**Judged 19.** `milestone-miss-30min` after 68 calls. The pom is well-formed this time — a real improvement on its L3 cell, which put `<dependency>` outside `<dependencies>` — and the review is 428 words of accurate description. 27 compile errors from one wrong idea: `new CSVParser(new FileReader(...))`, treating opencsv's parser class as the reader class, then calling `setQuoteAll()` and `setAllowComments()` on it.
+
+The review fails its check on locations only: 1 finding names a line where 2 are required, and it is written as a summary of changes rather than remaining problems.
+
+**Incidental observation, not a defect in the run:** the model set the project's `artifactId` to `cria-shepherd`. The suite creates run workspaces under `runs/` inside this repo, so the harness's own directory name is visible in the model's cwd and it named the project after it. Nothing to fix for the campaign — the workspace is the seed plus its own writes — but worth recording that the model reads its path and will name things after it.
