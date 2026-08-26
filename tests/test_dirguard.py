@@ -289,10 +289,6 @@ class CaseTypoNoteTests(unittest.TestCase):
         self.assertNotIn("{{CASENOTE}}", r or "")
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class WorkspaceTypoIsOneGlyph(unittest.TestCase):
     """The near-miss note must fire for ANY single mistyped glyph, not an enumerated list of them.
 
@@ -332,3 +328,8 @@ class WorkspaceTypoIsOneGlyph(unittest.TestCase):
         ]:
             with self.subTest(label):
                 self.assertFalse(self._fires(path), label)
+
+
+if __name__ == "__main__":
+    unittest.main()
+
