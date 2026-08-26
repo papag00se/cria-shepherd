@@ -382,3 +382,7 @@ Fourth distinct way this model has broken a node test suite across six attempts:
 | L5 | 100 | 97 | 74 | 15 | 89 | 100 | 79 |
 
 Highest rung is the top one, but the spread within every column swamps the differences between rows. Ruby runs 1 to 100; java 0 to 99; rust 11 to 100. The campaign's evidence on this model is that **which defects a run happens to produce decides the cell, and the rung does not predict them**.
+
+### Pass 2 — cell 41/76 — L0 shipping-rates-rb × nemotron-elastic
+
+**Judged 0.** `crashed-early` after 7 model calls and 30 seconds; `git status` clean, so the workspace is byte-identical to the seed. First cell for this model, and it matches qwen35's pure-proxy pattern exactly — quit inside a minute having written nothing. Throughput was fine at 137 tok/s, so this is not a speed problem.
