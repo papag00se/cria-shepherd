@@ -351,6 +351,17 @@ def level_cell(rs: list[dict], level: int, model: str, task: str) -> dict | None
     return None
 
 
+def _level_pct(rs: list[dict], level: int) -> float | None:
+    """The rung's own headline: every cell it ran, pooled.
+
+    Checks-passed over checks-attempted across the whole grid, the same measure `total` uses per
+    model — NOT the mean of the four model totals. A rung where one model ran six cells and another
+    ran one would otherwise weigh those equally. Returns None while the rung has no cells, so the
+    heading can stay silent rather than print 0%."""
+    have = [c for m in MODELS for t in TASKS if (c := level_cell(rs, level, m, t))]
+    return _overall_pct(have) if have else None
+
+
 def _level_grid(rs: list[dict], level: int) -> list[str]:
     """One row per model, one column per language, for a single rung of the ladder.
 
@@ -519,7 +530,9 @@ def report(rs: list[dict], now: float | None = None) -> str:
            "`[engagement] level = 0..5`, each rung implying every rung below it. "
            "`·` = not run. Superseded cells are excluded and re-run.", ""]
     for _lvl in range(0, 6):
-        out += [f"### Level {_lvl} — {LEVEL_NAMES[_lvl]}", ""]
+        _pct = _level_pct(rs, _lvl)
+        _hd = f"### Level {_lvl} — {LEVEL_NAMES[_lvl]}"
+        out += [f"{_hd} — {_pct:.0f}%" if _pct is not None else _hd, ""]
         out += _level_grid(rs, _lvl)
         out += [""]
     out += ["",
