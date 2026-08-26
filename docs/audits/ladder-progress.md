@@ -400,3 +400,7 @@ Three nemotron cells, three zeros, 7 / 7 / 5 model calls. It is not attempting t
 ### Pass 2 — cell 44/76 — L0 feed-pipeline-java × nemotron-elastic
 
 **Judged 0.** `exited` after 10 model calls and 4.1 minutes; only a `target/` build directory added, importer untouched. Fourth nemotron cell, fourth zero. It compiles the seed and stops — the same thing ternary-bonsai did on this task at L0.
+
+### Pass 2 — cell 45/76 — L0 handles-cli-node × nemotron-elastic
+
+**Judged 0.** `crashed-early` after **2 model calls** and 54 seconds. Fifth nemotron cell, fifth zero. Call counts across its L0 row so far: 7, 7, 5, 10, 2.
