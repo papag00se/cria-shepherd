@@ -1,6 +1,6 @@
 # Battery — the engagement ladder
 
-**Last updated 2026-08-26 04:44** — newest row `shipping-rates-rb_nemotron-elastic_codex_poff_1787742783`, scored 2026-08-26 04:43.
+**Last updated 2026-08-26 05:15** — newest row `cart-billing-go_nemotron-elastic_codex_poff_1787744641`, scored 2026-08-26 05:15.
 
 Tables only. Findings, walks and the retired two-arm campaign: [`battery-history.md`](battery-history.md).
 Per-cell judging: [`ladder-progress.md`](ladder-progress.md). Status: `python3 suite/engagement_status.py`.
@@ -50,7 +50,7 @@ Per-cell judging: [`ladder-progress.md`](ladder-progress.md). Status: `python3 s
 | 🟢 gemma4 | 100% | 73% | 100% | 100% | 93% | 86% | 92% | 10 | 46 |
 | 🟡 qwen35 | 86% | 45% | 79% | 100% | 83% | 100% | 82% | 17 | 140 |
 | 🟡 ternary-bonsai | 100% | 97% | 64% | 80% | 76% | 16% | 72% | 45 | 82 |
-| 🔴 nemotron-elastic | 26% | · | · | · | · | · | 26% | 31 | 153 |
+| 🔴 nemotron-elastic | 26% | 28% | · | · | · | · | 27% | 31 | 150 |
 
 ### Level 5 — ASSISTS_ENABLED — steers, periodic gates, detectors, planner
 

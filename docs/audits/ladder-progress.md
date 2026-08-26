@@ -526,3 +526,11 @@ Built the inner crate alone to see how far it gets: three errors — `?` used tw
 Everything is dead behind one wrong path. `rates.rb:6` reads `require 'vendor/europe'`; the gem was genuinely fetched and unpacked to `vendor/gems/europe/europe-0.0.28`. The dependency is present, the require names a path that does not exist, and every test errors before any code runs.
 
 The README check passes on real content — all four zones, 8/8 rate values. `zone_for` is written sensibly against `Europe::Country#european?` with GB special-cased.
+
+### Pass 2 — cell 66/76 — L4 cart-billing-go × nemotron-elastic
+
+**Judged 28.** `milestone-miss-30min` after **147 calls** — second consecutive L4 cell with a call count 25× its L0–L3 average of 6.
+
+**First cell where this model connected its own artifact to its own code.** Its L1 and L2 cells wrote a correct `discounts.json` that `cart.go` never mentioned; here `os.ReadFile("discounts.json")` reads it, with a documented fall-back to a default map.
+
+Killed by two invented names on one line: `taxed.Quantize(2, decimal.ROUND_HALF_UP)`. Both belong to Python's `decimal` module, not shopspring's — the real API is `Round(int32)`. The subtotal is also still computed in float before reaching decimal, so the rounding would be wrong even if it compiled.
