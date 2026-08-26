@@ -1,6 +1,6 @@
 # Battery — the engagement ladder
 
-**Last updated 2026-08-26 03:10** — newest row `handles-cli-node_nemotron-elastic_codex_poff_1787738932`, scored 2026-08-26 03:09.
+**Last updated 2026-08-26 03:11** — newest row `rust-toml-cli_nemotron-elastic_codex_poff_1787738995`, scored 2026-08-26 03:11.
 
 Tables only. Findings, walks and the retired two-arm campaign: [`battery-history.md`](battery-history.md).
 Per-cell judging: [`ladder-progress.md`](ladder-progress.md). Status: `python3 suite/engagement_status.py`.
@@ -14,7 +14,7 @@ Per-cell judging: [`ladder-progress.md`](ladder-progress.md). Status: `python3 s
 | 🟢 gemma4 | 85% | 92% | 89% | 100% | 93% | 86% | 91% | 2 | 20 |
 | 🔴 qwen35 | 0% | 21% | 0% | 0% | 0% | 0% | 4% | 1 | 8 |
 | 🟡 ternary-bonsai | 54% | 90% | 89% | 0% | 100% | 98% | 72% | 25 | 67 |
-| 🔴 nemotron-elastic | 0% | 0% | 0% | 0% | 0% | · | 0% | 4 | 6 |
+| 🔴 nemotron-elastic | 0% | 0% | 0% | 0% | 0% | 0% | 0% | 3 | 6 |
 
 ### Level 1 — TOOL_CALL_FIXES — dialect and template repair
 

@@ -404,3 +404,11 @@ Three nemotron cells, three zeros, 7 / 7 / 5 model calls. It is not attempting t
 ### Pass 2 — cell 45/76 — L0 handles-cli-node × nemotron-elastic
 
 **Judged 0.** `crashed-early` after **2 model calls** and 54 seconds. Fifth nemotron cell, fifth zero. Call counts across its L0 row so far: 7, 7, 5, 10, 2.
+
+### Pass 2 — cell 46/76 — L0 rust-toml-cli × nemotron-elastic
+
+**Judged 0.** `exited` after 3 model calls and 90 seconds with an **empty workspace** — not one file created. This task starts from nothing, so it is the only one where "did no work" and "wrote no files" are the same picture.
+
+**nemotron-elastic L0 row complete: 0, 0, 0, 0, 0, 0 → 0.** Call counts 7, 7, 5, 10, 2, 3. Every cell under seven minutes, every workspace untouched.
+
+**The pure-proxy rung across all four models: gemma4 91, ternary-bonsai 72, qwen35 4, nemotron 0.** Three of four do not engage with the task at all when cria only translates the wire.
