@@ -396,3 +396,7 @@ Highest rung is the top one, but the spread within every column swamps the diffe
 **Judged 0.** `exited` after 5 model calls and 6.4 minutes. Only `__pycache__` bytecode differs from the seed — the model ran the existing tests and stopped. SQL injection still live.
 
 Three nemotron cells, three zeros, 7 / 7 / 5 model calls. It is not attempting the work at the pure-proxy rung.
+
+### Pass 2 — cell 44/76 — L0 feed-pipeline-java × nemotron-elastic
+
+**Judged 0.** `exited` after 10 model calls and 4.1 minutes; only a `target/` build directory added, importer untouched. Fourth nemotron cell, fourth zero. It compiles the seed and stops — the same thing ternary-bonsai did on this task at L0.
