@@ -629,3 +629,14 @@ Its worst L4/L5 cell on this task despite 115 calls of engagement — the L4 att
 **Judged 22.** `milestone-miss-30min` after 74 calls. 39 compile errors from two invented class locations: `com.opencsv.CSVRecord` (that class belongs to commons-csv; opencsv has no such type) and `com.opencsv.exceptions.CsvParseException` (the real name is `CsvException`).
 
 Its review passes the check with 199 words and 7 located findings, and what it contains is worth recording: **the findings are its own unfixed compile errors**, each with file and line — a `ConcurrentMap` type mismatch, a missing `java.util.concurrent` import. It diagnosed them correctly, wrote them up as the deliverable, and never fixed them.
+
+### Pass 2 — cell 75/76 — L5 handles-cli-node × nemotron-elastic
+
+**Judged 39.** `milestone-miss-30min` after 129 calls. **The first nemotron cell in the campaign whose program does the task's actual work**: `node bin/cli.js goose` returns the correct resolved address, holder address and handle count from the live API.
+
+Everything around it is wrong:
+
+- `--json` is parsed and then ignored; output stays human-readable.
+- `--help` prints usage via a `usage()` helper that ends `process.exit(1)`, so asking for help is reported as failure.
+- The seed's `lookup.js` was left untouched with `require('request')` in it — the model wrote a new `bin/cli.js` beside the old file instead of replacing it, so the banned dependency survives in source.
+- `package.json` sets `"test": "jest"` with jest not installed, so no test runs at all.
