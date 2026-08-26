@@ -347,3 +347,11 @@ Worth noting against the earlier cells: this run finally abandoned index slicing
 Its three red tests are **correct** — they hit the route and catch the crash. Scored 75 rather than penalised: unlike its L2 and L4 node cells, these tests are not the bug, they are what found it.
 
 Python column for this model: **89, 61, 100, 93, 64, 74.**
+
+### Pass 2 — cell 38/76 — L5 feed-pipeline-java × ternary-bonsai
+
+**Judged 15.** `milestone-miss-30min` after 50 calls. Three compile errors from mixing opencsv's two reading APIs in one method: `reader.readNext()` throws a checked `CsvValidationException` and sits unguarded, while the `catch` written for that exception wraps the `for (String[] parts : reader)` iterator loop, which cannot throw it. The compiler rejects both halves — unreported exception at one site, never-thrown exception at the other — and a third error follows from `cols` possibly uninitialised.
+
+The worker guard is correct here (`!rows.isEmpty()`), which is the exact thing its L1 cell got wrong as `!rows.length > 0`. It never gets to run.
+
+Java column for this model: **0, 14, 94, 99, 80, 15.**
