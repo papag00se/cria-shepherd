@@ -464,3 +464,13 @@ Same shape as its go cells, one layer up: it completes a single self-contained p
 ### Pass 2 — cell 57/76 — L2 handles-cli-node × nemotron-elastic
 
 **Judged 0.** `exited` after 5 calls and 6.6 minutes, seed unchanged. Third attempt at this task, third zero.
+
+### Pass 2 — cell 58/76 — L2 rust-toml-cli × nemotron-elastic
+
+**Judged 18.** `exited` after 7 calls and 7.2 minutes. 17 compile errors, rooted in one wrong idea: the program reads its arguments with `env::argc()` and `env::argv[0]`, which is C, not Rust — `std::env::args()` is the real API. Nothing downstream can run.
+
+Second structural mistake in the same cell: `tests` was written as a **1192-byte regular file**, where cargo requires a directory. There is no test target at all.
+
+README is real (1692 B), so this is the model's first cell to deliver a written artifact that isn't an orphan.
+
+**nemotron-elastic L2 row complete: 0, 6, 45, 0, 0, 18 → 12.** Rows so far: L0 0, L1 1, L2 12.
