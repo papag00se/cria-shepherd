@@ -646,3 +646,23 @@ Everything around it is wrong:
 **Judged 84.** `milestone-miss-60min` after 191 calls. **The only one of this model's 36 cells that builds and does what the task asks**: clean build, 3/3 lookups including `server.limits.max_conn → 250`, correct non-zero exit on a missing key.
 
 Its tests are the sole broken part. They match on `toml::Value::Number`, a variant that does not exist — toml has `Integer` and `Float`. The invented variant appears only inside the `#[cfg(test)]` module and in a doc comment copying it, so `cargo build` is clean and `cargo test` fails. Same class of defect as its other 35 cells, confined this time to the part that does not ship.
+
+---
+
+## Walk — every L5 cell below 60% (2026-08-26)
+
+Full report: [`l5-sub60-walk.md`](l5-sub60-walk.md).
+
+Nine of twenty-four level-5 cells scored under 60. Each was read from its captured session — cria's event log, the prompts it sent, the workspace it left — asking only: what failed, and did cria cause or worsen it?
+
+**Two cria defects found, both fixed and pushed.**
+
+1. **The workspace-typo note was blind to a dropped letter.** `shipping-rates-rb × nemotron-elastic` typed `…-zpis1_t` for its real `…-zpsis1_t` and drew a correct refusal on **42 of its 115 coder calls**, second call to last, scoring 8. cria owns the sentence that ends this loop, and `_case_typo_of_workspace` only case-folded and collapsed dash/underscore. Third walk, third glyph class — the docstring records the other two. Replaced the enumerated classes with the property: one edit (Damerau-Levenshtein ≤ 1) on the segment that should have been the workspace.
+
+2. **cria's survey outgrew the tool result it rides home on.** The ride-along note promises the survey only attaches to tools "whose own output is one bounded line" — true of writes and edits, false of `list_dir`, capped at 9,000 bytes on its own against a 6.6–10 KB survey. The harness cut the middle, `apply_survey` refused the remains, and the workspace view went stale for the rest of the run. **449 refused surveys across 11 cells**, tracking the harness's own cut markers nearly 1:1 (94/94, 46/47, 29/29, 17/17); eight are L5. Dropped `list_dir` from `_SURVEYABLE`.
+
+**Six of the nine cells had no cria contribution at all** — invented library APIs, every one: opencsv's reader and parser classes swapped, `com.opencsv.CSVRecord` (a commons-csv class), Python's `Quantize`/`ROUND_HALF_UP` written in Go, `setattr` on a dict, `--help` tested against the wrong array.
+
+**Two things deliberately left alone.** The retired "same action N times" detector stays retired: `cart-billing-go × nemotron-elastic` spent 30 of 60 calls in a read/test spiral, self-corrected out of it unaided at call 31 exactly as the removal note predicts, and then failed on `Quantize` — a defect no anti-spiral steer touches. And `[safety] external_dir_permission = none` refused 213 prompts' worth of `/tmp` scratch and dependency-source reads across the L5 cells; one of them was a model reading the toml crate's source to learn the API it went on to invent. Raising it to `read` is an operator decision with a real quality argument, not a bug.
+
+Nothing in the walk showed cria destroying working code, mis-steering a model off a correct approach, or truncating content it needed. Both defects were cria failing to help, never cria doing harm.
