@@ -573,3 +573,21 @@ const help     = flags.includes('--help');               // wrong list
 Its live test passes the check and is worth 30, not 100: it re-implements the fetch inline with a hardcoded expected holder address and never invokes `lookup.js`. It passed against a CLI that does nothing but print help — which is precisely the failure it was written to catch.
 
 **nemotron L4 row so far: 26, 28, 40, 19, 40** — against 0, 1, 12, 13 for the rungs below.
+
+### Pass 2 — cell 70/76 — L4 rust-toml-cli × nemotron-elastic
+
+**Judged 20.** `milestone-miss-30min` after 77 calls. `toml = "0.10"` no longer resolves — crates.io offers 1.1.x — so nothing builds. Pinned a valid version on a copy to see what waits behind it: four more errors, all invented API (`toml::ValueTypeId`, `type_id()`, `as_i64()` on `Value`).
+
+The README is the strongest artifact this model has produced in the campaign: 2785 B covering features, installation, build requirements and the test cases it intended. A `tests/fixture.toml` exists with no test file to use it.
+
+**nemotron-elastic L4 row complete: 26, 28, 40, 19, 40, 20 → 29.**
+
+| rung | ruby | go | python | java | node | rust | total | avg calls |
+|---|---|---|---|---|---|---|---:|---:|
+| L0 | 0 | 0 | 0 | 0 | 0 | 0 | 0 | 6 |
+| L1 | 0 | 6 | 0 | 0 | 0 | 0 | 1 | 5 |
+| L2 | 0 | 6 | 45 | 0 | 0 | 18 | 12 | 8 |
+| L3 | 0 | 0 | 50 | 12 | 0 | 15 | 13 | 7 |
+| L4 | 26 | 28 | 40 | 19 | 40 | 20 | **29** | **141** |
+
+**The call count is the finding.** L0–L3 average 6–8 calls per cell; L4 averages 141. Level 4 is where cria begins refusing the model's claim to be finished, and this model stops quitting after thirty seconds and works for half an hour instead. Every cell in the row produced real code; none of it compiles, and the causes are the same class throughout — invented library names and single wrong identifiers.
