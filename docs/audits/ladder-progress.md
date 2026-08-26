@@ -363,3 +363,22 @@ Java column for this model: **0, 14, 94, 99, 80, 15.**
 Half the suite is dead, though. `test-runners.js` requires each test file to aggregate their counters, and `test-integration.js` ends with `process.exit()`. The runner dies inside its first `require`: `test-unit.js` and its 25 assertions never execute, and the runner's own `Results:` line never prints. Only `--- test-integration.js ---` appears in the output, and the exit code is still 0, so nothing signals the loss.
 
 Fourth distinct way this model has broken a node test suite across six attempts: unawaited async bodies, exported-but-never-invoked modules, args joined into the path — and now a runner that exits inside the loop that loads its files.
+
+### Pass 2 — cell 40/76 — L5 rust-toml-cli × ternary-bonsai
+
+**Judged 100.** `budget-killed` at 60.5 minutes after 119 calls, with the work complete. 26 tests green, clean build, `map.get(*key)` with the deref right and `Value::Integer` / `Value::Boolean` spelled correctly.
+
+**Rust column for this model, all six rungs: 98, 11, 11, 18, 16, 100.** Two clean runs at the extremes, four collapses between — every one of them a wrong name or a missing deref for the same `toml` API.
+
+**ternary-bonsai is complete: all 36 cells across six rungs.**
+
+| rung | ruby | go | python | java | node | rust | total |
+|---|---|---|---|---|---|---|---:|
+| L0 | 54 | 90 | 89 | 0 | 100 | 98 | 72 |
+| L1 | 7 | 32 | 61 | 14 | 99 | 11 | 37 |
+| L2 | 100 | 33 | 100 | 94 | 76 | 11 | 69 |
+| L3 | 1 | 78 | 93 | 99 | 94 | 18 | 64 |
+| L4 | 100 | 97 | 64 | 80 | 76 | 16 | 72 |
+| L5 | 100 | 97 | 74 | 15 | 89 | 100 | 79 |
+
+Highest rung is the top one, but the spread within every column swamps the differences between rows. Ruby runs 1 to 100; java 0 to 99; rust 11 to 100. The campaign's evidence on this model is that **which defects a run happens to produce decides the cell, and the rung does not predict them**.
