@@ -260,10 +260,21 @@ def main() -> None:
     # with some other row's number. Checked against every REVIEW.md on disk — exactly one row moves
     # (this one, 0 -> 13); nemotron's 419-word review has no located findings under either window
     # and stays correctly at 0.
+    # AND THE WINDOW AFTER "line" WAS FOUR, WHICH A BOLD MARKDOWN LABEL ALSO EXCEEDS. Pass 2
+    # cell 26, feed-pipeline-java x ternary-bonsai wrote 607 words of findings shaped
+    #     **File:** `src/main/java/pipeline/Importer.java`
+    #     **Line:** ~238 (call site) / ~224-229 (`printSkipStats` body)
+    # Between "Line" and 238 sit a colon, two asterisks, a space and a tilde — five non-word
+    # characters against a window of four, so a review that names the file AND the line on
+    # consecutive lines scored 0 located findings and lost the check. Same class as the table
+    # case above, one label further along. Widened to 8, which covers a bolded, punctuated
+    # label without spanning a sentence. Checked against every REVIEW.md on disk: two counts
+    # move, and only this one changes a verdict (0 -> 7); qwen35's goes 11 -> 12 and was
+    # already passing.
     located = re.findall(
         r"[\w/]+\.java\W{0,24}\d+"         # Importer.java:31 · `Importer.java` (31) · | ~45–50 |
         r"|[\w/]+\.java\W{0,12}?lines?\W{0,4}\d+"   # Importer.java, on line 31
-        r"|lines?\W{0,4}\d+(?:\s*[-–]\s*\d+)?",     # line 31 · Lines 31-33
+        r"|lines?\W{0,8}\d+(?:\s*[-–]\s*\d+)?",     # line 31 · Lines 31-33 · **Line:** ~238
         rtext, re.I)
     substantial = len(rtext.split()) >= 60
     r["parts"]["review_written"] = {

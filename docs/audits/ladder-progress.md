@@ -254,3 +254,18 @@ Strict score 3.0/5.0 for a program that does everything the task asked.
 **Judged 93.** `milestone-miss-60min` after 93 calls. Nine of ten HTTP tests green. The tenth fails on its own fixture: it builds a V1 database, inserts alice, and calls `close()` without `commit()`, so the row is discarded before the server ever starts. bob's insert then takes id 1 and the assertion reads `assert 'bob' == 'alice'`. Confirmed in isolation — close-without-commit leaves the table empty.
 
 Second cell running where the model's own test setup, not its program, produced the red. The migration it was trying to test passes the verifier's independent probe.
+
+### Pass 2 — cell 26/76 — L3 feed-pipeline-java × ternary-bonsai
+
+**Judged 99** in 18.5 minutes and 39 calls. Atomic `totals.compute(sku, ...)` per key with nothing unsafe behind it — a cleaner fix than this model's own L2 attempt, which left the worker-results list unsynchronized. Review names three real risks.
+
+**Verifier bug found and fixed.** The review check reported `607 words, 0 located finding(s)` and failed the deliverable, for a review that names the file and the line of every finding:
+
+```
+**File:** `src/main/java/pipeline/Importer.java`
+**Line:** ~238 (call site) / ~224–229 (`printSkipStats` body)
+```
+
+Between `Line` and `238` sit a colon, two asterisks, a space and a tilde — **five** non-word characters against a matcher window of **four**. A correctly located finding scored as unlocated because of how it was punctuated.
+
+This is the third instance of the same class in this one check, and the file's own comments record the previous two: case-sensitive `REVIEW.md`, and a markdown table needing five characters against the same four-wide window. Widened the post-`line` window from 4 to 8 — enough for a bolded, punctuated label, not enough to span a sentence. Checked against every `REVIEW.md` on disk: two counts move, one verdict changes (this cell, 0 → 7); qwen35's goes 11 → 12 and was already passing. Row re-verified: 4.0 → 5.0/5.0.
