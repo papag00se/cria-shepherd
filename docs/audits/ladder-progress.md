@@ -640,3 +640,9 @@ Everything around it is wrong:
 - `--help` prints usage via a `usage()` helper that ends `process.exit(1)`, so asking for help is reported as failure.
 - The seed's `lookup.js` was left untouched with `require('request')` in it — the model wrote a new `bin/cli.js` beside the old file instead of replacing it, so the banned dependency survives in source.
 - `package.json` sets `"test": "jest"` with jest not installed, so no test runs at all.
+
+### Pass 2 — cell 76/76 — L5 rust-toml-cli × nemotron-elastic — CAMPAIGN COMPLETE
+
+**Judged 84.** `milestone-miss-60min` after 191 calls. **The only one of this model's 36 cells that builds and does what the task asks**: clean build, 3/3 lookups including `server.limits.max_conn → 250`, correct non-zero exit on a missing key.
+
+Its tests are the sole broken part. They match on `toml::Value::Number`, a variant that does not exist — toml has `Integer` and `Float`. The invented variant appears only inside the `#[cfg(test)]` module and in a doc comment copying it, so `cargo build` is clean and `cargo test` fails. Same class of defect as its other 35 cells, confined this time to the part that does not ship.
