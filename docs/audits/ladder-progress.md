@@ -474,3 +474,7 @@ Second structural mistake in the same cell: `tests` was written as a **1192-byte
 README is real (1692 B), so this is the model's first cell to deliver a written artifact that isn't an orphan.
 
 **nemotron-elastic L2 row complete: 0, 6, 45, 0, 0, 18 → 12.** Rows so far: L0 0, L1 1, L2 12.
+
+### Pass 2 — cell 59/76 — L3 shipping-rates-rb × nemotron-elastic
+
+**Judged 0.** `crashed-early` after 5 model calls and 18 seconds. Fourth attempt at this task from this model; scores so far 0, 0, 0, 0.
