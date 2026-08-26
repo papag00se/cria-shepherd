@@ -412,3 +412,7 @@ Three nemotron cells, three zeros, 7 / 7 / 5 model calls. It is not attempting t
 **nemotron-elastic L0 row complete: 0, 0, 0, 0, 0, 0 → 0.** Call counts 7, 7, 5, 10, 2, 3. Every cell under seven minutes, every workspace untouched.
 
 **The pure-proxy rung across all four models: gemma4 91, ternary-bonsai 72, qwen35 4, nemotron 0.** Three of four do not engage with the task at all when cria only translates the wire.
+
+### Pass 2 — cell 47/76 — L1 shipping-rates-rb × nemotron-elastic
+
+**Judged 0.** `crashed-early` after 3 model calls and **12 seconds**. Workspace identical to the seed. First L1 cell for this model; the tool-call repair rung did not change the outcome on this task.
