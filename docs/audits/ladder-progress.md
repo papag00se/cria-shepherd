@@ -355,3 +355,11 @@ Python column for this model: **89, 61, 100, 93, 64, 74.**
 The worker guard is correct here (`!rows.isEmpty()`), which is the exact thing its L1 cell got wrong as `!rows.length > 0`. It never gets to run.
 
 Java column for this model: **0, 14, 94, 99, 80, 15.**
+
+### Pass 2 — cell 39/76 — L5 handles-cli-node × ternary-bonsai
+
+**Judged 89.** `budget-killed` at 60.5 minutes after 136 calls. Ten integration tests that are real and provably live — `execSync` against the CLI, exits 1 with the network removed.
+
+Half the suite is dead, though. `test-runners.js` requires each test file to aggregate their counters, and `test-integration.js` ends with `process.exit()`. The runner dies inside its first `require`: `test-unit.js` and its 25 assertions never execute, and the runner's own `Results:` line never prints. Only `--- test-integration.js ---` appears in the output, and the exit code is still 0, so nothing signals the loss.
+
+Fourth distinct way this model has broken a node test suite across six attempts: unawaited async bodies, exported-but-never-invoked modules, args joined into the path — and now a runner that exits inside the loop that loads its files.
