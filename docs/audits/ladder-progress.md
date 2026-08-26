@@ -289,3 +289,9 @@ Its rust cell has now scored 98, 11, 11, 18 across four rungs. The 98 was L0 —
 **Judged 100** in 43.5 minutes and 163 calls. Real `ISO3166::Country#in_eu?` behind a Gemfile that also scopes minitest to a test group, 18 self-written tests, complete README table. Rung clean — no level-5 mechanism fired.
 
 This model's five attempts at this one task now read **54, 7, 100, 1, 100**. Same prompt, same settings, five different outcomes spanning the whole range.
+
+### Pass 2 — cell 30/76 — L4 cart-billing-go × ternary-bonsai
+
+**Judged 97** in 43.7 minutes and 76 calls. Every check met. Tests compare with `got.Equal(want)` — the correct decimal comparison, where this model's L3 cell on the same task used `!=` and failed four tests that had computed the right answer.
+
+Docked 15 on logging: `%.2f` prints `subtotal=44.98` where the value is 44.9775. A log written to debug a rounding bug that rounds the number under investigation is weaker than the L3 attempt, which logged full precision.
