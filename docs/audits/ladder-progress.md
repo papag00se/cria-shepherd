@@ -329,3 +329,11 @@ Same model wrote a 607-word review with seven located findings on this task at L
 First L5 cell for this model, and the assists are visibly active — `loop.satisfaction_blocked` ×25, `loop.periodic_gate` ×2, `loop.write_streak_corrected` ×3, `loop.gate` ×4. Those are exactly the mechanisms absent from every rung below, so the level boundary holds.
 
 This task across all six rungs for ternary-bonsai: **54, 7, 100, 1, 100, 100.**
+
+### Pass 2 — cell 36/76 — L5 cart-billing-go × ternary-bonsai
+
+**Judged 97** in 16.3 minutes and 43 calls — the fastest clean pass this model has managed on the task. Tests compare `got.String() != want.String()`, which is correct (decimal string form is canonical) where its L3 cell compared the structs with `!=` and failed four right answers.
+
+Docked 15 on logging for the same reason as its L4 cell: `Float64()` then `%.2f` prints `subtotal=44.98` for a true 44.9775. Two rungs apart, the same weakness — a log written to expose a rounding bug that rounds the number away.
+
+Go column for this model: **90, 32, 33, 78, 97, 97.**
