@@ -510,3 +510,11 @@ The dependency coordinates themselves are right, and the worker chunking is writ
 ### Pass 2 — cell 63/76 — L3 handles-cli-node × nemotron-elastic
 
 **Judged 0.** `crashed-early` after 2 model calls and 30 seconds — the third time this model has stopped at exactly 2 calls on this task (L0, L1, L3). Node column: 0, 0, 0, 0.
+
+### Pass 2 — cell 64/76 — L3 rust-toml-cli × nemotron-elastic
+
+**Judged 15.** `exited` after 7 calls and 1.7 minutes. The project is laid out as two nested copies of the same crate: a root `Cargo.toml` with no `src/` beside it, and `toml_dotted_key/` holding a byte-identical manifest plus the actual source. cargo fails at the root with "no targets specified".
+
+Built the inner crate alone to see how far it gets: three errors — `?` used twice inside a `main()` that returns unit, and a call to `Value::walk()`, which does not exist. It also hardcodes `config.toml` while its own usage string promises a file argument.
+
+**nemotron-elastic L3 row complete: 0, 0, 50, 12, 0, 15 → 13.** Rows: L0 0, L1 1, L2 12, L3 13.
