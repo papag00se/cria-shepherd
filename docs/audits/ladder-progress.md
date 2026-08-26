@@ -283,3 +283,9 @@ Docked on the Dockerfile: it works, but carries a builder stage whose output is 
 **ternary-bonsai L3 row complete: 1, 78, 93, 99, 94, 18 → 64.**
 
 Its rust cell has now scored 98, 11, 11, 18 across four rungs. The 98 was L0 — pure proxy, no cria involvement at all.
+
+### Pass 2 — cell 29/76 — L4 shipping-rates-rb × ternary-bonsai
+
+**Judged 100** in 43.5 minutes and 163 calls. Real `ISO3166::Country#in_eu?` behind a Gemfile that also scopes minitest to a test group, 18 self-written tests, complete README table. Rung clean — no level-5 mechanism fired.
+
+This model's five attempts at this one task now read **54, 7, 100, 1, 100**. Same prompt, same settings, five different outcomes spanning the whole range.
