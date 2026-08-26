@@ -275,3 +275,11 @@ This is the third instance of the same class in this one check, and the file's o
 **Judged 94** in 4.4 minutes and 16 calls — the fastest clean cell this model has produced. Nine tests driving the real CLI through `execSync`; synchronous, so the try/catch actually catches. Verified: exits 1 with the network removed, 0 with it. Directly contrast its L2 cell on this task, where an unawaited async runner made twelve tests unfailable.
 
 Docked on the Dockerfile: it works, but carries a builder stage whose output is discarded and two `npm ci ... || true` lines for a project with no dependencies and no lockfile — in a runtime image that installs nodejs without npm, so the command could never succeed and is silenced rather than removed.
+
+### Pass 2 — cell 28/76 — L3 rust-toml-cli × ternary-bonsai
+
+**Judged 18.** `milestone-miss-30min` after 42 calls. Five invented toml API names in one file — `Value::Bool` for `Boolean`, `Value::Int` for `Integer`, `Value::Map` for `Table`, `Value::Null` which does not exist, and `as_map_ref` for `as_table`. Not a typo behind working logic: the value type it reasons about is the wrong shape throughout. README is real and complete; thirteen tests cannot run.
+
+**ternary-bonsai L3 row complete: 1, 78, 93, 99, 94, 18 → 64.**
+
+Its rust cell has now scored 98, 11, 11, 18 across four rungs. The 98 was L0 — pure proxy, no cria involvement at all.
