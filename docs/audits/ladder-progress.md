@@ -708,3 +708,9 @@ The invented `github.com/shopspring/decimal/quantize` import — the unresolvabl
 It still does not build. `go.mod` pins `v1.2.3`, which does not exist, and the rounding is written against three more names shopspring does not have: `taxed.Quantize(decimal.QuantizeModeHalfUp, …)`, `decimal.NewFromFloat64`, and `float64(int64(quantized) / 100)` on a `decimal.Decimal`.
 
 cria fired `loop.steer_invented_version` once — a guard aimed at exactly this — and two wheel-spin steers. Neither the fake subpackage nor a destructive steer recurred.
+
+### nemotron-elastic × orders-api-py — **5 → 76**
+
+The largest move of the re-run. The previous attempt built a dict named `db` and called `setattr` on it, so the package raised at import and every deliverable was unreachable — the service never started, and the verifier's own injection probe could not load the module. None of that recurs: the package imports, the service runs, and route, migration and injection all pass.
+
+What is left is one wrong assumption in the test helper. `app.serve()` ends in `HTTPServer(...).serve_forever()`, which never returns; `_start_server` calls it directly and only then tries to start a thread for it. The suite hangs on its first test.
