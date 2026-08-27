@@ -225,12 +225,19 @@ def pct(r: dict | None) -> float | None:
 
 
 def score_of(r: dict | None) -> str:
-    """The cell, with a `ˢ` on any number that is still the STRICT one. Half a grid judged and half
-    not is the confound to avoid; marking it is cheaper than waiting, and it shows the backlog."""
+    """The cell, badged, with a `ˢ` on any number that is still the STRICT one. Half a grid judged
+    and half not is the confound to avoid; marking it is cheaper than waiting, and it shows the
+    backlog.
+
+    THE BADGE IS ON THE CELL, NOT THE ROW. A row badge colours a model's six-task average, and the
+    average is the one number in this grid that never describes anything that happened: this suite's
+    per-cell spread runs 1 to 100 for one model on one task across rungs, so the mean sits in a band
+    no cell occupied. Reading down a column for a task, or across for a model, is what these grids
+    are for — and that reading wants the colour where the evidence is."""
     v = pct(r)
     if v is None:
-        return "—"
-    return f"{v:.0f}%" if judged(r) else f"{v:.0f}%ˢ"
+        return "·"
+    return f"{_badge(v)} {v:.0f}%" if judged(r) else f"{_badge(v)} {v:.0f}%ˢ"
 
 
 def _n(r: dict | None, key: str) -> str:
@@ -244,8 +251,11 @@ NOTES_MARKER = "<!-- NOTES — hand-written, preserved across regeneration -->"
 
 
 def _badge(avg_pct: float) -> str:
-    """Banded on the percentage, so the bands mean the same thing whatever a task's
-    check count is."""
+    """Banded on the percentage, so the bands mean the same thing whatever a task's check count is.
+
+    The four bands are quarters, read off the midpoints: 🟢 at or above 87.5, 🟡 62.5, 🟠 37.5,
+    🔴 below. On a CELL that reads as: everything the task asked for; most of it, with a real piece
+    missing; some of it, worth keeping; and nothing that runs."""
     return ("🟢" if avg_pct >= 87.5 else "🟡" if avg_pct >= 62.5
             else "🟠" if avg_pct >= 37.5 else "🔴")
 
@@ -387,7 +397,7 @@ def _level_grid(rs: list[dict], level: int) -> list[str]:
             out.append(f"| {m} | {got} | · | — | — |")
             continue
         overall = _overall_pct(have) or 0.0
-        out.append(f"| {_badge(overall)} {m} | {got} | {overall:.0f}% "
+        out.append(f"| {m} | {got} | {overall:.0f}% "
                    f"| {_avg(have, 'wall_seconds', 1 / 60)} | {_avg(have, 'calls')} |")
     return out
 
@@ -428,7 +438,7 @@ def _arm_grid(rs: list[dict], arm: str) -> list[str]:
         got = " | ".join(_with_delta(c, tk) for c, tk in zip(cells, TASKS))
         tok = [c["avg_tok_s"] for c in have if c.get("avg_tok_s")]
         rate = f"{sum(tok) / len(tok):.1f}" if tok else "—"
-        out.append(f"| {_badge(overall)} {m} | {got} | {overall:.0f}%"
+        out.append(f"| {m} | {got} | {overall:.0f}%"
                    f"{_overall_delta(rs, arm, m, cells)} | {rate} "
                    f"| {_avg(have, 'wall_seconds', 1 / 60)} | {_avg(have, 'calls')} |")
     if len(out) == 2:
