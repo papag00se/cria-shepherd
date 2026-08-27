@@ -1015,6 +1015,17 @@ def _respill_command(command: str) -> str:
     return re.sub(r"(?<![\w.])/" + re.escape(tail) + r"(?=[/\s\"']|$)", "./" + tail, command)
 
 
+# WHAT A TITLE CANNOT CARRY. A description earns its place inline when it names something callable:
+# a backticked span, a namespaced name (`ISO3166::Country`), a leading-hash method (`#in_eu?`), a
+# receiver call (`c.in_eu?`, `decimal.NewFromFloat(`), or a bare empty call (`in_eu?()`). Package
+# names are deliberately NOT in this set — those are the snippet poison the drop was written for,
+# and the title already carries them.
+#
+# A SHAPE, not a language list (#20): every one of these forms is punctuation between word
+# characters, and Ruby, Go, Java, Rust and Python all write callables that way.
+_API_NAME_SHAPE = r"`[^`]+`|\w+::\w+|(?<![\w#])#\w+|\w+\.\w+[?!(]|\w+[?!]\(|\w+\(\)"
+
+
 def _pyq(s: str) -> str:
     """A Python string literal safe to embed inside the single-quoted `python3 -c '...'` body.
 
@@ -1069,14 +1080,29 @@ def _search_command(args: dict, brave_key: str) -> str:
     # command output — inline when it fits, spill when it does not — instead of spilling always.
     # The full results with descriptions are written to the spill file either way, so the grep route
     # and the ledger entry are unchanged.
-    parse = (r"""python3 -c 'import sys,json,os"""
+    #
+    # …EXCEPT A DESCRIPTION THAT CARRIES AN API NAME, which a title cannot. The poison the drop was
+    # written against was a wrong PACKAGE name — and a title carries the package. A method name, a
+    # predicate or a constant only ever appears in the description.
+    #
+    # Walked on the sub-40 pass, shipping-rates-rb x nemotron-elastic. The model's FIRST search,
+    # ninety seconds into the run, returned the whole task as its first result's description:
+    # `European Union Membership · c.in_eu? #=> false`. cria wrote that to disk, showed the model
+    # twenty titles, and closed with "you do not have to open it". The model then spent fifteen
+    # minutes on nine more searches for a gem whose method name it had already been handed, and
+    # never opened the file — zero tool calls in 89 touched the spill directory, and four of the
+    # nine saved files contain `in_eu?`. Measured over those nine files, the rule below keeps 9 of
+    # 20 descriptions on the search that mattered (3,054 characters) and 250-1,750 on the rest.
+    parse = (r"""python3 -c 'import sys,json,os,re"""
              r""";d=json.load(sys.stdin);r=(d.get("web") or {}).get("results") or []"""
              r""";e=d.get("error") or d.get("message")"""
              r""";T=""" + _pyq(target) +
+             r""";K=re.compile(""" + _pyq(_API_NAME_SHAPE) + r""")"""
+             r""";api=lambda x:("\n  "+(x.get("description") or "")) if K.search(x.get("description") or "") else str()"""
              r""";full="\n".join("%s\n  %s\n  %s"%(x.get("title",""),x.get("url",""),x.get("description","")) for x in r)"""
              r""";os.makedirs(os.path.dirname(T) or ".",exist_ok=True)"""
              r""";r and open(T,"w").write(("%d results:\n"%len(r))+full)"""
-             r""";brief=("%d results:\n"%len(r))+"\n".join("%s\n  %s"%(x.get("title",""),x.get("url","")) for x in r)+"\n"+""" + _pyq(inline_note) +
+             r""";brief=("%d results:\n"%len(r))+"\n".join("%s\n  %s%s"%(x.get("title",""),x.get("url",""),api(x)) for x in r)+"\n"+""" + _pyq(inline_note) +
              r""";print(brief if len(brief.encode())<=""" + str(content_reduce_mod.INLINE_RESULT_MAX_BYTES) +
              r""" else """ + _pyq(msg) + r""") if r else print("search API error: "+json.dumps(e) if e else "no results")'""")
     # Save the (noisy) results to the read-only spill dir and hand back a grep/line-read pointer, instead

@@ -1,1 +1,1 @@
-web_search "{{QUERY}}" — each result's full description is in {{TARGET}} — read that if a title is not enough to choose (the titles and links above are already here; you do not have to open it)
+web_search "{{QUERY}}" — every result's full description is in {{TARGET}}. Only the descriptions naming something callable are shown above; read the file when none of these is what you were looking for.
