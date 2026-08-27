@@ -416,8 +416,15 @@ class FloorSynthesisTests(unittest.TestCase):
         self.assertGreater(dropped, 0)
         note = next(m for m in out if contextfloor._COMPACTED_MARK in str(m.get("content") or ""))
         # Disclosed either way — as unsummarizable, or as carried-and-cut. Never silently reworded.
+        # THIRD OUTCOME ADDED 2026-08-26: a turn whose digest will not fit its share of the note is
+        # now NAMED — role and first line, or role/kind/size for one unbroken blob — under a legend
+        # saying those lines describe a turn rather than quote one. The old pair left 6,725 turns
+        # across the capture corpus disclosed as a bare count. All three are acceptable; the
+        # requirement is unchanged and is what this asserts: a compacted turn says what happened
+        # to it, never nothing.
         self.assertTrue("could not be summarized" in note["content"]
-                        or "characters of this turn omitted" in note["content"],
+                        or "characters of this turn omitted" in note["content"]
+                        or "\u203a [" in note["content"],
                         "a compacted turn must say what happened to it")
         self.assertLess(est_tokens(note["content"]), est_tokens(prose) * 0.5)   # the original goal
         # And whatever IS carried must be the real words, not a reworded version of them.

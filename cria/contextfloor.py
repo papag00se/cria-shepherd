@@ -160,6 +160,41 @@ class FloorReport:
         }
 
 
+def _stub_reserve(dropped_msgs: list, before: int) -> int:
+    """What the one-line stubs for every turn OLDER than ``before`` will actually cost.
+
+    Measured, not a constant: a reserve that guesses high refuses a digest that would have fitted
+    (it refused one by six tokens), and a reserve that guesses low is not a reserve. The turns are
+    already in hand, so the exact number is free."""
+    return sum(est_tokens(_turn_stub(dropped_msgs[j], t))
+               for j in range(before)
+               if (t := _msg_text(dropped_msgs[j]).strip()))
+
+
+def _turn_stub(m: dict, text: str) -> str:
+    """One line saying WHAT a turn was, for a turn whose content will not fit its share of the note.
+
+    Not a summary and not pretending to be: the role, and the turn's own first line, whole. The
+    bound is the SENTENCE the writer wrote, which is a structural boundary rather than a cap — a
+    first line is one line however long the turn was.
+
+    It replaces `(+N further compacted turn(s) whose content could not be summarized here.)`, which
+    told the coder a number and nothing else: 6,725 turns' worth across the capture corpus, 219
+    prompts dropping ten or more."""
+    role = (m or {}).get("role") or "turn"
+    mark = "\u203a "                     # › — the legend line above names it
+    if "\n" in text:
+        # A real first line exists — the writer's own sentence boundary, not a cap.
+        first = next((ln.strip() for ln in text.splitlines() if ln.strip()), "")
+        return f"{mark}[{role}] {first}" if first else ""
+    # ONE UNBROKEN BLOB has no first line to quote, and quoting part of it would be the very cut
+    # this stub exists to avoid. Say what it WAS instead — kind and size are facts about the turn,
+    # not a shortened copy of it (#5b: saying less is allowed; saying a fragment as if it were the
+    # thing is not).
+    return (f"{mark}[{role}] {len(text):,} bytes of {_sniff_content_type(text) or 'text'}"
+            if text else "")
+
+
 def _msg_text(m: dict) -> str:
     """The token-bearing text of a message: content (str or content-parts) plus any
     tool-call arguments (JSON schemas/args are real tokens too)."""
@@ -619,8 +654,53 @@ def _note_cost_bound(dropped_tokens: int, msg_budget: int) -> int:
 _REPEAT_SUFFIX = "   [identical result, {n} times in a row]"
 
 
+# The longest repeating unit worth looking for. Period 1 is a plain run; period 2 is the
+# assistant/tool loop that made this necessary; beyond a few lines a "cycle" is not a cycle any
+# reader would recognise and the run-folding below is the honest answer.
+_MAX_CYCLE = 4
+
+
+def _fold_cycles(texts: list[str]) -> list[str] | None:
+    """One copy of a repeating cycle plus its count, or None when there is no cycle worth folding.
+
+    Order-preserving by construction: the cycle is emitted in the order it occurred, and anything
+    outside a cycle is left exactly where it was."""
+    if len(texts) < 4:
+        return None
+    out: list[str] = []
+    i = 0
+    folded_any = False
+    while i < len(texts):
+        best_p, best_n = 0, 0
+        for p in range(1, _MAX_CYCLE + 1):
+            if i + 2 * p > len(texts):
+                break
+            n = 1
+            while texts[i + n * p:i + (n + 1) * p] == texts[i:i + p]:
+                n += 1
+            if n >= 2 and n * p > best_n * best_p:
+                best_p, best_n = p, n
+        if best_n >= 2:
+            folded_any = True
+            out.extend(texts[i:i + best_p])
+            out[-1] += f"   [the {best_p} line(s) above repeated {best_n} times]" if best_p > 1 \
+                else f"   [identical, {best_n} times]"
+            i += best_p * best_n
+        else:
+            out.append(texts[i])
+            i += 1
+    return out if folded_any else None
+
+
 def _collapse_repeats(digests: list[tuple[int, str]]) -> list[str]:
-    """Consecutive identical digests folded into ONE, with the count stated.
+    """A repeating CYCLE of digests folded into one copy of the cycle, with the count stated.
+
+    A run of one identical line is the period-1 case and is what this always did. A loop of tool
+    calls is period 2 — `assistant, tool, assistant, tool` — so consecutive-only folding saw no
+    repeat at all: 136 turns of a shell loop produced 136 lines of two distinct texts and a note
+    that was over budget on its own. Folding a whole cycle keeps ORDER, which is information and
+    which a global dedupe would destroy (a a b a a is not a×4, b).
+
 
     Repeating a byte-identical result N times is not a summary of anything — it costs N times the
     context to say what one copy plus a number says exactly. This is lossless: nothing is reworded,
@@ -634,6 +714,10 @@ def _collapse_repeats(digests: list[tuple[int, str]]) -> list[str]:
     appeared **89 times**, and repeated bullets were 42% of the note's characters. The model had
     emitted the same failing curl in a loop; cria then replayed the identical failure back at it 89
     times."""
+    texts = [d for _, d in digests]
+    folded = _fold_cycles(texts)
+    if folded is not None:
+        return folded
     out: list[str] = []
     run_text, run_n = None, 0
     for _, d in digests:
@@ -661,10 +745,20 @@ def _compacted_note(dropped_msgs: list[dict], dropped: int, msg_budget: int) -> 
     # with a per-turn floor so a digest stays usable — but never a floor larger than the whole bound.
     note_budget = max(0, _note_cost_bound(sum(est_tokens(_msg_text(m)) for m in dropped_msgs),
                                           msg_budget) - _NOTE_FRAME_TOKENS)
+    # BREADTH FIRST. The share is what each turn may take on the FIRST pass, and one turn may not
+    # spend another's. `digest_reduce` is lossless-first and returns code and prose UNCHANGED — by
+    # design, after the word-stripper inverted a negation — so a single dropped `write_file` payload
+    # asked for `per_turn` tokens hands back three thousand, and the budget check below then spends
+    # the whole note on it. Measured over the capture corpus: 6,725 turns across 965 prompts left
+    # with no digest at all, 219 prompts dropping ten or more, while the note carried one verbatim
+    # test file. A turn that cannot be summarized inside its own share is worth one line saying what
+    # it was; that is what "could not be summarized" was standing in for, and a line is affordable
+    # for every turn at once.
     per_turn = min(max(_MIN_PER_TURN_TOKENS, note_budget // max(dropped, 1)), note_budget)
     digests: list[tuple[int, str]] = []
     spent = 0
     omitted = 0
+    stubbed = False
     # Newest-dropped first so a tight budget spends on the turns adjacent to the surviving active span
     # (most relevant to the current step); reassembled into chronological order for reading.
     for idx in range(len(dropped_msgs) - 1, -1, -1):
@@ -683,16 +777,37 @@ def _compacted_note(dropped_msgs: list[dict], dropped: int, msg_budget: int) -> 
         # enforcement, and it is what makes "the note costs less than what it replaces" true rather
         # than aspirational. A turn that won't fit is disclosed as omitted, never re-embedded whole
         # (its file, if it wrote one, still survives via the file list below).
+        # RESERVE A LINE FOR EVERY TURN STILL TO COME. A digest may spend what is left AFTER that
+        # reservation, so one big turn can still be summarized in full when there is room, and can
+        # never eat the note. The old rule was first-come-first-served against the whole budget, and
+        # `digest_reduce` returns code and prose UNCHANGED by design — so one dropped `write_file`
+        # payload took the lot and every older turn was counted away.
+        reserved = _stub_reserve(dropped_msgs, idx)
+        allowed = note_budget - spent - reserved
         cost = est_tokens(digest)
-        if digest and spent + cost <= note_budget:
+        if digest and cost <= allowed:
             digests.append((idx, digest))
             spent += cost
+            continue
+        # It did not fit its own share. Say WHAT the turn was rather than counting it away: the role
+        # and the first line are one line's worth and they are what a reader needs to know a turn
+        # existed and what it was about (#5 — an undisclosed drop and a counted drop lose the same
+        # bytes, and only one of them tells the coder what it lost).
+        stub = _turn_stub(dropped_msgs[idx], text)
+        stubbed = stubbed or bool(stub)
+        if stub and spent + est_tokens(stub) <= note_budget:
+            digests.append((idx, stub))
+            spent += est_tokens(stub)
         else:
             omitted += 1
     if digests:
         digests.sort(key=lambda p: p[0])  # chronological
         parts.append("Summary of what those turns contained:")
         parts.extend("• " + d for d in _collapse_repeats(digests))
+        if stubbed:
+            # A stub is a DESCRIPTION of a turn, never a piece of it — say which lines those are,
+            # once, so a reader never mistakes one for a quote (#5b).
+            parts.append(prompts.load("compacted_turn_stub").strip())
     if omitted:
         parts.append(f"(+{omitted} further compacted turn(s) whose content could not be summarized here.)")
 
