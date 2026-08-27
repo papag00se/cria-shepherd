@@ -666,3 +666,15 @@ Nine of twenty-four level-5 cells scored under 60. Each was read from its captur
 **Two things deliberately left alone.** The retired "same action N times" detector stays retired: `cart-billing-go × nemotron-elastic` spent 30 of 60 calls in a read/test spiral, self-corrected out of it unaided at call 31 exactly as the removal note predicts, and then failed on `Quantize` — a defect no anti-spiral steer touches. And `[safety] external_dir_permission = none` refused 213 prompts' worth of `/tmp` scratch and dependency-source reads across the L5 cells; one of them was a model reading the toml crate's source to learn the API it went on to invent. Raising it to `read` is an operator decision with a real quality argument, not a bug.
 
 Nothing in the walk showed cria destroying working code, mis-steering a model off a correct approach, or truncating content it needed. Both defects were cria failing to help, never cria doing harm.
+
+---
+
+## Re-run of the nine sub-60 L5 cells, after the truncation sweep
+
+Same rung, same models, same tasks. The comparison is against each cell's own earlier score.
+
+### gemma4 × rust-toml-cli — **51 → 100**
+
+Clean build, 3/3 lookups, 3 tests green, README, in **3.3 minutes and 24 calls** against 28.4 minutes and 98 calls. The previous run never fixed `args[2]`/`args[3]` — `env::args()` yields three items — and spent 37 of its 60 turns inside its own test mocks. This one parses positionals by walking the argument list, so that confusion cannot arise.
+
+cria's own instrumentation is visibly healthier: **2 survey rejections against 46**, and the log now names the reason — `entry-count-mismatch`, exactly what the two walkers reproduced independently and what my earlier truncation hypothesis got wrong.
