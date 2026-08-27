@@ -229,6 +229,55 @@ def apply(completion: dict, tools=None, rlog=None, *, tool_call_fixes: bool | No
     completion = lower_edit_file(completion, tools, rlog)  # edit_file → apply_patch
     completion = add_file_to_write_file(completion, rlog)  # a pure Add-File patch → write_file
     completion = normalize_apply_patch(completion, rlog)  # unified-diff / headers / envelope
+    # LAST, after every pass that could still produce a tool call: a turn that finished with its
+    # words only in the reasoning channel keeps them. See recover_reasoning_text.
+    completion = recover_reasoning_text(completion, rlog)
+    return completion
+
+
+def recover_reasoning_text(completion: dict, rlog=None) -> dict:
+    """A turn that FINISHED with reasoning, no content and no tool call keeps its words.
+
+    THE SIBLING OF :func:`recover_reasoning_tool_calls`, and its own docstring is the argument:
+    "a lost turn forwards none … this function's only job is to stop losing the action". That one
+    rescues an ACTION left in the reasoning channel. Nothing rescued a CONCLUSION left there, so a
+    turn that reached one and emitted nothing was discarded whole — which is destroying model output
+    (#5), by cria, at the wire.
+
+    Measured across the three walked runs of 2026-08-27 (java/go/ruby x nemotron-elastic): every one
+    of 249 coder turns produced reasoning and zero visible content, 1.54M characters of it, and every
+    assistant turn in the model's own history is `content: ''` plus a tool call. 28 of those turns
+    emitted no tool call either — 15 finished normally, 13 were cut by the rumination guard.
+
+    Those 15 are the whole population this touches, and one of them decided a run: go call 0046
+    reasoned *"we need to call loadDiscounts before using Discounts … inside Total, first call
+    loadDiscounts(), then use Discounts"* — precisely the defect the shipped `cart.go` has — and the
+    turn went back empty. The model re-derived the same conclusion at 0047, 0053, 0056, 0073, 0088
+    and 0091, and never wrote the call, because nothing it concluded was ever in front of it again.
+
+    ONLY ``finish_reason == "stop"``. A turn the rumination backstop cut is cut because the output
+    degenerated, and carrying that forward is the thing the guard exists to prevent — the
+    discriminator is the authoritative field on the choice, never a scan of the text (#12).
+
+    It does not change routing. A turn with no tool call already reads as a completion claim one
+    frame down (:func:`loop.unexecuted_write`), with or without content — and that detector reads
+    the content it was never given, so on these turns it has been blind. Nothing here manufactures
+    text: `turn_text` is the one owner for reading a model's words out of either channel
+    (#19, #23), and it is asked only after the content is known to be empty."""
+    for choice in completion.get("choices", []):
+        if (choice.get("finish_reason") or "") != "stop":
+            continue
+        msg = choice.get("message")
+        if not isinstance(msg, dict) or msg.get("tool_calls"):
+            continue
+        if content_text(msg.get("content")).strip():
+            continue
+        text = turn_text(msg)
+        if not text:
+            continue
+        msg["content"] = text
+        if rlog is not None:
+            rlog.emit("massage.reasoning_text_recovered", level="info", chars=len(text))
     return completion
 
 
