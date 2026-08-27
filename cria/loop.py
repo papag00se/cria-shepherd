@@ -8646,9 +8646,34 @@ def _invented_version(directive: str, evidence: str) -> str | None:
         tok = m.group(0).lstrip("@").strip()
         if not tok:
             continue
-        if tok not in ev:
+        if not _grounds_a_version(tok, ev):
             return tok
     return None
+
+
+# A TOOL'S OWN SYNOPSIS IS NOT EVIDENCE ABOUT THIS REPO. Every command-line tool answers a malformed
+# argument by printing the SHAPE of a well-formed one, and the placeholder it prints is version-
+# shaped:
+#
+#     go.mod:4:5: usage: require module/path v1.2.3
+#
+# `v1.2.3` is go's stand-in for "a version goes here", exactly as `module/path` stands in for the
+# module. It is not a version anything publishes.
+_SYNOPSIS_LINE = re.compile(r"(?i)(?<![\w-])(?:usage|synopsis)\s*:")
+
+
+def _grounds_a_version(tok: str, evidence: str) -> bool:
+    """True when the evidence carries ``tok`` as a version something REPORTED, not as a template.
+
+    Walked on the sub-40 pass, cart-billing-go x nemotron-elastic (scored 27). cria's steer at call
+    0091 quoted go's usage line back at the coder — *"the go.mod requires the correct format:
+    `require module/path v1.2.3`"* — and the coder wrote `v1.2.3` into the manifest, which is not a
+    version of anything and cannot resolve. `_invented_version` passed it because the token was
+    present in the evidence, which was true and beside the point.
+
+    Grounding stays the same rule (#5b): the exact token must appear in something cria observed. Only
+    a line where the tool is printing its own argument syntax stops counting as an observation."""
+    return any(tok in ln and not _SYNOPSIS_LINE.search(ln) for ln in (evidence or "").splitlines())
 
 
 def _resolve_cited(root: str, rel: str) -> str | None:
