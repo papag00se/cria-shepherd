@@ -98,3 +98,37 @@ All three models failed the same way, and it is not a harness failure.
 - **ruby**: nine searches, six of them a synonym swap of each other, versus zero attempts to look inside the gem it had installed.
 
 The go cell also would not have passed on symbol names alone. Repairing only the four invented names, and leaving the model's logic untouched, builds — and reports 64.50 where the task asks for 48.58, because the discount line subtracts 0.25 as an amount rather than applying 25 percent.
+
+---
+
+## "The model won't believe its compiler" — that was wrong
+
+Written at the end of the three-cell walk and checked afterwards. It does not survive the check.
+
+**The go model found the run's real defect and re-found it six more times.** Call 0046, in its own reasoning:
+
+> "But we need to call loadDiscounts before using Discounts. We can call loadDiscounts at the start of Total. Thus, inside Total, first call loadDiscounts(), then use Discounts."
+
+That is exactly what the shipped `cart.go` is missing — `loadDiscounts()` is defined and never called, so `Discounts` stays the empty map it is declared as. The turn ended mid-sentence:
+
+> `⟦— reasoning stream ABORTED HERE by the degenerate-run backstop —⟧`
+
+The same conclusion is reached again in the reasoning of calls 0047, 0053, 0056, 0073, 0088 and 0091. The call was never written. At 0056 the model reasoned that the call was needed and then wrote a whole `cart.go` without it, in the same turn.
+
+**Measured across the three runs.** Every coder turn, without exception, produces reasoning and no visible content:
+
+| run | coder turns with reasoning | of those, zero visible content | reasoning written |
+|---|---:|---:|---:|
+| java | 106 | 106 (100%) | 515,412 chars |
+| go | 85 | 85 (100%) | 503,277 chars |
+| ruby | 58 | 58 (100%) | 522,303 chars |
+
+Every assistant turn in the model's own history is `content: ''` plus a tool call. Its entire visible record of itself is a list of actions with no reasons attached. Twenty-seven of those turns — 7 java, 8 go, 12 ruby — emitted no content *and* no tool call, after writing 418,466 characters between them. Across four days of logs the degenerate-run backstop fired **460** times, and 22 of the retries produced output identical to what was aborted.
+
+So the model was not refusing the compiler's word. It was re-deriving from scratch every turn, because the only thing that carries forward is what it *did*, never what it *concluded* — and cria has already fixed this exact defect for its own seats. `massage.text_or_reasoning` exists because "cria's judge loop was erasing its own analysis … the steer author spent 28,777 characters reaching the correct root cause and cria discarded it — found it, then lost it." That fix was applied to cria's internal reasoners and never to the coder.
+
+**Two candidate fixes, neither built, both with a real objection.**
+
+*Carry a conclusion forward.* cria holds every coder completion, so it holds the reasoning the harness's history throws away. The objection is documented in cria's own source: feeding a model its own prior text is how "a false claim was re-signed every cycle and became unfalsifiable". Half a megabyte per run cannot go back wholesale either. A narrow version — give a turn that emitted *nothing at all* some trace, rather than erasing it whole — is defensible and much smaller, and the go 0046 abort is the case for it.
+
+*Catch a write that contradicts its own turn.* At go 0056 and ruby 0015 the reasoning names something the write then omits, and cria holds both halves at that instant. Measured over the three runs: 17 write-turns state an intent naming a real symbol, and 10 omit it — but on inspection several of those flags are junk (`task_complete`, `dependency:`), leaving five to seven genuine ones. The trigger available today is an English intent phrase, which is the shape of rule this codebase has removed before. Not enough to build on; the measurement is here so the next attempt starts from it.
