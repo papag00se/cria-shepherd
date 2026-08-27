@@ -8233,6 +8233,12 @@ def _prescribes_what_the_checks_reject(directive: str, findings: str, rlog, ask)
     more steers the same run said to USE `decimal.NewFromFloat64` while the same prompt carried
     `undefined: decimal.NewFromFloat64` twenty-three times.
 
+    A NAME THE CHECKS CANNOT FIND IS A NAME THEY ARE ASKING FOR, and no test over the findings can
+    tell that from a name that does not exist: `cannot find symbol: class AtomicInteger` and
+    `undefined: decimal.NewFromFloat64` are the same sentence. The first wants an import; the second
+    wants a different constructor. Only the directive separates them, so the separation lives in the
+    judge's instructions — supplying a missing name is QUOTES — and never in a pattern here.
+
     DETERMINISTIC GATHER, REASONED JUDGMENT (#8). Code finds the concrete discrepancy — a token
     present in BOTH the red finding-set and the directive — and one focused question decides whether
     the directive is PRESCRIBING it or merely quoting the failure. Without a reasoner, or on an
@@ -8246,14 +8252,21 @@ def _prescribes_what_the_checks_reject(directive: str, findings: str, rlog, ask)
     shared = _shared_symbols(directive, findings)
     if not shared:
         return ""
-    ans = strip_think(ask(prompts.render("steer_prescribes_broken", directive=directive,
-                                         findings=findings, symbols=prompts.named_list(shared))) or "").strip()
-    head = ans.upper().split()[0].strip(".,:;`*\"'") if ans.split() else ""
-    if head != "PRESCRIBES":
-        return ""
-    hit = next((t for t in shared if t in ans), shared[0])   # longest-first from _shared_symbols
-    rlog.emit("loop.steer_prescribes_broken", level="warn", symbol=hit, head=_clip(directive, 120))
-    return hit
+    # ONE SYMBOL PER CALL. The question is about a single name — "is the directive prescribing THIS
+    # name?" — and a list makes it about a set, which a weak judge answers on the worst member.
+    # Walked on the sub-40 pass, ternary-bonsai x feed-pipeline-java: the run's one correct directive
+    # ("add `import java.util.concurrent.atomic.AtomicInteger;` … rename the local `localTotals`")
+    # went to the judge as TWO names in one `Answer with ONE word`, came back PRESCRIBES, and cria
+    # refused its own fix. There is no way to tell from that answer which name it was about.
+    for sym in shared:                                       # longest-first from _shared_symbols
+        ans = strip_think(ask(prompts.render("steer_prescribes_broken", directive=directive,
+                                             findings=findings, symbol=sym)) or "").strip()
+        head = ans.upper().split()[0].strip(".,:;`*\"'") if ans.split() else ""
+        if head != "PRESCRIBES":
+            continue
+        rlog.emit("loop.steer_prescribes_broken", level="warn", symbol=sym, head=_clip(directive, 120))
+        return sym
+    return ""
 
 
 def _blames_a_service_that_answered(directive: str, sess, messages: list, rlog, ask) -> bool:

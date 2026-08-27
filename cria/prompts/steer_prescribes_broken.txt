@@ -6,12 +6,16 @@ A supervisor has written this directive for the engineer:
 
 {{DIRECTIVE}}
 
-These names appear in both: {{SYMBOLS}}
+This name appears in both: {{SYMBOL}}
 
 Answer with ONE word.
 
-PRESCRIBES — if the directive tells the engineer to USE, keep, or write one of those names, when the checks are reporting that name as the problem.
+PRESCRIBES — if the directive tells the engineer to call, keep, or rely on that name as something
+that already exists, when the checks are reporting that it does not exist or does not work.
 
-QUOTES — if the directive only refers to that name to describe what is wrong, or tells the engineer to remove or replace it.
+QUOTES — if the directive only refers to that name to describe what is wrong; or tells the engineer
+to remove or replace it; or tells the engineer to SUPPLY it, because the checks say it is missing —
+importing it, declaring it, defining it, creating the file, or adding the dependency that provides
+it. A checker saying it cannot find a name is asking for that name, not rejecting it.
 
 Output only PRESCRIBES or QUOTES.
