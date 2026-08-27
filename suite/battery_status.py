@@ -194,6 +194,63 @@ def sha() -> str:
         return "?"
 
 
+# WHEN EACH RUNG BECAME REAL. The ladder was built in eight commits on 2026-08-24, and cells were
+# being run while it was being built — so a row's number can predate the gate that defines its own
+# rung. The last of them is what matters: until `d80e0a2` the output massage chain had no gate at
+# all and ran at EVERY level, so a "level 0" run on earlier code was not a pure proxy.
+#
+# Found by auditing why ten of twelve L0/L1 cells fell. All twelve gemma4 cells ran 13:30-15:16 on
+# 2026-08-24; the last gating commit landed at 20:50 the same evening. Their L0 and L1 arms differ
+# only by two mechanisms that measured ZERO firings, so they are two samples of one configuration,
+# not a rung comparison. Three independent replays over the captures agree: `massage.apply` changed
+# 0 of 1,615 replies across all 24 runs.
+#
+# ANNOTATED, NEVER DELETED (#26): the row is real evidence of what that code did on that day. What
+# it cannot support is a statement about the RUNG, and that is what the mark withdraws.
+LADDER_GATED = "d80e0a2"
+
+
+def _row_commit(r: dict | None) -> str:
+    """The short commit a row records in its own note (`BATTERY2 L1 gemma4 c76cd6b p4`), or ""."""
+    for word in ((r or {}).get("note") or "").split():
+        if len(word) >= 7 and all(c in "0123456789abcdef" for c in word):
+            return word
+    return ""
+
+
+def _predates_the_ladder(commit: str) -> bool:
+    """True when ``commit`` is strictly older than the commit that finished gating the rungs.
+
+    Asked of git rather than of a date, because a date is a guess about clocks and an ancestry is a
+    fact about the tree (#12). An unknown or unresolvable commit answers False — a row cria cannot
+    place is not a row cria may accuse."""
+    if not commit or commit in _PREDATES_CACHE:
+        return _PREDATES_CACHE.get(commit, False)
+    try:
+        same = subprocess.run(["git", "rev-parse", commit + "^{commit}"], capture_output=True,
+                              text=True, cwd=SUITE.parent).returncode == 0
+        older = same and subprocess.run(
+            ["git", "merge-base", "--is-ancestor", commit, LADDER_GATED],
+            capture_output=True, cwd=SUITE.parent).returncode == 0
+        # An ancestor OF the gate that is not the gate itself ran before it existed.
+        older = older and commit not in LADDER_GATED and LADDER_GATED not in commit
+    except OSError:
+        older = False
+    _PREDATES_CACHE[commit] = older
+    return older
+
+
+_PREDATES_CACHE: dict = {}
+
+
+def ungated(r: dict | None) -> bool:
+    """Did this cell run before the ladder's own rungs were gated? Only levels 0-2 can be affected —
+    the mechanisms that were ungated all belong to rungs 1 and 3, so a level-5 row ran everything it
+    was supposed to either way."""
+    return bool(r) and (r.get("level") is not None and int(r["level"]) <= 2) \
+        and _predates_the_ladder(_row_commit(r))
+
+
 def judged(r: dict | None) -> bool:
     """Has this cell been judged on USEFULNESS, or is its number still the strict verifier's?"""
     return bool(r) and r.get("usefulness") is not None
@@ -237,7 +294,10 @@ def score_of(r: dict | None) -> str:
     v = pct(r)
     if v is None:
         return "·"
-    return f"{_badge(v)} {v:.0f}%" if judged(r) else f"{_badge(v)} {v:.0f}%ˢ"
+    mark = "ˢ" if not judged(r) else ""
+    # …AND A ROW THAT CANNOT SPEAK FOR ITS RUNG SAYS SO. See LADDER_GATED.
+    mark += "ᵘ" if ungated(r) else ""
+    return f"{_badge(v)} {v:.0f}%{mark}"
 
 
 def _n(r: dict | None, key: str) -> str:
@@ -547,8 +607,18 @@ def report(rs: list[dict], now: float | None = None) -> str:
         out += [""]
     out += ["",
             "`ˢ` = still scored strictly (all-or-nothing per deliverable); unmarked = judged. "
-            "The two are not comparable. Per-cell noise on this suite is wide: gemma4's L0 and L1 "
-            "scored 91 and 41 while five of six cells ran an identical code path.", ""]
+            "The two are not comparable.", "",
+            "`ᵘ` = the cell ran BEFORE the commit that gated its own rung, so its number cannot "
+            "speak for that rung. Every gemma4 cell at L0-L2 and two qwen35 L0 cells are marked: "
+            "the ladder was built in eight commits on 2026-08-24 while cells were being run, and "
+            "until the last of them the output massage chain had no gate and ran at every level. "
+            "Their arms differ by mechanisms that fired zero times — three independent replays over "
+            "the captures agree `massage.apply` changed 0 of 1,615 replies across those runs — so "
+            "they are repeat samples of one configuration, not a rung comparison.", "",
+            "**One sample per cell.** Repeat runs of the SAME cell in a FIXED configuration have "
+            "scored 0 and 100 (`ternary-bonsai x cart-billing-go`, and again on `rust-toml-cli`), "
+            "and `gemma4 x cart-billing-go` spans 40 to 100 over six runs. No difference between "
+            "two rungs is readable below roughly that spread until the grid carries n>1.", ""]
     # TABLES ONLY (operator, 2026-08-24): "I really don't need that document to have anything
     # else in it but the tables. I look at nothing else." Prose lives in battery-history.md, which
     # nothing regenerates, so a finding can never be destroyed by a --write either.

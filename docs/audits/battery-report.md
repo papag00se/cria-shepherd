@@ -1,6 +1,6 @@
 # Battery — the engagement ladder
 
-**Last updated 2026-08-27 13:20** — newest row `feed-pipeline-java_ternary-bonsai_codex_poff_1787856782`, scored 2026-08-27 13:09.
+**Last updated 2026-08-27 15:05** — newest row `feed-pipeline-java_ternary-bonsai_codex_poff_1787856782`, scored 2026-08-27 13:09.
 
 Tables only. Findings, walks and the retired two-arm campaign: [`battery-history.md`](battery-history.md).
 Per-cell judging: [`ladder-progress.md`](ladder-progress.md). Status: `python3 suite/engagement_status.py`.
@@ -11,8 +11,8 @@ Per-cell judging: [`ladder-progress.md`](ladder-progress.md). Status: `python3 s
 
 | model | ruby | go | python | java | node | rust | total | avg min | avg calls |
 |---|---|---|---|---|---|---|---:|---:|---:|
-| gemma4 | 🟡 85% | 🟢 92% | 🟢 89% | 🟢 100% | 🟢 93% | 🟡 86% | 91% | 2 | 20 |
-| qwen35 | 🔴 0% | 🔴 21% | 🔴 0% | 🔴 0% | 🔴 0% | 🔴 0% | 4% | 1 | 8 |
+| gemma4 | 🟡 85%ᵘ | 🟢 92%ᵘ | 🟢 89%ᵘ | 🟢 100%ᵘ | 🟢 93%ᵘ | 🟡 86%ᵘ | 91% | 2 | 20 |
+| qwen35 | 🔴 0% | 🔴 21%ᵘ | 🔴 0%ᵘ | 🔴 0% | 🔴 0% | 🔴 0% | 4% | 1 | 8 |
 | ternary-bonsai | 🟠 54% | 🟢 90% | 🟢 89% | 🔴 0% | 🟢 100% | 🟢 98% | 72% | 25 | 67 |
 | nemotron-elastic | 🔴 0% | 🔴 0% | 🔴 0% | 🔴 0% | 🔴 0% | 🔴 0% | 0% | 3 | 6 |
 
@@ -20,7 +20,7 @@ Per-cell judging: [`ladder-progress.md`](ladder-progress.md). Status: `python3 s
 
 | model | ruby | go | python | java | node | rust | total | avg min | avg calls |
 |---|---|---|---|---|---|---|---:|---:|---:|
-| gemma4 | 🔴 28% | 🟢 92% | 🔴 34% | 🔴 33% | 🔴 6% | 🟠 51% | 41% | 15 | 130 |
+| gemma4 | 🔴 28%ᵘ | 🟢 92%ᵘ | 🔴 34%ᵘ | 🔴 33%ᵘ | 🔴 6%ᵘ | 🟠 51%ᵘ | 41% | 15 | 130 |
 | qwen35 | 🟠 55% | 🟢 92% | 🟡 83% | 🟠 62% | 🔴 0% | 🟢 100% | 65% | 14 | 73 |
 | ternary-bonsai | 🔴 7% | 🔴 32% | 🟠 61% | 🔴 14% | 🟢 99% | 🔴 11% | 37% | 31 | 53 |
 | nemotron-elastic | 🔴 0% | 🔴 6% | 🔴 0% | 🔴 0% | 🔴 0% | 🔴 0% | 1% | 2 | 5 |
@@ -29,7 +29,7 @@ Per-cell judging: [`ladder-progress.md`](ladder-progress.md). Status: `python3 s
 
 | model | ruby | go | python | java | node | rust | total | avg min | avg calls |
 |---|---|---|---|---|---|---|---:|---:|---:|
-| gemma4 | 🔴 11% | 🟢 89% | 🟡 81% | 🟡 76% | 🟡 66% | 🟢 100% | 70% | 9 | 71 |
+| gemma4 | 🔴 11%ᵘ | 🟢 89%ᵘ | 🟡 81%ᵘ | 🟡 76%ᵘ | 🟡 66%ᵘ | 🟢 100%ᵘ | 70% | 9 | 71 |
 | qwen35 | 🟡 76% | 🟢 89% | 🟢 88% | 🟢 100% | 🟡 63% | 🟢 100% | 86% | 6 | 50 |
 | ternary-bonsai | 🟢 100% | 🔴 33% | 🟢 100% | 🟢 94% | 🟡 76% | 🔴 11% | 69% | 31 | 82 |
 | nemotron-elastic | 🔴 0% | 🔴 6% | 🟠 45% | 🔴 0% | 🔴 0% | 🔴 18% | 12% | 4 | 8 |
@@ -62,5 +62,9 @@ Per-cell judging: [`ladder-progress.md`](ladder-progress.md). Status: `python3 s
 | nemotron-elastic | 🔴 27% | 🔴 32% | 🟡 76% | 🔴 28% | 🟡 70% | 🟡 84% | 53% | 47 | 180 |
 
 
-`ˢ` = still scored strictly (all-or-nothing per deliverable); unmarked = judged. The two are not comparable. Per-cell noise on this suite is wide: gemma4's L0 and L1 scored 91 and 41 while five of six cells ran an identical code path.
+`ˢ` = still scored strictly (all-or-nothing per deliverable); unmarked = judged. The two are not comparable.
+
+`ᵘ` = the cell ran BEFORE the commit that gated its own rung, so its number cannot speak for that rung. Every gemma4 cell at L0-L2 and two qwen35 L0 cells are marked: the ladder was built in eight commits on 2026-08-24 while cells were being run, and until the last of them the output massage chain had no gate and ran at every level. Their arms differ by mechanisms that fired zero times — three independent replays over the captures agree `massage.apply` changed 0 of 1,615 replies across those runs — so they are repeat samples of one configuration, not a rung comparison.
+
+**One sample per cell.** Repeat runs of the SAME cell in a FIXED configuration have scored 0 and 100 (`ternary-bonsai x cart-billing-go`, and again on `rust-toml-cli`), and `gemma4 x cart-billing-go` spans 40 to 100 over six runs. No difference between two rungs is readable below roughly that spread until the grid carries n>1.
 
