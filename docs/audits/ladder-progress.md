@@ -714,3 +714,11 @@ cria fired `loop.steer_invented_version` once — a guard aimed at exactly this 
 The largest move of the re-run. The previous attempt built a dict named `db` and called `setattr` on it, so the package raised at import and every deliverable was unreachable — the service never started, and the verifier's own injection probe could not load the module. None of that recurs: the package imports, the service runs, and route, migration and injection all pass.
 
 What is left is one wrong assumption in the test helper. `app.serve()` ends in `HTTPServer(...).serve_forever()`, which never returns; `_start_server` calls it directly and only then tries to start a thread for it. The suite hangs on its first test.
+
+### nemotron-elastic × feed-pipeline-java — **22 → 16**
+
+The two invented opencsv class names that decided the previous attempt — `com.opencsv.CSVRecord`, which belongs to commons-csv, and `com.opencsv.exceptions.CsvParseException` — are gone, and the pom is well-formed. It fails one step earlier instead: `opencsv:5.13.0` does not exist, and the only trace of it in the local repository is a pair of `.lastUpdated` markers, which is Maven recording a download that failed. 5.9 and 5.10 are there.
+
+Its pom now declares **both** opencsv and commons-csv — the previous run's confusion written out as a dependency list rather than resolved.
+
+The review is 458 words with 0 located findings: not one names a file and a line.
