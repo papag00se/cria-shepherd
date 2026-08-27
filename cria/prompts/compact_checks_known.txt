@@ -1,3 +1,19 @@
-THE REPO'S OWN CHECKS, AS THEY LAST RAN. This is a real result from a real command, not a claim from the transcript above, and it is the ONLY thing you may base a statement about the build or the tests on. Do not work the current build state out by reading the transcript: an error earlier in the session may already be fixed, and a success may already be stale. Copy what matters from here, quoting the concrete error and its file:line, and if this section and the transcript disagree, this section is right.
-
-{{FLAG}}
+# The last gate verdict, framed for the compaction WRITER's input. Parsed by prompts.load_map.
+#
+# THE PRECEDENCE CLAUSE IS CONDITIONAL, and it was not. It read "if this section and the transcript
+# disagree, this section is right" on every compaction, including ones where the transcript held a
+# NEWER check than the gate did. Walked on the sub-40 pass, feed-pipeline-java x nemotron-elastic
+# (scored 28): at call 0091 the transcript ended with a complete `mvn clean compile` from the turn
+# before, and the pinned block was four calls older. The writer obeyed the clause, deleted ten real
+# errors, and wrote "the code compiles and runs". The coder spent its last 29 calls inside that
+# invented frame, and the one line-numbered finding in its REVIEW.md is a defect cria invented.
+#
+# The OUTPUT side of the same fact already had this — `server._last_checks_note` stamps the age and,
+# past the same threshold, tells the reader its own newer result wins. The input framing was the half
+# that still asserted precedence unconditionally.
+block = THE REPO'S OWN CHECKS, AS THEY LAST RAN. This is a real result from a real command, not a claim from the transcript above. Do not work the current build state out by reading the transcript alone: an error earlier in the session may already be fixed, and a success may already be stale. Copy what matters from here, quoting the concrete error and its file:line. {{PRECEDENCE}}\n\n{{FLAG}}
+# Nothing of the coder's has run since the gate, so the block IS the current state.
+fresh = If this section and the transcript disagree, this section is right.
+# The coder has run its own commands since. The block is still a real result, but it is no longer
+# the newest one in the room, and it may not claim to outrank what came after it.
+stale = This check ran {{CALLS}} of the coder's own commands ago, so the transcript may hold a newer one. Where a LATER command in the transcript ran the same check and reported something different, that later result is the current state and this section is not — say what the newest run showed, and say when each ran.

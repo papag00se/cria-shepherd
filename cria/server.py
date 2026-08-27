@@ -40,6 +40,7 @@ from .loop import (
     LoopStore,
     _fetch_ground_truth,
     completion_to_sse,
+    gate_age,
     reframe_compaction,
     session_key,
 )
@@ -251,6 +252,18 @@ def _last_gate_flag(server, sess_key: str) -> str:
     return getattr(sess, "last_gate_flag", "") if sess is not None else ""
 
 
+def _gate_age(server, sess_key: str) -> int:
+    """How many of the coder's OWN calls have run since the last gate. 0 when cria cannot say.
+
+    ONE OWNER for both halves of the same fact. The OUTPUT appendix (`_last_checks_note`) has stamped
+    the age since the incident that cost a green build; the compaction WRITER's input framing went on
+    telling the writer the pinned block outranks the transcript however old it was, and that cost a
+    second run (see `selfcompact.checks_input`)."""
+    loop = getattr(server, "loop", None)
+    sess = loop._store.get(sess_key) if loop is not None else None
+    return gate_age(sess)
+
+
 def _last_checks_note(server, sess_key: str) -> str:
     """The most recent gate verdict, verbatim, for the compaction summary — deterministic check
     truth the model-authored briefing kept omitting (and on gemma the briefing never materializes
@@ -263,9 +276,7 @@ def _last_checks_note(server, sess_key: str) -> str:
     # HOW OLD, NOT JUST WHAT. "most recent run" is true of a finding gathered twenty calls ago and
     # reads as current; when the coder's own build has gone green since, the block is cria asserting
     # a state the coder has already disproved. It cost a green build once — see `last_gate_seq`.
-    loop = getattr(server, "loop", None)
-    sess = loop._store.get(sess_key) if loop is not None else None
-    since = max(0, getattr(sess, "action_seq", 0) - getattr(sess, "last_gate_seq", 0)) if sess else 0
+    since = _gate_age(server, sess_key)
     stale = (prompts.fill(prompts.load("checks_note_staleness"), calls=str(since))
              if since >= _CHECKS_STALE_AFTER else "")
     age = (f"{since} of your calls ago" if since else "just now")
@@ -274,7 +285,9 @@ def _last_checks_note(server, sess_key: str) -> str:
 
 # How many of the coder's own forwarded calls may pass before the check block stops presenting
 # itself as the current state. Two is enough for one build-and-look; the incident ran 24 prompts.
-_CHECKS_STALE_AFTER = 2
+# The compaction writer's INPUT framing is gated on the same number, so the two halves of one fact
+# cannot disagree about when it went stale.
+_CHECKS_STALE_AFTER = selfcompact.CHECKS_STALE_AFTER
 
 
 def _session_gate_plan(server, sess_key: str):
@@ -289,7 +302,7 @@ def _session_gate_plan(server, sess_key: str):
 
 
 def _compaction_transcript(messages: list, files_list: str = "", gate_plan=None,
-                           checks: str = "") -> str:
+                           checks: str = "", checks_age: int = 0) -> str:
     """The conversation to be briefed, as flat text — the SAME preparation cria's internal
     compaction and steer author use: the harness's agent frame dropped (Codex ships ~7.8K tokens of
     update_plan/apply_patch docs and PLUGIN BLURBS — measured leading the g7 transcript, so the
@@ -317,11 +330,12 @@ def _compaction_transcript(messages: list, files_list: str = "", gate_plan=None,
     # cria's ask goes LAST, after the evidence — so nothing in the transcript out-recencies it.
     # Composed in ONE place (selfcompact.compaction_request) so this path and loop's self-compaction
     # cannot drift apart again; they already did once, and the sibling failed for months.
-    return selfcompact.compaction_request(_drop_harness_frame(convo), files_list, gate_plan, checks)
+    return selfcompact.compaction_request(_drop_harness_frame(convo), files_list, gate_plan,
+                                          checks, checks_age)
 
 
 def _compaction_body(pbody: dict, workspace_root: str | None = None, gate_plan=None,
-                     checks: str = "") -> dict:
+                     checks: str = "", checks_age: int = 0) -> dict:
     """The compaction request, re-asked in CRIA'S OWN WORDS.
 
     THE CAUSE of the blank briefings (g1 0093/0094, g2 0087/0088, forensics 07-30): the proxy path
@@ -355,7 +369,10 @@ def _compaction_body(pbody: dict, workspace_root: str | None = None, gate_plan=N
             gate_plan,
             # …and the checks, by the same argument one step on: a writer shown no build result
             # invents one. See selfcompact.compaction_request.
-            checks)},
+            checks,
+            # …and HOW OLD they are, which decides whether the block may claim to outrank the
+            # transcript. Unconditional precedence over a newer command is what cost the java run.
+            checks_age)},
     ]}
 
 
@@ -1228,7 +1245,7 @@ class CriaHandler(BaseHTTPRequestHandler):
             if _is_compaction_request(body.get("messages", [])):
                 sbody = _compaction_body(sbody, _session_cwd(sk, body.get("messages", []), rlog),
                                          _session_gate_plan(server, sk),
-                                         _last_gate_flag(server, sk))
+                                         _last_gate_flag(server, sk), _gate_age(server, sk))
             stream = massage.massage_stream(
                 provider.stream_chat(self._apply_route_role(sbody, indic), rlog),
                 body.get("model", ""),
@@ -1267,7 +1284,7 @@ class CriaHandler(BaseHTTPRequestHandler):
         if _is_compaction_request(body.get("messages", [])):
             pbody = _compaction_body(pbody, _session_cwd(sess_key, body.get("messages", []), rlog),
                                      _session_gate_plan(server, sess_key),
-                                     _last_gate_flag(server, sess_key))
+                                     _last_gate_flag(server, sess_key), _gate_age(server, sess_key))
         pbody, _ = self._focus_trim(self._apply_route_role(pbody, indic), rlog)
         raw = provider.chat(pbody, rlog)
         try:

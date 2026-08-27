@@ -3161,7 +3161,11 @@ class Loop:
                                      # (_briefing_gate_ground_truth, on the line below) and never
                                      # given to the writer, which was left to work the build state
                                      # out by reading. Both compaction paths, one rule.
-                                     getattr(sess, "last_gate_flag", "") or ""), rlog,
+                                     getattr(sess, "last_gate_flag", "") or "",
+                                     # …and HOW OLD that verdict is. The framing around it claims
+                                     # precedence over the transcript, and that claim is false once
+                                     # the coder has run its own check since. See checks_input.
+                                     gate_age(sess)), rlog,
                                  phase="self-compact", max_tokens=ROLLUP_MAX_TOKENS),
                                  workspace_inventory(sess.workspace_root or "", flavor="coder"),
                                  rlog) + _briefing_gate_ground_truth(sess),
@@ -6416,6 +6420,18 @@ def _checks_already_visible(body: dict, checks: str) -> bool:
         if isinstance(c, str) and needle and needle in c:
             return True
     return False
+
+
+def gate_age(sess) -> int:
+    """How many of the coder's OWN calls have run since the last gate. 0 when cria cannot say.
+
+    THE PRIMITIVE for both halves of one fact. A gate verdict is pinned into two places — the
+    compaction writer's INPUT framing (`selfcompact.checks_input`) and the briefing's OUTPUT
+    appendix (`server._last_checks_note`) — and each one says how current it is. They must not be
+    able to disagree about the age, so neither of them computes it."""
+    if sess is None:
+        return 0
+    return max(0, getattr(sess, "action_seq", 0) - getattr(sess, "last_gate_seq", 0))
 
 
 def passing_test_regression(sess, report) -> str:

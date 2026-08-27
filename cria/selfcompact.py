@@ -365,7 +365,7 @@ def _program_output(text: str) -> str:
 
 
 def compaction_request(messages: list[dict], files_list: str = "", gate_plan=None,
-                       checks: str = "") -> str:
+                       checks: str = "", checks_age: int = 0) -> str:
     """The compactor's user message: the cleaned transcript, the disk, then cria's ask LAST.
 
     ``gate_plan`` is the live ``probegate.GatePlan``. Every other caller of ``clean_gate_results``
@@ -439,18 +439,41 @@ def compaction_request(messages: list[dict], files_list: str = "", gate_plan=Non
     #
     # The RAW verdict comes in and the framing is applied HERE, so both compaction paths cannot
     # disagree about whether their argument is already rendered (#23, one owner).
-    known = f"\n\n{checks_input(checks)}" if checks_input(checks) else ""
+    known = f"\n\n{checks_input(checks, checks_age)}" if checks_input(checks, checks_age) else ""
     return (serialize(stub_old_write_args(probegate.clean_gate_results(messages, gate_plan)))
             + disk + known + "\n\n" + prompts.load("compact_closing_ask"))
 
 
-def checks_input(flag: str) -> str:
+# How many of the coder's own calls may pass before the pinned check block stops claiming to outrank
+# the transcript. One owner for both halves of the fact: `server._last_checks_note` reads it too.
+CHECKS_STALE_AFTER = 2
+
+
+def checks_input(flag: str, since: int = 0) -> str:
     """The last gate verdict, framed for the compactor's INPUT — "" when no gate has spoken.
 
     Distinct from the note the same verdict gets as an OUTPUT appendix: that one tells the READER
     what the checks said, this one tells the WRITER not to derive build state from the transcript.
-    Same fact, two jobs, so two strings (#22, both in prompt files)."""
-    return prompts.render("compact_checks_known", flag=flag.strip()) if (flag or "").strip() else ""
+    Same fact, two jobs, so two strings (#22, both in prompt files).
+
+    ``since`` is how many of the coder's OWN calls have run since that gate, and it decides the
+    precedence clause. The clause used to be unconditional — "if this section and the transcript
+    disagree, this section is right" — which is a false instruction the moment the transcript holds
+    a newer check than the gate does. Walked on the sub-40 pass, feed-pipeline-java x
+    nemotron-elastic (scored 28): the transcript ended with a complete `mvn clean compile` and the
+    pinned block was four calls older; the writer obeyed the clause, deleted ten real errors, and
+    briefed "the code compiles and runs" over a build that had never once compiled.
+
+    Zero, the default, is the honest reading of "cria does not know how old this is" AND of "nothing
+    has run since" — they are the same for this purpose, because a caller with no session cannot
+    contradict the block either."""
+    flag = (flag or "").strip()
+    if not flag:
+        return ""
+    lines = prompts.load_map("compact_checks_known")
+    clause = (prompts.fill(lines["stale"], calls=str(since)) if since >= CHECKS_STALE_AFTER
+              else lines["fresh"])
+    return prompts.fill(lines["block"], flag=flag, precedence=clause)
 
 
 def _summary_msg(summary: str) -> dict:
