@@ -8453,6 +8453,32 @@ def _phantom_system_path(directive: str, workspace_root: str | None) -> str:
 def _grounded_steer_or_none(directive: str | None, evidence: str, rlog, ask=None,
                             sess=None, messages: list | None = None,
                             workspace_root: str | None = None) -> str | None:
+    """The authored steer, or None when a guard refuses it — and ONE event either way.
+
+    THE RATIO HAD NO OWNER. Every guard below logs its own fire, and each was built from a real
+    incident it demonstrably prevents. Nothing counted the total, so nothing showed what they add up
+    to: measured across four days of logs, 109 authored steers refused against 45 delivered. cria
+    kills roughly seven of every ten directives it writes, and each walk of this campaign found the
+    run's one correct directive somewhere in the refused pile.
+
+    That is not an argument for removing a guard. It is an argument for being able to SEE the
+    tradeoff without walking a run by hand (#12 — the metric comes from the authoritative event, and
+    the authoritative event is this function returning). `loop.steer_outcome` carries `delivered` and
+    the name of the guard that refused, so a run's refusal profile is one query rather than a walk.
+
+    The vetting itself is unchanged and lives in :func:`_vet_steer`."""
+    if not directive:
+        return None
+    steer, refused_by = _vet_steer(directive, evidence, rlog, ask, sess, messages, workspace_root)
+    if rlog is not None:
+        rlog.emit("loop.steer_outcome", delivered=steer is not None,
+                  refused_by=refused_by, head=_clip(directive, 120))
+    return steer
+
+
+def _vet_steer(directive: str | None, evidence: str, rlog, ask=None,
+                            sess=None, messages: list | None = None,
+                            workspace_root: str | None = None) -> tuple:
     """The authored steer, or None when it names a URL the evidence cannot support.
 
     The steer author's own system prompt already says "NEVER invent a file path, directory, command,
@@ -8466,14 +8492,14 @@ def _grounded_steer_or_none(directive: str | None, evidence: str, rlog, ask=None
     callers that need a signal already have a grounded one to fall back to (the canned redirect, the
     raw check truth); a caller with none falls back to silence, which is the correct assist."""
     if not directive:
-        return None
+        return None, "empty"
     directive = _dedupe_doubled(directive)
     if _ROLEPLAY_STEER.search(directive):
         rlog.emit("loop.steer_roleplay_dropped", level="warn", head=_clip(directive, 120))
-        return None
+        return None, "roleplay"
     if _is_argument_blob(directive):
         rlog.emit("loop.steer_argument_blob", level="warn", head=_clip(directive, 120))
-        return None
+        return None, "argument_blob"
     if _ROLEPLAY_FIRSTPERSON.search(directive):
         # OBSERVE-ONLY (provenance audit, 2026-08-04): the first-person arm's evidence is two
         # blind-author-era MoE incidents, and it killed whole steers for a pronoun (40 unexamined
@@ -8484,11 +8510,11 @@ def _grounded_steer_or_none(directive: str | None, evidence: str, rlog, ask=None
     bad = urlgrounding.ungrounded_urls(directive, evidence)
     if bad:
         rlog.emit("loop.steer_ungrounded", level="warn", urls=",".join(bad))
-        return None
+        return None, "ungrounded_url"
     phantom = _phantom_system_path(directive, workspace_root)
     if phantom:
         rlog.emit("loop.steer_phantom_path", level="warn", path=phantom, head=_clip(directive, 120))
-        return None
+        return None, "phantom_path"
     # A FALSE FACT ABOUT A SOURCE CRIA HAS READ. Same enforcement class as the phantom path and the
     # false line citation above: cria stated the shape, so the check is exact, and a steer that
     # contradicts it is refused rather than reworded. This is what separates the maple steer that
@@ -8500,7 +8526,7 @@ def _grounded_steer_or_none(directive: str | None, evidence: str, rlog, ask=None
     if denied_field:
         rlog.emit("loop.steer_phantom_field", level="warn", field=denied_field,
                   head=_clip(directive, 120))
-        return None
+        return None, "phantom_field"
     if _dictates_code(directive, ask, rlog=rlog):
         # OBSERVE-ONLY on the DROP (operator ruling, 2026-08-04) — and the ruling's own reasoning is
         # what this now enforces. The drop's harm evidence came from a BLIND author (empty truth
@@ -8545,7 +8571,7 @@ def _grounded_steer_or_none(directive: str | None, evidence: str, rlog, ask=None
                 rlog.emit("loop.steer_dictated_code", level="warn", delivered=False,
                           invented=invented, reason="prescription",
                           head=_clip(directive, 120))
-                return None       # refused whole, like every other guard in this function
+                return None, "dictated_code"       # refused whole, like every other guard in this function
             directive = restated
         else:
             # `invented=0` MUST MEAN "CHECKED, AND NONE" — never "could not check". With no
@@ -8557,35 +8583,35 @@ def _grounded_steer_or_none(directive: str | None, evidence: str, rlog, ask=None
                       invented=0, checked=messages is not None, head=_clip(directive, 120))
     if sess is not None and _blames_a_service_that_answered(
             directive, sess, messages or [], rlog, (lambda sysm: ask(sysm, "")) if ask else None):
-        return None
+        return None, "blames_a_service"
     if sess is not None and _prescribes_what_the_checks_reject(
             directive, (getattr(sess, "last_gate_flag", "") or "").strip(), rlog,
             (lambda sysm: ask(sysm, "")) if ask else None):
-        return None      # the checks say this symbol is the problem — silence beats endorsing it
+        return None, "prescribes_broken"      # the checks say this symbol is the problem — silence beats endorsing it
     ghost = _symbol_not_in_the_file(directive, workspace_root)
     if ghost:
         # cria READ the file; the steer names something that is not in it. Refused, not reworded —
         # the same rule as the phantom path above, one claim class over.
         rlog.emit("loop.steer_phantom_symbol", level="warn", symbol=ghost,
                   head=_clip(directive, 120))
-        return None
+        return None, "phantom_symbol"
     made_up = _invented_version(directive, evidence)
     if made_up:
         # The author cannot know a version it was not told; the one it invents is pasted into a
         # manifest and poisons every build after it. See _invented_version for the run this cost.
         rlog.emit("loop.steer_invented_version", level="warn", version=made_up,
                   head=_clip(directive, 120))
-        return None
+        return None, "invented_version"
     cite = _false_line_citation(directive, workspace_root, _touched_paths(messages or []))
     if cite:
         # Same enforcement, next claim class: the author cited a LINE past the file's real length —
         # its own disk list said "68 lines" and the steer said "lines 108-112" (run g1 0034; run g1
         # 0127's misread rode a citation too). cria stated the line count, so the check is exact.
         rlog.emit("loop.steer_false_citation", level="warn", cite=cite)
-        return None
+        return None, "false_citation"
     if _steer_auth_refuted(directive, evidence, sess, ask, rlog):
-        return None
-    return directive
+        return None, "auth_refuted"
+    return directive, ""
 
 
 _AUTH_MARKER = re.compile(r"\b40[13]\b|\bunauthori[sz]ed\b|\bforbidden\b", re.I)
