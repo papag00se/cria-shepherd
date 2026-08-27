@@ -598,6 +598,25 @@ def coerce_args(name: str, args: dict, schemas: dict) -> dict:
                     pass
         elif "boolean" in types and text.lower() in ("true", "false"):
             out[key] = text.lower() == "true"
+        elif "array" in types or "object" in types:
+            # A STRUCTURED ARGUMENT ARRIVES AS ITS OWN JSON TEXT, and the harness rejects that the
+            # same way it rejects a stringified integer. L5 orders-api-py x qwen35: eight
+            # `update_plan` calls answered `invalid type: string "[{...}]", expected a sequence`,
+            # because `plan` is declared `array` and the recovered value was the literal text of the
+            # array. Eight of that run's 181 calls, thrown away by the very function written to stop
+            # this — it cast integer, number and boolean and stopped there.
+            #
+            # Same rule as the scalars: parse only an EXACT, TOTAL match, and only into the shape the
+            # schema declares. A string that happens to start with `[` but is not valid JSON, or that
+            # parses to a different kind than declared, is left exactly as it arrived — forging a
+            # structure the model never wrote is worse than the rejection this fixes.
+            try:
+                parsed = json.loads(text)
+            except (ValueError, TypeError):
+                continue
+            want = list if "array" in types else dict
+            if isinstance(parsed, want):
+                out[key] = parsed
     return out
 
 
@@ -1117,6 +1136,13 @@ def _lfm2_native_calls(body: str) -> list | None:
     return out or None
 
 
+# What separates two calls in a BATCH rather than two thoughts. A span runs from the dialect's
+# `<function=…>` to its `</function>`, so the wrapper the dialect puts around each call —
+# `</tool_call>\n<tool_call>`, `<|tool▁call▁end|>`, a fence — sits BETWEEN two spans and is not
+# prose. Strip every tag and see what words are left: markup is punctuation, words are thought.
+_WORDS_BETWEEN_CALLS = re.compile(r"<[^>]*>|\|[^|]*\||`{3,}[a-z]*")
+
+
 def _reasoning_call_spans(text: str) -> list:
     """Every (start, end, dialect, [(name, args), …]) a COMPLETE tool call occupies in ``text``.
 
@@ -1327,7 +1353,29 @@ def recover_reasoning_tool_calls(completion: dict, tools=None, rlog=None) -> dic
         spans = _reasoning_call_spans(reasoning)
         if not spans:
             continue
-        start, end, dialect, parsed = spans[-1]
+        # THE TERMINAL RUN, NOT ONLY THE LAST SPAN. Gate 5 below requires the generation to have
+        # STOPPED at the recovered call, which is why only the tail can be forwarded: a span with
+        # prose after it is one the model reasoned past, and forwarding it would replay an action it
+        # abandoned. But a model that wants several calls at once emits them BACK TO BACK, and
+        # taking `spans[-1]` alone threw the rest away — a batch is not a supersession.
+        #
+        # Walked twice in the L5 cells: orders-api-py x qwen35 emitted parallel batches on five
+        # turns and lost 10 calls, each re-asked singly afterwards; handles-cli-node x qwen35 asked
+        # for lookup.js, package.json and README.md together at call 0003 and got one, spending
+        # calls 0004 and 0005 re-asking for the other two.
+        #
+        # Adjacency is the whole test, and it is the model's own punctuation: spans separated by
+        # nothing but whitespace are one batch; a span with words between it and the next is a
+        # thought the model moved on from. Reading it needs no similarity judgement and no dialect
+        # knowledge.
+        run = [spans[-1]]
+        while len(run) < len(spans):
+            prev = spans[-(len(run) + 1)]
+            if _WORDS_BETWEEN_CALLS.sub("", reasoning[prev[1]:run[0][0]]).strip():
+                break                     # prose between them → the earlier one was abandoned
+            run.insert(0, prev)
+        start, end, dialect = run[0][0], run[-1][1], run[-1][2]
+        parsed = [call for span in run for call in span[3]]
         # gate 5. TERMINAL — the generation stopped at this call — and not quoted inside a fence.
         if not _is_terminal(reasoning, end) or _is_quoted(reasoning, start):
             _log(rlog, "massage.reasoning_call_not_terminal", dialect=dialect,
