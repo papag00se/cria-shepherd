@@ -21,3 +21,22 @@ refreshed /home/jesse/src/cria-shepherd/docs/audits/regression-report.md
 [sampling] nemotron-elastic: coder={'temperature': 0.6, 'top_p': 0.95}  reasoner={'temperature': 0.6, 'top_p': 0.95}  classifier={'temperature': 0.0}  compactor={'temperature': 0.0}
 ===== BEGIN cart-billing-go nemotron-elastic 15:47:04
 [sampling] nemotron-elastic: coder={'temperature': 0.6, 'top_p': 0.95}  reasoner={'temperature': 0.6, 'top_p': 0.95}  classifier={'temperature': 0.0}  compactor={'temperature': 0.0}
+[milestone] 30min  score=1.0/5.0  floor=2  MISS
+[milestone] recheck score=1.0  CONFIRMED MISS
+{
+ "run_id": "cart-billing-go_nemotron-elastic_codex_poff_1787870824",
+ "terminal": "milestone-miss-30min",
+ "success": false,
+ "score": 1.0,
+ "wall_seconds": 1846.4,
+ "calls": 32,
+ "avg_tok_s": 133.1
+}
+[usefulness] evidence frozen -> /home/jesse/.cria/suite/_usefulness_evidence/cart-billing-go_nemotron-elastic_codex_poff_1787870824.txt
+refreshed /home/jesse/src/cria-shepherd/docs/audits/regression-report.md
+[grid] refreshed docs/audits/regression-report.md
+[battery] refreshed docs/audits/battery-report.md
+[arm] [engagement] level = 5  (was 5)
+===== END cart-billing-go nemotron-elastic 16:18:02
+===== BEGIN feed-pipeline-java nemotron-elastic 16:18:02
+[sampling] nemotron-elastic: coder={'temperature': 0.6, 'top_p': 0.95}  reasoner={'temperature': 0.6, 'top_p': 0.95}  classifier={'temperature': 0.0}  compactor={'temperature': 0.0}

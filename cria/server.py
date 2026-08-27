@@ -338,6 +338,26 @@ def _compaction_body(pbody: dict, workspace_root: str | None = None, gate_plan=N
                      checks: str = "", checks_age: int = 0) -> dict:
     """The compaction request, re-asked in CRIA'S OWN WORDS.
 
+    LEVEL 3 — CONTEXT_FIXES, and it ran at EVERY level until 2026-08-27. Discarding the harness's
+    own summarize instruction and replacing it with cria's, then flattening a structured history into
+    one text message, is context surgery by the ladder's own definition. Its sibling
+    (`reframe_compaction`, which rewrites the REPLY) was gated on 2026-08-24; this half, which
+    rewrites the REQUEST, was missed — the gate went on one of the two call sites' mechanisms and not
+    on the other's.
+
+    Found by walking the level-0 and level-1 arms of six cells. Two walkers reported it independently:
+    it fired at level 1 in `handles-cli-node x gemma4` (23 reframes) and in BOTH arms of
+    `shipping-rates-rb x ternary-bonsai`. So neither of those rows is a clean measurement of its rung.
+
+    IT IS NOT FREE. Flattening the history into one fresh user message throws away the model server's
+    prefix cache. Measured on that ruby run's call 0102: `cached_tokens: 0`, a cold 42,586-token
+    prefill costing **453 seconds**, against 25 seconds on the neighbouring call that reused 46,267
+    cached tokens. On the level-1 arm the same call was still in flight when the run's gate fired.
+
+    `tests/test_engagement_levels.py` could not catch this: it reads the event log, and this function
+    emits no event. Gated at the call site, which is where its own docstring says a mechanism should
+    be gated when its state is not set anywhere else.
+
     THE CAUSE of the blank briefings (g1 0093/0094, g2 0087/0088, forensics 07-30): the proxy path
     drops the harness system prompt, the compactor role's reasoning-off then injects
     nothink_directive ("Do not think out loud... Respond directly") as the ONLY system line, and the
@@ -1242,7 +1262,7 @@ class CriaHandler(BaseHTTPRequestHandler):
             provider, indic = self._route(body, classification, rlog)
             rlog.phase = "proxy"
             sbody = _proxy_body(body)
-            if _is_compaction_request(body.get("messages", [])):
+            if self.server.cfg.routing.context_fixes and _is_compaction_request(body.get("messages", [])):
                 sbody = _compaction_body(sbody, _session_cwd(sk, body.get("messages", []), rlog),
                                          _session_gate_plan(server, sk),
                                          _last_gate_flag(server, sk), _gate_age(server, sk))
@@ -1281,7 +1301,7 @@ class CriaHandler(BaseHTTPRequestHandler):
         provider, indic = self._route(body, classification, rlog)
         rlog.phase = "proxy"
         pbody = _proxy_body(body)
-        if _is_compaction_request(body.get("messages", [])):
+        if self.server.cfg.routing.context_fixes and _is_compaction_request(body.get("messages", [])):
             pbody = _compaction_body(pbody, _session_cwd(sess_key, body.get("messages", []), rlog),
                                      _session_gate_plan(server, sess_key),
                                      _last_gate_flag(server, sess_key), _gate_age(server, sess_key))
