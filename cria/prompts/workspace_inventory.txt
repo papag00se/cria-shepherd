@@ -45,3 +45,8 @@ partial = This list is NOT complete — the survey of this workspace hit its own
 # whose own `ls` output was 200 lines further up the SAME prompt. The headers above say "right now" /
 # "just now" / "at judging time", so this clause has to withdraw that too, not only the completeness.
 stale = This list is the last complete look at the workspace, not a fresh one: a command has run since that could have changed the tree — an install, a build, a shell write — so read it as of that moment rather than as of now. A file missing from it may have been created since; use list_dir on a directory you expect before concluding anything is absent.
+
+# The COMPACTION listing's header (server._workspace_listing). Same inventory, different reader: the
+# compactor is writing the summary that becomes the session's entire remembered past, so the clause
+# it needs is "these already exist", not "anything missing is absent".
+compaction_header = FILES ALREADY IN THIS WORKSPACE (on disk right now — do not re-create them):

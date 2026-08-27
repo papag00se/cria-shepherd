@@ -381,11 +381,14 @@ def _workspace_listing(ws: str | None) -> str:
     # (on disk right now — do not re-create them)" — so a file past the cap was not merely missing,
     # it was implicitly denied, in the one reply whose own docstring says everything not in it is
     # gone. The caps stay (this rides in a summary); the remainder is now named.
-    over = 0
+    labels = prompts.load_map("workspace_inventory")
     for name in top:
-        if name.startswith(".") or name == "tmp" or name.endswith(".pyc"):
+        if name.startswith(".") or name.endswith(".pyc"):
             continue
         full = os.path.join(ws, name)
+        if name == _SPILL_ROOT:
+            lines.extend(_spill_listing(ws, view, labels))
+            continue
         if view.isdir(full) is True:
             kids = [x for x in (view.listdir(full) or [])
                     if not x.startswith((".", "__pycache__"))]
@@ -395,9 +398,40 @@ def _workspace_listing(ws: str | None) -> str:
             lines.append(f"  {name}")
     if not lines:
         return ""
-    if over:
-        lines.append(f"  …and {over} more entries at the top level, not listed here")
-    return "FILES ALREADY IN THIS WORKSPACE (on disk right now — do not re-create them):\n" + "\n".join(lines)
+    return labels["compaction_header"] + "\n" + "\n".join(lines)
+
+
+# cria's own scratch root inside the workspace, and the directory under it where `webfetch` saves a
+# document too large to inline. Derived from `SPILL_DIR` rather than spelled twice.
+_SPILL_ROOT = os.path.normpath(webfetch.SPILL_DIR).split(os.sep)[0]
+
+
+def _spill_listing(ws: str, view, labels: dict) -> list[str]:
+    """The lines for cria's scratch root — the reference directory, LABELLED, and nothing else.
+
+    SPILL ENTRIES ARE LABELLED, NEVER REMOVED. `_label_spill_entries` and `workspace_inventory`'s
+    own `spill_note` already say so; this listing was the one place that removed instead, skipping
+    the whole of `tmp` on the reasonable grounds that build junk is not the coder's memory. cria's
+    saved copy of a fetched page lives in `tmp/reference`, so the one artifact cria created to hold
+    an answer was the one artifact it deleted from the session's memory — under a docstring reading
+    "THE LISTING THAT BECOMES THE SESSION'S MEMORY MAY NOT LIE BY OMISSION."
+
+    Walked on the sub-40 pass, cart-billing-go x nemotron-elastic (scored 32). cria had fetched
+    shopspring/decimal's README to `./tmp/reference/`, and lines 84-93 of it name `NewFromFloat`,
+    the exact constructor the run then spent 42 consecutive calls failing to guess. The
+    re-orientation author at call 0049 got this listing — four files, no reference directory — and
+    its own system prompt forbids naming a file the listing does not name. It stayed quiet, and the
+    coder rebuilt the API from memory.
+
+    The rest of `tmp` stays out: it is where installs and builds land, and a package manager's tree
+    is not something the coder wrote."""
+    ref = os.path.join(ws, os.path.normpath(webfetch.SPILL_DIR))
+    kids = [x for x in (view.listdir(ref) or []) if not x.startswith(".")]
+    if not kids:
+        return []
+    rel = os.path.normpath(webfetch.SPILL_DIR).replace(os.sep, "/")
+    note = labels.get("spill_note", "").strip()
+    return [f"  {rel}/  ({prompts.named_list(kids)}) {note}".rstrip()]
 
 
 def _harden_compaction_reply(comp: dict, body: dict, provider, server, rlog, sess_key: str = "") -> dict:
