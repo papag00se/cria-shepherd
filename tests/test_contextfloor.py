@@ -127,8 +127,15 @@ class TestFits(unittest.TestCase):
         self.assertFalse(rep.over_budget)
         self.assertEqual(len(new_tools), 120)
 
-    def test_reduces_oversized_tool_output_before_dropping_turns(self):
-        big = ("This is a long sentence of prose that repeats. " * 400)
+    def test_reduces_oversized_STRUCTURED_output_before_dropping_turns(self):
+        """Lever 3 still reduces, but only where reduction is structural.
+
+        CHANGED 2026-08-26: prose no longer goes through `strip_prose_text`, which deleted function
+        words and inverted a negation in a real run ("could be read from it" -> "could read it").
+        A tool result that is prose now survives whole and the floor drops a turn if it must — a
+        disclosed loss, and the compaction note names every turn it drops."""
+        big = '{"rows": [' + ",".join('{"msg": "a long human readable message about the request"}'
+                                      for _ in range(400)) + ']}'
         msgs = [
             _u("task"),
             _a("", [{"id": "c1", "function": {"name": "web_fetch", "arguments": "{}"}}]),
@@ -141,12 +148,19 @@ class TestFits(unittest.TestCase):
         reduced = [m for m in out if m.get("role") == "tool"][0]["content"]
         self.assertLess(est_tokens(reduced), before)
 
+
     def test_reduction_spares_the_freshest_tool_output(self):
         # Two reducible tool outputs; the budget only needs ONE reduced to fit. The freshest one
         # (highest index) is the file the current step edits — it must be spared, so the STALE one
         # is reduced. Pre-fix reduction ran largest-first and (fresh being larger) gutted it.
-        dense = "the item is in the list and it is on the page with the note for the row of the set " * 40
-        fresh = "This sentence describes the current file contents that the model edits. " * 60
+        #
+        # STRUCTURED CONTENT since 2026-08-26: the prose tier was removed from content_reduce
+        # because it deleted function words and inverted a negation in a real run. The ORDERING
+        # this test exists to pin is unchanged and is what it still asserts.
+        dense = '{"rows": [' + ",".join('{"m": "the item is in the list and on the page"}'
+                                        for _ in range(120)) + ']}'
+        fresh = '{"rows": [' + ",".join('{"m": "this describes the current file the model edits"}'
+                                        for _ in range(200)) + ']}'
         self.assertGreater(est_tokens(fresh), est_tokens(dense))  # fresh is the LARGER of the two
         msgs = [
             _a("", [{"id": "c1", "function": {"name": "web_fetch", "arguments": "{}"}}]),
@@ -154,11 +168,13 @@ class TestFits(unittest.TestCase):
             _a("", [{"id": "c2", "function": {"name": "read_file", "arguments": "{}"}}]),
             _tool("c2", fresh),   # FRESHEST — the file the current step depends on
         ]
-        out, reduced = contextfloor._reduce_tool_outputs(msgs, 1700)
-        self.assertGreaterEqual(reduced, 1)
+        # The budget is satisfiable by reducing the OLDER output alone — which is the whole point.
+        out, reduced = contextfloor._reduce_tool_outputs(msgs, 3000)
+        self.assertEqual(reduced, 1)
         tool_msgs = [m for m in out if m.get("role") == "tool"]
         self.assertEqual(tool_msgs[-1]["content"], fresh)  # freshest byte-intact
         self.assertLess(est_tokens(tool_msgs[0]["content"]), est_tokens(dense))  # stale shrank
+
 
     def test_oversized_reserve_is_clamped_not_zeroing_prompt(self):
         # A harness sending max_tokens >= window drives reserve >= window (reserve_for falls back to

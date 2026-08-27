@@ -149,22 +149,30 @@ def digest_reduce(content: str, content_type: str | None, cap_tokens: int) -> st
 
 def content_reduce(content: str, content_type: str | None, cap_tokens: int) -> str:
     """Reduce `content` toward roughly `cap_tokens`, dispatching on `content_type`.
-    Returns the input unchanged when it already fits."""
+    Returns the input unchanged when it already fits.
+
+    THE PROSE TIER IS GONE, from here and from the JSON walk. It ran :func:`strip_prose_text`, which
+    deletes function words, and this module's own :func:`digest_reduce` docstring records what that
+    did to a real run: cria's note "no endpoints or field names could **be read from** it" came out
+    as "could read it", turning a statement that nothing was learned into a claim that something
+    was. Fluent, plausible, and inverted — worse than truncation, because truncation is visible.
+
+    `digest_reduce` was added to keep that away from text a model reads as INSTRUCTION. But rule 5
+    sanctions `contextfloor.fit` as the one window-fit point precisely because it is lossless-first,
+    and lever 3 reaches this function with the coder's EVIDENCE — where an inverted sentence is
+    every bit as damaging. There is no text a model reads for which silent rewording is the right
+    answer, so the tier is removed rather than gated more narrowly.
+
+    What remains is lossless or structural: HTML/XML to its own text, and JSON minified and
+    structurally reduced. Prose that does not fit comes back whole and the CALLER discloses it."""
     if est_tokens(content) <= cap_tokens:
         return content
     ct = (content_type or "").lower()
     if "html" in ct or "xml" in ct:
-        text = html_to_text(content)
-        return strip_prose_text(text) if est_tokens(text) > cap_tokens else text
+        return html_to_text(content)
     if "json" in ct:
         reduced = reduce_json(content, cap_tokens)
         return reduced if reduced is not None else content
-    # text/*, yaml, unknown -> guarded prose strip (only ran because over cap). Gate it: the
-    # stripper removes bare keywords (for/in/is/as/from/with), so running it on SOURCE CODE — which
-    # sniffs as "unknown" too — silently corrupts the file the model is about to edit. Strip only
-    # when the blob reads as natural language AND does not read as code.
-    if _looks_like_prose(content) and not _looks_like_code(content):
-        return strip_prose_text(content)
     return content
 
 
@@ -175,11 +183,13 @@ def content_reduce(content: str, content_type: str | None, cap_tokens: int) -> s
 def reduce_json(content: str, cap_tokens: int, strip_prose: bool = True) -> str | None:
     """Minify; if that is not enough and ``strip_prose``, compress prose-named string values.
 
-    ``strip_prose=False`` stops at the lossless tier. :func:`digest_reduce` passes it, because the
-    whole reason that function exists is to keep the word-deleter away from text a model reads as
-    instruction — and its JSON tier walked straight into it through this call. The fields
-    `_PROSE_FIELDS` names — `message`, `text`, `body`, `details`, `note`, `description`, `summary` —
-    are exactly where an API error, a test failure or a tool's own explanation lives."""
+    ``strip_prose=False`` stops at minification alone.
+
+    THE WORD-DELETING TIER IS GONE. It compressed prose-named string values — `message`, `text`,
+    `body`, `details`, `note`, `description`, `summary`, which is exactly where an API error, a test
+    failure or a tool's own explanation lives — and it did so by removing function words, which
+    inverted a negation in a real run. What takes its place folds REPEATED ELEMENTS, which is
+    lossless and is rule 5's own first allowance."""
     try:
         v = json.loads(content)
     except (ValueError, TypeError):
@@ -189,8 +199,39 @@ def reduce_json(content: str, cap_tokens: int, strip_prose: bool = True) -> str 
         return None
     if est_tokens(minified) <= cap_tokens or not strip_prose:
         return minified  # lossless was enough, or lossless is all this caller permits
-    v = _strip_prose_nodes(v, None)
-    return _dump_json(v)
+    # STILL LOSSLESS: fold repeated array elements. A payload that overruns is usually a list of the
+    # same shape said many times — 120 identical rows, an API returning the same error per item —
+    # and rule 5's first allowance is exactly this: one copy plus a count. What replaced the
+    # word-deleting tier here shrinks that case by orders of magnitude and cannot change a meaning.
+    folded = _fold_repeated_elements(v)
+    return _dump_json(folded)
+
+
+# The marker that stands in for folded repeats. It is data, not prose, so it says plainly what it
+# replaced and how many times — a reader (model or parser) can tell a fold from a value.
+_REPEAT_KEY = "__repeated__"
+
+
+def _fold_repeated_elements(v):
+    """Identical adjacent elements in any list folded to one copy plus a count. Lossless.
+
+    Order is preserved and only ADJACENT runs fold, so `[a, a, b, a]` keeps its shape — the same
+    rule the compaction note follows, for the same reason: sequence is information."""
+    if isinstance(v, dict):
+        return {k: _fold_repeated_elements(val) for k, val in v.items()}
+    if not isinstance(v, list):
+        return v
+    out, i = [], 0
+    items = [_fold_repeated_elements(x) for x in v]
+    while i < len(items):
+        j = i + 1
+        while j < len(items) and items[j] == items[i]:
+            j += 1
+        out.append(items[i])
+        if j - i > 1:
+            out.append({_REPEAT_KEY: j - i, "of": "the element above"})
+        i = j
+    return out
 
 
 def _dump_json(v) -> str | None:
@@ -209,8 +250,6 @@ def _strip_prose_nodes(v, key: str | None):
     if isinstance(v, list):
         return [_strip_prose_nodes(val, key) for val in v]
     if isinstance(v, str):
-        if key is not None and _is_prose_field(key) and _looks_like_prose(v):
-            return strip_prose_text(v)
         return v
     return v
 

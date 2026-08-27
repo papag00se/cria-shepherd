@@ -48,13 +48,15 @@ class ContentReduceTests(unittest.TestCase):
         self.assertIn("for item in items", out)
         self.assertIn("is not None", out)
 
-    def test_prose_over_cap_is_still_stripped(self):
-        # Genuine prose must STILL compress — the gate mustn't over-refuse.
+    def test_prose_over_cap_comes_back_WHOLE(self):
+        """REVERSED 2026-08-26 — the prose tier is gone. It deleted function words, and this
+        module's own docstring records it turning "could be read from it" into "could read it".
+        Rule 5 names evidence; rule 5b forbids a sentence the world contradicts. Over-cap prose is
+        returned intact and the caller (the context floor) drops a turn and says which."""
         prose = ("The service resolves an incoming request to the correct handler and returns "
                  "a response to the caller, with the payload embedded in the body of the message. ") * 8
-        out = content_reduce(prose, None, cap_tokens=10)
-        self.assertLess(len(out), len(prose))
-        self.assertNotIn(" to the ", out)  # a function word was dropped
+        self.assertEqual(content_reduce(prose, None, cap_tokens=10), prose)
+
 
     def test_strips_function_words_keeps_meaning(self):
         s = ("Resolves an Ada Handle to its Cardano address; returns 404 when the handle is "
@@ -68,18 +70,18 @@ class ContentReduceTests(unittest.TestCase):
             self.assertNotIn(gone, out, f"must drop `{gone}`: {out}")
         self.assertLess(len(out), len(s))
 
-    def test_json_structure_never_breaks_and_only_prose_fields_change(self):
+    def test_json_structure_never_breaks_and_prose_fields_are_untouched(self):
+        """The JSON tier still minifies and reduces STRUCTURALLY; it no longer rewords a value.
+        Same reversal as above — a description a model reads is evidence."""
         src = ('{"description":"This is a long human readable explanation of the thing that does '
                'work","pattern":"^[a-z]+ or [0-9]+$","example":"do not change this value at all please"}')
         out = reduce_json(src, 1)
         v = json.loads(out)  # still valid JSON
-        # pattern (excluded) and example (excluded) untouched
         self.assertEqual(v["pattern"], "^[a-z]+ or [0-9]+$")
         self.assertEqual(v["example"], "do not change this value at all please")
-        # description (prose field) got shorter but kept its content words
-        d = v["description"]
-        self.assertTrue("human" in d and "readable" in d and "explanation" in d)
-        self.assertLess(len(d), len("This is a long human readable explanation of the thing that does work"))
+        self.assertEqual(v["description"],
+                         "This is a long human readable explanation of the thing that does work")
+
 
     def test_html_strips_script_style_and_tags(self):
         html = ("<html><head><style>.x{color:red}</style><script>alert(1)</script></head>"

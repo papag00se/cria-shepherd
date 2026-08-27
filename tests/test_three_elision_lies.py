@@ -28,10 +28,17 @@ class TheDigestKeepsTheWordsItPromisedTests(unittest.TestCase):
         spaced = json.dumps({"a": [{"b": "c"}] * 40}, indent=4)
         self.assertLess(len(cr.digest_reduce(spaced, "application/json", 10)), len(spaced))
 
-    def test_the_lossy_caller_is_unchanged(self):
-        """`content_reduce` is a different contract — it must shrink, and its caller labels it."""
+    def test_the_lossy_caller_no_longer_rewords_either(self):
+        """REVERSED 2026-08-26. This pinned `content_reduce` as "a different contract — it must
+        shrink". It shrank by DELETING FUNCTION WORDS, which is how "could be read from" became
+        "could read". Evidence is named in rule 5's first line and 5b forbids a sentence the world
+        contradicts, so there is no text a model reads for which silent rewording is right.
+
+        What remains is structural: the JSON is minified and reduced by shape, and every message it
+        carries is still the message the server sent."""
         out = cr.content_reduce(self.BODY, "application/json", 50)
-        self.assertNotIn("could not be read from the server", out)
+        self.assertIn("could not be read from the server", out)
+
 
     def test_the_label_explains_itself(self):
         """`⟦ctx:reduced⟧` was stamped on a rewritten tool result and explained nowhere — no prompt

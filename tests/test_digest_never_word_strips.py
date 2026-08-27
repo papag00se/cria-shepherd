@@ -63,11 +63,20 @@ class DigestTests(unittest.TestCase):
         out = digest_reduce(big, "application/json", 50)
         self.assertLess(len(out), len(big))
 
-    def test_evidence_reduction_is_UNCHANGED(self):
-        # content_reduce still serves fetched pages/tool output, where the trade is defensible and
-        # the text is not instruction. Only the digest path changed.
+    def test_evidence_prose_is_NO_LONGER_word_stripped(self):
+        """REVERSED 2026-08-26. The pin here read "content_reduce still serves fetched pages/tool
+        output, where the trade is defensible and the text is not instruction."
+
+        It is not defensible, for the reason this file exists: the stripper INVERTS meaning, and an
+        inverted sentence in EVIDENCE misleads exactly as well as one in an instruction — cria's own
+        "could be read from it" became "could read it". Rule 5 names evidence in its first line, and
+        rule 5b forbids cria stating a thing the world contradicts.
+
+        It also cost nothing to remove: across the whole capture corpus the tier fired 6 times and
+        produced 0 ⟦ctx:reduced⟧ prompts. Prose that will not fit now comes back whole and the floor
+        drops a turn instead — a loss that is disclosed and names what it dropped."""
         prose = ("The quick brown fox is jumping over the lazy dog in the park. " * 200)
-        self.assertNotEqual(content_reduce(prose, None, 20), prose)
+        self.assertEqual(content_reduce(prose, None, 20), prose)
 
 
 class WiringTests(unittest.TestCase):
@@ -191,3 +200,36 @@ class SearchSpillTests(unittest.TestCase):
                                              scratch=d)
         self.assertIn("Findable Title 0", out.text)   # the titles still ride inline...
         self.assertNotIn("zzzzzzzz", out.text)          # ...the snippet bodies spilled to disk
+
+
+class TheJsonTierIsLosslessNow(unittest.TestCase):
+    """What replaced the word-deleting JSON tier, 2026-08-26.
+
+    `_strip_prose_nodes` compressed `message`/`text`/`body`/`details`/`note`/`description`/`summary`
+    — where an API error, a test failure or a tool's own explanation lives — by deleting function
+    words. Folding identical adjacent elements is rule 5's own first allowance and shrinks the case
+    that actually overruns (a list saying the same thing many times) by orders of magnitude."""
+
+    def test_repeats_fold_to_one_copy_and_a_count(self):
+        from cria.content_reduce import content_reduce, est_tokens
+        body = '{"rows": [' + ",".join('{"m": "the same row said again"}' for _ in range(120)) + ']}'
+        out = content_reduce(body, "application/json", 200)
+        self.assertLess(est_tokens(out), est_tokens(body) // 10)
+        self.assertIn("the same row said again", out, "one copy survives verbatim")
+        self.assertIn("120", out, "and the count says how many there were")
+
+    def test_order_is_kept_and_only_adjacent_runs_fold(self):
+        from cria.content_reduce import _fold_repeated_elements
+        self.assertEqual(_fold_repeated_elements(["a", "a", "b", "a"]),
+                         ["a", {"__repeated__": 2, "of": "the element above"}, "b", "a"])
+
+    def test_distinct_elements_are_untouched(self):
+        from cria.content_reduce import _fold_repeated_elements
+        self.assertEqual(_fold_repeated_elements([1, 2, 3]), [1, 2, 3])
+
+    def test_a_prose_field_keeps_its_words(self):
+        from cria.content_reduce import content_reduce
+        body = '{"items": [' + ",".join(
+            '{"message": "the request could not be read from the server"}' for _ in range(80)) + ']}'
+        self.assertIn("could not be read from the server",
+                      content_reduce(body, "application/json", 20))

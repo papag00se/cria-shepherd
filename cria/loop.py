@@ -9521,7 +9521,17 @@ def _command_text(args) -> str | None:
     return " ".join(str(x) for x in _flat_values(parsed))
 
 
-ROLLUP_MAX_TOKENS = 2048
+# The self-compaction rollup's output cap. It was 2,048, added on 2026-07-28 for LATENCY — "at 7
+# tok/s it is an 18-minute worst case, and a truncated pass then RETRIES, doubling it" — eleven days
+# after the truncation overhaul had raised exactly these caps to 8,192 "so a summary is never itself
+# truncated". Rule 6 answers it in as many words: do not shorten output for speed, slow hardware and
+# long waits are acceptable, and runaway protection belongs to streaming detection and timeouts, not
+# to a short hard cap.
+#
+# It failed safe rather than shipping half a summary — `summarize` refuses a `finish_reason=length`
+# reply and the fold is abandoned — but the cost of that safety is that the floor then drops whole
+# turns instead, which is the more expensive loss. 31% of rollups hit it.
+ROLLUP_MAX_TOKENS = 8192
 
 CODER_FETCH_HEADER = "PAGES THE CODER ALREADY FETCHED"
 
