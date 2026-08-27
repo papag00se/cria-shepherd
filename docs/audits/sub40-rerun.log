@@ -1,0 +1,100 @@
+===== BEGIN shipping-rates-rb nemotron-elastic 09:17:32
+[sampling] nemotron-elastic: coder={'temperature': 0.6, 'top_p': 0.95}  reasoner={'temperature': 0.6, 'top_p': 0.95}  classifier={'temperature': 0.0}  compactor={'temperature': 0.0}
+[milestone] 30min  score=1.0/5.0  floor=2  MISS
+[milestone] recheck score=1.0  CONFIRMED MISS
+{
+ "run_id": "shipping-rates-rb_nemotron-elastic_codex_poff_1787847452",
+ "terminal": "milestone-miss-30min",
+ "success": false,
+ "score": 1.0,
+ "wall_seconds": 1844.7,
+ "calls": 89,
+ "avg_tok_s": 130.7
+}
+[usefulness] evidence frozen -> /home/jesse/.cria/suite/_usefulness_evidence/shipping-rates-rb_nemotron-elastic_codex_poff_1787847452.txt
+refreshed /home/jesse/src/cria-shepherd/docs/audits/regression-report.md
+[grid] refreshed docs/audits/regression-report.md
+[battery] refreshed docs/audits/battery-report.md
+[arm] [engagement] level = 5  (was 5)
+===== END shipping-rates-rb nemotron-elastic 09:48:52
+===== BEGIN cart-billing-go nemotron-elastic 09:48:52
+[sampling] nemotron-elastic: coder={'temperature': 0.6, 'top_p': 0.95}  reasoner={'temperature': 0.6, 'top_p': 0.95}  classifier={'temperature': 0.0}  compactor={'temperature': 0.0}
+[milestone] 30min  score=1.0/5.0  floor=2  MISS
+[milestone] recheck score=1.0  CONFIRMED MISS
+{
+ "run_id": "cart-billing-go_nemotron-elastic_codex_poff_1787849333",
+ "terminal": "milestone-miss-30min",
+ "success": false,
+ "score": 1.0,
+ "wall_seconds": 1850.5,
+ "calls": 103,
+ "avg_tok_s": 130.9
+}
+[usefulness] evidence frozen -> /home/jesse/.cria/suite/_usefulness_evidence/cart-billing-go_nemotron-elastic_codex_poff_1787849333.txt
+refreshed /home/jesse/src/cria-shepherd/docs/audits/regression-report.md
+[grid] refreshed docs/audits/regression-report.md
+[battery] refreshed docs/audits/battery-report.md
+[arm] [engagement] level = 5  (was 5)
+===== END cart-billing-go nemotron-elastic 10:19:58
+===== BEGIN feed-pipeline-java nemotron-elastic 10:19:58
+[sampling] nemotron-elastic: coder={'temperature': 0.6, 'top_p': 0.95}  reasoner={'temperature': 0.6, 'top_p': 0.95}  classifier={'temperature': 0.0}  compactor={'temperature': 0.0}
+[milestone] 30min  score=0.0/5.0  floor=2  MISS
+[milestone] recheck score=0.0  CONFIRMED MISS
+{
+ "run_id": "feed-pipeline-java_nemotron-elastic_codex_poff_1787851198",
+ "terminal": "milestone-miss-30min",
+ "success": false,
+ "score": 0.0,
+ "wall_seconds": 1879.8,
+ "calls": 132,
+ "avg_tok_s": 129.5
+}
+[usefulness] evidence frozen -> /home/jesse/.cria/suite/_usefulness_evidence/feed-pipeline-java_nemotron-elastic_codex_poff_1787851198.txt
+refreshed /home/jesse/src/cria-shepherd/docs/audits/regression-report.md
+[grid] refreshed docs/audits/regression-report.md
+[battery] refreshed docs/audits/battery-report.md
+[arm] [engagement] level = 5  (was 5)
+===== END feed-pipeline-java nemotron-elastic 10:51:53
+===== BEGIN handles-cli-node nemotron-elastic 10:51:53
+[sampling] nemotron-elastic: coder={'temperature': 0.6, 'top_p': 0.95}  reasoner={'temperature': 0.6, 'top_p': 0.95}  classifier={'temperature': 0.0}  compactor={'temperature': 0.0}
+[milestone] 30min  score=3.0/4.0  floor=2  ok
+[milestone] 45min  score=3.0/4.0  floor=3  ok
+[milestone] 60min  score=3.0/4.0  floor=4  MISS
+[milestone] recheck score=3.0  CONFIRMED MISS
+{
+ "run_id": "handles-cli-node_nemotron-elastic_codex_poff_1787853113",
+ "terminal": "milestone-miss-60min",
+ "success": false,
+ "score": 3.0,
+ "wall_seconds": 3653.5,
+ "calls": 268,
+ "avg_tok_s": 129.9
+}
+[usefulness] evidence frozen -> /home/jesse/.cria/suite/_usefulness_evidence/handles-cli-node_nemotron-elastic_codex_poff_1787853113.txt
+refreshed /home/jesse/src/cria-shepherd/docs/audits/regression-report.md
+[grid] refreshed docs/audits/regression-report.md
+[battery] refreshed docs/audits/battery-report.md
+[arm] [engagement] level = 5  (was 5)
+===== END handles-cli-node nemotron-elastic 11:53:02
+===== BEGIN feed-pipeline-java ternary-bonsai 11:53:02
+[sampling] ternary-bonsai: coder={'temperature': 0.2, 'top_p': 0.95, 'top_k': 20, 'repeat_penalty': 1.1}  reasoner={'temperature': 0.6, 'top_p': 0.9, 'top_k': 40, 'repeat_penalty': 1.1}  classifier={'temperature': 0.0, 'repeat_penalty': 1.1}  compactor={'temperature': 0.0, 'repeat_penalty': 1.1}
+[milestone] 30min  score=4.0/5.0  floor=2  ok
+[milestone] 45min  score=5.0/5.0  floor=3  ok
+[milestone] 60min  score=5.0/5.0  floor=4  ok
+[milestone] 75min  score=5.0/5.0  floor=5  ok
+{
+ "run_id": "feed-pipeline-java_ternary-bonsai_codex_poff_1787856782",
+ "terminal": "budget-killed",
+ "success": true,
+ "score": 5.0,
+ "wall_seconds": 4543.7,
+ "calls": 110,
+ "avg_tok_s": 33.5
+}
+[usefulness] evidence frozen -> /home/jesse/.cria/suite/_usefulness_evidence/feed-pipeline-java_ternary-bonsai_codex_poff_1787856782.txt
+refreshed /home/jesse/src/cria-shepherd/docs/audits/regression-report.md
+[grid] refreshed docs/audits/regression-report.md
+[battery] refreshed docs/audits/battery-report.md
+[arm] [engagement] level = 5  (was 5)
+===== END feed-pipeline-java ternary-bonsai 13:09:42
+===== BATCH DONE 13:09:42

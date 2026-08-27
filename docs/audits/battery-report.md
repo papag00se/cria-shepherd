@@ -1,6 +1,6 @@
 # Battery — the engagement ladder
 
-**Last updated 2026-08-27 09:16** — newest row `feed-pipeline-java_ternary-bonsai_codex_poff_1787837593`, scored 2026-08-27 07:04.
+**Last updated 2026-08-27 13:20** — newest row `feed-pipeline-java_ternary-bonsai_codex_poff_1787856782`, scored 2026-08-27 13:09.
 
 Tables only. Findings, walks and the retired two-arm campaign: [`battery-history.md`](battery-history.md).
 Per-cell judging: [`ladder-progress.md`](ladder-progress.md). Status: `python3 suite/engagement_status.py`.
@@ -52,14 +52,14 @@ Per-cell judging: [`ladder-progress.md`](ladder-progress.md). Status: `python3 s
 | ternary-bonsai | 🟢 100% | 🟢 97% | 🟡 64% | 🟡 80% | 🟡 76% | 🔴 16% | 72% | 45 | 82 |
 | nemotron-elastic | 🔴 26% | 🔴 28% | 🟠 40% | 🔴 19% | 🟠 40% | 🔴 20% | 29% | 33 | 141 |
 
-### Level 5 — ASSISTS_ENABLED — steers, periodic gates, detectors, planner — 74%
+### Level 5 — ASSISTS_ENABLED — steers, periodic gates, detectors, planner — 81%
 
 | model | ruby | go | python | java | node | rust | total | avg min | avg calls |
 |---|---|---|---|---|---|---|---:|---:|---:|
 | gemma4 | 🟡 73% | 🟢 89% | 🟢 92% | 🟢 100% | 🟢 91% | 🟢 100% | 91% | 20 | 74 |
 | qwen35 | 🟢 100% | 🟡 63% | 🟡 71% | 🟢 96% | 🟢 93% | 🟢 100% | 87% | 40 | 227 |
-| ternary-bonsai | 🟢 100% | 🟢 97% | 🟡 74% | 🔴 12% | 🟢 89% | 🟢 100% | 79% | 40 | 78 |
-| nemotron-elastic | 🔴 9% | 🔴 15% | 🟡 76% | 🔴 16% | 🔴 33% | 🟡 84% | 39% | 42 | 145 |
+| ternary-bonsai | 🟢 100% | 🟢 97% | 🟡 74% | 🟢 100% | 🟢 89% | 🟢 100% | 93% | 48 | 89 |
+| nemotron-elastic | 🔴 27% | 🔴 32% | 🟡 76% | 🔴 28% | 🟡 70% | 🟡 84% | 53% | 47 | 180 |
 
 
 `ˢ` = still scored strictly (all-or-nothing per deliverable); unmarked = judged. The two are not comparable. Per-cell noise on this suite is wide: gemma4's L0 and L1 scored 91 and 41 while five of six cells ran an identical code path.
