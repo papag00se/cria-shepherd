@@ -694,3 +694,9 @@ The hollow suite that defined the previous attempt is gone. That one scored 0 on
 What remains is one wrong exit code: `--help` prints correct, complete usage and then `process.exit(1)`. Third node cell in this campaign to lose a point that way.
 
 279 calls, 38.7 minutes, ended on its own.
+
+### nemotron-elastic × shipping-rates-rb — **8 → 9**
+
+The same one-character diff as before (`>` → `>=`, which turns the seed suite green) and nothing else. What changed is where the turns went: **zero external-path refusals against 20**, so the workspace-path typo loop that consumed 42 of the previous run's 115 calls did not recur. It spent the recovered turns writing a Gemfile pinned to `countries ~> 0.9.3` — nine major versions behind what is installed — that no source file requires.
+
+The loop is gone; the model still does not do the task.

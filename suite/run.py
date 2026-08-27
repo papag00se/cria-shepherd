@@ -94,9 +94,12 @@ HARNESSES = {"codex": _codex_argv}
 NODE_PATH = "/home/jesse/.nvm/versions/node/v22.13.1/bin"
 
 
-# How long a task's own verify.py may take. It runs the coder's program repeatedly — the
-# determinism check alone runs it eight times — so a slow build plus a large fixture can be minutes.
-VERIFY_TIMEOUT_S = 900
+# How long a task's own verify.py may take. It runs the coder's program repeatedly — feed-pipeline
+# -java's determinism check alone runs it eight times over a 1.2 MB fixture, and the program prints
+# a line per SKU. MEASURED rather than guessed: that verifier took 1,250 s on the workspace whose
+# row the old 600 s limit destroyed. 1,800 leaves headroom over the worst case observed without
+# letting a genuinely wedged verifier hold a cell forever.
+VERIFY_TIMEOUT_S = 1800
 
 
 def sh(*cmd, timeout=120):
