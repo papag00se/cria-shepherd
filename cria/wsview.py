@@ -916,7 +916,19 @@ while stack and n < TREE_MAX and spent < TREE_BYTES:
             EMIT("F\t0\t0\t%s\n" % rel)
         n += 1
         if n >= TREE_MAX or spent >= TREE_BYTES:
+            # THE BOUND MEANS UNKNOWN, NOT ABSENT. Breaking here leaves this directory already
+            # popped off the stack and the rest of its files unlisted, with no `X` record naming
+            # it — and `complete` stayed 1, so `View.isfile` answered FALSE for a file that
+            # exists and `listed_everything` told every judge "This list is complete — a file not
+            # listed here does not exist in the workspace." Reproduced on a 61-file tree at the
+            # budget a gate-carried survey actually gets: 17 records emitted, complete 1,
+            # isfile('pkg/file_60.py') -> False. Same defect the root-fold branch was written to
+            # fix, one loop further in (#5b, #11b).
+            complete = 0
+            EMIT("X\t0\t%s\n" % cur)
             break
+if stack and (n >= TREE_MAX or spent >= TREE_BYTES):
+    complete = 0                      # queued directories nobody will walk — same reason as above
 for rel in stack[:{drain_max}]:
     EMIT("X\t0\t%s\n" % rel)
 if len(stack) > {drain_max}:
