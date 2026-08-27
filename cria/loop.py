@@ -330,6 +330,17 @@ class PlanSession(GuardState):
     verify_replanned: bool = False  # the verify-fail re-derive fired once this STEP (anti-churn bound)
     leg0_nudged: bool = False  # the no-tools nudge fired once this step (bounds in-process recursion)
     last_gate_flag: str = ""  # previous gate's block-nudge, for convergence/stall detection
+    # WHEN that finding-set was gathered, as the forwarded-call counter's value. The block cria
+    # renders from `last_gate_flag` is headed "the repo's own checks, MOST RECENT RUN", which is
+    # true and reads as CURRENT — and it persists until another gate runs. L5 feed-pipeline-java x
+    # ternary-bonsai: a gate found a compile error at 10 minutes; the coder's own `mvn clean
+    # compile` returned BUILD SUCCESS at 17.4 minutes; the periodic gate that would have refreshed
+    # the finding was cancelled by a compaction (`ran:false, why:history-rewritten`); and the stale
+    # block went on asserting the error in 24 of the run's 42 prompts. The coder believed cria over
+    # its own compiler, rewrote the file, and re-broke a build that had been green for nine minutes.
+    # cria cannot know whether a newer command contradicts a finding — but it does know how old the
+    # finding is, and saying so is the difference between a fact and an implication (#5b, #12).
+    last_gate_seq: int = 0
     # Did the last completion gate actually RUN? `guard_gate_verdict` returns None for BOTH a green
     # gate and a gate that could not run, so its callers could not tell them apart and two of the
     # three hardcoded "The repo's automated checks pass". Measured: that wording shipped 80 times,
@@ -537,6 +548,7 @@ def track_gate_progress(gs: GuardState, finding: str) -> None:
     docstring claimed it fed the steer author. One field, written at the one funnel every gate path
     reaches (#23: one owner)."""
     gs.last_gate_flag = finding or ""
+    gs.last_gate_seq = gs.action_seq
     if not finding:
         gs.gate_stall = 0
         gs.gate_sig = ""

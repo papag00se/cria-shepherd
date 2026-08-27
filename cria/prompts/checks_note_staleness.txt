@@ -1,0 +1,2 @@
+
+You have run {{CALLS}} of your own commands since that check. If one of them shows something different — a build that now succeeds, a test that now passes — your own newer result is the current state and this block is not. Re-run the check rather than acting on whichever you saw first.

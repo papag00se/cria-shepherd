@@ -255,7 +255,21 @@ def _last_checks_note(server, sess_key: str) -> str:
     flag = _last_gate_flag(server, sess_key)
     if not flag:
         return ""
-    return "LATEST CHECK RESULTS (the repo's own checks, most recent run):\n" + flag
+    # HOW OLD, NOT JUST WHAT. "most recent run" is true of a finding gathered twenty calls ago and
+    # reads as current; when the coder's own build has gone green since, the block is cria asserting
+    # a state the coder has already disproved. It cost a green build once — see `last_gate_seq`.
+    loop = getattr(server, "loop", None)
+    sess = loop._store.get(sess_key) if loop is not None else None
+    since = max(0, getattr(sess, "action_seq", 0) - getattr(sess, "last_gate_seq", 0)) if sess else 0
+    stale = (prompts.fill(prompts.load("checks_note_staleness"), calls=str(since))
+             if since >= _CHECKS_STALE_AFTER else "")
+    age = (f"{since} of your calls ago" if since else "just now")
+    return prompts.fill(prompts.load("checks_note"), age=age, flag=flag, staleness=stale)
+
+
+# How many of the coder's own forwarded calls may pass before the check block stops presenting
+# itself as the current state. Two is enough for one build-and-look; the incident ran 24 prompts.
+_CHECKS_STALE_AFTER = 2
 
 
 def _session_gate_plan(server, sess_key: str):
