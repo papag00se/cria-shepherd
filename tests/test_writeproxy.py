@@ -596,10 +596,15 @@ class WebFetchEnvelopeTests(unittest.TestCase):
     def test_strip_removes_envelope_keeps_payload_and_real_footer(self):
         from cria.writeproxy import _strip_exec_envelope
         out = _strip_exec_envelope(self._ENVELOPE)
-        self.assertTrue(out.startswith("HTTP 200 OK"))          # the payload leads
+        # CHANGED 2026-08-26: the harness's own "Warning: truncated output" is NOT envelope — it
+        # says the payload below is a PIECE of the answer. Dropping it with the framing let a read,
+        # a listing or a fetch the harness had cut reach the model looking whole (#5b). Everything
+        # else about the strip is unchanged and still asserted below.
+        self.assertTrue(out.startswith("Warning: truncated output"))
+        self.assertIn("HTTP 200 OK", out)                       # the payload follows it
         for noise in ("Chunk ID", "Process exited", "Wall time", "Original token count",
-                      "Warning: truncated output", "Total output lines"):
-            self.assertNotIn(noise, out)                         # no shell/cache/truncation signal
+                      "Total output lines"):
+            self.assertNotIn(noise, out)                         # no shell/cache plumbing
         self.assertIn("⚠ More remains", out)                    # webfetch's OWN accurate footer survives
         self.assertIn('cursor="c16000"', out)
 
@@ -618,7 +623,8 @@ class WebFetchEnvelopeTests(unittest.TestCase):
         content = str(out[-1]["content"])
         self.assertNotIn("Chunk ID", content)                    # envelope stripped from the result
         self.assertNotIn("Process exited", content)
-        self.assertTrue(content.startswith("HTTP 200 OK"))
+        self.assertTrue(content.startswith("Warning: truncated output"))  # see the strip test above
+        self.assertIn("HTTP 200 OK", content)
         self.assertIn("⚠ More remains", content)
 
     def test_gate_result_is_not_stripped_no_fetch_sentinel(self):

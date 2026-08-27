@@ -1484,7 +1484,15 @@ def _read_sentinel(command: str) -> dict | None:
 # the envelope adds only a false disk-cache mental model (and a spurious "truncated output" warning —
 # webfetch PAGINATES, it does not truncate). Strip it back to the payload. A no-op when absent.
 _ENVELOPE_OUTPUT_LINE = re.compile(r"^Output:[ \t]*$", re.M)
-_ENVELOPE_ADVISORY = re.compile(r"^(?:Warning: truncated output.*|Total output lines: \d+)[ \t]*$")
+# THE HARNESS'S OWN BOOKKEEPING, which is envelope and goes. `Total output lines: N` describes the
+# transport, not the answer.
+_ENVELOPE_ADVISORY = re.compile(r"^Total output lines: \d+[ \t]*$")
+# ITS TRUNCATION WARNING IS NOT ENVELOPE. `Warning: truncated output` says the payload below is a
+# PIECE of the answer, and it was being dropped along with the framing — so a read, a listing or a
+# fetch that the harness had cut reached the model looking whole (#5b). It stays, and
+# `note_harness_cuts` learns its shape so cria can count it like the inline `…N tokens truncated…`
+# marker it already watches for.
+_ENVELOPE_CUT_WARNING = re.compile(r"^Warning: truncated output.*$")
 
 
 # A pipe into a line-filter: the class of self-blinding observed live (`| grep -E 'passed|failed'`,
@@ -1573,9 +1581,14 @@ def _strip_exec_envelope(content: str) -> str:
     if not m or "Process exited with code" not in content[:m.start()]:
         return content
     lines = content[m.end():].split("\n")
-    while lines and (_ENVELOPE_ADVISORY.match(lines[0]) or not lines[0].strip()):
-        lines.pop(0)  # drop the harness's leading truncation advisories + blank lines
-    return "\n".join(lines).rstrip("\n")
+    kept_warning = ""
+    while lines and (_ENVELOPE_ADVISORY.match(lines[0]) or not lines[0].strip()
+                     or _ENVELOPE_CUT_WARNING.match(lines[0])):
+        line = lines.pop(0)
+        if _ENVELOPE_CUT_WARNING.match(line):
+            kept_warning = line.strip()      # the payload is a piece — say so above it
+    body = "\n".join(lines).rstrip("\n")
+    return f"{kept_warning}\n{body}" if kept_warning else body
 
 
 def _scrub(v, secrets: list[str]):
@@ -1701,6 +1714,14 @@ def _collapse_rejected_payload(tc: dict, path: str, rlog=None) -> dict:
 # `…N tokens truncated…` into a tool result it decided was too big to keep whole. Other harnesses
 # will spell it differently; this matches the shape, and anything it misses stays silent (#3).
 _HARNESS_CUT = re.compile(r"…\s*([\d,]+)\s+(chars|tokens)\s+truncated\s*…")
+# THE OTHER SHAPE THE SAME HARNESS EMITS. Codex writes an inline `…N tokens truncated…` into a
+# result it cut in the MIDDLE, and a leading `Warning: truncated output (original token count: N)`
+# on one it cut at the END. Only the first was counted, so every end-cut result was a cut cria never
+# observed at all — and the strip used to remove the warning, so nothing downstream could see it
+# either. The count it carries is the ORIGINAL size, not the amount removed; that difference is
+# recorded in the event rather than papered over.
+_HARNESS_CUT_HEAD = re.compile(r"^Warning: truncated output(?:\s*\(original token count:\s*([\d,]+)\))?",
+                               re.M)
 
 
 def note_harness_cuts(messages: list, rlog=None) -> int:
@@ -1726,11 +1747,17 @@ def note_harness_cuts(messages: list, rlog=None) -> int:
     for m in messages or []:
         if (m or {}).get("role") != "tool":
             continue
-        for hit in _HARNESS_CUT.finditer(str(m.get("content") or "")):
+        body = str(m.get("content") or "")
+        for hit in _HARNESS_CUT.finditer(body):
             n += 1
             if rlog is not None:
                 rlog.emit("harness.truncated_a_result", level="warn",
                           amount=hit.group(1), unit=hit.group(2))
+        for hit in _HARNESS_CUT_HEAD.finditer(body):
+            n += 1
+            if rlog is not None:
+                rlog.emit("harness.truncated_a_result", level="warn", where="tail",
+                          original=hit.group(1) or "unstated", unit="tokens")
     return n
 
 
