@@ -57,9 +57,13 @@ MAX_PROBE_LABEL = "32 MB"
 
 class ProbeTooLarge(Exception):
     """The endpoint's own answer ran past MAX_PROBE_BYTES — a bound cria hit, not a fact about the API."""
-MAX_ITEMS = 40                # tools / root fields listed; the cap is DISCLOSED, never silent
-MAX_ARGS = 12                 # arguments shown per item, likewise disclosed
-MAX_FIELDS = 24               # return-type fields shown per GraphQL root field
+# NO CAPS. These bounded the very evidence this block exists to supply — the tool names, argument
+# names and return-field names a coder would otherwise GUESS. They were disclosed ("…+N more
+# tool(s) not shown"), and rule 5 as tightened on 2026-08-16 says a disclosed elision is still one.
+# A name is a few tokens; the context floor is the one place a list may be narrowed.
+MAX_ITEMS = None              # tools / root fields listed
+MAX_ARGS = None               # arguments shown per item
+MAX_FIELDS = None             # return-type fields shown per GraphQL root field
 
 # A GET that answers like a protocol endpoint rather than a document. 405 is the canonical MCP answer
 # to GET; 400 is GraphQL's answer to a query-less request. The body test keeps an unrelated 400 from
@@ -154,7 +158,7 @@ def _json_schema_args(schema: Any, mark_optional: bool = True) -> list[str]:
             t = "|".join(str(x) for x in t)
         mark = "" if (name in required or not mark_optional) else "?"
         out.append(f"{name}{mark}: {t}" if t else f"{name}{mark}")
-    if len(props) > MAX_ARGS:
+    if MAX_ARGS is not None and len(props) > MAX_ARGS:
         out.append(f"…+{len(props) - MAX_ARGS} more arg(s)")
     return out
 
@@ -224,11 +228,14 @@ def _mcp_discover(url: str) -> Optional[Discovery]:
         fields = _json_schema_args(t.get("outputSchema"), mark_optional=False)
         if fields:
             d.shapes.append(f"{t['name']} → {', '.join(fields)}")
-    if len(tools) > MAX_ITEMS:
+    if MAX_ITEMS is not None and len(tools) > MAX_ITEMS:
         d.routes.append(f"…+{len(tools) - MAX_ITEMS} more tool(s) not shown")
     for method, key, label in (("resources/list", "resources", "mcp resource"),
                                ("prompts/list", "prompts", "mcp prompt")):
-        for item in listing(method, key)[:MAX_ITEMS]:
+        # UNCAPPED. The tools arm above discloses its cap; this one sliced silently, so a server's
+        # resources and prompts read as the complete set whatever their number. Names and URIs are
+        # a line each and the floor is where a list may be narrowed (#5).
+        for item in listing(method, key):
             if isinstance(item, dict) and item.get("name"):
                 ident = item.get("uri") or item["name"]
                 d.routes.append(f"{label} {ident}")
@@ -330,7 +337,7 @@ def _graphql_discover(url: str) -> Optional[Discovery]:
                 continue
             args = [f"{a.get('name')}: {_gql_type_name(a.get('type'))}"
                     for a in (f.get("args") or [])[:MAX_ARGS] if isinstance(a, dict) and a.get("name")]
-            if len(f.get("args") or []) > MAX_ARGS:
+            if MAX_ARGS is not None and len(f.get("args") or []) > MAX_ARGS:
                 args.append(f"…+{len(f['args']) - MAX_ARGS} more arg(s)")
             ret = _gql_type_name(f.get("type"))
             entry = f"{prefix}.{f['name']}({', '.join(args)}) -> {ret}"
@@ -342,11 +349,11 @@ def _graphql_discover(url: str) -> Optional[Discovery]:
             if isinstance(subfields, list) and subfields:
                 names = [f"{s.get('name')}({_gql_type_name(s.get('type'))})"
                          for s in subfields[:MAX_FIELDS] if isinstance(s, dict) and s.get("name")]
-                if len(subfields) > MAX_FIELDS:
+                if MAX_FIELDS is not None and len(subfields) > MAX_FIELDS:
                     names.append(f"…+{len(subfields) - MAX_FIELDS} more field(s)")
                 if names:
                     d.shapes.append(f"{prefix}.{f['name']} → {', '.join(names)}")
-        if len(fields) > MAX_ITEMS:
+        if MAX_ITEMS is not None and len(fields) > MAX_ITEMS:
             d.routes.append(f"…+{len(fields) - MAX_ITEMS} more {prefix} field(s) not shown")
     return d or None
 

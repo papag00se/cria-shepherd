@@ -1056,7 +1056,10 @@ def _endpoint_response_fields(parsed: Any, max_endpoints: int = 12, max_fields: 
                 # and every `}` look like a new endpoint to anything reading the block by line.
                 lines.append(f"{head} returns:\n" + render_jsonc(shape))
                 shaped.append(path)
-                break  # one method per path is enough for the shape hint
+                # EVERY METHOD, not the first one that happens to have a schema. `break` here meant
+                # a path whose GET was shaped never showed its POST — and a coder writing the POST
+                # body is exactly who needs that shape. The skip was undisclosed, so the block read
+                # as the complete set of shapes for that path.
     if capped:
         lines.append(f"…+more endpoints have shapes not shown here — web_fetch find=\"<path>\" for one")
     return lines
@@ -2023,7 +2026,13 @@ def _no_text_match(content: str, query: str, cap_tokens: int) -> str:
 def find_text(content: str, query: str, cap_tokens: int) -> str:
     q = query.lower()
     lc = content.lower()
-    per = max(256, (cap_tokens * 4) // max(1, FIND_TOP_K))
+    # EVERY WHOLE MATCH THAT FITS, not a fixed best-three. `FIND_TOP_K = 3` decided how many windows
+    # a reader got regardless of how much room it had, and the residual line said "narrow your find"
+    # about matches the caller's own budget could have carried — one measured result disclosed 1,700
+    # of them. The budget is the bound now, each window is a whole paragraph, and the residual names
+    # the saved copy so the rest are one grep away rather than gone (#5: no arbitrary cap; where a
+    # bound is real, refuse and route).
+    per = max(256, cap_tokens * 4)
     # Collect ALL distinct match windows, then show the top FIND_TOP_K and DISCLOSE the residual —
     # a silent stop at FIND_TOP_K is a truncation the model can't detect (it may conclude the match
     # it wants doesn't exist when it was really the 4th hit). Mirrors find_json's disclosure.
@@ -2039,21 +2048,32 @@ def find_text(content: str, query: str, cap_tokens: int) -> str:
         frm = rel + max(1, len(q))
     if not results:
         return _no_text_match(content, query, cap_tokens)
-    shown = results[:FIND_TOP_K]
+    budget = cap_tokens * 4
+    shown, spent = [], 0
+    for r in results:
+        if shown and spent + len(r) > budget:
+            break                       # whole windows only — never half a paragraph
+        shown.append(r)
+        spent += len(r)
     body = "\n\n---\n\n".join(shown)
     if len(results) > len(shown):
-        body += f"\n\n[{len(results) - len(shown)} more match(es); narrow your find]"
+        body += "\n\n" + prompts.fill(prompts.load("find_more_matches"),
+                                       rest=str(len(results) - len(shown)),
+                                       shown=str(len(shown)), total=str(len(results)))
     return body
 
 
 def _extract_around(content: str, at: int, budget: int) -> str:
+    """The whole paragraph the match sits in.
+
+    ``budget`` used to re-cut that paragraph around the hit when it was large, with no marker at
+    all — so a match inside a long block came back as a mid-sentence slice the reader could not tell
+    from the block itself. The paragraph break is the author's own boundary and is the only bound
+    here now; the CALLER decides how many whole paragraphs it can afford."""
     p = content.rfind("\n\n", 0, at)
     lo = p + 2 if p != -1 else 0
     p2 = content.find("\n\n", at)
     hi = p2 if p2 != -1 else len(content)
-    if hi - lo > budget:
-        lo = max(lo, at - budget // 2)
-        hi = min(hi, at + budget // 2)
     return content[lo:max(hi, lo)].strip()
 
 

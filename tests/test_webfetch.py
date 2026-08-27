@@ -572,12 +572,23 @@ class UncappedNavHintsTests(unittest.TestCase):
         self.assertLess(len(out), 500)                 # not the document
         self.assertIn("without find", out)             # concrete re-target guidance
 
-    def test_find_text_hit_discloses_residual_matches(self):
-        # 5 distinct paragraphs each contain the query → top-FIND_TOP_K shown, the rest DISCLOSED,
-        # never silently stopped at FIND_TOP_K (the match the model wants may be the 4th).
+    def test_find_text_shows_every_match_that_fits(self):
+        """UNCAPPED 2026-08-26. FIND_TOP_K = 3 decided how many windows a reader got regardless of
+        how much room it had, and the residual said "narrow your find" about matches the caller's
+        own budget could have carried — one measured result disclosed 1,700 of them. The budget is
+        the bound now."""
         body = "\n\n".join(f"Paragraph {i} mentions the needle right here." for i in range(5))
         out = wf.find_text(body, "needle", 4000)
-        self.assertIn(f"{5 - wf.FIND_TOP_K} more match(es)", out)
+        for i in range(5):
+            self.assertIn(f"Paragraph {i}", out)
+        self.assertNotIn("more match", out)
+
+    def test_find_text_discloses_and_routes_what_will_not_fit(self):
+        body = "\n\n".join(f"Paragraph {i} mentions the needle right here. " + "filler " * 60
+                            for i in range(40))
+        out = wf.find_text(body, "needle", 200)
+        self.assertIn("of 40 matches shown", out)
+        self.assertIn("grep", out, "the rest are routed, not merely counted")
 
 
 class TruncationDisclosureTests(unittest.TestCase):

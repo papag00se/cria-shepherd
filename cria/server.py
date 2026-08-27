@@ -157,8 +157,13 @@ SESSION_HEADER = "X-Cria-Session-Id"
 # so cria can recognize a SUMMARIZE turn (correctly tool-less) and route it to the compactor role's
 # tuned sampling, never the classifier's guess or a bare passthrough. Harness-agnostic: any harness
 # that leads its compaction prompt with this marker gets the compactor.
-_COMPACT_TOP_MAX = 40      # entries listed at the workspace root; the remainder is NAMED
-_COMPACT_KIDS_MAX = 12     # entries listed inside each directory; likewise
+# NO CAPS. This listing rides in the reply the HARNESS stores as the session's entire remembered
+# past, under a header reading "on disk right now — do not re-create them" — so an entry past a cap
+# was not merely missing, it was implicitly denied. Naming the remainder ("…and 17 more entries")
+# does not fix that: the coder cannot avoid re-creating a file it was never told the name of.
+# Names are cheap and the context floor is the one place a list may be narrowed (#5).
+_COMPACT_TOP_MAX = None
+_COMPACT_KIDS_MAX = None
 LOCAL_COMPACT_MARKER = "<<<LOCAL_COMPACT>>>"
 
 
@@ -376,8 +381,8 @@ def _workspace_listing(ws: str | None) -> str:
     # (on disk right now — do not re-create them)" — so a file past the cap was not merely missing,
     # it was implicitly denied, in the one reply whose own docstring says everything not in it is
     # gone. The caps stay (this rides in a summary); the remainder is now named.
-    over = max(0, len(top) - _COMPACT_TOP_MAX)
-    for name in top[:_COMPACT_TOP_MAX]:
+    over = 0
+    for name in top:
         if name.startswith(".") or name == "tmp" or name.endswith(".pyc"):
             continue
         full = os.path.join(ws, name)
