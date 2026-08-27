@@ -730,3 +730,11 @@ The CLI itself is complete and correct for the first time on this cell: `node cl
 Two deliverables were never attempted — no Dockerfile, and `test/cli.test.mjs` exists but package.json declares no test script to run it. And the seed's `lookup.js` is still on disk with `require('request')` in it, which is what the dependency check reads: the model wrote its CLI beside the old file rather than replacing it, the third time this campaign has seen that on this task.
 
 **Instrument fix (#25), landed between passes.** `entrypoints()` tried a hardcoded list of `.js` names and never consulted package.json. This run set `"main": "cli.mjs"` and `"start": "node cli.mjs"`, and the verifier ran `node lookup.js` — the untouched seed — and recorded `no runnable entry point` while a working CLI sat beside it. The task's words are "turn the Ada Handle resolver into a command-line tool"; nothing in it names a filename, so failing the run for the spelling is failing it over a property the task never named. Discovery now reads `bin`, `main` and `scripts.start` first — package.json is where Node itself says the entry point is — then the README command, then the name list with `.mjs`/`.cjs` added. This row was re-verified: 0.0 → 1.0/4.0, annotated with `reverified`.
+
+### ternary-bonsai × feed-pipeline-java — **15 → 12** (the row the timeout destroyed, re-run)
+
+20 compile errors. `java.util.concurrent.*` is imported and `AtomicInteger`/`AtomicLong` live in `java.util.concurrent.atomic`, which a wildcard on the parent package does not reach. Verified on a copy that this is not a one-line miss: adding both imports leaves four more real errors — a `Map.get` called with the wrong arity, an assignment to a `final` field, a no-argument `remove()`.
+
+The previous attempt at this cell was the campaign's worst cria incident: a green build at 17.4 minutes, destroyed after cria's stale `LATEST CHECK RESULTS` block asserted a compile error in 24 of 42 prompts for nine minutes after the coder's own `mvn clean compile` returned 0. **That did not recur** — the block now states its age and yields to the coder's newer result. This run never reached a green build to lose.
+
+No REVIEW.md this time, against 607 words and 7 located findings before.
