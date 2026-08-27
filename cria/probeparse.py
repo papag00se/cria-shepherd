@@ -956,9 +956,12 @@ def parse_runner_locations(s: str) -> list[Finding]:
             # EXPECTED WITHOUT ACTUAL IS HALF A FACT. Runners state the comparison over two lines and
             # indent the second under the first; the same shape the compiler paths already keep whole.
             msg = _with_runner_continuation(msg, lines, at)
-            # MARKED. This is the runner's assertion message — expected-vs-got lives in its tail —
-            # and it was cut with a bare slice the reader cannot see.
-            out.append(Finding(file, line, None, clip(msg, 200)))
+            # WHOLE. This is the runner's assertion message and expected-vs-got lives in its
+            # TAIL, which is exactly what a 200-character head cut removes. It was a bare slice,
+            # then a marked one; a marked cut of the answer is still a cut of the answer (rule 5,
+            # as tightened 2026-08-16). The gate's own byte budget bounds the section; a second
+            # bound here could only take the half that says what went wrong.
+            out.append(Finding(file, line, None, msg))
     return out
 
 
@@ -979,7 +982,13 @@ def parse_runner_locations(s: str) -> list[Finding]:
 # notes and pytest's assertion diff all continue a diagnostic by indenting under it (#20). A
 # continuation line is one that is indented and is NOT itself a new diagnostic — so a run of them
 # ends the moment another `file:line` appears, whatever tool wrote it.
-_CONTINUATION_MAX = 6          # a header plus its detail, never a whole stack trace
+# NO COUNT CAP. The loop below already ends a continuation on three STRUCTURAL boundaries — a blank
+# line, a dedent back to the header's own level, and any line that is itself a diagnostic — and the
+# third is what stops a stack trace: its first frame carries a `file:line` and `split_diag` sees it.
+# A count on top of that could only ever cut a diagnostic the structure said was still running, and
+# it did: javac prints `symbol:` and `location:` after a candidate list, rustc prints `note:` runs
+# past six, and those trailing lines are the ones that say what the API really is. Same class as the
+# 44-prompt headless-`cannot find symbol` incident this function's own comment records.
 
 
 def _with_continuation(msg: str, lines: list[str], i: int) -> str:
@@ -994,8 +1003,6 @@ def _with_continuation(msg: str, lines: list[str], i: int) -> str:
         if split_diag(nxt.strip()) is not None:
             break                       # indented, but it is a diagnostic of its own
         got.append(nxt.strip())
-        if len(got) > _CONTINUATION_MAX:
-            break
     return "\n".join(got)
 
 

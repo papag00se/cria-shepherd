@@ -118,6 +118,11 @@ def execute_tool(name: str, args: dict, cwd: str, search_key: str, recent_search
 # A 60-hit result read exactly like an exhaustive search that found sixty things, which is the
 # failure this function's own docstring names for the OTHER partiality it discloses.
 _GREP_MAX_HITS = 60
+# AND IT SAYS SO WHEN IT FILLS. The comment above has named this defect since the cap was written
+# and the code never said it out loud: a 60-hit answer was indistinguishable from an exhaustive
+# search that found sixty things, so the planner read a partial result as the whole truth (#5b).
+_GREP_CAPPED = (f"[the search stopped at {_GREP_MAX_HITS} matches — this is NOT the complete set, "
+                "and files after this point were never opened. Narrow the pattern or the path.]")
 
 
 def _scratch_read(full: str, scratch: str | None) -> str | None:
@@ -165,9 +170,9 @@ def _scratch_grep(full: str, rx, scratch: str | None) -> str | None:
             continue
         for i, line in enumerate(body.splitlines(), 1):
             if rx.search(line):
-                hits.append(f"{_os.path.relpath(t, root)}:{i}: {content_reduce.clip(line.strip(), 200)}")
+                hits.append(f"{_os.path.relpath(t, root)}:{i}: {line.strip()}")
                 if len(hits) >= _GREP_MAX_HITS:
-                    return "\n".join(hits)
+                    return "\n".join(hits + [_GREP_CAPPED])
     return "\n".join(hits) if hits else "[no match]"
 
 
@@ -229,7 +234,7 @@ def _grep_files(args: dict, cwd: str, scratch: str | None = None) -> ToolResult:
             rel = os.path.relpath(fp, cwd or full)
             for i, line in enumerate(body.splitlines(), 1):
                 if rx.search(line):
-                    hits.append(f"{rel}:{i}: {content_reduce.clip(line.strip(), 200)}")
+                    hits.append(f"{rel}:{i}: {line.strip()}")
                     if len(hits) >= _GREP_MAX_HITS:
                         break
             if len(hits) >= _GREP_MAX_HITS:
@@ -237,6 +242,8 @@ def _grep_files(args: dict, cwd: str, scratch: str | None = None) -> ToolResult:
         if len(hits) >= _GREP_MAX_HITS:
             break
     out = "\n".join(hits) if hits else f"[no match for {pattern}]"
+    if len(hits) >= _GREP_MAX_HITS:
+        out += "\n" + _GREP_CAPPED
     if unread:
         out += f"\n[{unread} file(s) under {path} could not be read — this search is not exhaustive]"
     return ToolResult(out, bool(hits))

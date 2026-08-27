@@ -487,9 +487,10 @@ def _with_delimiter_facts(findings: list[str], plan, annotate: bool = True,
             # a default argument three functions away. cria cannot justify the pointer, so it does
             # not make it (#5b, and #3 — silence over noise).
             continue
-        # MARKED. This quote exists so the model does not GUESS the line; a silent cut inside the
-        # backticks is a partial guess-prompt, which is the failure it was built to prevent.
-        emit(f"  the flagged line on disk — line {line_no}: `{content_reduce.clip(text, 200)}`")
+        # WHOLE. This quote exists so the model does not GUESS the line, and a cut quote is a
+        # partial guess-prompt — which is the failure it was built to prevent. It was a silent cut,
+        # then a marked one; marking it does not restore the half that was removed (rule 5).
+        emit(f"  the flagged line on disk — line {line_no}: `{text}`")
     return out
 
 

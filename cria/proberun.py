@@ -1103,7 +1103,16 @@ def offline_probe_command(c: "ProbeCandidate", timeout_s: float) -> str:
         # model about whether the tests passed with the network gone. A runner that prints its tally
         # and then anything else (a coverage table, a teardown, a warnings summary) lost the tally,
         # and `_offline_fact` fell silently to its weaker wording or returned "" (#12).
-        f"printf '%s' \"$__cria_out\" | grep -E {shlex.quote(_TALLY_LINE_RE)} | tail -c {OFFLINE_TAIL_BYTES}; "
+        # THE TALLY LINES GO WHOLE. They are what `_offline_fact` parses, and they are the entire
+        # basis of a sentence 3,218 model-facing prompts have carried — "the same tests pass with
+        # the network switched off … nothing in them reaches a service on the internet". `grep`
+        # already bounds this leg to lines that look like a runner's summary; putting a byte tail
+        # after it could only ever remove one of the few lines that matter, which is the failure the
+        # comment above records. Nothing here is shown to a model, so this is not rule 5 — it is 5b:
+        # a claim cria states as fact must not rest on bytes cria threw away.
+        f"printf '%s' \"$__cria_out\" | grep -E {shlex.quote(_TALLY_LINE_RE)}; "
+        # The raw tail behind it is a PARSE fallback for a runner whose summary the pattern missed,
+        # never something a model reads. It stays bounded.
         f"printf '%s' \"$__cria_out\" | tail -c {OFFLINE_TAIL_BYTES}; "
         f"printf '\\n{PROBE_EXIT_SENTINEL}%d\\n' \"$__cria_ec\"; "
         f"fi"
