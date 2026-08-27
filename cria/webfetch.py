@@ -1652,8 +1652,23 @@ def was_substituted(session: Optional[str], url: str) -> bool:
     return (url or "").strip() in (_SUBSTITUTED.get(session) or ())
 
 
+# The 4xx codes that are the server DECLINING rather than the address being wrong: credentials
+# wanted, permission withheld, a proxy in the way, a rate limit, a legal block. On these the page may
+# well exist and be exactly right. Everything else in 4xx — a malformed request, a path that is not
+# there, a method the route does not take — is the coder's URL to correct, and keeps the original
+# wording.
+_REFUSAL_STATUSES = (401, 403, 407, 429, 451)
+
+
 def client_error_note(status: int, body: str, ours: bool = False) -> str:
     """The line appended under a 4xx result — "" for anything else.
+
+    THREE wordings, not two. The original said "the URL, the path, or the version segment in it was
+    wrong, not the service" for every 4xx. That is true of a 400 or a 404 — a malformed request, or
+    nothing at that path — and false of a refusal: a 401 wants credentials, a 429 wants a wait, and a
+    403 is very often a bot wall in front of a page that exists. Walked on the sub-40 pass, feed-pipeline-java x nemotron-elastic — a 403 carrying
+    Cloudflare's "Enable JavaScript and cookies to continue" was reported to the coder as a wrong
+    address, over the one page holding the class list the run was failing to guess.
 
     Two wordings, because "read the server's text" is a footgun when there is no text: it sends the
     model back to re-read a page that says nothing (#5b — never point at content cria knows is not
@@ -1666,12 +1681,17 @@ def client_error_note(status: int, body: str, ours: bool = False) -> str:
     reasoner — the transcript showed the fetch as the coder's own action, and this sentence then told
     it the 404 was its fault. Twice in one run. Blaming the coder for a request cria authored is a
     false fact in cria's own voice (#5b), and the coder cannot act on it: it never typed that url."""
-    if not (400 <= int(status or 0) < 500):
+    code = int(status or 0)
+    if not (400 <= code < 500):
         return ""
+    lines = prompts.load_map("fetch_client_error")
     if ours:
-        return "\n\n" + prompts.load_map("fetch_client_error")["ours"]
-    key = "with_body" if (body or "").strip() else "no_body"
-    return "\n\n" + prompts.load_map("fetch_client_error")[key]
+        return "\n\n" + lines["ours"]
+    has_body = bool((body or "").strip())
+    if code in _REFUSAL_STATUSES:
+        key = "refused" if has_body else "refused_no_body"
+        return "\n\n" + prompts.fill(lines[key], status=str(code))
+    return "\n\n" + lines["with_body" if has_body else "no_body"]
 
 
 def render_page(url: str, status: int, ct: Optional[str], reduced: str, parsed: Optional[Any],

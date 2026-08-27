@@ -4,3 +4,19 @@ no_body = That request FAILED and the failure is on your side (a 4xx is a client
 # its own reasoners recommended, and the url was wrong. Telling the coder to "correct the URL" here
 # points it at something it never wrote — see webfetch.client_error_note for the run this cost.
 ours = That fetch was not yours — it replaced the search you asked for, and the address it used does not exist. Nothing about it is yours to correct. Run the search you originally wanted.
+# A REFUSAL IS NOT A WRONG ADDRESS. The two lines above name ONE cause -- the URL, the path, or the
+# version segment was wrong -- and that is true of a 400 or a 404: a malformed request, or nothing at
+# that path. It is false of a refusal: a 401 wants credentials, a 429 wants a wait, and a 403 is very
+# often a bot wall in front of a page that exists.
+#
+# Walked on the sub-40 pass, feed-pipeline-java x nemotron-elastic (scored 28). At call 0055 the
+# coder fetched opencsv's own apidocs page and got a 403 carrying Cloudflare's "Just a moment...
+# Enable JavaScript and cookies to continue" challenge. cria told it the address was wrong. The page
+# holds the class list the whole run was failing to guess, and it was never read again; the ledger
+# carried a bare "HTTP 403" for the remaining 78 calls.
+#
+# This does NOT reinstate a menu of causes -- `fetched_facts_sections` records why that was removed,
+# and every word of it still applies. It WITHDRAWS a cause cria cannot support, and says only what
+# the server did (#5b, #3). The refused/refused_no_body wording names no cause at all.
+refused = That request was REFUSED by the server (HTTP {{STATUS}}). That is the server declining to answer, which is not the same as the address being wrong -- the page may well exist. The text above is whatever it sent with the refusal; read that first. If it does not say what it wants, this route is closed to you: find the same information somewhere else rather than re-sending this URL.
+refused_no_body = That request was REFUSED by the server (HTTP {{STATUS}}). That is the server declining to answer, which is not the same as the address being wrong -- the page may well exist. It sent nothing back explaining itself, so there is nothing more to read here: find the same information somewhere else rather than re-sending this URL.
