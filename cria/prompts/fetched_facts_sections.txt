@@ -86,3 +86,8 @@ read_more = \n- …and {{COUNT}} more file(s) you have read this session.
 # to code against those rather than re-fetching, in a run that fetched nothing and needed to (#5b,
 # #11b). The anchor's own docstring already promised it fires only when real fetches exist.
 anchor_tail_fetches = \nThis is your real fetch record for this session and it persists here even after older turns scroll away. Where an entry lists endpoints or response fields, those came back from the real source — code against THOSE rather than re-fetching the page to rediscover them. Where an entry came back with an error, read its status, anything the server returned with it, and any note on that line before deciding what it means.
+# A read that asked for a LINE RANGE saw a window, not the file. The size beside a path used to
+# describe whatever came back, so a 16-line window on a 237-line file was recorded as "751 bytes, 16
+# lines" under the file's own path and the ledger presented that as the file. Walked on the sub-40
+# pass, feed-pipeline-java x nemotron-elastic: the coder acted on it at call 0070.
+read_range = lines {{RANGE}} only — {{SIZE}}

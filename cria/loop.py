@@ -281,7 +281,7 @@ class GuardState:
     # punt-floor was a deterministic fallback behind a reasoner call — both are what the doctrine forbids
     # (principles #1, #2, #4). The search gate still REFUSES a near-duplicate search and steers "read the
     # source you named" — a steer the coder can disregard, not an action taken for it.
-    read_files: dict = None     # path -> "N bytes, M lines": DURABLE record of the WORKSPACE files the
+    read_files: dict = None     # path -> (bytes, "N bytes, M lines"): DURABLE record of the WORKSPACE files the
     # coder has already read. The fetch ledger below survives compaction and this did not, so a
     # compacted coder kept its web history and lost every file it had opened — on
     # shipping-rates-rb x nemotron-elastic 1787432916 it had the gem's source read at call 0091, was
@@ -6914,10 +6914,20 @@ _READ_TOOL_NAMES = ("read_file", "cat_file", "view_file")
 
 
 def _extract_reads(messages: list[dict]) -> dict:
-    """path -> "N bytes, M lines" for every workspace read that actually returned content.
+    """path -> (bytes, "N bytes, M lines") for every workspace read that actually returned content.
 
     TOOL RESULTS ONLY, the same rule the fetch ledger follows: a read the coder merely SAID it did
-    proves nothing, and a refused read returned no content to remember."""
+    proves nothing, and a refused read returned no content to remember.
+
+    A RANGED READ SAYS SO. The size describes what came BACK, and `read_file` takes `start_line` /
+    `end_line` — so a 16-line window on a 237-line file was recorded as "751 bytes, 16 lines" under
+    the file's own path, and the ledger then told the coder that was the file. Walked on the sub-40
+    pass, feed-pipeline-java x nemotron-elastic (scored 16): at call 0070 the coder acted on it. cria
+    composed both halves of that sentence, so it is a false fact of cria's own making (#5b).
+
+    The byte count rides along because it is what decides which reading to KEEP: a later window must
+    not replace a whole-file read in the ledger. Largest wins — a window is never larger than the
+    file it came out of."""
     from . import denial
     calls: dict = {}
     out: dict = {}
@@ -6927,17 +6937,46 @@ def _extract_reads(messages: list[dict]) -> dict:
         for tc in m.get("tool_calls") or []:
             fn = tc.get("function") or {}
             if fn.get("name") in _READ_TOOL_NAMES and tc.get("id"):
+                args = _args_of(fn.get("arguments") or "")
                 p = _path_of_args(fn.get("arguments") or "")
                 if p:
-                    calls[tc["id"]] = p
+                    calls[tc["id"]] = (p, args.get("start_line"), args.get("end_line"))
         tid = m.get("tool_call_id") or m.get("call_id")
         if tid in calls:
             c = m.get("content") if m.get("content") is not None else m.get("output")
             if not isinstance(c, str) or not c.strip() or denial.is_denied(c):
                 continue
+            path, start, end = calls[tid]
             raw = c.encode("utf-8", "replace")
-            out[calls[tid]] = f"{len(raw):,} bytes, {c.count(chr(10)) + 1} lines"
+            label = f"{len(raw):,} bytes, {c.count(chr(10)) + 1} lines"
+            if start or end:
+                label = prompts.fill(prompts.load_map("fetched_facts_sections")["read_range"],
+                                     range=_line_range(start, end), size=label)
+            _keep_larger(out, path, len(raw), label)
     return out
+
+
+def _args_of(args) -> dict:
+    """A tool call's arguments as a dict — {} when they are not readable JSON, never a guess."""
+    try:
+        obj = json.loads(args) if isinstance(args, str) else dict(args or {})
+    except (json.JSONDecodeError, TypeError, ValueError):
+        return {}
+    return obj if isinstance(obj, dict) else {}
+
+
+def _line_range(start, end) -> str:
+    """The window a ranged read asked for, in the words the ledger prints — one end may be open."""
+    if start and end:
+        return f"{start}-{end}"
+    return f"from {start}" if start else f"up to {end}"
+
+
+def _keep_larger(out: dict, path: str, nbytes: int, label: str) -> None:
+    """Record this reading of ``path`` unless the ledger already holds a bigger one."""
+    prev = out.get(path)
+    if prev is None or nbytes >= prev[0]:
+        out[path] = (nbytes, label)
 
 
 def _track_read_files(sess, messages: list[dict]) -> None:
@@ -6947,7 +6986,8 @@ def _track_read_files(sess, messages: list[dict]) -> None:
         return
     if getattr(sess, "read_files", None) is None:
         sess.read_files = {}
-    sess.read_files.update(_extract_reads(messages))
+    for path, (nbytes, label) in _extract_reads(messages).items():
+        _keep_larger(sess.read_files, path, nbytes, label)
 
 
 def _read_ground_truth(sess, messages: list[dict]) -> str:
@@ -6957,11 +6997,12 @@ def _read_ground_truth(sess, messages: list[dict]) -> str:
     copy of the workspace in every prompt. What the coder loses at compaction is not the bytes, it is
     the KNOWLEDGE THAT IT HAS ALREADY LOOKED — and that is one line per file."""
     seen = dict(getattr(sess, "read_files", None) or {})
-    seen.update(_extract_reads(messages or []))
+    for path, (nbytes, label) in _extract_reads(messages or []).items():
+        _keep_larger(seen, path, nbytes, label)
     if not seen:
         return ""
     labels = prompts.load_map("fetched_facts_sections")
-    lines = "\n".join(f"- {p} ({size})" for p, size in sorted(seen.items()))
+    lines = "\n".join(f"- {p} ({size})" for p, (_n, size) in sorted(seen.items()))
     rest = 0
     more = prompts.fill(labels["read_more"], count=rest) if rest else ""
     return "\n\n" + prompts.fill(labels["read_header"], files=lines, more=more)
