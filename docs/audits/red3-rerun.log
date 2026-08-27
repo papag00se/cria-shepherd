@@ -19,3 +19,5 @@ refreshed /home/jesse/src/cria-shepherd/docs/audits/regression-report.md
 ===== END shipping-rates-rb nemotron-elastic 15:18:33
 ===== BEGIN cart-billing-go nemotron-elastic 15:18:33
 [sampling] nemotron-elastic: coder={'temperature': 0.6, 'top_p': 0.95}  reasoner={'temperature': 0.6, 'top_p': 0.95}  classifier={'temperature': 0.0}  compactor={'temperature': 0.0}
+===== BEGIN cart-billing-go nemotron-elastic 15:47:04
+[sampling] nemotron-elastic: coder={'temperature': 0.6, 'top_p': 0.95}  reasoner={'temperature': 0.6, 'top_p': 0.95}  classifier={'temperature': 0.0}  compactor={'temperature': 0.0}

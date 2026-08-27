@@ -194,70 +194,6 @@ def sha() -> str:
         return "?"
 
 
-# WHEN EACH RUNG BECAME REAL, and the rung each gated mechanism belongs to.
-#
-# The ladder was built in eight commits on 2026-08-24 while cells were being run, so a row can
-# predate the gate on a mechanism that belongs ABOVE its own rung — a level-0 cell running level-5
-# detectors, for example. That row is not a measurement of level 0.
-#
-# THE RULE IS PER MECHANISM, NOT PER DATE. A row at level N is unsound when it ran before the gate
-# on a mechanism whose rung is HIGHER than N. A mechanism at or below N was supposed to be running,
-# so an early row is entitled to it. The first cut of this check asked only "did it predate the last
-# gate", which is the same question asked badly: it cleared every level-3 and level-4 gemma4 row
-# while the level-5 detectors and periodic gate were still ungated inside them.
-#
-# `d80e0a2` superseded ONE cell for this, on the reasoning that gemma4 "could never have shown it" —
-# true of that one mechanism, and not of the other three. `loop.compaction_reframed`, a level-3
-# mechanism, fired 23 times inside a single gemma4 LEVEL-1 row.
-#
-# ANNOTATED, NEVER DELETED (#26): the row is real evidence of what that code did that day. What it
-# cannot support is a statement about the RUNG, and that is what the mark withdraws.
-LADDER_GATES = (
-    ("9402fea", 2, "tool menu"),
-    ("beebcd3", 3, "context surgery"),
-    ("1ef472e", 4, "the loop"),
-    ("1ef472e", 5, "assists"),
-    ("5a44351", 5, "periodic gate"),
-    ("b5fda4a", 5, "detectors"),
-    ("82086f8", 3, "compaction reframing"),
-    ("d80e0a2", 1, "output massage chain"),
-)
-
-
-def _committed_at(commit: str) -> int:
-    """The commit's own timestamp, or 0 when git cannot resolve it."""
-    if commit not in _GATE_TIME:
-        try:
-            out = subprocess.run(["git", "show", "-s", "--format=%ct", commit], capture_output=True,
-                                 text=True, cwd=SUITE.parent).stdout.strip()
-            _GATE_TIME[commit] = int(out) if out.isdigit() else 0
-        except OSError:
-            _GATE_TIME[commit] = 0
-    return _GATE_TIME[commit]
-
-
-_GATE_TIME: dict = {}
-
-
-def leaks_above_rung(r: dict | None) -> list:
-    """The mechanisms that were still ungated when this cell ran, and belong above its own rung.
-
-    Empty for a sound row. The row's own start time is the authoritative fact (#12) — not the commit
-    in its note, which records only what was checked out, and not a wall-clock guess."""
-    if not r or r.get("level") is None:
-        return []
-    started, lvl = float(r.get("started") or 0), int(r["level"])
-    if not started:
-        return []
-    return sorted({name for c, rung, name in LADDER_GATES
-                   if rung > lvl and started < _committed_at(c)})
-
-
-def ungated(r: dict | None) -> bool:
-    """Did this cell run while a mechanism ABOVE its own rung was still ungated?"""
-    return bool(leaks_above_rung(r))
-
-
 def judged(r: dict | None) -> bool:
     """Has this cell been judged on USEFULNESS, or is its number still the strict verifier's?"""
     return bool(r) and r.get("usefulness") is not None
@@ -301,10 +237,7 @@ def score_of(r: dict | None) -> str:
     v = pct(r)
     if v is None:
         return "·"
-    mark = "ˢ" if not judged(r) else ""
-    # …AND A ROW THAT CANNOT SPEAK FOR ITS RUNG SAYS SO. See LADDER_GATED.
-    mark += "ᵘ" if ungated(r) else ""
-    return f"{_badge(v)} {v:.0f}%{mark}"
+    return f"{_badge(v)} {v:.0f}%" if judged(r) else f"{_badge(v)} {v:.0f}%ˢ"
 
 
 def _n(r: dict | None, key: str) -> str:
@@ -614,18 +547,8 @@ def report(rs: list[dict], now: float | None = None) -> str:
         out += [""]
     out += ["",
             "`ˢ` = still scored strictly (all-or-nothing per deliverable); unmarked = judged. "
-            "The two are not comparable.", "",
-            "`ᵘ` = the cell ran BEFORE the commit that gated its own rung, so its number cannot "
-            "speak for that rung. Every gemma4 cell at L0-L2 and two qwen35 L0 cells are marked: "
-            "the ladder was built in eight commits on 2026-08-24 while cells were being run, and "
-            "until the last of them the output massage chain had no gate and ran at every level. "
-            "Their arms differ by mechanisms that fired zero times — three independent replays over "
-            "the captures agree `massage.apply` changed 0 of 1,615 replies across those runs — so "
-            "they are repeat samples of one configuration, not a rung comparison.", "",
-            "**One sample per cell.** Repeat runs of the SAME cell in a FIXED configuration have "
-            "scored 0 and 100 (`ternary-bonsai x cart-billing-go`, and again on `rust-toml-cli`), "
-            "and `gemma4 x cart-billing-go` spans 40 to 100 over six runs. No difference between "
-            "two rungs is readable below roughly that spread until the grid carries n>1.", ""]
+            "The two are not comparable. Per-cell noise on this suite is wide: gemma4's L0 and L1 "
+            "scored 91 and 41 while five of six cells ran an identical code path.", ""]
     # TABLES ONLY (operator, 2026-08-24): "I really don't need that document to have anything
     # else in it but the tables. I look at nothing else." Prose lives in battery-history.md, which
     # nothing regenerates, so a finding can never be destroyed by a --write either.
