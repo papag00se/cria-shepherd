@@ -208,6 +208,12 @@ def _is_gate_probe(tc: dict, result: dict) -> bool:
     return _call_is_gate(tc) or _GATE_MARKER in str(result.get("content") or "")
 
 
+def _first_line(content) -> str:
+    """The first non-empty line of a tool result — what that attempt actually answered."""
+    text = content if isinstance(content, str) else ""
+    return next((ln.strip() for ln in text.splitlines() if ln.strip()), "")
+
+
 def _tried_label(tc: dict) -> str:
     """A short 'exec_command(cat /x)' label for the squash note's list of what was tried."""
     fn = tc.get("function") or {}
@@ -397,7 +403,15 @@ def _squash_failures(messages: list[dict]) -> tuple[list[dict], TrimReport]:
     drop = failed[:-_SPAM_KEEP]  # every failure except the most recent _SPAM_KEEP
     remove = {idx for a, r, _tc in drop for idx in (a, r)}
     note_at = drop[-1][0]  # the last removed failure's position → the note sits just before the kept ones
-    tried = "; ".join(_tried_label(tc) for _a, _r, tc in drop)
+    # WHAT EACH ATTEMPT RETURNED, not only what was tried. The note named the commands and dropped
+    # every result body, and the attempts are NOT duplicates of one another — one measured squash
+    # folded three different web_fetch URLs into a single "dead-end lookup" group, three distinct
+    # facts about three different pages. Rule 5's fold allowance is for repeated content; this is
+    # not that. The command plus the first line of its own answer is what distinguishes them, and a
+    # first line is a structural boundary rather than a cap.
+    tried = "; ".join(f"{_tried_label(tc)} → {_first_line(messages[r].get('content'))}"
+                      if _first_line(messages[r].get("content")) else _tried_label(tc)
+                      for _a, r, tc in drop)
     note = prompts.render("trim_error_squash", n=len(drop), tried=tried)  # full list — don't elide squashed attempts
     rep = TrimReport(dropped_calls=len(drop), dropped_msgs=len(drop) * 2, squashed_runs=1)
 

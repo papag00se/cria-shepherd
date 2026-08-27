@@ -309,7 +309,11 @@ class CompactedViewTests(unittest.TestCase):
                  "content": editrecovery.EDITFAIL + "eyJtb2RlIjogIndvdWxkX2JyZWFrIn0="},
                 self._write_call("new.py", big, "w2")]
         out = stub_old_write_args(msgs)
-        self.assertNotIn("content", j.loads(out[0]["tool_calls"][0]["function"]["arguments"]))
+        # CHANGED 2026-08-26: the bytes STAY. The 5b incident this test was written for was the
+        # CLAIM — "this exact content is on disk" about a write that was refused — not the presence
+        # of the content. A refused write's payload exists nowhere else, and deleting it is rule 5's
+        # own subject; the note beside the call is what carries the truth about it.
+        self.assertIn("content", j.loads(out[0]["tool_calls"][0]["function"]["arguments"]))
         stub = out[0]["content"]
         self.assertIn("REFUSED", stub)
         self.assertIn("never reached disk", stub)

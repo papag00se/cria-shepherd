@@ -649,6 +649,31 @@ def _stub_write_args(m: dict, landed=None, idx: int = -1, last_by_path: dict | N
         notes, touched = [], False
         for key in _WRITE_ARG_KEYS:
             v = args.get(key)
+            # ONLY WHERE THERE IS SOMETHING TO POINT AT. Rule 5 permits replacing repeated content
+            # with a pointer to the ORIGINAL, and two of these have no original anywhere:
+            #   * refused  — the write was blocked, so those bytes never reached disk at all.
+            #   * replaced — the fragment an edit consumed; read_file returns what came AFTER it.
+            # Measured across the capture corpus: 1,665 of 10,258 elisions were one of those two,
+            # and the note for them pointed at a file that does not contain them.
+            #
+            # A SUPERSEDED body still stubs. Its pointer leads to the CURRENT file rather than to
+            # this version, which the note says in as many words — and rule 11 is explicit that the
+            # current disk state is the answer and stale transcript state is the hazard. Keeping a
+            # dead version verbatim would be honouring rule 5 by breaking rule 11.
+            if ((stub_key == "write_stub_refused" or key in _REPLACED_ARG_KEYS)
+                    and isinstance(v, str) and len(v) >= _STUB_MIN_CHARS):
+                # KEEP THE BYTES, STILL SAY WHAT HAPPENED. The 5b incident these notes were written
+                # for was the CLAIM ("this exact content is on disk" about a refused write), not the
+                # presence of the content — and deleting bytes that exist nowhere else is rule 5's
+                # own subject. So the note is emitted beside the call, in the assistant turn's
+                # prose, and the argument stays where the model wrote it.
+                words = prompts.load_map("compact_view")
+                use = "write_stub_replaced" if key in _REPLACED_ARG_KEYS and stub_key != "write_stub_refused" else stub_key
+                notes.append(prompts.fill(words[use], chars=str(len(v)), path=path))
+                touched = True
+                continue
+            if stub_key == "write_stub_refused" or key in _REPLACED_ARG_KEYS:
+                continue
             if isinstance(v, str) and len(v) >= _STUB_MIN_CHARS:
                 # A replaced FRAGMENT gets its own sentence — calling it "an earlier version of
                 # <path>" would be a small false fact about what the model is looking at.
