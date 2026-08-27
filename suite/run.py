@@ -94,6 +94,11 @@ HARNESSES = {"codex": _codex_argv}
 NODE_PATH = "/home/jesse/.nvm/versions/node/v22.13.1/bin"
 
 
+# How long a task's own verify.py may take. It runs the coder's program repeatedly — the
+# determinism check alone runs it eight times — so a slow build plus a large fixture can be minutes.
+VERIFY_TIMEOUT_S = 900
+
+
 def sh(*cmd, timeout=120):
     return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
 
@@ -476,13 +481,27 @@ def main() -> None:
     # nothing. That is a false fact in the record, and the record is what the campaign is scored on.
     workspace_lost = not ws.is_dir() or not (archive / "workspace").is_dir()
 
-    vr = sh(sys.executable, str(task_dir / "verify.py"), str(ws),
-            *([str(session_dir)] if session_dir else []), timeout=600)
+    # A VERIFIER THAT TIMES OUT IS AN UNSCORED ROW, NOT A LOST ONE. `sh` lets TimeoutExpired
+    # propagate, and this call site did not catch it — so the whole run.py died AFTER the cell had
+    # spent its wall clock, and the row was never written at all. Walked on the sub-60 re-run of
+    # feed-pipeline-java x ternary-bonsai: an hour of model time, an archived workspace, and no
+    # record that any of it happened. A cell that produced no row is indistinguishable from a cell
+    # that never ran, which is the one failure nobody can see from the outside (#12).
     try:
-        verdict = json.loads(vr.stdout)
+        vr = sh(sys.executable, str(task_dir / "verify.py"), str(ws),
+                *([str(session_dir)] if session_dir else []), timeout=VERIFY_TIMEOUT_S)
+        stdout, stderr = vr.stdout, vr.stderr
+    except subprocess.TimeoutExpired as exc:
+        stdout = (exc.stdout or b"").decode(errors="replace") if isinstance(exc.stdout, bytes) \
+            else (exc.stdout or "")
+        stderr = (f"VERIFIER TIMED OUT after {VERIFY_TIMEOUT_S}s — this row is NOT a score. "
+                  + ((exc.stderr or b"").decode(errors="replace") if isinstance(exc.stderr, bytes)
+                     else (exc.stderr or "")))
+    try:
+        verdict = json.loads(stdout)
     except Exception:  # noqa: BLE001
         verdict = {"score": 0, "max_score": 0, "success": False,
-                   "verifier_error": (vr.stdout + vr.stderr)[-400:]}
+                   "verifier_error": (stdout + stderr)[-400:]}
     if workspace_lost:
         verdict["verifier_error"] = (
             f"WORKSPACE GONE before verification ({ws}) — this row is NOT a score. "
