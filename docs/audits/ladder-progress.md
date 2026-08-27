@@ -700,3 +700,11 @@ What remains is one wrong exit code: `--help` prints correct, complete usage and
 The same one-character diff as before (`>` → `>=`, which turns the seed suite green) and nothing else. What changed is where the turns went: **zero external-path refusals against 20**, so the workspace-path typo loop that consumed 42 of the previous run's 115 calls did not recur. It spent the recovered turns writing a Gemfile pinned to `countries ~> 0.9.3` — nine major versions behind what is installed — that no source file requires.
 
 The loop is gone; the model still does not do the task.
+
+### nemotron-elastic × cart-billing-go — **24 → 27**
+
+The invented `github.com/shopspring/decimal/quantize` import — the unresolvable module that decided the previous attempt, and which a cria steer had talked that run into — does not appear. `discounts.json` is genuinely wired in this time via a guarded `loadDiscounts`.
+
+It still does not build. `go.mod` pins `v1.2.3`, which does not exist, and the rounding is written against three more names shopspring does not have: `taxed.Quantize(decimal.QuantizeModeHalfUp, …)`, `decimal.NewFromFloat64`, and `float64(int64(quantized) / 100)` on a `decimal.Decimal`.
+
+cria fired `loop.steer_invented_version` once — a guard aimed at exactly this — and two wheel-spin steers. Neither the fake subpackage nor a destructive steer recurred.

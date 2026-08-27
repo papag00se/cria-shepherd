@@ -1,6 +1,6 @@
 # Battery — the engagement ladder
 
-**Last updated 2026-08-27 03:47** — newest row `shipping-rates-rb_nemotron-elastic_codex_poff_1787825733`, scored 2026-08-27 03:46.
+**Last updated 2026-08-27 04:18** — newest row `cart-billing-go_nemotron-elastic_codex_poff_1787827609`, scored 2026-08-27 04:17.
 
 Tables only. Findings, walks and the retired two-arm campaign: [`battery-history.md`](battery-history.md).
 Per-cell judging: [`ladder-progress.md`](ladder-progress.md). Status: `python3 suite/engagement_status.py`.
@@ -59,7 +59,7 @@ Per-cell judging: [`ladder-progress.md`](ladder-progress.md). Status: `python3 s
 | 🟢 gemma4 | 73% | 89% | 92% | 100% | 91% | 100% | 91% | 20 | 74 |
 | 🟡 qwen35 | 100% | 63% | 71% | 96% | 93% | 100% | 87% | 40 | 227 |
 | 🟡 ternary-bonsai | 100% | 97% | 74% | 15% | 89% | 100% | 79% | 40 | 79 |
-| 🔴 nemotron-elastic | 9% | 24% | 5% | 22% | 39% | 84% | 30% | 36 | 122 |
+| 🔴 nemotron-elastic | 9% | 27% | 5% | 22% | 39% | 84% | 31% | 36 | 125 |
 
 
 `ˢ` = still scored strictly (all-or-nothing per deliverable); unmarked = judged. The two are not comparable. Per-cell noise on this suite is wide: gemma4's L0 and L1 scored 91 and 41 while five of six cells ran an identical code path.
