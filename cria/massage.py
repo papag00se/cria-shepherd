@@ -116,6 +116,14 @@ def has_tool_call_leak(text: str) -> bool:
 _FUSED_SENTINELS = _LEAK_DEBRIS + ("<|channel>", "<channel|>")
 
 
+# HOW MUCH WAS BEHIND THE FIRST CALL. This repairs ONE malformed historical `arguments` string by
+# keeping its head, and the tail is discarded — correctly, because history is what happened and
+# synthesising a second call into it would be cria inventing a turn the model never took. But the
+# discard was silent, so a fused pair and a fused call-plus-debris were indistinguishable from the
+# outside. The size is recorded on the event instead.
+_LAST_FUSED_TAIL: list[int] = []
+
+
 def _recover_fused_call(raw: str) -> dict | None:
     """Recover the real first call from a fused/leaked ``arguments`` string: cut at the first tool-call/
     channel sentinel, then parse the head — first as-is, then undoing the over-escaped quotes (``\\"``→
@@ -125,6 +133,8 @@ def _recover_fused_call(raw: str) -> dict | None:
     if cut < 0:
         return None
     head = raw[:cut].strip()
+    _LAST_FUSED_TAIL.clear()
+    _LAST_FUSED_TAIL.append(len(raw) - cut)   # what was cut away, for the caller to record (#12)
     for cand in (head, head.replace('\\"', '"').replace("\\'", "'")):
         try:
             obj = jsontext.loads(cand)
@@ -1759,7 +1769,8 @@ def repair_tool_args(completion: dict, rlog=None) -> dict:
                 obj = _recover_fused_call(raw)
                 if obj is not None:
                     fn["arguments"] = json.dumps(obj, ensure_ascii=False)
-                    _log(rlog, "massage.fused_call_recovered", tool=fn.get("name"))
+                    _log(rlog, "massage.fused_call_recovered", tool=fn.get("name"),
+                         discarded_chars=(_LAST_FUSED_TAIL[0] if _LAST_FUSED_TAIL else 0))
                 continue
             try:
                 json.loads(raw)
