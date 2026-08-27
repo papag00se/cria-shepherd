@@ -1485,8 +1485,17 @@ def _restates_the_verdict(why: str, reason: str) -> bool:
     return bool(a) and a == b
 
 
+def _cria_measured_facts(sess) -> str:
+    """What cria established by RUNNING the repo's checks, for a judge that gets no narrative.
+
+    Today that is the offline-test fact and nothing else — silence when there is none (#3). It rides
+    on the GatePlan because that is the one object both the gate that computes it and the loop that
+    ends the run already hold; no new store, and nothing that can outlive a session."""
+    return getattr(getattr(sess, "gate_plan", None), "offline_fact", "") or ""
+
+
 def _confirm_completion(claim: str, reason: str, workspace_root: str, reasoner_chat, reasoner_role,
-                        rlog, *, phase: str) -> tuple[bool, str]:
+                        rlog, *, phase: str, cria_facts: str = "") -> tuple[bool, str]:
     """The APPROVE-path brake — one narrow, reasoning-off check run ONLY on a done/satisfied verdict:
     is the completion claim CONSISTENT with (a) the fresh on-disk listing and (b) the verdict's own
     reason? Measured need (n=3 in one day, both judges): a judge holding contrary ground truth in its
@@ -1544,7 +1553,16 @@ def _confirm_completion(claim: str, reason: str, workspace_root: str, reasoner_c
 
     def ask(extra: str = "") -> tuple[bool | None, str]:
         """One confirm judgement → (consistent, why), or (None, "") when it cannot be read."""
-        user = prompts.fill(labels["user"], step=claim, reason=reason or "(none stated)") + extra
+        user = prompts.fill(labels["user"], step=claim, reason=reason or "(none stated)")
+        # CRIA'S OWN MEASUREMENTS, which this judge deliberately does without the coder's narrative
+        # but should never do without. `_offline_fact` — the suite passed, and passed again with the
+        # network taken away — reached the coder in 20 prompts of L5 handles-cli-node x qwen35 and
+        # 0 of its 24 satisfaction-confirm prompts. The confirmer is the last word before the run is
+        # allowed to end; that run shipped seven tests that all pass before an assertion runs and
+        # cria approved it. This is a fact cria gathered by running things (#8), not a claim.
+        if cria_facts:
+            user += prompts.fill(prompts.load("confirm_cria_facts"), facts=cria_facts)
+        user += extra
         comp = _judge_completion(reasoner_chat, role, labels["system"], user, rlog,
                                  phase=phase, force_think_off=True, workspace_root=workspace_root,
                                  answer_now_simple=verifytools.ANSWER_NOW_CONSISTENT)
@@ -1982,7 +2000,8 @@ def judge_satisfaction(task: str, evidence: str, reasoner_chat, reasoner_role, r
             # while the listing in the judge's prompt proved its absence).
             confirmed, why = _confirm_completion(task, str(obj.get("reason") or ""), workspace_root,
                                                  reasoner_chat, reasoner_role, rlog,
-                                                 phase="satisfaction-confirm")
+                                                 phase="satisfaction-confirm",
+                                                 cria_facts=_cria_measured_facts(sess))
             rlog.emit("loop.satisfaction_confirm", confirmed=confirmed)
             if not confirmed:
                 return False, why or str(obj.get("reason") or "a named deliverable is not on disk"), ""

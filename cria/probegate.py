@@ -78,6 +78,15 @@ class GatePlan:
     # cria-facing observations about the PLAN itself (not about the repo) — currently only the
     # shared-budget floor. Never shown to the model; it is a note for the log and the operator.
     notes: list = field(default_factory=list)
+    # THE OFFLINE FACT THIS PLAN'S LAST CLEAN GATE PRODUCED, so a reader that is not the coder can
+    # have it. `_offline_fact` is one sentence cria owns outright — the suite passed, and it passed
+    # again with the network taken away — and it reached the coder in 20 prompts of L5
+    # handles-cli-node x qwen35 and 0 of the 24 `satisfaction-confirm` prompts, which are the last
+    # word before the run is allowed to end. That run shipped a suite whose seven tests all pass
+    # before a single assertion runs (an unawaited async runner) and cria approved it. The plan is
+    # the one object both the gate that computes the fact and the loop that ends the run already
+    # hold (#23: one owner, no new store, no cross-session global).
+    offline_fact: str = ""
 
 
 @dataclass
@@ -850,6 +859,8 @@ def clean_gate_output(raw: str, plan: "GatePlan | None" = None, *, annotate: boo
     offline = _offline_fact(_sections, plan)
     if offline:
         clean += " " + offline
+        if plan is not None:
+            plan.offline_fact = offline
     for note in _advisory_note(dropped_advisories):
         clean += " " + note
     return clean

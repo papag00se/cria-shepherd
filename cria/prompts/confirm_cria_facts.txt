@@ -1,0 +1,4 @@
+
+ALSO WEIGH THIS, measured by running the repo's own checks rather than by reading anything the coder said:
+{{FACTS}}
+If the task asks for something this fact contradicts, the claim is not consistent — say so.
