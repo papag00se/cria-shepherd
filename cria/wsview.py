@@ -540,6 +540,8 @@ class View:
         try:
             raw = base64.b64decode(b64.encode(), validate=False)
         except Exception:                             # noqa: BLE001 — undecodable is simply unknown
+            self._bodies.pop(rel, None)               # never leave an OLDER body standing in for it
+            self._stale.add(rel)
             return
         self._bodies[rel] = raw
         self._stale.discard(rel)
@@ -1131,6 +1133,20 @@ def apply_survey(view: View, survey_text: str) -> bool:
     view._ingest_tree(secs["tree"], complete=done.get("complete") != "0")
     if secs.get("blob"):
         view._ingest_blob(secs["blob"])
+        # AND SIZE-CHECK WHAT THE BLOB JUST DELIVERED. `_ingest_tree` ends by calling
+        # `_drop_stale_bodies`, which compares every remembered body against the size the listing
+        # declares — the exact check that catches a body cut in transit. It ran BEFORE the blob was
+        # ingested, so the bodies this survey carried were the only ones it never tested.
+        #
+        # Walked three times in the L5 sub-60 cells. A harness middle-cut inside a base64 body line
+        # splices the remains into something `b64decode(validate=False)` still decodes, so cria
+        # stored soup and then quoted it as the file: `[binary content: 3,792 bytes]` and
+        # "5,734 bytes, 6 lines" for a 7,601-byte, 193-line Importer.java, and
+        # `[binary content: 6,225 bytes]` for a test.js the same prompt's inventory called 7,354 B.
+        # Both went to a REASONER as ground truth — one authored "the file is binary/corrupted,
+        # rewrite it from scratch". A body whose length disagrees with the listing is not a file
+        # (#5b); re-running the existing check here drops it and cria re-asks.
+        view._drop_stale_bodies()
     if secs.get("outside"):
         view._ingest_outside(secs["outside"])
     if secs.get("progs"):
