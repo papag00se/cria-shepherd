@@ -722,3 +722,11 @@ The two invented opencsv class names that decided the previous attempt — `com.
 Its pom now declares **both** opencsv and commons-csv — the previous run's confusion written out as a dependency list rather than resolved.
 
 The review is 458 words with 0 located findings: not one names a file and a line.
+
+### nemotron-elastic × handles-cli-node — **39 → 33**
+
+The CLI itself is complete and correct for the first time on this cell: `node cli.mjs goose` returns the address, the holder and the count from a live call, `--json` parses, `--help` works and a bad handle exits non-zero. All four behaviours, which no previous attempt managed.
+
+Two deliverables were never attempted — no Dockerfile, and `test/cli.test.mjs` exists but package.json declares no test script to run it. And the seed's `lookup.js` is still on disk with `require('request')` in it, which is what the dependency check reads: the model wrote its CLI beside the old file rather than replacing it, the third time this campaign has seen that on this task.
+
+**Instrument fix (#25), landed between passes.** `entrypoints()` tried a hardcoded list of `.js` names and never consulted package.json. This run set `"main": "cli.mjs"` and `"start": "node cli.mjs"`, and the verifier ran `node lookup.js` — the untouched seed — and recorded `no runnable entry point` while a working CLI sat beside it. The task's words are "turn the Ada Handle resolver into a command-line tool"; nothing in it names a filename, so failing the run for the spelling is failing it over a property the task never named. Discovery now reads `bin`, `main` and `scripts.start` first — package.json is where Node itself says the entry point is — then the README command, then the name list with `.mjs`/`.cjs` added. This row was re-verified: 0.0 → 1.0/4.0, annotated with `reverified`.

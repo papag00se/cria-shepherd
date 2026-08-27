@@ -41,8 +41,38 @@ def run(cmd, cwd, timeout=TIMEOUT, blocked=False):
 
 
 def entrypoints(ws):
-    """However the model spelled it: the documented command, then the usual candidates."""
+    """However the model spelled it: what package.json DECLARES, the documented command, then the
+    usual candidates.
+
+    #25 — THE TASK NEVER NAMES A FILE. Its words are "turn the Ada Handle resolver into a
+    command-line tool"; nothing in it says the tool must still be called `lookup.js`. The candidate
+    list was a hardcoded set of `.js` names, so a model that wrote `cli.mjs` and pointed
+    package.json's `main` and `scripts.start` at it scored `no runnable entry point` — the working
+    CLI was sitting beside the files being tried. Walked on the sub-60 re-run of handles-cli-node x
+    nemotron-elastic: `node cli.mjs goose` returns the address, the holder and the count, and the
+    verifier ran `node lookup.js` (the untouched seed) and recorded exit 1.
+
+    package.json is where Node itself says the entry point is, so it is the authoritative source
+    and it goes first (#5b). `.mjs`/`.cjs` join the fallback names for the same reason: which module
+    spelling a model picks is not a property this task names."""
     cmds = []
+    pkg = ws / "package.json"
+    if pkg.exists():
+        try:
+            meta = json.loads(pkg.read_text(errors="replace"))
+        except (ValueError, OSError):
+            meta = {}
+        b = meta.get("bin")
+        for cand in ([b] if isinstance(b, str) else list((b or {}).values()) if isinstance(b, dict) else []):
+            if isinstance(cand, str) and (ws / cand.lstrip("./")).exists():
+                cmds.append(["node", cand.lstrip("./")])
+        if isinstance(meta.get("main"), str) and (ws / meta["main"].lstrip("./")).exists():
+            cmds.append(["node", meta["main"].lstrip("./")])
+        start = (meta.get("scripts") or {}).get("start")
+        if isinstance(start, str) and start.split()[:1] == ["node"]:
+            named = start.split()[1] if len(start.split()) > 1 else ""
+            if named and (ws / named.lstrip("./")).exists():
+                cmds.append(["node", named.lstrip("./")])
     rd = next((p for p in ws.iterdir() if p.is_file() and p.name.lower().startswith("readme")), None)
     if rd:
         for m in re.finditer(r"(?m)^\s*(?:\$\s*)?((?:node|npm)\s+[^\n`]+)$", rd.read_text(errors="replace")):
@@ -50,10 +80,17 @@ def entrypoints(ws):
             if "install" in line or "test" in line:
                 continue
             cmds.append(line.split())
-    for name in ("cli.js", "index.js", "lookup.js", "main.js", "bin/cli.js"):
+    for name in ("cli.js", "cli.mjs", "cli.cjs", "index.js", "index.mjs", "lookup.js", "lookup.mjs",
+                 "main.js", "main.mjs", "bin/cli.js", "bin/cli.mjs"):
         if (ws / name).exists():
             cmds.append(["node", name])
-    return cmds
+    seen, out = set(), []
+    for c in cmds:                      # first spelling wins, duplicates dropped
+        k = tuple(c)
+        if k not in seen:
+            seen.add(k)
+            out.append(c)
+    return out
 
 
 def main() -> None:
