@@ -678,3 +678,11 @@ Same rung, same models, same tasks. The comparison is against each cell's own ea
 Clean build, 3/3 lookups, 3 tests green, README, in **3.3 minutes and 24 calls** against 28.4 minutes and 98 calls. The previous run never fixed `args[2]`/`args[3]` — `env::args()` yields three items — and spent 37 of its 60 turns inside its own test mocks. This one parses positionals by walking the argument list, so that confusion cannot arise.
 
 cria's own instrumentation is visibly healthier: **2 survey rejections against 46**, and the log now names the reason — `entry-count-mismatch`, exactly what the two walkers reproduced independently and what my earlier truncation hypothesis got wrong.
+
+### qwen35 × orders-api-py — **29 → 71**
+
+Three of four checks met against one. Both defects that decided the previous attempt are gone: the app honours `sys.argv[2]` (the old run ignored it, so every test hit the shared `./orders.db` and saw accumulated rows), and the destructive `DELETE FROM orders` / `DROP TABLE IF EXISTS` that a cria steer talked the old run into never appears.
+
+A third defect takes their place, and it is one this campaign has seen twice before in other cells: `db.py` declares `connect`/`init`/`create_order`/`get_customer_orders` with `path=DB_PATH`, and Python binds default arguments at import — so `serve()`'s `db.DB_PATH = path` never reaches them. `init()` creates the table in the test database while every query still reads `./orders.db`, and each request dies with `no such table: orders`. Eight HTTP tests red.
+
+326 calls over the full hour.
