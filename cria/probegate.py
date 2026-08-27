@@ -888,18 +888,37 @@ def gate_passing_tests(report: ProbeReport) -> int:
     from "the runner said zero" — the distinction the completion gate's whole vacuous-green family
     turns on.
     """
+    by = gate_passing_by_command(report)
+    return sum(by.values()) if by else -1
+
+
+def gate_passing_by_command(report: ProbeReport) -> dict:
+    """Passing-test count per Test-kind probe COMMAND, from each runner's own tally.
+
+    THE SUM IS NOT A SUBJECT. `passing_test_regression` compares this session's high-water tally
+    against the current one, and a total over several test commands moves when the SET of commands
+    moves — which happens for reasons that have nothing to do with the repo losing a test. A gate
+    that ran two test probes and then one reports a collapse the runner never reported.
+
+    Walked on the sub-40 pass, shipping-rates-rb x nemotron-elastic (scored 9): two Test probes
+    tallied 7 passing each, the total went 14, a later gate ran one of them, and cria told the coder
+    seven passing tests had disappeared. It spent the rest of the run hunting a deleted test that was
+    never deleted.
+
+    Keyed by command, each probe is its own subject and its own high-water mark, so the comparison is
+    always between two runs of the same command (#12 — the fact comes from the authoritative event,
+    and a command is what the runner was reporting about)."""
     if report is None:
-        return -1
+        return {}
     kinds = proberun._kind_by_command(report)
-    total, seen = 0, False
+    out: dict = {}
     for r in report.results:
         if kinds.get(r.command) is not probediscovery.ProbeKind.Test or r.timed_out:
             continue
         m = re.match(r"(\d+)f/(\d+)p$", r.tally or "")
         if m:
-            total += int(m.group(2))
-            seen = True
-    return total if seen else -1
+            out[r.command] = out.get(r.command, 0) + int(m.group(2))
+    return out
 
 
 def _offline_fact(sections: dict, plan: "GatePlan | None" = None) -> str:

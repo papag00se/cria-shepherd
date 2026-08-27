@@ -68,7 +68,7 @@ class TheTallyIsReadableTests(unittest.TestCase):
 
 class TheRegressionSignalNowFiresOnGoTests(unittest.TestCase):
     class _Sess:
-        tests_passed_high = 0
+        tests_passed_high: dict = {}
 
     def _report(self, tally):
         """A real ProbeReport shape: `results` correlate to `selected` by joined command, and the
@@ -99,7 +99,7 @@ class TheRegressionSignalNowFiresOnGoTests(unittest.TestCase):
         loop, rep_two = self._report("0f/2p")
         sess = self._Sess()
         self.assertEqual(loop.passing_test_regression(sess, rep_two), "")
-        self.assertEqual(sess.tests_passed_high, 2)
+        self.assertEqual(list(sess.tests_passed_high.values()), [2])
         _, rep_one = self._report("0f/1p")
         note = loop.passing_test_regression(sess, rep_one)
         self.assertIn("2", note)

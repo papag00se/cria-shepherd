@@ -347,10 +347,13 @@ class PlanSession(GuardState):
     # twice in a prompt whose newest check block showed failing tests, while the honest `never_ran`
     # wording the prompt file already carries fired zero times.
     last_gate_ran: bool = False
-    # The highest PASSING test count any green gate has reported this session. Regression-only (#2):
-    # it exists so cria can state, as a fact from the runner's own tally (#12), that the suite used
-    # to pass more tests than it does now. See `passing_test_regression`.
-    tests_passed_high: int = 0
+    # The highest PASSING test count each test COMMAND has reported this session, keyed by command.
+    # Regression-only (#2): it exists so cria can state, as a fact from the runner's own tally (#12),
+    # that the suite used to pass more tests than it does now. Per command and never summed — see
+    # `probegate.gate_passing_by_command` for the run a total cost.
+    tests_passed_high: dict = field(default_factory=dict)
+    # The (command, was, now) of the last regression stated, for the log line. None until one fires.
+    last_regression: tuple | None = None
     # Every DISTINCT gate finding-set this step has produced, oldest first. `last_gate_flag` answers
     # "same as last time" and an ALTERNATION defeats it by construction — the findings genuinely
     # change every turn. Base-rated 2026-08-01 across 61 captured runs: 19 of them (31%) return to a
@@ -3279,7 +3282,8 @@ class Loop:
         if not sess.last_gate_red and (lost := passing_test_regression(sess, outcome.report)):
             sess.nudge_reason = sess.nudge_reason or lost
             rlog.emit("loop.tests_regressed", level="warn", step=idx,
-                      high=sess.tests_passed_high)
+                      command=sess.last_regression[0], high=sess.last_regression[1],
+                      now=sess.last_regression[2])
         rlog.emit("loop.probe", step=idx, passed=nudge is None)
 
         # A RED gate is GROUND TRUTH about the REPOSITORY — it is not, by itself, a verdict on THIS
@@ -5922,7 +5926,8 @@ def guard_periodic_result(gs: GuardState, body: dict, rlog) -> str | None:
     record_gate_state(gs, outcome, err, rlog)
     gs.gate_fresh = fresh_before
     if not err and outcome.ran and (lost := passing_test_regression(gs, outcome.report)):
-        rlog.emit("loop.tests_regressed", level="warn", high=gs.tests_passed_high)
+        rlog.emit("loop.tests_regressed", level="warn", command=gs.last_regression[0],
+                  high=gs.last_regression[1], now=gs.last_regression[2])
         return prompts.render("periodic_gate", truth=lost)
     # a couldn't-run probe leaves last_gate_red + the streak unchanged — no evidence either way
     if not err:
@@ -6434,14 +6439,27 @@ def passing_test_regression(sess, report) -> str:
     IT STATES THE FACT, IT DOES NOT ACCUSE (#2's corollary, #5b). A count can legitimately drop when
     two tests are merged into one, so cria reports what the runner reported and leaves the judgement
     to the coder — which is also what makes it safe to speak on a GREEN gate at all (#3)."""
-    passed = probegate.gate_passing_tests(report)
-    if passed < 0:
+    now = probegate.gate_passing_by_command(report)
+    if not now:
         return ""                       # no tally → no signal, and no guess
-    high = getattr(sess, "tests_passed_high", 0)
-    if passed >= high:
-        sess.tests_passed_high = passed
+    # COPIED, never mutated in place: the field may still be whatever a caller handed in, and a
+    # shared dict updated under the caller is a bug that only shows up two sessions later.
+    highs = getattr(sess, "tests_passed_high", None)
+    highs = dict(highs) if isinstance(highs, dict) else {}
+    worst = None
+    for cmd, passed in now.items():
+        was = highs.get(cmd, 0)
+        if passed < was and (worst is None or was - passed > worst[1] - worst[2]):
+            worst = (cmd, was, passed)
+        highs[cmd] = max(was, passed)
+    sess.tests_passed_high = highs
+    if worst is None:
         return ""
-    return prompts.render("tests_regressed", was=str(high), now=str(passed))
+    # A COMMAND THAT DID NOT RUN THIS TIME IS NOT A LOSS. Its high-water mark is kept and simply not
+    # compared — the runner said nothing about it, and silence is not zero (the same distinction
+    # `gate_passing_tests` returns -1 for).
+    sess.last_regression = worst
+    return prompts.render("tests_regressed", was=str(worst[1]), now=str(worst[2]))
 
 
 def _gate_notes(sess) -> str:

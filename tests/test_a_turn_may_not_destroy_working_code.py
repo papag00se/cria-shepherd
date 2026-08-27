@@ -42,7 +42,7 @@ def report(raw, command="python3 -m pytest -q", family="pytest"):
 
 
 class Sess:
-    tests_passed_high = 0
+    tests_passed_high: dict = {}       # per test COMMAND — see gate_passing_by_command
 
 
 class ItFiresOnlyOnARegressionTests(unittest.TestCase):
@@ -60,7 +60,7 @@ class ItFiresOnlyOnARegressionTests(unittest.TestCase):
         s = Sess()
         for n in (3, 5, 9):
             self.assertEqual(loop.passing_test_regression(s, report(f"{n} passed in 0.1s")), "")
-        self.assertEqual(s.tests_passed_high, 9)
+        self.assertEqual(list(s.tests_passed_high.values()), [9])
 
     def test_an_unchanged_count_is_silent(self):
         s = Sess()
@@ -103,7 +103,7 @@ class ItSpeaksForTheRUNNERS_THAT_PRINT_A_TALLY_Tests(unittest.TestCase):
         s = Sess()
         for raw in ("ok  \tcartsvc\t0.001s\n", "ok  \tcartsvc\t0.001s\n"):
             self.assertEqual(loop.passing_test_regression(s, report(raw, "go test -count=1 ./...", "go")), "")
-        self.assertEqual(s.tests_passed_high, 0)
+        self.assertFalse(s.tests_passed_high)
 
 
 class TheNoteStatesTheFactTests(unittest.TestCase):
@@ -119,6 +119,65 @@ class TheNoteStatesTheFactTests(unittest.TestCase):
         note = prompts.render("tests_regressed", was="8", now="7").lower()
         self.assertIn("append", note)
         self.assertIn("restore", note)
+
+
+class TwoTestCommandsAreTwoSubjectsTests(unittest.TestCase):
+    """Walked on the sub-40 pass: shipping-rates-rb x nemotron-elastic, scored 9.
+
+    The gate ran two Test probes, each tallying 7 passing. The old counter SUMMED them to 14. A later
+    gate ran one of them, the sum read 7, and cria told the coder seven passing tests had vanished.
+    Nothing had. The rest of the run went into hunting a deleted test.
+
+    A total over a moving SET of commands is not a measurement of the repo. Each command carries its
+    own high-water mark, so every comparison is between two runs of the same command."""
+
+    def _two(self, a, b):
+        """One report holding two Test probes, the way a gate with two runners produces it."""
+        cand = lambda c: ProbeCandidate(kind=ProbeKind.Test, command=c.split(), working_dir="/tmp",
+                                        confidence=90, expected_value=80, cost=ProbeCost.Cheap,
+                                        mutates_code=False, may_hang=False,
+                                        may_need_services=False, reason="t")
+        one, two = "python3 -m pytest -q", "python3 -m pytest -q tests/e2e"
+        return ProbeReport(
+            project_type=["pytest"], selected=[cand(one), cand(two)],
+            results=[probeparse.parse_output(one, "pytest", 0, a, ""),
+                     probeparse.parse_output(two, "pytest", 0, b, "")])
+
+    def test_dropping_one_command_is_not_a_regression(self):
+        s = Sess()
+        self.assertEqual(loop.passing_test_regression(
+            s, self._two("7 passed in 0.1s", "7 passed in 0.1s")), "")
+        self.assertEqual(loop.passing_test_regression(s, report("7 passed in 0.1s")), "",
+                         "the same command still reports 7 — the other one simply did not run")
+
+    def test_a_real_drop_in_one_command_still_speaks(self):
+        s = Sess()
+        loop.passing_test_regression(s, self._two("7 passed in 0.1s", "7 passed in 0.1s"))
+        note = loop.passing_test_regression(
+            s, self._two("7 passed in 0.1s", "5 passed in 0.1s"))
+        self.assertIn("7", note)
+        self.assertIn("5", note)
+        self.assertEqual(s.last_regression[2], 5)
+
+    def test_the_note_names_the_worst_drop(self):
+        s = Sess()
+        loop.passing_test_regression(s, self._two("9 passed in 0.1s", "7 passed in 0.1s"))
+        loop.passing_test_regression(s, self._two("8 passed in 0.1s", "1 passed in 0.1s"))
+        self.assertEqual((s.last_regression[1], s.last_regression[2]), (7, 1))
+
+    def test_the_high_water_of_an_absent_command_is_kept(self):
+        s = Sess()
+        loop.passing_test_regression(s, self._two("7 passed in 0.1s", "7 passed in 0.1s"))
+        loop.passing_test_regression(s, report("7 passed in 0.1s"))
+        self.assertEqual(sorted(s.tests_passed_high.values()), [7, 7])
+
+    def test_the_session_field_is_not_mutated_in_place(self):
+        """The stored map is replaced, never updated under the caller."""
+        s = Sess()
+        s.tests_passed_high = shared = {}
+        loop.passing_test_regression(s, report("4 passed in 0.1s"))
+        self.assertEqual(shared, {})
+        self.assertTrue(s.tests_passed_high)
 
 
 if __name__ == "__main__":
