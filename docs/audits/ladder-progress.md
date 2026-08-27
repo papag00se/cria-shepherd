@@ -686,3 +686,11 @@ Three of four checks met against one. Both defects that decided the previous att
 A third defect takes their place, and it is one this campaign has seen twice before in other cells: `db.py` declares `connect`/`init`/`create_order`/`get_customer_orders` with `path=DB_PATH`, and Python binds default arguments at import — so `serve()`'s `db.DB_PATH = path` never reaches them. `init()` creates the table in the test database while every query still reads `./orders.db`, and each request dies with `no such table: orders`. Eight HTTP tests red.
 
 326 calls over the full hour.
+
+### qwen35 × handles-cli-node — **58 → 93**
+
+The hollow suite that defined the previous attempt is gone. That one scored 0 on `tests_incl_live`: a homemade runner called async test bodies without awaiting them, so all seven counted PASS before an assertion ran and the suite finished identically with the network removed. This one has eight tests that await, mock `globalThis.fetch` deliberately for most cases, and leave one that really reaches the service — verified by hand, exit 0 online and 1 offline.
+
+What remains is one wrong exit code: `--help` prints correct, complete usage and then `process.exit(1)`. Third node cell in this campaign to lose a point that way.
+
+279 calls, 38.7 minutes, ended on its own.
