@@ -345,6 +345,31 @@ def _compress_tools(tools, budget_est: int) -> tuple[list, int, int]:
     return out, n, len(tools) - len(out)
 
 
+def _shorten_at_a_boundary(text: str, cap: int) -> str:
+    """``text`` shortened to at most ``cap`` characters, cut only at a sentence or word boundary.
+
+    It was `v[:cap] + "…"`, and this module's own comment concedes that "at 40 a first sentence
+    usually does NOT survive" — so a tool description arrived as a fragment ending mid-word, which
+    is the shape a reader cannot tell from a complete short sentence. Cutting where the WRITER put
+    a boundary keeps whatever complete thought fits, and says plainly that there was more.
+
+    The bound itself stays: this is the tool SCHEMA, which a verbose harness connector can blow the
+    whole window with, and bounding it is the floor's own job (#18 — no harness-specific pruning,
+    just a size the floor enforces for everyone)."""
+    room = max(1, cap - len(_MORE_MARK))
+    head = text[:room]
+    for boundary in (". ", "! ", "? ", "\n"):
+        cut = head.rfind(boundary)
+        if cut > room // 3:
+            return text[:cut + 1] + _MORE_MARK
+    cut = head.rfind(" ")
+    return (text[:cut] if cut > room // 3 else head) + _MORE_MARK
+
+
+# What a shortened description ends with, so a reader can tell one from a short complete one.
+_MORE_MARK = " […more]"
+
+
 def _cap_descriptions(obj, cap: int):
     """Deep-copy ``obj`` (a tool schema) with every ``description`` string truncated to
     ``cap`` chars (``cap == 0`` drops it). Structure and all non-description fields intact."""
@@ -354,7 +379,7 @@ def _cap_descriptions(obj, cap: int):
             if k == "description" and isinstance(v, str):
                 if cap <= 0:
                     continue
-                out[k] = v if len(v) <= cap else v[:cap] + "…"
+                out[k] = v if len(v) <= cap else _shorten_at_a_boundary(v, cap)
             else:
                 out[k] = _cap_descriptions(v, cap)
         return out

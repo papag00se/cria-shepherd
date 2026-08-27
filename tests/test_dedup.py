@@ -379,5 +379,39 @@ class ARepeatedTestRunIsARepeatTests(unittest.TestCase):
         self.assertIn("1 failures", key)
 
 
+
+
+class AProgramsOwnClockIsNotRunnerNoiseTests(unittest.TestCase):
+    """`volatile_key` erases a clock reading so two runs of the same test suite key alike. It did so
+    for ANY decimal followed by a time unit, anywhere — including a program's own measured output.
+
+    A task that says "make it 4x faster" (principle 25c names that shape) prints `elapsed: 12.50 s`
+    and later `elapsed: 3.10 s`. Both keyed to the same string, so `focustrim` folded them into one
+    duplicate group and deleted the earlier call and its result from the model's view — two
+    genuinely different answers merged, which is truncation with extra steps.
+
+    The scrub is now scoped to a line that is a RUNNER talking about itself: one carrying a count of
+    what ran, or its own duration announcement."""
+
+    def test_two_different_benchmark_results_stay_different(self):
+        a = "Benchmark complete.\nelapsed: 12.50 s\nrows: 40000\n"
+        b = "Benchmark complete.\nelapsed: 3.10 s\nrows: 40000\n"
+        self.assertNotEqual(dedup.volatile_key(a), dedup.volatile_key(b))
+
+    def test_a_bare_took_line_is_not_scrubbed_either(self):
+        self.assertNotEqual(dedup.volatile_key("import took 4.20 s"),
+                            dedup.volatile_key("import took 1.05 s"))
+
+    def test_the_same_suite_run_twice_still_folds(self):
+        for a, b in (("== 7 passed in 0.36s ==", "== 7 passed in 1.94s =="),
+                     ("ok  \tcartsvc\t0.003s", "ok  \tcartsvc\t0.921s"),
+                     ("7 runs, 7 assertions\nFinished in 0.010147s",
+                      "7 runs, 7 assertions\nFinished in 0.884s"),
+                     ("Tests run: 4\nTime elapsed: 0.031 s",
+                      "Tests run: 4\nTime elapsed: 0.912 s")):
+            with self.subTest(a):
+                self.assertEqual(dedup.volatile_key(a), dedup.volatile_key(b))
+
+
 if __name__ == "__main__":
     unittest.main()

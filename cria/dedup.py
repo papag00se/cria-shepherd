@@ -204,6 +204,33 @@ def fold_repeated_messages(msgs: list[dict], note: str, *, protect: "tuple[str, 
 #
 # Verified not to over-merge: applied to 777 distinct payloads across 20 captured sessions, the table
 # merges nothing the narrow python-only version did not.
+# A RUNNER'S OWN SUMMARY LINE, by shape rather than by runner. It carries a count of what ran —
+# `7 passed`, `2 runs, 2 assertions`, `Tests run: 4`, `4 examples, 0 failures` — or it is go's
+# tabular `ok\tpkg\t0.003s`. That is the only place a clock reading is per-run NOISE.
+#
+# Unanchored, the elapsed-time rules erased ANY decimal followed by a time unit, including a
+# program's own measured output. A task that says "make it 4x faster" (principle 25c names that
+# shape) prints `elapsed: 12.50 s` and later `elapsed: 3.10 s`, and both keyed to the same string:
+# two genuinely different answers folded into one duplicate group and the earlier call deleted from
+# the model's view. A dedup that merges different answers is truncation with extra steps.
+_TALLY = (
+    # a count of what ran, in any runner's wording
+    r"(?:\b\d+\s+(?:passed|passing|failed|failing|error|errors|skipped|pending|runs?|tests?|assertions?|"
+    r"examples?|failures?|specs?)\b|\b(?:Tests? run|Ran|OK|FAILED)\b|^ok\s|^FAIL\s|^---\s"
+    # …or the runner's own duration announcement, which some print on a line of its own:
+    # minitest/rspec `Finished in 0.010147s`, surefire `Time elapsed: 0.031 s`, unittest
+    # `Ran 4 tests in 0.002s`, jest `Time: 1.234 s`. These are the runner talking about ITSELF —
+    # a program's own `elapsed: 12.50 s` says nothing about a test run and is not one of them.
+    r"|\bFinished in\b|\bTime elapsed\b|^\s*Time:\s|\bTotal time\b)")
+_TALLY_LINE = re.compile(rf"(?im)^.*{_TALLY}.*$")
+_A_TIME = re.compile(r"\b\d+\.\d+\s?(?:s|secs?|seconds?)\b")
+_A_SUBSECOND = re.compile(r"\b\d+(?:\.\d+)?\s?(?:ns|µs|us|ms)\b")
+
+
+def _scrub_clock_on_tally_lines(text: str) -> str:
+    """Erase a clock reading only on a line that is a runner's own tally."""
+    return _TALLY_LINE.sub(lambda m: _A_SUBSECOND.sub("", _A_TIME.sub("", m.group(0))), text)
+
 _VOLATILE = (
     # the harness exec envelope's per-run fields (whole lines)
     (re.compile(r"(?im)^\s*(?:Chunk ID:|Wall time:|Original token count:)\s*\S.*$\n?"), ""),
@@ -228,9 +255,19 @@ _VOLATILE = (
     # pytest `in 0.36s`, cargo `finished in 0.00s`, go `ok\ttick\t0.003s`,
     # JUnit `Time elapsed: 0.031 s`, RSpec `Finished in 0.0123 seconds`, jest `Time: 1.234 s`.
     # The decimal point is load-bearing: it keeps `expected 30s` in a finding out of the table.
-    (re.compile(r"\b\d+\.\d+\s?(?:s|secs?|seconds?)\b"), ""),
-    # …and sub-second units, where runners drop the decimal — mocha `(123ms)`
-    (re.compile(r"\b\d+(?:\.\d+)?\s?(?:ns|µs|us|ms)\b"), ""),
+    #
+    # AND SO IS THE RUNNER'S OWN PHRASE IN FRONT OF IT. Unanchored, this erased ANY decimal followed
+    # by a time unit — including a program's own measured output. A task that says "make it 4x
+    # faster" (principle 25c names that shape) prints `elapsed: 12.50 s` and then `elapsed: 3.10 s`,
+    # and this keyed both to the same string: two genuinely different results folded into one group
+    # and the earlier call deleted from the view. A dedup that merges different answers is
+    # truncation with extra steps. Anchored to the words a RUNNER writes around its own clock, which
+    # is what this rule was always for.
+    # ONLY ON A LINE THAT IS A RUNNER'S TALLY. `_TALLY_LINE` below decides that by shape — the line
+    # also carries a count of tests/assertions/failures, or is go's `ok\tpkg\t0.003s`. A program's
+    # own `elapsed: 12.50 s` is not on such a line and keeps its number.
+    (_TALLY_LINE, _scrub_clock_on_tally_lines),   # handled by the callable below
+
 
     # ── a runner's THROUGHPUT, which is elapsed time wearing a different unit ──
     # minitest `614.8036 runs/s, 614.8036 assertions/s`, and the same shape wherever a runner divides
@@ -259,7 +296,8 @@ def volatile_key(content) -> str:
     if not isinstance(content, str):
         return ""
     for pat, repl in _VOLATILE:
-        content = pat.sub(repl, content)
+        content = repl(content) if callable(repl) and repl is _scrub_clock_on_tally_lines \
+            else pat.sub(repl, content)
     return content.strip()
 
 
