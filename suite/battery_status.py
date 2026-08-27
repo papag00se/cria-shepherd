@@ -194,61 +194,68 @@ def sha() -> str:
         return "?"
 
 
-# WHEN EACH RUNG BECAME REAL. The ladder was built in eight commits on 2026-08-24, and cells were
-# being run while it was being built — so a row's number can predate the gate that defines its own
-# rung. The last of them is what matters: until `d80e0a2` the output massage chain had no gate at
-# all and ran at EVERY level, so a "level 0" run on earlier code was not a pure proxy.
+# WHEN EACH RUNG BECAME REAL, and the rung each gated mechanism belongs to.
 #
-# Found by auditing why ten of twelve L0/L1 cells fell. All twelve gemma4 cells ran 13:30-15:16 on
-# 2026-08-24; the last gating commit landed at 20:50 the same evening. Their L0 and L1 arms differ
-# only by two mechanisms that measured ZERO firings, so they are two samples of one configuration,
-# not a rung comparison. Three independent replays over the captures agree: `massage.apply` changed
-# 0 of 1,615 replies across all 24 runs.
+# The ladder was built in eight commits on 2026-08-24 while cells were being run, so a row can
+# predate the gate on a mechanism that belongs ABOVE its own rung — a level-0 cell running level-5
+# detectors, for example. That row is not a measurement of level 0.
 #
-# ANNOTATED, NEVER DELETED (#26): the row is real evidence of what that code did on that day. What
-# it cannot support is a statement about the RUNG, and that is what the mark withdraws.
-LADDER_GATED = "d80e0a2"
+# THE RULE IS PER MECHANISM, NOT PER DATE. A row at level N is unsound when it ran before the gate
+# on a mechanism whose rung is HIGHER than N. A mechanism at or below N was supposed to be running,
+# so an early row is entitled to it. The first cut of this check asked only "did it predate the last
+# gate", which is the same question asked badly: it cleared every level-3 and level-4 gemma4 row
+# while the level-5 detectors and periodic gate were still ungated inside them.
+#
+# `d80e0a2` superseded ONE cell for this, on the reasoning that gemma4 "could never have shown it" —
+# true of that one mechanism, and not of the other three. `loop.compaction_reframed`, a level-3
+# mechanism, fired 23 times inside a single gemma4 LEVEL-1 row.
+#
+# ANNOTATED, NEVER DELETED (#26): the row is real evidence of what that code did that day. What it
+# cannot support is a statement about the RUNG, and that is what the mark withdraws.
+LADDER_GATES = (
+    ("9402fea", 2, "tool menu"),
+    ("beebcd3", 3, "context surgery"),
+    ("1ef472e", 4, "the loop"),
+    ("1ef472e", 5, "assists"),
+    ("5a44351", 5, "periodic gate"),
+    ("b5fda4a", 5, "detectors"),
+    ("82086f8", 3, "compaction reframing"),
+    ("d80e0a2", 1, "output massage chain"),
+)
 
 
-def _row_commit(r: dict | None) -> str:
-    """The short commit a row records in its own note (`BATTERY2 L1 gemma4 c76cd6b p4`), or ""."""
-    for word in ((r or {}).get("note") or "").split():
-        if len(word) >= 7 and all(c in "0123456789abcdef" for c in word):
-            return word
-    return ""
+def _committed_at(commit: str) -> int:
+    """The commit's own timestamp, or 0 when git cannot resolve it."""
+    if commit not in _GATE_TIME:
+        try:
+            out = subprocess.run(["git", "show", "-s", "--format=%ct", commit], capture_output=True,
+                                 text=True, cwd=SUITE.parent).stdout.strip()
+            _GATE_TIME[commit] = int(out) if out.isdigit() else 0
+        except OSError:
+            _GATE_TIME[commit] = 0
+    return _GATE_TIME[commit]
 
 
-def _predates_the_ladder(commit: str) -> bool:
-    """True when ``commit`` is strictly older than the commit that finished gating the rungs.
-
-    Asked of git rather than of a date, because a date is a guess about clocks and an ancestry is a
-    fact about the tree (#12). An unknown or unresolvable commit answers False — a row cria cannot
-    place is not a row cria may accuse."""
-    if not commit or commit in _PREDATES_CACHE:
-        return _PREDATES_CACHE.get(commit, False)
-    try:
-        same = subprocess.run(["git", "rev-parse", commit + "^{commit}"], capture_output=True,
-                              text=True, cwd=SUITE.parent).returncode == 0
-        older = same and subprocess.run(
-            ["git", "merge-base", "--is-ancestor", commit, LADDER_GATED],
-            capture_output=True, cwd=SUITE.parent).returncode == 0
-        # An ancestor OF the gate that is not the gate itself ran before it existed.
-        older = older and commit not in LADDER_GATED and LADDER_GATED not in commit
-    except OSError:
-        older = False
-    _PREDATES_CACHE[commit] = older
-    return older
+_GATE_TIME: dict = {}
 
 
-_PREDATES_CACHE: dict = {}
+def leaks_above_rung(r: dict | None) -> list:
+    """The mechanisms that were still ungated when this cell ran, and belong above its own rung.
+
+    Empty for a sound row. The row's own start time is the authoritative fact (#12) — not the commit
+    in its note, which records only what was checked out, and not a wall-clock guess."""
+    if not r or r.get("level") is None:
+        return []
+    started, lvl = float(r.get("started") or 0), int(r["level"])
+    if not started:
+        return []
+    return sorted({name for c, rung, name in LADDER_GATES
+                   if rung > lvl and started < _committed_at(c)})
 
 
 def ungated(r: dict | None) -> bool:
-    """Did this cell run before the ladder's own rungs were gated? Only levels 0-2 can be affected —
-    the mechanisms that were ungated all belong to rungs 1 and 3, so a level-5 row ran everything it
-    was supposed to either way."""
-    return bool(r) and (r.get("level") is not None and int(r["level"]) <= 2) \
-        and _predates_the_ladder(_row_commit(r))
+    """Did this cell run while a mechanism ABOVE its own rung was still ungated?"""
+    return bool(leaks_above_rung(r))
 
 
 def judged(r: dict | None) -> bool:

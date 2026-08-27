@@ -1,2 +1,21 @@
 ===== BEGIN shipping-rates-rb nemotron-elastic 14:47:06
 [sampling] nemotron-elastic: coder={'temperature': 0.6, 'top_p': 0.95}  reasoner={'temperature': 0.6, 'top_p': 0.95}  classifier={'temperature': 0.0}  compactor={'temperature': 0.0}
+[milestone] 30min  score=0.0/5.0  floor=2  MISS
+[milestone] recheck score=0.0  CONFIRMED MISS
+{
+ "run_id": "shipping-rates-rb_nemotron-elastic_codex_poff_1787867226",
+ "terminal": "milestone-miss-30min",
+ "success": false,
+ "score": 0.0,
+ "wall_seconds": 1849.1,
+ "calls": 75,
+ "avg_tok_s": 129.2
+}
+[usefulness] evidence frozen -> /home/jesse/.cria/suite/_usefulness_evidence/shipping-rates-rb_nemotron-elastic_codex_poff_1787867226.txt
+refreshed /home/jesse/src/cria-shepherd/docs/audits/regression-report.md
+[grid] refreshed docs/audits/regression-report.md
+[battery] refreshed docs/audits/battery-report.md
+[arm] [engagement] level = 5  (was 5)
+===== END shipping-rates-rb nemotron-elastic 15:18:33
+===== BEGIN cart-billing-go nemotron-elastic 15:18:33
+[sampling] nemotron-elastic: coder={'temperature': 0.6, 'top_p': 0.95}  reasoner={'temperature': 0.6, 'top_p': 0.95}  classifier={'temperature': 0.0}  compactor={'temperature': 0.0}
