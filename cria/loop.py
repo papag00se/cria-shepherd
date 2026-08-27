@@ -7913,7 +7913,26 @@ def _is_code_line(line: str) -> bool:
     bar — being wrong here costs one reasoner call to say the same thing in words, and the restater
     can only say less than it was given, never something different."""
     return bool(_CODE_LINE.search(line)) or shellshape.looks_like_command(line)
-_INLINE_CALL = re.compile(r"\b\w+(?:\.\w+)+\([^)\n]*\)")
+# EMPTY PARENS ARE A NAME, NOT CODE. `Importer.load()` hands the coder nothing to paste — it says
+# WHERE, the way a file path does, and a directive is entitled to name the method it is talking
+# about. The argument text is the part that can be invented, so the pattern now requires some.
+#
+# Walked on the sub-40 pass, feed-pipeline-java x nemotron-elastic (scored 16). The reasoner wrote
+# the run's correct fix — delete the five `builder.set…` lines that do not exist on the CSV builder —
+# and `_invented_code_spans` counted 2, so the directive was refused. The 2 were `Importer.load()`
+# and a `builder.setEscapeCharacter` call whose escape was one character off from the line that IS on
+# disk. Either one alone would have shipped it. Whether the NAME exists is a different guard's
+# question
+# (`_symbol_not_in_the_file`), and that one reads the file.
+_INLINE_CALL = re.compile(r"\b\w+(?:\.\w+)+\(\s*[^)\n\s][^)\n]*\)")
+
+
+def _unquoted(s: str) -> str:
+    """``s`` with quote characters and backslashes removed — the comparison that ignores escaping."""
+    return s.translate(_QUOTE_CHARS)
+
+
+_QUOTE_CHARS = {ord(c): None for c in "'\"`\\"}
 
 
 def _observed_code(messages: list[dict] | None) -> str:
@@ -8046,7 +8065,17 @@ def _invented_code_spans(directive: str, evidence: str) -> int:
     if not evidence:
         return 0                                  # nothing to check against → nothing is invented
     haystack = " ".join(evidence.split())
-    seen = lambda s: " ".join(s.split()) in haystack        # noqa: E731
+    bare = _unquoted(haystack)
+
+    def seen(s: str) -> bool:
+        flat = " ".join(s.split())
+        # QUOTING IS NOT CONTENT. A one-character slip in an escape — `setEscapeCharacter('\')` for
+        # the `setEscapeCharacter('\\')` that is on disk — is the author re-typing a line it read,
+        # not inventing one, and everything that decides what the line DOES is identical. Compared
+        # again with quote characters and backslashes taken out of both sides, so a difference in
+        # what is inside the quotes still counts as invented.
+        return flat in haystack or _unquoted(flat) in bare
+
     n = 0
     for line in directive.splitlines():
         for seg in (shellshape.segments(line) or [line]):
