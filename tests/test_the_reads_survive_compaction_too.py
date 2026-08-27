@@ -61,10 +61,16 @@ class TheReadLedgerTests(unittest.TestCase):
     def test_nothing_read_says_nothing(self):
         self.assertEqual(loop._read_ground_truth(_Sess(), []), "")
 
-    def test_a_long_ledger_counts_its_remainder(self):
-        many = {f"f{i}.rb": "10 bytes, 1 lines" for i in range(loop._READ_LEDGER_CAP + 7)}
+    def test_a_long_ledger_names_every_file(self):
+        """UNCAPPED 2026-08-26. It named 20 of an ALPHABETICALLY sorted list and counted the rest,
+        so which files vanished was arbitrary — a `z*.py` read a moment ago always went first. The
+        ledger's stated purpose is "the KNOWLEDGE THAT IT HAS ALREADY LOOKED", which is per-file and
+        is not recoverable from a number (rule 5, as tightened 2026-08-16)."""
+        many = {f"f{i}.rb": "10 bytes, 1 lines" for i in range(27)}
         out = loop._read_ground_truth(_Sess(many), [])
-        self.assertIn("7 more file(s)", out)
+        for name in many:
+            self.assertIn(name, out)
+        self.assertNotIn("more file(s)", out)
 
     def test_it_rides_in_the_durable_facts_anchor(self):
         anchor = loop._fetched_facts_anchor(_Sess({"lib/rates.rb": "986 bytes, 40 lines"}), [])

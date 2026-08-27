@@ -109,11 +109,24 @@ def validate_referenced(rlog=None) -> list[str]:
 #
 # This is the only sanctioned way to print a bounded list of names to a model. The remainder is
 # derived from the same list that was printed, so the two can never disagree (#5b).
-def named_list(items, cap: int = 6, unit: str = "") -> str:
-    """``"a, b, c"`` — or ``"a, b, c, and 4 more <unit>"`` when the list was longer than ``cap``."""
+def named_list(items, cap: int | None = None, unit: str = "") -> str:
+    """``"a, b, c"`` — every name, comma-separated.
+
+    THE CAP IS GONE FROM EVIDENCE, and it defaulted to six. This helper existed to make a shortened
+    list look tidy, and rule 5 as tightened on 2026-08-16 names disclosed elisions as truncation —
+    "and 4 more file(s)" is one. It had ten seats, and what sat behind the count was not decoration:
+    the stranded test files a coder is told to fix (cap 4), the files written since the checks ran,
+    the symbols a judge is asked to find in a directive, the files whose writes were removed from
+    the view. A file past the cap was never named, so the coder could not act on it.
+
+    Names are cheap — a path is a few tokens and the window fitting belongs at the floor. ``cap``
+    survives for the operator-facing log lines that genuinely want a short label; passing None (the
+    default now) names everything."""
     names = [str(x) for x in (items or []) if str(x).strip()]
     if not names:
         return ""
+    if cap is None:
+        return ", ".join(names)
     shown, rest = names[:max(cap, 1)], max(0, len(names) - max(cap, 1))
     out = ", ".join(shown)
     if rest:

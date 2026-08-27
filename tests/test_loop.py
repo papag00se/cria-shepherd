@@ -3556,25 +3556,26 @@ class FreshDiskFactsTests(unittest.TestCase):
         self.assertEqual(_fresh_disk_facts(None, ["h.py"], ""), "")  # no root → empty (prior behavior)
         self.assertEqual(_fresh_disk_facts(d, [], ""), "")          # no paths → empty
 
-    def test_a_bounded_file_list_says_how_many_it_left_out(self):
-        """The cap used to be a bare `[-8:]` inside _touched_paths, so the ninth-oldest file simply
-        ceased to exist for the reader — under a header telling it to trust this over the transcript."""
+    def test_every_touched_file_reaches_the_disk_facts(self):
+        """UNCAPPED 2026-08-26. The cap was a bare `[-8:]` inside _touched_paths, so the ninth-oldest
+        file ceased to exist for the reader — under a header telling it to trust this over the
+        transcript. Naming it and counting it are not the same thing when the reader has to act on
+        it (rule 5, as tightened 2026-08-16)."""
         import os
         import tempfile
 
-        from cria.loop import TOUCHED_PATHS_CAP, _fresh_disk_facts
+        from cria.loop import _fresh_disk_facts
         d = tempfile.mkdtemp()
         names = []
-        for i in range(TOUCHED_PATHS_CAP + 4):
-            with open(os.path.join(d, f"f{i}.py"), "w") as f:
-                f.write("x = 1\n")
-            names.append(f"f{i}.py")
-        out = _fresh_disk_facts(d, names, "")
-        self.assertEqual(out.count("FILE "), TOUCHED_PATHS_CAP)
-        self.assertIn("4 more file(s)", out)
-        self.assertIn(f"FILE {names[-1]}", out)                  # the NEWEST survive the bound
-        self.assertNotIn(f"FILE {names[0]}", out)
-        self.assertNotIn("more file(s)", _fresh_disk_facts(d, names[:2], ""))
+        for i in range(12):
+            n = f"f{i}.py"
+            names.append(n)
+            with open(os.path.join(d, n), "w") as fh:
+                fh.write("x = 1\n")
+        out = _fresh_disk_facts(d, names, "") or ""
+        for n in names:
+            self.assertIn(n, out, f"{n} was written and must be named")
+        self.assertNotIn("more file(s)", out)
 
     def test_path_spellings_of_one_file_are_one_entry(self):
         # `api.json` vs `./api.json` vs the absolute form are ONE file; the exact-string dedupe

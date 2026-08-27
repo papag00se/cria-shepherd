@@ -1370,7 +1370,7 @@ def stranded_test_sentences(root: Path) -> list[str]:
             # The strongest thing cria can say: the tests EXIST and will never run. Naming the file
             # makes it checkable — g20 (unittest classes inside resolve_handle.py, gate clean 54×)
             # and maple run 2 (pytest_da_resolvers.py, 19KB, zero collected) are both this class.
-            out.append(f"Test code in {prompts.named_list(stranded, 4, 'file(s)')} will not run: "
+            out.append(f"Test code in {prompts.named_list(stranded)} will not run: "
                        f"{conv.runner} only runs tests {conv.label}.")
     return out
 
@@ -1401,7 +1401,7 @@ def undiscoverable_tests(root: Path) -> list[str]:
         # different instructions, and gluing either into a fixed "must be named {X}" frame produced a
         # sentence that said neither.
         if stranded:
-            out.append(f"Test code in {prompts.named_list(stranded, 4, 'file(s)')} will not run: "
+            out.append(f"Test code in {prompts.named_list(stranded)} will not run: "
                        f"{conv.runner} only runs tests {conv.label}.")
         elif discoverable is False:
             # `is False`, NOT falsy. None means cria could not read the bodies that would settle it,

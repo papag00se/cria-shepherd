@@ -384,7 +384,7 @@ def _workspace_listing(ws: str | None) -> str:
         if view.isdir(full) is True:
             kids = [x for x in (view.listdir(full) or [])
                     if not x.startswith((".", "__pycache__"))]
-            inner = prompts.named_list(kids, _COMPACT_KIDS_MAX, "entries")
+            inner = prompts.named_list(kids)
             lines.append(f"  {name}/" + (f"  ({inner})" if inner else ""))
         else:
             lines.append(f"  {name}")

@@ -2119,7 +2119,7 @@ def _briefing_disk_truth(briefing: str, files_list: str, rlog=None) -> str:
         return briefing
     if rlog is not None:
         rlog.emit("context.briefing_denies_disk", steer="briefing-fix", level="warn",
-                  files=prompts.named_list(named, 6, "file(s)"))
+                  files=prompts.named_list(named))
     return briefing + "\n\n" + prompts.fill(
         prompts.load_map("briefing_checks")["files_exist"], files=", ".join(named))
 
@@ -4485,7 +4485,7 @@ class Loop:
         invented = _invented_names(text, grounding)
         if invented:
             rlog.emit("loop.reanchor_ungrounded", level="warn",
-                      names=prompts.named_list(invented, 4, "name(s)"), head=_clip(text, 120))
+                      names=prompts.named_list(invented), head=_clip(text, 120))
             return canned
         return text
 
@@ -6356,11 +6356,14 @@ def _checks_ran_before(paths: list[str]) -> str:
         return labels.get("none", "").strip()
     key = "one" if len(paths) == 1 else "many"
     return prompts.fill(labels[key],
-                        files=prompts.named_list(paths, WRITES_SINCE_GATE_CAP, "file(s)")).rstrip("\n")
+                        files=prompts.named_list(paths)).rstrip("\n")
 
 
-# How many of the files written since the checks ran are NAMED; the rest are counted, never dropped.
-WRITES_SINCE_GATE_CAP = 3
+# NO CAP. Every file written since the checks ran is named. It was 3, "the rest are counted, never
+# dropped" — and a counted file is a file the coder cannot act on, which is what rule 5's tightening
+# on 2026-08-16 settled about disclosed elisions. Paths are a few tokens each and the floor is the
+# one place a list may be narrowed.
+WRITES_SINCE_GATE_CAP = None
 
 
 def _writes_since_last_gate(messages: list[dict], cap: int | None = None) -> list[str]:
@@ -6940,14 +6943,17 @@ def _read_ground_truth(sess, messages: list[dict]) -> str:
     if not seen:
         return ""
     labels = prompts.load_map("fetched_facts_sections")
-    lines = "\n".join(f"- {p} ({size})" for p, size in sorted(seen.items())[:_READ_LEDGER_CAP])
-    rest = max(0, len(seen) - _READ_LEDGER_CAP)
+    lines = "\n".join(f"- {p} ({size})" for p, size in sorted(seen.items()))
+    rest = 0
     more = prompts.fill(labels["read_more"], count=rest) if rest else ""
     return "\n\n" + prompts.fill(labels["read_header"], files=lines, more=more)
 
 
-# Files named in the durable read ledger; the rest are counted, never dropped silently (#R2).
-_READ_LEDGER_CAP = 20
+# NO CAP on the read ledger. It was 20 names out of an ALPHABETICALLY sorted list, so which files
+# vanished was arbitrary — a `z*.py` the coder read a moment ago always went first. The count that
+# replaced them answers a different question than the ledger's own stated purpose: "the KNOWLEDGE
+# THAT IT HAS ALREADY LOOKED" is per-file and is not recoverable from a number.
+_READ_LEDGER_CAP = None
 
 
 def _fetched_facts_anchor(sess, messages: list[dict] | None = None) -> dict | None:
@@ -7449,7 +7455,7 @@ def author_steer(reasoner_chat, reasoner_role, workspace_root, gs, body: dict, r
                           disk=(disk or "(no files touched yet)"),
                           truth=(truth or "(no check results for this steer)"),
                           checks_age=(prompts.fill(prompts.load_map("steer_checks_age")["written"],
-                                                   files=prompts.named_list(written, 6, "file(s)"))
+                                                   files=prompts.named_list(written))
                                                       if written else ""))
     coder_tools = _coder_tools_summary(body.get("tools"))
     # The one-shot reasoner the dictated-code check uses. Toolless and phase-tagged so it is
@@ -8241,7 +8247,7 @@ def _prescribes_what_the_checks_reject(directive: str, findings: str, rlog, ask)
     if not shared:
         return ""
     ans = strip_think(ask(prompts.render("steer_prescribes_broken", directive=directive,
-                                         findings=findings, symbols=prompts.named_list(shared, 8, "name(s)"))) or "").strip()
+                                         findings=findings, symbols=prompts.named_list(shared))) or "").strip()
     head = ans.upper().split()[0].strip(".,:;`*\"'") if ans.split() else ""
     if head != "PRESCRIBES":
         return ""
@@ -9349,7 +9355,9 @@ def _read_tool_result(messages: list[dict], call_id: str) -> str:
 # Files whose on-disk facts are READ for the steer author's section. The list itself is not bounded:
 # the bound belongs where the printing happens, with the sentence that says how many it left out
 # (#R2) — a bare `[-8:]` here made the ninth-oldest file simply cease to exist for the reader.
-TOUCHED_PATHS_CAP = 8
+# NO CAP: every file the coder touched reaches the steer author's disk facts. It was the newest
+# 8, so the file a steer most needed to know about could be the one dropped.
+TOUCHED_PATHS_CAP = None
 
 
 def _touched_paths(messages, cap: int | None = None) -> list[str]:
@@ -9394,7 +9402,7 @@ def _fresh_disk_facts(root: str | None, recent_writes, spin_path: str) -> str:
     # NEWEST FIRST OUT OF THE BOUND, and the bound is counted below. Bounding on the number of lines
     # PRODUCED would count wrong: a file the view knows nothing about contributes no line, so the
     # remainder must come from the paths, not from what could be read about them.
-    shown, rest = paths[-TOUCHED_PATHS_CAP:], max(0, len(paths) - TOUCHED_PATHS_CAP)
+    shown, rest = paths, 0
     lines: list[str] = []
     view = wsview.current(root)
     for p in shown:

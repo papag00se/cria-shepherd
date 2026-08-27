@@ -95,7 +95,7 @@ class LinterReport:
         if not self.skipped_dirs:
             return ""
         return " " + prompts.fill(d["unread"],
-                                  dirs=prompts.named_list(self.skipped_dirs, 6, "directories"))
+                                  dirs=prompts.named_list(self.skipped_dirs))
 
     def nudge_text(self) -> Optional[str]:
         """Coder-facing re-prompt with the exact errors; None when nothing is failing."""

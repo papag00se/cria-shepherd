@@ -519,7 +519,7 @@ def _drop_superseded_writes(messages: list[dict]) -> tuple[list[dict], int]:
                     # sentence are deliberate — N writes were removed, ACROSS these files — and the
                     # count stays a count of calls.
                     "content": prompts.render("superseded_writes_dropped", count=str(dropped),
-                                              paths=prompts.named_list(dropped_paths, 6, "file(s)"))})
+                                              paths=prompts.named_list(dropped_paths))})
     return (out if dropped else messages), dropped
 
 
