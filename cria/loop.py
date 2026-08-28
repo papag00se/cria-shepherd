@@ -8048,7 +8048,22 @@ def _is_code_line(line: str) -> bool:
 # disk. Either one alone would have shipped it. Whether the NAME exists is a different guard's
 # question
 # (`_symbol_not_in_the_file`), and that one reads the file.
-_INLINE_CALL = re.compile(r"\b\w+(?:\.\w+)+\(\s*[^)\n\s][^)\n]*\)")
+# …AND THE DOT WAS NEVER THE THING THAT MADE IT CODE. The pattern required a DOTTED name, so a bare
+# constructor call carried no dot and was invisible: cria's own reasoner wrote
+# `new CSVParser(new StringReader(line), ',', '\\'', true, true, true, null, null)` at
+# feed-pipeline-java x nemotron-elastic 0019 and again at 0060, `_invented_code_spans` scored 0, and
+# the directive shipped as dictated code with cria's authority behind it. The real constructor —
+# named by javac IN THAT SAME PROMPT — takes eight arguments, all chars first, and no Reader at all.
+# The coder adopted the shape and the run died on it (36 compile errors; repairing everything else
+# still leaves 28). Java, C++, Rust tuple structs and every `new Thing(...)` write calls that way.
+#
+# The ARGUMENTS are what can be invented, so that is the whole test: a name, and parens with
+# something in them. `_QUOTABLE_MIN` now bounds this branch as it already bounds the line branch,
+# which is the same "empty parens are a name" rule stated by length instead of by emptiness —
+# `m.group(1)`, `sys.exit(0)`, `O(n)` hand the coder nothing to paste. Measured over the captures:
+# dropping the dot finds 134,084 more spans, 99.8% of them real code; the floor costs 0.8% of
+# today's dotted hits, all of them names with a trivial argument.
+_INLINE_CALL = re.compile(r"\b\w+(?:\.\w+)*\(\s*[^)\n\s][^)\n]*\)")
 
 
 def _unquoted(s: str) -> str:
@@ -8207,7 +8222,8 @@ def _invented_code_spans(directive: str, evidence: str) -> int:
             if len(body) >= _QUOTABLE_MIN and _is_code_line(seg) and not seen(body):
                 n += 1
         for m in _INLINE_CALL.finditer(line):
-            if not seen(m.group(0)):
+            span = m.group(0)
+            if len(span) >= _QUOTABLE_MIN and not seen(span):
                 n += 1
     return n
 

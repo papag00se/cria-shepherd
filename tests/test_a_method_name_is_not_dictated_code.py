@@ -64,5 +64,36 @@ class TheWalkedDirectiveShipsTests(unittest.TestCase):
              "builder.setTrimTrailingWhiteSpace(true);", "builder.setSkipHeader(false);"])), 0)
 
 
+class AnUndottedCallIsStillCodeTests(unittest.TestCase):
+    """feed-pipeline-java x nemotron-elastic, calls 0019 and 0060 — the run this reopened.
+
+    cria's own reasoner authored a `CSVParser` constructor that does not exist, while javac's
+    rejection naming the real one sat in the same prompt. The pattern wanted a dot before the
+    parenthesis, `new CSVParser(...)` has none, so the count was 0 and the invention shipped."""
+
+    JAVAC = ("Importer.java:93: error: constructor CSVParser in class com.opencsv.CSVParser cannot "
+             "be applied to given types;\n  required: char,char,char,boolean,boolean,boolean,"
+             "CSVReaderNullFieldIndicator,Locale")
+
+    def test_the_invented_constructor_is_counted(self):
+        d = ("Change the line that creates the parser to CSVParser parser = new CSVParser(new "
+             "StringReader(line), ',', '\\'', true, true, true, null, null);")
+        self.assertEqual(_invented_code_spans(d, self.JAVAC), 1)
+
+    def test_quoting_the_coder_s_own_call_is_not_an_invention(self):
+        d = "The failing line is new CSVParser(new StringReader(line), ',') — the parser takes chars."
+        seen = self.JAVAC + "\nImporter.java:93: new CSVParser(new StringReader(line), ',')"
+        self.assertEqual(_invented_code_spans(d, seen), 0)
+
+    def test_a_span_too_short_to_paste_is_a_name(self):
+        """`O(n)`, `sys.exit(0)`, `m.group(1)` — the empty-parens rule, stated by length.
+
+        The floor is what a long English `word(s)` would trip; measured over the captures that
+        shape is 0.06% of what dropping the dot finds, and its whole cost is one restater call that
+        is handed the directive and nothing else, so it can only say the same thing in words."""
+        d = "The loader is O(n) over each row; m.group(1) is the sku and it ends in sys.exit(0)."
+        self.assertEqual(_invented_code_spans(d, self.JAVAC), 0)
+
+
 if __name__ == "__main__":
     unittest.main()
