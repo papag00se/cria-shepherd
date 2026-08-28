@@ -231,7 +231,13 @@ def score_of(r: dict | None) -> str:
     no cell occupied. Reading down a column for a task, or across for a model, is what these grids
     are for — and that reading wants the colour where the evidence is."""
     v = pct(r)
-    return "·" if v is None else f"{_badge(v)} {v:.0f}%"
+    if v is not None:
+        return f"{_badge(v)} {v:.0f}%"
+    # UNKNOWN IS NOT ABSENT (#11b). `·` used to mean both "never ran" and "ran, not yet judged", and
+    # the second is a cell with a workspace, a capture and evidence on disk — the only thing missing
+    # is me. Reading it as empty also let the row average quietly skip it: three unjudged cells took
+    # nemotron's level-5 total from 46% to 77%, upward, by removing its worst three.
+    return "?" if r else "·"
 
 
 def _n(r: dict | None, key: str) -> str:
@@ -278,13 +284,29 @@ def _overall_pct(cs: list[dict]) -> float | None:
     checks-attempted, so a task carrying six checks weighs more than one carrying three — that is
     the point of letting check counts differ. A JUDGED cell is a 0-100 verdict on the whole cell, so
     those get one vote each."""
-    if any(judged(c) for c in cs):
-        # A usefulness judgement is about the WHOLE cell, not about a count of checks, so cells get
-        # one vote each. Mixed sets average what each cell reports — marked per cell by score_of.
-        vals = [v for v in (pct(c) for c in cs) if v is not None]
-        return sum(vals) / len(vals) if vals else None
-    total = sum(float(c.get("max_score") or 0) for c in cs)
-    return 100.0 * sum(float(c.get("score") or 0) for c in cs) / total if total else None
+    vals = [v for v in (pct(c) for c in cs) if v is not None]
+    return sum(vals) / len(vals) if vals else None
+
+
+def _pending(cs: list[dict]) -> int:
+    """Cells here that RAN and have no verdict yet. The average cannot speak for them."""
+    return sum(1 for c in cs if c and pct(c) is None)
+
+
+def _pct_str(cs: list[dict]) -> str:
+    """A set of cells as one number — with the count it is actually over, when that is not all of them.
+
+    AN AVERAGE OVER PART OF A ROW MAY NOT WEAR THE ROW'S NAME. Judging lags running, so a row is
+    routinely part-judged, and averaging only what is judged moves the number by whichever cells
+    happen to be done. Measured the night the strict fallback was removed: three unjudged cells took
+    nemotron's level-5 total from 46% to 77% and the rung's heading from 79% to 88%, upward, purely
+    by dropping its three worst. `77% (3/6)` says what it is; `77%` is a false fact (#5b)."""
+    v = _overall_pct(cs)
+    if v is None:
+        return "—"
+    ran = [c for c in cs if c]
+    got = len(ran) - _pending(ran)
+    return f"{v:.0f}%" if got == len(ran) else f"{v:.0f}% ({got}/{len(ran)})"
 
 
 def _overall_delta(rs: list[dict], arm: str, model: str, cells: list[dict | None]) -> str:
@@ -355,7 +377,7 @@ def level_cell(rs: list[dict], level: int, model: str, task: str) -> dict | None
     return None
 
 
-def _level_pct(rs: list[dict], level: int) -> float | None:
+def _level_pct(rs: list[dict], level: int) -> str | None:
     """The rung's own headline: every cell it ran, pooled.
 
     Checks-passed over checks-attempted across the whole grid, the same measure `total` uses per
@@ -363,7 +385,7 @@ def _level_pct(rs: list[dict], level: int) -> float | None:
     ran one would otherwise weigh those equally. Returns None while the rung has no cells, so the
     heading can stay silent rather than print 0%."""
     have = [c for m in MODELS for t in TASKS if (c := level_cell(rs, level, m, t))]
-    return _overall_pct(have) if have else None
+    return _pct_str(have) if have else None
 
 
 def _level_grid(rs: list[dict], level: int) -> list[str]:
@@ -390,8 +412,7 @@ def _level_grid(rs: list[dict], level: int) -> list[str]:
         if not have:
             out.append(f"| {m} | {got} | · | — | — |")
             continue
-        overall = _overall_pct(have) or 0.0
-        out.append(f"| {m} | {got} | {overall:.0f}% "
+        out.append(f"| {m} | {got} | {_pct_str(have)} "
                    f"| {_avg(have, 'wall_seconds', 1 / 60)} | {_avg(have, 'calls')} |")
     return out
 
@@ -412,9 +433,9 @@ def _arm_grid(rs: list[dict], arm: str) -> list[str]:
         # the point of letting check counts differ.
         overall = _overall_pct(have) or 0.0
         ranked.append((overall, -sum(float(c.get("wall_seconds") or 0) for c in have),
-                       m, cells, have))
+                       m, cells, have))  # rank by what IS judged; the cell prints its own state
     started_at = cycle_start(rs, arm)
-    for overall, _t, m, cells, have in sorted(ranked, key=lambda x: (-x[0], -x[1])):
+    for _rank, _t, m, cells, have in sorted(ranked, key=lambda x: (-x[0], -x[1])):
         # …WITH THE MOVEMENT SINCE THE PREVIOUS RUN OF THIS CELL, in percentage points, matching the
         # unit the cell is already written in.
         #
@@ -432,7 +453,7 @@ def _arm_grid(rs: list[dict], arm: str) -> list[str]:
         got = " | ".join(_with_delta(c, tk) for c, tk in zip(cells, TASKS))
         tok = [c["avg_tok_s"] for c in have if c.get("avg_tok_s")]
         rate = f"{sum(tok) / len(tok):.1f}" if tok else "—"
-        out.append(f"| {m} | {got} | {overall:.0f}%"
+        out.append(f"| {m} | {got} | {_pct_str(have)}"
                    f"{_overall_delta(rs, arm, m, cells)} | {rate} "
                    f"| {_avg(have, 'wall_seconds', 1 / 60)} | {_avg(have, 'calls')} |")
     if len(out) == 2:
@@ -536,13 +557,13 @@ def report(rs: list[dict], now: float | None = None) -> str:
     for _lvl in range(0, 6):
         _pct = _level_pct(rs, _lvl)
         _hd = f"### Level {_lvl} — {LEVEL_NAMES[_lvl]}"
-        out += [f"{_hd} — {_pct:.0f}%" if _pct is not None else _hd, ""]
+        out += [f"{_hd} — {_pct}" if _pct else _hd, ""]
         out += _level_grid(rs, _lvl)
         out += [""]
     out += ["",
-            "Every number is a judgement of how much of the task was actually delivered. A cell "
-            "that ran but has not been judged reads `·`, the same as one that never ran — there is "
-            "no strict all-or-nothing score behind it any more.", ""]
+            "Every number is a judgement of how much of the task was actually delivered. `?` = the "
+            "cell RAN and is waiting on a verdict; `·` = it never ran. A total reading `77% (3/6)` "
+            "is an average over the judged cells only and cannot speak for the rest of the row.", ""]
     # TABLES ONLY (operator, 2026-08-24): "I really don't need that document to have anything
     # else in it but the tables. I look at nothing else." Prose lives in battery-history.md, which
     # nothing regenerates, so a finding can never be destroyed by a --write either.

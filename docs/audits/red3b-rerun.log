@@ -19,3 +19,40 @@ refreshed /home/jesse/src/cria-shepherd/docs/audits/regression-report.md
 ===== END shipping-rates-rb nemotron-elastic 23:10:22
 ===== BEGIN cart-billing-go nemotron-elastic 23:10:22
 [sampling] nemotron-elastic: coder={'temperature': 0.6, 'top_p': 0.95}  reasoner={'temperature': 0.6, 'top_p': 0.95}  classifier={'temperature': 0.0}  compactor={'temperature': 0.0}
+[gate] 30min  asked -> /home/jesse/src/cria-shepherd/suite/results/gates/cart-billing-go_nemotron-elastic_codex_poff_1787897422.030min.md
+[gate] 30min  floor=2  judged=0
+{
+ "run_id": "cart-billing-go_nemotron-elastic_codex_poff_1787897422",
+ "terminal": "behind-30min",
+ "success": false,
+ "score": 1.0,
+ "wall_seconds": 1876.4,
+ "calls": 57,
+ "avg_tok_s": 125.1
+}
+[usefulness] evidence frozen -> /home/jesse/.cria/suite/_usefulness_evidence/cart-billing-go_nemotron-elastic_codex_poff_1787897422.txt
+refreshed /home/jesse/src/cria-shepherd/docs/audits/regression-report.md
+[grid] refreshed docs/audits/regression-report.md
+[battery] refreshed docs/audits/battery-report.md
+[arm] [engagement] level = 5  (was 5)
+===== END cart-billing-go nemotron-elastic 23:41:52
+===== BEGIN feed-pipeline-java nemotron-elastic 23:41:52
+[sampling] nemotron-elastic: coder={'temperature': 0.6, 'top_p': 0.95}  reasoner={'temperature': 0.6, 'top_p': 0.95}  classifier={'temperature': 0.0}  compactor={'temperature': 0.0}
+[gate] 30min  asked -> /home/jesse/src/cria-shepherd/suite/results/gates/feed-pipeline-java_nemotron-elastic_codex_poff_1787899312.030min.md
+[gate] 30min  floor=2  judged=1
+{
+ "run_id": "feed-pipeline-java_nemotron-elastic_codex_poff_1787899312",
+ "terminal": "behind-30min",
+ "success": false,
+ "score": 1.0,
+ "wall_seconds": 1867.4,
+ "calls": 108,
+ "avg_tok_s": 122.3
+}
+[usefulness] evidence frozen -> /home/jesse/.cria/suite/_usefulness_evidence/feed-pipeline-java_nemotron-elastic_codex_poff_1787899312.txt
+refreshed /home/jesse/src/cria-shepherd/docs/audits/regression-report.md
+[grid] refreshed docs/audits/regression-report.md
+[battery] refreshed docs/audits/battery-report.md
+[arm] [engagement] level = 5  (was 5)
+===== END feed-pipeline-java nemotron-elastic 00:13:27
+===== BATCH DONE 00:13:27

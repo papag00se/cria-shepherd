@@ -22,7 +22,11 @@ import battery_status as bs  # noqa: E402
 
 
 def row(model: str, task: str, score: float, max_score: float = 5.0) -> dict:
+    # The cell's number is the JUDGEMENT — the strict all-or-nothing score was removed on
+    # 2026-08-27, so a fixture that states only `score` describes a cell the grid now reads as
+    # unjudged. These tests are about the DELTA, so they state the quantity the grid states.
     return {"model": model, "task": task, "score": score, "max_score": max_score,
+            "usefulness": 100.0 * score / max_score,
             "note": f"{bs.NOTE_PREFIX} CRIA {model} deadbee p4", "capture_dir": "/tmp/x"}
 
 
@@ -63,12 +67,25 @@ class TotalColumnCarriesItsDelta(unittest.TestCase):
         line = next(l for l in bs._arm_grid(rs, "CRIA") if "gemma4" in l)
         self.assertIn("100% (0)", line)
 
-    def test_headline_still_weighs_by_checks_not_by_cell(self):
-        """The total was checks-passed over checks-attempted before this change and still is: a
-        4/4 task and a 0/8 task average to 33%, never to 50%."""
+    def test_each_cell_gets_one_vote(self):
+        """It used to weigh checks-passed over checks-attempted, so a 4/4 task and a 0/8 task
+        averaged to 33% — the task carrying more checks counted for more. That weighting belonged to
+        the strict all-or-nothing score, which was removed on 2026-08-27. A judgement is a verdict on
+        the WHOLE cell, and a task does not matter more because its verifier happens to be split into
+        more pieces. 100 and 0 average to 50."""
         rs = [row("gemma4", "orders-api-py", 4.0, 4.0), row("gemma4", "rust-toml-cli", 0.0, 8.0)]
         line = next(l for l in bs._arm_grid(rs, "CRIA") if "gemma4" in l)
-        self.assertIn("33%", line)
+        self.assertIn("50%", line)
+
+    def test_a_part_judged_row_says_how_many_it_speaks_for(self):
+        """An average over the judged cells only may not wear the row's name: three unjudged cells
+        took nemotron's level-5 total from 46% to 77%, upward, by dropping its three worst."""
+        rs = [row("gemma4", "orders-api-py", 4.0, 4.0)]
+        rs.append({"model": "gemma4", "task": "rust-toml-cli", "score": 0.0, "max_score": 4.0,
+                   "note": f"{bs.NOTE_PREFIX} CRIA gemma4 deadbee p4", "capture_dir": "/tmp/x"})
+        line = next(l for l in bs._arm_grid(rs, "CRIA") if "gemma4" in l)
+        self.assertIn("(1/2)", line)
+        self.assertIn("?", line, "the cell that ran but has no verdict is not `·`")
 
 
 if __name__ == "__main__":

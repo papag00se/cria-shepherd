@@ -1,6 +1,6 @@
 # Battery — the engagement ladder
 
-**Last updated 2026-08-27 23:10** — newest row `shipping-rates-rb_nemotron-elastic_codex_poff_1787895558`, scored 2026-08-27 23:10.
+**Last updated 2026-08-28 07:54** — newest row `feed-pipeline-java_nemotron-elastic_codex_poff_1787899312`, scored 2026-08-28 00:13.
 
 Tables only. Findings, walks and the retired two-arm campaign: [`battery-history.md`](battery-history.md).
 Per-cell judging: [`ladder-progress.md`](ladder-progress.md). Status: `python3 suite/engagement_status.py`.
@@ -52,15 +52,15 @@ Per-cell judging: [`ladder-progress.md`](ladder-progress.md). Status: `python3 s
 | ternary-bonsai | 🟢 100% | 🟢 97% | 🟡 64% | 🟡 80% | 🟡 76% | 🔴 16% | 72% | 45 | 82 |
 | nemotron-elastic | 🔴 26% | 🔴 28% | 🟠 40% | 🔴 19% | 🟠 40% | 🔴 20% | 29% | 33 | 141 |
 
-### Level 5 — ASSISTS_ENABLED — steers, periodic gates, detectors, planner — 86%
+### Level 5 — ASSISTS_ENABLED — steers, periodic gates, detectors, planner — 88% (21/24)
 
 | model | ruby | go | python | java | node | rust | total | avg min | avg calls |
 |---|---|---|---|---|---|---|---:|---:|---:|
 | gemma4 | 🟡 73% | 🟢 89% | 🟢 92% | 🟢 100% | 🟢 91% | 🟢 100% | 91% | 20 | 74 |
 | qwen35 | 🟢 100% | 🟡 63% | 🟡 71% | 🟢 96% | 🟢 93% | 🟢 100% | 87% | 40 | 227 |
 | ternary-bonsai | 🟢 100% | 🟢 97% | 🟡 74% | 🟢 100% | 🟢 89% | 🟢 100% | 93% | 48 | 89 |
-| nemotron-elastic | · | · | 🟡 76% | 🔴 26% | 🟡 70% | 🟡 84% | 64% | 54 | 183 |
+| nemotron-elastic | ? | ? | 🟡 76% | ? | 🟡 70% | 🟡 84% | 77% (3/6) | 47 | 163 |
 
 
-Every number is a judgement of how much of the task was actually delivered. A cell that ran but has not been judged reads `·`, the same as one that never ran — there is no strict all-or-nothing score behind it any more.
+Every number is a judgement of how much of the task was actually delivered. `?` = the cell RAN and is waiting on a verdict; `·` = it never ran. A total reading `77% (3/6)` is an average over the judged cells only and cannot speak for the rest of the row.
 
