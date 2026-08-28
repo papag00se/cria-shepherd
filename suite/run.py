@@ -357,8 +357,14 @@ def deliverable_count(task_dir: Path) -> int:
 GATE_DIR = SUITE / "results" / "gates"
 # How long a gate waits for a verdict before giving up and letting the run continue. The judge is a
 # person reading a packet, not a service: they may be asleep. A gate nobody answers must never be the
-# reason a run dies (#13), so the timeout fails OPEN and says so on the row.
-GATE_WAIT_S = 900
+# reason a run dies (#13), so the timeout fails OPEN, says so on the row, and drops a marker the
+# batch reads.
+#
+# SHORT, BECAUSE FAILING OPEN MAKES A LONG WAIT PURE COST. It was 900s: three unanswered gates added
+# 45 minutes to a run nobody was gating, on top of the 45 minutes the missing gate itself cost. Two
+# minutes is long enough for a judge who is already watching the directory and cheap enough for one
+# who is not.
+GATE_WAIT_S = 120
 
 
 def ask_gate(run_id: str, minute: int, floor: int, ws: Path, task_dir: Path, prompt: str):
@@ -419,7 +425,15 @@ def ask_gate(run_id: str, minute: int, floor: int, ws: Path, task_dir: Path, pro
                         return int(tok.strip())
                 return None
             time.sleep(5)
-        print(f"[gate] {minute}min  no verdict in {GATE_WAIT_S}s — continuing", flush=True)
+        # AN UNANSWERED GATE IS AN UNGATED RUN, and that is an instrument defect, not a hiccup. It
+        # fails OPEN because silence must never end a run (#13) — but silence must not be silent
+        # either: the row records `complete: null`, and this marker lets the batch stop instead of
+        # spending the next cell the same way. Six gates went unanswered on 2026-08-27 and two cells
+        # ran their full budget ungated before anyone noticed.
+        with (GATE_DIR / "UNANSWERED").open("a") as fh:
+            fh.write(f"{q.name}\n")
+        print(f"[gate] {minute}min  NO VERDICT in {GATE_WAIT_S}s — the run continues UNGATED. "
+              f"Answer it in {q} and the next cell will run gated.", flush=True)
         return None
     except Exception:  # noqa: BLE001
         return None
