@@ -718,7 +718,7 @@ def main() -> None:
                       ("run_id", "terminal", "success", "score", "wall_seconds",
                        "calls", "avg_tok_s")}, indent=1))
     _freeze_usefulness_evidence(row)
-    _refresh_grid()
+    _refresh_grid(row)
 
 
 def _freeze_usefulness_evidence(row: dict) -> None:
@@ -747,7 +747,7 @@ def _freeze_usefulness_evidence(row: dict) -> None:
         print(f"[usefulness] could not freeze evidence: {e}", flush=True)
 
 
-def _refresh_grid() -> None:
+def _refresh_grid(row: dict | None = None) -> None:
     """Rewrite the operator grid from results.jsonl, here, where the row was just appended.
 
     The grid is THE operator view and the standing rule is to refresh it after every run — but it
@@ -774,6 +774,19 @@ def _refresh_grid() -> None:
         if rs := battery_status.rows():
             battery_status.write_report(rs)
             print("[battery] refreshed docs/audits/battery-report.md")
+        # A ROW THE GRID CANNOT SEE MUST SAY SO. `battery_status.rows()` keeps only rows whose note
+        # starts with a counted prefix, and `cell()` then matches an arm token inside it — so a run
+        # launched with free text in --note completes, gets judged, and is silently absent from the
+        # operator's only view. Measured 2026-08-28: two nemotron cells were re-run with
+        # --note "re-run after the invented-call and read-window fixes", scored 59 and 29, and the
+        # grid went on showing the 8 and 24 they replaced until someone asked why. Nothing is
+        # rejected here — a deliberate one-off run is legitimate — but it is named (#3 is about
+        # noise, not about hiding a fact the operator is about to act on).
+        if row and not any(r.get("run_id") == row.get("run_id") for r in rs):
+            print(f"[battery] NOT COUNTED in the grid: note {row.get('note')!r} does not start with one "
+                  f"of {battery_status.COUNTED_PREFIXES}. A counted note looks like "
+                  f"'{battery_status.NOTE_PREFIX} L<level> <model> <commit> p<rev>' — "
+                  f"suite/battery_run.py composes it for you.")
     except Exception as e:  # noqa: BLE001
         print(f"[battery] refresh skipped: {type(e).__name__}: {e}")
 
