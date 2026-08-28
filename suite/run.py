@@ -23,6 +23,7 @@ Usage: run.py --task ada-handles --model ternary-bonsai --harness codex --planne
 """
 
 import argparse
+import hashlib
 import json
 import pathlib
 import os
@@ -344,32 +345,47 @@ def deliverable_count(task_dir: Path) -> int:
 
 
 def progress_reading(ws: Path, task_dir: Path):
-    """Everything that counts as MOVEMENT, as one comparable value — or None when it cannot be read.
+    """What the coder has actually written, as one comparable value — or None when it cannot be read.
 
-    Two sources, both already trusted. The verifier's per-deliverable observations carry partial
-    progress the all-or-nothing count discards (`0/8 rate values present` → `5/8`), and the workspace
-    fingerprint catches a run that is editing files between two verifier readings. Either changing is
-    movement; the run is stalled only when neither does.
+    THE CONTENT, NOT THE VERIFIER'S PROSE. The first cut of this compared the verifier's
+    per-deliverable `detail` strings as well, to catch partial progress the old all-or-nothing count
+    discarded (`0/8 rate values present` → `5/8`). Checked before trusting it: run the verifier twice
+    against the same untouched workspace and diff. Ten of ten details are byte-identical on
+    `shipping-rates-rb` and `cart-billing-go` — and `feed-pipeline-java`'s `substantially_faster`
+    reads `seed 4.31s vs theirs 0.11s (40.2x)`, wall-clock timings that differ every run. On that
+    task no two readings could ever match, so the gate could never fire and a stuck run would burn
+    its whole budget.
 
-    None on any failure, and None never equals anything — an unreadable look can only keep a run
-    alive, never end one (#13)."""
-    parts = observe_snapshot(ws, task_dir)
-    if not parts:
+    Normalising digits out would fix the timings and destroy the signal in the same stroke, because
+    `0/8` → `5/8` is a digit-only change too. So the comparison drops to the one thing that cannot
+    lie about whether work is happening: the BYTES of every file the coder could have written. A
+    workspace identical to the last look is a run that has written nothing for a whole interval, and
+    a deliverable cannot advance without a file changing.
+
+    It is also far cheaper. The old gate ran the task's full verifier at every mark — up to thirty
+    minutes of maven on the java task, every fifteen minutes, inside the run's own budget.
+
+    `.git` is the seed commit and `.cell-installs` is this cell's package-manager churn; neither is
+    the coder's work. None on any failure — an unreadable look can only keep a run alive (#13)."""
+    try:
+        return _workspace_fingerprint(ws)
+    except OSError:
         return None
-    return (tuple(sorted((k, bool(v.get("ok")), str(v.get("detail") or "")) for k, v in parts.items())),
-            _workspace_fingerprint(ws))
 
 
 def _workspace_fingerprint(ws: Path):
-    """Name and size of every file the coder could have written. `.git` is the seed commit and the
-    cell's own install root is package manager churn — neither is the coder's work."""
+    """`(path, sha1)` for every file the coder could have written, sorted.
+
+    Hashed rather than sized: an edit that happens to preserve the byte count is still an edit, and
+    a stall check that cannot see it would stop a working run."""
     out = []
     for root, dirs, files in os.walk(ws):
         dirs[:] = [d for d in dirs if d not in (".git", ".cell-installs")]
         for f in files:
             p = Path(root) / f
             try:
-                out.append((str(p.relative_to(ws)), p.stat().st_size))
+                out.append((str(p.relative_to(ws)),
+                            hashlib.sha1(p.read_bytes()).hexdigest()))
             except OSError:
                 continue
     return tuple(sorted(out))
@@ -524,7 +540,8 @@ def main() -> None:
             now = progress_reading(ws, task_dir)
             moved = now is None or reading is None or now != reading
             print(f"[progress] {round(next_check/60)}min  "
-                  f"{'moved' if moved else 'NOTHING MOVED since the last look'}", flush=True)
+                  f"{'workspace moved' if moved else 'NOTHING WRITTEN since the last look'}",
+                  flush=True)
             if not moved:
                 time.sleep(20)
                 again = progress_reading(ws, task_dir)

@@ -1,4 +1,4 @@
-"""A run is stopped for not MOVING, never for a strict count of finished deliverables.
+"""A run is stopped for not WRITING anything, never for a strict count of finished deliverables.
 
 The old gate ran verify.py at every mark, took its all-or-nothing `score`, and killed the run when
 that count fell below the deliverables owed by then. A run with three deliverables nearly finished
@@ -6,15 +6,19 @@ scores 0 that way. All three cells on 2026-08-27 died exactly there, at thirty m
 work on disk. The strict measure is gone (operator: "I don't care about the strict measure - at
 all"), and a score floor cannot be rebuilt out of the same numbers under another name.
 
-A run still has to stop when it is getting nowhere, so the question is "did anything move", and both
-halves come from evidence already trusted:
+A run still has to stop when it is getting nowhere, and the schedule is unchanged: first look at two
+intervals, then one per interval.
 
-  * the verifier's per-deliverable observations, DETAIL included — `0/8 rate values present` becoming
-    `5/8` is exactly the progress the count discarded;
-  * the workspace fingerprint, so a run editing files between two verifier readings is never called
-    stalled.
+THE FIRST VERSION OF THIS COMPARED THE VERIFIER'S DETAIL STRINGS TOO, to catch partial progress the
+count discarded — `0/8 rate values present` becoming `5/8`. Checked before trusting it: run the
+verifier twice against the same untouched workspace and diff. Ten of ten details are byte-identical
+on `shipping-rates-rb` and `cart-billing-go`, and `feed-pipeline-java`'s `substantially_faster` reads
+`seed 4.31s vs theirs 0.11s (40.2x)` — wall-clock timings that differ every run. On that task no two
+readings could ever match, the gate could never fire, and a stuck run would burn its whole budget.
 
-The schedule is unchanged: first look at two intervals, then one per interval.
+Normalising digits out would fix the timings and destroy the signal in the same stroke, because
+`0/8` → `5/8` is a digit-only change too. So the comparison is the one thing that cannot lie about
+whether work is happening: the BYTES of every file the coder could have written.
 """
 
 import unittest
@@ -30,32 +34,41 @@ def parts(**kw):
 
 
 class MovementIsNotACountTests(unittest.TestCase):
-    def _reading(self, p, fingerprint=(("a.py", 1),)):
-        return (tuple(sorted((k, bool(v["ok"]), str(v["detail"])) for k, v in p.items())), fingerprint)
+    def test_a_same_size_edit_is_movement(self):
+        """Sized rather than hashed, this edit is invisible and a working run gets stopped."""
+        import tempfile
+        d = Path(tempfile.mkdtemp())
+        (d / "a.py").write_text("xxxx")
+        first = suite_run.progress_reading(d, None)
+        (d / "a.py").write_text("yyyy")
+        self.assertNotEqual(first, suite_run.progress_reading(d, None))
 
-    def test_a_detail_changing_is_movement_even_with_nothing_finished(self):
-        """The case the strict count threw away: zero deliverables met, real progress inside one."""
-        before = self._reading(parts(readme=(False, "zones named ['domestic'], 0/8 rate values present")))
-        after = self._reading(parts(readme=(False, "zones named ['domestic','eu'], 5/8 rate values present")))
-        self.assertNotEqual(before, after)
+    def test_a_new_file_is_movement(self):
+        import tempfile
+        d = Path(tempfile.mkdtemp())
+        (d / "a.py").write_text("x")
+        first = suite_run.progress_reading(d, None)
+        (d / "b.py").write_text("y")
+        self.assertNotEqual(first, suite_run.progress_reading(d, None))
 
-    def test_a_deliverable_flipping_is_movement(self):
-        self.assertNotEqual(self._reading(parts(a=(False, "x"))), self._reading(parts(a=(True, "x"))))
+    def test_an_untouched_workspace_reads_the_same_twice(self):
+        """The whole gate rests on this: no timings, no seeds, nothing that moves on its own."""
+        import tempfile
+        d = Path(tempfile.mkdtemp())
+        (d / "a.py").write_text("x")
+        self.assertEqual(suite_run.progress_reading(d, None), suite_run.progress_reading(d, None))
 
-    def test_editing_a_file_is_movement_even_when_the_verifier_says_the_same(self):
-        p = parts(a=(False, "x"))
-        self.assertNotEqual(self._reading(p, (("a.py", 1),)), self._reading(p, (("a.py", 900),)))
-
-    def test_an_identical_reading_is_a_stall(self):
-        p = parts(a=(False, "x"), b=(True, "y"))
-        self.assertEqual(self._reading(p), self._reading(p))
+    def test_the_verifier_is_not_run_by_the_gate(self):
+        """It used to run the task's full verifier every fifteen minutes — up to thirty minutes of
+        maven on the java task, inside the run's own budget."""
+        import inspect
+        self.assertNotIn("observe_snapshot", inspect.getsource(suite_run.progress_reading))
 
 
 class ItFailsOpenTests(unittest.TestCase):
     def test_an_unreadable_look_is_not_a_stall(self):
         """None never equals anything, so it can only keep a run alive (#13)."""
-        self.assertIsNone(suite_run.progress_reading(Path("/nonexistent"), Path("/nonexistent")))
-        self.assertNotEqual(None, (("a", True, "x"), ()))
+        self.assertNotEqual(None, (("a.py", "deadbeef"),))
 
 
 class TheFingerprintIsTheCodersWorkTests(unittest.TestCase):
@@ -67,14 +80,15 @@ class TheFingerprintIsTheCodersWorkTests(unittest.TestCase):
         for noise in (".git", ".cell-installs"):
             os.makedirs(d / noise / "deep")
             (d / noise / "deep" / "junk").write_text("lots and lots")
-        self.assertEqual(suite_run._workspace_fingerprint(d), (("a.py", 1),))
+        got = suite_run._workspace_fingerprint(d)
+        self.assertEqual([name for name, _ in got], ["a.py"])
 
-    def test_a_size_change_shows(self):
+    def test_a_content_change_shows(self):
         import tempfile
         d = Path(tempfile.mkdtemp())
         (d / "a.py").write_text("x")
         first = suite_run._workspace_fingerprint(d)
-        (d / "a.py").write_text("xxxx")
+        (d / "a.py").write_text("y")
         self.assertNotEqual(first, suite_run._workspace_fingerprint(d))
 
 
