@@ -199,6 +199,54 @@ def _user_install_roots() -> dict:
     return roots
 
 
+def _isolated_installs(ws) -> dict:
+    """Environment that keeps this cell's package installs INSIDE its own workspace.
+
+    NO CELL MAY AFFECT ANOTHER CELL, and for five days they did. `user_install_listing` was built to
+    make contamination visible rather than to prevent it — its own words: "Nothing is prevented or
+    cleaned here — a leak that is visible can be reasoned about". That fails in one specific way: the
+    row records the DELTA a run creates, so the run that installs is visible and every run that
+    INHERITS is silent. Five rows in the whole campaign recorded a leak; every later cell on the box
+    read those packages and reported nothing.
+
+    Measured, and it decided cells. `gem:countries-8.1.0` has been on this box since 2026-08-22 and
+    `gem:iso_country_codes-0.7.8` since 2026-08-24 13:30, left by one ruby cell ninety minutes before
+    another ruby cell went looking. Walked: the first run searched for "country", found nothing,
+    fell back to a hardcoded list and banked its other deliverables (85); the second searched for
+    "countries", found an installed gem nobody in that run had installed, and spent 277 calls
+    interrogating it (28). By the time the ternary-bonsai ruby cells ran, seven gems left by four
+    earlier cells were discoverable by `gem list`.
+
+    The direction is one-way — installs accumulate, so a later cell can find more than an earlier one
+    and never less. That is why a batch comparison drifts one way and a repeat of a single cell does
+    not.
+
+    Every root here is one `user_install_listing` already probes, so the tripwire keeps working and
+    now measures a run against its own empty slate. The shared DOWNLOAD caches are left alone
+    deliberately: a cached artifact is not discoverable by name, and taking them away would make
+    every run re-fetch the world inside a 30-minute budget, which changes what the suite measures
+    for a reason unrelated to isolation."""
+    root = Path(ws) / ".cell-installs"
+    return {
+        # THE USER-LEVEL ROOT ITSELF. `gem install --user-install` ignores GEM_HOME and writes to
+        # `Gem.user_dir`, which is derived from XDG_DATA_HOME — and `--user-install` is exactly the
+        # command that leaked `iso_country_codes` onto this box. Verified: with XDG_DATA_HOME set,
+        # `Gem.user_dir` moves and `--user-install` lands inside the cell.
+        "XDG_DATA_HOME": str(root / "xdg-data"),
+        "XDG_CACHE_HOME": str(root / "xdg-cache"),
+        # ruby: `gem install` and `bundle` honour these.
+        "GEM_HOME": str(root / "gem"),
+        "GEM_PATH": str(root / "gem"),
+        # python: `pip install --user` and `site.getusersitepackages()`.
+        "PYTHONUSERBASE": str(root / "py"),
+        # node: `npm install -g` and `npm root -g`.
+        "npm_config_prefix": str(root / "npm"),
+        # go and rust install binaries here; the module/registry caches stay shared.
+        "GOBIN": str(root / "go" / "bin"),
+        "CARGO_INSTALL_ROOT": str(root / "cargo"),
+    }
+
+
 def user_install_listing() -> set:
     """`{"<ecosystem>:<name>"}` for everything currently installed at user level, across ecosystems.
 
@@ -398,7 +446,7 @@ def main() -> None:
     before_sessions = set(p.name for p in CALLS_DIR.glob("2*"))
     installs_before = user_install_listing()
 
-    env = dict(os.environ, PATH=f"{NODE_PATH}:{os.environ['PATH']}")
+    env = dict(os.environ, PATH=f"{NODE_PATH}:{os.environ['PATH']}", **_isolated_installs(ws))
     t0 = time.time()
     with open(log_path, "w") as lf:
         # stdin MUST be closed explicitly: `codex exec` reads stdin to EOF as "additional input"
