@@ -864,12 +864,43 @@ def _read_command(args: dict) -> str | None:
     # read". 420 renderings of the version without it. The shell running this knows the number, the
     # same way `_list_command` already fills its entry count, so cria says it rather than making the
     # coder discover it.
+    # …AND THE WINDOW IT NAMES HAS TO FIT. The first window was the literal `end_line=200`, a
+    # constant with no relationship to the file it was said about, and cria refuses a RANGE over the
+    # same byte limit — so on a file with wide lines it recommended a read it then denied. Measured
+    # on feed-pipeline-java x nemotron-elastic 0041/0042: cria said `start_line=1 end_line=200`, the
+    # coder sent exactly that, lines 1-200 are 9,457 bytes against READ_INLINE_MAX, and the window
+    # was refused as too large. The coder never asked for a big window again — it worked from 5-line
+    # grep results for the next 66 calls, on the file it had just been told to rewrite whole.
+    #
+    # EXACT, NOT PROPORTIONAL. The sibling for a spilled document (`spill_extent`) estimates the fit
+    # from an average line width because it holds the bytes and not the file; here the shell IS
+    # walking the file, so it can carry a running total and name the largest prefix that provably
+    # fits. Same one pass that already produces the line count. `LC_ALL=C` makes `length` bytes
+    # rather than characters, because the limit is bytes.
+    #
+    # AND IT COUNTS THE BYTES CRIA WILL RETURN, NOT THE ONES ON DISK. `_ranged_read` NUMBERS its
+    # output (`printf "%d: %s\n"`) and then sizes THAT against the same limit, so a window measured
+    # against the raw file overshoots by the width of every line number it is about to add — a
+    # 147-line window over 8,967 bytes of source comes back as 9,702 and is refused. That is the
+    # same defect as the constant 200, one layer down: a promise made about a different artifact
+    # than the one the promise is checked against (#12). The `length(NR) + 2` below IS the prefix,
+    # and it is exact because this clause only ever offers a window starting at line 1.
+    #
+    # AND IT ABSTAINS. A file whose FIRST line is over the limit has no window to offer, so the
+    # clause is dropped rather than filled with a number that would be refused (#11b) — the grep
+    # route beside it is still true.
     text = denial.mark(prompts.render("large_read_steer", path=str(path)))
-    head, _, tail = text.partition("{{LINES}}")
-    # Two quoted literals with the shell's own substitution between them — the same shape
-    # `_list_command` uses for its entry count.
-    steer = (f"printf '%s%s%s' {_qbash(head)} "
-             f'"$(wc -l < {q} 2>/dev/null | tr -cd 0-9)" {_qbash(tail)}')
+    head, _, rest = text.partition("{{LINES}}")
+    mid, _, tail = rest.partition("{{WINDOW}}")
+    win_head, _, win_tail = prompts.render("large_read_window").partition("{{FITS}}")
+    # Passed through the environment, not `awk -v`, which would process backslash escapes in a path.
+    prog = ('{t += length(NR) + 2 + length($0) + 1; if (t <= %d) f = NR}\n'
+            'END {w = ""; if (f > 0) w = ENVIRON["CRIA_WH"] f ENVIRON["CRIA_WT"];\n'
+            '     printf "%%s%%s%%s%%s%%s", ENVIRON["CRIA_H"], NR, ENVIRON["CRIA_M"], w,\n'
+            '                              ENVIRON["CRIA_T"]}') % READ_INLINE_MAX
+    steer = (f"CRIA_H={_qbash(head)} CRIA_M={_qbash(mid)} CRIA_T={_qbash(tail)} "
+             f"CRIA_WH={_qbash(win_head)} CRIA_WT={_qbash(win_tail)} "
+             f"LC_ALL=C awk {_qbash(prog)} {q}")
     return (f"{_read_failure_branches(q, str(path))}"
             f'if [ "$(wc -c < {q} 2>/dev/null || echo 0)" -gt {READ_INLINE_MAX} ]; '
             f"then {steer}; else cat {q}; fi")
