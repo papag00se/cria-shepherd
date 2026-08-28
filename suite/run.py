@@ -191,6 +191,34 @@ def _user_install_roots() -> dict:
     return roots
 
 
+def _ruby_keep_path() -> list:
+    """The gem directories a cell must still SEE: Ruby's own, and nothing anyone installed.
+
+    GEM_PATH REPLACES THE SEARCH PATH, IT DOES NOT EXTEND IT. Pointed at an empty cell directory it
+    hides `minitest` and `rake`, which ship with Ruby and live in `/usr/lib/ruby/gems`. Walked on
+    shipping-rates-rb x nemotron-elastic the night isolation landed: the run spent 24 of its 60 calls
+    trying five ways to load minitest, cria's check block carried `cannot load such file --
+    minitest/autorun` in 51 of 61 prompts, and the one-character bug the task opens with was never
+    touched. The cell scored 8 — a measurement of this bug, not of the model.
+
+    Asked of Ruby, never spelled out here (#20): `Gem.default_path` is the system search path, and
+    the two entries to drop are `Gem.default_dir` — where a plain `gem install` puts things, so the
+    `countries` and `rspec` somebody installed by hand — and `Gem.user_dir`, the leaked user root.
+    What is left is the distribution's own. Verified: minitest and rake visible, `countries`,
+    `iso_country_codes`, `eu_countries` and `rspec` all hidden, and an install still lands in the
+    cell.
+
+    Empty when Ruby is not installed or cannot answer, which leaves GEM_PATH as the cell alone — the
+    behaviour before this, and no worse for a box with no Ruby on it."""
+    try:
+        out = subprocess.run(
+            ["ruby", "-e", "print (Gem.default_path - [Gem.default_dir, Gem.user_dir]).join(File::PATH_SEPARATOR)"],
+            capture_output=True, text=True, timeout=30).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return []
+    return [d for d in out.split(os.pathsep) if d]
+
+
 def _isolated_installs(ws) -> dict:
     """Environment that keeps this cell's package installs INSIDE its own workspace.
 
@@ -226,9 +254,10 @@ def _isolated_installs(ws) -> dict:
         # `Gem.user_dir` moves and `--user-install` lands inside the cell.
         "XDG_DATA_HOME": str(root / "xdg-data"),
         "XDG_CACHE_HOME": str(root / "xdg-cache"),
-        # ruby: `gem install` and `bundle` honour these.
+        # ruby: `gem install` and `bundle` honour these. GEM_PATH is not a prefix — it REPLACES the
+        # search path — so it has to name Ruby's own gems too. See _ruby_keep_path.
         "GEM_HOME": str(root / "gem"),
-        "GEM_PATH": str(root / "gem"),
+        "GEM_PATH": os.pathsep.join([str(root / "gem"), *_ruby_keep_path()]),
         # python: `pip install --user` and `site.getusersitepackages()`.
         "PYTHONUSERBASE": str(root / "py"),
         # node: `npm install -g` and `npm root -g`.
