@@ -150,12 +150,35 @@ def recover(content: str, prior_msgs: list, rlog=None) -> str:
     """If ``content`` is a heredoc edit-FAIL fact-report, compose the one directive (keyed on the file's
     prior edit-steer count in ``prior_msgs``). Otherwise return it unchanged — non-edit-fail results
     (write refusals, real errors) pass straight through."""
-    if not content.startswith(EDITFAIL):
+    i = content.find(EDITFAIL)
+    if i < 0:
         return content
+    # FIND, NOT STARTSWITH — the same lookup :func:`summarize` has always used, for the same marker,
+    # in the same module. They disagreed, and that disagreement silently killed this function.
+    #
+    # `_strip_exec_envelope` was taught on 2026-08-26 to KEEP the harness's `Warning: truncated
+    # output (original token count: N)` line above the payload, so the coder is told the report is a
+    # piece. Correct, and it put one line in front of the marker — which is all it took: the guard
+    # here was positional, so every edit miss that came back with a cut warning skipped recovery and
+    # handed the coder 3,200 characters of base64 instead of "your copy first differs at LINE 53".
+    #
+    # Measured on shipping-rates-rb x nemotron-elastic 1787950133, found twice in one walk. At 0047
+    # and again at 0081 the coder read the warning as a fact about its OWN edit — 0086: "The previous
+    # edit we made was to add the require "countries" line but it got truncated." It then spent calls
+    # 0086, 0087, 0089 and 0090 re-reading the file to settle a question cria had already answered,
+    # and the blob rode every prompt from 0081 to 0091. The contrast is in the same run: at 0036 and
+    # 0085 there was no warning, `startswith` matched, and the directive landed.
+    #
+    # Whatever preceded the marker is kept in place — the warning is still true and still wanted; it
+    # simply belongs ABOVE the directive rather than in front of a prefix test.
+    head, rest = content[:i], content[i + len(EDITFAIL):]
     try:
-        fail = json.loads(base64.b64decode(content[len(EDITFAIL):].strip()).decode("utf-8"))
+        fail = json.loads(base64.b64decode(rest.strip()).decode("utf-8"))
     except (ValueError, json.JSONDecodeError):
-        return content
+        # A REPORT THAT WAS REALLY CUT STILL MUST NOT SHIP AS BASE64. Returning `content` unchanged
+        # is what leaked the blob for ten calls; the marker proves an edit_file failed, so cria can
+        # always say that much in words even when it can no longer say which line (#5, #5b).
+        return head + prompts.load("editfail_unreadable")
     prior = _prior_edit_steers(prior_msgs, fail.get("path") or "")
     # TELEMETRY (provenance audit 2026-08-04): the whole-file escalation had no event at all — its
     # window-fill cost on dense models (both gemma4 0/4s compacted mid-run under forced rewrites)
@@ -164,7 +187,7 @@ def recover(content: str, prior_msgs: list, rlog=None) -> str:
             and fail.get("mode") not in ("phantom", "would_break", "multi", "multi_flex")):
         rlog.emit("editrecovery.escalated", path=os.path.basename(fail.get("path") or ""),
                   fails=prior + 1)
-    return compose(fail, prior)
+    return head + compose(fail, prior)
 
 
 def summarize(content: str) -> str:
