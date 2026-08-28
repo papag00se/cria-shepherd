@@ -333,62 +333,98 @@ def collect_assists(t0: float, t1: float) -> dict:
     return {k: v for k, v in kinds.items() if not any(k.startswith(p) for p in plumbing)}
 
 
-def deliverable_count(task_dir: Path) -> int:
-    """How many things this task must produce — the task's own meta.toml is the authority, so the
-    milestone budget follows the task rather than a number hardcoded here."""
+def deliverable_names(task_dir: Path) -> list:
+    """The things this task must produce, in the task's own words — meta.toml is the authority.
+
+    The gate asks the judge how many of THESE are complete, so the list a run is paced against and
+    the list it is finally judged against are the same list, written by whoever wrote the task."""
     meta = tomllib.loads((task_dir / "meta.toml").read_text())
-    n = len(meta.get("deliverables") or [])
-    if n < 1:
+    names = [str(d) for d in (meta.get("deliverables") or [])]
+    if not names:
         raise RuntimeError(f"{task_dir.name}/meta.toml declares no deliverables — "
-                           "milestone pacing has nothing to pace against")
-    return n
+                           "pacing has nothing to pace against")
+    return names
 
 
-def progress_reading(ws: Path, task_dir: Path):
-    """What the coder has actually written, as one comparable value — or None when it cannot be read.
+def deliverable_count(task_dir: Path) -> int:
+    """How many things this task must produce, so the budget follows the task."""
+    return len(deliverable_names(task_dir))
 
-    THE CONTENT, NOT THE VERIFIER'S PROSE. The first cut of this compared the verifier's
-    per-deliverable `detail` strings as well, to catch partial progress the old all-or-nothing count
-    discarded (`0/8 rate values present` → `5/8`). Checked before trusting it: run the verifier twice
-    against the same untouched workspace and diff. Ten of ten details are byte-identical on
-    `shipping-rates-rb` and `cart-billing-go` — and `feed-pipeline-java`'s `substantially_faster`
-    reads `seed 4.31s vs theirs 0.11s (40.2x)`, wall-clock timings that differ every run. On that
-    task no two readings could ever match, so the gate could never fire and a stuck run would burn
-    its whole budget.
 
-    Normalising digits out would fix the timings and destroy the signal in the same stroke, because
-    `0/8` → `5/8` is a digit-only change too. So the comparison drops to the one thing that cannot
-    lie about whether work is happening: the BYTES of every file the coder could have written. A
-    workspace identical to the last look is a run that has written nothing for a whole interval, and
-    a deliverable cannot advance without a file changing.
+# Where a mid-run gate asks its question and waits for the answer. One file per gate, named for the
+# run and the minute, so a batch's pending questions are a directory listing and nothing is held in
+# anyone's head — the same shape `usefulness.pending` uses for the end-of-run judgement.
+GATE_DIR = SUITE / "results" / "gates"
+# How long a gate waits for a verdict before giving up and letting the run continue. The judge is a
+# person reading a packet, not a service: they may be asleep. A gate nobody answers must never be the
+# reason a run dies (#13), so the timeout fails OPEN and says so on the row.
+GATE_WAIT_S = 900
 
-    It is also far cheaper. The old gate ran the task's full verifier at every mark — up to thirty
-    minutes of maven on the java task, every fifteen minutes, inside the run's own budget.
 
-    `.git` is the seed commit and `.cell-installs` is this cell's package-manager churn; neither is
-    the coder's work. None on any failure — an unreadable look can only keep a run alive (#13)."""
+def ask_gate(run_id: str, minute: int, floor: int, ws: Path, task_dir: Path, prompt: str):
+    """Ask the judge how many deliverables are complete, and wait. Returns an int, or None.
+
+    THE JUDGE IS THE PERSON RUNNING THE CAMPAIGN, and always has been — every verdict in
+    `results.jsonl` was written by one reading an evidence packet. The old gate asked `verify.py`'s
+    all-or-nothing count instead, which says "not done" for work that is done and merely fails a
+    check on something incidental: a complete, correct, working CLI one directory too deep scored 0.
+    That count is gone; the question it asked is not.
+
+    So the gate writes the same kind of packet `usefulness.emit` writes — the task's own deliverable
+    list, the diff from the seed, and the verifier's per-deliverable observations as EVIDENCE rather
+    than as the verdict — and waits for a file holding one integer.
+
+    It does not pause the coder. The packet describes the workspace at the mark; the run carries on
+    while the question is open, so a slow answer costs the run nothing.
+
+    None when the answer does not arrive or does not parse, and None is the caller's cue to continue.
+    A judge who is asleep may not end a run."""
+    GATE_DIR.mkdir(parents=True, exist_ok=True)
+    q = GATE_DIR / f"{run_id}.{minute:03d}min.md"
+    a = GATE_DIR / f"{run_id}.{minute:03d}min.verdict"
+    snap = Path(tempfile.mkdtemp(prefix="gate-snap-", dir=RUNS_DIR))
     try:
-        return _workspace_fingerprint(ws)
-    except OSError:
+        sh("cp", "-r", str(ws), str(snap / "ws"), timeout=300)
+        parts = observe_snapshot(snap / "ws", task_dir)
+        diff = sh("git", "-C", str(snap / "ws"), "diff", "HEAD", timeout=120).stdout
+        names = deliverable_names(task_dir)
+        q.write_text("\n".join([
+            f"# GATE — {run_id} at {minute} minutes",
+            "",
+            f"**How many of these {len(names)} deliverables are COMPLETE?** Write the integer alone "
+            f"into `{a.name}` in this directory. The run continues while you decide; it is stopped "
+            f"only if your answer is below {floor}.",
+            "",
+            "Judge whether the work is DONE, not whether a check passes. A deliverable that works but "
+            "trips a check on something incidental is complete. A deliverable that is written but "
+            "cannot run is not.",
+            "",
+            "## The deliverables this task names",
+            *[f"{i+1}. {n}" for i, n in enumerate(names)],
+            "",
+            "## The task, as the coder received it",
+            prompt,
+            "",
+            "## What the repo's own verifier observes right now — EVIDENCE, not the verdict",
+            *[f"- [{'met' if v.get('ok') else 'NOT met'}] {k}: {v.get('detail')}" for k, v in parts.items()],
+            "",
+            "## Everything the coder has changed since the seed",
+            "```diff", diff, "```", ""]))
+        print(f"[gate] {minute}min  asked -> {q}", flush=True)
+        deadline = time.time() + GATE_WAIT_S
+        while time.time() < deadline:
+            if a.is_file():
+                for tok in a.read_text().split():
+                    if tok.strip().isdigit():
+                        return int(tok.strip())
+                return None
+            time.sleep(5)
+        print(f"[gate] {minute}min  no verdict in {GATE_WAIT_S}s — continuing", flush=True)
         return None
-
-
-def _workspace_fingerprint(ws: Path):
-    """`(path, sha1)` for every file the coder could have written, sorted.
-
-    Hashed rather than sized: an edit that happens to preserve the byte count is still an edit, and
-    a stall check that cannot see it would stop a working run."""
-    out = []
-    for root, dirs, files in os.walk(ws):
-        dirs[:] = [d for d in dirs if d not in (".git", ".cell-installs")]
-        for f in files:
-            p = Path(root) / f
-            try:
-                out.append((str(p.relative_to(ws)),
-                            hashlib.sha1(p.read_bytes()).hexdigest()))
-            except OSError:
-                continue
-    return tuple(sorted(out))
+    except Exception:  # noqa: BLE001
+        return None
+    finally:
+        sh("rm", "-rf", str(snap), timeout=120)
 
 
 def observe_snapshot(ws: Path, task_dir: Path) -> dict:
@@ -533,26 +569,19 @@ def main() -> None:
     # snapshot is taken while the coder may be mid-write). Unreadable answers fail OPEN toward
     # keeping the run alive (#13). The FIRST interval is never judged: it holds everything a run does
     # once, before anything can have moved twice.
-    reading, stalls = None, 0
     next_check = milestone_s * 2 if milestone_s else 0
+    gates = []
     while proc.poll() is None:
         if next_check and time.time() - t0 >= next_check:
-            now = progress_reading(ws, task_dir)
-            moved = now is None or reading is None or now != reading
-            print(f"[progress] {round(next_check/60)}min  "
-                  f"{'workspace moved' if moved else 'NOTHING WRITTEN since the last look'}",
-                  flush=True)
-            if not moved:
-                time.sleep(20)
-                again = progress_reading(ws, task_dir)
-                if again is not None and again == reading:
-                    terminal = f"stalled-{round(next_check/60)}min"
-                    print("[progress] confirmed — stopping", flush=True)
-                    stop_run()
-                    break
-                print("[progress] recheck moved — continuing", flush=True)
-                now = again if again is not None else reading
-            reading = now if now is not None else reading
+            minute = round(next_check / 60)
+            floor = int(round(next_check / milestone_s))      # 2 at the first look, then one more each
+            done = ask_gate(run_id, minute, floor, ws, task_dir, prompt)
+            gates.append({"at_minutes": minute, "floor": floor, "complete": done})
+            print(f"[gate] {minute}min  floor={floor}  judged={done}", flush=True)
+            if done is not None and done < floor:
+                terminal = f"behind-{minute}min"
+                stop_run()
+                break
             next_check += milestone_s
         if time.time() - t0 > wall:
             terminal = "budget-killed"
@@ -615,7 +644,7 @@ def main() -> None:
         "planner": args.planner, "note": args.note, "sampling": spec,
         **({"level": args.level} if args.level is not None else {}),
         "started": t0, "wall_seconds": round(t1 - t0, 1), "terminal": terminal,
-        "milestone_minutes": args.milestone_minutes or None,
+        "milestone_minutes": args.milestone_minutes or None, "gates": gates or None,
         "success": bool(verdict.get("success")), "score": verdict.get("score"),
         "max_score": verdict.get("max_score"), "verify": verdict.get("parts"),
         **capture,
