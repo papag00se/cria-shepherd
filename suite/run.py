@@ -392,7 +392,13 @@ def ask_gate(run_id: str, minute: int, floor: int, ws: Path, task_dir: Path, pro
     try:
         sh("cp", "-r", str(ws), str(snap / "ws"), timeout=300)
         parts = observe_snapshot(snap / "ws", task_dir)
-        diff = sh("git", "-C", str(snap / "ws"), "diff", "HEAD", timeout=120).stdout
+        # STAGE FIRST, so a NEW file is in the diff. `git diff HEAD` shows tracked changes only, and
+        # a run whose whole contribution is new files reads as having done nothing — which is a
+        # judgement the gate would then make on an empty page. Caught on the first real gate: the
+        # ruby run's diff was empty while a Gemfile and a vendor tree sat untracked beside it. Safe
+        # because this is a throwaway copy; the coder's own index is never touched.
+        sh("git", "-C", str(snap / "ws"), "add", "-A", timeout=120)
+        diff = sh("git", "-C", str(snap / "ws"), "diff", "--cached", "HEAD", timeout=120).stdout
         names = deliverable_names(task_dir)
         q.write_text("\n".join([
             f"# GATE — {run_id} at {minute} minutes",

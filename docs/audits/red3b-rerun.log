@@ -1,54 +1,21 @@
-===== BEGIN shipping-rates-rb nemotron-elastic 19:41:47
+===== BEGIN shipping-rates-rb nemotron-elastic 22:39:18
 [sampling] nemotron-elastic: coder={'temperature': 0.6, 'top_p': 0.95}  reasoner={'temperature': 0.6, 'top_p': 0.95}  classifier={'temperature': 0.0}  compactor={'temperature': 0.0}
-[gate] 30min  asked -> /home/jesse/src/cria-shepherd/suite/results/gates/shipping-rates-rb_nemotron-elastic_codex_poff_1787884907.030min.md
-[gate] 30min  no verdict in 900s — continuing
-[gate] 30min  floor=2  judged=None
-[gate] 45min  asked -> /home/jesse/src/cria-shepherd/suite/results/gates/shipping-rates-rb_nemotron-elastic_codex_poff_1787884907.045min.md
-[gate] 45min  no verdict in 900s — continuing
-[gate] 45min  floor=3  judged=None
-[gate] 60min  asked -> /home/jesse/src/cria-shepherd/suite/results/gates/shipping-rates-rb_nemotron-elastic_codex_poff_1787884907.060min.md
-[gate] 60min  no verdict in 900s — continuing
-[gate] 60min  floor=4  judged=None
+[gate] 30min  asked -> /home/jesse/src/cria-shepherd/suite/results/gates/shipping-rates-rb_nemotron-elastic_codex_poff_1787895558.030min.md
+[gate] 30min  floor=2  judged=0
 {
- "run_id": "shipping-rates-rb_nemotron-elastic_codex_poff_1787884907",
- "terminal": "budget-killed",
+ "run_id": "shipping-rates-rb_nemotron-elastic_codex_poff_1787895558",
+ "terminal": "behind-30min",
  "success": false,
  "score": 0.0,
- "wall_seconds": 4562.7,
- "calls": 61,
- "avg_tok_s": 134.9
+ "wall_seconds": 1850.4,
+ "calls": 60,
+ "avg_tok_s": 125.3
 }
-[usefulness] evidence frozen -> /home/jesse/.cria/suite/_usefulness_evidence/shipping-rates-rb_nemotron-elastic_codex_poff_1787884907.txt
+[usefulness] evidence frozen -> /home/jesse/.cria/suite/_usefulness_evidence/shipping-rates-rb_nemotron-elastic_codex_poff_1787895558.txt
 refreshed /home/jesse/src/cria-shepherd/docs/audits/regression-report.md
 [grid] refreshed docs/audits/regression-report.md
 [battery] refreshed docs/audits/battery-report.md
 [arm] [engagement] level = 5  (was 5)
-===== END shipping-rates-rb nemotron-elastic 20:58:06
-===== BEGIN cart-billing-go nemotron-elastic 20:58:06
-[sampling] nemotron-elastic: coder={'temperature': 0.6, 'top_p': 0.95}  reasoner={'temperature': 0.6, 'top_p': 0.95}  classifier={'temperature': 0.0}  compactor={'temperature': 0.0}
-[gate] 30min  asked -> /home/jesse/src/cria-shepherd/suite/results/gates/cart-billing-go_nemotron-elastic_codex_poff_1787889486.030min.md
-[gate] 30min  no verdict in 900s — continuing
-[gate] 30min  floor=2  judged=None
-[gate] 45min  asked -> /home/jesse/src/cria-shepherd/suite/results/gates/cart-billing-go_nemotron-elastic_codex_poff_1787889486.045min.md
-[gate] 45min  no verdict in 900s — continuing
-[gate] 45min  floor=3  judged=None
-[gate] 60min  asked -> /home/jesse/src/cria-shepherd/suite/results/gates/cart-billing-go_nemotron-elastic_codex_poff_1787889486.060min.md
-[gate] 60min  no verdict in 900s — continuing
-[gate] 60min  floor=4  judged=None
-{
- "run_id": "cart-billing-go_nemotron-elastic_codex_poff_1787889486",
- "terminal": "budget-killed",
- "success": false,
- "score": 1.0,
- "wall_seconds": 4551.2,
- "calls": 208,
- "avg_tok_s": 131.2
-}
-[usefulness] evidence frozen -> /home/jesse/.cria/suite/_usefulness_evidence/cart-billing-go_nemotron-elastic_codex_poff_1787889486.txt
-refreshed /home/jesse/src/cria-shepherd/docs/audits/regression-report.md
-[grid] refreshed docs/audits/regression-report.md
-[battery] refreshed docs/audits/battery-report.md
-[arm] [engagement] level = 5  (was 5)
-===== END cart-billing-go nemotron-elastic 22:14:09
-===== BEGIN feed-pipeline-java nemotron-elastic 22:14:09
+===== END shipping-rates-rb nemotron-elastic 23:10:22
+===== BEGIN cart-billing-go nemotron-elastic 23:10:22
 [sampling] nemotron-elastic: coder={'temperature': 0.6, 'top_p': 0.95}  reasoner={'temperature': 0.6, 'top_p': 0.95}  classifier={'temperature': 0.0}  compactor={'temperature': 0.0}
