@@ -2102,6 +2102,50 @@ def _briefing_denies_real_files(briefing: str, files_list: str) -> list[str]:
     return named
 
 
+# A briefing sentence that declares a name broken. The verbs are the ones a compiler uses and a
+# summarizer copies — the trigger is deliberately wide because the DECISION is not made here: a
+# symbol only survives to the correction if the checks' own output does not name it.
+# The window may NOT stop at a full stop: a qualified name has dots in it, and `[^.\n]` cut
+# `decimal.NewFromString` down to `decimal` — the guard then found nothing to say. Newline-bounded
+# and length-bounded instead, which is what "the rest of this sentence" actually means here.
+_BRIEFING_BROKEN = re.compile(
+    r"(?i)(?:undefined|not defined|does not exist|doesn'?t exist|cannot find|can'?t find|"
+    r"unknown|missing|no such|broken|invalid)\b[^\n]{0,120}", re.M)
+
+
+def _briefing_denies_working_symbols(briefing: str, findings: str) -> list:
+    """Symbols the briefing calls broken that the CHECKS never named — worst first, else [].
+
+    THE BRIEFING IS THE ONE INJECTED CHANNEL WITH NO FACTUAL GUARD ON IT. Every steer cria authors
+    runs a stack — `_prescribes_what_the_checks_reject`, `_symbol_not_in_the_file`,
+    `_invented_version`, `_blames_a_service_that_answered`. The compaction briefing is model-authored
+    text, injected verbatim, outranking the transcript and surviving every later fold, and it passes
+    through none of them.
+
+    Walked on cart-billing-go x nemotron-elastic, 2026-08-27. At call 0043 the model reached the
+    answer in its own words — *"decimal.NewDecimal is not a function; the package provides
+    NewFromString"* — and its edit failed to apply. cria compacted at 0044. The briefing it got back
+    listed `decimal.NewFromString`, the CORRECT name, among the undefined symbols, and told the coder
+    to *"replace decimal.NewDecimal with decimal.NewFromFloat64"*. The live compiler output in the
+    same prompt named three symbols and `NewFromString` was not one of them. cria injected that
+    briefing as ⟦ctx:continuation⟧ from 0046 to the end of the run, so for the last fifteen calls the
+    only mentions of the right answer were two lines calling it broken.
+
+    Exact, not judged: a symbol is only reported when the checks' own text does not contain it
+    anywhere. Silent with no check output — cria cannot contradict what it never ran (#11b) — and
+    silent on anything that is not symbol-shaped, which is `_looks_like_a_symbol`'s job and the same
+    test the prescribes guard uses."""
+    if not briefing or not (findings or "").strip():
+        return []
+    named = []
+    for span in _BRIEFING_BROKEN.finditer(briefing):
+        for tok in re.findall(r"[A-Za-z_][\w.:]*", span.group(0)):
+            t = tok.strip(".:")
+            if _looks_like_a_symbol(t) and t not in findings and t not in named:
+                named.append(t)
+    return named
+
+
 def _briefing_disk_truth(briefing: str, files_list: str, rlog=None) -> str:
     """The briefing, plus a ground-truth line when it denies a file cria can see. NEVER deletes.
 
@@ -2125,6 +2169,23 @@ def _briefing_disk_truth(briefing: str, files_list: str, rlog=None) -> str:
                   files=prompts.named_list(named))
     return briefing + "\n\n" + prompts.fill(
         prompts.load_map("briefing_checks")["files_exist"], files=", ".join(named))
+
+
+def _briefing_symbol_truth(briefing: str, findings: str, rlog=None) -> str:
+    """The briefing, plus a line naming the symbols it calls broken that the checks never did.
+
+    Sibling of :func:`_briefing_disk_truth`, same shape and for the same reason: cria states its
+    fact, the briefing keeps its words, and the reader is told which to trust. Deleting the sentence
+    would be a regex deciding which claims about a name are true, which is the mistake that function
+    already records making once."""
+    named = _briefing_denies_working_symbols(briefing, findings)
+    if not named:
+        return briefing
+    if rlog is not None:
+        rlog.emit("context.briefing_denies_symbols", steer="briefing-fix", level="warn",
+                  symbols=prompts.named_list(named))
+    return briefing + "\n\n" + prompts.fill(
+        prompts.load_map("briefing_checks")["symbols_fine"], symbols=", ".join(named))
 
 
 # Past this, a COMPOSED two-message prompt cannot be made to fit by the context floor: the floor's
@@ -3128,7 +3189,7 @@ class Loop:
             msgs,
             # Ground the reasoner's summary in cria's REAL last check state — so a summary that launders
             # an unverified 'tests pass' claim is overridden by what the checks actually reported.
-            lambda mm: _briefing_disk_truth(summarize(
+            lambda mm: _briefing_symbol_truth(_briefing_disk_truth(summarize(
                                  self._ctx.compactor_chat or self._ctx.reasoner_chat,
                                  self._ctx.compactor_role or self._ctx.reasoner_role,
                                  prompts.load("selfcompact_summary"),
@@ -3168,7 +3229,13 @@ class Loop:
                                      gate_age(sess)), rlog,
                                  phase="self-compact", max_tokens=ROLLUP_MAX_TOKENS),
                                  workspace_inventory(sess.workspace_root or "", flavor="coder"),
-                                 rlog) + _briefing_gate_ground_truth(sess),
+                                 rlog),
+                # …AND THE SAME QUESTION ABOUT SYMBOLS. The disk guard above catches a briefing that
+                # denies a FILE cria can see; this catches one that calls a NAME broken which the
+                # checks never named. Both are additive and both run before the gate state is
+                # appended, so the correction sits with the claim it corrects.
+                (getattr(sess, "last_gate_flag", "") or "").strip(), rlog)
+                + _briefing_gate_ground_truth(sess),
             sess.compact_state, trigger_tokens=self._ctx.trigger_compaction, force=force,
             # The task is a foldable history message in the plan frame (only the STEP is in the system
             # message). Pin it as a ⟦ctx:task⟧ anchor so a boundary fold — which keeps NO verbatim tail —

@@ -8,3 +8,10 @@ testless = ⟦ctx:checks⟧ GROUND TRUTH — the last checks that ran passed but
 # Same shape as `red`, for a briefing that says a file is missing which cria's own disk
 # listing shows exists. Additive: the briefing keeps its words, the disk gets the last one.
 files_exist = ⟦ctx:checks⟧ GROUND TRUTH — these files DO exist on disk right now: {{FILES}}. Trust this over any claim above that they are missing or were never written; read them before recreating anything.
+# Same shape again, for a briefing that calls a SYMBOL broken which the checks never named. Walked on
+# cart-billing-go x nemotron-elastic: the model worked out that `decimal.NewFromString` was the right
+# constructor, its edit failed to apply, cria compacted, and the briefing came back listing
+# NewFromString among the undefined symbols and telling the coder to use `NewFromFloat64` instead.
+# The compiler output in the same prompt named three symbols and NewFromString was not one of them.
+# That briefing then rode every prompt to the end of the run.
+symbols_fine = ⟦ctx:checks⟧ GROUND TRUTH — the checks that ran do NOT report a problem with: {{SYMBOLS}}. The summary above calls them broken or missing; the checks below are what actually ran, and they say nothing about them. Do not rewrite working code on the strength of that claim.
