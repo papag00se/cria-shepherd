@@ -200,34 +200,30 @@ def judged(r: dict | None) -> bool:
 
 
 def pct(r: dict | None) -> float | None:
-    """A cell's number for the grid: the USEFULNESS judgement where there is one, else the strict
-    percentage of its own checks.
+    """A cell's number: the USEFULNESS judgement, or None when it has not been judged.
 
-    THE QUESTION THE GRID ANSWERS CHANGED (operator, 2026-08-16). Strict scoring answers "was this
-    perfect?" and the campaign is asking "can a cria model be useful in getting real work done" —
-    rust-toml-cli x gemma4 delivered a complete, correct, working CLI one directory too deep and the
-    strict grid printed 0%. A grid whose headline number is that far from what a person would say
-    they received is not reporting the thing it is for.
+    THE QUESTION THE GRID ANSWERS (operator, 2026-08-16). Strict scoring answers "was this perfect?"
+    and the campaign asks "can a cria model be useful in getting real work done" — rust-toml-cli x
+    gemma4 delivered a complete, correct, working CLI one directory too deep and the strict grid
+    printed 0%.
 
-    An unjudged cell keeps the strict number and is MARKED as such (see :func:`score_of`), because a
-    grid that silently mixes two measures is worse than one that shows only the old one. The strict
-    score is never overwritten; it stays on the row as the anchor.
+    NO STRICT FALLBACK (operator, 2026-08-27: "I don't care about the strict measure - at all. We
+    should never have had it."). An unjudged cell now reads `·`, the same as one that never ran,
+    because a number nobody wants is worse than an honest blank — and the fallback quietly mixed two
+    measures in one grid. The verifier is untouched and remains the only truth: its per-deliverable
+    observations are the evidence every judgement is made from. What is gone is the all-or-nothing
+    COUNT laid over them.
 
-    (The old note here explained why a percentage rather than a fraction: a task may carry as many
-    checks as its work honestly needs, so long as every check within a task costs about the same.
-    That still governs the strict number.)"""
+    (A percentage rather than a fraction: a task may carry as many checks as its work honestly needs,
+    so long as every check within a task costs about the same.)"""
     if not r:
         return None
-    if judged(r):
-        return float(r["usefulness"])
-    mx = float(r.get("max_score") or 0)
-    return 100.0 * float(r.get("score") or 0) / mx if mx else None
+    u = r.get("usefulness")
+    return float(u) if u is not None else None
 
 
 def score_of(r: dict | None) -> str:
-    """The cell, badged, with a `ˢ` on any number that is still the STRICT one. Half a grid judged
-    and half not is the confound to avoid; marking it is cheaper than waiting, and it shows the
-    backlog.
+    """The cell, badged. `·` when it has not been judged — see :func:`pct`.
 
     THE BADGE IS ON THE CELL, NOT THE ROW. A row badge colours a model's six-task average, and the
     average is the one number in this grid that never describes anything that happened: this suite's
@@ -235,9 +231,7 @@ def score_of(r: dict | None) -> str:
     no cell occupied. Reading down a column for a task, or across for a model, is what these grids
     are for — and that reading wants the colour where the evidence is."""
     v = pct(r)
-    if v is None:
-        return "·"
-    return f"{_badge(v)} {v:.0f}%" if judged(r) else f"{_badge(v)} {v:.0f}%ˢ"
+    return "·" if v is None else f"{_badge(v)} {v:.0f}%"
 
 
 def _n(r: dict | None, key: str) -> str:
@@ -546,9 +540,9 @@ def report(rs: list[dict], now: float | None = None) -> str:
         out += _level_grid(rs, _lvl)
         out += [""]
     out += ["",
-            "`ˢ` = still scored strictly (all-or-nothing per deliverable); unmarked = judged. "
-            "The two are not comparable. Per-cell noise on this suite is wide: gemma4's L0 and L1 "
-            "scored 91 and 41 while five of six cells ran an identical code path.", ""]
+            "Every number is a judgement of how much of the task was actually delivered. A cell "
+            "that ran but has not been judged reads `·`, the same as one that never ran — there is "
+            "no strict all-or-nothing score behind it any more.", ""]
     # TABLES ONLY (operator, 2026-08-24): "I really don't need that document to have anything
     # else in it but the tables. I look at nothing else." Prose lives in battery-history.md, which
     # nothing regenerates, so a finding can never be destroyed by a --write either.

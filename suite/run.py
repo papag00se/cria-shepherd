@@ -7,15 +7,14 @@ slow models surfacing as budget-kills is itself signal), then collects metrics f
 capture/events, runs the task's deterministic verifier, and appends one JSON row to
 suite/results/results.jsonl.
 
-Two pacing modes:
-  * flat (default) — one HARD 30-minute wall, scored once at the end.
-  * `--milestone-minutes N` — N minutes per deliverable, with the workspace scored at every N-minute
-    mark and a floor that climbs by one each time. A run that keeps delivering earns the whole
-    budget; a stalled one is killed early instead of burning the full wall. Which deliverable lands
-    first does not matter — only the count does. Scoring STARTS at the second mark (2N minutes,
-    floor 2): the first interval carries everything a run does once, before any deliverable can be
-    finished, so judging it there kills runs that are merely starting. See
-    FIRST_MILESTONE_INTERVAL.
+Two budgets:
+  * flat (default) — one HARD 30-minute wall.
+  * `--milestone-minutes N` — N minutes per deliverable, so the budget follows the size of the task.
+
+NO MID-RUN SCORING. There used to be a floor at every N-minute mark, climbing by one deliverable each
+time, that killed a run whose STRICT all-or-nothing count fell behind. That is the measure this suite
+does not ask about (operator, 2026-08-27), and it killed runs whose deliverables were nearly done. A
+run now gets its budget and is judged once, by inference, after it finishes.
 
 Kill mechanics follow the runctl scars: match the codex process list explicitly (ps + grep of
 the exec pattern, excluding shells), never `pkill -f` (it matches the invoking shell).
@@ -61,14 +60,6 @@ CALLS_DIR = Path.home() / ".cria" / "calls"
 EVENTS_DIR = Path.home() / ".cria" / "logs"
 CRIA_TOML = Path.home() / ".cria" / "cria.toml"
 WALL_SECONDS = int(os.environ.get("SUITE_WALL_MINUTES", "30")) * 60
-# The first milestone a run must clear. The floors are one deliverable per interval, and the FIRST
-# interval is the one a run cannot pace: it holds everything that happens once — reading the task,
-# listing the workspace, reading the files it names, the first build, the first failing test — before
-# any deliverable can possibly be finished. Judged at one interval it reads as a stall; the same run
-# judged at two is on pace. Operator, 2026-08-19: give the first two deliverables 30 minutes between
-# them and skip the 15-minute wall entirely. The total budget is unchanged — one interval per
-# deliverable — so nothing is bought here except not killing a run for its slow first step.
-FIRST_MILESTONE_INTERVAL = 2
 KILL_GRACE = 20
 
 # fleet model name -> systemd service (one model at a time on the 3080)
@@ -352,24 +343,24 @@ def deliverable_count(task_dir: Path) -> int:
     return n
 
 
-def score_snapshot(ws: Path, task_dir: Path) -> tuple[float, float, dict]:
-    """Score the workspace AS IT STANDS, without touching it.
+def observe_snapshot(ws: Path, task_dir: Path) -> dict:
+    """What the verifier OBSERVES about the workspace as it stands — per deliverable, no total.
 
-    The verifier runs the deliverables — pytest, the CLI, the network-blocked live check — and
-    those leave `__pycache__`, `.pytest_cache` and stray output behind. Running it against the live
-    workspace would put cria's own artifacts in front of the coder's `ls` mid-run (principle 7), so
-    a COPY is scored and thrown away.
-    """
-    snap = Path(tempfile.mkdtemp(prefix="milestone-snap-", dir=RUNS_DIR))
+    Read-only, and it runs against a COPY: the verifier executes the deliverables, which leaves
+    `__pycache__`, `.pytest_cache` and stray output behind, and putting cria's artifacts in front of
+    the coder's `ls` mid-run is principle 7.
+
+    It returns `parts` and nothing else. The aggregate this used to return was the strict
+    all-or-nothing count, which gated a mid-run kill and is the measure the suite does not ask about;
+    the per-deliverable observations are the verifier's real output and remain the evidence a
+    judgement is made from. `{}` on any failure — an unreadable verdict is not an observation."""
+    snap = Path(tempfile.mkdtemp(prefix="observe-snap-", dir=RUNS_DIR))
     try:
         sh("cp", "-r", str(ws), str(snap / "ws"), timeout=300)
         vr = sh(sys.executable, str(task_dir / "verify.py"), str(snap / "ws"), timeout=600)
-        v = json.loads(vr.stdout)
-        return float(v.get("score") or 0), float(v.get("max_score") or 0), v.get("parts") or {}
+        return json.loads(vr.stdout).get("parts") or {}
     except Exception:  # noqa: BLE001
-        # An unreadable verdict must not read as "no progress" and kill a healthy run — the one
-        # direction this check may fail is OPEN (principle 13: fail open only toward keep working).
-        return -1.0, 0.0, {}
+        return {}
     finally:
         sh("rm", "-rf", str(snap), timeout=120)
 
@@ -470,39 +461,21 @@ def main() -> None:
 
     milestone_s = args.milestone_minutes * 60
     wall = WALL_SECONDS
-    milestones = []
     if milestone_s:
         # One interval per deliverable, so a run that earns every milestone gets the full budget.
         wall = milestone_s * deliverable_count(task_dir)
-    next_check = milestone_s * FIRST_MILESTONE_INTERVAL   # the 1st interval is not judged; see above
     terminal = "exited"
+    # NO MID-RUN KILL. It scored the workspace with verify.py every interval and stopped the run when
+    # the STRICT all-or-nothing count was below the deliverables owed by then — so a run with three
+    # deliverables nearly finished scored 0 and was killed at thirty minutes. The strict measure was
+    # never the question this suite asks (operator, 2026-08-27: "I don't care about the strict measure
+    # - at all. We should never have had it."), and there is no inference judge available mid-run:
+    # every role in the live config is backend = "local", which is the one GPU slot already serving
+    # the coder. So the gate is gone rather than reimplemented on a number nobody wants.
+    #
+    # `--milestone-minutes` still sets the BUDGET — one interval per deliverable — because that is a
+    # statement about how long the work is worth, not a judgement about the work.
     while proc.poll() is None:
-        elapsed = time.time() - t0
-        if milestone_s and elapsed >= next_check:
-            due = int(round(next_check / milestone_s))       # 1 after the 1st interval, 2 after 2nd
-            score, mx, parts = score_snapshot(ws, task_dir)
-            ok = score < 0 or score >= due                   # score < 0 = unreadable -> fail open
-            milestones.append({"at_minutes": round(next_check / 60), "floor": due,
-                               "score": None if score < 0 else score, "ok": ok,
-                               "parts": {k: v.get("ok") for k, v in parts.items()}})
-            print(f"[milestone] {round(next_check/60)}min  score={score}/{mx}  floor={due}  "
-                  f"{'ok' if ok else 'MISS'}", flush=True)
-            if not ok:
-                # Confirm before killing. The snapshot is taken while the coder is writing, so a
-                # single sample can catch a half-written file and score a healthy run as stalled.
-                # A second reading is cheap next to discarding a good run.
-                time.sleep(20)
-                score2, _, parts2 = score_snapshot(ws, task_dir)
-                confirmed = not (score2 < 0 or score2 >= due)
-                milestones[-1].update({"recheck_score": None if score2 < 0 else score2,
-                                       "confirmed": confirmed})
-                print(f"[milestone] recheck score={score2}  "
-                      f"{'CONFIRMED MISS' if confirmed else 'recovered'}", flush=True)
-                if confirmed:
-                    terminal = f"milestone-miss-{round(next_check/60)}min"
-                    stop_run()
-                    break
-            next_check += milestone_s
         if time.time() - t0 > wall:
             terminal = "budget-killed"
             stop_run()
@@ -564,7 +537,7 @@ def main() -> None:
         "planner": args.planner, "note": args.note, "sampling": spec,
         **({"level": args.level} if args.level is not None else {}),
         "started": t0, "wall_seconds": round(t1 - t0, 1), "terminal": terminal,
-        "milestone_minutes": args.milestone_minutes or None, "milestones": milestones or None,
+        "milestone_minutes": args.milestone_minutes or None,
         "success": bool(verdict.get("success")), "score": verdict.get("score"),
         "max_score": verdict.get("max_score"), "verify": verdict.get("parts"),
         **capture,

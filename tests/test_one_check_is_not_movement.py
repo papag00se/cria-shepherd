@@ -35,7 +35,12 @@ from suite import battery_status as bs
 
 
 def _row(task, model, arm, score, mx=5, **kw):
+    # The cell's number is the JUDGEMENT now — the strict all-or-nothing score was removed on
+    # 2026-08-27 and `pct` no longer falls back to it. These tests are about the DELTA machinery, so
+    # the fixtures state the same quantity the grid states: a judged percentage. `max_score` stays,
+    # because the noise floor is still the task's own check granularity, which the verifier reports.
     r = {"task": task, "model": model, "score": score, "max_score": mx,
+         "usefulness": 100.0 * score / mx,
          "note": f"BATTERY2 {arm} {model} abc1234", "started": 1.0}
     r.update(kw)
     return r

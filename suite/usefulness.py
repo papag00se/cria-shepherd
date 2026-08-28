@@ -48,8 +48,11 @@ and then gets out of the way. `--emit` writes the packet; `--record` takes the v
 THE CONFLICT, stated rather than hidden: the agent grading these cells is the same one fixing cria,
 and that is a real objection. Three things hold it honest — the rubric is written down and fixed
 before the evidence is read (`suite/prompts/usefulness_judge.txt`), every verdict must cite what was
-OBSERVED and is stored with its evidence, and the strict all-or-nothing score is kept untouched
-beside it as an independent anchor. A number that disagrees with the strict score has to say why.
+OBSERVED and is stored with its evidence. The strict all-or-nothing score is GONE (operator,
+2026-08-27): it was never the question this suite asks, it gated a mid-run kill that ended runs whose
+deliverables were nearly finished, and closing the evidence packet with it handed the judge an answer
+before it had read anything. The verifier is untouched — its per-deliverable observations are the
+evidence every judgement is made from.
 """
 from __future__ import annotations
 
@@ -204,13 +207,14 @@ def evidence(row: dict, _saved: bool = True) -> tuple[str, str]:
                       f"observed:"]
         for name, p in (v.get("parts") or {}).items():
             lines.append(f"  [{'met' if p.get('ok') else 'NOT met'}] {name}: {p.get('detail')}")
-        lines.append(f"  (strict score from that directory: {v.get('score')}/{v.get('max_score')})")
         lines.append("  The work is real; it is not where the task said to put it.")
 
+    # NO STRICT SCORE IN THE PACKET. It used to close every evidence packet with the all-or-nothing
+    # count, which is an anchor the judge cannot help reading as an answer — and it is the measure
+    # this suite does not ask about (operator, 2026-08-27). The verifier's per-deliverable
+    # observations are above; they are the evidence, and they are all of it.
     lines += ["", f"HOW THE SESSION ENDED: {row.get('terminal')} after {row.get('calls')} model "
-                  f"calls and {round((row.get('wall_seconds') or 0) / 60, 1)} minutes.",
-              f"STRICT SCORE (all-or-nothing per deliverable): "
-              f"{row.get('score')}/{row.get('max_score')}"]
+                  f"calls and {round((row.get('wall_seconds') or 0) / 60, 1)} minutes."]
     text = "\n".join(lines)
     # The digest covers the RUBRIC as well as the evidence. Keying on evidence alone meant a reworded
     # prompt silently reused every verdict written under the old one — a cache that hides the change
@@ -301,7 +305,7 @@ def pending(rows: list[dict]) -> list[dict]:
 
 
 def record(run_id: str, verdict: dict) -> dict:
-    """Store a verdict and write its number onto the row, beside the strict score."""
+    """Store a verdict and write its number onto the row."""
     v = dict(verdict)
     v.setdefault("judged_by", "campaign agent, full toolset")
     rows = [json.loads(l) for l in RESULTS.read_text().splitlines() if l.strip()]
@@ -348,7 +352,7 @@ def main() -> int:
                 and (not args.arm or f" {args.arm} " in f" {r.get('note', '')} ")]
         for r in want:
             print(f"{r['run_id']}\t{r['task']}\t{r['model']}\t"
-                  f"strict {int(r.get('score') or 0)}/{int(r.get('max_score') or 0)}")
+                  f"{r.get('terminal') or ''}")
         if not want:
             print("(nothing pending)")
         return 0
@@ -369,14 +373,11 @@ def main() -> int:
         return 0
 
     want = [r for r in rows if r.get("started", 0) >= args.since and "usefulness" in r]
-    print(f"{'task':22} {'model':17} {'strict':>8} {'useful':>8}")
+    print(f"{'task':22} {'model':17} {'delivered':>10}")
     for r in want:
-        print(f"{r['task']:22} {r['model']:17} "
-              f"{int(r['score'])}/{int(r['max_score']):<6} {r['usefulness']:7.0f}%")
+        print(f"{r['task']:22} {r['model']:17} {r['usefulness']:9.0f}%")
     if want:
-        st = 100 * sum(r["score"] for r in want) / sum(r["max_score"] for r in want)
-        us = sum(r["usefulness"] for r in want) / len(want)
-        print(f"{'':22} {'':17} {st:7.0f}% {us:7.0f}%")
+        print(f"{'':22} {'':17} {sum(r['usefulness'] for r in want) / len(want):9.0f}%")
     return 0
 
 

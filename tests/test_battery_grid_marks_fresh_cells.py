@@ -28,7 +28,8 @@ M0 = bs.MODELS[0]
 
 def row(model, task, score, started, max_score=5.0):
     return {"run_id": f"{task}_{model}_{started:.0f}", "model": model, "task": task,
-            "score": score, "max_score": max_score, "started": started,
+            "score": score, "max_score": max_score, "usefulness": 100.0 * score / max_score,
+            "started": started,
             "note": f"{bs.NOTE_PREFIX} CRIA {model} deadbee p4", "capture_dir": "/tmp/x"}
 
 
@@ -39,15 +40,15 @@ class BoldMeansMeasuredThisRun(unittest.TestCase):
     def test_a_cell_from_this_run_is_bold(self):
         """FAILS BEFORE: nothing in the grid distinguished fresh from carried."""
         rs = [row(M0, T0, 4.0, 1000)]          # the first cell IS the boundary
-        # `ˢ` marks a cell still scored strictly; this test is about BOLD, which means FRESH.
-        self.assertIn("80%ˢ**", self._grid(rs)[0])          # bold survives the cell badge
+        # This test is about BOLD, which means FRESH — not about the number itself.
+        self.assertIn("80%**", self._grid(rs)[0])          # bold survives the cell badge
 
     def test_a_cell_carried_from_the_previous_pass_is_not(self):
         rs = [row(M0, T1, 5.0, 500),           # ran before this pass began
               row(M0, T0, 4.0, 1000)]          # this pass's first cell
         line = self._grid(rs)[0]
-        self.assertIn("80%ˢ**", line)          # the fresh one; the badge sits inside the bold
-        self.assertIn("100%ˢ |", line)          # the carried one, plain (no bold)
+        self.assertIn("80%**", line)          # the fresh one; the badge sits inside the bold
+        self.assertIn("100% |", line)          # the carried one, plain (no bold)
         self.assertNotIn("**🟢 100%", line)
 
     def test_the_total_is_never_bold(self):
@@ -65,7 +66,7 @@ class BoldMeansMeasuredThisRun(unittest.TestCase):
         line = self._grid(rs)[0]
         self.assertIn("80%", line)             # the re-run first cell is fresh
         self.assertTrue(line.split("|")[2].strip().startswith("**"), "and it is bold")
-        self.assertIn("100%ˢ |", line)          # the 1100 cell is behind the new boundary
+        self.assertIn("100% |", line)          # the 1100 cell is behind the new boundary
         self.assertNotIn("**🟢 100%", line)
 
     def test_nothing_is_marked_when_the_first_cell_has_never_run(self):

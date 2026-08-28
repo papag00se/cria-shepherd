@@ -23,7 +23,7 @@ from pathlib import Path
 SUITE = Path(__file__).resolve().parent
 sys.path.insert(0, str(SUITE))
 import ladder_status as L                                        # noqa: E402
-from run import score_snapshot                                   # noqa: E402
+from run import observe_snapshot                                  # noqa: E402
 
 REPORT = SUITE.parent / "docs" / "audits" / "ladder-report.md"
 TASK_DIR = SUITE / "tasks"
@@ -101,9 +101,10 @@ def main() -> None:
         if args.score:
             ws = live_workspace(task, running)
             if ws:
-                s, mx, parts = score_snapshot(ws, TASK_DIR / task)
-                w(f"**Measured just now** (verifier run against a copy of the live workspace): "
-                  f"**{fmt_score(None if s < 0 else s, mx or 4)}**")
+                parts = observe_snapshot(ws, TASK_DIR / task)
+                w("**Observed just now** — the verifier run against a copy of the live workspace. "
+                  "Per-deliverable observations only: there is no aggregate score here, because an "
+                  "all-or-nothing count of deliverables is not what this suite measures.")
                 w("")
                 if parts:
                     w("| deliverable | | detail |")
