@@ -62,7 +62,50 @@ class TheReadLedgerTests(unittest.TestCase):
     def test_the_block_names_the_files_and_no_contents(self):
         out = loop._read_ground_truth(_Sess(_ledger(**{"lib/rates.rb": "986 bytes, 40 lines"})), [])
         self.assertIn("lib/rates.rb (986 bytes, 40 lines)", out)
-        self.assertIn("read it again rather than working it out from memory", out)
+
+    def test_the_header_does_not_contradict_the_system_prompt(self):
+        """It used to close with "read it again rather than working it out from memory", while
+        `coder_system.txt` line 16 says "do not read or run the same thing again". Both shipped in
+        every prompt, and the ledger is the one the coder obeyed: twelve walkers on the 2026-08-28
+        runs recorded repeat reads of files whose full text was in the same request, and in the java
+        cell the third such read was swallowed by the repetition redirect, costing the whole turn."""
+        from cria import prompts
+        out = loop._read_ground_truth(_Sess(_ledger(**{"a.rb": "1 bytes, 1 lines"})), [])
+        self.assertNotIn("read it again", out)
+        self.assertIn("do not read or run the same thing again",
+                      prompts.load("coder_system"))
+
+    def test_it_does_not_claim_the_contents_are_absent(self):
+        """"their contents are not repeated here" is a claim about the whole prompt, which this
+        function cannot see. It was false in every run walked: the files it named were sitting in
+        the same request, in full, further down."""
+        out = loop._read_ground_truth(_Sess(_ledger(**{"a.rb": "1 bytes, 1 lines"})), [])
+        self.assertNotIn("not repeated here", out)
+
+    def test_a_write_supersedes_the_size_a_read_recorded(self):
+        """`_keep_larger` is right between two READINGS and wrong against a write, which is the
+        file's new state and may be smaller. go 0010 said `cart.go (894 bytes, 44 lines)` for a file
+        rewritten at 0009; ruby 0036 said `rates.rb (984 bytes, 25 lines)` for one rewritten at
+        0026, and there the stale number corroborated a stale copy in the transcript, so the coder
+        sent an edit blending two versions of one file."""
+        msgs = [_read("r1", "/w/c.go"),
+                {"role": "tool", "tool_call_id": "r1", "content": "x" * 894},
+                {"role": "assistant", "tool_calls": [{"id": "w1", "function": {
+                    "name": "write_file",
+                    "arguments": r'{"path":"/w/c.go","content":"package p\nfunc A(){}\n"}'}}]},
+                {"role": "tool", "tool_call_id": "w1", "content": "Wrote /w/c.go"}]
+        out = loop._read_ground_truth(_Sess(), msgs)
+        self.assertIn("/w/c.go (21 bytes, 3 lines)", out)
+        self.assertNotIn("894", out)
+
+    def test_a_refused_write_does_not_enter_the_ledger(self):
+        """An attempted write is not a write — the same bar the read side already applies."""
+        msgs = [{"role": "assistant", "tool_calls": [{"id": "w1", "function": {
+                    "name": "write_file",
+                    "arguments": '{"path":"/w/n.go","content":"nope"}'}}]},
+                {"role": "tool", "tool_call_id": "w1",
+                 "content": "\u27e6ctx:denied\u27e7 write_file REFUSED (not written)"}]
+        self.assertEqual(loop._read_ground_truth(_Sess(), msgs), "")
 
     def test_nothing_read_says_nothing(self):
         self.assertEqual(loop._read_ground_truth(_Sess(), []), "")

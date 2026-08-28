@@ -77,7 +77,7 @@ no_spec_here =  (this page answered with content rather than an endpoint definit
 descriptions = this page is a catalogue — it names where each API's description lives; fetch a service-desc url to get the spec itself:
 # The workspace files the coder has already READ. Paths and sizes only — the contents are on disk
 # and re-reading one is a single call; what compaction destroys is the knowledge that it looked.
-read_header = FILES YOU HAVE ALREADY READ FROM THIS WORKSPACE — you have seen these; their contents are not repeated here. If you need what one of them holds, read it again rather than working it out from memory.\n{{FILES}}{{MORE}}
+read_header = FILES YOU HAVE ALREADY READ FROM THIS WORKSPACE — this is the record that you looked, so you do not spend a turn rediscovering it after older messages scroll away. It says nothing about whether a file's text is still in this conversation: look for it above before asking for it again.\n{{FILES}}{{MORE}}
 read_more = \n- …and {{COUNT}} more file(s) you have read this session.
 # The closing sentence of the durable anchor. It is about FETCHES, so it may only be said when the
 # block holds one. Appending the read ledger to the same anchor made it render with zero fetches

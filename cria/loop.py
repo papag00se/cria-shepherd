@@ -7062,6 +7062,49 @@ def _keep_larger(out: dict, path: str, nbytes: int, label: str) -> None:
         out[path] = (nbytes, label)
 
 
+def _extract_writes(messages: list[dict]) -> dict:
+    """path -> (bytes, "N bytes, M lines") for every write that actually LANDED.
+
+    THE SIBLING THE LEDGER WAS MISSING. :func:`_extract_reads` records what a read returned, and
+    `_keep_larger` then keeps the largest reading ever seen — correct for two reads of one file, and
+    wrong the moment the coder WRITES it. The recorded size stops describing the file and nothing
+    ever corrects it, because the ledger only refreshes on a read.
+
+    Measured on all three cells of the 2026-08-28 walk, found independently by nine walkers. go
+    0010: `cart.go (894 bytes, 44 lines)` for a file rewritten at 0009. ruby 0036: `rates.rb (984
+    bytes, 25 lines)` for a file rewritten at 0026 — and there the stale number CORROBORATED a stale
+    copy still in the transcript, so the coder sent an edit whose `old_string` blended the old and
+    new versions of one file. go 0097-0116: `go.mod (68 bytes, 5 lines)`, twenty calls after the
+    write. The header presents these as facts about the workspace (#5b).
+
+    cria composed the write, so it holds the bytes exactly — nothing is measured on the filesystem
+    and nothing is guessed. A refused write is not a write: the same `denial` bar the read side
+    already applies, for the same reason (an attempted write is not a write)."""
+    from . import denial
+    calls: dict = {}
+    out: dict = {}
+    for m in messages or []:
+        if not isinstance(m, dict):
+            continue
+        for tc in m.get("tool_calls") or []:
+            fn = tc.get("function") or {}
+            if fn.get("name") in writeproxy_names and tc.get("id"):
+                args = _args_of(fn.get("arguments") or "")
+                path = _path_of_args(fn.get("arguments") or "")
+                body = args.get("content")
+                if path and isinstance(body, str):
+                    calls[tc["id"]] = (path, body)
+        tid = m.get("tool_call_id") or m.get("call_id")
+        if tid in calls:
+            res = m.get("content") if m.get("content") is not None else m.get("output")
+            if isinstance(res, str) and denial.is_denied(res):
+                continue                      # refused — the file on disk is unchanged
+            path, body = calls[tid]
+            raw = body.encode("utf-8", "replace")
+            out[path] = (len(raw), f"{len(raw):,} bytes, {body.count(chr(10)) + 1} lines")
+    return out
+
+
 def _track_read_files(sess, messages: list[dict]) -> None:
     """Accumulate the workspace files the coder has read, durably — the sibling of
     :func:`_track_fetched_pages`, for the half of its research that lives on disk."""
@@ -7082,6 +7125,11 @@ def _read_ground_truth(sess, messages: list[dict]) -> str:
     seen = dict(getattr(sess, "read_files", None) or {})
     for path, (nbytes, label) in _extract_reads(messages or []).items():
         _keep_larger(seen, path, nbytes, label)
+    # A WRITE OVERRIDES, IT DOES NOT COMPETE. `_keep_larger` is the right rule between two READINGS
+    # of one file — a later window must not displace a whole-file read. It is the wrong rule against
+    # a WRITE, which is not another reading but the file's new state, and may legitimately be
+    # smaller. Applied last so the newest thing cria knows about the path is what the ledger says.
+    seen.update({p: v for p, v in _extract_writes(messages or []).items() if p in seen})
     if not seen:
         return ""
     labels = prompts.load_map("fetched_facts_sections")
