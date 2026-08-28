@@ -1,0 +1,2 @@
+===== BEGIN shipping-rates-rb nemotron-elastic 19:01:55
+[sampling] nemotron-elastic: coder={'temperature': 0.6, 'top_p': 0.95}  reasoner={'temperature': 0.6, 'top_p': 0.95}  classifier={'temperature': 0.0}  compactor={'temperature': 0.0}

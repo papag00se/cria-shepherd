@@ -343,6 +343,38 @@ def deliverable_count(task_dir: Path) -> int:
     return n
 
 
+def progress_reading(ws: Path, task_dir: Path):
+    """Everything that counts as MOVEMENT, as one comparable value — or None when it cannot be read.
+
+    Two sources, both already trusted. The verifier's per-deliverable observations carry partial
+    progress the all-or-nothing count discards (`0/8 rate values present` → `5/8`), and the workspace
+    fingerprint catches a run that is editing files between two verifier readings. Either changing is
+    movement; the run is stalled only when neither does.
+
+    None on any failure, and None never equals anything — an unreadable look can only keep a run
+    alive, never end one (#13)."""
+    parts = observe_snapshot(ws, task_dir)
+    if not parts:
+        return None
+    return (tuple(sorted((k, bool(v.get("ok")), str(v.get("detail") or "")) for k, v in parts.items())),
+            _workspace_fingerprint(ws))
+
+
+def _workspace_fingerprint(ws: Path):
+    """Name and size of every file the coder could have written. `.git` is the seed commit and the
+    cell's own install root is package manager churn — neither is the coder's work."""
+    out = []
+    for root, dirs, files in os.walk(ws):
+        dirs[:] = [d for d in dirs if d not in (".git", ".cell-installs")]
+        for f in files:
+            p = Path(root) / f
+            try:
+                out.append((str(p.relative_to(ws)), p.stat().st_size))
+            except OSError:
+                continue
+    return tuple(sorted(out))
+
+
 def observe_snapshot(ws: Path, task_dir: Path) -> dict:
     """What the verifier OBSERVES about the workspace as it stands — per deliverable, no total.
 
@@ -465,17 +497,46 @@ def main() -> None:
         # One interval per deliverable, so a run that earns every milestone gets the full budget.
         wall = milestone_s * deliverable_count(task_dir)
     terminal = "exited"
-    # NO MID-RUN KILL. It scored the workspace with verify.py every interval and stopped the run when
-    # the STRICT all-or-nothing count was below the deliverables owed by then — so a run with three
-    # deliverables nearly finished scored 0 and was killed at thirty minutes. The strict measure was
-    # never the question this suite asks (operator, 2026-08-27: "I don't care about the strict measure
-    # - at all. We should never have had it."), and there is no inference judge available mid-run:
-    # every role in the live config is backend = "local", which is the one GPU slot already serving
-    # the coder. So the gate is gone rather than reimplemented on a number nobody wants.
+    # NOT A SCORE FLOOR — A STALL DETECTOR. The old gate ran verify.py every interval, took its
+    # STRICT all-or-nothing count, and killed the run when that count fell below the deliverables
+    # owed by then. A run with three deliverables nearly finished scores 0 that way, and was killed
+    # at thirty minutes; all three cells on 2026-08-27 died exactly there. The strict measure is gone
+    # (operator: "I don't care about the strict measure - at all").
     #
-    # `--milestone-minutes` still sets the BUDGET — one interval per deliverable — because that is a
-    # statement about how long the work is worth, not a judgement about the work.
+    # A run still has to stop when it is not getting anywhere, so the question changes from "how many
+    # are DONE" to "did anything MOVE". Both halves come from the verifier's own per-deliverable
+    # observations, which are what a judgement is made from anyway:
+    #
+    #   * a deliverable flipping to met is movement, and so is its DETAIL changing — `0/8 rate values`
+    #     becoming `5/8` is exactly the progress the count threw away;
+    #   * the workspace fingerprint moving is movement, so a run editing files between two verifier
+    #     readings is never called stalled.
+    #
+    # Only a reading identical to the one before it — same deliverables met, byte-identical details,
+    # untouched workspace — is a stall, and it is confirmed once before the run is stopped (the
+    # snapshot is taken while the coder may be mid-write). Unreadable answers fail OPEN toward
+    # keeping the run alive (#13). The FIRST interval is never judged: it holds everything a run does
+    # once, before anything can have moved twice.
+    reading, stalls = None, 0
+    next_check = milestone_s * 2 if milestone_s else 0
     while proc.poll() is None:
+        if next_check and time.time() - t0 >= next_check:
+            now = progress_reading(ws, task_dir)
+            moved = now is None or reading is None or now != reading
+            print(f"[progress] {round(next_check/60)}min  "
+                  f"{'moved' if moved else 'NOTHING MOVED since the last look'}", flush=True)
+            if not moved:
+                time.sleep(20)
+                again = progress_reading(ws, task_dir)
+                if again is not None and again == reading:
+                    terminal = f"stalled-{round(next_check/60)}min"
+                    print("[progress] confirmed — stopping", flush=True)
+                    stop_run()
+                    break
+                print("[progress] recheck moved — continuing", flush=True)
+                now = again if again is not None else reading
+            reading = now if now is not None else reading
+            next_check += milestone_s
         if time.time() - t0 > wall:
             terminal = "budget-killed"
             stop_run()
