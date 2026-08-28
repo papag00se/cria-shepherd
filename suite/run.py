@@ -538,10 +538,12 @@ def main() -> None:
     ap.add_argument("--level", type=int, default=None)
     ap.add_argument("--milestone-minutes", type=int, default=0,
                     help="minutes allowed per deliverable. 0 (default) keeps the flat 30-minute "
-                         "wall. When set, the run must hold score >= 1 after the first interval, "
-                         ">= 2 after the second, and so on; it is killed the moment it does not. "
-                         "A run that keeps delivering therefore EARNS more clock than the flat "
-                         "wall gave it, and a stalled one is stopped in a quarter of the time.")
+                         "wall. When set, the run is looked at after TWO intervals and once "
+                         "per interval after that; each look asks the campaign judge how many "
+                         "deliverables are actually complete, and the run is killed when that "
+                         "count is below the number of intervals elapsed. A run that keeps "
+                         "delivering therefore EARNS more clock than the flat wall gave it, "
+                         "and a stalled one is stopped in a quarter of the time.")
     args = ap.parse_args()
 
     task_dir = SUITE / "tasks" / args.task
