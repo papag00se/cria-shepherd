@@ -1967,15 +1967,61 @@ def _recover_write_args(raw: str) -> dict | None:
     args: dict[str, str] = {"path": pm.group(1)}
     cm = _CONTENT_RE.search(raw)
     if cm:
-        tail = raw[cm.end():]
-        end = tail.rfind('"')  # closing quote of the content value (object is known-complete)
-        if end < 0:
+        end = _content_value_end(raw, cm.end())
+        if end is None:
             return None
-        body = tail[:end]
-        # undo the escapes that WERE applied; raw newlines/quotes pass through as-is
-        body = body.replace('\\"', '"').replace("\\n", "\n").replace("\\t", "\t").replace("\\\\", "\\")
-        args["content"] = body
+        args["content"] = _unescape_once(raw[cm.end():end])
     return args
+
+
+def _content_value_end(raw: str, start: int) -> int | None:
+    """Index of the closing quote of the `content` value, or None.
+
+    IT USED TO BE `tail.rfind('"')` — the LAST quote in the whole remainder, with a comment resting
+    on the object being known-complete. Completeness says nothing about key ORDER, and models emit
+    keys alphabetically, so `content` comes before `path` far more often than after it. Reproduced:
+
+        sent      {"content":"line1\nline2","path":"x.py"}
+        recovered content = 'line1\nline2","path":"x.py'
+
+    The rest of the JSON object was written into the file. Not observed firing — the completeness
+    gate above refuses first in all fourteen reachable cases in the captures — but this is the
+    last-resort path for a large `write_file`, and a byte-exact write of that is a broken file that
+    reports success.
+
+    Forward scan with the same string-state rule `_json_structurally_complete` already uses: a
+    backslash escapes the next character, and the value ends at the first unescaped quote."""
+    i = start
+    while i < len(raw):
+        c = raw[i]
+        if c == "\\":
+            i += 2
+            continue
+        if c == '"':
+            return i
+        i += 1
+    return None
+
+
+def _unescape_once(body: str) -> str:
+    """The escapes JSON applied, undone in ONE pass so a decoded character is never re-read.
+
+    The chained `.replace()` calls ran `\\\\` LAST, so a literal backslash followed by `n` — `C:\\newfile`
+    in a Windows path, `\\n` in a regex a file happens to contain — had its `\\n` turned into a real
+    newline by an earlier pass, and the backslash that would have protected it was still there to be
+    collapsed afterwards. One left-to-right pass cannot do that. `writeproxy._decode_backslash_escapes`
+    already worked this way; this is the same rule, kept local to its one caller."""
+    out, i, n = [], 0, len(body)
+    while i < n:
+        c = body[i]
+        if c == "\\" and i + 1 < n:
+            nxt = body[i + 1]
+            out.append({"n": "\n", "t": "\t", '"': '"', "\\": "\\"}.get(nxt, "\\" + nxt))
+            i += 2
+            continue
+        out.append(c)
+        i += 1
+    return "".join(out)
 
 
 # Content-bearing file mutations. A cut-off call to one of these must never be lowered to disk
