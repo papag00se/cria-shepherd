@@ -65,9 +65,29 @@ def ledger_units(ledger: str) -> list[str]:
             block = []
     if block:
         units.append("\n".join(block))
-    units.extend(ln for ln in lines if not ln.startswith("- "))
+    # INDENTED ONLY — A FLUSH-LEFT LINE IS A LABEL, NOT CONTENT. The long-line granularity exists
+    # for the field-shape lines, which are an entry's indented continuation; this used to take every
+    # non-entry line, and a SECTION HEADER is a non-entry line too. The size floor was doing the
+    # separating, so which headers survived was decided by how long they happen to be.
+    #
+    # It cost the go run. `THESE FETCHES FAILED.` is 251 characters, over the floor, so it was
+    # excised as a duplicate — while its two 404 entries, being entries, stayed. They landed under
+    # the surviving `— these SUCCEEDED (from the real tool results — trust these over any note or
+    # reasoning claiming a fetch failed)` header, 123 characters and under the floor.
+    #
+    # cart-billing-go x nemotron-elastic 1787952898, calls 0107 onward: cria told the coder that
+    # `.../decimal/main/quantize.go → HTTP 404` and `.../blob/main/quantize.go → HTTP 404` had
+    # SUCCEEDED, and to trust that over anything saying a fetch failed. At 0102, with the FAILED
+    # header still present, the coder had it right — "the import 'github.com/govalues/decimal/
+    # quantize' might not exist". At 0107, with it gone: "So we need to add that as a dependency."
+    # It spent its last ten calls adding a package that does not exist, and the run never compiled.
+    #
+    # This function's own docstring already stated the rule — "The ledger's header line is never a
+    # unit: a pointer must not replace the block's own label" — and enforced it only for the `- `
+    # form. Indentation is the property that actually separates the two (#5b, #5).
+    units.extend(ln for ln in lines if ln.startswith((" ", "\t")))
     # longest first, so an entry block is excised whole before its own lines could match the
-    # remainder; the size floor drops headers, short entries, and blank lines.
+    # remainder; the size floor drops short entries and blank lines.
     out = [u for u in units if len(u) >= MIN_UNIT_CHARS]
     out.sort(key=len, reverse=True)
     return out
