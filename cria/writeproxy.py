@@ -43,8 +43,26 @@ from .toolargs import PATH_KEYS as _PATH_KEYS, parse_args as _parse, tool_path a
 # carries a path, a command, or a short body; a whole file does not.
 _FUSED_TAIL_MAX_LINES = 40
 
+# THE OPENERS CARRY AN `=`, AND THAT IS WHAT MAKES THEM PROTOCOL. `<function=exec_command>` and
+# `<parameter=cmd>` are the dialect; `<parameter>` and `<function>` without one are ordinary XML
+# element names, and `<parameter>` is a real Maven POM element.
+#
+# The old pattern was `</?(?:…|parameter|…)\b[^\n]*?>?\s*$`, whose lazy middle swallows the rest of
+# the line — so `<parameter>Main-Class=pipeline.Importer</parameter>`, three lines of valid POM XML,
+# classified as debris. Walked on feed-pipeline-java x gemma4 call 0054: the model sent five lines of
+# a `<transformers>` block, cria delivered two, and then told it "your edit would break pom.xml —
+# mismatched tag: line 54". Its `old_string` (which says `<parameters>`, plural, and so did not
+# match) came back intact beside a truncated `new_string`, so the model read itself as having sent a
+# short replacement for a complete original. At 0056 it renamed the tag that was never wrong.
+#
+# Rule 5 and rule 5b in one turn: model output shortened, and cria stating a false fact about the
+# model's own call. Measured over every firing in the captures: 65 of 77 cuts remove a genuine fused
+# call and every one of those uses the dialect form, so requiring the `=` costs none of them.
 _PROTOCOL_TAG_LINE = re.compile(
-    r"^\s*(?:</?(?:tool_call|function|parameter|think|channel)\b[^\n]*?>?"
+    r"^\s*(?:</?tool_call>"                       # <tool_call> / </tool_call>
+    r"|<(?:function|parameter)=[^>\n]*>"           # the dialect's openers, which carry the `=`
+    r"|</(?:function|parameter)>"                  # and their closers
+    r"|</?think>|</?channel>"
     r"|<\|[^|>\n]+\|?>|<[a-z_]+\|>)\s*$")
 
 
@@ -98,6 +116,14 @@ def trim_fused_tail(content: str) -> str:
         ln = lines[i]
         if not ln.strip():
             continue
+        # THE BOUND APPLIES ALWAYS, and it did not. It read `if not saw_tag and …`, so the moment one
+        # tag was found the scan lost its limit and walked to the top of the file — the cut then
+        # landing on the EARLIEST tag-shaped line anywhere, not on the start of the trailing junk.
+        # The docstring says "ONLY A TAIL" and the comment below claims the bound "keeps it to an
+        # argument's worth of lines rather than the whole file"; neither was true after the first
+        # tag. A 205-line file with one tag-shaped line near the top came back as two lines.
+        if (len(lines) - i) > _FUSED_TAIL_MAX_LINES:
+            break
         if _PROTOCOL_TAG_LINE.match(ln):
             saw_tag, cut = True, i     # the cut may only ever land ON a tag
             continue
@@ -118,8 +144,6 @@ def trim_fused_tail(content: str) -> str:
         # content — `</function>`, `<tool_call>`, `<parameter=…>` — so a file with no fused call has
         # no tag to find and comes back untouched however far the scan walks. The bound keeps it to
         # an argument's worth of lines rather than the whole file.
-        if not saw_tag and (len(lines) - i) > _FUSED_TAIL_MAX_LINES:
-            break
         continue
     if not saw_tag or cut == 0:
         return content          # nothing to cut, or the whole thing is debris (that is _protocol_debris)

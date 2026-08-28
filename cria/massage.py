@@ -1799,7 +1799,25 @@ def _toolcall(name: str, args) -> dict:
 
 def repair_tool_args(completion: dict, rlog=None) -> dict:
     """Ensure every tool call's ``arguments`` is a clean JSON string — unwrap ```` ``` ````
-    fences, recover the object out of surrounding noise, else leave it be."""
+    fences, recover the object out of surrounding noise, else leave it be.
+
+    A RECOVERY THAT LOSES THE CALL IS NOT A RECOVERY. `extract_json_object` returns the first
+    brace-balanced span that parses to a dict, and on a CUT argument string the first such span is
+    very often an empty brace pair belonging to the code the model was writing — `func main() {}`,
+    `awk '{}'`, `${}`. The dict is `{}`, it is a dict, and the arguments were replaced with it.
+
+    Reproduced, and found four times on this machine's captures: `write_file` calls of 6,026, 6,277,
+    6,893 and 28,571 characters — one of them a whole test file — whose arguments became `{}`. All
+    four sat on turns the rumination backstop had already aborted, so no damage is observed; the
+    hazard is a turn the MODEL cut itself (`finish_reason="length"`), which this corpus also has.
+
+    So an EMPTY recovered object never replaces a non-empty raw string. That is the whole rule: it
+    needs no threshold and no schema, because `{}` carries nothing the model wrote and substituting
+    it deletes the call outright. Every partial recovery still lands — a `write_file` rebuilt from
+    raw newlines, a fenced object, an object with prose after it — because those carry the model's
+    own values. When nothing is recovered the raw string is left exactly as written, which is what
+    level 0 does, and what keeps the harness's parse error a true statement about the MODEL's output
+    rather than about cria's repair (#5, #13)."""
     for choice in completion.get("choices", []):
         for tc in (choice.get("message") or {}).get("tool_calls") or []:
             fn = tc.get("function")
@@ -1828,6 +1846,11 @@ def repair_tool_args(completion: dict, rlog=None) -> dict:
                 obj = extract_json_object(raw)
                 if obj is None:
                     obj = _recover_write_args(raw)  # raw newlines / unescaped quotes in content
+                if obj == {} and raw.strip():
+                    # AN EMPTY OBJECT IS NOT A RECOVERY. It carries nothing the model wrote, and
+                    # substituting it deletes the call. See the docstring for the four real ones.
+                    _log(rlog, "massage.args_recovery_refused", tool=fn.get("name"), raw_chars=len(raw))
+                    obj = None
                 if obj is not None:
                     fn["arguments"] = json.dumps(obj, ensure_ascii=False)
                     _log(rlog, "massage.args_repaired", reshape="massage", tool=fn.get("name"))
@@ -1866,6 +1889,12 @@ def repair_history_tool_args(messages: list, rlog=None) -> list:
                     json.loads(raw)
                 except json.JSONDecodeError:
                     obj = extract_json_object(raw) or _recover_write_args(raw)
+                    # SAME BAR AS THE REPLY SIDE. An empty recovery carries nothing the model wrote,
+                    # and here it would be written into the REPLAYED history — the version the model
+                    # reads back as its own past. `{}` escapes today only because it is falsy and the
+                    # `or` falls through; a non-empty wrong dict would not.
+                    if obj == {}:
+                        obj = None
                     fixed = json.dumps(obj if obj is not None else {"_unparsed": raw}, ensure_ascii=False)
                     tc = {**tc, "function": {**fn, "arguments": fixed}}
                     repaired += 1
