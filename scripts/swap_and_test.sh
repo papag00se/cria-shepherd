@@ -7,8 +7,9 @@
 set -uo pipefail
 
 SVC="$1"; LABEL="$2"; TURNS="${3:-4}"
-ALL="llama-fabliq-q6 llama-fabliq-reasoning-q6 llama-gemma4-q4km \
-     llama-mellum2-q4 llama-ornith-q6 llama-qwopus-q6 llama-qwythos-q6"
+# Every installed llama-*.service, discovered live — a hardcoded list goes stale the
+# day a model is added, and the stale entry loses the port fight silently.
+ALL=$(systemctl list-unit-files 'llama-*.service' --no-legend | awk '{print $1}')
 
 echo "════════════════════════════════════════════════════════════════════════"
 echo "  SWAP → $SVC   (label: $LABEL)"
