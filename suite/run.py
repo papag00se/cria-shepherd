@@ -60,6 +60,10 @@ RUNS_DIR.mkdir(parents=True, exist_ok=True)
 CALLS_DIR = Path.home() / ".cria" / "calls"
 EVENTS_DIR = Path.home() / ".cria" / "logs"
 CRIA_TOML = Path.home() / ".cria" / "cria.toml"
+# Isolated Codex config dir that routes the harness through cria (:18085) instead of the operator's
+# global ~/.codex (OpenAI). The suite always points CODEX_HOME here so a run measures cria, never
+# whatever provider the ambient shell happened to select. Set up once at ~/.cria/codex-home.
+SUITE_CODEX_HOME = Path.home() / ".cria" / "codex-home"
 WALL_SECONDS = int(os.environ.get("SUITE_WALL_MINUTES", "30")) * 60
 KILL_GRACE = 20
 
@@ -82,6 +86,26 @@ def _codex_argv(prompt: str):
     return ["codex", "exec", "--yolo", prompt]
 
 HARNESSES = {"codex": _codex_argv}
+
+
+def _codex_env(base: dict) -> dict:
+    """Force the suite's cria-routing Codex home onto the child env, whatever the operator's shell
+    had. The override is the point: an inherited CODEX_HOME (a `.envrc` left active, an export in a
+    profile) would otherwise silently repoint the harness, and the run would score a different
+    target than the one it names. Returns a new dict; the input is not mutated."""
+    return {**base, "CODEX_HOME": str(SUITE_CODEX_HOME)}
+
+
+def _require_codex_home() -> None:
+    """Fail CLOSED before a run if the isolated Codex home is not set up. A missing config.toml makes
+    `codex exec` fall back to its built-in default provider — i.e. NOT cria — and the run would look
+    fine while measuring the wrong endpoint. Better a loud stop than a quiet mismeasurement (#13)."""
+    cfg = SUITE_CODEX_HOME / "config.toml"
+    if not cfg.is_file():
+        raise RuntimeError(
+            f"suite Codex home missing: {cfg} does not exist. The suite routes Codex through cria "
+            f"via an isolated CODEX_HOME; create it with a [model_providers.cria] block "
+            f"(base_url http://127.0.0.1:18085/v1, wire_api \"responses\") before running.")
 
 NODE_PATH = "/home/jesse/.nvm/versions/node/v22.13.1/bin"
 
@@ -546,6 +570,9 @@ def main() -> None:
                          "and a stalled one is stopped in a quarter of the time.")
     args = ap.parse_args()
 
+    if args.harness == "codex":
+        _require_codex_home()   # fail before any model swap if cria routing is not set up
+
     task_dir = SUITE / "tasks" / args.task
     prompt = (task_dir / "prompt.txt").read_text().strip()
     run_id = f"{args.task}_{args.model}_{args.harness}_p{args.planner}_{int(time.time())}"
@@ -572,7 +599,7 @@ def main() -> None:
     before_sessions = set(p.name for p in CALLS_DIR.glob("2*"))
     installs_before = user_install_listing()
 
-    env = dict(os.environ, PATH=f"{NODE_PATH}:{os.environ['PATH']}", **_isolated_installs(ws))
+    env = _codex_env(dict(os.environ, PATH=f"{NODE_PATH}:{os.environ['PATH']}", **_isolated_installs(ws)))
     t0 = time.time()
     with open(log_path, "w") as lf:
         # stdin MUST be closed explicitly: `codex exec` reads stdin to EOF as "additional input"
