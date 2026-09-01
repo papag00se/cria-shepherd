@@ -330,6 +330,10 @@ class PlanSession(GuardState):
     verify_replanned: bool = False  # the verify-fail re-derive fired once this STEP (anti-churn bound)
     leg0_nudged: bool = False  # the no-tools nudge fired once this step (bounds in-process recursion)
     last_gate_flag: str = ""  # previous gate's block-nudge, for convergence/stall detection
+    # The last RED gate carried failures with NO located finding (a resolver error, a checker that
+    # died without a file:line). While true, no file may be vouched for as unflagged — an
+    # unattributed failure could concern any file (#11b). Written beside last_gate_flag, one funnel.
+    last_gate_unlocated: bool = False
     # WHEN that finding-set was gathered, as the forwarded-call counter's value. The block cria
     # renders from `last_gate_flag` is headed "the repo's own checks, MOST RECENT RUN", which is
     # true and reads as CURRENT — and it persists until another gate runs. L5 feed-pipeline-java x
@@ -2171,13 +2175,24 @@ def _briefing_disk_truth(briefing: str, files_list: str, rlog=None) -> str:
         prompts.load_map("briefing_checks")["files_exist"], files=", ".join(named))
 
 
-def _briefing_symbol_truth(briefing: str, findings: str, rlog=None) -> str:
+def _briefing_symbol_truth(briefing: str, findings: str, rlog=None, *,
+                           unlocated: bool = False) -> str:
     """The briefing, plus a line naming the symbols it calls broken that the checks never did.
 
     Sibling of :func:`_briefing_disk_truth`, same shape and for the same reason: cria states its
     fact, the briefing keeps its words, and the reader is told which to trust. Deleting the sentence
     would be a regex deciding which claims about a name are true, which is the mistake that function
     already records making once."""
+    if unlocated:
+        # The checks carry at least one failure with NO located finding. Text-containment cannot
+        # tell whether THAT failure is about a name the briefing calls broken — a resolver's
+        # `Could not find artifact` never contains "pom.xml", yet is a pom problem — so vouching
+        # for ANY name ("the checks do NOT report a problem with: …") would state a fact this
+        # mechanism cannot reach (#11b). Abstain whole; the motivating case (located compiler
+        # errors, ba5f226) still speaks because those parse to locations and this flag stays False.
+        if rlog is not None and _briefing_denies_working_symbols(briefing, findings):
+            rlog.emit("context.briefing_symbols_unreachable", level="info")
+        return briefing
     named = _briefing_denies_working_symbols(briefing, findings)
     if not named:
         return briefing
@@ -3234,7 +3249,8 @@ class Loop:
                 # denies a FILE cria can see; this catches one that calls a NAME broken which the
                 # checks never named. Both are additive and both run before the gate state is
                 # appended, so the correction sits with the claim it corrects.
-                (getattr(sess, "last_gate_flag", "") or "").strip(), rlog)
+                (getattr(sess, "last_gate_flag", "") or "").strip(), rlog,
+                unlocated=bool(getattr(sess, "last_gate_unlocated", False)))
                 + _briefing_gate_ground_truth(sess),
             sess.compact_state, trigger_tokens=self._ctx.trigger_compaction, force=force,
             # The task is a foldable history message in the plan frame (only the STEP is in the system
@@ -3545,6 +3561,7 @@ class Loop:
         # still holding — the same silent-loss shape rule #5b exists to prevent.
         if not sess.last_gate_red:
             sess.last_gate_flag = ""
+            sess.last_gate_unlocated = False
         sess.compact_pending = True  # a step just VERIFIED → force a rollup next turn so the completed
         #                              step's raw work-signals don't distract the next step (operator ask)
         rlog.emit("loop.step_done", step=idx, verified=True)
@@ -6177,6 +6194,15 @@ def record_gate_state(gs: GuardState, outcome, findings: str, rlog=None) -> None
     if findings:
         gs.last_gate_red = True
         gs.gate_fresh = False    # red never satisfies the completion backstop
+        # Whether any of this red's failures lacks a located finding — recorded HERE because this
+        # funnel is the one place that holds the OUTCOME, and read by `_briefing_symbol_truth`:
+        # a guard that vouches "the checks do NOT report a problem with: X" from text-containment
+        # cannot REACH a failure reported without naming a file (walked on feed-pipeline-java x
+        # nemotron-elastic 1788232218: "do NOT report a problem with: pom.xml" over a Maven
+        # `Could not find artifact` — a pom problem no file:line ever names). #11b: abstain.
+        report = getattr(outcome, "report", None)
+        # A red with NO report cannot prove its failures are located — same direction, abstain.
+        gs.last_gate_unlocated = report is None or bool(proberun.failed_unparsed_probes(report))
         track_gate_progress(gs, findings)
         return
     # A CLEAN PARTIAL GATE IS NOT A GREEN GATE. `ran` is True as long as ANY section came back, so a
@@ -6196,6 +6222,7 @@ def record_gate_state(gs: GuardState, outcome, findings: str, rlog=None) -> None
         gs.gate_fresh = True
         return
     gs.last_gate_red = False     # ran, complete, and genuinely clean → GREEN
+    gs.last_gate_unlocated = False
     gs.gate_fresh = True         # fresh ground truth — the completion backstop is satisfied
     gs.last_gate_testless = not proberun.gate_ran_tests(outcome.report)  # vacuous-green evidence
     gs.last_gate_skipped = proberun.gate_skipped_count(outcome.report)

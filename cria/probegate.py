@@ -351,6 +351,50 @@ def _a_command_could_have_changed_things_after(messages: list, start: int) -> bo
     return False
 
 
+def _probe_reran_after_last_change(messages: list, start: int, plan: "GatePlan | None") -> bool:
+    """Did the coder re-run one of the gate's own probe commands AFTER the last workspace change?
+
+    That is the one case where ``checks_are_stale``'s "have not been re-run since" is a false fact
+    about work the coder just did (#5b) — and its "re-run them" an instruction to repeat the action
+    it answers. Matched against the PLAN'S own discovered argv, never a command vocabulary (#20):
+    a probe re-run is recognised because the coder's command CONTAINS a probe's joined argv. False
+    whenever cria cannot tell (no plan, no candidates, no shell record) — the existing sentence then
+    stands unchanged, which is today's behaviour (#13: fail toward the known state).
+
+    A command that both matches a probe AND could write (e.g. ``go build && go get x``) counts as a
+    CHANGE, not a re-run — its findings may not reflect its own change, so the stale note stays."""
+    from . import shelltool
+    probe_strs = [" ".join(c.command) for c in getattr(plan, "candidates", []) or []
+                  if getattr(c, "command", None)]
+    if not probe_strs:
+        return False
+    changed = False
+    reran = False
+    for m in messages[start + 1:]:
+        if not isinstance(m, dict):
+            continue
+        for tc in m.get("tool_calls") or []:
+            fn = tc.get("function") or {}
+            name = str(fn.get("name") or "")
+            try:
+                args = json.loads(fn.get("arguments") or "{}")
+            except ValueError:
+                continue
+            if name in ("write_file", "edit_file"):
+                changed, reran = True, False
+                continue
+            if not shelltool.is_shell_tool_name(name):
+                continue
+            cmd = str((args or {}).get("cmd") or (args or {}).get("command") or "")
+            if not cmd:
+                continue
+            if shelltool.writes_something(name, cmd):
+                changed, reran = True, False
+            elif changed and any(p in cmd for p in probe_strs):
+                reran = True
+    return reran
+
+
 def _paths_written_after(messages: list, start: int) -> "frozenset[str]":
     """Basenames of files a LANDED write/edit touched in messages after ``start``.
 
@@ -567,7 +611,8 @@ def _is_hard_failure(plan, sid: str) -> bool:
 
 def clean_gate_output(raw: str, plan: "GatePlan | None" = None, *, annotate: bool = True,
                       changed_paths: "frozenset[str]" = frozenset(),
-                      a_command_ran_since: bool = False) -> str | None:
+                      a_command_ran_since: bool = False,
+                      checks_reran: bool = False) -> str | None:
     """A raw gate-probe RESULT → a compact, error-class-only summary for the MODEL to read.
 
     The raw result is cria's internal gate protocol wrapped in the harness's exec noise:
@@ -785,7 +830,14 @@ def clean_gate_output(raw: str, plan: "GatePlan | None" = None, *, annotate: boo
         # already knows which files moved; it was only being used to unquote the annotation.
         stale = ""
         if changed_paths:
-            stale = prompts.render("checks_are_stale",
+            # "…have not been re-run since — re-run them" answered the coder's OWN literal re-run of
+            # the same checks (walked on cart-billing-go x nemotron-elastic 1788230301: last go.mod
+            # edit, then `go vet ./... && go build ./...`, then this sentence over lines identical to
+            # that fresh run's output — a false fact instructing the action just taken, a churn loop).
+            # When the coder demonstrably re-ran one of the PLAN'S OWN probes after the last change,
+            # say the true thing instead: these lines are the older reading; trust the newest output.
+            key = "checks_are_stale_rerun" if checks_reran else "checks_are_stale"
+            stale = prompts.render(key,
                                    files=", ".join(f"`{p}`" for p in sorted(changed_paths)))
         elif a_command_ran_since:
             # NAMED WHERE cria CAN NAME IT, STATED WHERE IT CANNOT. `go mod download` created go.sum
@@ -1195,7 +1247,9 @@ def clean_gate_results(messages: list, plan: "GatePlan | None" = None) -> list:
                     c, plan, annotate=(i == last_gate),
                     changed_paths=_paths_written_after(messages, i) if i == last_gate else frozenset(),
                     a_command_ran_since=(i == last_gate
-                                         and _a_command_could_have_changed_things_after(messages, i)))
+                                         and _a_command_could_have_changed_things_after(messages, i)),
+                    checks_reran=(i == last_gate
+                                  and _probe_reran_after_last_change(messages, i, plan)))
                 if cleaned is not None:
                     if _NO_SIGNAL_CHECK in cleaned:   # no signal → drop the result AND its command turn
                         tid = m.get("tool_call_id") or m.get("call_id")
