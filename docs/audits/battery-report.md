@@ -1,6 +1,6 @@
 # Battery — the engagement ladder
 
-**Last updated 2026-08-28 15:40** — newest row `feed-pipeline-java_nemotron-elastic_codex_poff_1787954778`, scored 2026-08-28 15:37.
+**Last updated 2026-08-31 21:06** — newest row `feed-pipeline-java_nemotron-elastic_codex_poff_1788232218`, scored 2026-08-31 20:41.
 
 Tables only. Findings, walks and the retired two-arm campaign: [`battery-history.md`](battery-history.md).
 Per-cell judging: [`ladder-progress.md`](ladder-progress.md). Status: `python3 suite/engagement_status.py`.
@@ -59,7 +59,7 @@ Per-cell judging: [`ladder-progress.md`](ladder-progress.md). Status: `python3 s
 | gemma4 | 🟡 73% | 🟢 89% | 🟢 92% | 🟢 100% | 🟢 91% | 🟢 100% | 91% | 20 | 74 |
 | qwen35 | 🟢 100% | 🟡 63% | 🟡 71% | 🟢 96% | 🟢 93% | 🟢 100% | 87% | 40 | 227 |
 | ternary-bonsai | 🟢 100% | 🟢 97% | 🟡 74% | 🟢 100% | 🟢 89% | 🟢 100% | 93% | 48 | 89 |
-| nemotron-elastic | 🟠 59% | 🔴 29% | 🟡 76% | 🔴 30% | 🟡 70% | 🟡 84% | 58% | 49 | 175 |
+| nemotron-elastic | 🟠 59% | 🔴 31% | 🟡 76% | 🔴 24% | 🟡 70% | 🟡 84% | 57% | 50 | 166 |
 
 
 Every number is a judgement of how much of the task was actually delivered. `?` = the cell RAN and is waiting on a verdict; `·` = it never ran. A total reading `77% (3/6)` is an average over the judged cells only and cannot speak for the rest of the row.

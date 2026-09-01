@@ -534,13 +534,38 @@ def spill_reading_hint(path: str, limit: int) -> str:
         lines = body.count("\n") + 1
         if lines < 2 or not body:
             return ""
-        # Proportional, then rounded DOWN — a range cria promises fits has to fit.
-        fits = max(1, int(lines * limit / max(len(body), 1)))
+        # EXACT, NOT PROPORTIONAL — the same contract 467da62 gave the file-path sibling. The
+        # proportional estimate (lines * limit / len(body)) overshot whenever the EARLY lines ran
+        # wider than average: walked on feed-pipeline-java x nemotron-elastic 1788232218, where
+        # this sentence said "end_line=205 fits in one read" about the spilled opencsv POM — the
+        # one document naming the correct groupId — and `_ranged_read` then refused the coder's
+        # SMALLER 1-200 request, in every prompt of the run, because the promise was made about
+        # average bytes and checked against real ones (#12, #5b). cria holds the spilled bytes
+        # right here, so it can name the largest prefix that provably fits instead of estimating.
+        fits = _numbered_prefix_fits(body, limit)
+        if fits < 1:
+            return ""      # even line 1 alone is over the limit — no honest window to offer (#11b)
         if fits >= lines:
             return ""      # the whole thing would fit; the refusal is not about size then
         return prompts.fill(prompts.load_map("webfetch_guards")["spill_extent"],
                             lines=f"{lines:,}", fits=str(fits))
     return ""
+
+
+def _numbered_prefix_fits(body: str, limit: int) -> int:
+    """Largest N such that lines 1..N — AS `_ranged_read` RETURNS them, numbered ``n: line\\n`` —
+    total at most ``limit`` bytes. 0 when even line 1 alone is over.
+
+    The promise `spill_extent` makes is checked by `_ranged_read` against its NUMBERED output, so
+    the promise must be computed over the same artifact: line-number digits, the ``: `` separator
+    and the newline all count (#12). Per line that is ``len(str(n)) + 2 + len(utf-8 bytes) + 1``."""
+    total, fits = 0, 0
+    for n, line in enumerate(body.split("\n"), 1):
+        total += len(str(n)) + 2 + len(line.encode("utf-8", "replace")) + 1
+        if total > limit:
+            break
+        fits = n
+    return fits
 
 
 # A URL PATH THAT NAMES A SOURCE FILE. A forge's `/blob/` view serves the HTML page ABOUT a file
