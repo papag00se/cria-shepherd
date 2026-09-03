@@ -54,7 +54,14 @@ THROTTLE_PROMPTS = 5
 # NOT under ~/.cria either, and that is not a style choice: `writeproxy._targets_cria_home` REFUSES
 # any absolute write that resolves into cria's own home, so a workspace there would have every write
 # the model makes refused. This is the durable place that is neither.
-RUNS_DIR = Path(__file__).resolve().parent.parent / "runs"   # gitignored; see .gitignore
+#
+# AND NOT INSIDE THE REPO. It used to be `<repo>/runs`, so every workspace path the model reads —
+# its own cwd, every file:line a checker prints, every absolute path in a tool result — carried the
+# string `cria-shepherd`. The model reads that (#17 is about the model never seeing the token) and
+# on cart-billing-go x nemotron-elastic 1788241229 call 0061 minted `github.com/jesse/creashepherd`
+# from it. A neutral durable dir outside the tree removes the token from the path entirely;
+# SUITE_RUNS_DIR overrides it for anyone who wants elsewhere.
+RUNS_DIR = Path(os.environ.get("SUITE_RUNS_DIR") or (Path.home() / "suite-runs")).expanduser()
 RUNS_DIR.mkdir(parents=True, exist_ok=True)
 
 CALLS_DIR = Path.home() / ".cria" / "calls"
