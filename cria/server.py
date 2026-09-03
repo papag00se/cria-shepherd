@@ -42,6 +42,7 @@ from .loop import (
     completion_to_sse,
     gate_age,
     reframe_compaction,
+    validate_compaction_briefing,
     session_key,
 )
 from .planner import Planner, _extract_cwd
@@ -301,6 +302,15 @@ def _session_gate_plan(server, sess_key: str):
     return getattr(sess, "gate_plan", None) if sess is not None else None
 
 
+def _compaction_messages(messages: list) -> list[dict]:
+    """The model-authored history eligible to become compaction evidence."""
+    convo = [m for m in messages
+             if m.get("role") not in ("system", "developer")
+             and LOCAL_COMPACT_MARKER not in _text_of_msg(m)
+             and not selfcompact.has_anchor(m)]
+    return _drop_harness_frame(convo)
+
+
 def _compaction_transcript(messages: list, files_list: str = "", gate_plan=None,
                            checks: str = "", checks_age: int = 0) -> str:
     """The conversation to be briefed, as flat text — the SAME preparation cria's internal
@@ -308,29 +318,10 @@ def _compaction_transcript(messages: list, files_list: str = "", gate_plan=None,
     update_plan/apply_patch docs and PLUGIN BLURBS — measured leading the g7 transcript, so the
     briefing model read plugin ads before any work), gate blobs cleaned, then serialized. Structured
     tool-call turns become text lines: nothing for a weak model to pattern-match into a tool call."""
-    convo = [m for m in messages
-             if m.get("role") not in ("system", "developer")
-             # the harness's OWN summarize request is the instruction, not work to summarize —
-             # left in, it became the transcript's last line while the line BEFORE it was a stale
-             # "produce the corrected FULL file in a single write_file call". The model obeys the
-             # last instruction it reads, and answered with a write_file (measured g8 0187/0188).
-             and LOCAL_COMPACT_MARKER not in _text_of_msg(m)
-             # …and cria's OWN prior briefings, for the reason selfcompact states in its own words:
-             # "excluded from the summarizer input, so cria's OWN prior briefings never become a
-             # rollup-of-a-rollup (each round summarizing the last round's summary is how a transient
-             # hallucination hardened into authoritative misdirection)". That exclusion was enforced
-             # in the self-compaction path only. This sibling fed the previous briefing straight back
-             # in, so a false claim was re-signed every cycle and became unfalsifiable.
-             #
-             # Walked on ada-handles_fabliq_codex_pon_1785721353: the compactor asserted
-             # "handle_resolver.py has a syntax error - it's missing a closing parenthesis", was fed
-             # its own briefing next round, emitted the identical sentence back, and that fixed point
-             # rode every prompt for the rest of the run while cria's own compileall exited 0.
-             and not selfcompact.has_anchor(m)]
     # cria's ask goes LAST, after the evidence — so nothing in the transcript out-recencies it.
     # Composed in ONE place (selfcompact.compaction_request) so this path and loop's self-compaction
     # cannot drift apart again; they already did once, and the sibling failed for months.
-    return selfcompact.compaction_request(_drop_harness_frame(convo), files_list, gate_plan,
+    return selfcompact.compaction_request(_compaction_messages(messages), files_list, gate_plan,
                                           checks, checks_age)
 
 
@@ -381,8 +372,8 @@ def _compaction_body(pbody: dict, workspace_root: str | None = None, gate_plan=N
     prompt and the full structured history for months)."""
     return {**pbody, "messages": [
         {"role": "system", "content": prompts.load("selfcompact_summary")},
-        {"role": "user", "content": _compaction_transcript(
-            pbody.get("messages", []),
+        *selfcompact.compaction_request_messages(
+            _compaction_messages(pbody.get("messages", [])),
             # …AND THE DISK, for the same reason the self-compaction sibling now passes it: a writer
             # shown no workspace invents one. ONE mechanism, both paths.
             groundtruth.workspace_inventory(workspace_root or "", flavor="briefing"),
@@ -392,7 +383,7 @@ def _compaction_body(pbody: dict, workspace_root: str | None = None, gate_plan=N
             checks,
             # …and HOW OLD they are, which decides whether the block may claim to outrank the
             # transcript. Unconditional precedence over a newer command is what cost the java run.
-            checks_age)},
+            checks_age),
     ]}
 
 
@@ -534,11 +525,11 @@ def _harden_compaction_reply(comp: dict, body: dict, provider, server, rlog, ses
             # cria's most forgiving sentence). It is the pass that runs precisely when the first one
             # produced garbage — the one that can least afford to be given less. The checks join
             # them for the same reason, and most of all here.
-            {"role": "user", "content": _compaction_transcript(
-                pb.get("messages", []),
+            *selfcompact.compaction_request_messages(
+                _compaction_messages(pb.get("messages", [])),
                 groundtruth.workspace_inventory(ws or "", flavor="briefing"),
                 _session_gate_plan(server, sk),
-                _last_gate_flag(server, sk))},
+                _last_gate_flag(server, sk)),
         ]}
         if role is not None:
             replace(role, reasoning="off").apply(pb)
@@ -568,6 +559,23 @@ def _harden_compaction_reply(comp: dict, body: dict, provider, server, rlog, ses
     # creating, didn't — and wrote a DUPLICATE test suite beside the one it had already built.
     # A name-only listing (top level + one level down) is re-derivable truth, judgment-free.
     inventory = _workspace_listing(ws)
+    checks = _last_checks_note(server, sk)
+    if text:
+        # A model-made summary becomes the harness's entire memory. Give a separate, closed judge
+        # the candidate, the same transcript, and the exact disk/gate facts before allowing that
+        # summary onto the wire. An absent/ambiguous judge withholds the prose; unlike internal
+        # self-compaction this handshake cannot retain history the harness has chosen to replace,
+        # so the re-derivable appendices below remain as the safe minimum.
+        writer_inventory = groundtruth.workspace_inventory(ws or "", flavor="briefing")
+        transcript = selfcompact.compaction_request_parts(
+            _compaction_messages(body.get("messages", [])),
+            gate_plan=_session_gate_plan(server, sk))
+        role = server.cfg.routing.roles.get("compactor") or server.cfg.routing.roles.get("reasoner")
+        if not validate_compaction_briefing(
+                lambda call, log: provider.chat(call, log), role, text,
+                files=writer_inventory, checks=checks, transcript_blocks=transcript, rlog=rlog,
+                phase="harness-compaction-validate"):
+            text = ""
     # THE SAME REPAIR THE OTHER COMPACTION PATH HAS. `_briefing_disk_truth` appends a ground-truth
     # line when a briefing DENIES a file cria can see — never deletes — and the self-compaction path
     # has called it since it was written. This one, the HARNESS handshake, never did, and it is the
@@ -584,7 +592,6 @@ def _harden_compaction_reply(comp: dict, body: dict, provider, server, rlog, ses
     # direction is an irrelevant fact, never a deletion and never a falsehood (#2).
     if text and inventory:
         text = _briefing_disk_truth(text, inventory, rlog)
-    checks = _last_checks_note(server, sk)
     facts = "\n\n".join(t for t in (facts, inventory, checks) if t)
     # Rewrite when there is anything to append OR when the reply's own prose was DROPPED above —
     # otherwise a dropped summary silently survives as the untouched original content.

@@ -1686,16 +1686,20 @@ class LoopSelfCompactTests(unittest.TestCase):
 
         def reasoner(body, rlog):
             reasoner_calls.append(body)
-            return json.dumps({"choices": [{"message": {"content": "ROLLUP"}}]}).encode()
+            validating = "validating a proposed" in body["messages"][0]["content"]
+            return json.dumps({"choices": [{"message": {
+                "content": "ACCEPT" if validating else "ROLLUP"}}]}).encode()
 
-        ctx = replace(_ctx(coder=None, reasoner=reasoner), trigger_compaction=100)  # low trigger
+        from cria.config import Role
+        ctx = replace(_ctx(coder=None, reasoner=reasoner), trigger_compaction=100,
+                      reasoner_role=Role(name="reasoner", backend="local"))  # low trigger
         loop = Loop(ctx)
         sess = PlanSession(plan=_plan(1))
         # total must exceed the 6000-token default tail so there's a middle to roll up (~50 * 250 tok)
         big = [{"role": "system", "content": "sys"}] + [{"role": "assistant", "content": "y" * 1000} for _ in range(50)]
         out = loop._self_compact(big, sess, 1, _Rlog())
         self.assertLess(len(out), len(big))                                   # compacted
-        self.assertEqual(len(reasoner_calls), 1)                              # via the shared summarizer
+        self.assertEqual(len(reasoner_calls), 2)                              # writer + focused validator
         self.assertTrue(any("⟦ctx:rollup⟧" in str(m.get("content")) for m in out))
 
     def test_rollup_is_grounded_by_the_real_gate_state(self):
@@ -1705,9 +1709,13 @@ class LoopSelfCompactTests(unittest.TestCase):
         from dataclasses import replace
 
         def reasoner(body, rlog):
-            return json.dumps({"choices": [{"message": {"content": "all 7 tests now pass"}}]}).encode()
+            validating = "validating a proposed" in body["messages"][0]["content"]
+            text = "ACCEPT" if validating else "all 7 tests now pass"
+            return json.dumps({"choices": [{"message": {"content": text}}]}).encode()
 
-        ctx = replace(_ctx(coder=None, reasoner=reasoner), trigger_compaction=100)
+        from cria.config import Role
+        ctx = replace(_ctx(coder=None, reasoner=reasoner), trigger_compaction=100,
+                      reasoner_role=Role(name="reasoner", backend="local"))
         sess = PlanSession(plan=_plan(1))
         sess.last_gate_red = True
         sess.last_gate_flag = "⟦ctx:checks⟧ test_x.py:1: AssertionError: 400 != 200"

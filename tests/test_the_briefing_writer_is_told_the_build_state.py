@@ -71,12 +71,13 @@ class TheWriterIsGivenTheVerdictTests(unittest.TestCase):
 class BothCompactionPathsCarryItTests(unittest.TestCase):
     def test_the_harness_path_puts_the_verdict_in_the_body(self):
         body = srv._compaction_body({"messages": MSGS}, None, None, RED)
-        text = body["messages"][-1]["content"]
+        text = "\n".join(m["content"] for m in body["messages"])
         self.assertIn("class Action", text)
         self.assertIn("REPO'S OWN CHECKS", text)
 
     def test_the_harness_path_without_a_verdict_is_unchanged(self):
-        text = srv._compaction_body({"messages": MSGS}, None, None, "")["messages"][-1]["content"]
+        text = "\n".join(m["content"] for m in
+                         srv._compaction_body({"messages": MSGS}, None, None, "")["messages"])
         self.assertNotIn("REPO'S OWN CHECKS", text)
 
     def test_one_lookup_serves_the_input_and_the_output_appendix(self):

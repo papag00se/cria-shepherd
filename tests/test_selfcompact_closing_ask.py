@@ -23,9 +23,13 @@ def _plan_with_one_step():
 
 
 def _low_trigger_ctx(reasoner_chat=None, compactor_chat=None):
+    from cria.config import Role
     from cria.loop import LoopContext
+    reasoner_role = Role(name="reasoner", backend="local") if reasoner_chat else None
+    compactor_role = Role(name="compactor", backend="local") if compactor_chat else None
     return replace(LoopContext(planner=None, coder_chat=None, reasoner_chat=reasoner_chat,
-                               runs_dir="", compactor_chat=compactor_chat),
+                               reasoner_role=reasoner_role, runs_dir="", compactor_chat=compactor_chat,
+                               compactor_role=compactor_role),
                    trigger_compaction=100)  # low trigger so the fixture's tail actually rolls up
 
 
@@ -70,26 +74,28 @@ class SelfCompactionAskTests(unittest.TestCase):
 
         calls = []
 
-        def fake_compaction_request(messages, files_list="", gate_plan=None, checks="",
-                                    checks_age=0):
-            calls.append(len(messages))
-            return "COMPOSED"
+        real_parts = selfcompact.compaction_request_parts
 
-        with unittest.mock.patch.object(selfcompact, "compaction_request", fake_compaction_request):
+        def recording_parts(messages, files_list="", gate_plan=None, checks="", checks_age=0):
+            calls.append(len(messages))
+            return real_parts(messages, files_list, gate_plan, checks, checks_age)
+
+        with unittest.mock.patch.object(selfcompact, "compaction_request_parts", recording_parts):
             # the harness-compaction path (server.py)
-            out = server._compaction_transcript([{"role": "user", "content": "hi"}])
-            self.assertEqual(out, "COMPOSED")
+            server._compaction_body({"messages": [{"role": "user", "content": "hi"}]})
 
             # the self-compaction path (loop.py)
             def reasoner(body, rlog):
-                return json.dumps({"choices": [{"message": {"content": "ROLLUP"}}]}).encode()
+                validating = "validating a proposed" in body["messages"][0]["content"]
+                text = "ACCEPT" if validating else "ROLLUP"
+                return json.dumps({"choices": [{"message": {"content": text}}]}).encode()
 
             from cria.loop import PlanSession
             ctx = _low_trigger_ctx(reasoner_chat=reasoner)
             sess = PlanSession(plan=_plan_with_one_step())
             Loop(ctx)._self_compact(_big_transcript(), sess, 1, _RLog())
 
-        self.assertEqual(len(calls), 2, "both entry points must delegate to the one composer")
+        self.assertGreaterEqual(len(calls), 2, "both entry points must delegate to the one composer")
 
     def test_the_evidence_comes_first_and_the_ask_last(self):
         from cria import prompts, selfcompact
@@ -217,7 +223,9 @@ class NoHandComposedTranscriptTests(unittest.TestCase):
             return json.dumps({"choices": [{"message": {"content": "FROM REASONER"}}]}).encode()
 
         def compactor(body, rlog):
-            return json.dumps({"choices": [{"message": {"content": "FROM COMPACTOR"}}]}).encode()
+            validating = "validating a proposed" in body["messages"][0]["content"]
+            text = "ACCEPT" if validating else "FROM COMPACTOR"
+            return json.dumps({"choices": [{"message": {"content": text}}]}).encode()
 
         ctx = _low_trigger_ctx(reasoner_chat=reasoner, compactor_chat=compactor)
         sess = PlanSession(plan=_plan_with_one_step())
@@ -232,7 +240,9 @@ class NoHandComposedTranscriptTests(unittest.TestCase):
         from cria.loop import Loop, PlanSession
 
         def reasoner(body, rlog):
-            return json.dumps({"choices": [{"message": {"content": "all 7 tests now pass"}}]}).encode()
+            validating = "validating a proposed" in body["messages"][0]["content"]
+            text = "ACCEPT" if validating else "all 7 tests now pass"
+            return json.dumps({"choices": [{"message": {"content": text}}]}).encode()
 
         ctx = _low_trigger_ctx(reasoner_chat=reasoner)
         sess = PlanSession(plan=_plan_with_one_step())

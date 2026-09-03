@@ -113,15 +113,15 @@ class CriaAsksInItsOwnWordsTests(unittest.TestCase):
         self.assertEqual(out["messages"][0]["role"], "system")
         self.assertEqual(out["messages"][0]["content"], prompts.load("selfcompact_summary"))
 
-    def test_the_history_is_flattened_to_one_user_turn(self):
-        """89 structured turns, 42 of them tool calls, taught the model to answer with a tool call."""
+    def test_the_history_is_flattened_into_reducible_user_turns(self):
+        """Tool calls become prose, but evidence blocks remain independently floor-reducible."""
         out = server._compaction_body(body())
-        self.assertEqual(len(out["messages"]), 2)
-        self.assertEqual(out["messages"][1]["role"], "user")
-        self.assertNotIn("tool_calls", str(out["messages"][1]))
+        self.assertGreater(len(out["messages"]), 3)
+        self.assertTrue(all(m["role"] in ("system", "user") for m in out["messages"]))
+        self.assertNotIn("tool_calls", str(out["messages"]))
 
     def test_the_work_itself_survives(self):
-        text = server._compaction_body(body())["messages"][1]["content"]
+        text = "\n".join(m["content"] for m in server._compaction_body(body())["messages"])
         self.assertIn("build the shipping calculator", text)
 
     def test_everything_else_on_the_request_is_untouched(self):

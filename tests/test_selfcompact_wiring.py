@@ -2,6 +2,7 @@ import json
 import unittest
 
 from cria import selfcompact
+from cria.config import Role
 from cria.loop import Loop, LoopContext, LoopStore, PlanSession
 from cria.plan import Plan, PlanItem
 from cria.selfcompact import msg_digest as _msg_digest
@@ -15,9 +16,13 @@ class _Rlog:
 def _loop(self_compact=True, chat_reply="ROLLUP SUMMARY", trigger=100):
     # The single-item self-compaction rides the COMPACTOR endpoint (compactor_chat), same summarize
     # primitive the loop's completion compaction uses.
-    chat = lambda body, rlog: json.dumps({"choices": [{"message": {"content": chat_reply}}]}).encode()
+    def chat(body, rlog):
+        validating = "validating a proposed" in body["messages"][0]["content"]
+        text = "ACCEPT" if validating else chat_reply
+        return json.dumps({"choices": [{"message": {"content": text}}]}).encode()
     ctx = LoopContext(planner=None, coder_chat=chat, reasoner_chat=chat, compactor_chat=chat,
-                      compactor_role=None, coder_role=None, planner_enabled=False, runs_dir="",
+                      compactor_role=Role(name="compactor", backend="local"), coder_role=None,
+                      planner_enabled=False, runs_dir="",
                       self_compact=self_compact, trigger_compaction=trigger)
     return Loop(ctx, LoopStore())
 

@@ -1,0 +1,2 @@
+LATEST CHECK FACTS (authoritative, with any stated age):
+{{CHECKS}}

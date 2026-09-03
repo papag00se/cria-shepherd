@@ -832,7 +832,7 @@ class HardenCompactionReplyTests(unittest.TestCase):
     class _Srv:
         class cfg:
             class routing:
-                roles = {}
+                roles = {"reasoner": Role(name="reasoner", backend="local")}
 
     class _Rlog:
         phase = "proxy"
@@ -852,12 +852,12 @@ class HardenCompactionReplyTests(unittest.TestCase):
                     "[API endpoints (2): /handles/{handle}, /holders/{address}]"},
                 {"role": "user", "content": "<<<LOCAL_COMPACT>>> Summarize the thread"}]
 
-    def test_good_summary_gains_the_fetch_facts_appendix(self):
+    def test_a_summary_without_a_validator_is_withheld_but_facts_survive(self):
         from cria.server import _harden_compaction_reply
         comp = _harden_compaction_reply(self._comp("Did X, then Y."), {"messages": self._history()},
                                         provider=None, server=self._Srv, rlog=self._Rlog())
         text = comp["choices"][0]["message"]["content"]
-        self.assertTrue(text.startswith("Did X, then Y."))          # the model's summary leads
+        self.assertNotIn("Did X, then Y.", text)                    # no judge: withhold model memory
         self.assertIn("/handles/{handle}", text)                    # the real routes survive the fold
         self.assertIn("api.example.com", text)
 
@@ -870,12 +870,14 @@ class HardenCompactionReplyTests(unittest.TestCase):
             @staticmethod
             def chat(pb, rlog):
                 calls.append(pb)
+                validating = "validating a proposed" in pb["messages"][0]["content"]
+                text = "ACCEPT" if validating else "Recovered briefing."
                 return json.dumps({"choices": [{"message": {
-                    "role": "assistant", "content": "Recovered briefing."}}]})
+                    "role": "assistant", "content": text}}]})
 
         comp = _harden_compaction_reply(self._comp(""), {"messages": self._history()},
                                         provider=_Provider, server=self._Srv, rlog=self._Rlog())
-        self.assertEqual(len(calls), 1)                             # one retry, no loop
+        self.assertEqual(len(calls), 2)                             # retry, then focused validation
         self.assertFalse(calls[0].get("tools"))                     # still a toolless summarize
         text = comp["choices"][0]["message"]["content"]
         self.assertTrue(text.startswith("Recovered briefing."))
@@ -893,14 +895,16 @@ class HardenCompactionReplyTests(unittest.TestCase):
             @staticmethod
             def chat(pb, rlog):
                 calls.append(pb)
+                validating = "validating a proposed" in pb["messages"][0]["content"]
+                text = "ACCEPT" if validating else "Whole briefing."
                 return json.dumps({"choices": [{"message": {
-                    "role": "assistant", "content": "Whole briefing."}, "finish_reason": "stop"}]})
+                    "role": "assistant", "content": text}, "finish_reason": "stop"}]})
 
         cut = {"choices": [{"message": {"role": "assistant", "content": "I closed the issue. I clo"},
                             "finish_reason": "length"}]}
         comp = _harden_compaction_reply(cut, {"messages": self._history()},
                                         provider=_Provider, server=self._Srv, rlog=self._Rlog())
-        self.assertEqual(len(calls), 1)
+        self.assertEqual(len(calls), 2)
         self.assertTrue(comp["choices"][0]["message"]["content"].startswith("Whole briefing."))
 
     def test_a_summary_cut_off_TWICE_is_dropped_not_shipped(self):
@@ -944,7 +948,7 @@ class CompactionFirstPassFramingTests(unittest.TestCase):
 
     def test_compaction_body_leads_with_the_briefing_system(self):
         from cria import prompts
-        from cria.server import _is_compaction_request, _proxy_body
+        from cria.server import _compaction_body, _is_compaction_request, _proxy_body
         msgs = [{"role": "system", "content": "harness persona"},
                 {"role": "user", "content": "task"},
                 {"role": "assistant", "tool_calls": [{"id": "t", "type": "function",
@@ -953,19 +957,17 @@ class CompactionFirstPassFramingTests(unittest.TestCase):
                 {"role": "user", "content": "<<<LOCAL_COMPACT>>> Summarize the thread"}]
         self.assertTrue(_is_compaction_request(msgs))
         pb = _proxy_body({"messages": msgs})
-        from cria.server import _compaction_transcript
-        pb = {**pb, "messages": [
-            {"role": "system", "content": prompts.load("selfcompact_summary")},
-            {"role": "user", "content": _compaction_transcript(pb.get("messages", []))},
-        ]}
+        pb = _compaction_body(pb)
         head = pb["messages"][0]
         self.assertEqual(head["role"], "system")
         self.assertIn("NO tools", head["content"])                       # the ONE proven framing,
         self.assertIn("tool/function call", head["content"])             # shared with self-compaction
-        # …and the history is FLAT TEXT: no structured tool-call turn for a weak model to mimic
-        self.assertEqual(len(pb["messages"]), 2)
+        # …and the history is FLAT TEXT in independently reducible evidence turns: no structured
+        # tool-call turn for a weak model to mimic, and the final ask stays last.
+        self.assertGreater(len(pb["messages"]), 3)
         self.assertTrue(all(not m.get("tool_calls") for m in pb["messages"]))
-        self.assertIn("shell", pb["messages"][1]["content"])              # the calls survive AS TEXT
+        self.assertTrue(any("shell" in m["content"] for m in pb["messages"][1:-1]))
+        self.assertIn("Write the briefing now", pb["messages"][-1]["content"])
 
     def test_transcript_drops_harness_boilerplate_keeps_work(self):
         # g7: the flat transcript LED with Codex's plugin ads (119,361 chars) — the briefing model

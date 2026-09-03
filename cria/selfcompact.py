@@ -364,6 +364,50 @@ def _program_output(text: str) -> str:
     return _ENVELOPE.sub("", text or "").strip()
 
 
+def compaction_request_parts(messages: list[dict], files_list: str = "", gate_plan=None,
+                             checks: str = "", checks_age: int = 0) -> list[str]:
+    """Independently reducible evidence blocks for a compaction call.
+
+    A single flattened user message is irreducible at the context floor: the system instruction and
+    active user request are both protected, so a long transcript is knowingly sent over budget.
+    Preserve the same text and order, but carry each historical turn and each authoritative fact as
+    its own block.  ``loop.summarize`` and the harness compaction path put these blocks between a
+    small protected introduction and the final protected ask; the one context-floor owner can then
+    fit them losslessly-first and label any reduction it must make.
+    """
+    cleaned = stub_old_write_args(probegate.clean_gate_results(messages, gate_plan))
+    parts = []
+    for message in cleaned:
+        rendered = serialize([message])
+        if rendered.strip():
+            parts.append(rendered)
+    if files_list.strip():
+        parts.append(files_list.strip())
+    known = checks_input(checks, checks_age)
+    if known:
+        parts.append(known)
+    return parts
+
+
+def compaction_ask() -> str:
+    """The single owner of the final compaction instruction."""
+    return prompts.load("compact_closing_ask")
+
+
+def compaction_request_messages(messages: list[dict], files_list: str = "", gate_plan=None,
+                                checks: str = "", checks_age: int = 0) -> list[dict]:
+    """User-role evidence turns followed by the compaction ask.
+
+    The first small turn is intentionally the first user message, so contextfloor's task protection
+    does not accidentally pin the first (possibly enormous) evidence block.  The final ask remains
+    the active turn.  Everything between is independently reducible by the wire-owned floor.
+    """
+    parts = compaction_request_parts(messages, files_list, gate_plan, checks, checks_age)
+    return ([{"role": "user", "content": prompts.load("composed_evidence_intro")}] +
+            [{"role": "user", "content": p} for p in parts] +
+            [{"role": "user", "content": compaction_ask()}])
+
+
 def compaction_request(messages: list[dict], files_list: str = "", gate_plan=None,
                        checks: str = "", checks_age: int = 0) -> str:
     """The compactor's user message: the cleaned transcript, the disk, then cria's ask LAST.
@@ -439,7 +483,8 @@ def compaction_request(messages: list[dict], files_list: str = "", gate_plan=Non
     #
     # The RAW verdict comes in and the framing is applied HERE, so both compaction paths cannot
     # disagree about whether their argument is already rendered (#23, one owner).
-    known = f"\n\n{checks_input(checks, checks_age)}" if checks_input(checks, checks_age) else ""
+    known_text = checks_input(checks, checks_age)
+    known = f"\n\n{known_text}" if known_text else ""
     return (serialize(stub_old_write_args(probegate.clean_gate_results(messages, gate_plan)))
             + disk + known + "\n\n" + prompts.load("compact_closing_ask"))
 

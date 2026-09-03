@@ -250,8 +250,9 @@ class TheLoopPathHandsOverItsSessionPlanTests(unittest.TestCase):
 
         from cria import loop
         src = inspect.getsource(loop.Loop._self_compact)
-        i = src.index("compaction_request(")
-        self.assertIn('getattr(sess, "gate_plan", None)', src[i:i + 1200])
+        i = src.index("compaction_request_parts(")
+        self.assertIn('gate_plan = getattr(sess, "gate_plan", None)', src[:i])
+        self.assertIn("mm, inventory_for_writer, gate_plan", src[i:i + 300])
 
 
 if __name__ == "__main__":

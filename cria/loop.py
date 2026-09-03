@@ -333,10 +333,6 @@ class PlanSession(GuardState):
     verify_replanned: bool = False  # the verify-fail re-derive fired once this STEP (anti-churn bound)
     leg0_nudged: bool = False  # the no-tools nudge fired once this step (bounds in-process recursion)
     last_gate_flag: str = ""  # previous gate's block-nudge, for convergence/stall detection
-    # The last RED gate carried failures with NO located finding (a resolver error, a checker that
-    # died without a file:line). While true, no file may be vouched for as unflagged — an
-    # unattributed failure could concern any file (#11b). Written beside last_gate_flag, one funnel.
-    last_gate_unlocated: bool = False
     # WHEN that finding-set was gathered, as the forwarded-call counter's value. The block cria
     # renders from `last_gate_flag` is headed "the repo's own checks, MOST RECENT RUN", which is
     # true and reads as CURRENT — and it persists until another gate runs. L5 feed-pipeline-java x
@@ -2109,68 +2105,6 @@ def _briefing_denies_real_files(briefing: str, files_list: str) -> list[str]:
     return named
 
 
-# A briefing sentence that declares a name broken. The verbs are the ones a compiler uses and a
-# summarizer copies — the trigger is deliberately wide because the DECISION is not made here: a
-# symbol only survives to the correction if the checks' own output does not name it.
-# The window may NOT stop at a full stop: a qualified name has dots in it, and `[^.\n]` cut
-# `decimal.NewFromString` down to `decimal` — the guard then found nothing to say. Newline-bounded
-# and length-bounded instead, which is what "the rest of this sentence" actually means here.
-_BRIEFING_BROKEN = re.compile(
-    r"(?i)(?:undefined|not defined|does not exist|doesn'?t exist|cannot find|can'?t find|"
-    r"unknown|missing|no such|broken|invalid)\b[^\n]{0,120}", re.M)
-
-
-def _briefing_denies_working_symbols(briefing: str, findings: str) -> list:
-    """Symbols the briefing calls broken that the CHECKS never named — worst first, else [].
-
-    THE BRIEFING IS THE ONE INJECTED CHANNEL WITH NO FACTUAL GUARD ON IT. Every steer cria authors
-    runs a stack — `_prescribes_what_the_checks_reject`, `_symbol_not_in_the_file`,
-    `_invented_version`, `_blames_a_service_that_answered`. The compaction briefing is model-authored
-    text, injected verbatim, outranking the transcript and surviving every later fold, and it passes
-    through none of them.
-
-    Walked on cart-billing-go x nemotron-elastic, 2026-08-27. At call 0043 the model reached the
-    answer in its own words — *"decimal.NewDecimal is not a function; the package provides
-    NewFromString"* — and its edit failed to apply. cria compacted at 0044. The briefing it got back
-    listed `decimal.NewFromString`, the CORRECT name, among the undefined symbols, and told the coder
-    to *"replace decimal.NewDecimal with decimal.NewFromFloat64"*. The live compiler output in the
-    same prompt named three symbols and `NewFromString` was not one of them. cria injected that
-    briefing as ⟦ctx:continuation⟧ from 0046 to the end of the run, so for the last fifteen calls the
-    only mentions of the right answer were two lines calling it broken.
-
-    Exact, not judged: a symbol is only reported when the checks' own text does not contain it
-    anywhere. Silent with no check output — cria cannot contradict what it never ran (#11b) — and
-    silent on anything that is not symbol-shaped, which is `_looks_like_a_symbol`'s job and the same
-    test the prescribes guard uses."""
-    if not briefing or not (findings or "").strip():
-        return []
-    named = []
-    for span in _BRIEFING_BROKEN.finditer(briefing):
-        for tok in re.findall(r"[A-Za-z_][\w.:]*", span.group(0)):
-            t = tok.strip(".:")
-            if _looks_like_a_symbol(t) and not _checks_name_symbol(t, findings) and t not in named:
-                named.append(t)
-    return named
-
-
-def _checks_name_symbol(tok: str, findings: str) -> bool:
-    """Do the checks name this symbol — the WHOLE token, OR its leaf segment for a dotted/namespaced
-    name? javac renders `symbol: class CSVParseException` and `location: package com.opencsv` on
-    SEPARATE lines, so the FQN `com.opencsv.CSVParseException` a briefing writes never appears whole
-    in the checks, only its leaf `CSVParseException` does. Walked on feed-pipeline-java x
-    nemotron-elastic 1788243086 (calls 0073/0076/0084/0102/0122): the vouch "the checks do NOT
-    report a problem with: com.opencsv.CSVParseException" fired directly above javac flagging exactly
-    that class — a #5b false fact, because the whole-string test missed the split rendering.
-
-    Leaf-match only ADDS matches, so it only ever WITHHOLDS a vouch, never emits one (#5b-safe): a
-    symbol whose leaf the checks never mention is still named. Leaf must be specific (>3 chars) so a
-    bare `Map`/`Set` collision cannot silence a legitimate vouch on the whole name."""
-    if tok in findings:
-        return True
-    leaf = re.split(r"[.:]+", tok)[-1]
-    return len(leaf) > 3 and leaf != tok and leaf in findings
-
-
 def _briefing_disk_truth(briefing: str, files_list: str, rlog=None) -> str:
     """The briefing, plus a ground-truth line when it denies a file cria can see. NEVER deletes.
 
@@ -2194,34 +2128,6 @@ def _briefing_disk_truth(briefing: str, files_list: str, rlog=None) -> str:
                   files=prompts.named_list(named))
     return briefing + "\n\n" + prompts.fill(
         prompts.load_map("briefing_checks")["files_exist"], files=", ".join(named))
-
-
-def _briefing_symbol_truth(briefing: str, findings: str, rlog=None, *,
-                           unlocated: bool = False) -> str:
-    """The briefing, plus a line naming the symbols it calls broken that the checks never did.
-
-    Sibling of :func:`_briefing_disk_truth`, same shape and for the same reason: cria states its
-    fact, the briefing keeps its words, and the reader is told which to trust. Deleting the sentence
-    would be a regex deciding which claims about a name are true, which is the mistake that function
-    already records making once."""
-    if unlocated:
-        # The checks carry at least one failure with NO located finding. Text-containment cannot
-        # tell whether THAT failure is about a name the briefing calls broken — a resolver's
-        # `Could not find artifact` never contains "pom.xml", yet is a pom problem — so vouching
-        # for ANY name ("the checks do NOT report a problem with: …") would state a fact this
-        # mechanism cannot reach (#11b). Abstain whole; the motivating case (located compiler
-        # errors, ba5f226) still speaks because those parse to locations and this flag stays False.
-        if rlog is not None and _briefing_denies_working_symbols(briefing, findings):
-            rlog.emit("context.briefing_symbols_unreachable", level="info")
-        return briefing
-    named = _briefing_denies_working_symbols(briefing, findings)
-    if not named:
-        return briefing
-    if rlog is not None:
-        rlog.emit("context.briefing_denies_symbols", steer="briefing-fix", level="warn",
-                  symbols=prompts.named_list(named))
-    return briefing + "\n\n" + prompts.fill(
-        prompts.load_map("briefing_checks")["symbols_fine"], symbols=", ".join(named))
 
 
 # Past this, a COMPOSED two-message prompt cannot be made to fit by the context floor: the floor's
@@ -3224,58 +3130,45 @@ class Loop:
         ``_briefing_gate_ground_truth`` — the override that stops a rollup laundering an unverified
         "the tests pass" past cria's real last check state. Each had a piece the other needed. That is
         what having two of something costs, every time."""
+        chat_fn = self._ctx.compactor_chat or self._ctx.reasoner_chat
+        role = self._ctx.compactor_role or self._ctx.reasoner_role
+        inventory_for_writer = workspace_inventory(sess.workspace_root or "", flavor="briefing")
+        inventory_for_coder = workspace_inventory(sess.workspace_root or "", flavor="coder")
+        gate_plan = getattr(sess, "gate_plan", None)
+        gate_flag = (getattr(sess, "last_gate_flag", "") or "").strip()
+        checks_fact = selfcompact.checks_input(gate_flag, gate_age(sess))
+
+        def make_summary(mm: list[dict]) -> str:
+            history = selfcompact.compaction_request_parts(mm, gate_plan=gate_plan)
+            evidence = selfcompact.compaction_request_parts(
+                mm, inventory_for_writer, gate_plan, gate_flag, gate_age(sess))
+            candidate = summarize(
+                chat_fn, role, prompts.load("selfcompact_summary"),
+                selfcompact.compaction_ask(), rlog,
+                phase="self-compact", max_tokens=ROLLUP_MAX_TOKENS,
+                evidence_blocks=evidence)
+            if not validate_compaction_briefing(
+                    chat_fn, role, candidate, files=inventory_for_writer, checks=checks_fact,
+                    transcript_blocks=history, rlog=rlog):
+                return ""
+            # Deterministic existence correction remains a final additive defense. The semantic
+            # symbol matcher is deliberately gone: whether compiler output refutes a briefing is a
+            # judgment, now made by the focused validator above rather than token containment.
+            return (_briefing_disk_truth(candidate, inventory_for_coder, rlog)
+                    + _briefing_gate_ground_truth(sess))
+
+        def refold_summary(text: str) -> str:
+            candidate = summarize(chat_fn, role, prompts.load("selfcompact_refold"),
+                                  _ASK_USER_TURN, rlog, phase="self-compact-refold",
+                                  max_tokens=ROLLUP_MAX_TOKENS, evidence_blocks=[text])
+            if not validate_compaction_briefing(
+                    chat_fn, role, candidate, files=inventory_for_writer, checks=checks_fact,
+                    transcript_blocks=[text], rlog=rlog, phase="compaction-refold-validate"):
+                return ""
+            return candidate
+
         out, sess.compact_state, applied = selfcompact.compact(
-            msgs,
-            # Ground the reasoner's summary in cria's REAL last check state — so a summary that launders
-            # an unverified 'tests pass' claim is overridden by what the checks actually reported.
-            lambda mm: _briefing_symbol_truth(_briefing_disk_truth(summarize(
-                                 self._ctx.compactor_chat or self._ctx.reasoner_chat,
-                                 self._ctx.compactor_role or self._ctx.reasoner_role,
-                                 prompts.load("selfcompact_summary"),
-                                 # CRIA'S ASK GOES LAST. Without it the transcript ends on the
-                                 # coder's own step ("Do ONLY this step (2 of 4)... Write
-                                 # test_resolve_handle.py") and the compactor obeys THAT instead of
-                                 # summarizing: on ada-handles_mellum2_codex_pon_1785628543 call 25 it
-                                 # emitted `write_file({"path": ...` and degenerated to `v5v5v5…`
-                                 # until the cap, and call 26 produced a whole unittest file. cria
-                                 # adopted it as "⟦ctx:rollup⟧ Summary of your earlier turns this
-                                 # session" — a file that had never been written and was not on disk.
-                                 # The coder believed it ("The user has given me a test suite"), and
-                                 # that is where unittest entered a pytest run.
-                                 # This is the SAME fix as da35f4e, which landed on the harness path
-                                 # (server.py) and never reached its sibling here.
-                                 selfcompact.compaction_request(
-                                     mm,
-                                     # …AND THE DISK. This inventory was already gathered on
-                                     # the line below, but only to CORRECT the briefing after
-                                     # the fact (_briefing_disk_truth, denial direction only).
-                                     # The writer never saw it and invented files that never
-                                     # existed. Same fact, given before the question.
-                                     workspace_inventory(sess.workspace_root or "",
-                                                         flavor="briefing"),
-                                     # …and the gate plan, so the cleaner reports what the gate
-                                     # actually found rather than its most forgiving branch.
-                                     getattr(sess, "gate_plan", None),
-                                     # …and the last gate VERDICT, by the same argument as the
-                                     # disk above: this was appended to the briefing afterwards
-                                     # (_briefing_gate_ground_truth, on the line below) and never
-                                     # given to the writer, which was left to work the build state
-                                     # out by reading. Both compaction paths, one rule.
-                                     getattr(sess, "last_gate_flag", "") or "",
-                                     # …and HOW OLD that verdict is. The framing around it claims
-                                     # precedence over the transcript, and that claim is false once
-                                     # the coder has run its own check since. See checks_input.
-                                     gate_age(sess)), rlog,
-                                 phase="self-compact", max_tokens=ROLLUP_MAX_TOKENS),
-                                 workspace_inventory(sess.workspace_root or "", flavor="coder"),
-                                 rlog),
-                # …AND THE SAME QUESTION ABOUT SYMBOLS. The disk guard above catches a briefing that
-                # denies a FILE cria can see; this catches one that calls a NAME broken which the
-                # checks never named. Both are additive and both run before the gate state is
-                # appended, so the correction sits with the claim it corrects.
-                (getattr(sess, "last_gate_flag", "") or "").strip(), rlog,
-                unlocated=bool(getattr(sess, "last_gate_unlocated", False)))
-                + _briefing_gate_ground_truth(sess),
+            msgs, make_summary,
             sess.compact_state, trigger_tokens=self._ctx.trigger_compaction, force=force,
             # The task is a foldable history message in the plan frame (only the STEP is in the system
             # message). Pin it as a ⟦ctx:task⟧ anchor so a boundary fold — which keeps NO verbatim tail —
@@ -3283,12 +3176,9 @@ class Loop:
             pinned_task=(pinned_task if pinned_task is not None else (getattr(sess.plan, "task", "") or "")),
             # The coder-flavored files list (operator's design): the compacted view carries the LIST
             # of what exists; read_file is the road back to any content.
-            files_list=workspace_inventory(sess.workspace_root or "", flavor="coder"),
-            # The RARE fold-of-the-accumulated-summary (see selfcompact REFOLD_TOKENS).
-            refold=lambda text: summarize(self._ctx.compactor_chat or self._ctx.reasoner_chat,
-                                          self._ctx.compactor_role or self._ctx.reasoner_role,
-                                          prompts.load("selfcompact_refold"), text, rlog,
-                                          phase="self-compact-refold", max_tokens=ROLLUP_MAX_TOKENS),
+            files_list=inventory_for_coder,
+            # The RARE fold-of-the-accumulated-summary is independently validated before adoption.
+            refold=refold_summary,
             rlog=rlog)
         if applied:
             rlog.emit("context.self_compact", reshape="compact", step=idx, before=len(msgs),
@@ -3585,7 +3475,6 @@ class Loop:
         # still holding — the same silent-loss shape rule #5b exists to prevent.
         if not sess.last_gate_red:
             sess.last_gate_flag = ""
-            sess.last_gate_unlocated = False
         sess.compact_pending = True  # a step just VERIFIED → force a rollup next turn so the completed
         #                              step's raw work-signals don't distract the next step (operator ask)
         rlog.emit("loop.step_done", step=idx, verified=True)
@@ -6064,9 +5953,44 @@ def ask_closed(chat_fn, role, question: str, rlog, *, phase: str, max_tokens: in
                      temperature=0.0) or ""
 
 
+def validate_compaction_briefing(chat_fn, role, briefing: str, *, files: str, checks: str,
+                                  transcript_blocks: list[str], rlog,
+                                  phase: str = "compaction-validate") -> bool:
+    """Focused accept/reject judgment before model-made session memory is injected.
+
+    The candidate writer is not allowed to grade itself.  A separate closed question receives the
+    same historical evidence plus the exact filesystem and gate facts.  Unavailable, unparseable,
+    or uncertain means reject; callers then retain verbatim history (self-compaction) or return only
+    re-derivable appendices (a harness-owned compaction that cannot be cancelled).
+    """
+    if chat_fn is None or role is None or not briefing.strip():
+        if rlog is not None:
+            rlog.emit("context.compaction_validation", reshape="validate-rollup", level="warn",
+                      accepted=False, reason="judge unavailable")
+        return False
+    blocks = list(transcript_blocks)
+    blocks.append(prompts.render("compaction_candidate", briefing=briefing.strip()))
+    blocks.append(prompts.render("compaction_files_fact", files=files.strip()) if files.strip()
+                  else prompts.render("compaction_no_fact", kind="FILESYSTEM INVENTORY"))
+    blocks.append(prompts.render("compaction_checks_fact", checks=checks.strip()) if checks.strip()
+                  else prompts.render("compaction_no_fact", kind="LATEST CHECK FACTS"))
+    answer = summarize(chat_fn, replace(role, reasoning="off"),
+                       prompts.load("compaction_validate"),
+                       prompts.load("compaction_validate_ask"), rlog, phase=phase,
+                       max_tokens=16, retry_off=False, temperature=0.0,
+                       evidence_blocks=blocks)
+    accepted = answer.strip().upper() == "ACCEPT"
+    if rlog is not None:
+        rlog.emit("context.compaction_validation", reshape="validate-rollup",
+                  level="info" if accepted else "warn", accepted=accepted,
+                  answer=answer.strip()[:40])
+    return accepted
+
+
 def summarize(chat_fn, role, system: str, user: str, rlog, *, phase: str = "compactor",
               max_tokens: int = 8192, retry_off: bool = True, coder_tools: str = "",
-              capture: list | None = None, temperature: float | None = None) -> str:
+              capture: list | None = None, temperature: float | None = None,
+              evidence_blocks: list[str] | None = None) -> str:
     """The ONE reasoner text-generation primitive — call the model with (system, user) and return the
     text ("" on failure/empty). With ``retry_off`` (default), retries with reasoning FORCED OFF when
     the first pass yields no text (a reasoning model can burn its whole budget THINKING and emit empty
@@ -6086,8 +6010,18 @@ def summarize(chat_fn, role, system: str, user: str, rlog, *, phase: str = "comp
     if coder_tools:
         user = prompts.render("reasoner_coder_tools", tools=coder_tools) + "\n\n" + user
     def _one(reasoning_off: bool) -> str:
-        call = {"stream": False, "max_tokens": max_tokens,
-                "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}]}
+        messages = [{"role": "system", "content": system}]
+        if evidence_blocks:
+            # A composed two-message call has no reducible turn: both its system and active user
+            # message are protected by the context floor.  A small first-user introduction keeps
+            # task protection off the evidence, and the final question remains the active turn.
+            # The blocks between them are facts in their original order, not a per-site clip; only
+            # contextfloor.fit may reduce them, and every reduction it makes is labelled.
+            messages.append({"role": "user", "content": prompts.load("composed_evidence_intro")})
+            messages.extend({"role": "user", "content": block}
+                            for block in evidence_blocks if block and block.strip())
+        messages.append({"role": "user", "content": user})
+        call = {"stream": False, "max_tokens": max_tokens, "messages": messages}
         r = role
         if reasoning_off:
             r = replace(role, reasoning="off") if role is not None else None
@@ -6218,15 +6152,6 @@ def record_gate_state(gs: GuardState, outcome, findings: str, rlog=None) -> None
     if findings:
         gs.last_gate_red = True
         gs.gate_fresh = False    # red never satisfies the completion backstop
-        # Whether any of this red's failures lacks a located finding — recorded HERE because this
-        # funnel is the one place that holds the OUTCOME, and read by `_briefing_symbol_truth`:
-        # a guard that vouches "the checks do NOT report a problem with: X" from text-containment
-        # cannot REACH a failure reported without naming a file (walked on feed-pipeline-java x
-        # nemotron-elastic 1788232218: "do NOT report a problem with: pom.xml" over a Maven
-        # `Could not find artifact` — a pom problem no file:line ever names). #11b: abstain.
-        report = getattr(outcome, "report", None)
-        # A red with NO report cannot prove its failures are located — same direction, abstain.
-        gs.last_gate_unlocated = report is None or bool(proberun.failed_unparsed_probes(report))
         track_gate_progress(gs, findings)
         return
     # A CLEAN PARTIAL GATE IS NOT A GREEN GATE. `ran` is True as long as ANY section came back, so a
@@ -6246,7 +6171,6 @@ def record_gate_state(gs: GuardState, outcome, findings: str, rlog=None) -> None
         gs.gate_fresh = True
         return
     gs.last_gate_red = False     # ran, complete, and genuinely clean → GREEN
-    gs.last_gate_unlocated = False
     gs.gate_fresh = True         # fresh ground truth — the completion backstop is satisfied
     gs.last_gate_testless = not proberun.gate_ran_tests(outcome.report)  # vacuous-green evidence
     gs.last_gate_skipped = proberun.gate_skipped_count(outcome.report)

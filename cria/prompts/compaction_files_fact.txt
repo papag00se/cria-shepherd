@@ -1,0 +1,2 @@
+CURRENT FILESYSTEM INVENTORY (authoritative for existence only):
+{{FILES}}

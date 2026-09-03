@@ -55,7 +55,8 @@ class TheListingReachesTheWriterTests(unittest.TestCase):
 
     def test_the_harness_path_carries_it_too(self, ):
         body = server._compaction_body({"messages": transcript()}, workspace_root=None)
-        self.assertEqual(len(body["messages"]), 2)  # unchanged shape when there is no root
+        self.assertGreater(len(body["messages"]), 2)  # evidence is independently reducible
+        self.assertNotIn("FILES ON DISK RIGHT NOW:", str(body["messages"]))
 
     def test_the_harness_path_renders_a_real_root(self):
         import tempfile
@@ -63,8 +64,9 @@ class TheListingReachesTheWriterTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as ws:
             pathlib.Path(ws, "main.rs").write_text("fn main() {}\n")
             body = server._compaction_body({"messages": transcript()}, workspace_root=ws)
-        self.assertIn("main.rs", body["messages"][1]["content"])
-        self.assertNotIn("nested_key_lookup.rs (", body["messages"][1]["content"])
+        evidence = "\n".join(m["content"] for m in body["messages"][1:-1])
+        self.assertIn("main.rs", evidence)
+        self.assertNotIn("nested_key_lookup.rs (", evidence)
 
 
 class TheListingIsDecisiveTests(unittest.TestCase):

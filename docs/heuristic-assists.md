@@ -44,9 +44,10 @@ A terse index of the assists cria **actually implements** today, in five familie
 - **Window auto-detect + derived budget** — read real `n_ctx` from `/props`; budget = window − output reserve.
 - **Real-token calibration** — a rise-fast/fall-slow EWMA learns the model's chars→token ratio (≈1.8× → 3.5×) so the budget is against truth, not chars/4.
 - **content_reduce** — MIME-aware lossless-first reduction of an oversized tool output (HTML→text, JSON minify) before it blows the window.
-- **Self-compaction** — token-triggered: roll the old transcript middle into a `⟦cria:rollup⟧` reasoner summary, keeping the tail verbatim.
-- **Completion compaction** — on `loop.done`, summarize the finished work into a `⟦cria:briefing⟧` envelope that rides in the closing message, so a follow-up resumes on top of it.
-- **Overflow re-trim + retry** — a context-overflow error → re-trim to the server's real numbers and retry (no crash).
+- **Self-compaction** — token-triggered: roll the old transcript middle into a `⟦ctx:rollup⟧` reasoner summary, keeping the tail verbatim. A separate focused judge sees the candidate plus the same transcript, current filesystem inventory, and latest check facts; only exact `ACCEPT` adopts it. Rejection, ambiguity, or no judge leaves the verbatim history in place. Rare rollup refolds pass through the same gate.
+- **Reducible internal evidence** — compactor and briefing-validator transcripts ride as independently reducible evidence turns between a small introduction and the final active question. With no pressure their bytes are unchanged; under pressure the single context floor can fold/drop whole evidence blocks with its existing labelled stand-in instead of knowingly sending an irreducible oversized two-message body.
+- **Completion compaction** — on `loop.done`, summarize the finished work into a `⟦ctx:briefing⟧` envelope that rides in the closing message, so a follow-up resumes on top of it.
+- **Overflow re-trim + retry** — a context-overflow error → re-trim to the server's real numbers and retry only when re-preparation changes the body; a byte-identical body is never resent to a known rejection.
 - **Last-resort drop + state synthesis** — drop oldest droppable turns (strip orphan tool-results) as the fit floor, replacing them with a protected `⟦cria:compacted⟧` note of the files they modified.
 - **Anchor protection** — the briefing envelope, gate output, and compacted-state note are never silently trimmed.
 - **web_fetch navigation** — cria fetches in-process: structural JSON/YAML reduce, top-level-keys outline, `find=`/`cursor` paging, `$ref` inline, real HTTP status.

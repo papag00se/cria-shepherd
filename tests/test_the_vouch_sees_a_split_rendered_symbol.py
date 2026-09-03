@@ -1,46 +1,82 @@
-"""The "checks do NOT report a problem with X" vouch must not fire when the checks DO name X.
+"""A compiler/briefing disagreement is judged, never settled by token containment.
 
-Walked on feed-pipeline-java x nemotron-elastic 1788243086 (calls 0073/0076/0084/0102/0122): the
-vouch named `com.opencsv.CSVParseException` as working, directly above javac's `symbol: class
-CSVParseException` / `location: package com.opencsv` — a #5b false fact, because javac splits the
-FQN across lines so the whole dotted string never appears in the checks and the whole-string test
-missed it. The leaf (`CSVParseException`) is right there. Leaf-match only WITHHOLDS a vouch, never
-emits one, so ba5f226's genuinely-absent case still speaks.
+The Java L5 capture put these three claims in one coder prompt: a rollup said ``net.opencsv`` was
+correct, javac said ``package net.opencsv does not exist``, and cria's lexical vouch said the checks
+did not report an OpenCSV problem.  The validator is a closed, fail-closed question over the exact
+candidate, transcript, disk inventory, and check facts; it cannot author a replacement.
 """
+import json
 import unittest
 
 from cria import loop
+from cria.config import Role
 
 
-BRIEFING = ("The build fails: undefined symbols remain, including "
-            "com.opencsv.CSVParseException and com.example.TotallyAbsentThing.")
-# javac's split rendering: the FQN never appears whole; the leaf class name does.
-FINDINGS = ("Importer.java:[92,76] cannot find symbol\n"
-            "  symbol:   class CSVParseException\n"
-            "  location: package com.opencsv")
+class _Rlog:
+    phase = ""
+
+    def __init__(self):
+        self.events = []
+
+    def emit(self, kind, **kw):
+        self.events.append((kind, kw))
 
 
-class LeafMatchWithholdsTheFalseVouchTests(unittest.TestCase):
-    def test_a_split_rendered_fqn_is_seen_as_named(self):
-        self.assertTrue(loop._checks_name_symbol("com.opencsv.CSVParseException", FINDINGS))
+def _reply(text):
+    return json.dumps({"choices": [{"message": {"role": "assistant", "content": text},
+                                     "finish_reason": "stop"}]}).encode()
 
-    def test_the_vouch_does_not_name_the_split_symbol(self):
-        named = loop._briefing_denies_working_symbols(BRIEFING, FINDINGS)
-        self.assertNotIn("com.opencsv.CSVParseException", named)
 
-    def test_a_genuinely_absent_symbol_is_still_named(self):
-        # ba5f226's motivating case: the checks say nothing about this one — the vouch still speaks.
-        named = loop._briefing_denies_working_symbols(BRIEFING, FINDINGS)
-        self.assertIn("com.example.TotallyAbsentThing", named)
+class CompactionBriefingValidationTests(unittest.TestCase):
+    def setUp(self):
+        self.role = Role(name="reasoner", backend="local")
+        self.rlog = _Rlog()
+        self.candidate = "The correct imports are net.opencsv; the build now compiles."
+        self.checks = "Importer.java:10: package net.opencsv does not exist\nBUILD EXIT: 1"
 
-    def test_a_short_leaf_collision_cannot_silence_a_vouch(self):
-        # leaf 'Map' is <=3 chars and common; a broken 'com.foo.Map' is still named despite an
-        # unrelated 'Map' in the checks — the leaf rule requires >3 chars.
-        self.assertFalse(loop._checks_name_symbol("com.foo.Map", "cannot find symbol Map"))
+    def test_the_java_falsehood_is_withheld_when_the_judge_rejects_it(self):
+        seen = []
 
-    def test_whole_token_match_still_works(self):
-        self.assertTrue(loop._checks_name_symbol("decimal.NewFromFloat64",
-                                                 "undefined: decimal.NewFromFloat64"))
+        def chat(body, _rlog):
+            seen.append(body)
+            return _reply("REJECT")
+
+        accepted = loop.validate_compaction_briefing(
+            chat, self.role, self.candidate, files="pom.xml\nsrc/main/java/pipeline/Importer.java",
+            checks=self.checks, transcript_blocks=["tool: " + self.checks], rlog=self.rlog)
+        self.assertFalse(accepted)
+        rendered = "\n".join(m["content"] for m in seen[0]["messages"])
+        self.assertIn(self.candidate, rendered)
+        self.assertIn(self.checks, rendered)
+        self.assertNotIn("checks do NOT report a problem", rendered)
+
+    def test_only_a_clean_accept_verdict_adopts_the_briefing(self):
+        self.assertTrue(loop.validate_compaction_briefing(
+            lambda body, rlog: _reply("ACCEPT"), self.role, "Importer.java was edited.",
+            files="Importer.java", checks="BUILD EXIT: 1",
+            transcript_blocks=["assistant: edited Importer.java"], rlog=self.rlog))
+
+    def test_ambiguous_or_unavailable_judgment_fails_closed(self):
+        self.assertFalse(loop.validate_compaction_briefing(
+            lambda body, rlog: _reply("ACCEPT, but consider checking it"), self.role,
+            self.candidate, files="Importer.java", checks=self.checks,
+            transcript_blocks=[], rlog=self.rlog))
+        self.assertFalse(loop.validate_compaction_briefing(
+            None, self.role, self.candidate, files="Importer.java", checks=self.checks,
+            transcript_blocks=[], rlog=self.rlog))
+
+    def test_the_question_keeps_evidence_in_independently_reducible_turns(self):
+        seen = []
+        loop.validate_compaction_briefing(
+            lambda body, rlog: seen.append(body) or _reply("REJECT"), self.role,
+            self.candidate, files="Importer.java", checks=self.checks,
+            transcript_blocks=["A" * 1000, "B" * 1000], rlog=self.rlog)
+        messages = seen[0]["messages"]
+        self.assertGreater(len(messages), 5)
+        self.assertEqual(messages[-1]["content"].strip(),
+                         "Judge the candidate briefing against the authoritative facts now. Answer exactly ACCEPT or REJECT.")
+        self.assertTrue(any(m["content"] == "A" * 1000 for m in messages[1:-1]))
+        self.assertTrue(any(m["content"] == "B" * 1000 for m in messages[1:-1]))
 
 
 if __name__ == "__main__":
