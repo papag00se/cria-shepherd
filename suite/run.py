@@ -11,10 +11,9 @@ Two budgets:
   * flat (default) — one HARD 30-minute wall.
   * `--milestone-minutes N` — N minutes per deliverable, so the budget follows the size of the task.
 
-Milestone runs are judged by the campaign's inferred-usefulness rubric: each fixed deliverable gets a
-0–100 score on its own merits and the average is compared with the share due (40% at two intervals,
-60% at three). The old strict verifier count and the later binary COMPLETE count are both forbidden:
-they erase real partial and independently delivered work that the campaign exists to measure.
+There is no mid-run score or completeness floor. Minutes determine only how long the work is worth;
+the workspace is judged once, by inference, after the run finishes. A time-indexed score turns model
+latency and work ordering into false statements about final usefulness.
 
 Kill mechanics follow the runctl scars: match the codex process list explicitly (ps + grep of
 the exec pattern, excluding shells), never `pkill -f` (it matches the invoking shell).
@@ -37,7 +36,6 @@ import tomllib
 from pathlib import Path
 
 import sampling
-import usefulness
 
 SUITE = Path(__file__).resolve().parent
 RESULTS = SUITE / "results" / "results.jsonl"
@@ -397,8 +395,7 @@ def collect_assists(t0: float, t1: float) -> dict:
 def deliverable_names(task_dir: Path) -> list:
     """The things this task must produce, in the task's own words — meta.toml is the authority.
 
-    The gate asks the judge how many of THESE are complete, so the list a run is paced against and
-    the list it is finally judged against are the same list, written by whoever wrote the task."""
+    This fixed denominator sets the task-sized time budget and final judgment denominator."""
     meta = tomllib.loads((task_dir / "meta.toml").read_text())
     names = [str(d) for d in (meta.get("deliverables") or [])]
     if not names:
@@ -410,105 +407,6 @@ def deliverable_names(task_dir: Path) -> list:
 def deliverable_count(task_dir: Path) -> int:
     """How many things this task must produce, so the budget follows the task."""
     return len(deliverable_names(task_dir))
-
-
-# Where a mid-run gate asks its question and waits for the answer. One file per gate, named for the
-# run and the minute, so a batch's pending questions are a directory listing and nothing is held in
-# anyone's head — the same shape `usefulness.pending` uses for the end-of-run judgement.
-GATE_DIR = SUITE / "results" / "gates"
-# How long a gate waits for a verdict before giving up and letting the run continue. The judge is a
-# person reading a packet, not a service: they may be asleep. A gate nobody answers must never be the
-# reason a run dies (#13), so the timeout fails OPEN, says so on the row, and drops a marker the
-# batch reads.
-#
-# SHORT, BECAUSE FAILING OPEN MAKES A LONG WAIT PURE COST. It was 900s: three unanswered gates added
-# 45 minutes to a run nobody was gating, on top of the 45 minutes the missing gate itself cost. Two
-# minutes is long enough for a judge who is already watching the directory and cheap enough for one
-# who is not.
-GATE_WAIT_S = 120
-
-
-def ask_gate(run_id: str, minute: int, floor: int, ws: Path, task_dir: Path, prompt: str):
-    """Ask for an inferred-usefulness verdict and return its 0–100 score, or None.
-
-    THE JUDGE IS THE PERSON RUNNING THE CAMPAIGN, and always has been — every verdict in
-    `results.jsonl` was written by one reading an evidence packet. The old gate asked `verify.py`'s
-    all-or-nothing count instead, which says "not done" for work that is done and merely fails a
-    check on something incidental: a complete, correct, working CLI one directory too deep scored 0.
-    A later binary COMPLETE count repeated the same loss at a different layer. Both are gone.
-
-    So the gate writes the same kind of packet `usefulness.emit` writes — the task's own deliverable
-    list, the diff from the seed, the verifier's per-deliverable observations as EVIDENCE, and the
-    exact fixed usefulness rubric — and waits for that rubric's JSON verdict. The threshold is the
-    fraction of the task owed by this mark, not a count of binary checkboxes.
-
-    It does not pause the coder. The packet describes the workspace at the mark; the run carries on
-    while the question is open, so a slow answer costs the run nothing.
-
-    None when the answer does not arrive or does not parse, and None is the caller's cue to continue.
-    A judge who is asleep may not end a run."""
-    GATE_DIR.mkdir(parents=True, exist_ok=True)
-    q = GATE_DIR / f"{run_id}.{minute:03d}min.md"
-    a = GATE_DIR / f"{run_id}.{minute:03d}min.verdict"
-    snap = Path(tempfile.mkdtemp(prefix="gate-snap-", dir=RUNS_DIR))
-    try:
-        sh("cp", "-r", str(ws), str(snap / "ws"), timeout=300)
-        parts = observe_snapshot(snap / "ws", task_dir)
-        # STAGE FIRST, so a NEW file is in the diff. `git diff HEAD` shows tracked changes only, and
-        # a run whose whole contribution is new files reads as having done nothing — which is a
-        # judgement the gate would then make on an empty page. Caught on the first real gate: the
-        # ruby run's diff was empty while a Gemfile and a vendor tree sat untracked beside it. Safe
-        # because this is a throwaway copy; the coder's own index is never touched.
-        sh("git", "-C", str(snap / "ws"), "add", "-A", timeout=120)
-        diff = sh("git", "-C", str(snap / "ws"), "diff", "--cached", "HEAD", timeout=120).stdout
-        names = deliverable_names(task_dir)
-        threshold = round(100.0 * floor / len(names), 1)
-        q.write_text("\n".join([
-            f"# GATE — {run_id} at {minute} minutes",
-            "",
-            f"**Infer how much of the requested work is delivered.** This mark requires {floor} of "
-            f"{len(names)} deliverables' worth: {threshold:g}%. Write the JSON object required by "
-            f"the rubric below into `{a.name}`. The run continues while you decide; it is stopped "
-            f"only if `usefulness` is below {threshold:g}%.",
-            "",
-            "Score each deliverable independently. Partial, attempted, mostly complete, and fully "
-            "complete work receive the rubric's corresponding credit; a failure affects only "
-            "deliverables that depend on it.",
-            "",
-            "## The deliverables this task names",
-            *[f"{i+1}. {n}" for i, n in enumerate(names)],
-            "",
-            "## The task, as the coder received it",
-            prompt,
-            "",
-            "## What the repo's own verifier observes right now — EVIDENCE, not the verdict",
-            *[f"- [{'met' if v.get('ok') else 'NOT met'}] {k}: {v.get('detail')}" for k, v in parts.items()],
-            "",
-            "## Everything the coder has changed since the seed",
-            "```diff", diff, "```", "",
-            "## Authoritative inferred-judgment rubric",
-            usefulness.SYSTEM.read_text(), ""]))
-        print(f"[gate] {minute}min  asked -> {q}", flush=True)
-        deadline = time.time() + GATE_WAIT_S
-        while time.time() < deadline:
-            if a.is_file():
-                verdict = usefulness.parse(a.read_text())
-                return float(verdict["usefulness"]) if verdict is not None else None
-            time.sleep(5)
-        # AN UNANSWERED GATE IS AN UNGATED RUN, and that is an instrument defect, not a hiccup. It
-        # fails OPEN because silence must never end a run (#13) — but silence must not be silent
-        # either: the row records `usefulness: null`, and this marker lets the batch stop instead of
-        # spending the next cell the same way. Six gates went unanswered on 2026-08-27 and two cells
-        # ran their full budget ungated before anyone noticed.
-        with (GATE_DIR / "UNANSWERED").open("a") as fh:
-            fh.write(f"{q.name}\n")
-        print(f"[gate] {minute}min  NO VERDICT in {GATE_WAIT_S}s — the run continues UNGATED. "
-              f"Answer it in {q} and the next cell will run gated.", flush=True)
-        return None
-    except Exception:  # noqa: BLE001
-        return None
-    finally:
-        sh("rm", "-rf", str(snap), timeout=120)
 
 
 def observe_snapshot(ws: Path, task_dir: Path) -> dict:
@@ -572,13 +470,9 @@ def main() -> None:
     # must not depend on a regex over prose surviving the next edit.
     ap.add_argument("--level", type=int, default=None)
     ap.add_argument("--milestone-minutes", type=int, default=0,
-                    help="minutes allowed per deliverable. 0 (default) keeps the flat 30-minute "
-                         "wall. When set, the run is looked at after TWO intervals and once "
-                         "per interval after that; each look asks the campaign judge for inferred "
-                         "usefulness under the fixed per-deliverable rubric, and the run is killed "
-                         "when that percentage is below the elapsed share. A run that keeps "
-                         "delivering therefore EARNS more clock than the flat wall gave it, "
-                         "and a stalled one is stopped in a quarter of the time.")
+                    help="minutes budgeted per deliverable. 0 (default) keeps the flat 30-minute "
+                         "wall; otherwise the run receives the full N × deliverable-count wall "
+                         "and is judged once after it ends.")
     args = ap.parse_args()
 
     if args.harness == "codex":
@@ -638,28 +532,11 @@ def main() -> None:
         # One interval per deliverable, so a run that earns every milestone gets the full budget.
         wall = milestone_s * deliverable_count(task_dir)
     terminal = "exited"
-    # INFERRED PACING, not strict verification and not binary completion. At each mark the campaign
-    # judge applies the same fixed per-deliverable usefulness rubric used at the end of a run. Two
-    # intervals means 2/N of the requested work must be delivered; partial and independent work
-    # counts exactly as the rubric says. An unreadable/missing verdict fails open toward more work.
-    # The first interval is not judged: it holds the one-time setup every run must perform.
-    next_check = milestone_s * 2 if milestone_s else 0
-    gates = []
+    # NO MID-RUN JUDGMENT. `--milestone-minutes` names the historical interface, but now sets only
+    # the full task-sized budget above. Completeness and usefulness have no valid relationship to
+    # elapsed minutes; comparing them penalizes latency, work order, and late integration. The one
+    # inferred judgment happens after the final workspace is frozen.
     while proc.poll() is None:
-        if next_check and time.time() - t0 >= next_check:
-            minute = round(next_check / 60)
-            floor = int(round(next_check / milestone_s))      # 2 at the first look, then one more each
-            threshold = 100.0 * floor / deliverable_count(task_dir)
-            inferred = ask_gate(run_id, minute, floor, ws, task_dir, prompt)
-            gates.append({"at_minutes": minute, "deliverables_due": floor,
-                          "threshold": round(threshold, 1), "usefulness": inferred})
-            print(f"[gate] {minute}min  due={floor}  threshold={threshold:.0f}%  "
-                  f"judged={inferred}", flush=True)
-            if inferred is not None and inferred < threshold:
-                terminal = f"behind-{minute}min"
-                stop_run()
-                break
-            next_check += milestone_s
         if time.time() - t0 > wall:
             terminal = "budget-killed"
             stop_run()
@@ -721,7 +598,7 @@ def main() -> None:
         "planner": args.planner, "note": args.note, "sampling": spec,
         **({"level": args.level} if args.level is not None else {}),
         "started": t0, "wall_seconds": round(t1 - t0, 1), "terminal": terminal,
-        "milestone_minutes": args.milestone_minutes or None, "gates": gates or None,
+        "milestone_minutes": args.milestone_minutes or None,
         "success": bool(verdict.get("success")), "score": verdict.get("score"),
         "max_score": verdict.get("max_score"), "verify": verdict.get("parts"),
         **capture,

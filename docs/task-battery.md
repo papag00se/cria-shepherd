@@ -85,7 +85,7 @@ Closed in the prompt-clarity pass, not because it finally bit, but because the w
 
 `suite/run.py` paces a run at `len(meta.deliverables) x --milestone-minutes`, and the counts had drifted from what each task scores. Three tasks scored five checks on a four-thing clock; handles-cli-node scored four on a five-thing clock.
 
-Held open through the campaign for arm parity, then corrected once it closed. shipping-rates-rb, cart-billing-go and feed-pipeline-java now declare five and run to 75 minutes; handles-cli-node declares four and runs to 60. The milestone FLOOR is unaffected — it is one passing check per interval regardless of the count.
+Held open through the campaign for arm parity, then corrected once it closed. shipping-rates-rb, cart-billing-go and feed-pipeline-java now declare five and run to 75 minutes; handles-cli-node declares four and runs to 60. There is no milestone floor: the count sizes only the total budget and the final inferred-judgment denominator.
 
 ## The prompts themselves — where to edit them
 
