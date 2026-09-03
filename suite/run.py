@@ -11,10 +11,10 @@ Two budgets:
   * flat (default) — one HARD 30-minute wall.
   * `--milestone-minutes N` — N minutes per deliverable, so the budget follows the size of the task.
 
-NO MID-RUN SCORING. There used to be a floor at every N-minute mark, climbing by one deliverable each
-time, that killed a run whose STRICT all-or-nothing count fell behind. That is the measure this suite
-does not ask about (operator, 2026-08-27), and it killed runs whose deliverables were nearly done. A
-run now gets its budget and is judged once, by inference, after it finishes.
+Milestone runs are judged by the campaign's inferred-usefulness rubric: each fixed deliverable gets a
+0–100 score on its own merits and the average is compared with the share due (40% at two intervals,
+60% at three). The old strict verifier count and the later binary COMPLETE count are both forbidden:
+they erase real partial and independently delivered work that the campaign exists to measure.
 
 Kill mechanics follow the runctl scars: match the codex process list explicitly (ps + grep of
 the exec pattern, excluding shells), never `pkill -f` (it matches the invoking shell).
@@ -37,6 +37,7 @@ import tomllib
 from pathlib import Path
 
 import sampling
+import usefulness
 
 SUITE = Path(__file__).resolve().parent
 RESULTS = SUITE / "results" / "results.jsonl"
@@ -428,17 +429,18 @@ GATE_WAIT_S = 120
 
 
 def ask_gate(run_id: str, minute: int, floor: int, ws: Path, task_dir: Path, prompt: str):
-    """Ask the judge how many deliverables are complete, and wait. Returns an int, or None.
+    """Ask for an inferred-usefulness verdict and return its 0–100 score, or None.
 
     THE JUDGE IS THE PERSON RUNNING THE CAMPAIGN, and always has been — every verdict in
     `results.jsonl` was written by one reading an evidence packet. The old gate asked `verify.py`'s
     all-or-nothing count instead, which says "not done" for work that is done and merely fails a
     check on something incidental: a complete, correct, working CLI one directory too deep scored 0.
-    That count is gone; the question it asked is not.
+    A later binary COMPLETE count repeated the same loss at a different layer. Both are gone.
 
     So the gate writes the same kind of packet `usefulness.emit` writes — the task's own deliverable
-    list, the diff from the seed, and the verifier's per-deliverable observations as EVIDENCE rather
-    than as the verdict — and waits for a file holding one integer.
+    list, the diff from the seed, the verifier's per-deliverable observations as EVIDENCE, and the
+    exact fixed usefulness rubric — and waits for that rubric's JSON verdict. The threshold is the
+    fraction of the task owed by this mark, not a count of binary checkboxes.
 
     It does not pause the coder. The packet describes the workspace at the mark; the run carries on
     while the question is open, so a slow answer costs the run nothing.
@@ -460,16 +462,18 @@ def ask_gate(run_id: str, minute: int, floor: int, ws: Path, task_dir: Path, pro
         sh("git", "-C", str(snap / "ws"), "add", "-A", timeout=120)
         diff = sh("git", "-C", str(snap / "ws"), "diff", "--cached", "HEAD", timeout=120).stdout
         names = deliverable_names(task_dir)
+        threshold = round(100.0 * floor / len(names), 1)
         q.write_text("\n".join([
             f"# GATE — {run_id} at {minute} minutes",
             "",
-            f"**How many of these {len(names)} deliverables are COMPLETE?** Write the integer alone "
-            f"into `{a.name}` in this directory. The run continues while you decide; it is stopped "
-            f"only if your answer is below {floor}.",
+            f"**Infer how much of the requested work is delivered.** This mark requires {floor} of "
+            f"{len(names)} deliverables' worth: {threshold:g}%. Write the JSON object required by "
+            f"the rubric below into `{a.name}`. The run continues while you decide; it is stopped "
+            f"only if `usefulness` is below {threshold:g}%.",
             "",
-            "Judge whether the work is DONE, not whether a check passes. A deliverable that works but "
-            "trips a check on something incidental is complete. A deliverable that is written but "
-            "cannot run is not.",
+            "Score each deliverable independently. Partial, attempted, mostly complete, and fully "
+            "complete work receive the rubric's corresponding credit; a failure affects only "
+            "deliverables that depend on it.",
             "",
             "## The deliverables this task names",
             *[f"{i+1}. {n}" for i, n in enumerate(names)],
@@ -481,19 +485,19 @@ def ask_gate(run_id: str, minute: int, floor: int, ws: Path, task_dir: Path, pro
             *[f"- [{'met' if v.get('ok') else 'NOT met'}] {k}: {v.get('detail')}" for k, v in parts.items()],
             "",
             "## Everything the coder has changed since the seed",
-            "```diff", diff, "```", ""]))
+            "```diff", diff, "```", "",
+            "## Authoritative inferred-judgment rubric",
+            usefulness.SYSTEM.read_text(), ""]))
         print(f"[gate] {minute}min  asked -> {q}", flush=True)
         deadline = time.time() + GATE_WAIT_S
         while time.time() < deadline:
             if a.is_file():
-                for tok in a.read_text().split():
-                    if tok.strip().isdigit():
-                        return int(tok.strip())
-                return None
+                verdict = usefulness.parse(a.read_text())
+                return float(verdict["usefulness"]) if verdict is not None else None
             time.sleep(5)
         # AN UNANSWERED GATE IS AN UNGATED RUN, and that is an instrument defect, not a hiccup. It
         # fails OPEN because silence must never end a run (#13) — but silence must not be silent
-        # either: the row records `complete: null`, and this marker lets the batch stop instead of
+        # either: the row records `usefulness: null`, and this marker lets the batch stop instead of
         # spending the next cell the same way. Six gates went unanswered on 2026-08-27 and two cells
         # ran their full budget ungated before anyone noticed.
         with (GATE_DIR / "UNANSWERED").open("a") as fh:
@@ -570,9 +574,9 @@ def main() -> None:
     ap.add_argument("--milestone-minutes", type=int, default=0,
                     help="minutes allowed per deliverable. 0 (default) keeps the flat 30-minute "
                          "wall. When set, the run is looked at after TWO intervals and once "
-                         "per interval after that; each look asks the campaign judge how many "
-                         "deliverables are actually complete, and the run is killed when that "
-                         "count is below the number of intervals elapsed. A run that keeps "
+                         "per interval after that; each look asks the campaign judge for inferred "
+                         "usefulness under the fixed per-deliverable rubric, and the run is killed "
+                         "when that percentage is below the elapsed share. A run that keeps "
                          "delivering therefore EARNS more clock than the flat wall gave it, "
                          "and a stalled one is stopped in a quarter of the time.")
     args = ap.parse_args()
@@ -634,36 +638,24 @@ def main() -> None:
         # One interval per deliverable, so a run that earns every milestone gets the full budget.
         wall = milestone_s * deliverable_count(task_dir)
     terminal = "exited"
-    # NOT A SCORE FLOOR — A STALL DETECTOR. The old gate ran verify.py every interval, took its
-    # STRICT all-or-nothing count, and killed the run when that count fell below the deliverables
-    # owed by then. A run with three deliverables nearly finished scores 0 that way, and was killed
-    # at thirty minutes; all three cells on 2026-08-27 died exactly there. The strict measure is gone
-    # (operator: "I don't care about the strict measure - at all").
-    #
-    # A run still has to stop when it is not getting anywhere, so the question changes from "how many
-    # are DONE" to "did anything MOVE". Both halves come from the verifier's own per-deliverable
-    # observations, which are what a judgement is made from anyway:
-    #
-    #   * a deliverable flipping to met is movement, and so is its DETAIL changing — `0/8 rate values`
-    #     becoming `5/8` is exactly the progress the count threw away;
-    #   * the workspace fingerprint moving is movement, so a run editing files between two verifier
-    #     readings is never called stalled.
-    #
-    # Only a reading identical to the one before it — same deliverables met, byte-identical details,
-    # untouched workspace — is a stall, and it is confirmed once before the run is stopped (the
-    # snapshot is taken while the coder may be mid-write). Unreadable answers fail OPEN toward
-    # keeping the run alive (#13). The FIRST interval is never judged: it holds everything a run does
-    # once, before anything can have moved twice.
+    # INFERRED PACING, not strict verification and not binary completion. At each mark the campaign
+    # judge applies the same fixed per-deliverable usefulness rubric used at the end of a run. Two
+    # intervals means 2/N of the requested work must be delivered; partial and independent work
+    # counts exactly as the rubric says. An unreadable/missing verdict fails open toward more work.
+    # The first interval is not judged: it holds the one-time setup every run must perform.
     next_check = milestone_s * 2 if milestone_s else 0
     gates = []
     while proc.poll() is None:
         if next_check and time.time() - t0 >= next_check:
             minute = round(next_check / 60)
             floor = int(round(next_check / milestone_s))      # 2 at the first look, then one more each
-            done = ask_gate(run_id, minute, floor, ws, task_dir, prompt)
-            gates.append({"at_minutes": minute, "floor": floor, "complete": done})
-            print(f"[gate] {minute}min  floor={floor}  judged={done}", flush=True)
-            if done is not None and done < floor:
+            threshold = 100.0 * floor / deliverable_count(task_dir)
+            inferred = ask_gate(run_id, minute, floor, ws, task_dir, prompt)
+            gates.append({"at_minutes": minute, "deliverables_due": floor,
+                          "threshold": round(threshold, 1), "usefulness": inferred})
+            print(f"[gate] {minute}min  due={floor}  threshold={threshold:.0f}%  "
+                  f"judged={inferred}", flush=True)
+            if inferred is not None and inferred < threshold:
                 terminal = f"behind-{minute}min"
                 stop_run()
                 break

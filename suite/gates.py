@@ -8,11 +8,11 @@ answering a gate part of a turn instead of something to remember.
 
     python3 suite/gates.py            # what is open right now
     python3 suite/gates.py --wait     # block until a question appears, then print it
-    python3 suite/gates.py --answer <name> <integer>
+    python3 suite/gates.py --answer <name> <verdict.json>
 
-A question is `<run_id>.<NNN>min.md`; it is answered by `<run_id>.<NNN>min.verdict` holding one
-integer — how many of the task's deliverables are COMPLETE. Judge whether the work is done, not
-whether a check passes.
+A question is `<run_id>.<NNN>min.md`; it is answered by `<run_id>.<NNN>min.verdict` holding the same
+inferred-usefulness JSON used for final campaign judgment. Each fixed deliverable is scored 0–100 on
+its own merits and the average is compared with the elapsed share of the task.
 """
 from __future__ import annotations
 
@@ -20,6 +20,8 @@ import argparse
 import sys
 import time
 from pathlib import Path
+
+import usefulness
 
 GATE_DIR = Path(__file__).resolve().parent / "results" / "gates"
 
@@ -43,22 +45,25 @@ def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--wait", type=int, nargs="?", const=3600, default=0,
                     help="block up to N seconds for a question to appear (default 3600)")
-    ap.add_argument("--answer", nargs=2, metavar=("QUESTION", "COMPLETE"))
+    ap.add_argument("--answer", nargs=2, metavar=("QUESTION", "VERDICT_JSON"))
     ap.add_argument("--print", action="store_true", help="print the oldest open question in full")
     args = ap.parse_args(argv)
 
     if args.answer:
-        name, n = args.answer
-        if not n.strip().isdigit():
-            print("the verdict is a single integer: how many deliverables are COMPLETE",
+        name, source = args.answer
+        candidate = Path(source)
+        raw = candidate.read_text() if candidate.is_file() else source
+        verdict = usefulness.parse(raw)
+        if verdict is None:
+            print("the verdict must be the inferred-usefulness JSON required by the gate rubric",
                   file=sys.stderr)
             return 2
         q = GATE_DIR / (name if name.endswith(".md") else f"{name}.md")
         if not q.is_file():
             print(f"no such question: {q}", file=sys.stderr)
             return 2
-        q.with_suffix(".verdict").write_text(f"{int(n)}\n")
-        print(f"answered {q.name}: {int(n)}")
+        q.with_suffix(".verdict").write_text(raw.rstrip() + "\n")
+        print(f"answered {q.name}: usefulness {verdict['usefulness']:g}%")
         return 0
 
     deadline = time.time() + args.wait

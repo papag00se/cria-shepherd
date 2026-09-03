@@ -4,7 +4,7 @@ On 2026-08-27 six gates fired across two cells. None were answered. Each waited 
 failed open, and let the run continue — which is the right direction, because a judge who is asleep
 must never end a run (#13). But nothing said so. Both cells ran their full 75-minute budget with no
 gate deciding anything, the batch went on to spend a third cell the same way, and the only trace was
-`complete: null` on a row nobody reads until the batch is over.
+`usefulness: null` on a row nobody reads until the batch is over.
 
 Failing open is correct. Failing open SILENTLY is the defect. Three things changed:
 
@@ -47,7 +47,8 @@ class ATimedOutGateLeavesATraceTests(unittest.TestCase):
 
     def test_an_answered_gate_leaves_no_marker(self):
         (gates.GATE_DIR).mkdir(parents=True, exist_ok=True)
-        (gates.GATE_DIR / "run-9.030min.verdict").write_text("2\n")
+        (gates.GATE_DIR / "run-9.030min.verdict").write_text(
+            '{"usefulness":40,"reason":"x. y.","deliverables":[]}')
         suite_run.ask_gate("run-9", 30, 2, Path(tempfile.mkdtemp()), TASK, "t")
         self.assertEqual(gates.unanswered(), [])
 
@@ -62,11 +63,12 @@ class TheWorklistIsOneCommandTests(unittest.TestCase):
 
     def test_answering_closes_it(self):
         (gates.GATE_DIR / "r.030min.md").write_text("q")
-        self.assertEqual(gates.main(["--answer", "r.030min", "3"]), 0)
+        verdict = '{"usefulness":60,"reason":"x. y.","deliverables":[]}'
+        self.assertEqual(gates.main(["--answer", "r.030min", verdict]), 0)
         self.assertEqual(gates.open_questions(), [])
-        self.assertEqual((gates.GATE_DIR / "r.030min.verdict").read_text().strip(), "3")
+        self.assertEqual((gates.GATE_DIR / "r.030min.verdict").read_text().strip(), verdict)
 
-    def test_a_non_integer_verdict_is_refused(self):
+    def test_a_non_json_verdict_is_refused(self):
         (gates.GATE_DIR / "r.030min.md").write_text("q")
         self.assertEqual(gates.main(["--answer", "r.030min", "most of them"]), 2)
         self.assertEqual(len(gates.open_questions()), 1)

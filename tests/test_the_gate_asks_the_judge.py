@@ -1,16 +1,13 @@
-"""The mid-run gate asks the same question it always asked — and the judge answering is a person.
+"""The mid-run gate uses the campaign's own score: inferred usefulness.
 
-At 30 minutes: have two deliverables been completed? At 45: three. At 60: four. That schedule is the
-operator's and it is unchanged. What changed is who decides "complete".
-
-It used to be `verify.py`'s all-or-nothing count. That count says "not done" for work that IS done
-and merely fails a check on something incidental — a complete, correct, working CLI one directory too
-deep scored 0 — and it killed all three cells on 2026-08-27 at thirty minutes with real work on disk.
+At 30 minutes the run owes two of five deliverables' worth of work (40%); at 45 it owes three (60%).
+That is not a binary completed-item count. Each fixed deliverable gets 0–100 under the same rubric as
+the final judgment, and the average measures how much requested work was actually delivered.
 
 The judge is the person running the campaign, and always has been: every verdict in `results.jsonl`
 was written by one reading an evidence packet from `usefulness.emit`. So the gate writes the same
-kind of packet — the task's own deliverable list, the diff from the seed, and the verifier's
-observations as EVIDENCE rather than as the verdict — and waits for a file holding one integer.
+kind of packet — the task's own deliverable list, the diff from the seed, verifier observations, and
+the authoritative usefulness rubric — and waits for that rubric's JSON verdict.
 
 Two properties matter more than the rest:
 
@@ -72,17 +69,20 @@ class ItFailsOpenTests(unittest.TestCase):
         sleeping a fixed time is a coin flip, and a flaky test about a gate is worse than none."""
         ws = Path(tempfile.mkdtemp())
         suite_run.GATE_DIR.mkdir(parents=True, exist_ok=True)
-        (suite_run.GATE_DIR / "run-2.045min.verdict").write_text("3\n")
-        self.assertEqual(suite_run.ask_gate("run-2", 45, 3, ws, TASK, "t"), 3)
+        verdict = '{"usefulness":61,"reason":"x. y.","deliverables":[]}'
+        (suite_run.GATE_DIR / "run-2.045min.verdict").write_text(verdict)
+        self.assertEqual(suite_run.ask_gate("run-2", 45, 3, ws, TASK, "t"), 61)
 
     def test_the_packet_names_the_deliverables_and_the_floor(self):
         ws = Path(tempfile.mkdtemp())
         self._ask(ws)
         q = (suite_run.GATE_DIR / "run-1.030min.md").read_text()
         self.assertIn("threshold bug fixed", q)
-        self.assertIn("below 2", q)
+        self.assertIn("40%", q)
         self.assertIn("EVIDENCE, not the verdict", q)
-        self.assertIn("whether the work is DONE, not whether a check passes", q)
+        self.assertIn("Score each deliverable independently", q)
+        self.assertIn("A failure affects only deliverables that depend on it", q)
+        self.assertNotIn("written but cannot run is not", q)
 
 
 class TheScheduleAndTheKillTests(unittest.TestCase):
@@ -94,10 +94,11 @@ class TheScheduleAndTheKillTests(unittest.TestCase):
         self.assertIn("floor = int(round(next_check / milestone_s))", src)
         self.assertIn("next_check += milestone_s", src)
 
-    def test_a_run_is_stopped_only_on_an_answer_below_the_floor(self):
+    def test_a_run_is_stopped_only_when_inferred_usefulness_is_below_the_due_share(self):
         import inspect
         src = inspect.getsource(suite_run)
-        self.assertIn("if done is not None and done < floor:", src)
+        self.assertIn("threshold = 100.0 * floor / deliverable_count(task_dir)", src)
+        self.assertIn("if inferred is not None and inferred < threshold:", src)
 
     def test_no_strict_score_decides_anything(self):
         import inspect
