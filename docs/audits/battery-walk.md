@@ -202,3 +202,23 @@ L5, f07f1df, milestone-15, force-stopped @30min (judged 1). strict 1/5, usefulne
 **W2 — steer/reasoner re-blesses a compiler-refused symbol, coder-facing (VERIFIED, HEAD-current).** Reasoner 0071 → `⟦ctx:steer⟧` 0073, and again 0110/0111: "replace `import com.opencsv.CSVParseException;` with `import com.opencsv.exception.CSVParseException;`" — the exact package javac refused ≥3× in the seat's OWN prompt. `_prescribes_what_the_checks_reject` IS wired in but its trigger `_shared_symbols` runs `CSVParseException` through `_NAMES_A_FAILURE`, which strips `*Exception`/`*Error` names on the theory "a checker REPORTS an exception, never REJECTS it" — false when javac says `cannot find symbol: class CSVParseException`. So the trigger is filtered before the reasoner is ever asked, same blind spot as W1. NOT a mechanical DICTATES bypass: 0048 ruled DICTATES, but `_invented_code_spans` exempted the directive because the coder itself had typed BOTH wrong variants, so neither read as "invented" (the QUOTES-exemption).
 
 **Fix-audit.** F1 spill: 1 sighting, no denial (pass). F2 stale-note: both variants sighted, claims TRUE where rendered, model heeded them. F3: the W1 regression class above. Compactor overload recurred (0060/0061 `finish: length`), but the coder rollup was checks-only so the poison didn't reach it — verify that fail-safe is deliberate.
+
+## Vouch-rework (P1) — measured, then resolved NO-CHANGE (2026-09-02)
+
+Walk-3 judged P1 (the split-FQN leaf-match on the working-symbols vouch) a B-fix — a second patch
+(after F3) on a mechanism whose root is lexical containment doing a semantic job (#8). Two candidate
+A-fixes were drafted: R (reasoner-gate it) and X (remove it), decision deferred to a census.
+
+The census over all `~/.cria/calls` found the vouch had fired 3 times ever, false 3/3, correct 0 —
+and concluded REMOVE. But every one of those 3 was a PRE-P1 capture (the split-FQN CsvParser case):
+the census measured the bug, not the fix. Then the live nemotron re-run #4 (f07f1df, feed-pipeline-
+java call 0038) produced the FIRST correct vouch, verified in full: the briefing called `CsvParser`,
+`CsvParserBuilder` AND `skipRow` broken; the checks flag the CsvParser classes but are silent on
+`skipRow`; P1 WITHHELD the CsvParser classes (leaf in checks) and vouched ONLY `skipRow` (leaf
+absent) — correct discrimination on a mixed set.
+
+So P1 did not make the vouch inert (the census's assumption); it made it DISCRIMINATE. Both R and X
+are withdrawn — removing it would delete a now-working assist; reasoner-gating adds a call the
+leaf-match does not need. **Resolution: keep P1, no further change.** Lesson: a census over captures
+that all predate a fix measures the defect, not the remedy — live ground truth (#23b) corrected it.
+(Full working notes: local docs/audits/2026-09-02-vouch-rework-candidate.md, gitignored scratch.)
