@@ -65,12 +65,28 @@ def _coordinate_like(tok: str) -> bool:
     return len(tok) > 4 and bool(re.search(r"[./:@]", tok))
 
 
+def _normalize(tok: str) -> str:
+    """A refusal may name a coordinate as a URL — Go prints `repository
+    'https://github.com/arborize/decimal/' not found` — while a steer that re-blesses it names the
+    bare host/path (`github.com/arborize/decimal`). Walked on cart-billing-go x nemotron-elastic
+    1788413612 (steers 0049/0058/0070/0082/0083/0107): the URL-form ledger entry never matched the
+    bare-path steer under substring compare, so every re-bless of the twice-refused module shipped.
+    Strip a URL scheme, a trailing slash, and a trailing `.git` so the two forms compare equal.
+    Non-URL coordinates (maven `g:a:v`, npm `@scope/x`, `module@version`) carry no scheme and pass
+    through byte-identical."""
+    tok = re.sub(r"^[a-z][a-z0-9+.\-]*://", "", tok)   # scheme://
+    tok = tok.rstrip("/")
+    if tok.endswith(".git"):
+        tok = tok[:-4]
+    return tok
+
+
 def refused_names(text: str) -> set[str]:
     """Every coordinate/package/module the given tool-output text shows a resolver REFUSING."""
     out: set[str] = set()
     for pat in _REFUSAL:
         for m in pat.finditer(text or ""):
-            tok = (m.group(1) or "").strip().strip("'\"`.,;:")
+            tok = _normalize((m.group(1) or "").strip().strip("'\"`.,;:"))
             if _coordinate_like(tok):
                 out.add(tok)
     return out

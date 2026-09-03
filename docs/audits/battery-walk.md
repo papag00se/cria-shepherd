@@ -222,3 +222,69 @@ are withdrawn — removing it would delete a now-working assist; reasoner-gating
 leaf-match does not need. **Resolution: keep P1, no further change.** Lesson: a census over captures
 that all predate a fix measures the defect, not the remedy — live ground truth (#23b) corrected it.
 (Full working notes: local docs/audits/2026-09-02-vouch-rework-candidate.md, gitignored scratch.)
+
+## cart-billing-go_nemotron-elastic_codex_poff_1788413612 + feed-pipeline-java_..._1788415500 (walk-4, 7c54652 fixes LIVE)
+
+Full line-by-line walk of both re-run #4 cells (19 agents, go 54 chunks / java 60 chunks, zero
+truncation). Both force-stopped at the 30-min gate (judged 1/5 and 0/5, below floor 2). Purpose:
+audit the three walk-3 fixes under live fire and answer the run's open questions. Every load-bearing
+claim below was re-verified against the raw chunks (#23b); two subagent "regressions" collapsed on
+that read.
+
+### Fix audit
+- **P4 (runs-dir token): PASS, all 19 slices.** Every path is `~/suite-runs/…`; zero `cria-shepherd`
+  tokens anywhere in either run. The leak the fix targeted is gone.
+- **P1 (split-FQN vouch): PASS / working.** Confirmed discriminating at java 0036/0040 (vouched the
+  checks-silent `skipRow`, withheld all six checks-flagged `Csv*`/`rows`/`rowCount`), 0058, 0082,
+  0106 (as the check set changed, `skipRow` flipped from vouched to correctly withheld — dynamic
+  discrimination), and 0047 (vouched exactly the four symbols the MODEL'S briefing called broken that
+  the real mvn `symbol:` output is silent on — `CsvValidationException`/`rows` were the only symbols
+  the checks actually flagged). Two agents filed P1 "regressions"; both were mis-reads I overturned
+  against the chunks — one matched vouched symbols against the model's summary text instead of the
+  mvn output (0047), the other read no truncation cap that wasn't there. One cosmetic edge stands:
+  the case-sensitive leaf-match lets a vouch of `OpenCSV` through while the checks name lowercase
+  `opencsv` (0058/0082/0106) — harmless (`OpenCSV` is the library name, not a code symbol the coder
+  acts on); logged, not fixed (case-folding risks over-withholding a real `Foo` vs unrelated `foo`).
+- **P3 (resolver-refusal ledger): PASS in java, VERIFIED GAP in go → fixed as P3b.** Java steers only
+  ever quoted the `package net.opencsv does not exist` refusal, never prescribed a coordinate. But go
+  steers re-blessed the twice-refused `github.com/arborize/decimal` at SIX sites (0049/0058/0070/
+  0082/0083/0107) and P3 did not fire. Root, verified by running `refusalledger` on the exact
+  strings: go prints the refusal as a URL (`repository 'https://github.com/arborize/decimal/' not
+  found`) so the ledger held the URL form, while the steers named the bare module path
+  `github.com/arborize/decimal`; substring compare never equated the two. Java works only because
+  `package X does not exist` yields the bare form that matches steers. **P3b** normalizes a captured
+  coordinate (strip URL scheme / trailing slash / `.git`) at ledger time so both forms compare equal;
+  fails-before/passes-after test from the exact 0083 steer. This is a completion of P3, not a new
+  assist — the ADD bar is met by six live sites.
+
+### Open questions answered (all model-own, #19)
+- **go.sum fabrication**: model-origin. The model read `Repository not found` twice, THOUGHT "we can
+  generate a fake but valid go.sum?" (0101) and hand-wrote ~25 hashless variants; no cria text
+  invited editing go.sum (Go's own `to add: go get cartsvc` hint was the only prompt). cria's reasoner
+  steers then SUSTAINED the loop by prescribing invented go.sum grammar for the refused module — the
+  P3b gap above — but did not originate it. Model also destroyed a green build at 0040 by rewriting
+  with the invented decimal API.
+- **net.opencsv origin**: model-own, nailed to root. Miscased `CsvParser` made javac print `cannot
+  find symbol … location: package com.opencsv`, which the model MISREAD as a wrong-package error and
+  "fixed" by inventing `net.opencsv` — seconds after `dependency:tree` proved `com.opencsv:5.9`
+  resolves. No cria injection ever contains net.opencsv except quoted compiler refusals.
+- **REVIEW.md 0-located**: model-own timing, not fix effect. Written pre-compile from plan/memory
+  with tilde-approximate line numbers, never grep-verified, never revisited — one draft even HAD
+  file:line and dropped them. The strict-0 REVIEW is model variance, confirming last session's read.
+- **⟦ctx:rollup⟧ "the correct package is net.opencsv" (0085/0088)**: NOT a cria false fact. It is the
+  MODEL's own compaction summary, carried under the explicit "this is a summary… where a tool result
+  disagrees, that is ground truth — read them rather than trusting this" label, with cria's
+  `⟦ctx:checks⟧ package net.opencsv does not exist` appended in the SAME prompt. cria labeled the
+  model's wrong summary and showed the truth beside it; the weak model believed itself (#19).
+
+### Measure-first candidates (NOT built — #15)
+- Repeat detector never fires on 20+ byte-identical `write_file` thrashes (go.sum spiral); measure
+  prevalence before touching the dedup path.
+- Rollup-vs-checks same-prompt contradiction rate (how often the model's own summary asserts a
+  false-positive the adjacent checks reject). A measurement, not yet a fix — cria already ships the
+  contradicting ground truth; the question is whether that is enough.
+
+### Verdict
+Two of three walk-3 fixes held perfectly live (P4, P1). The third (P3) held for java and revealed one
+coordinate-form gap in go, now closed by P3b with a test. Every remaining failure in both runs
+originates in the model's own invention (#19); cria's injections pointed at the truth throughout.
