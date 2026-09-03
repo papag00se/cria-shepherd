@@ -46,7 +46,7 @@ from pathlib import Path
 from . import bodykeys, wsview
 from . import callcapture, dedup, denial, editrecovery, execcheck, focustrim, groundtruth, indicators, massage, probediscovery, probegate, probeparse, proberun, prompts, selfcompact, shellshape, toolmenu, urlgrounding, verifytools, webfetch
 from .classify import _task_key, latest_user_text
-from . import jsontext, planner, writeproxy
+from . import jsontext, planner, refusalledger, writeproxy
 from .jsontext import extract_json_object, strip_think
 from . import research
 from .rumination import WINDOW_EXHAUSTED_FRACTION
@@ -290,6 +290,9 @@ class GuardState:
     # Paths and sizes only — the contents stay where they are, and re-reading one is a single call.
     fetched_pages: dict = None  # url -> (status, routes): DURABLE fetch facts a steer cites after the
     # real result has been floored out of the window (else a steer can't counter a late spiral)
+    refused_names: set = None  # coordinates/packages the coder's toolchain REFUSED (refusalledger):
+    # DURABLE like fetched_pages, because compaction folds the refusal away and a seat then re-blesses
+    # the pin the tools rejected (walked: cart-billing-go 1788241229 0095->0096)
     same_checks_relooked: bool = False  # the ONE second look at unchanged findings has been spent
     #                                     (rearms whenever the findings move; see author_steer)
 
@@ -2145,9 +2148,27 @@ def _briefing_denies_working_symbols(briefing: str, findings: str) -> list:
     for span in _BRIEFING_BROKEN.finditer(briefing):
         for tok in re.findall(r"[A-Za-z_][\w.:]*", span.group(0)):
             t = tok.strip(".:")
-            if _looks_like_a_symbol(t) and t not in findings and t not in named:
+            if _looks_like_a_symbol(t) and not _checks_name_symbol(t, findings) and t not in named:
                 named.append(t)
     return named
+
+
+def _checks_name_symbol(tok: str, findings: str) -> bool:
+    """Do the checks name this symbol — the WHOLE token, OR its leaf segment for a dotted/namespaced
+    name? javac renders `symbol: class CSVParseException` and `location: package com.opencsv` on
+    SEPARATE lines, so the FQN `com.opencsv.CSVParseException` a briefing writes never appears whole
+    in the checks, only its leaf `CSVParseException` does. Walked on feed-pipeline-java x
+    nemotron-elastic 1788243086 (calls 0073/0076/0084/0102/0122): the vouch "the checks do NOT
+    report a problem with: com.opencsv.CSVParseException" fired directly above javac flagging exactly
+    that class — a #5b false fact, because the whole-string test missed the split rendering.
+
+    Leaf-match only ADDS matches, so it only ever WITHHOLDS a vouch, never emits one (#5b-safe): a
+    symbol whose leaf the checks never mention is still named. Leaf must be specific (>3 chars) so a
+    bare `Map`/`Set` collision cannot silence a legitimate vouch on the whole name."""
+    if tok in findings:
+        return True
+    leaf = re.split(r"[.:]+", tok)[-1]
+    return len(leaf) > 3 and leaf != tok and leaf in findings
 
 
 def _briefing_disk_truth(briefing: str, files_list: str, rlog=None) -> str:
@@ -2289,6 +2310,8 @@ class LoopStore:
             if prev is not None and _stable_session(key) and getattr(prev, "fetched_pages", None):
                 sess.fetched_pages = _merge_fetches(dict(sess.fetched_pages or {}),
                                                     prev.fetched_pages)
+            if prev is not None and _stable_session(key) and getattr(prev, "refused_names", None):
+                sess.refused_names = (sess.refused_names or set()) | prev.refused_names
             self._sessions.pop(key, None)          # re-put refreshes recency
             self._sessions[key] = sess
             self._bound_sessions_locked()
@@ -2739,6 +2762,7 @@ class Loop:
         if self._ctx.assists:
             coder = guard_search_query(sess, coder, body, self._ctx.reasoner_chat, self._ctx.reasoner_role, rlog)
             _track_fetched_pages(sess, body.get("messages", []))  # durable fetch facts for later steers
+            _track_refused_names(sess, body.get("messages", []))  # …and coordinates the toolchain refused
             _track_read_files(sess, body.get("messages", []))     # …and the files it opened on disk
             if _has_tool_calls(coder):  # the coder ACTED → track it for the refusal/spin guards
                 guard_track_refusals(sess, coder, rlog, step=step,
@@ -7018,6 +7042,19 @@ def _track_fetched_pages(sess, messages: list[dict]) -> None:
     _merge_fetches(sess.fetched_pages, _extract_fetches(messages))
 
 
+def _track_refused_names(sess, messages: list[dict]) -> None:
+    """Accumulate coordinates/packages the toolchain refused, DURABLY on the GuardState, so a steer
+    that re-blesses a refused pin is caught even after compaction has folded the refusal out of the
+    live window (the point it is most needed — walked on cart-billing-go 1788241229 0095->0096).
+    A union: once a name is known-refused this session it stays refused (a later success does not
+    un-refuse a coordinate the coder should not be told to re-add)."""
+    if sess is None:
+        return
+    if getattr(sess, "refused_names", None) is None:
+        sess.refused_names = set()
+    sess.refused_names |= refusalledger.scan_messages(messages)
+
+
 # The read tools by their canonical names — `massage.normalize_tool_names` has already mapped a
 # harness's spelling onto these by the time the loop sees a message.
 _READ_TOOL_NAMES = ("read_file", "cat_file", "view_file")
@@ -8481,6 +8518,39 @@ def _positional_only(findings: str) -> set:
     return out
 
 
+def _prescribes_a_refused_coordinate(directive: str, refused, rlog, ask) -> str:
+    """A dependency coordinate/package the directive tells the coder to ADD/USE while the session's
+    own toolchain has REFUSED it — else "".
+
+    The coordinate sibling of :func:`_prescribes_what_the_checks_reject`, and it exists because that
+    function structurally cannot reach this case: `_shared_symbols` drops any token with a `/`
+    ("a path is not a symbol"), so a module coordinate is invisible to it, and its findings come
+    from `last_gate_flag`, which compaction empties. The ledger (`sess.refused_names`) is durable, so
+    the refusal survives the fold that let a seat re-bless `v0.5.0` after the tools rejected it.
+
+    Same #8 split as the symbol guard: `refusalledger.prescribed` is the deterministic TRIGGER (the
+    directive names a remembered-refused coordinate), and ONE focused reasoner question — the SAME
+    `steer_prescribes_broken` prompt, whose QUOTES branch already covers "remove it" and "supply the
+    missing thing" — rules PRESCRIBES vs QUOTES. With no reasoner or an unreadable answer the
+    directive STANDS (#4: no deterministic fallback behind an absent reasoner), so this can only move
+    a steer from delivered to withheld when a model says the steer tells the coder to USE a
+    coordinate that did not resolve."""
+    if ask is None:
+        return ""
+    coord = refusalledger.prescribed(directive, refused)
+    if not coord:
+        return ""
+    ans = strip_think(ask(prompts.render("steer_prescribes_broken",
+                                         findings="the coder's toolchain could not resolve: " + coord,
+                                         directive=directive, symbol=coord), "") or "").strip()
+    head = ans.upper().split()[0].strip(".,:;`*") if ans.split() else ""
+    if head == "PRESCRIBES":
+        rlog.emit("loop.steer_prescribes_refused", level="warn", coordinate=coord,
+                  head=_clip(directive, 120))
+        return coord
+    return ""
+
+
 def _prescribes_what_the_checks_reject(directive: str, findings: str, rlog, ask) -> str:
     """The symbol a directive tells the coder to USE while the checks name it as the problem — else "".
 
@@ -8746,6 +8816,10 @@ def _vet_steer(directive: str | None, evidence: str, rlog, ask=None,
             directive, (getattr(sess, "last_gate_flag", "") or "").strip(), rlog,
             (lambda sysm: ask(sysm, "")) if ask else None):
         return None, "prescribes_broken"      # the checks say this symbol is the problem — silence beats endorsing it
+    if sess is not None and _prescribes_a_refused_coordinate(
+            directive, getattr(sess, "refused_names", None), rlog,
+            (lambda sysm: ask(sysm, "")) if ask else None):
+        return None, "prescribes_refused"     # the coordinate did not resolve when the coder tried it
     ghost = _symbol_not_in_the_file(directive, workspace_root)
     if ghost:
         # cria READ the file; the steer names something that is not in it. Refused, not reworded —
