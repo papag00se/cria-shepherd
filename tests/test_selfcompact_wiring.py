@@ -13,12 +13,21 @@ class _Rlog:
         pass
 
 
+def _validation_reply(system):
+    if "PLAN or RETROSPECTIVE" in system:
+        return "RETROSPECTIVE"
+    if "NARROWS or PRESERVES" in system:
+        return "PRESERVES"
+    if "UNFAITHFUL or FAITHFUL" in system:
+        return "FAITHFUL"
+    return None
+
+
 def _loop(self_compact=True, chat_reply="ROLLUP SUMMARY", trigger=100):
     # The single-item self-compaction rides the COMPACTOR endpoint (compactor_chat), same summarize
     # primitive the loop's completion compaction uses.
     def chat(body, rlog):
-        validating = "validating a proposed" in body["messages"][0]["content"]
-        text = "ACCEPT" if validating else chat_reply
+        text = _validation_reply(body["messages"][0]["content"]) or chat_reply
         return json.dumps({"choices": [{"message": {"content": text}}]}).encode()
     ctx = LoopContext(planner=None, coder_chat=chat, reasoner_chat=chat, compactor_chat=chat,
                       compactor_role=Role(name="compactor", backend="local"), coder_role=None,
@@ -50,6 +59,29 @@ class SelfCompactWiringTests(unittest.TestCase):
         self.assertLess(len(out["messages"]), len(framed["messages"]))
         self.assertTrue(any(selfcompact.SUMMARY_MARKER in str(m.get("content")) for m in out["messages"]))
         self.assertIn("ROLLUP SUMMARY", " ".join(str(m.get("content")) for m in out["messages"]))
+
+    def test_the_writer_and_scope_judge_receive_the_pinned_original_task(self):
+        seen = []
+
+        def chat(body, rlog):
+            seen.append(body)
+            text = (_validation_reply(body["messages"][0]["content"])
+                    or "Retrospective session state.")
+            return json.dumps({"choices": [{"message": {"content": text}}]}).encode()
+
+        ctx = LoopContext(planner=None, coder_chat=chat, reasoner_chat=chat, compactor_chat=chat,
+                          compactor_role=Role(name="compactor", backend="local"), coder_role=None,
+                          planner_enabled=False, runs_dir="", self_compact=True,
+                          trigger_compaction=100)
+        loop = Loop(ctx, LoopStore())
+        task = "Fix rounding, load discounts.json, use decimal money, and log totals."
+        loop._self_compact_single(_big(150), _synth(), _Rlog(), root_task=task)
+
+        rendered = ["\n".join(str(m.get("content") or "") for m in call["messages"])
+                    for call in seen]
+        self.assertIn(task, rendered[0], "the briefing writer must see the north-star task")
+        self.assertTrue(any(task in text and "full unresolved scope" in text for text in rendered[1:]),
+                        "an independent scope judgment must compare the candidate with the task")
 
     def test_skips_short_history(self):
         loop = _loop()

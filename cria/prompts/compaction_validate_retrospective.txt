@@ -1,0 +1,5 @@
+You are validating a proposed coding-session briefing. Judge one question only: does any sentence in the candidate tell the future coding agent what action to take, what repair to make, what command to run, or what approach will fix the problem?
+
+Answer PLAN if any sentence does. Answer RETROSPECTIVE only if no sentence does. A statement that a task requirement remains unmet is retrospective state; a statement telling the agent how to satisfy it is a plan. If uncertain, answer PLAN.
+
+Your entire answer must be exactly one word: PLAN or RETROSPECTIVE.

@@ -15,6 +15,7 @@ A terse index of the assists cria **actually implements** today, in five familie
 - **Fetch exact-repeat guard** — an identical external `web_fetch` (url + find + cursor) this session → HTTP 400; internal hosts exempt.
 - **Failing-fetch guard** — 3 consecutive non-2xx external fetches → a "stop guessing URLs" nudge; localhost exempt.
 - **Shared-install guard** — a package install whose destination is the user/system environment (`pip install`, `npm -g`, `gem`/`cargo`/`go install`, `apt`/`brew`) → refused with the in-project venv route; project-local installs (`npm install`, `composer require`, `cargo add`) pass untouched.
+- **Missing-dependency note** — beside the latest real loader/compiler failure, quote the exact unresolved package and distinguish an undeclared dependency from an invalid package name. For Go, the note explicitly withholds `go get` as a remedy until authoritative package source establishes that the import path exists.
 
 ## Massages — silent output repair so the harness accepts it
 
@@ -44,7 +45,7 @@ A terse index of the assists cria **actually implements** today, in five familie
 - **Window auto-detect + derived budget** — read real `n_ctx` from `/props`; budget = window − output reserve.
 - **Real-token calibration** — a rise-fast/fall-slow EWMA learns the model's chars→token ratio (≈1.8× → 3.5×) so the budget is against truth, not chars/4.
 - **content_reduce** — MIME-aware lossless-first reduction of an oversized tool output (HTML→text, JSON minify) before it blows the window.
-- **Self-compaction** — token-triggered: roll the old transcript middle into a `⟦ctx:rollup⟧` reasoner summary, keeping the tail verbatim. A separate focused judge sees the candidate plus the same transcript, current filesystem inventory, and latest check facts; only exact `ACCEPT` adopts it. Rejection, ambiguity, or no judge leaves the verbatim history in place. Rare rollup refolds pass through the same gate.
+- **Self-compaction** — token-triggered: roll the old transcript middle into a retrospective `⟦ctx:rollup⟧`, keeping the tail verbatim and giving the writer the pinned original task. Three independent fail-closed judgments require exact `RETROSPECTIVE`, `PRESERVES`, and `FAITHFUL` verdicts for no forward plan, full task scope, and fidelity to transcript/disk/check facts (including decisive negative evidence). Rejection retains verbatim history and suppresses a retry until a new token band accumulates. Rare rollup refolds pass through the same gate.
 - **Reducible internal evidence** — compactor and briefing-validator transcripts ride as independently reducible evidence turns between a small introduction and the final active question. With no pressure their bytes are unchanged; under pressure the single context floor can fold/drop whole evidence blocks with its existing labelled stand-in instead of knowingly sending an irreducible oversized two-message body.
 - **Completion compaction** — on `loop.done`, summarize the finished work into a `⟦ctx:briefing⟧` envelope that rides in the closing message, so a follow-up resumes on top of it.
 - **Overflow re-trim + retry** — a context-overflow error → re-trim to the server's real numbers and retry only when re-preparation changes the body; a byte-identical body is never resent to a known rejection.

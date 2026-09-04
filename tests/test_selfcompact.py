@@ -425,6 +425,49 @@ class RollingSummaryTests(unittest.TestCase):
         self.assertEqual(st.summary, "whole")                     # replaced, not appended to stale
 
 
+class RejectedSummaryThrottleTests(unittest.TestCase):
+    """A rejected briefing is unchanged evidence, not permission to ask again next turn."""
+
+    @staticmethod
+    def _msgs(n, tag="old"):
+        return ([{"role": "system", "content": "sys"}]
+                + [{"role": "assistant", "content": f"{tag}-{i} " + "x" * 400}
+                   for i in range(n)])
+
+    def test_rejected_span_is_not_retried_until_a_new_band_accumulates(self):
+        calls = []
+
+        def reject(ms):
+            calls.append([m.get("content") for m in ms])
+            return ""
+
+        msgs = self._msgs(12)
+        out, state, applied = selfcompact.compact(
+            msgs, reject, selfcompact.CompactState(), trigger_tokens=100,
+            keep_tail_tokens=120, recompact_tokens=100, pinned_task="task")
+        self.assertFalse(applied)
+        self.assertIs(out, msgs)
+        self.assertEqual(len(calls), 1)
+        self.assertGreater(state.attempted, 0)
+
+        # One tiny new turn is not new evidence worth regenerating and re-judging the same briefing.
+        slightly_newer = msgs + [{"role": "assistant", "content": "tiny update"}]
+        out2, state2, applied2 = selfcompact.compact(
+            slightly_newer, reject, state, trigger_tokens=100,
+            keep_tail_tokens=120, recompact_tokens=100, pinned_task="task")
+        self.assertFalse(applied2)
+        self.assertIs(out2, slightly_newer)
+        self.assertEqual(len(calls), 1)
+
+        # A real new band reaches the existing recompact threshold and earns one fresh attempt.
+        much_newer = slightly_newer + self._msgs(6, "new")[1:]
+        _, state3, _ = selfcompact.compact(
+            much_newer, reject, state2, trigger_tokens=100,
+            keep_tail_tokens=120, recompact_tokens=100, pinned_task="task")
+        self.assertEqual(len(calls), 2)
+        self.assertGreater(state3.attempted, state2.attempted)
+
+
 class SummaryRefoldTests(unittest.TestCase):
     """THE ACCUMULATED SUMMARY IS ITSELF BOUNDED (operator: append-only just moves the unbounded
     growth into the summary — it would eventually overtake the window, and the rollup is anchor-

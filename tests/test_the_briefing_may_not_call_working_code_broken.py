@@ -36,24 +36,29 @@ class BriefingConflictUsesJudgmentTests(unittest.TestCase):
         seen = []
         def chat(body, rlog):
             seen.append(body)
-            return json.dumps({"choices": [{"message": {"content": "REJECT"}}]}).encode()
+            verdict = "RETROSPECTIVE" if len(seen) == 1 else "UNFAITHFUL"
+            return json.dumps({"choices": [{"message": {"content": verdict}}]}).encode()
         accepted = loop.validate_compaction_briefing(
             chat, Role(name="reasoner", backend="local"), BRIEFING, files="cart.go",
             checks=FINDINGS, transcript_blocks=["tool: " + FINDINGS], rlog=_Rlog())
         self.assertFalse(accepted)
-        text = "\n".join(m["content"] for m in seen[0]["messages"])
+        text = "\n".join(m["content"] for m in seen[-1]["messages"])
         self.assertIn("decimal.NewFromString", text)
         self.assertIn("decimal.NewDecimal", text)
         self.assertIn(FINDINGS, text)
 
     def test_no_check_output_is_explicitly_absent_not_lexically_inferred(self):
         seen = []
+        def chat(body, rlog):
+            seen.append(body)
+            verdict = "RETROSPECTIVE" if len(seen) == 1 else "UNFAITHFUL"
+            return json.dumps({"choices": [{"message": {"content": verdict}}]}).encode()
+
         loop.validate_compaction_briefing(
-            lambda body, rlog: seen.append(body) or json.dumps(
-                {"choices": [{"message": {"content": "REJECT"}}]}).encode(),
+            chat,
             Role(name="reasoner", backend="local"), BRIEFING, files="cart.go", checks="",
             transcript_blocks=[], rlog=_Rlog())
-        text = "\n".join(m["content"] for m in seen[0]["messages"])
+        text = "\n".join(m["content"] for m in seen[-1]["messages"])
         self.assertIn("LATEST CHECK FACTS: no authoritative fact was available", text)
 
 

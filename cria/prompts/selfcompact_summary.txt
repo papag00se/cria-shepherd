@@ -5,7 +5,7 @@ You are compressing the earlier part of a coding session into a briefing for the
 Summarize the transcript below into a concise, factual briefing:
 - What now WORKS — describe each accomplishment by its behavior/capability and the FILE it lives in (e.g. "parsing the config file now works — in config.py"). Mention a function or variable name only as a pointer to find the code, never as a fact to keep: identifiers, signatures, and structure are the current implementation and MAY still be renamed or refactored.
 - The CURRENT state of the code and any tests: what passes, what still fails and why (quote the concrete error and file:line). Only from a check that RAN in the transcript — see the evidence rule below, which applies to failures exactly as it does to passes.
-- What remains to be done / the next step — UNDER THE SAME EVIDENCE RULE as the bullets above. Name something outstanding only where a check that RAN reported it, or the task's own words ask for it and no run has shown it done. Never a file, a command, a function or a step the task does not name. If nothing meets that bar, say "nothing verified outstanding" — an invented next step becomes a requirement the agent will build.
+- What remains to be done (requirements only, not a next-step plan) — UNDER THE SAME EVIDENCE RULE as the bullets above. Name something outstanding only where a check that RAN reported it, or the ORIGINAL TASK asks for it and no run has shown it done. Never name a file, command, or step the task does not name. State only the unmet requirement and its evidence; do not prescribe a repair, file edit, command, implementation, or next action. If nothing meets that bar, say "nothing verified outstanding".
 
 Rules:
 - Name FILES and concrete ERRORS precisely — those are stable ground truth the agent should trust.
@@ -15,4 +15,5 @@ Rules:
 - Do NOT present any function name, variable name, or code shape as "done — don't change it." The agent may be mid-refactor; a briefing that freezes a name it is in the middle of renaming makes it thrash between the old and new name.
 - Do NOT restate anything a durable ledger above already carries in full — endpoints, routes,
 response fields, a file's contents. Those are not session progress, they are re-stated from the real source in every turn, and a paraphrase can only degrade them while competing with the real thing. Say WHICH source was read and what the code does with it. Where no such ledger is present, this does not apply: a fact that travels nowhere else belongs in the briefing.
+- Preserve decisive negative findings and unresolved contradictions, especially a real tool result that disproved an approach the coder had been pursuing. Omitting that evidence makes the disproven approach look viable again.
 - Do NOT invent progress. Output only the briefing, no preamble.

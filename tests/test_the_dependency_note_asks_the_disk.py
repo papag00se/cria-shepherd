@@ -185,10 +185,17 @@ class WhatIsLeftAloneTests(unittest.TestCase):
         dependency — a different sentence with a different truth condition."""
         with _Project(files=["Cargo.toml"]) as root:
             for eco, phrase in (("rust", "has to be in Cargo.toml's [dependencies]"),
-                                ("go", "records it in go.mod"),
+                                ("go", "authoritative package listing or source"),
                                 ("java", "against what the repository actually publishes")):
                 with self.subTest(ecosystem=eco):
                     self.assertIn(phrase, line(eco, root, name="x"))
+
+    def test_go_does_not_bless_an_unverified_package_path(self):
+        with _Project(files=["go.mod"]) as root:
+            note = line("go", root, name="github.com/shopspring/decimal/quantize")
+        self.assertIn("does NOT establish", note)
+        self.assertIn("package path that does not exist", note)
+        self.assertNotIn("records it in go.mod so the import can resolve", note)
 
     def test_no_workspace_keeps_the_original(self):
         """#3: with no workspace to read, cria keeps the general line — which since 2026-08-18 names

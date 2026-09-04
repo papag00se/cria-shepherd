@@ -39,6 +39,7 @@ from .loop import (
     LoopContext,
     LoopStore,
     _fetch_ground_truth,
+    _history_root,
     completion_to_sse,
     gate_age,
     reframe_compaction,
@@ -573,7 +574,8 @@ def _harden_compaction_reply(comp: dict, body: dict, provider, server, rlog, ses
         role = server.cfg.routing.roles.get("compactor") or server.cfg.routing.roles.get("reasoner")
         if not validate_compaction_briefing(
                 lambda call, log: provider.chat(call, log), role, text,
-                files=writer_inventory, checks=checks, transcript_blocks=transcript, rlog=rlog,
+                files=writer_inventory, checks=checks, transcript_blocks=transcript,
+                task=_history_root(body.get("messages", []))[0], rlog=rlog,
                 phase="harness-compaction-validate"):
             text = ""
     # THE SAME REPAIR THE OTHER COMPACTION PATH HAS. `_briefing_disk_truth` appends a ground-truth

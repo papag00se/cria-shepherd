@@ -1,0 +1,4 @@
+ORIGINAL TASK (authoritative; preserve its full scope in the briefing):
+{{TASK}}
+
+The latest failure may be only one blocker within this task. Do not redefine the task as fixing that blocker, and do not omit requested deliverables merely because the transcript has not reached them yet.

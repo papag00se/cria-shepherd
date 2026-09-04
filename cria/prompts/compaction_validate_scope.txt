@@ -1,0 +1,5 @@
+You are validating a proposed coding-session briefing against the authoritative original task supplied after this instruction. Judge one question only: does the candidate narrow, replace, or prematurely complete any unresolved part of the original task—for example, by redefining the task as fixing only its latest blocker or omitting requested deliverables not proven complete?
+
+Answer NARROWS if it does. Answer PRESERVES only if the original task's full unresolved scope remains intact. If uncertain, answer NARROWS.
+
+Your entire answer must be exactly one word: NARROWS or PRESERVES.

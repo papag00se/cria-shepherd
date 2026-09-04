@@ -1678,6 +1678,16 @@ class SharedSummarizeTests(unittest.TestCase):
         self.assertEqual(len(calls), 2)   # the plan-recovered pass was discarded and retried off
 
 
+def _compaction_validation_verdict(system):
+    if "PLAN or RETROSPECTIVE" in system:
+        return "RETROSPECTIVE"
+    if "NARROWS or PRESERVES" in system:
+        return "PRESERVES"
+    if "UNFAITHFUL or FAITHFUL" in system:
+        return "FAITHFUL"
+    return None
+
+
 class LoopSelfCompactTests(unittest.TestCase):
     def test_loop_rolls_up_a_big_coder_view(self):
         from cria.loop import Loop, PlanSession
@@ -1686,9 +1696,8 @@ class LoopSelfCompactTests(unittest.TestCase):
 
         def reasoner(body, rlog):
             reasoner_calls.append(body)
-            validating = "validating a proposed" in body["messages"][0]["content"]
-            return json.dumps({"choices": [{"message": {
-                "content": "ACCEPT" if validating else "ROLLUP"}}]}).encode()
+            text = _compaction_validation_verdict(body["messages"][0]["content"]) or "ROLLUP"
+            return json.dumps({"choices": [{"message": {"content": text}}]}).encode()
 
         from cria.config import Role
         ctx = replace(_ctx(coder=None, reasoner=reasoner), trigger_compaction=100,
@@ -1699,7 +1708,7 @@ class LoopSelfCompactTests(unittest.TestCase):
         big = [{"role": "system", "content": "sys"}] + [{"role": "assistant", "content": "y" * 1000} for _ in range(50)]
         out = loop._self_compact(big, sess, 1, _Rlog())
         self.assertLess(len(out), len(big))                                   # compacted
-        self.assertEqual(len(reasoner_calls), 2)                              # writer + focused validator
+        self.assertEqual(len(reasoner_calls), 4)                              # writer + three focused validators
         self.assertTrue(any("⟦ctx:rollup⟧" in str(m.get("content")) for m in out))
 
     def test_rollup_is_grounded_by_the_real_gate_state(self):
@@ -1709,8 +1718,8 @@ class LoopSelfCompactTests(unittest.TestCase):
         from dataclasses import replace
 
         def reasoner(body, rlog):
-            validating = "validating a proposed" in body["messages"][0]["content"]
-            text = "ACCEPT" if validating else "all 7 tests now pass"
+            text = (_compaction_validation_verdict(body["messages"][0]["content"])
+                    or "all 7 tests now pass")
             return json.dumps({"choices": [{"message": {"content": text}}]}).encode()
 
         from cria.config import Role

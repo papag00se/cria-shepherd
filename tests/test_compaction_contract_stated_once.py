@@ -39,4 +39,5 @@ class ClosingAskTests(unittest.TestCase):
 
     def test_the_system_prompt_still_defines_what_a_briefing_contains(self):
         self.assertIn("What now WORKS", self.SYS)
-        self.assertIn("What remains to be done", self.SYS)
+        self.assertIn("requirements only, not a next-step plan", self.SYS)
+        self.assertIn("do not prescribe", self.SYS)

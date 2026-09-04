@@ -823,6 +823,16 @@ class ResponsesStatusTickerTests(unittest.TestCase):
         self.assertEqual(output[1]["content"][0]["text"], "Hi")    # the real message after it
 
 
+def _compaction_validation_verdict(system):
+    if "PLAN or RETROSPECTIVE" in system:
+        return "RETROSPECTIVE"
+    if "NARROWS or PRESERVES" in system:
+        return "PRESERVES"
+    if "UNFAITHFUL or FAITHFUL" in system:
+        return "FAITHFUL"
+    return None
+
+
 class HardenCompactionReplyTests(unittest.TestCase):
     """The harness stores the compaction reply as the session's ENTIRE remembered past — an empty
     briefing is amnesia (B3 0094), and fetched-spec facts that lived only in the discarded transcript
@@ -870,14 +880,14 @@ class HardenCompactionReplyTests(unittest.TestCase):
             @staticmethod
             def chat(pb, rlog):
                 calls.append(pb)
-                validating = "validating a proposed" in pb["messages"][0]["content"]
-                text = "ACCEPT" if validating else "Recovered briefing."
+                text = (_compaction_validation_verdict(pb["messages"][0]["content"])
+                        or "Recovered briefing.")
                 return json.dumps({"choices": [{"message": {
                     "role": "assistant", "content": text}}]})
 
         comp = _harden_compaction_reply(self._comp(""), {"messages": self._history()},
                                         provider=_Provider, server=self._Srv, rlog=self._Rlog())
-        self.assertEqual(len(calls), 2)                             # retry, then focused validation
+        self.assertEqual(len(calls), 4)                             # retry, then three focused validations
         self.assertFalse(calls[0].get("tools"))                     # still a toolless summarize
         text = comp["choices"][0]["message"]["content"]
         self.assertTrue(text.startswith("Recovered briefing."))
@@ -895,8 +905,8 @@ class HardenCompactionReplyTests(unittest.TestCase):
             @staticmethod
             def chat(pb, rlog):
                 calls.append(pb)
-                validating = "validating a proposed" in pb["messages"][0]["content"]
-                text = "ACCEPT" if validating else "Whole briefing."
+                text = (_compaction_validation_verdict(pb["messages"][0]["content"])
+                        or "Whole briefing.")
                 return json.dumps({"choices": [{"message": {
                     "role": "assistant", "content": text}, "finish_reason": "stop"}]})
 
@@ -904,7 +914,7 @@ class HardenCompactionReplyTests(unittest.TestCase):
                             "finish_reason": "length"}]}
         comp = _harden_compaction_reply(cut, {"messages": self._history()},
                                         provider=_Provider, server=self._Srv, rlog=self._Rlog())
-        self.assertEqual(len(calls), 2)
+        self.assertEqual(len(calls), 4)
         self.assertTrue(comp["choices"][0]["message"]["content"].startswith("Whole briefing."))
 
     def test_a_summary_cut_off_TWICE_is_dropped_not_shipped(self):

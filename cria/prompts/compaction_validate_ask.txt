@@ -1,1 +1,1 @@
-Judge the candidate briefing against the authoritative facts now. Answer exactly ACCEPT or REJECT.
+Classify the candidate now. Answer with exactly one of the two allowed words from the question above.

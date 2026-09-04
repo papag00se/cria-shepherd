@@ -22,13 +22,17 @@ class UnlocatedFailureValidationTests(unittest.TestCase):
         seen = []
         failure = "Could not find artifact org.opencsv:opencsv:jar:5.9.3"
         candidate = "pom.xml is fine; do not change it."
+        def chat(body, rlog):
+            seen.append(body)
+            verdict = "RETROSPECTIVE" if len(seen) == 1 else "UNFAITHFUL"
+            return json.dumps({"choices": [{"message": {"content": verdict}}]}).encode()
+
         accepted = loop.validate_compaction_briefing(
-            lambda body, rlog: seen.append(body) or json.dumps(
-                {"choices": [{"message": {"content": "REJECT"}}]}).encode(),
+            chat,
             Role(name="reasoner", backend="local"), candidate, files="pom.xml",
             checks=failure, transcript_blocks=["tool: " + failure], rlog=_Rlog())
         self.assertFalse(accepted)
-        text = "\n".join(m["content"] for m in seen[0]["messages"])
+        text = "\n".join(m["content"] for m in seen[-1]["messages"])
         self.assertIn(candidate, text)
         self.assertIn(failure, text)
         self.assertNotIn("checks do NOT report a problem", text)

@@ -16,6 +16,16 @@ class _RLog:
         pass
 
 
+def _validation_answer(system):
+    if "PLAN or RETROSPECTIVE" in system:
+        return "RETROSPECTIVE"
+    if "NARROWS or PRESERVES" in system:
+        return "PRESERVES"
+    if "UNFAITHFUL or FAITHFUL" in system:
+        return "FAITHFUL"
+    return None
+
+
 def _plan_with_one_step():
     from cria.plan import Plan, PlanItem
     return Plan(id="20260707T0000-abcd1234", task="build it", created="2026-07-07T00:00:00+00:00",
@@ -86,8 +96,7 @@ class SelfCompactionAskTests(unittest.TestCase):
 
             # the self-compaction path (loop.py)
             def reasoner(body, rlog):
-                validating = "validating a proposed" in body["messages"][0]["content"]
-                text = "ACCEPT" if validating else "ROLLUP"
+                text = _validation_answer(body["messages"][0]["content"]) or "ROLLUP"
                 return json.dumps({"choices": [{"message": {"content": text}}]}).encode()
 
             from cria.loop import PlanSession
@@ -223,8 +232,8 @@ class NoHandComposedTranscriptTests(unittest.TestCase):
             return json.dumps({"choices": [{"message": {"content": "FROM REASONER"}}]}).encode()
 
         def compactor(body, rlog):
-            validating = "validating a proposed" in body["messages"][0]["content"]
-            text = "ACCEPT" if validating else "FROM COMPACTOR"
+            text = (_validation_answer(body["messages"][0]["content"])
+                    or "FROM COMPACTOR")
             return json.dumps({"choices": [{"message": {"content": text}}]}).encode()
 
         ctx = _low_trigger_ctx(reasoner_chat=reasoner, compactor_chat=compactor)
@@ -240,8 +249,8 @@ class NoHandComposedTranscriptTests(unittest.TestCase):
         from cria.loop import Loop, PlanSession
 
         def reasoner(body, rlog):
-            validating = "validating a proposed" in body["messages"][0]["content"]
-            text = "ACCEPT" if validating else "all 7 tests now pass"
+            text = (_validation_answer(body["messages"][0]["content"])
+                    or "all 7 tests now pass")
             return json.dumps({"choices": [{"message": {"content": text}}]}).encode()
 
         ctx = _low_trigger_ctx(reasoner_chat=reasoner)

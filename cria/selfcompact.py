@@ -79,6 +79,7 @@ _ANCHOR_MARKERS = ("⟦ctx:briefing⟧", "⟦ctx:continuation⟧", "___CRIA_GATE
 class CompactState:
     summary: str = ""      # the current rolling summary text
     covered: int = 0       # message INDEX the summary represents up to (throttle reference)
+    attempted: int = 0     # message INDEX last offered to a summarizer, accepted or rejected
 
 
 def _text(m: dict) -> str:
@@ -853,9 +854,20 @@ def compact(messages: list[dict], summarize, state: CompactState, *,
     if tail_start <= head_end:
         return messages, state, False
 
-    band_tokens = (sum(_msg_tokens(m) for m in messages[state.covered:tail_start])
-                   if head_end <= state.covered <= tail_start else None)
-    if not state.summary or band_tokens is None or band_tokens >= recompact_tokens:
+    # A rejected briefing does not change the evidence. Retrying it on the next coder call asks the
+    # same weak model the same question and produced dozens of near-identical rejected briefings in
+    # both L5 walks. Remember the last span OFFERED, independently of the last span ACCEPTED, and do
+    # not pay for another judgment until a real new band has accumulated. Lost/shifted state still
+    # falls back to the whole middle, as covered-state recovery always has.
+    base = max(state.covered, state.attempted)
+    band_tokens = (sum(_msg_tokens(m) for m in messages[base:tail_start])
+                   if head_end <= base <= tail_start else None)
+    never_attempted = state.attempted <= head_end
+    should_summarize = ((not state.summary and never_attempted) or band_tokens is None
+                        or (band_tokens is not None and band_tokens >= recompact_tokens))
+    if not should_summarize and not state.summary:
+        return messages, state, False
+    if should_summarize:
         # TRULY ROLLING (operator-driven, first 27B): summarize only the NEW band — the turns past
         # what the existing summary already covers — and APPEND the increment. The old shape
         # re-summarized the ENTIRE middle every round into one REPLACING summary, which (a) squeezed
@@ -869,6 +881,10 @@ def compact(messages: list[dict], summarize, state: CompactState, *,
         lo = state.covered if (state.summary and band_tokens is not None) else head_end
         summarizable = [m for m in messages[lo:tail_start] if not _has_anchor(m)]
         if summarizable:
+            # Record the attempt BEFORE accepting its answer. Empty means fail closed, not "try the
+            # identical span again one coder turn later".
+            state = CompactState(summary=state.summary, covered=state.covered,
+                                 attempted=tail_start)
             fresh = strip_frame_echo(summarize(summarizable), prompts.load("selfcompact_summary"))
             # An EMPTY summary must NEVER be adopted. ``summarize`` returns "" on a failed/empty compactor
             # call (it happens — a reasoning model can burn its budget thinking and emit no content), and
@@ -892,7 +908,7 @@ def compact(messages: list[dict], summarize, state: CompactState, *,
                 folded = strip_frame_echo(refold(combined), prompts.load("selfcompact_refold"))
                 if folded.strip():
                     combined = folded
-            state = CompactState(summary=combined, covered=tail_start)
+            state = CompactState(summary=combined, covered=tail_start, attempted=tail_start)
 
     covered = max(head_end, min(state.covered, tail_start))
     # Kept verbatim, never elided — but IDENTICAL copies collapse to the first. Each ⟦ctx:denied⟧

@@ -3137,11 +3137,21 @@ class Loop:
         gate_plan = getattr(sess, "gate_plan", None)
         gate_flag = (getattr(sess, "last_gate_flag", "") or "").strip()
         checks_fact = selfcompact.checks_input(gate_flag, gate_age(sess))
+        root_task = (pinned_task if pinned_task is not None
+                     else (getattr(sess.plan, "task", "") or ""))
+        task_fact = (prompts.render("compaction_task_fact", task=root_task.strip())
+                     if root_task.strip() else "")
 
         def make_summary(mm: list[dict]) -> str:
             history = selfcompact.compaction_request_parts(mm, gate_plan=gate_plan)
             evidence = selfcompact.compaction_request_parts(
                 mm, inventory_for_writer, gate_plan, gate_flag, gate_age(sess))
+            if task_fact:
+                # The pinned task was deliberately excluded from ``mm`` so it survives verbatim in
+                # the coder view. That also made the briefing writer blind to it: both failed L5
+                # cells repeatedly redefined the task as fixing the latest compiler/module blocker.
+                history.append(task_fact)
+                evidence.append(task_fact)
             candidate = summarize(
                 chat_fn, role, prompts.load("selfcompact_summary"),
                 selfcompact.compaction_ask(), rlog,
@@ -3149,7 +3159,7 @@ class Loop:
                 evidence_blocks=evidence)
             if not validate_compaction_briefing(
                     chat_fn, role, candidate, files=inventory_for_writer, checks=checks_fact,
-                    transcript_blocks=history, rlog=rlog):
+                    transcript_blocks=history, task=root_task, rlog=rlog):
                 return ""
             # Deterministic existence correction remains a final additive defense. The semantic
             # symbol matcher is deliberately gone: whether compiler output refutes a briefing is a
@@ -3158,12 +3168,14 @@ class Loop:
                     + _briefing_gate_ground_truth(sess))
 
         def refold_summary(text: str) -> str:
+            refold_evidence = [text] + ([task_fact] if task_fact else [])
             candidate = summarize(chat_fn, role, prompts.load("selfcompact_refold"),
                                   _ASK_USER_TURN, rlog, phase="self-compact-refold",
-                                  max_tokens=ROLLUP_MAX_TOKENS, evidence_blocks=[text])
+                                  max_tokens=ROLLUP_MAX_TOKENS, evidence_blocks=refold_evidence)
             if not validate_compaction_briefing(
                     chat_fn, role, candidate, files=inventory_for_writer, checks=checks_fact,
-                    transcript_blocks=[text], rlog=rlog, phase="compaction-refold-validate"):
+                    transcript_blocks=[text], task=root_task, rlog=rlog,
+                    phase="compaction-refold-validate"):
                 return ""
             return candidate
 
@@ -3173,7 +3185,7 @@ class Loop:
             # The task is a foldable history message in the plan frame (only the STEP is in the system
             # message). Pin it as a ⟦ctx:task⟧ anchor so a boundary fold — which keeps NO verbatim tail —
             # can't summarize the original requirements away.
-            pinned_task=(pinned_task if pinned_task is not None else (getattr(sess.plan, "task", "") or "")),
+            pinned_task=root_task,
             # The coder-flavored files list (operator's design): the compacted view carries the LIST
             # of what exists; read_file is the road back to any content.
             files_list=inventory_for_coder,
@@ -5954,36 +5966,55 @@ def ask_closed(chat_fn, role, question: str, rlog, *, phase: str, max_tokens: in
 
 
 def validate_compaction_briefing(chat_fn, role, briefing: str, *, files: str, checks: str,
-                                  transcript_blocks: list[str], rlog,
+                                  transcript_blocks: list[str], rlog, task: str = "",
                                   phase: str = "compaction-validate") -> bool:
-    """Focused accept/reject judgment before model-made session memory is injected.
+    """Fail-closed, independent judgments before model-made session memory is injected.
 
-    The candidate writer is not allowed to grade itself.  A separate closed question receives the
-    same historical evidence plus the exact filesystem and gate facts.  Unavailable, unparseable,
-    or uncertain means reject; callers then retain verbatim history (self-compaction) or return only
-    re-derivable appendices (a harness-owned compaction that cannot be cancelled).
+    One large verdict asked a weak judge to enforce format, task scope, files, checks, uncertainty,
+    and omissions over a long transcript. In both failed L5 cells it accepted forward plans and
+    claims contradicted in its own prompt. Ask the semantic questions separately: candidate-only
+    retrospection, task-scope preservation, then evidence fidelity. Every applicable lens must
+    return their exact positive verdict. Callers retain verbatim history (self-compaction) or only
+    re-derivable appendices (a harness-owned compaction) on any rejection or unavailable answer.
     """
     if chat_fn is None or role is None or not briefing.strip():
         if rlog is not None:
             rlog.emit("context.compaction_validation", reshape="validate-rollup", level="warn",
                       accepted=False, reason="judge unavailable")
         return False
-    blocks = list(transcript_blocks)
-    blocks.append(prompts.render("compaction_candidate", briefing=briefing.strip()))
-    blocks.append(prompts.render("compaction_files_fact", files=files.strip()) if files.strip()
-                  else prompts.render("compaction_no_fact", kind="FILESYSTEM INVENTORY"))
-    blocks.append(prompts.render("compaction_checks_fact", checks=checks.strip()) if checks.strip()
-                  else prompts.render("compaction_no_fact", kind="LATEST CHECK FACTS"))
-    answer = summarize(chat_fn, replace(role, reasoning="off"),
-                       prompts.load("compaction_validate"),
-                       prompts.load("compaction_validate_ask"), rlog, phase=phase,
-                       max_tokens=16, retry_off=False, temperature=0.0,
-                       evidence_blocks=blocks)
-    accepted = answer.strip().upper() == "ACCEPT"
+
+    candidate = prompts.render("compaction_candidate", briefing=briefing.strip())
+    answers: dict[str, str] = {}
+
+    def judge(lens: str, system_prompt: str, blocks: list[str], accepted_word: str) -> bool:
+        answer = summarize(chat_fn, replace(role, reasoning="off"), system_prompt,
+                           prompts.load("compaction_validate_ask"), rlog,
+                           phase=f"{phase}-{lens}", max_tokens=16, retry_off=False,
+                           temperature=0.0, evidence_blocks=blocks)
+        answers[lens] = answer.strip()[:40]
+        return answer.strip().upper() == accepted_word
+
+    # Candidate-only on purpose. In the captured false accepts, an obvious "Next step" section was
+    # buried behind 12K-32K tokens of history and the judge overlooked the simplest invariant.
+    accepted = judge("retrospective", prompts.load("compaction_validate_retrospective"),
+                     [candidate], "RETROSPECTIVE")
+    task_fact = (prompts.render("compaction_task_fact", task=task.strip()) if task.strip() else "")
+    if accepted and task_fact:
+        accepted = judge("scope", prompts.load("compaction_validate_scope"),
+                         [task_fact, candidate], "PRESERVES")
+    if accepted:
+        blocks = list(transcript_blocks)
+        if task_fact and task_fact not in blocks:
+            blocks.append(task_fact)
+        blocks.append(candidate)
+        blocks.append(prompts.render("compaction_files_fact", files=files.strip()) if files.strip()
+                      else prompts.render("compaction_no_fact", kind="FILESYSTEM INVENTORY"))
+        blocks.append(prompts.render("compaction_checks_fact", checks=checks.strip()) if checks.strip()
+                      else prompts.render("compaction_no_fact", kind="LATEST CHECK FACTS"))
+        accepted = judge("fidelity", prompts.load("compaction_validate"), blocks, "FAITHFUL")
     if rlog is not None:
         rlog.emit("context.compaction_validation", reshape="validate-rollup",
-                  level="info" if accepted else "warn", accepted=accepted,
-                  answer=answer.strip()[:40])
+                  level="info" if accepted else "warn", accepted=accepted, answers=answers)
     return accepted
 
 
