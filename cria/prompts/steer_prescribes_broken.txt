@@ -6,16 +6,14 @@ A supervisor has written this directive for the engineer:
 
 {{DIRECTIVE}}
 
-This name appears in both: {{SYMBOL}}
+This exact name appears in both: {{SYMBOL}}
 
 Answer with ONE word.
 
-PRESCRIBES — if the directive tells the engineer to call, keep, or rely on that name as something
-that already exists, when the checks are reporting that it does not exist or does not work.
+PRESCRIBES — if the directive tells the engineer to call, import, install, keep, or rely on that name as something that exists or works when the evidence reports that exact target, package, coordinate, member, or version does not exist, resolve, or work.
 
-QUOTES — if the directive only refers to that name to describe what is wrong; or tells the engineer
-to remove or replace it; or tells the engineer to SUPPLY it, because the checks say it is missing —
-importing it, declaring it, defining it, creating the file, or adding the dependency that provides
-it. A checker saying it cannot find a name is asking for that name, not rejecting it.
+QUOTES — if the directive only names it to describe, remove, or replace the broken thing. Also use QUOTES when the checker says a real name is merely absent from the engineer's current source and the directive supplies that reference by importing, declaring, defining, or creating it. Do NOT use this exception when the package, module, API, coordinate, or target itself is what the toolchain refused.
+
+Do not decide whether the proposed replacement is correct; answer only whether the directive relies on the exact refused name above.
 
 Output only PRESCRIBES or QUOTES.

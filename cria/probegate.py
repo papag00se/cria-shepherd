@@ -627,6 +627,13 @@ def clean_gate_output(raw: str, plan: "GatePlan | None" = None, *, annotate: boo
     not a gate result (untouched)."""
     if SECTION_PREFIX not in (raw or ""):
         return None
+    # This mutable field belongs to THIS interpreted gate event, not to the last clean event that
+    # happened to populate the same plan object.  Every non-gate caller leaves it alone; every real
+    # gate first makes silence the current fact and only the clean offline branch below may set it.
+    # Without the reset, a later red Go gate left an earlier network-off pass in the completion
+    # confirmer's prompt — true historically, false as a statement about the current workspace.
+    if plan is not None:
+        plan.offline_fact = ""
     workspace = getattr(plan, "workspace", "") or ""
     stranded_findings: list[str] | None = None   # scanned at most once, only on a zero-tests signal
     findings: list[str] = []

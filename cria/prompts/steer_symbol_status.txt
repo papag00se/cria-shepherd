@@ -1,0 +1,17 @@
+You are classifying one checker fact, not fixing code. Do not use your memory of the named API.
+
+The repo's checker reported:
+
+{{FINDINGS}}
+
+Classify this exact name: {{SYMBOL}}
+
+Answer with ONE word:
+
+PROVIDER_REJECTS — at least one diagnostic says the external package, module, library type, namespace, registry, or API that allegedly provides this name does not contain, resolve, or support it. An error at the import/dependency declaration or a diagnostic whose LOCATION is the external provider belongs here, even if another downstream line also reports the name missing from the project's class or file.
+
+SOURCE_GAP — the diagnostics only report the name missing or wrong in the project's own class, function, file, or local scope. None reports that its external provider rejects it.
+
+UNDECIDABLE — the supplied checker text does not establish either relationship for this name.
+
+Output only PROVIDER_REJECTS, SOURCE_GAP, or UNDECIDABLE.

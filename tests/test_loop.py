@@ -1877,8 +1877,11 @@ class WheelSpinTests(unittest.TestCase):
             def __call__(self, body, rlog):
                 asked.append(body["messages"][-1]["content"])
                 captured["user"] = asked[0]
-                return json.dumps({"choices": [{"message": {"content":
-                    "Read handler.py as it stands on disk and run the failing check to see the real error."}}]}).encode()
+                system = body["messages"][0]["content"]
+                content = ("SUPPORTED" if "UNSUPPORTED —" in system else
+                           "SOURCE_GAP" if "PROVIDER_REJECTS —" in system else
+                           "Read handler.py as it stands on disk and run the failing check to see the real error.")
+                return json.dumps({"choices": [{"message": {"content": content}}]}).encode()
 
         coder = _VaryingWriter()                   # rewrites handler.py forever (content varies)
         loop = Loop(_ctx(coder, _Reasoner(), _plan(1), workspace_root=ws))
@@ -2399,8 +2402,11 @@ class RefusalRedirectTests(unittest.TestCase):
             def __call__(self, body, rlog):
                 _Reasoner.calls += 1
                 captured.setdefault("user", body["messages"][-1]["content"])
-                return json.dumps({"choices": [{"message": {"role": "assistant", "content":
-                    "Stop rewriting test_handle.py — the mock target is wrong. Patch handler.requests instead."}}]}).encode()
+                system = body["messages"][0]["content"]
+                content = ("SUPPORTED" if "UNSUPPORTED —" in system else
+                           "SOURCE_GAP" if "PROVIDER_REJECTS —" in system else
+                           "Stop rewriting test_handle.py — the mock target is wrong. Patch handler.requests instead.")
+                return json.dumps({"choices": [{"message": {"role": "assistant", "content": content}}]}).encode()
 
         coder = _Recorder([_write("h.py", "same bytes")])
         loop = Loop(_ctx(coder, _Reasoner(), _plan(1), workspace_root=ws))

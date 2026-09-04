@@ -8473,14 +8473,74 @@ def _positional_only(findings: str) -> set:
     return out
 
 
+def _provider_rejected_name_the_steer_relies_on(
+        directive: str, findings: str, rlog, ask) -> str:
+    """A shared name whose external provider rejects it and the directive still relies on.
+
+    This is deliberately TWO focused judgments.  Asking a weak classifier whether a whole mixed
+    directive is safe made a valid source import and a nonexistent provider member look identical.
+    First classify only the checker's LOCATION/SCOPE for one concrete name; only when the provider
+    rejects it ask whether the directive uses that name or merely quotes/removes it.  Deterministic
+    code still only gathers shared names; neither lexical shape decides the answer (#8).
+    """
+    if not directive or not findings or ask is None:
+        return ""
+    for symbol in _shared_symbols(directive, findings):
+        status = strip_think(ask(prompts.render(
+            "steer_symbol_status", findings=findings, symbol=symbol)) or "").strip()
+        status = status.upper().split()[0].strip(".,:;`*\"'") if status.split() else ""
+        if status != "PROVIDER_REJECTS":
+            continue
+        relation = strip_think(ask(prompts.render(
+            "steer_prescribes_broken", findings=findings, directive=directive,
+            symbol=symbol)) or "").strip()
+        relation = relation.upper().split()[0].strip(".,:;`*\"'") if relation.split() else ""
+        if relation == "PRESCRIBES":
+            if rlog is not None:
+                rlog.emit("loop.steer_relies_on_rejected_provider", level="warn",
+                          symbol=symbol, head=_clip(directive, 120))
+            return symbol
+    return ""
+
+
+def _diagnostic_action_verdict(directive: str, findings: str, refused, rlog, ask) -> str:
+    """Whether an optional authored steer is supported by the current red-check evidence.
+
+    The old guard asked a lexical question for each identifier-shaped token shared by a directive
+    and the findings.  That made ``go.mod:5`` the subject while a steer restored a rejected version,
+    and its blanket "a missing name should be supplied" rule blessed imports for classes whose
+    PACKAGE was proving they do not exist.  The action-to-diagnostic relationship is semantic: code
+    gathers the exact checker lines and durable resolver refusals; one focused reasoner judges them.
+
+    ``SUPPORTED`` is the positive sentinel (#21).  An unreadable judgment is ``UNDECIDABLE`` and the
+    caller withholds the optional steer: silence preserves the coder's own work, while shipping a
+    supervisor directive gives an ungrounded guess cria's authority (#1, #3, #4).  No findings means
+    this guard has no subject and leaves the other grounding guards to decide.
+    """
+    if not directive or not (findings or "").strip():
+        return "SUPPORTED"
+    if ask is None:
+        return "UNDECIDABLE"
+    refused_text = "\n".join(f"- {name}" for name in sorted(refused or set())) or "(none recorded)"
+    ans = strip_think(ask(prompts.render(
+        "steer_diagnostic_action", directive=directive, findings=findings,
+        refusals=refused_text)) or "").strip()
+    head = ans.upper().split()[0].strip(".,:;`*\"'") if ans.split() else ""
+    verdict = (head if head in {"SUPPORTED", "CONTRADICTED", "UNSUPPORTED", "UNRELATED"}
+               else "UNDECIDABLE")
+    if rlog is not None:
+        rlog.emit("loop.steer_diagnostic_action", level="info" if verdict == "SUPPORTED" else "warn",
+                  verdict=verdict, head=_clip(directive, 120))
+    return verdict
+
+
 def _prescribes_a_refused_coordinate(directive: str, refused, rlog, ask) -> str:
     """A dependency coordinate/package the directive tells the coder to ADD/USE while the session's
     own toolchain has REFUSED it — else "".
 
-    The coordinate sibling of :func:`_prescribes_what_the_checks_reject`, and it exists because that
-    function structurally cannot reach this case: `_shared_symbols` drops any token with a `/`
-    ("a path is not a symbol"), so a module coordinate is invisible to it, and its findings come
-    from `last_gate_flag`, which compaction empties. The ledger (`sess.refused_names`) is durable, so
+    The durable sibling of the current-diagnostic compatibility checks. `_shared_symbols` drops any
+    token with a `/` ("a path is not a symbol"), so a module coordinate is invisible to the provider
+    check, and current findings can disappear at compaction. The ledger (`sess.refused_names`) is durable, so
     the refusal survives the fold that let a seat re-bless `v0.5.0` after the tools rejected it.
 
     Same #8 split as the symbol guard: `refusalledger.prescribed` is the deterministic TRIGGER (the
@@ -8503,56 +8563,6 @@ def _prescribes_a_refused_coordinate(directive: str, refused, rlog, ask) -> str:
         rlog.emit("loop.steer_prescribes_refused", level="warn", coordinate=coord,
                   head=_clip(directive, 120))
         return coord
-    return ""
-
-
-def _prescribes_what_the_checks_reject(directive: str, findings: str, rlog, ask) -> str:
-    """The symbol a directive tells the coder to USE while the checks name it as the problem — else "".
-
-    THE COUNT CANNOT CATCH THIS, and its own contract is why. `_invented_code_spans` asks "did the
-    author READ this or invent it?", and answers from what cria observed — which includes tool
-    results. A compiler error is a tool result. So on any "replace X with Y" steer the BROKEN symbol
-    X is the best-attested string in the prompt and survives, while the correct replacement Y was
-    never observed and is stripped. The strip inverts the fix.
-
-    Delivered to a coder on 2026-08-16: "replace `decimal.NewFromInt64` with [code removed]`)`" —
-    that symbol appears 7 times in the same prompt, all of them inside `undefined: …` errors. Two
-    more steers the same run said to USE `decimal.NewFromFloat64` while the same prompt carried
-    `undefined: decimal.NewFromFloat64` twenty-three times.
-
-    A NAME THE CHECKS CANNOT FIND IS A NAME THEY ARE ASKING FOR, and no test over the findings can
-    tell that from a name that does not exist: `cannot find symbol: class AtomicInteger` and
-    `undefined: decimal.NewFromFloat64` are the same sentence. The first wants an import; the second
-    wants a different constructor. Only the directive separates them, so the separation lives in the
-    judge's instructions — supplying a missing name is QUOTES — and never in a pattern here.
-
-    DETERMINISTIC GATHER, REASONED JUDGMENT (#8). Code finds the concrete discrepancy — a token
-    present in BOTH the red finding-set and the directive — and one focused question decides whether
-    the directive is PRESCRIBING it or merely quoting the failure. Without a reasoner, or on an
-    unreadable answer, the directive stands: this may only move steers from delivered to refused
-    when a model says so, never on a pattern alone.
-
-    Returns the symbol, or "". The caller refuses the steer outright (#3's safe null) rather than
-    rewording it — cria has no better directive to offer, and a wrong one costs more than silence."""
-    if not directive or not findings or ask is None:
-        return ""
-    shared = _shared_symbols(directive, findings)
-    if not shared:
-        return ""
-    # ONE SYMBOL PER CALL. The question is about a single name — "is the directive prescribing THIS
-    # name?" — and a list makes it about a set, which a weak judge answers on the worst member.
-    # Walked on the sub-40 pass, ternary-bonsai x feed-pipeline-java: the run's one correct directive
-    # ("add `import java.util.concurrent.atomic.AtomicInteger;` … rename the local `localTotals`")
-    # went to the judge as TWO names in one `Answer with ONE word`, came back PRESCRIBES, and cria
-    # refused its own fix. There is no way to tell from that answer which name it was about.
-    for sym in shared:                                       # longest-first from _shared_symbols
-        ans = strip_think(ask(prompts.render("steer_prescribes_broken", directive=directive,
-                                             findings=findings, symbol=sym)) or "").strip()
-        head = ans.upper().split()[0].strip(".,:;`*\"'") if ans.split() else ""
-        if head != "PRESCRIBES":
-            continue
-        rlog.emit("loop.steer_prescribes_broken", level="warn", symbol=sym, head=_clip(directive, 120))
-        return sym
     return ""
 
 
@@ -8767,14 +8777,35 @@ def _vet_steer(directive: str | None, evidence: str, rlog, ask=None,
     if sess is not None and _blames_a_service_that_answered(
             directive, sess, messages or [], rlog, (lambda sysm: ask(sysm, "")) if ask else None):
         return None, "blames_a_service"
-    if sess is not None and _prescribes_what_the_checks_reject(
-            directive, (getattr(sess, "last_gate_flag", "") or "").strip(), rlog,
-            (lambda sysm: ask(sysm, "")) if ask else None):
-        return None, "prescribes_broken"      # the checks say this symbol is the problem — silence beats endorsing it
-    if sess is not None and _prescribes_a_refused_coordinate(
-            directive, getattr(sess, "refused_names", None), rlog,
-            (lambda sysm: ask(sysm, "")) if ask else None):
-        return None, "prescribes_refused"     # the coordinate did not resolve when the coder tried it
+    if sess is not None:
+        findings = (getattr(sess, "last_gate_flag", "") or "").strip()
+        if findings and ask is not None:
+            # A check observed the workspace at one point in the transcript.  If a later write
+            # changed it, that finding is still true historically but cannot ground a new precise
+            # supervisor action.  Do not ask a judge to turn stale evidence into present-tense
+            # advice; withhold the optional steer until a fresh gate supplies a current subject.
+            written = _writes_since_last_gate(messages or [])
+            if written:
+                rlog.emit("loop.steer_diagnostic_stale", level="warn", files=written,
+                          head=_clip(directive, 120))
+                return None, "diagnostic_stale"
+            verdict = _diagnostic_action_verdict(
+                directive, findings, getattr(sess, "refused_names", None), rlog,
+                (lambda sysm: ask(sysm, "")) if ask else None)
+            if verdict != "SUPPORTED":
+                return None, "diagnostic_" + verdict.lower()
+            if _provider_rejected_name_the_steer_relies_on(
+                    directive, findings, rlog,
+                    (lambda sysm: ask(sysm, "")) if ask else None):
+                return None, "rejected_provider"
+        # The durable refusal ledger exists specifically for the post-compaction case where the
+        # current finding-set is gone.  With current findings the whole-action judgment above owns
+        # the question; asking the old per-coordinate question too would be two judges over one
+        # invariant, and either one could falsely veto a supported repair.
+        elif not findings and _prescribes_a_refused_coordinate(
+                directive, getattr(sess, "refused_names", None), rlog,
+                (lambda sysm: ask(sysm, "")) if ask else None):
+            return None, "prescribes_refused"
     ghost = _symbol_not_in_the_file(directive, workspace_root)
     if ghost:
         # cria READ the file; the steer names something that is not in it. Refused, not reworded —
@@ -10055,9 +10086,11 @@ def _verdict_nudge(obj: dict, done: bool, routes: str = "", *,
     # ships, `delivered=True invented=0`. Of 25 such log lines, 10 were immediately preceded by a
     # `satisfaction` upstream call — this seat, where the check could not have run.
     #
-    # `sess` brings `_field_the_ledger_denies`, `_blames_a_service_that_answered`,
-    # `_prescribes_what_the_checks_reject` and `_steer_auth_refuted` with it. `ask` stays out, as the
-    # docstring says: the reasoner-backed arms remain off here, so this still costs no model call.
+    # `sess` brings `_field_the_ledger_denies`, `_blames_a_service_that_answered`, the deterministic
+    # grounding checks and `_steer_auth_refuted` with it. `ask` stays out, as the docstring says: the
+    # reasoner-backed arms remain off here, so this still costs no model call. In particular, the
+    # current-diagnostic compatibility guard abstains rather than deleting every proposed fix merely
+    # because this caller deliberately has no classifier seat.
     if rlog is not None and _grounded_steer_or_none(fix, evidence, rlog, sess=sess, messages=messages,
                                                     workspace_root=workspace_root) is None:
         return reason

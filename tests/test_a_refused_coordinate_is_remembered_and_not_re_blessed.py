@@ -39,6 +39,11 @@ class TheDetectorReadsResolverRefusalsTests(unittest.TestCase):
                       rl.refused_names("go: github.com/shopspring/decimal@v0.5.0: reading "
                                        "go.mod at revision v0.5.0: unknown revision v0.5.0"))
 
+    def test_go_manifest_error_reassembles_the_exact_refused_coordinate(self):
+        text = ('go.mod:5: require github.com/shopspring/decimal: version "1.10.0" '
+                'invalid: unknown revision 1.10.0')
+        self.assertIn("github.com/shopspring/decimal@1.10.0", rl.refused_names(text))
+
     def test_java_missing_package(self):
         self.assertIn("com.opencsv.exception",
                       rl.refused_names("Importer.java:[18,29] package com.opencsv.exception "

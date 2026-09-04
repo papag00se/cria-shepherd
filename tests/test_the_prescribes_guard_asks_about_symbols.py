@@ -1,9 +1,8 @@
-"""The guard that stops cria prescribing a broken symbol killed the fixes two cells needed.
+"""The shared-name gather must hand the provider-status guard real names, not failure vocabulary.
 
-`_prescribes_what_the_checks_reject` exists for a real incident: a steer told a coder to USE
-`decimal.NewFromFloat64` while the same prompt carried `undefined: decimal.NewFromFloat64`
-twenty-three times. It gathers tokens present in BOTH the directive and the red findings, then asks
-a reasoner whether the directive PRESCRIBES that name or merely QUOTES it.
+The current diagnostic guard still needs concrete names present in BOTH a directive and red
+findings so its focused provider-status question can ask about one subject at a time. Its predecessor
+asked one reasoner to decide the whole prescription relationship directly.
 
 The gather was any identifier-shaped run of four or more letters — which, on a failing build, is the
 vocabulary of failure itself. MEASURED over every fire the guard has ever had, all 18, found in the
@@ -28,10 +27,8 @@ or an internal capital. That is a shape test, not a stoplist — a list of Engli
 would be a rule needing an exception list, which is the tell that it should have been a question
 (#9's corollary, #20).
 
-WHAT IS NOT FIXED HERE, and is recorded rather than guessed at: seven of the eighteen tokens survive
-the shape test, and several of those fires were still wrong — the judge answering PRESCRIBES on
-"replace X with Y" when its own prompt says that is QUOTES. That is a weak-judge problem, it needs
-its own measurement, and the guard's documented default (the directive stands) is the place to look.
+The gather is not a verdict. The provider-status and directive-relation judgments are separate so a
+missing source import is not conflated with a package that does not provide the named member.
 """
 
 import unittest

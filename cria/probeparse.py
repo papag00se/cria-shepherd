@@ -406,10 +406,9 @@ _MSVC_LOC = re.compile(r"^(\S+?)\((\d+),(\d+)\):\s+")
 # output" and quoted the LAST `[ERROR]` line, which is Maven's help URL — so the steer author was
 # handed `http://cwiki.apache.org/confluence/display/MAVEN/MojoFailureException` as the error while
 # `cannot find symbol / symbol: class CSVRecord / location: package com.opencsv` sat in the same
-# prompt. It steered blind for the whole 30 minutes. Worse, an EMPTY finding set makes
-# `_prescribes_what_the_checks_reject` return "" on its first line — the guard whose entire job is
-# refusing a steer that tells the coder to USE the symbol the checks reject was inert, and two
-# steers ordering `import com.opencsv.CSVRecord` shipped against `cannot find symbol: CSVRecord`.
+# prompt. It steered blind for the whole 30 minutes. Worse, an EMPTY finding set leaves the
+# diagnostic-action and provider-status guards with no subject, and two steers ordering
+# `import com.opencsv.CSVRecord` shipped against `cannot find symbol: CSVRecord`.
 #
 # STRIPPED BY SHAPE AND SELF-VALIDATING, not by a vocabulary of severity words (#8, #20): a
 # bracketed alphabetic tag is removed only when what remains parses as a real diagnostic, so a line

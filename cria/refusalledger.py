@@ -34,6 +34,13 @@ import re
 
 # Each pattern captures the REFUSED coordinate/package/module. Grouped by ecosystem, and every one
 # is a resolver/compiler saying it could not provide the named thing.
+# Go's manifest parser reports an invalid requirement as two separated fields rather than the
+# ordinary contiguous ``module@version`` coordinate.  Join those exact fields when gathering the
+# fact; the ledger still stores the coordinate the resolver actually refused, never a bare-module
+# inference.
+_GO_INVALID_VERSION = re.compile(
+    r'require ([\w./\-]+): version "([^"]+)" invalid:[^\n]*?unknown revision')
+
 _REFUSAL = (
     # Go
     re.compile(r"no required module provides package ([^\s;)]+)"),
@@ -84,6 +91,10 @@ def _normalize(tok: str) -> str:
 def refused_names(text: str) -> set[str]:
     """Every coordinate/package/module the given tool-output text shows a resolver REFUSING."""
     out: set[str] = set()
+    for m in _GO_INVALID_VERSION.finditer(text or ""):
+        tok = _normalize(f"{m.group(1)}@{m.group(2)}")
+        if _coordinate_like(tok):
+            out.add(tok)
     for pat in _REFUSAL:
         for m in pat.finditer(text or ""):
             tok = _normalize((m.group(1) or "").strip().strip("'\"`.,;:"))
