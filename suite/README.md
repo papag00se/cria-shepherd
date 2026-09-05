@@ -2,7 +2,7 @@
 
 One matrix cell per `run.py` invocation. A run receives active working time in milestone intervals, preserves its workspace and exact call captures, and appends one metadata row to `results/results.jsonl`.
 
-At every interval the harness is paused and the campaign agent inspects a frozen workspace snapshot. The agent infers `complete`, `continue`, or `stalled`; a progressing run earns another interval, while complete or stalled work ends the run.
+The harness gets fifteen active minutes per task item. The minute-15 gate is skipped; at minute 30 the campaign agent inspects a frozen workspace snapshot and two task items must be complete, in any order, to continue. Later gates require three complete items at minute 45, four at minute 60, and so on; missing the quota stops the run early.
 
 ## Run a cell
 
@@ -15,7 +15,7 @@ python3 suite/run.py \
   --note "experiment label"
 ```
 
-The default milestone interval is 30 active minutes. `--milestone-minutes N` changes that interval; the maximum active budget is `N × meta.budget_intervals`, but each additional interval must be earned by an inference judgment. `budget_intervals` is pacing only: `prompt.txt` is the sole judgment contract.
+Pacing is fixed at 15 active minutes per task item. `meta.budget_intervals` supplies the number of task slots and therefore the maximum active budget; five slots means 75 minutes. It supplies no task content: `prompt.txt` is the sole judgment contract, and the judge infers exactly that many substantive task items from it.
 
 When a checkpoint appears:
 
@@ -25,7 +25,7 @@ python3 suite/milestones.py emit <checkpoint>
 printf '%s' '<judgment JSON>' | python3 suite/milestones.py record <checkpoint>
 ```
 
-The runner remains paused until the campaign agent records the judgment. Waiting time does not consume the run's active budget.
+The runner remains paused until the campaign agent records the task-state judgment. Waiting time does not consume the run's active budget. Only completed task items earn later time; partial progress does not.
 
 Each row records run identity, settings, elapsed time, terminal state, call/phase counts, throughput, assist events, workspace/archive paths, captures, and harness log. Delivered-work quality is absent until an independent usefulness judgment is recorded.
 

@@ -6,7 +6,7 @@ The suite puts cria under the kinds of pressure real coding work applies so its 
 
 1. **Comparable work.** Tasks carry several substantial deliverables: research, implementation, tests, documentation, integration, or operational behavior.
 2. **Inference judges usefulness.** The judgment concerns how much usable work was actually delivered. Coder claims are not evidence.
-3. **Milestones are inferred, not counted.** Each additional interval is earned by an agent inspecting the actual workspace. There is no fixed deliverable count due at a particular minute.
+3. **Task completion earns time.** A judge infers task-item state from the actual workspace. There is no minute-15 gate; minute 30 requires any two task items complete, minute 45 requires any three, and minute 60 requires any four. Partial progress does not earn another interval.
 4. **Seeded beats greenfield for finding cria bugs.** Seeded tasks exercise unfamiliar-file reading, surgical editing, and reactions to real gate output.
 5. **No task is special-cased in cria.** The suite is useful only while cria remains harness-, prompt-, and language-agnostic.
 
@@ -36,7 +36,7 @@ A task with `seed/` is copied into a fresh workspace and committed before the ru
 
 ## Time budgets
 
-The default interval is 30 active minutes. At every interval the harness pauses while the campaign agent inspects a frozen snapshot and records `complete`, `continue`, or `stalled`. A `continue` judgment earns one more interval, up to the maximum active budget of `N × meta.budget_intervals`; waiting for the judge consumes no active time. The positive integer `budget_intervals` sizes time only and describes no deliverable.
+Each task item is worth 15 active minutes. The first gate is at minute 30, where any two completed items earn the next slot; minute 45 requires three, minute 60 four, and so on. Missing the completion quota stops the cell early. The positive integer `budget_intervals` supplies the task-slot count and maximum budget—five slots means 75 minutes—but no task content; the judge infers exactly that many substantive items from `prompt.txt`. Waiting for the judge consumes no active time.
 
 ## Task prompts
 

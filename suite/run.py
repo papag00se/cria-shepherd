@@ -65,7 +65,7 @@ CRIA_TOML = Path.home() / ".cria" / "cria.toml"
 # global ~/.codex (OpenAI). The suite always points CODEX_HOME here so a run measures cria, never
 # whatever provider the ambient shell happened to select. Set up once at ~/.cria/codex-home.
 SUITE_CODEX_HOME = Path.home() / ".cria" / "codex-home"
-DEFAULT_MILESTONE_MINUTES = int(os.environ.get("SUITE_MILESTONE_MINUTES", "30"))
+TASK_MINUTES = 15
 KILL_GRACE = 20
 
 # fleet model name -> systemd service (one model at a time on the 3080)
@@ -391,22 +391,28 @@ def budget_intervals(task_dir: Path) -> int:
 
 @dataclass
 class MilestonePacing:
-    """Active-time milestone schedule; judge wait time is excluded from every deadline."""
+    """Fifteen active minutes per task, with the first two tasks judged together at minute 30."""
 
     started_at: float
-    interval_seconds: int
-    budget_intervals: int
+    task_minutes: int
+    task_count: int
     paused_seconds: float = 0.0
     next_milestone: int = field(init=False)
 
     def __post_init__(self) -> None:
-        if self.interval_seconds <= 0 or self.budget_intervals <= 0:
-            raise ValueError("milestone pacing values must be positive")
-        self.next_milestone = self.interval_seconds
+        if self.task_minutes != TASK_MINUTES:
+            raise ValueError("suite pacing is fixed at 15 active minutes per task")
+        if self.task_count < 2:
+            raise ValueError("suite pacing requires at least two task slots")
+        self.next_milestone = 2 * self.task_minutes * 60
+
+    @property
+    def interval_seconds(self) -> int:
+        return self.task_minutes * 60
 
     @property
     def maximum_active_seconds(self) -> int:
-        return self.interval_seconds * self.budget_intervals
+        return self.interval_seconds * self.task_count
 
     @property
     def at_limit(self) -> bool:
@@ -425,12 +431,19 @@ class MilestonePacing:
         self.next_milestone += self.interval_seconds
 
 
-def milestone_terminal(decision: str, minute: int, at_limit: bool) -> str | None:
-    """Translate the agent's inference into run control; None earns another interval."""
-    if decision == "complete":
+def milestone_terminal(verdict: dict, minute: int, at_limit: bool) -> str | None:
+    """Enforce the task-completion clock; None earns the next fifteen-minute task slot.
+
+    There is no minute-15 judgment. At minute 30, two inferred task items must be complete in any
+    order; minute 45 requires three, minute 60 four, and so on. Meaningful progress is not enough.
+    """
+    tasks = verdict.get("tasks") or []
+    complete = sum(task.get("state") == "complete" for task in tasks if isinstance(task, dict))
+    if tasks and complete == len(tasks):
         return f"milestone-complete-{minute}min"
-    if decision == "stalled":
-        return f"milestone-stalled-{minute}min"
+    required = minute // TASK_MINUTES
+    if complete < required:
+        return f"milestone-quota-miss-{minute}min"
     if at_limit:
         return "budget-killed"
     return None
@@ -474,9 +487,8 @@ def main() -> None:
     # note. The note is prose and has been reformatted twice; a column that a status command counts
     # must not depend on a regex over prose surviving the next edit.
     ap.add_argument("--level", type=int, default=None)
-    ap.add_argument("--milestone-minutes", type=int, default=DEFAULT_MILESTONE_MINUTES,
-                    help="active minutes per inference checkpoint (default: 30). A progressing run "
-                         "earns another interval, up to the task's budget_intervals limit.")
+    ap.add_argument("--milestone-minutes", type=int, choices=[TASK_MINUTES], default=TASK_MINUTES,
+                    help="fixed at 15 active minutes per task; the minute-15 gate is skipped")
     args = ap.parse_args()
     if args.milestone_minutes <= 0:
         ap.error("--milestone-minutes must be positive")
@@ -546,9 +558,8 @@ def main() -> None:
         except subprocess.TimeoutExpired:
             proc.kill()
 
-    milestone_s = args.milestone_minutes * 60
-    pacing = MilestonePacing(started_at=t0, interval_seconds=milestone_s,
-                             budget_intervals=budget_intervals(task_dir))
+    pacing = MilestonePacing(started_at=t0, task_minutes=args.milestone_minutes,
+                             task_count=budget_intervals(task_dir))
     terminal = "exited"
     milestone_judgments = []
 
@@ -574,10 +585,10 @@ def main() -> None:
             finally:
                 pacing.record_pause(time.time() - pause_started)
             milestone_judgments.append({"at_active_minutes": minute, **verdict})
-            print(f"[milestone] {minute}min decision={verdict['decision']}: "
+            complete_tasks = sum(task["state"] == "complete" for task in verdict["tasks"])
+            print(f"[milestone] {minute}min complete={complete_tasks}/{len(verdict['tasks'])}: "
                   f"{verdict['reason']}", flush=True)
-            outcome = milestone_terminal(verdict["decision"], minute,
-                                         at_limit=pacing.at_limit)
+            outcome = milestone_terminal(verdict, minute, at_limit=pacing.at_limit)
             if outcome is not None:
                 terminal = outcome
                 stop_run()
@@ -618,7 +629,7 @@ def main() -> None:
         "started": t0, "wall_seconds": round(t1 - t0, 1),
         "active_seconds": round(pacing.active_elapsed(t1), 1), "terminal": terminal,
         "milestone_minutes": args.milestone_minutes,
-        "budget_intervals": pacing.budget_intervals,
+        "budget_intervals": pacing.task_count,
         "milestone_judgments": milestone_judgments,
         **capture,
         "assists": collect_assists(t0, t1),

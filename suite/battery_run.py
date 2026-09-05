@@ -92,7 +92,8 @@ def main() -> int:
     ap.add_argument("--arm", choices=("BASE", "CRIA"))
     ap.add_argument("--model", required=True)
     ap.add_argument("--task", required=True)
-    ap.add_argument("--milestone-minutes", type=int, default=15)
+    ap.add_argument("--milestone-minutes", type=int, choices=[15], default=15,
+                    help="fixed at 15 minutes per task; the first gate is at minute 30")
     args = ap.parse_args()
 
     if not TOML.exists():
