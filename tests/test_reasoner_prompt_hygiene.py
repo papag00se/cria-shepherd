@@ -144,7 +144,7 @@ class ThePromptRanksItsSourcesTests(unittest.TestCase):
 
     def test_the_author_still_gets_its_sentinel_and_its_ask(self):
         self.assertIn("ON_TRACK", self.TEXT)
-        self.assertIn("short unstick directive", self.TEXT)
+        self.assertIn("exactly one action", self.TEXT.lower())
 
 
 class TheSteerAuthorUsesBothTests(unittest.TestCase):

@@ -2406,7 +2406,7 @@ class RefusalRedirectTests(unittest.TestCase):
                 system = body["messages"][0]["content"]
                 content = ("SUPPORTED" if "UNSUPPORTED —" in system else
                            "SOURCE_GAP" if "PROVIDER_REJECTS —" in system else
-                           "Stop rewriting test_handle.py — the mock target is wrong. Patch handler.requests instead.")
+                           "Patch handler.requests now.")
                 return json.dumps({"choices": [{"message": {"role": "assistant", "content": content}}]}).encode()
 
         coder = _Recorder([_write("h.py", "same bytes")])
@@ -3917,7 +3917,7 @@ class UnifiedSteerAuthorTests(unittest.TestCase):
                                         "paths:\n  /handles/{handle}:\n    get: resolve a handle"},
         ]}
         out = author_steer(
-            self._chat("You are stuck re-reading the spec. Fetch https://api.handle.me/handles now."),
+            self._chat("Fetch https://api.handle.me/handles now."),
             None, ws, gs, body, _Rlog(), condition="refusal")
         self.assertIsNotNone(out)
         self.assertIn("https://api.handle.me/handles", out)

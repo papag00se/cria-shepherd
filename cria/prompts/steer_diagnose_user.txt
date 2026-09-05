@@ -18,4 +18,4 @@ THE FILES IT HAS BEEN CHANGING (on disk right now — name, size, and line count
 GROUND TRUTH FROM THE REPO'S CHECKS{{CHECKS_AGE}}:
 {{TRUTH}}
 
-Reply with a short unstick directive spoken to the coder — grounded ONLY in what you see above — or EXACTLY the one word `ON_TRACK` if (and only if) the coder is clearly making progress and needs no help. If it is looping or stuck, write the directive.
+Reply with only exactly one action, as one short imperative sentence spoken to the coder and grounded in what you see above, or EXACTLY the one word `ON_TRACK` if the coder is clearly making progress and needs no help. Do not quote or restate checker evidence in the action; the coder receives it separately through the ground-truth channel.

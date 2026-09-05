@@ -28,6 +28,7 @@ Simplifications (flagged; both are refinements, not correctness holes):
 
 from __future__ import annotations
 
+import copy
 import difflib
 import hashlib
 import inspect
@@ -6217,9 +6218,13 @@ def summarize(chat_fn, role, system: str, user: str, rlog, *, phase: str = "comp
             call["temperature"] = temperature
         try:
             rlog.phase = phase + ("-noreason" if reasoning_off else "")
-            applied = massage.apply(_parse_completion(chat_fn(call, rlog)), None, rlog)
+            received = _parse_completion(chat_fn(call, rlog))
             if capture is not None:
-                capture.append(applied)   # BEFORE any of the rejections below discard it
+                # Preserve the completion AS RECEIVED. `massage.apply` can promote private
+                # reasoning into empty content before `coerce_text_answer` runs; answer-vs-thinking
+                # recovery needs the original empty/ON_TRACK answer, not either mutated view.
+                capture.append(copy.deepcopy(received))
+            applied = massage.apply(received, None, rlog)
             # A summarize/redirect call offers NO tools, so ANY tool call the model produced (native, or
             # a dialect leak recover_leaked_tool_calls promoted) means it answered in ACT/PLAN mode, not
             # prose. coerce_text_answer then salvages its reasoning_content — but on a "summarize past
@@ -7915,7 +7920,16 @@ def author_steer(reasoner_chat, reasoner_role, workspace_root, gs, body: dict, r
             return None
         evidence = user + "\n\n" + "\n".join(
             str(m.get("content") or "") for m in transcript if m.get("role") == "tool")
-        directive = _steer_or_none(text) or _steer_from_reasoning(comp, text, _recover_ask, rlog)
+        directive = _authored_action_or_none(text, rlog)
+        if directive is None:
+            # The generic massage layer preserves a finished reasoner's words by copying an otherwise
+            # empty answer out of `reasoning_content`. For answer-vs-thinking recovery that is still
+            # an EMPTY authored answer, not a prose action and not evidence that both channels agreed.
+            msg = ((comp.get("choices") or [{}])[0].get("message") or {})
+            raw_answer = ("" if isinstance(msg.get("reasoning_content"), str)
+                          and msg.get("content") == msg.get("reasoning_content") else text)
+            directive = _authored_action_or_none(
+                _steer_from_reasoning(comp, raw_answer, _recover_ask, rlog) or "", rlog)
         return _grounded_steer_or_none(directive, evidence, rlog, ask=_steer_ask,
                                        sess=gs, messages=body.get("messages", []),
                                        workspace_root=workspace_root)
@@ -7928,9 +7942,17 @@ def author_steer(reasoner_chat, reasoner_role, workspace_root, gs, body: dict, r
     if _ruminating_reply(text):   # same guard as the tooled branch — see loop.steer_degenerate above
         rlog.emit("loop.steer_degenerate", level="warn", phase="reasoner", chars=len(text))
         return None
-    directive = _steer_or_none(text)
+    directive = _authored_action_or_none(text, rlog)
     if directive is None and passes:
-        directive = _steer_from_reasoning(passes[0], text, _recover_ask, rlog)
+        # `summarize` may coerce private reasoning into text when the actual answer is empty.  That
+        # prose is not an authored action, and using the coerced value as `answer` also makes
+        # `_steer_from_reasoning` believe there is no second signal to recover.  Recovery is about
+        # answer-versus-thinking provenance, so compare the raw answer from the captured completion.
+        raw_answer = _completion_text(passes[0])
+        if reasoner_role is not None:
+            raw_answer = reasoner_role.clean_content(raw_answer)
+        directive = _authored_action_or_none(
+            _steer_from_reasoning(passes[0], raw_answer, _recover_ask, rlog) or "", rlog)
     return _grounded_steer_or_none(directive, user, rlog, ask=_steer_ask,
                                    sess=gs, messages=body.get("messages", []),
                                    workspace_root=workspace_root)
@@ -8041,6 +8063,33 @@ def _steer_or_none(text: str) -> str | None:
     # essentially nothing left → a genuine on-track veto, inject nothing. The small floor skips a bare
     # "ok"/"yes" residue without discarding a real short steer.
     return directive if len(directive) >= 8 else None
+
+
+def _authored_action_or_none(text: str, rlog=None) -> str | None:
+    """A steer-author reply narrowed to the contract's one structural action.
+
+    Whether prose describes one conceptual action is a judgment and does not belong in a verb list.
+    The author contract supplies the cheaper upstream constraint: one imperative sentence.  Code can
+    enforce only that observable shape.  Multiple sentence boundaries are multiple authored units,
+    whatever language or tool they name, so the ambiguous reply is withheld and the caller keeps its
+    existing raw-ground-truth fallback.  The historical ``_steer_or_none`` cleanup remains the owner
+    of verdict/scaffolding recovery before this shape check.
+    """
+    action = _steer_or_none(text)
+    if not action:
+        return None
+    # Explicit lists expose multiple units even when the author omitted sentence punctuation. This
+    # is structure, not an English verb/conjunction guess, and applies equally to numbered and
+    # bulleted actions in any implementation language.
+    listed = re.findall(r"(?m)^\s*(?:[-*+]|\d+[.)])\s+", strip_think(text or ""))
+    units = [part for part in re.split(r"(?<=[.!?])\s+", action.strip()) if part.strip()]
+    if len(units) > 1 or len(listed) > 1:
+        if rlog is not None:
+            rlog.emit("loop.steer_multiple_actions", level="warn",
+                      units=max(len(units), len(listed)),
+                      head=_clip(action, 120))
+        return None
+    return action
 
 
 # ---- THE ANSWER SAYS ON_TRACK; THE THINKING SAYS STUCK ------------------------------------------

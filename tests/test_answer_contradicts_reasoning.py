@@ -148,8 +148,7 @@ STEER_REAL = (
     "progress and requires assistance."
 )
 
-RECOVERED = ("You keep re-running the same edit against handle_resolver.py while the tests fail the "
-             "same way. Read handle_resolver.py now and run the failing test to see the real error.")
+RECOVERED = "Read handle_resolver.py now."
 
 
 class SteerAuthorReadsItsOwnThinkingTests(unittest.TestCase):

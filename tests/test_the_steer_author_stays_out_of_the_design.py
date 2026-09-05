@@ -75,11 +75,12 @@ class TheAuthorMayNotInventACauseTests(unittest.TestCase):
 
     def test_it_is_given_what_to_say_instead(self):
         """A prohibition with no replacement is a prohibition a weak model routes around."""
-        self.assertIn("Report what a check printed", self.body)
-        self.assertIn("name the next thing to look at", self.body)
+        self.assertRegex(self.body, r"(?i)use .{0,80} to choose")
+        self.assertIn("one action", self.body.lower())
 
-    def test_the_identify_rule_asks_for_a_quote_not_an_explanation(self):
-        self.assertRegex(self.body, r"(?i)quote it; do not describe it|quoting it, not by explaining it")
+    def test_the_evidence_is_not_mixed_into_the_action(self):
+        self.assertRegex(self.body,
+                         r"(?is)(do not|never|must not).{0,100}(quote|restate).{0,100}(evidence|check)")
 
     def test_the_rule_carries_its_evidence_IN_THE_CODE(self):
         import inspect
@@ -98,11 +99,9 @@ class WhatTheAuthorMayStillDoTests(unittest.TestCase):
     def test_it_still_must_give_one_concrete_next_action(self):
         self.assertRegex(self.body, r"(?i)exactly ONE (concrete )?next action")
 
-    def test_it_still_may_quote_a_real_error_or_a_line_it_read(self):
-        """The prohibition on writing code must not swallow quoting the error — that is the one
-        thing the directive most needs to do."""
-        self.assertRegex(self.body,
-                         r"(?i)quoting a real error[^.]*is not writing code")
+    def test_it_emits_only_the_action(self):
+        """Checker evidence reaches the coder separately; the authored value has one provenance."""
+        self.assertRegex(self.body, r"(?i)(only|output).{0,80}(exactly )?one action")
 
     def test_it_still_redirects_to_a_missing_deliverable(self):
         self.assertRegex(self.body, r"(?i)(redirect it to|send it to) that deliverable")
