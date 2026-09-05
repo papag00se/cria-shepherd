@@ -38,7 +38,9 @@ CARRIERS = ("block_nudge_preamble", "steer_checks_repeat")
 # The scope sentence, as one string, so the two copies cannot say subtly different things.
 SCOPE = ("This governs the tests that were already in the repository when you started — they "
          "describe behaviour someone else depends on. A test YOU wrote earlier in this session is "
-         "yours: if its own setup or fixture is wrong, correct the test.")
+         "yours only where you chose its setup and fixture")
+TASK_CONTRACT = ("an exact input, expected output, or acceptance condition named by the user's task "
+                 "remains the user's requirement")
 
 
 def _rendered(name: str) -> str:
@@ -74,6 +76,14 @@ class EveryCarrierOfTheRuleNamesItsScopeTests(unittest.TestCase):
                 rule_end = body.index("stops asking is not a fix")
                 self.assertLess(body.index(SCOPE) - rule_end, 60,
                                 "the scope must follow the rule, not trail it")
+
+    def test_a_coder_created_test_does_not_own_the_users_observables(self):
+        for name in CARRIERS:
+            with self.subTest(prompt=name):
+                body = _rendered(name)
+                self.assertIn(TASK_CONTRACT, body)
+                self.assertIn("not yours to change so the implementation passes", body)
+                self.assertIn("preserve it while you inspect the task and implementation", body)
 
     def test_the_external_system_exception_still_stands(self):
         """The narrower escape hatch, added because a test asserted a false world-fact and the

@@ -42,6 +42,8 @@ class EveryCarrierSaysWhichTestsTests(unittest.TestCase):
                 self.assertIn("not a fix", out)
                 self.assertIn(SCOPE, out)
                 self.assertIn("A test YOU wrote earlier in this session is yours", out)
+                self.assertIn("expected output", out)
+                self.assertIn("user's requirement", out)
 
     def test_the_copy_that_ships_is_one_of_them(self):
         """`checks_error_class` is the gate's own findings block — 3,254 captured prompts, and the
