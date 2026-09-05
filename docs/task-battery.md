@@ -1,105 +1,43 @@
 # The task battery — what we test cria against, and why
 
-The suite's job is not to grade models. It is to put cria under the kinds of pressure real coding work applies, so its own footguns surface where a call-by-call walk can find them. A task earns its place by exercising machinery no other task reaches.
+The suite puts cria under the kinds of pressure real coding work applies so its own footguns surface in exact call captures and finished workspaces. It does not decide quality during a run. Afterward, an independent reasoner infers the requested deliverables from the task, inspects the archived workspace with read-only tools, and records a usefulness judgment.
 
 ## Design rules
 
-1. **Comparable weight.** Every task carries roughly four deliverables of similar size, the shape the original `ada-handles` set: research, implementation, tests, documentation. A single-skill exercise ("fix this one bug") produces a thin signal and finishes in five minutes.
-2. **Deterministic scoring only.** `verify.py` runs the deliverables and scores what works. Never a model claim, never a judge verdict, never a green gate.
-3. **The cheats must be worthless, and must be TESTED.** Every verifier here was run against a real cheat before it was trusted — see "Cheat-resistance" below.
-4. **Seeded beats greenfield for finding cria bugs.** Greenfield tests research and creation. Seeded tasks start from code the model did not write, which is the only way to exercise reading an unfamiliar file, editing it surgically, and acting on gate output — where most of cria's measured footguns live.
-5. **No task is ever special-cased in cria.** Doctrine. The suite doubles as cria's regression harness, and a prompt cria recognises is worthless as one.
+1. **Comparable work.** Tasks carry several substantial deliverables: research, implementation, tests, documentation, integration, or operational behavior.
+2. **Inference judges usefulness.** The judgment concerns how much usable work was actually delivered. Coder claims are not evidence.
+3. **Elapsed time is only a budget.** A run ends when the harness exits or its wall expires; no quality judgment can end it.
+4. **Seeded beats greenfield for finding cria bugs.** Seeded tasks exercise unfamiliar-file reading, surgical editing, and reactions to real gate output.
+5. **No task is special-cased in cria.** The suite is useful only while cria remains harness-, prompt-, and language-agnostic.
 
-## The matrix: one kind of work per language
+## Matrix: one kind of work per language
 
-Every task carries four deliverables of similar weight, and **no two tasks share a language**. That second rule is not decoration. A finding that only ever appears in Python cannot be told apart from a Python-specific quirk in cria, and the project's whole claim is that it is harness- and language-agnostic.
-
-**Scores are percentages, not fractions.** A task carries as many checks as its work honestly needs; the constraint that remains is that every check WITHIN a task costs roughly the same effort. `suite/capabilities.py` and `suite/coverage.py` model what each task DEMANDS — wall clock does not: `orders-api-py` takes twenty minutes because it polls an HTTP service and `shipping-rates-rb` takes one because arithmetic is fast, and neither number says how much the model had to be good at.
-
-**Five of the six now reach the network**, and in every case because the work genuinely calls for it rather than to tick the box: the right fix for float money in Go is a decimal library, the right fix for `split(",")` in Java is a CSV parser, and the right source for EU membership in Ruby is a maintained gem rather than a list typed by hand (Croatia joined in 2013; Switzerland and Norway never did). The measurement now depends on the package registries being up — a real cost, recorded here rather than discovered later.
-
-| task | language | categories covered | status |
-|---|---|---|---|
-| `shipping-rates-rb` | Ruby | **3** resolve failing tests · **1** feature from spec · **4** write missing tests · **19** update docs · country→zone via a gem | built 2026-08-10; 5 checks; seed 0%, honest 100%, four cheats measured |
-| `cart-billing-go` | Go | **2** bug from user report · **12** logging/observability · **14** config/environment · **6** refactor · decimal money via a library | built; 5 checks; seed 0%, honest 100%, three cheats measured |
-| `orders-api-py` | Python | **8** new API endpoint · **9** database change · **5** integration tests · **11** security fix | built; scored 4/4 by gemma4 and qwen35, so proven satisfiable |
-| `feed-pipeline-java` | Java | **17** data transform · **10** optimise slow code · **13** concurrency · **20** code review · real CSV parser | built 2026-08-10; Maven; 5 checks; seed 0%, honest 100%, three cheats measured |
-| `handles-cli-node` | JavaScript | **18** external service · **16** CLI tooling · **7** dependency migration · **15** containerise | built; seed scores 0/4; **4/4 not yet proven** |
-| `rust-toml-cli` | Rust | discover and use a third-party crate under compile-loop pressure | built; scored 4/4 by gemma4, so proven satisfiable |
-
-Toolchains for all six are on the box and need no network: ruby+minitest, go, python3, JDK 21, node 22, cargo with a warm crate cache.
-
-### Why the earlier selection was wrong
-
-The first battery ran `shipping-rates-py`, `orders-api-py`, `feed-pipeline-py`, `missing-tests-py`, `sqlite-inventory` and `rust-toml-cli` — five Python tasks and one Rust. The original five-task design already had Go and JavaScript in it; the selection dropped both and replaced them with Python. The `handles-*` ports were excluded on the grounds that one problem in seven languages is a portability question rather than a variety one. That reasoning is right for measuring variety of WORK and exactly backwards for measuring variety of LANGUAGE, and the trade was never surfaced.
-
-Two tasks were ported rather than newly invented, so the work axis is unchanged and only the language moved: `shipping-rates-py` → `shipping-rates-rb`, `feed-pipeline-py` → `feed-pipeline-java`. The Python originals stay on disk. Retired from the matrix: `missing-tests-py` (its category 4 is covered by the Ruby task) and `sqlite-inventory` (Python, and overlapping `orders-api-py`).
-
-### Also in the suite, not in the matrix
-
-| task | language | shape |
+| task | language | work exercised |
 |---|---|---|
-| `ada-handles` | Python | API research + client + tests + live test + docs — already mined for findings |
-| `handles-{go,rust,node,ruby,php,java}` | six | the same problem, one language each — isolates the language variable |
-| `shipping-rates-py`, `feed-pipeline-py` | Python | the originals the Ruby and Java members were ported from |
-| `missing-tests-py`, `sqlite-inventory` | Python | retired from the matrix, kept as evidence |
+| `shipping-rates-rb` | Ruby | failing tests, feature from specification, tests, documentation, dependency research |
+| `cart-billing-go` | Go | reported bug, logging, file-backed configuration, decimal-money refactor |
+| `orders-api-py` | Python | API endpoint, database change, integration tests, security |
+| `feed-pipeline-java` | Java | data transformation, performance, concurrency, code review, CSV dependency |
+| `handles-cli-node` | JavaScript | external service, CLI, dependency migration, containerization |
+| `rust-toml-cli` | Rust | discover and use a third-party crate under compile-loop pressure |
 
-## Cheat-resistance
+The matrix deliberately spans languages. A pattern seen only in one ecosystem cannot establish a harness-agnostic cria defect.
 
-Scoring a coding task is mostly a fight against the easy way out. Each defence below was checked by committing the cheat and confirming the score:
+### Additional tasks
 
-| cheat | defence | measured |
-|---|---|---|
-| weaken or delete the failing test | seeded tests hashed against `seed/` | 1/4 |
-| special-case the numbers in the ticket | hidden cases at inputs never shown | 3/4 |
-| `assert True` × 20 | **mutation scoring** — seeded bugs the suite must catch | shallow 2/4, thorough 4/4 |
-| mock the "live" test | must PASS with network and FAIL without (`unshare -rn`) | mocked 3/4, live 4/4 |
-| import a logger and never call it | run real inputs, read what actually reached stderr | — |
-| implement the feature but never test it | the model's own tests must mention it | — |
-
-Two traps worth remembering, both found by running the verifier rather than trusting it:
-
-- `go test` replays a **cached** pass without executing anything. Every Go invocation needs `-count=1`, or the network-blocked half of a liveness check succeeds and a genuinely live test scores as mocked.
-- Hidden expectations must be **computed, not recalled**. One of mine was wrong (7.77 × 7 with WELCOME10 rounds to 52.87, not 52.89) and would have failed a correct solution.
+- `ada-handles`: API research, client, tests, live behavior, and documentation.
+- `handles-{go,rust,node,ruby,php,java}`: the same problem across languages.
+- `shipping-rates-py`, `feed-pipeline-py`: Python counterparts.
+- `missing-tests-py`, `sqlite-inventory`: retained non-matrix workloads.
 
 ## Seeding
 
-A task shipping a `seed/` directory has it copied into the workspace and committed before the run, so `git status` is clean and the model's own diff stays legible to it. Hidden tests live in `hidden/` and are copied in only at scoring time — nothing in the workspace hints at them during the run.
+A task with `seed/` is copied into a fresh workspace and committed before the run. This keeps `git status` clean and makes the coder's changes legible. Task-specific hidden grading material is not part of the suite.
 
+## Time budgets
 
-## Verifier corrections found by running the battery
+The default is a flat 30-minute elapsed-time wall. With `--milestone-minutes N`, the total wall is `N × len(meta.deliverables)`. Despite the historical option name, it performs no interval judgment; the metadata count only sizes the task budget.
 
-**`shipping-rates-py`, 2026-08-10 — `suite_green_tests_intact` punished the task's own instruction.** The check demanded the seeded test file be byte-identical to the seed. The prompt says *"Don't change what the tests assert"* and, two paragraphs later, *"Add it, with tests"* — and the obvious place to add tests is the file that already has them. The first baseline run caught it: gemma4 appended three correct express tests, deleted nothing, weakened nothing, left the suite green at 10 passed, and lost the point. Its true score was 4/4, recorded as 3/4.
+## Task prompts
 
-Byte-identity is now per-test-function integrity: every seeded test must still exist with its source unchanged, and additions are free. The anti-cheat is intact and was re-proven both ways — a weakened assertion and a deleted test are each still caught, while the honest solution scores 4/4.
-
-The general lesson for the remaining five: a verifier can be wrong by being too STRICT, not only too lax, and the tell is a plausible-looking near miss rather than an all-zero column. The status tool catches all-zero automatically; this class needs a human to read the diff.
-
-## RESOLVED 2026-08-12 — cart-billing-go's decimal ambiguity
-
-The prompt said "use whatever the Go ecosystem standardises on for decimal money rather than hand-rolling it", and `decimal_money_library` requires a THIRD-PARTY module in go.mod. A model could read stdlib `math/big` as the answer. That was recorded on 2026-08-10 and deliberately left alone at n=0 realised harm.
-
-Closed in the prompt-clarity pass, not because it finally bit, but because the whole prompt was being rewritten for a different reason and the sentence was one of the vaguest in the battery. It now says: *"Do not write your own decimal type, and do not keep using float64: add a third-party Go module for decimal money — one that goes in go.mod."* Same requirement, no second reading.
-
-## RESOLVED 2026-08-12 — deliverables count vs checks count
-
-`suite/run.py` paces a run at `len(meta.deliverables) x --milestone-minutes`, and the counts had drifted from what each task scores. Three tasks scored five checks on a four-thing clock; handles-cli-node scored four on a five-thing clock.
-
-Held open through the campaign for arm parity, then corrected once it closed. shipping-rates-rb, cart-billing-go and feed-pipeline-java now declare five and run to 75 minutes; handles-cli-node declares four and runs to 60. There is no milestone floor: the count sizes only the total budget and the final inferred-judgment denominator.
-
-## The prompts themselves — where to edit them
-
-Each task's prompt is one file, and it is the only copy:
-
-    suite/tasks/shipping-rates-rb/prompt.txt      ruby
-    suite/tasks/cart-billing-go/prompt.txt        go
-    suite/tasks/orders-api-py/prompt.txt          python
-    suite/tasks/feed-pipeline-java/prompt.txt     java
-    suite/tasks/handles-cli-node/prompt.txt       node
-    suite/tasks/rust-toml-cli/prompt.txt          rust
-
-`suite/run.py` reads the file at the start of every run, so an edit takes effect on the next run with nothing to regenerate and nothing to rebuild. Nothing else in the repo holds prompt text — the only other place the wording appears is under `docs/audits/`, which is a record of what was sent on a given day and is not read by anything.
-
-Editing one changes what every later row measures. Rows carry `p1` or `p2` in their note so a row earned against older wording is never silently compared with a newer one; bump `PROMPT_REV` in `suite/battery_run.py` when the wording changes materially.
-
-A prompt and its verifier have to agree, and the deliverable count sets the clock (`15 minutes x len(meta.deliverables)`). `tests/test_task_meta_matches_its_verifier.py` fails when they drift — that drift is what put three tasks on the wrong wall clock.
+Each task's `prompt.txt` is its sole instruction source. `suite/run.py` reads it at the beginning of every run. A material prompt change requires incrementing `PROMPT_REV` in `suite/battery_run.py` so later usefulness comparisons do not silently mix task definitions.

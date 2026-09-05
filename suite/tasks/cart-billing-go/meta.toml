@@ -2,7 +2,6 @@ name = "cart-billing-go"
 language = "go"
 shape = "seeded-multi"       # a SYMPTOM (no failing test) + config + observability
 categories = [2, 12, 14, 6]  # bug from report / logging / config-env / refactor without behaviour change
-deliverables_note = "5 checks since 2026-08-10 — decimal money added"
 deliverables = [
   "rounding fixed + regression test",
   "discounts.json with fallback",

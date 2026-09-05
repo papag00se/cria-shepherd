@@ -36,7 +36,7 @@ def prompt(task: str) -> str:
     return (TASKS / task / "prompt.txt").read_text()
 
 
-class TheGoTaskNamesTheBoundaryItsVerifierEnforcesTests(unittest.TestCase):
+class TheGoTaskNamesItsCompatibilityBoundaryTests(unittest.TestCase):
     def test_the_prompt_does_NOT_pin_the_signatures(self):
         """Reverted 2026-08-12 on operator instruction. The pin was added because the seeded test
         does `got != 15.00` and will not compile against a decimal return, so 7 of 19 attempts lost

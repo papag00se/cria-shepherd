@@ -47,7 +47,7 @@ Point your harness at `http://127.0.0.1:18085/v1` instead of the model server. T
 - **Seven models, 9B–27B, dense and MoE** — Ornith, Qwopus, Qwythos, Gemma 4 Fable, Mellum 2, Nemotron Elastic, Ternary-Bonsai. A model that breaks cria isn't a nuisance here — it's a requirement. Launch recipes per model in [`docs/model-settings.md`](docs/model-settings.md).
 - **Harnesses**: exercised under Codex (Responses API) and Claude tooling; anything speaking OpenAI Chat-Completions works. Tools are matched by *family*, never by one harness's names.
 - **Languages**: gates and probes discover each ecosystem's own checks — parse floors, linters, test runners — for Python, TypeScript/JS, Rust, Go, Java (plus Ruby and PHP floors), fresh from the workspace on every gate.
-- **Prompts**: hardened on multi-step agentic tasks — API integrations, database work, test suites, CLI tools — scored by a matrix (`suite/`) whose verifiers **run the deliverables**. Not the model's claim. Not a judge's vibe. The code, executed. cria never special-cases a benchmark prompt.
+- **Prompts**: hardened on multi-step agentic tasks — API integrations, database work, test suites, and CLI tools — evaluated by independent usefulness judgments over archived workspaces and exact call captures. cria never special-cases a benchmark prompt.
 
 ## The assists
 

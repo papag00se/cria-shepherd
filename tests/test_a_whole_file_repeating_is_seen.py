@@ -2,7 +2,7 @@
 
 Cycle 4 cell 4, `feed-pipeline-java × gemma4`, strict 0/5. Inside the first 8% of a single generation
 the model composed a complete, correct commons-csv rewrite — 169 lines, later extracted from the
-capture and run against the task's own verifier: **4 of 5**, a 34.3× speedup, 4 worker threads, 8
+capture and run directly: a 34.3× speedup, 4 worker threads, 8
 runs giving 1 distinct result, clean `mvn compile`. It then emitted the same 6,664-character
 `old_string` block twenty-two more times.
 

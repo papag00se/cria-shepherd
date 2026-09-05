@@ -69,7 +69,7 @@ If it is ever revisited, the fix belongs in the steer author's own prompt (fence
 - Self-recursion detector idea dropped (`3cdf774`); B3b reasoning-portability (`ea6fba9`, `130228c`).
 - **Config unify — one backends/roles model, zero aliases (`68a4597`).**
 
-**2026-08-04 addendum (REGRESSION1 walks), counter-evidence:** run `ada-handles_gemma4_codex_poff_1785843217` steer 0080 asserted camelCase field names (`resolvedAddresses`/`totalHandles`) against a ledger holding the snake_case truth — and the coder's code was CORRECT until it obeyed; the shipped resolver kept `totalHandles` and scored one of the run's four zeros. This is a defect that arrived BEFORE the write it caused, the case the refusal's "damage already landed" bullet said did not occur. A second same-day instance: `ada-handles_nemotron-elastic_codex_pon_1785834747` (plan-step side) survived five replans and seven correct critic rejections demanding fields from an endpoint the ledger proves does not return them. Two walked runs, two surfaces (steer, plan step), both ledger-disprovable. Re-adjudication is the operator's call.
+**2026-08-04 addendum (REGRESSION1 walks), counter-evidence:** run `ada-handles_gemma4_codex_poff_1785843217` steer 0080 asserted camelCase field names (`resolvedAddresses`/`totalHandles`) against a ledger holding the snake_case truth — and the coder's code was CORRECT until it obeyed; the shipped resolver kept `totalHandles` and was unusable. This is a defect that arrived BEFORE the write it caused, the case the refusal's "damage already landed" bullet said did not occur. A second same-day instance: `ada-handles_nemotron-elastic_codex_pon_1785834747` (plan-step side) survived five replans and seven correct critic rejections demanding fields from an endpoint the ledger proves does not return them. Two walked runs, two surfaces (steer, plan step), both ledger-disprovable. Re-adjudication is the operator's call.
 
 ---
 
@@ -132,7 +132,7 @@ Grouped by ROOT rather than by site, because the same mistake appears in up to s
 
 ## Sub-40 walks — four items left unbuilt (2026-08-27)
 
-Full write-up and the evidence for each: [`audits/sub40-walk.md`](audits/sub40-walk.md). Eight cria-side defects were found and fixed across two passes; these four were left because the clean decision was not obvious, not because they are small.
+Eight cria-side defects were fixed across two passes; these four remain because the clean decision is not obvious, not because they are small.
 
 | # | What | Why it was left |
 |---|------|-----------------|

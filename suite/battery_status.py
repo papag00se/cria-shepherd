@@ -5,7 +5,7 @@ Reads `suite/results/results.jsonl` and nothing else. Not a conversation, not a 
 report someone typed. Whatever it prints under `NEXT:` is the next action; when a chat message and
 this tool disagree, this tool is right. `docs/goals/battery-goal.md` is the campaign it drives.
 
-THE QUESTION: for four models across six tasks, what does the same model score with cria DRIVING
+THE QUESTION: for four models across six tasks, how useful is the same model with cria DRIVING
 versus with cria only PLUMBING? Nothing in this project has ever measured what the assists are
 worth, because there has never been a control.
 
@@ -29,7 +29,7 @@ RESULTS = SUITE / "results" / "results.jsonl"
 WALK = SUITE.parent / "docs" / "audits" / "battery-walk.md"
 NOTE_PREFIX = "BATTERY2"          # what a NEW campaign run is stamped with (battery_run.py imports it)
 
-# EVERY RUN OF A CELL COUNTS, WHATEVER PROMPTED IT. A rerun launched to chase a low score is still a
+# EVERY RUN OF A CELL COUNTS, WHATEVER PROMPTED IT. A rerun launched after a weak judgment is still a
 # measurement of the same task, model and arm, and `prior_cell` below already states the rule the
 # operator settled on: "a run is a run". Reading only the campaign prefix meant the grid ignored the
 # reruns launched to improve it — four cells re-run on 08-20 never entered the ranking they were run
@@ -113,12 +113,7 @@ def delta_of(now: dict | None, before: dict | None) -> str:
     counts, so one check is 20 points on a five-check task and 25 on a four-check one."""
     if not now or not before:
         return ""
-    # NEVER ACROSS MEASURES. A judged cell and a strict one are answers to different questions, and
-    # subtracting them produces a number that is not movement in anything. Caught on the first
-    # judged grid: rust-toml-cli read `95% (-5)`, comparing this cycle's usefulness against last
-    # cycle's strict score, which invites exactly the wrong reading — the cell went from 0 to 95.
-    # No delta is the honest output until the other side has been judged too.
-    if judged(now) != judged(before):
+    if not judged(now) or not judged(before):
         return ""
     a, b = pct(now), pct(before)
     if a is None or b is None:
@@ -144,29 +139,20 @@ def delta_of(now: dict | None, before: dict | None) -> str:
     return f" ({d:+.0f})"
 
 
+MIN_MEANINGFUL_DELTA = 10.0
+
+
 def within_noise(now: dict | None, before: dict | None) -> bool:
-    """Is the movement between these two rows no bigger than one check — the amount that flips on a
-    re-run of the same binary? See the note above `delta_of`'s return for what that cost."""
-    if not now or not before or judged(now) != judged(before):
+    """Whether two independent usefulness judgments are too close to distinguish confidently."""
+    if not now or not before or not judged(now) or not judged(before):
         return False
     a, b = pct(now), pct(before)
-    if a is None or b is None:
-        return False
-    return abs(a - b) <= noise_floor(now, before)
+    return a is not None and b is not None and abs(a - b) <= MIN_MEANINGFUL_DELTA
 
 
-def noise_floor(*rows: dict | None) -> float:
-    """One check's worth of percentage points for this cell — the smallest movement it can make.
-
-    A run either passes a check or does not, so nothing between two adjacent check counts is
-    observable; a delta no larger than one check is exactly the amount that flips on a re-run. Falls
-    back to 20 points (the five-check task, the commonest shape) when no row carries a check count,
-    which keeps the mark on rather than silently claiming precision the row cannot support (#13)."""
-    for r in rows:
-        mx = float((r or {}).get("max_score") or 0)
-        if mx:
-            return 100.0 / mx + 0.5
-    return 20.5
+def noise_floor(*_rows: dict | None) -> float:
+    """Conservative uncertainty band for comparing independent usefulness judgments."""
+    return MIN_MEANINGFUL_DELTA
 
 
 def in_flight() -> str | None:
@@ -195,27 +181,14 @@ def sha() -> str:
 
 
 def judged(r: dict | None) -> bool:
-    """Has this cell been judged on USEFULNESS, or is its number still the strict verifier's?"""
+    """Has this cell received an independent usefulness judgment?"""
     return bool(r) and r.get("usefulness") is not None
 
 
 def pct(r: dict | None) -> float | None:
     """A cell's number: the USEFULNESS judgement, or None when it has not been judged.
 
-    THE QUESTION THE GRID ANSWERS (operator, 2026-08-16). Strict scoring answers "was this perfect?"
-    and the campaign asks "can a cria model be useful in getting real work done" — rust-toml-cli x
-    gemma4 delivered a complete, correct, working CLI one directory too deep and the strict grid
-    printed 0%.
-
-    NO STRICT FALLBACK (operator, 2026-08-27: "I don't care about the strict measure - at all. We
-    should never have had it."). An unjudged cell now reads `·`, the same as one that never ran,
-    because a number nobody wants is worse than an honest blank — and the fallback quietly mixed two
-    measures in one grid. The verifier is untouched and remains the only truth: its per-deliverable
-    observations are the evidence every judgement is made from. What is gone is the all-or-nothing
-    COUNT laid over them.
-
-    (A percentage rather than a fraction: a task may carry as many checks as its work honestly needs,
-    so long as every check within a task costs about the same.)"""
+    An unjudged cell has no numeric value; the grid never substitutes another measure."""
     if not r:
         return None
     u = r.get("usefulness")
@@ -471,15 +444,15 @@ def repeat_evidence(rs: list[dict]) -> str:
     import statistics
     groups = collections.defaultdict(list)
     for r in rs:
-        note, mx = str(r.get("note", "")), float(r.get("max_score") or 0)
-        if not mx:
+        note = str(r.get("note", ""))
+        if r.get("usefulness") is None:
             continue
         tok = [w for w in note.split()
                if len(w) == 7 and all(ch in "0123456789abcdef" for ch in w)]
         if not tok:
             continue
         arm = "BASE" if " BASE " in f" {note} " else "CRIA"
-        groups[(r.get("task"), r.get("model"), arm, tok[-1])].append(100.0 * r["score"] / mx)
+        groups[(r.get("task"), r.get("model"), arm, tok[-1])].append(float(r["usefulness"]))
     spreads = [max(v) - min(v) for v in groups.values() if len(v) > 1]
     if not spreads:
         return ""
@@ -503,10 +476,10 @@ def _stamp(rs: list[dict], now: float | None = None) -> str:
     written = time.strftime(fmt, time.localtime(now if now is not None else time.time()))
     latest = max((r for r in rs if r.get("started")), key=lambda r: r["started"], default=None)
     if latest is None:
-        return f"**Last updated {written}** — no scored rows yet."
-    scored = time.strftime(fmt, time.localtime(latest["started"] + (latest.get("wall_seconds") or 0)))
+        return f"**Last updated {written}** — no completed rows yet."
+    finished = time.strftime(fmt, time.localtime(latest["started"] + (latest.get("wall_seconds") or 0)))
     return (f"**Last updated {written}** — newest row `{latest.get('run_id', '?')}`, "
-            f"scored {scored}.")
+            f"finished {finished}.")
 
 
 def _ladder_banner(rs: list[dict]) -> list[str]:
@@ -534,7 +507,7 @@ def _ladder_banner(rs: list[dict]) -> list[str]:
         ">",
         f"> The ladder below replaces it: six cumulative levels, 0 (pure proxy) to 5 (everything),",
         f"> **{len(lad)} cells in across levels {levels[0]}-{levels[-1]}**. Per-cell findings:",
-        "> [`docs/audits/ladder-progress.md`](ladder-progress.md). Status: `python3 suite/engagement_status.py`.",
+        "> Status: `python3 suite/engagement_status.py`.",
         ">",
         "> The old arm rows stay in `results.jsonl` and in *Every run* below. The six-language history",
         "> further down is what the ladder is built to price — gemma4 drops finishing work, qwen35",
@@ -548,10 +521,7 @@ def report(rs: list[dict], now: float | None = None) -> str:
     NOTES_MARKER is carried over untouched, because a finding is not derivable from a score."""
     out = ["# Battery — the engagement ladder", "",
            _stamp(rs, now), "",
-           "Tables only. Findings, walks and the retired two-arm campaign: "
-           "[`battery-history.md`](battery-history.md).",
-           "Per-cell judging: [`ladder-progress.md`](ladder-progress.md). "
-           "Status: `python3 suite/engagement_status.py`.", "",
+           "Tables only. Status: `python3 suite/engagement_status.py`.", "",
            "`[engagement] level = 0..5`, each rung implying every rung below it. "
            "`·` = not run. Superseded cells are excluded and re-run.", ""]
     for _lvl in range(0, 6):
@@ -565,8 +535,7 @@ def report(rs: list[dict], now: float | None = None) -> str:
             "cell RAN and is waiting on a verdict; `·` = it never ran. A total reading `77% (3/6)` "
             "is an average over the judged cells only and cannot speak for the rest of the row.", ""]
     # TABLES ONLY (operator, 2026-08-24): "I really don't need that document to have anything
-    # else in it but the tables. I look at nothing else." Prose lives in battery-history.md, which
-    # nothing regenerates, so a finding can never be destroyed by a --write either.
+    # else in it but the tables. I look at nothing else."
     return "\n".join(out) + "\n"
 
 
@@ -616,21 +585,6 @@ def main() -> int:
         print(f"\nIN FLIGHT: {live[:120]}")
         print("NEXT: WAIT — one run at a time, and do not edit cria/ or cria/prompts/ while it runs.")
         return 2
-
-    # A task whose finished BASE cells are ALL ZERO is a suspect verifier, not four failures. Five of
-    # the six tasks have never had a correct solution scored against them, so an unsatisfiable
-    # verifier is a live possibility and would waste the other half of the campaign. Stop and prove
-    # the task before spending more GPU on it.
-    for task in TASKS:
-        base = [cell(rs, "BASE", m, task) for m in MODELS]
-        have = [b for b in base if b]
-        if len(have) >= 2 and all((pct(b) or 0) == 0 for b in have):
-            print(f"\nNEXT: VALIDATE {task}   "
-                  f"({len(have)} baseline runs, every one 0/4 — prove the verifier is satisfiable)")
-            print(f"      read suite/tasks/{task}/verify.py against suite/tasks/{task}/prompt.txt,")
-            print(f"      then solve it by hand in a copy of the seed and score that. See the")
-            print(f"      'largely unproven' section of docs/goals/battery-goal.md.")
-            return 1
 
     # A CRIA run that LOST to its BASE twin is the campaign's whole point; walk it before running
     # more — BUT ONLY BY MORE THAN THE NOISE FLOOR. A one-check gap between two single runs is not

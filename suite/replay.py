@@ -4,7 +4,7 @@
 A full suite run costs 30 minutes and yields ONE noisy number. cria already stores the exact body
 of every call it has ever made (~/.cria/calls/<session>/NNNN-<phase>.json), so the same question —
 "do these sampling settings make the model behave better?" — can be asked against thousands of real
-prompts in minutes, with deterministic scoring and no model in the judge's seat.
+prompts in minutes, with protocol-shape classification and no model in the judge's seat.
 
 The three metrics are the three failures walks have actually turned up, not invented proxies:
 

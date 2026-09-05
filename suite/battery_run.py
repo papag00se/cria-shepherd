@@ -33,7 +33,7 @@ from battery_status import NOTE_PREFIX  # noqa: E402
 # measurement, and the note is where that stays visible instead of being folded silently
 # into a delta. BUMP THIS whenever a task's wording changes materially.
 #
-# p4 (2026-08-13): two prompts named a fact their own verifier already scored.
+# p4 (2026-08-13): two prompts named a requirement the task did not state.
 #   * handles-cli-node now asks for the RESOLVED address as well as the holder's. api.handle.me
 #     returns two different addresses and the checker required both; the prompt named one, so a tool
 #     that printed the holder address and the count — exactly what was asked — lost two checks.

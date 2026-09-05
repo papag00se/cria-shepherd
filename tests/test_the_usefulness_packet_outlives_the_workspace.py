@@ -1,21 +1,7 @@
-"""The inferred score died with the workspace, and the workspace is the part that gets deleted.
+"""A usefulness evidence packet is frozen while the workspace is still available.
 
-The usefulness judge — "was real work done?", the question the campaign is actually asking — grades
-an evidence packet built by walking the ARCHIVED workspace and, where the working directory holds no
-manifest, re-running the verifier from where the project really is. Once that directory is gone the
-packet cannot be built and the run can never be judged; the strict all-or-nothing score is all that
-survives it.
-
-Measured when the operator asked why the inferred score was missing: of 503 recorded runs, 455 had
-no verdict and only 138 of those still had a workspace on disk. Every BASE row that could still be
-judged had already been judged — the other 57 were gone — so the two arms can never be compared on
-the number that matters for anything run before this. Nothing in `suite/` deletes an archive, so the
-loss came from outside, which is exactly why judgeability must not depend on 3.4 GB of trees
-surviving indefinitely. The packets for all 185 surviving workspaces are 816 KB.
-
-So the packet is frozen at the END of a cell, while the workspace is warm, and `evidence()` reads it
-back when the archive is gone. The digest is still recomputed against the CURRENT rubric, so a
-reworded rubric invalidates old verdicts exactly as before.
+The packet preserves the task, archive location, and file inventory. If the archive is later reaped,
+`evidence()` can still return that packet, and rubric changes still invalidate its digest.
 """
 
 import json
@@ -34,10 +20,8 @@ TASK = "feed-pipeline-java"
 
 
 def _row(archive: str, run_id: str = "r1") -> dict:
-    return {"run_id": run_id, "task": TASK, "archive": archive, "score": 3.0, "max_score": 5.0,
-            "terminal": "milestone-miss-30min", "calls": 44, "wall_seconds": 3685.2,
-            "verify": {"review_written": {"ok": True, "detail": "550 words"},
-                       "csv_library": {"ok": False, "detail": "did not build"}}}
+    return {"run_id": run_id, "task": TASK, "archive": archive,
+            "terminal": "budget-killed", "calls": 44, "wall_seconds": 3685.2}
 
 
 class ThePacketOutlivesTheWorkspaceTests(unittest.TestCase):
@@ -65,12 +49,11 @@ class ThePacketOutlivesTheWorkspaceTests(unittest.TestCase):
         self.assertEqual(after_digest, live_digest)
         self.assertIn("THE TASK THE CODER WAS GIVEN", after)
 
-    def test_without_a_packet_a_reaped_workspace_still_reports_the_facts_it_has(self):
-        # No packet saved. evidence() must not crash — the row's own verify parts are still real.
+    def test_without_a_packet_a_reaped_workspace_reports_that_its_inventory_is_empty(self):
         row = _row(str(self.tmp), run_id="r2")
         shutil.rmtree(self.tmp / "workspace")
         text, _ = usefulness.evidence(row)
-        self.assertIn("did not build", text)
+        self.assertIn("(empty)", text)
 
     def test_the_digest_still_tracks_the_rubric_not_just_the_evidence(self):
         row = _row(str(self.tmp))

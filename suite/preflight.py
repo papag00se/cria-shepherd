@@ -31,15 +31,15 @@ PROBE_UA = "cria-suite-preflight/1.0 (+reachability check)"
 # tool -> (version probe, what it is needed for)
 TOOLS = {
     "python3": (["python3", "--version"], "ada-handles, sqlite-inventory, the seeded Python tasks"),
-    "pytest": (["python3", "-m", "pytest", "--version"], "every Python task's verifier"),
+    "pytest": (["python3", "-m", "pytest", "--version"], "Python task execution"),
     "go": (["go", "version"], "handles-go, cart-billing-go"),
     "cargo": (["cargo", "--version"], "handles-rust, rust-toml-cli"),
     "node": (["node", "--version"], "handles-node, handles-cli-node"),
     "npm": (["npm", "--version"], "handles-node package scripts"),
     "ruby": (["ruby", "--version"], "handles-ruby"),
-    "rspec": (["rspec", "--version"], "handles-ruby's verifier"),
+    "rspec": (["rspec", "--version"], "Ruby task execution"),
     "php": (["php", "--version"], "handles-php"),
-    "phpunit": (["phpunit", "--version"], "handles-php's verifier"),
+    "phpunit": (["phpunit", "--version"], "PHP task execution"),
     "composer": (["composer", "--version"], "PHP dependency install inside a run"),
     "mvn": (["mvn", "-v"], "handles-java"),
     # OPTIONAL: the containerise deliverable is scored by READING the Dockerfile (FROM + CMD), not

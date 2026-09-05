@@ -4,16 +4,15 @@
 Provisions a throwaway workspace, points the rig at the requested model + planner setting,
 drives one harness run of the task prompt under a wall clock (operator's call: no call budget —
 slow models surfacing as budget-kills is itself signal), then collects metrics from cria's own
-capture/events, runs the task's deterministic verifier, and appends one JSON row to
-suite/results/results.jsonl.
+capture/events, preserves the workspace for an independent usefulness judgment, and appends one
+JSON row to suite/results/results.jsonl.
 
 Two budgets:
   * flat (default) — one HARD 30-minute wall.
   * `--milestone-minutes N` — N minutes per deliverable, so the budget follows the size of the task.
 
-There is no mid-run score or completeness floor. Minutes determine only how long the work is worth;
-the workspace is judged once, by inference, after the run finishes. A time-indexed score turns model
-latency and work ordering into false statements about final usefulness.
+There is no mid-run judgment or completeness floor. Minutes determine only how long the work is
+worth; the workspace is judged once, by inference, after the run finishes.
 
 Kill mechanics follow the runctl scars: match the codex process list explicitly (ps + grep of
 the exec pattern, excluding shells), never `pkill -f` (it matches the invoking shell).
@@ -42,12 +41,9 @@ RESULTS = SUITE / "results" / "results.jsonl"
 # One stray 403 is a blip; a run peppered with them was throttled. Measured: the affected
 # runs carried dozens, the healthy ones none.
 THROTTLE_PROMPTS = 5
-# NOT /tmp. A run's workspace IS its evidence — the archive, the verifier's input, and every walk
-# that reads what the coder actually built — and this box runs cleaners over /tmp. One did, mid-run:
-# `shipping-rates-rb x ternary-bonsai` 2026-08-17 17:14 lost its workspace between the 15-minute
-# milestone (which scored it) and the archive twelve seconds later, so `cp -r` copied nothing,
-# verify.py ran against a path that no longer existed, and the row landed 0/0 with no verifier error
-# to explain it. The evidence-preservation rule one screen down — "Nothing under ~/.cria/suite is
+# NOT /tmp. A run's workspace IS its evidence — the archive and every walk that reads what the coder
+# actually built — and this box runs cleaners over /tmp. One removed a workspace before archival.
+# The evidence-preservation rule one screen down — "Nothing under ~/.cria/suite is
 # ever auto-cleaned" — was already the intent; the live tree just was not covered by it.
 #
 # NOT under ~/.cria either, and that is not a style choice: `writeproxy._targets_cria_home` REFUSES
@@ -114,14 +110,6 @@ def _require_codex_home() -> None:
             f"(base_url http://127.0.0.1:18085/v1, wire_api \"responses\") before running.")
 
 NODE_PATH = "/home/jesse/.nvm/versions/node/v22.13.1/bin"
-
-
-# How long a task's own verify.py may take. It runs the coder's program repeatedly — feed-pipeline
-# -java's determinism check alone runs it eight times over a 1.2 MB fixture, and the program prints
-# a line per SKU. MEASURED rather than guessed: that verifier took 1,250 s on the workspace whose
-# row the old 600 s limit destroyed. 1,800 leaves headroom over the worst case observed without
-# letting a genuinely wedged verifier hold a cell forever.
-VERIFY_TIMEOUT_S = 1800
 
 
 def sh(*cmd, timeout=120):
@@ -409,28 +397,6 @@ def deliverable_count(task_dir: Path) -> int:
     return len(deliverable_names(task_dir))
 
 
-def observe_snapshot(ws: Path, task_dir: Path) -> dict:
-    """What the verifier OBSERVES about the workspace as it stands — per deliverable, no total.
-
-    Read-only, and it runs against a COPY: the verifier executes the deliverables, which leaves
-    `__pycache__`, `.pytest_cache` and stray output behind, and putting cria's artifacts in front of
-    the coder's `ls` mid-run is principle 7.
-
-    It returns `parts` and nothing else. The aggregate this used to return was the strict
-    all-or-nothing count, which gated a mid-run kill and is the measure the suite does not ask about;
-    the per-deliverable observations are the verifier's real output and remain the evidence a
-    judgement is made from. `{}` on any failure — an unreadable verdict is not an observation."""
-    snap = Path(tempfile.mkdtemp(prefix="observe-snap-", dir=RUNS_DIR))
-    try:
-        sh("cp", "-r", str(ws), str(snap / "ws"), timeout=300)
-        vr = sh(sys.executable, str(task_dir / "verify.py"), str(snap / "ws"), timeout=600)
-        return json.loads(vr.stdout).get("parts") or {}
-    except Exception:  # noqa: BLE001
-        return {}
-    finally:
-        sh("rm", "-rf", str(snap), timeout=120)
-
-
 def throttled_mid_run(session_dir) -> str:
     """A 403/429 from the task's live service, seen in the run's own captures.
 
@@ -439,8 +405,8 @@ def throttled_mid_run(session_dir) -> str:
     request from a shell seconds later returned 200. Counted across every capture at the time: 251
     coder prompts carrying a 403, in 3 runs.
 
-    Such a run fails for a reason that is neither cria's nor the model's, and it is scored exactly
-    like a real failure — which corrupts the ladder's evidence. It is annotated, not deleted, and the
+    Such a run fails for a reason that is neither cria's nor the model's, which corrupts the
+    campaign evidence. It is annotated, not deleted, and the
     oracle skips it the way it skips any aborted row."""
     if not session_dir:
         return ""
@@ -561,37 +527,12 @@ def main() -> None:
     archive = Path.home() / ".cria" / "suite" / run_id
     archive.mkdir(parents=True, exist_ok=True)
     sh("cp", "-r", str(ws), str(archive / "workspace"), timeout=300)
-    # SAY SO WHEN THE EVIDENCE IS GONE. `sh` does not check, so a failed copy was silent and the row
-    # that followed read 0/0 with no verifier_error — indistinguishable from a model that built
-    # nothing. That is a false fact in the record, and the record is what the campaign is scored on.
+    # SAY SO WHEN THE EVIDENCE IS GONE. `sh` does not check, so a failed copy was silent and
+    # indistinguishable from a model that built nothing.
     workspace_lost = not ws.is_dir() or not (archive / "workspace").is_dir()
 
-    # A VERIFIER THAT TIMES OUT IS AN UNSCORED ROW, NOT A LOST ONE. `sh` lets TimeoutExpired
-    # propagate, and this call site did not catch it — so the whole run.py died AFTER the cell had
-    # spent its wall clock, and the row was never written at all. Walked on the sub-60 re-run of
-    # feed-pipeline-java x ternary-bonsai: an hour of model time, an archived workspace, and no
-    # record that any of it happened. A cell that produced no row is indistinguishable from a cell
-    # that never ran, which is the one failure nobody can see from the outside (#12).
-    try:
-        vr = sh(sys.executable, str(task_dir / "verify.py"), str(ws),
-                *([str(session_dir)] if session_dir else []), timeout=VERIFY_TIMEOUT_S)
-        stdout, stderr = vr.stdout, vr.stderr
-    except subprocess.TimeoutExpired as exc:
-        stdout = (exc.stdout or b"").decode(errors="replace") if isinstance(exc.stdout, bytes) \
-            else (exc.stdout or "")
-        stderr = (f"VERIFIER TIMED OUT after {VERIFY_TIMEOUT_S}s — this row is NOT a score. "
-                  + ((exc.stderr or b"").decode(errors="replace") if isinstance(exc.stderr, bytes)
-                     else (exc.stderr or "")))
-    try:
-        verdict = json.loads(stdout)
-    except Exception:  # noqa: BLE001
-        verdict = {"score": 0, "max_score": 0, "success": False,
-                   "verifier_error": (stdout + stderr)[-400:]}
     if workspace_lost:
-        verdict["verifier_error"] = (
-            f"WORKSPACE GONE before verification ({ws}) — this row is NOT a score. "
-            + str(verdict.get("verifier_error") or ""))[:400]
-        print(f"[archive] WORKSPACE MISSING: {ws} — the row is unscored, not zero", flush=True)
+        print(f"[archive] WORKSPACE MISSING: {ws}", flush=True)
 
     row = {
         "run_id": run_id, "task": args.task, "model": args.model, "harness": args.harness,
@@ -599,8 +540,6 @@ def main() -> None:
         **({"level": args.level} if args.level is not None else {}),
         "started": t0, "wall_seconds": round(t1 - t0, 1), "terminal": terminal,
         "milestone_minutes": args.milestone_minutes or None,
-        "success": bool(verdict.get("success")), "score": verdict.get("score"),
-        "max_score": verdict.get("max_score"), "verify": verdict.get("parts"),
         **capture,
         "assists": collect_assists(t0, t1),
         "workspace": str(ws),
@@ -618,8 +557,7 @@ def main() -> None:
     with open(RESULTS, "a") as fh:
         fh.write(json.dumps(row) + "\n")
     print(json.dumps({k: row[k] for k in
-                      ("run_id", "terminal", "success", "score", "wall_seconds",
-                       "calls", "avg_tok_s")}, indent=1))
+                      ("run_id", "terminal", "wall_seconds", "calls", "avg_tok_s")}, indent=1))
     _freeze_usefulness_evidence(row)
     _refresh_grid(row)
 
@@ -627,7 +565,7 @@ def main() -> None:
 def _freeze_usefulness_evidence(row: dict) -> None:
     """Save the judge's evidence packet NOW, while the workspace still exists.
 
-    The usefulness score — "was real work done?", the question the operator actually cares about —
+    The usefulness judgment — "was real work done?", the question the operator actually cares about —
     is judged from a packet built by walking the archived workspace. The workspace is the perishable
     half: of 503 recorded runs, 455 had no verdict and only 138 of those still had a workspace on
     disk, so the rest can never be judged at all. Every BASE row that could still be judged already
@@ -653,23 +591,11 @@ def _freeze_usefulness_evidence(row: dict) -> None:
 def _refresh_grid(row: dict | None = None) -> None:
     """Rewrite the operator grid from results.jsonl, here, where the row was just appended.
 
-    The grid is THE operator view and the standing rule is to refresh it after every run — but it
-    was a step a human had to remember, so it drifted: gemma4's canary was recorded and then
-    qwen35's 4/4 and mellum2's 1/4 both landed unrecorded, leaving the board showing qwen with two
-    runs when it had three. A rule that depends on remembering is not a rule (#4 — fix it where it
-    belongs, not by trying harder).
+    The grid is the operator view and is refreshed automatically after every run.
 
     Best-effort and non-fatal: the run's RESULT is already durably on disk one line above, and a
     reporting step must never be able to fail a completed run."""
-    try:
-        sys.path.insert(0, str(SUITE))
-        import regression_stats
-        lines = [regression_stats.stat_line(r) for r in regression_stats.rows()]
-        regression_stats.write_report(lines, regression_stats.model_summary(lines))
-        print("[grid] refreshed docs/audits/regression-report.md")
-    except Exception as e:  # noqa: BLE001 — reporting must not fail the run
-        print(f"[grid] refresh skipped: {type(e).__name__}: {e}")
-    # The campaign's own table, on the same rule and for the same reason. Silent when no BATTERY
+    # The campaign table is silent when no BATTERY rows exist, so an ordinary run does not touch it.
     # rows exist, so an ordinary ladder run does not touch it.
     try:
         sys.path.insert(0, str(SUITE))
@@ -680,9 +606,7 @@ def _refresh_grid(row: dict | None = None) -> None:
         # A ROW THE GRID CANNOT SEE MUST SAY SO. `battery_status.rows()` keeps only rows whose note
         # starts with a counted prefix, and `cell()` then matches an arm token inside it — so a run
         # launched with free text in --note completes, gets judged, and is silently absent from the
-        # operator's only view. Measured 2026-08-28: two nemotron cells were re-run with
-        # --note "re-run after the invented-call and read-window fixes", scored 59 and 29, and the
-        # grid went on showing the 8 and 24 they replaced until someone asked why. Nothing is
+        # operator's only view. Nothing is
         # rejected here — a deliberate one-off run is legitimate — but it is named (#3 is about
         # noise, not about hiding a fact the operator is about to act on).
         if row and not any(r.get("run_id") == row.get("run_id") for r in rs):

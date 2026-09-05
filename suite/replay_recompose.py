@@ -66,7 +66,6 @@ SUITE = pathlib.Path(__file__).resolve().parent
 sys.path.insert(0, str(SUITE.parent))
 sys.path.insert(0, str(SUITE))
 
-import ladder_status  # noqa: E402 — ONE owner for "which model is blocked on its build"
 import replay_logic  # noqa: E402 — sibling harness: ONE owner for "which runs have evidence"
 import run as ladder_run  # noqa: E402 — ONE owner for model name -> systemd unit, and the swap
 from cria import (loop, probegate, probeparse, prompts, shelltool,  # noqa: E402
@@ -1401,10 +1400,6 @@ def main() -> None:
     for name in picked:
         if name not in by_model:
             print(f"── {name}: no captured run is attributed to it — skipped")
-            continue
-        if name in ladder_status.BLOCKED_ON_TOOLING:
-            print(f"── {name}: BLOCKED ON TOOLING, not asked — "
-                  f"{ladder_status.BLOCKED_ON_TOOLING[name][:110]}…")
             continue
         print(f"{'=' * 100}\n══ building cases from {name}'s own captures "
               f"({len(by_model[name])} runs)\n{'=' * 100}")

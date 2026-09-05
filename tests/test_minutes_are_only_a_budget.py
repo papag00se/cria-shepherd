@@ -1,10 +1,8 @@
 """Elapsed time is a budget, never evidence about completeness or usefulness.
 
-The suite previously compared strict verifier counts, binary COMPLETE counts, and finally inferred
-usefulness with elapsed fractions of the task. Every version made the same category error: work
-ordering and model latency determined whether a run survived long enough to finish. Inferred
-judgment belongs once, against the final frozen workspace. `--milestone-minutes` now means only
-N minutes of budget per fixed deliverable.
+Work ordering and model latency cannot decide whether a run survives long enough to finish.
+An independent judgment belongs once, against the final frozen workspace. `--milestone-minutes`
+means only N minutes of budget per fixed deliverable.
 """
 
 import inspect

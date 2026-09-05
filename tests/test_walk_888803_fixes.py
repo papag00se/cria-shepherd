@@ -702,7 +702,7 @@ class TestsThatPassWithTheNetworkOffTests(unittest.TestCase):
     exists. mellum2 1786047222 shipped five tests patching requests.get and asserting the fixture the
     test itself supplied; the gate said "no error-class problems" and the satisfaction judge — which
     had read all three files and cannot run anything — passed a run verify scores 2/4. Running the
-    suite twice settles it: same discriminator verify.py uses."""
+    suite twice settles it from execution rather than prose."""
 
     def setUp(self):
         from cria import proberun, probediscovery

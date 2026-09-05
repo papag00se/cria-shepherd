@@ -2,7 +2,7 @@
 
 **Score 0/5. 171 calls, 30.8 minutes, ended on the wall clock.** Captures: `~/.cria/calls/20260820T111058-01a0205e-7e44-7151-916d-a13fe0a97089`. Code state at run time: `05f7525` — before today's four fixes.
 
-Walked to answer one question: **did it fail to the same causes as [`feed-pipeline-java × nemotron-elastic`](feed-pipeline-java-nemotron-walk.md)?** Four agents plus direct verification. Agent claims that did not survive checking are recorded as refuted.
+Walked to determine whether it failed for the same causes as the earlier nemotron-elastic run. Four agents plus direct inspection; claims that did not survive checking are recorded as refuted.
 
 ## Answer: one shared root cause, in the opposite direction, plus one shared plumbing bug. Everything else is different.
 

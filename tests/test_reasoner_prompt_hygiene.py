@@ -179,7 +179,7 @@ class TheSteerFixesWhereTheValueIsSetTests(unittest.TestCase):
     `db_path = None`. `db_path` is set only by `_run_server`, a helper in the model's OWN test file;
     `serve()` — the real entry point, fifteen lines below and byte-identical to the seed — never
     sets it. Every request became `sqlite3.connect(None)`. The code is present, correct, and
-    unreachable, and the verifier scored the deliverable MISS while the reasoner went on truthfully
+    unreachable, leaving the deliverable unusable while the reasoner went on truthfully
     reporting the route as done.
 
     Staying inside the one-action budget is the point: one change to one mechanism is still one
