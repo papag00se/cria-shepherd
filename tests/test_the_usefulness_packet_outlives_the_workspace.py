@@ -90,6 +90,14 @@ class ThePacketOutlivesTheWorkspaceTests(unittest.TestCase):
         # A packet that cannot be written must not fail a run that finished.
         self.assertIsNone(usefulness.save_packet({"run_id": "x", "task": "no-such-task"}))
 
+    def test_the_emergency_answer_contract_matches_the_rubric(self):
+        rubric = usefulness.SYSTEM.read_text()
+        self.assertIn('"deliverables"', usefulness.ANSWER_NOW)
+        self.assertNotIn('"deductions"', usefulness.ANSWER_NOW)
+        self.assertIn('"deliverables"', rubric)
+        self.assertNotIn("`list_dir`", rubric)
+        self.assertNotIn("`read_file`", rubric)
+
 
 class TheWorklistOnlyHoldsJudgEABLERowsTests(unittest.TestCase):
     def setUp(self):

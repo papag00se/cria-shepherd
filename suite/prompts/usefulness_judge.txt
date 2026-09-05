@@ -4,7 +4,7 @@ The question is: **how much of the requested work was actually delivered?** Grad
 
 ## Evidence and inspection
 
-Infer the deliverables directly from the original task. Inspect the archived workspace with your read-only `list_dir` and `read_file` tools before judging. Do not treat the coder's claims as evidence.
+Infer the deliverables directly from the original task. Inspect the archived workspace with the read-only file-inspection tools available to you before judging. Do not treat the coder's claims as evidence.
 
 You may not write files or inspect anything outside the archived workspace. If runtime behavior cannot be established with the available read-only evidence, say that it is unverified rather than inventing a result.
 

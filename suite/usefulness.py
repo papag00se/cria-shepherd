@@ -27,8 +27,9 @@ PACKET_VERSION = "SUITE EVIDENCE PACKET: 2"
 
 # The stop-looking line, in THIS judge's schema. See the call site.
 ANSWER_NOW = ('You have inspected enough. Answer NOW with ONLY the JSON object: '
-              '{"usefulness": <0-100>, "reason": "<two sentences>", '
-              '"deductions": [{"points": <n>, "for": "<what cost it>"}]}')
+              '{"usefulness": <0-100>, "reason": "<two evidence-based sentences>", '
+              '"deliverables": [{"name": "<task deliverable>", "score": <0-100>, '
+              '"why": "<specific inspected evidence>"}]}')
 
 
 def _current_contract(text: str) -> str:
