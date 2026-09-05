@@ -9,8 +9,9 @@ never-truncating, every outcome a factual sentence the judge can proceed from.""
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
-from cria import verifytools
+from cria import verifytools, wsview
 
 
 class VerifyToolExecutorTests(unittest.TestCase):
@@ -76,6 +77,20 @@ class VerifyToolExecutorTests(unittest.TestCase):
             (Path(root) / "escape").symlink_to("/etc")
             out = verifytools.execute("read_file", {"path": "escape/passwd"}, root)
         self.assertIn("outside the workspace", out)
+
+    def test_a_remote_workspace_path_is_never_resolved_on_this_machine(self):
+        root = "/harness/workspace"
+        view = wsview.View(root, "remote")
+        token = wsview.bind(view)
+        try:
+            with mock.patch("cria.verifytools.os.path.realpath",
+                            side_effect=AssertionError("local disk touched")):
+                self.assertEqual(verifytools._resolve("src/app.any", root),
+                                 "/harness/workspace/src/app.any")
+                self.assertIsNone(verifytools._resolve("../outside", root))
+                self.assertIsNone(verifytools._resolve("/other-machine/file", root))
+        finally:
+            wsview.unbind(token)
 
     def test_missing_paths_and_unknown_tools_are_factual_sentences(self):
         d, root = self._ws()

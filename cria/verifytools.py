@@ -84,12 +84,21 @@ VERIFY_TOOLS = [
 
 
 def _resolve(path: str, root: str) -> str | None:
-    """Path resolved under ``root``, or None when it escapes. Symlinks and ``..`` are resolved
-    BEFORE the containment check so neither can smuggle a read outside the workspace."""
+    """Path under the harness workspace, or ``None`` when it lexically escapes.
+
+    Production must not call ``realpath`` on a harness-supplied path: that resolves against cria's
+    machine, not the workstation. The request-bound workspace view owns remote path algebra. Tests
+    may explicitly bind ``DirectView`` for a genuinely local tree; only there can realpath safely
+    follow symlinks before the containment check.
+    """
     full = path if os.path.isabs(path) else os.path.join(root, path or ".")
-    real = os.path.realpath(full)
-    real_root = os.path.realpath(root)
-    return real if real == real_root or real.startswith(real_root + os.sep) else None
+    view = wsview.current(root)
+    if isinstance(view, wsview.DirectView):
+        real = os.path.realpath(full)
+        real_root = os.path.realpath(root)
+        return real if real == real_root or real.startswith(real_root + os.sep) else None
+    rel = view.rel(full)
+    return None if rel is None else view.abs(rel)
 
 
 def execute(name: str, args: dict, root: str) -> str:
