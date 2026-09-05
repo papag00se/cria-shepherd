@@ -44,7 +44,7 @@ from enum import Enum, auto
 from pathlib import Path
 
 from . import bodykeys, wsview
-from . import callcapture, dedup, denial, editrecovery, execcheck, focustrim, groundtruth, indicators, massage, probediscovery, probegate, probeparse, proberun, prompts, selfcompact, shellshape, toolmenu, urlgrounding, verifytools, webfetch
+from . import callcapture, dedup, denial, editrecovery, execcheck, focustrim, groundtruth, indicators, massage, participation, probediscovery, probegate, probeparse, proberun, prompts, selfcompact, shellshape, toolmenu, urlgrounding, verifytools, webfetch
 from .classify import _task_key, latest_user_text
 from . import jsontext, planner, refusalledger, writeproxy
 from .jsontext import extract_json_object, strip_think
@@ -255,6 +255,9 @@ class GuardState:
     # VACUOUS green. Fed to the satisfaction judge as EVIDENCE (not a deterministic block): the judge
     # holds the task and decides whether tests were even part of the ask (a script task is legitimately
     # testless-green; deterministically blocking would wedge it AND push a weak model to fabricate tests).
+    # Full three-valued build/source/test evidence from the same authoritative gate event.  Unlike
+    # ``last_gate_testless``, an unsupported field can remain unknown all the way to the judge.
+    last_gate_participation: object = None
     # Completion-gate-on-"done" state (plan-off path; the loop uses PlanSession's own fields):
     done_probe: bool = False  # a probe verifying a "done" claim is in flight
     pending_done: str = ""  # the coder's held "done" text, forwarded if the gate passes
@@ -1500,10 +1503,15 @@ def _restates_the_verdict(why: str, reason: str) -> bool:
 def _cria_measured_facts(sess) -> str:
     """What cria established by RUNNING the repo's checks, for a judge that gets no narrative.
 
-    Today that is the offline-test fact and nothing else — silence when there is none (#3). It rides
-    on the GatePlan because that is the one object both the gate that computes it and the loop that
-    ends the run already hold; no new store, and nothing that can outlive a session."""
-    return getattr(getattr(sess, "gate_plan", None), "offline_fact", "") or ""
+    The network-off reading rides on the GatePlan; the participation report rides on the session's
+    last gate reading.  Both are scoped to this session, gathered from the gate event, and silent
+    when unavailable (#3)."""
+    plan = getattr(sess, "gate_plan", None)
+    offline = getattr(plan, "offline_fact", "") or ""
+    observed = participation.render_for_judge(
+        getattr(sess, "last_gate_participation", None),
+        fresh=getattr(sess, "gate_fresh", None))
+    return "\n\n".join(part for part in (offline, observed) if part)
 
 
 def _confirm_completion(claim: str, reason: str, workspace_root: str, reasoner_chat, reasoner_role,
@@ -1950,6 +1958,14 @@ def judge_satisfaction(task: str, evidence: str, reasoner_chat, reasoner_role, r
     NOT satisfied, so a session is never ended on the critic's silence."""
     if not task.strip():
         return False, "no task text to judge", ""
+    # ONE satisfaction-judge funnel.  Some callers append legacy gate notes before arriving here
+    # and one (the re-derived-empty-tail check) does not.  Participation cannot depend on which
+    # caller remembered it: add the current event here, byte-identically, unless already present.
+    measured_participation = participation.render_for_judge(
+        getattr(sess, "last_gate_participation", None),
+        fresh=getattr(sess, "gate_fresh", None))
+    if measured_participation and measured_participation not in evidence:
+        evidence = "\n\n".join(part for part in (evidence, measured_participation) if part)
     system = prompts.load("satisfaction")
     user = prompts.render("satisfaction_user", task=task,
                           evidence=evidence or "(no actions recorded yet)")
@@ -2978,6 +2994,9 @@ class Loop:
             return _completion_toolcalls([probe_tc], note=f"verifying step {idx}/{total} — running checks")
         # no shell tool → cannot probe; still ground the critic in the coder's own tool output
         evidence = self._grounded_evidence(sess, body, rlog)
+        participation_facts = participation.render_for_judge(
+            getattr(sess, "last_gate_participation", None),
+            fresh=getattr(sess, "gate_fresh", None))
         ok, reason = self._verify(item.text, _completion_text(coder), "", evidence, rlog, idx=idx, total=total, key=key,
                                   coder_tools=_coder_tools_summary(body.get("tools")),
                                   routes=known_routes(body.get('messages', []), sess),
@@ -2985,7 +3004,8 @@ class Loop:
                                       _extract_fetches(body.get('messages', [])), body.get('messages', [])),
                                   workspace_root=sess.workspace_root or "",
                                   gate_red=bool(sess.last_gate_red),
-                                  messages=body.get("messages", []), sess=sess)
+                                  messages=body.get("messages", []), sess=sess,
+                                  participation_facts=participation_facts)
         if ok:  # advance ONLY on a genuine pass — no fail cap (re-nudge forever otherwise)
             return self._advance(sess, key, body, idx, total, rlog)
         sess.verify_fails += 1
@@ -3224,6 +3244,8 @@ class Loop:
                 sess.probe_call_id = probe_tc["id"]
                 return _completion_toolcalls(
                     [probe_tc], note=f"verifying step {idx}/{total} — running checks")
+        participation_facts = participation.render_for_judge(
+            getattr(outcome, "participation", None), fresh=getattr(sess, "gate_fresh", None))
         if not outcome.ran:
             # The script never ran (harness declined / no markers). Don't wedge — the pre-existing
             # fail-open: the critic still judges, told explicitly that no diagnostics ran.
@@ -3233,11 +3255,12 @@ class Loop:
             ok, reason = self._verify(item.text, sess.pending_coder_text, digest, evidence, rlog, idx=idx, total=total, key=key,
                                       coder_tools=_coder_tools_summary(body.get("tools")),
                                       routes=known_routes(body.get('messages', []), sess),
-                                  sources_read=research.sources_read(
-                                      _extract_fetches(body.get('messages', [])), body.get('messages', [])),
+                                      sources_read=research.sources_read(
+                                          _extract_fetches(body.get('messages', [])), body.get('messages', [])),
                                       workspace_root=sess.workspace_root or "",
                                       gate_red=bool(sess.last_gate_red),
-                                      messages=body.get("messages", []), sess=sess)
+                                      messages=body.get("messages", []), sess=sess,
+                                      participation_facts=participation_facts)
             if ok:
                 return self._advance(sess, key, body, idx, total, rlog)
             sess.verify_fails += 1
@@ -3323,7 +3346,8 @@ class Loop:
                                   workspace_root=sess.workspace_root or "",
                                   red_findings=red_findings or "",  # grounded in the coder's own runs
                                   gate_red=bool(sess.last_gate_red),
-                                  messages=body.get("messages", []), sess=sess)
+                                  messages=body.get("messages", []), sess=sess,
+                                  participation_facts=participation_facts)
         if nudge is not None:
             if ok:
                 # The critic read the findings and ruled they are not this step's goal. Loud by
@@ -3395,6 +3419,9 @@ class Loop:
         # reading, pass the reading: `last_gate_flag` is the finding-set every gate reader persists,
         # and the `probe_red` slot is what carries it into the critic's prompt.
         findings = (getattr(sess, "last_gate_flag", "") or "").strip()
+        participation_facts = participation.render_for_judge(
+            getattr(sess, "last_gate_participation", None),
+            fresh=getattr(sess, "gate_fresh", None))
         ok, reason = self._verify(
             item.text, prompts.load("periodic_step_claim"),
             prompts.load("probe_digest_none") if not sess.last_gate_ran else "",
@@ -3405,7 +3432,8 @@ class Loop:
             workspace_root=sess.workspace_root or "",
             red_findings=findings if sess.last_gate_red else "",
             gate_red=bool(sess.last_gate_red),
-            messages=msgs, sess=sess)
+            messages=msgs, sess=sess,
+            participation_facts=participation_facts)
         # SAY WHAT IT DID, always — a guard that is silent when it declines cannot be told apart from
         # one that never ran.
         rlog.emit("loop.periodic_step_check", step=idx, done=bool(ok), drive=sess.drive_count,
@@ -3682,7 +3710,8 @@ class Loop:
                 *, idx: int = 0, total: int = 0, key: str = "", coder_tools: str = "",
                 routes: str = "", workspace_root: str = "", red_findings: str = "",
                 gate_red: bool = False, sources_read: list | None = None,
-                messages: list | None = None, sess=None) -> tuple[bool, str]:
+                messages: list | None = None, sess=None,
+                participation_facts: str = "") -> tuple[bool, str]:
         # NB: no per-step fast-path around the critic. The one that existed shortcut a research step whose
         # facts cria had surfaced — but it could only recognize a step cria itself had injected and pinned,
         # and that injection is gone. The critic judges every step, grounded on the same durable fetch
@@ -3696,6 +3725,8 @@ class Loop:
             parts.append(prompts.fill(labels["evidence"], evidence=evidence))
         if probe:
             parts.append(prompts.fill(labels["probe"], probe=probe))
+        if participation_facts:
+            parts.append(participation_facts)
         # A RED gate is EVIDENCE the critic weighs, not a veto that skips it — see _verify_after_probe
         # for the measurement. The checker's OWN lines, under a label that states the one thing the
         # findings cannot state for themselves: they are repo-wide, so they do not say whose step
@@ -3792,7 +3823,8 @@ class Loop:
                     # the FRESH on-disk listing and with its own stated reason.
                     confirmed, why = _confirm_completion(item, str(obj.get("reason") or ""), workspace_root,
                                                          self._ctx.reasoner_chat, self._ctx.reasoner_role,
-                                                         rlog, phase="critic-confirm")
+                                                         rlog, phase="critic-confirm",
+                                                         cria_facts=participation_facts)
                     rlog.emit("loop.done_confirm", step=idx, confirmed=confirmed)
                     if not confirmed:
                         done = False
@@ -6201,6 +6233,9 @@ def record_gate_state(gs: GuardState, outcome, findings: str, rlog=None) -> None
     exception is a survey-only bootstrap: it enables a newly discovered gate but attempted none of
     those checks, so it requires that new plan and remains stale."""
     gs.last_gate_ran = bool(outcome.ran)
+    # Stored before every early return: missing/partial/failed gate sections are exactly where
+    # unknown participation must survive rather than inheriting an older green event.
+    gs.last_gate_participation = getattr(outcome, "participation", None)
     gs.gate_replan_required = bool(getattr(outcome, "replan_after_survey", False))
     if gs.gate_replan_required:
         # Only the survey ran.  It made a better plan possible; it did not attempt that plan and may
@@ -6593,17 +6628,23 @@ def _gate_notes(sess) -> str:
     "3 passed, 2 skipped" read as green). Empty when there is nothing to disclose — silence over
     noise, and never a doubt-hedge on a clean run."""
     lines = prompts.load_map("gate_notes")
+    observed = participation.render_for_judge(
+        getattr(sess, "last_gate_participation", None),
+        fresh=getattr(sess, "gate_fresh", None))
+
+    def with_observed(note: str) -> str:
+        return "\n\n" + "\n\n".join(part for part in (note.strip(), observed) if part)
     # RED FIRST. A step may now advance over a red gate the step critic attributed to another step's
     # work (_verify_after_probe), so the plan can reach its end with the checks still failing — which
     # was structurally impossible before, and is the one way this change could have opened a
     # fail-OPEN on completion (principle 13). The judge gets the failure as a fact and holds the task.
     if getattr(sess, "last_gate_red", False) and getattr(sess, "last_gate_flag", ""):
-        return "\n\n" + prompts.fill(lines["red"], findings=sess.last_gate_flag.strip())
+        return with_observed(prompts.fill(lines["red"], findings=sess.last_gate_flag.strip()))
     if getattr(sess, "last_gate_testless", False):
-        return "\n\n" + lines["testless"]
+        return with_observed(lines["testless"])
     skipped = getattr(sess, "last_gate_skipped", 0)
     if skipped:
-        return "\n\n" + prompts.fill(lines["skipped"], count=str(skipped))
+        return with_observed(prompts.fill(lines["skipped"], count=str(skipped)))
     # …AND THE GREEN, LAST, for the seat deciding whether the work is FINISHED. Last because every
     # disclosure above it describes a pass that does not mean what it looks like — a red gate, a run
     # that executed no tests, a run that skipped some — and each of those must win over a plain
@@ -6614,8 +6655,8 @@ def _gate_notes(sess) -> str:
     # worse than none (#5b, #11b).
     if (getattr(sess, "last_gate_ran", False) and getattr(sess, "gate_fresh", False)
             and lines.get("green")):
-        return "\n\n" + lines["green"]
-    return ""
+        return with_observed(lines["green"])
+    return with_observed("") if observed else ""
 
 
 def _briefing_gate_ground_truth(sess) -> str:

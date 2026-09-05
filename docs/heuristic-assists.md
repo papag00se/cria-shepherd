@@ -66,6 +66,7 @@ A terse index of the assists cria **actually implements** today, in five familie
 - **Bounded probe runner** — the harness runs ONE composed script; cria replays the output through the ported parsers, never mutating the workspace.
 - **Diagnostic parsers** — rustc/cargo, tsc, ESLint, pytest, and generic `file:line` → structured findings + a one-line summary; **error-class only** (unused-import/style advisories don't block).
 - **Ground-truth completion gate** — on a "done" claim, run the floor + top probe + top TEST probe; broken code or failing tests block, and the exact `file:line` becomes the re-prompt. A first gate that only bootstraps the workspace survey is not fresh evidence: cria plans one new gate from that survey before completion. An already-surveyed workspace with no applicable probe, or a harness with no shell, keeps the bounded safe exit.
+- **Build/source/test participation evidence** — one three-valued schema reads the actual gate event plus `wsview` manifest/config declarations through adapters for all nine discovery ecosystems; exact supporting tool lines reach completion judges, and unsupported source/test reach stays unknown rather than becoming pass/zero.
 - **Changed-a-file leg** — a coder turn ends only if it actually modified a file on disk this task.
 
 ## Reasoned guidance — the reasoner as the stuck-loop response

@@ -1,0 +1,4 @@
+[GROUND TRUTH] BUILD / SOURCE / TEST PARTICIPATION FROM THE LAST COMPLETION-GATE EVENT:
+{{EVIDENCE}}
+
+Interpret this narrowly. “proven” means only that this gate event proved participation in that phase; it does not prove correct behavior. “unknown” is no evidence and can never be promoted to pass or zero. A green command with source completion_support=unknown did not prove that the claimed implementation was among its inputs. Even source completion_support=proven applies only to the file participants actually listed; compare those paths with the claimed implementation. A source path participated only when it appears in that event’s file participants; package names, target names, counts, and manifest declarations do not prove a particular file was reached. Manifest/config lines are declarations only, not execution. If workspace_fresh_for_this_event is false, later edits are not covered by this event.

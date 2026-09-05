@@ -175,6 +175,16 @@ class ProbeCandidate:
     may_need_services: bool
     reason: str
     composed_by_cria: bool = False
+    # The builder that produced this candidate.  Participation evidence must not recover this from
+    # English in ``reason`` or guess it from a shared runner name downstream.  Legacy/test-created
+    # candidates may leave it unset; the participation adapter has a conservative argv fallback.
+    ecosystem: Ecosystem | None = None
+    # Exact source inputs known when the command was composed.  Needed for commands such as
+    # ``compileall .`` whose argv names a scope rather than the files discovery selected.  The
+    # post-gate workspace survey may include files a later test created, so reconstructing this
+    # from the view after execution would be a false event history.
+    participation_inputs: tuple[str, ...] | None = None
+    participation_inputs_complete: bool | None = None
     """Did cria AUTHOR this argv, or did it read it off the project?
 
     `cargo test --no-fail-fast`, `go vet ./...`, `bundle exec rspec` come from the project's own
@@ -390,6 +400,7 @@ def discover_all(root: Path) -> list[ProbeCandidate]:
     out: list[ProbeCandidate] = []
     for p in projects:  # sorted-by-dir order
         for eco in detect_ecosystems(p):
+            before = len(out)
             if eco is Ecosystem.JsTs:
                 build_js(root, p, out)
             elif eco is Ecosystem.Python:
@@ -408,6 +419,11 @@ def discover_all(root: Path) -> list[ProbeCandidate]:
                 build_ruby(p, out)
             elif eco is Ecosystem.Elixir:
                 build_elixir(p, out)
+            # Provenance belongs at discovery, where the ecosystem is an authoritative manifest
+            # reading.  Recovering it later from command text fails for project-defined scripts and
+            # for runners shared by more than one language.
+            for candidate in out[before:]:
+                candidate.ecosystem = eco
     # Repo-wide glue probes (config/CI), anchored at the root project if present.
     rootp = next((p for p in projects if p.dir == root), None)
     if rootp is not None:
@@ -429,7 +445,10 @@ def project_types(root: Path) -> list[str]:
 
 def cand(kind: ProbeKind, command: list[str], working_dir: Path, confidence: int,
          expected_value: int, cost: ProbeCost, reason: str,
-         composed_by_cria: bool = False) -> ProbeCandidate:
+         composed_by_cria: bool = False,
+         ecosystem: Ecosystem | None = None,
+         participation_inputs: tuple[str, ...] | None = None,
+         participation_inputs_complete: bool | None = None) -> ProbeCandidate:
     return ProbeCandidate(
         kind=kind,
         command=list(command),  # fresh list — callers may reuse prefixes
@@ -445,6 +464,9 @@ def cand(kind: ProbeKind, command: list[str], working_dir: Path, confidence: int
         may_hang=False,
         may_need_services=False,
         reason=reason,
+        ecosystem=ecosystem,
+        participation_inputs=participation_inputs,
+        participation_inputs_complete=participation_inputs_complete,
     )
 
 
@@ -1055,16 +1077,22 @@ def syntax_floor_candidates(root: Path) -> list[ProbeCandidate]:
     if py:
         out.append(cand(ProbeKind.SyntaxCheck,
                         ["python3", "-m", "compileall", "-q", "-x", _COMPILEALL_SKIP_RE, "."],
-                        root, 95, 95, ProbeCost.Cheap, composed_by_cria=True, reason="Python files present: parse floor"))
+                        root, 95, 95, ProbeCost.Cheap, composed_by_cria=True,
+                        ecosystem=Ecosystem.Python, participation_inputs=tuple(py),
+                        participation_inputs_complete=wsview.current().listed_everything(str(root)),
+                        reason="Python files present: parse floor"))
     for f in linterprobe.collect_files(str(root), ["js", "mjs", "cjs"])[:MAX_FLOOR_FILES_PER_LANG]:
         out.append(cand(ProbeKind.SyntaxCheck, ["node", "--check", f],
-                        root, 95, 95, ProbeCost.Cheap, composed_by_cria=True, reason="JS file present: parse floor"))
+                        root, 95, 95, ProbeCost.Cheap, composed_by_cria=True,
+                        ecosystem=Ecosystem.JsTs, reason="JS file present: parse floor"))
     for f in linterprobe.collect_files(str(root), ["php"])[:MAX_FLOOR_FILES_PER_LANG]:
         out.append(cand(ProbeKind.SyntaxCheck, ["php", "-l", f],
-                        root, 95, 95, ProbeCost.Cheap, composed_by_cria=True, reason="PHP file present: parse floor"))
+                        root, 95, 95, ProbeCost.Cheap, composed_by_cria=True,
+                        ecosystem=Ecosystem.Php, reason="PHP file present: parse floor"))
     for f in linterprobe.collect_files(str(root), ["rb"])[:MAX_FLOOR_FILES_PER_LANG]:
         out.append(cand(ProbeKind.SyntaxCheck, ["ruby", "-c", f],
-                        root, 95, 95, ProbeCost.Cheap, composed_by_cria=True, reason="Ruby file present: parse floor"))
+                        root, 95, 95, ProbeCost.Cheap, composed_by_cria=True,
+                        ecosystem=Ecosystem.Ruby, reason="Ruby file present: parse floor"))
     tomls = linterprobe.collect_files(str(root), ["toml"])[:MAX_FLOOR_FILES_PER_LANG]
     if tomls:
         out.append(cand(ProbeKind.SyntaxCheck, ["python3", "-c", _TOML_CHECK, *tomls],
@@ -1095,6 +1123,7 @@ def lint_floor_candidates(root: Path) -> list[ProbeCandidate]:
         out.append(cand(ProbeKind.Lint,
                         ["python3", "-m", "pyflakes", *py[:MAX_FLOOR_FILES_PER_LANG]],
                         root, 60, 80, ProbeCost.Cheap, composed_by_cria=True,
+                        ecosystem=Ecosystem.Python,
                         reason="Python linting: pyflakes (undefined names, unused imports; zero-config)"))
     # JAVASCRIPT'S SECOND RUNG. Python's floor is two rungs — parse it, then catch the undefined
     # names a parser cannot see — and JavaScript's was one. `node --check` is a parser; an assignment
@@ -1117,17 +1146,18 @@ def lint_floor_candidates(root: Path) -> list[ProbeCandidate]:
                          "--env", "es2022,node,browser",
                          *js[:MAX_FLOOR_FILES_PER_LANG]],
                         root, 60, 80, ProbeCost.Cheap, composed_by_cria=True,
+                        ecosystem=Ecosystem.JsTs,
                         reason="JS linting: eslint no-undef (undefined names; zero-config)"))
     dirs = inventory(root)
     for p in dirs:
         if p.has("Cargo.toml"):
             out.append(cand(ProbeKind.Lint, ["cargo", "clippy", "-q", "--no-deps"],
                             p.dir, 60, 82, ProbeCost.Moderate,
-                            "Rust linting: clippy (zero-config)"))
+                            "Rust linting: clippy (zero-config)", ecosystem=Ecosystem.Rust))
         if p.has("go.mod"):
             out.append(cand(ProbeKind.Lint, ["go", "vet", "./..."],
                             p.dir, 60, 82, ProbeCost.Cheap,
-                            "Go linting: go vet (zero-config)"))
+                            "Go linting: go vet (zero-config)", ecosystem=Ecosystem.Go))
     return out
 
 
@@ -1464,6 +1494,8 @@ def test_floor_candidates(root: Path) -> list[ProbeCandidate]:
             continue
         paths = _language_files(root, conv)
         if paths and _has_discoverable_test(root, paths, conv):
+            ecosystem = {"py": Ecosystem.Python, "rb": Ecosystem.Ruby}.get(conv.exts[0])
             out.append(cand(ProbeKind.Test, list(conv.floor), root, 60, 90, ProbeCost.Moderate,
-                            f"{conv.runner} auto-discovers {conv.label} (zero-config)"))
+                            f"{conv.runner} auto-discovers {conv.label} (zero-config)",
+                            ecosystem=ecosystem))
     return out

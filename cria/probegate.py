@@ -34,7 +34,7 @@ import shlex
 from dataclasses import dataclass, field
 
 from . import dirguard, dedup, jsontext, wsview
-from . import probediscovery, probeparse, prompts, proberun
+from . import participation, probediscovery, probeparse, prompts, proberun
 
 # Leading ``path:line[:col][:]`` location prefix a linter prints before the diagnostic. Stripping it
 # lets probeparse.is_advisory's ANCHORED style-code check (``^W###``/``E###``…) fire on a raw gate
@@ -92,6 +92,9 @@ class GatePlan:
     # the one object both the gate that computes the fact and the loop that ends the run already
     # hold (#23: one owner, no new store, no cross-session global).
     offline_fact: str = ""
+    # Structured build/source/test reach from THIS plan's interpreted gate event.  Populated only
+    # by :func:`interpret_gate`; selection alone never creates participation facts.
+    participation: participation.ParticipationReport | None = None
 
 
 @dataclass
@@ -113,6 +116,7 @@ class GateOutcome:
     # survey, but no actual probe section ran.  This is bootstrap state, not a fresh attempted gate:
     # the caller must plan once more against the newly populated view.
     replan_after_survey: bool = False
+    participation: participation.ParticipationReport | None = None
 
 
 def _marker(section_id: str) -> str:
@@ -1444,6 +1448,7 @@ def interpret_gate(plan: GatePlan, result_text: str, rlog=None) -> GateOutcome:
             rlog.emit("gate.survey_rejected", level="warn", bytes=len(survey),
                       closed=wsview.SURVEY_CLOSE in survey, **wsview.last_reject())
     sections = split_sections(result_text)
+    participation_events = []
     # Before anything else: take back what the probes left behind. Runs even when the gate FAILED —
     # a suite that errors halfway still wrote its fixtures, and the next gate would inherit them.
     swept = sweep_litter(plan, sections)
@@ -1452,10 +1457,14 @@ def interpret_gate(plan: GatePlan, result_text: str, rlog=None) -> GateOutcome:
     # that as "ran" made guard_ground_truth emit a clean "no error-class problems" verdict when NO check
     # actually ran. No probe-* section → ran=False → silence, not a false pass.
     if not any(k.startswith("probe-") for k in sections):
+        participation_events = [participation.observe(c, "", None, event_missing=True)
+                                for c in plan.candidates]
+        plan.participation = participation.report(participation_events)
         return GateOutcome(
             ran=False,
             refused=refusal_reason(result_text),
             replan_after_survey=bool(survey_applied and not plan.surveyed_before),
+            participation=plan.participation,
         )
     out = GateOutcome(ran=True, swept=swept)
 
@@ -1468,11 +1477,17 @@ def interpret_gate(plan: GatePlan, result_text: str, rlog=None) -> GateOutcome:
             # subset of `selected`, and nothing downstream said a check was missing, so a truncated gate
             # looked like a passing one. Record the gap so the digest can report it.
             out.unran.append(proberun.display_command(c.command))
+            participation_events.append(participation.observe(c, "", None, event_missing=True))
             continue
         raw, code = proberun.scrape_exit(body)
-        results.append(proberun.interpret_probe_output(
-            c, proberun.display_command(c.command), raw, code, COMPLETION_PROBE_TIMEOUT_S))
+        result = proberun.interpret_probe_output(
+            c, proberun.display_command(c.command), raw, code, COMPLETION_PROBE_TIMEOUT_S)
+        results.append(result)
+        participation_events.append(participation.observe(
+            c, raw, code, findings=result.findings))
     out.report = ProbeReport(project_type=[], selected=list(plan.candidates), results=results)
+    out.participation = participation.report(participation_events)
+    plan.participation = out.participation
 
     if any(c.kind is probediscovery.ProbeKind.Test for c in plan.candidates):
         out.offline_ran = bool(sections.get("offline", "").strip())
