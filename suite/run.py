@@ -2,17 +2,14 @@
 """Suite runner — one cell of the test matrix per invocation.
 
 Provisions a throwaway workspace, points the rig at the requested model + planner setting,
-drives one harness run of the task prompt under a wall clock (operator's call: no call budget —
-slow models surfacing as budget-kills is itself signal), then collects metrics from cria's own
-capture/events, preserves the workspace for an independent usefulness judgment, and appends one
-JSON row to suite/results/results.jsonl.
+drives one harness run of the task prompt under an active-time budget, then collects metrics from
+cria's own capture/events, preserves the workspace for an independent usefulness judgment, and
+appends one JSON row to suite/results/results.jsonl.
 
-Two budgets:
-  * flat (default) — one HARD 30-minute wall.
-  * `--milestone-minutes N` — N minutes per deliverable, so the budget follows the size of the task.
-
-There is no mid-run judgment or completeness floor. Minutes determine only how long the work is
-worth; the workspace is judged once, by inference, after the run finishes.
+At every milestone interval the runner pauses the harness, freezes the workspace, and waits for the
+campaign agent to infer whether the work is complete, progressing, or stalled. A progressing run
+earns the next interval, up to one interval per declared deliverable; no checklist count or
+mechanical task result participates. The default interval is 30 minutes.
 
 Kill mechanics follow the runctl scars: match the codex process list explicitly (ps + grep of
 the exec pattern, excluding shells), never `pkill -f` (it matches the invoking shell).
@@ -26,6 +23,7 @@ import json
 import pathlib
 import os
 import re
+import signal
 import site
 import subprocess
 import sys
@@ -66,7 +64,7 @@ CRIA_TOML = Path.home() / ".cria" / "cria.toml"
 # global ~/.codex (OpenAI). The suite always points CODEX_HOME here so a run measures cria, never
 # whatever provider the ambient shell happened to select. Set up once at ~/.cria/codex-home.
 SUITE_CODEX_HOME = Path.home() / ".cria" / "codex-home"
-WALL_SECONDS = int(os.environ.get("SUITE_WALL_MINUTES", "30")) * 60
+DEFAULT_MILESTONE_MINUTES = int(os.environ.get("SUITE_MILESTONE_MINUTES", "30"))
 KILL_GRACE = 20
 
 # fleet model name -> systemd service (one model at a time on the 3080)
@@ -393,8 +391,19 @@ def deliverable_names(task_dir: Path) -> list:
 
 
 def deliverable_count(task_dir: Path) -> int:
-    """How many things this task must produce, so the budget follows the task."""
+    """How many things this task must produce, so the maximum budget follows the task."""
     return len(deliverable_names(task_dir))
+
+
+def milestone_terminal(decision: str, minute: int, at_limit: bool) -> str | None:
+    """Translate the agent's inference into run control; None earns another interval."""
+    if decision == "complete":
+        return f"milestone-complete-{minute}min"
+    if decision == "stalled":
+        return f"milestone-stalled-{minute}min"
+    if at_limit:
+        return "budget-killed"
+    return None
 
 
 def throttled_mid_run(session_dir) -> str:
@@ -435,11 +444,12 @@ def main() -> None:
     # note. The note is prose and has been reformatted twice; a column that a status command counts
     # must not depend on a regex over prose surviving the next edit.
     ap.add_argument("--level", type=int, default=None)
-    ap.add_argument("--milestone-minutes", type=int, default=0,
-                    help="minutes budgeted per deliverable. 0 (default) keeps the flat 30-minute "
-                         "wall; otherwise the run receives the full N × deliverable-count wall "
-                         "and is judged once after it ends.")
+    ap.add_argument("--milestone-minutes", type=int, default=DEFAULT_MILESTONE_MINUTES,
+                    help="active minutes per inference checkpoint (default: 30). A progressing run "
+                         "earns another interval, up to one interval per declared deliverable.")
     args = ap.parse_args()
+    if args.milestone_minutes <= 0:
+        ap.error("--milestone-minutes must be positive")
 
     if args.harness == "codex":
         _require_codex_home()   # fail before any model swap if cria routing is not set up
@@ -481,7 +491,21 @@ def main() -> None:
                                 stdin=subprocess.DEVNULL,
                                 stdout=lf, stderr=subprocess.STDOUT, env=env,
                                 start_new_session=True)
+    def pause_run() -> bool:
+        try:
+            os.killpg(proc.pid, signal.SIGSTOP)
+            return True
+        except ProcessLookupError:
+            return False
+
+    def resume_run():
+        try:
+            os.killpg(proc.pid, signal.SIGCONT)
+        except ProcessLookupError:
+            pass
+
     def stop_run():
+        resume_run()
         for pid in codex_pids():
             sh("kill", "-INT", str(pid))
         time.sleep(KILL_GRACE)
@@ -493,21 +517,49 @@ def main() -> None:
             proc.kill()
 
     milestone_s = args.milestone_minutes * 60
-    wall = WALL_SECONDS
-    if milestone_s:
-        # One interval per deliverable, so a run that earns every milestone gets the full budget.
-        wall = milestone_s * deliverable_count(task_dir)
+    wall = milestone_s * deliverable_count(task_dir)
     terminal = "exited"
-    # NO MID-RUN JUDGMENT. `--milestone-minutes` names the historical interface, but now sets only
-    # the full task-sized budget above. Completeness and usefulness have no valid relationship to
-    # elapsed minutes; comparing them penalizes latency, work order, and late integration. The one
-    # inferred judgment happens after the final workspace is frozen.
+    next_milestone = milestone_s
+    paused_seconds = 0.0
+    milestone_judgments = []
+
+    def active_elapsed() -> float:
+        return time.time() - t0 - paused_seconds
+
     while proc.poll() is None:
-        if time.time() - t0 > wall:
-            terminal = "budget-killed"
-            stop_run()
-            break
-        time.sleep(10)
+        elapsed = active_elapsed()
+        if elapsed >= next_milestone:
+            minute = round(next_milestone / 60)
+            pause_started = time.time()
+            if not pause_run():
+                terminal = "exited"
+                break
+            try:
+                sys.path.insert(0, str(SUITE))
+                import milestones
+                checkpoint = milestones.create(run_id, minute, ws, task_dir)
+                print(f"[milestone] {minute} active minutes -> {checkpoint}", flush=True)
+                print("[milestone] waiting for the campaign agent's inference judgment", flush=True)
+                verdict = milestones.wait(checkpoint)
+            except BaseException:
+                # Never strand the harness in SIGSTOP when packet creation, waiting, or the operator
+                # session is interrupted. The judgment remains mandatory; this run aborts loudly.
+                stop_run()
+                raise
+            finally:
+                paused_seconds += time.time() - pause_started
+            milestone_judgments.append({"at_active_minutes": minute, **verdict})
+            print(f"[milestone] {minute}min decision={verdict['decision']}: "
+                  f"{verdict['reason']}", flush=True)
+            outcome = milestone_terminal(verdict["decision"], minute,
+                                         at_limit=next_milestone >= wall)
+            if outcome is not None:
+                terminal = outcome
+                stop_run()
+                break
+            next_milestone += milestone_s
+            resume_run()
+        time.sleep(2)
     t1 = time.time()
     if terminal == "exited" and t1 - t0 < 60:
         terminal = "crashed-early"
@@ -538,8 +590,10 @@ def main() -> None:
         "run_id": run_id, "task": args.task, "model": args.model, "harness": args.harness,
         "planner": args.planner, "note": args.note, "sampling": spec,
         **({"level": args.level} if args.level is not None else {}),
-        "started": t0, "wall_seconds": round(t1 - t0, 1), "terminal": terminal,
-        "milestone_minutes": args.milestone_minutes or None,
+        "started": t0, "wall_seconds": round(t1 - t0, 1),
+        "active_seconds": round(t1 - t0 - paused_seconds, 1), "terminal": terminal,
+        "milestone_minutes": args.milestone_minutes,
+        "milestone_judgments": milestone_judgments,
         **capture,
         "assists": collect_assists(t0, t1),
         "workspace": str(ws),

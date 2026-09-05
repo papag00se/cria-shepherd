@@ -1,0 +1,144 @@
+#!/usr/bin/env python3
+"""Create, inspect, and answer inference checkpoints for live suite runs.
+
+The runner freezes the workspace and waits at each interval. The campaign agent inspects that
+snapshot with read-only tools and records `complete`, `continue`, or `stalled`:
+
+    python3 suite/milestones.py pending
+    python3 suite/milestones.py emit <checkpoint>
+    printf '%s' '<JSON>' | python3 suite/milestones.py record <checkpoint>
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import shutil
+import sys
+import time
+from pathlib import Path
+
+
+SUITE = Path(__file__).resolve().parent
+ROOT = Path.home() / ".cria" / "suite" / "_milestones"
+SYSTEM = SUITE / "prompts" / "milestone_judge.txt"
+SKIP_DIRS = {".git", "target", "node_modules", "vendor", "__pycache__", ".venv", "venv",
+             "build", "dist", "tmp", ".mvn", ".cell-installs"}
+DECISIONS = {"complete", "continue", "stalled"}
+
+
+def _tree(ws: Path, limit: int = 400) -> str:
+    out = []
+    for dirpath, dirnames, filenames in os.walk(ws):
+        dirnames[:] = sorted(d for d in dirnames if d not in SKIP_DIRS)
+        for name in sorted(filenames):
+            p = Path(dirpath) / name
+            try:
+                out.append(f"  {p.relative_to(ws)} ({p.stat().st_size} B)")
+            except OSError:
+                continue
+            if len(out) >= limit:
+                return "\n".join(out) + f"\n  … listing stopped at {limit} entries"
+    return "\n".join(out) or "  (empty)"
+
+
+def checkpoint_name(run_id: str, minute: int) -> str:
+    return f"{run_id}.{minute:03d}min"
+
+
+def create(run_id: str, minute: int, ws: Path, task_dir: Path) -> Path:
+    """Freeze one live workspace and return its checkpoint directory."""
+    out = ROOT / checkpoint_name(run_id, minute)
+    snapshot = out / "workspace"
+    out.mkdir(parents=True, exist_ok=True)
+    if snapshot.exists():
+        shutil.rmtree(snapshot)
+    shutil.copytree(ws, snapshot, symlinks=True)
+    prompt = (task_dir / "prompt.txt").read_text(errors="replace").strip()
+    meta = (task_dir / "meta.toml").read_text(errors="replace").strip()
+    packet = "\n".join([
+        SYSTEM.read_text().strip(),
+        "", "=" * 78, "",
+        f"CHECKPOINT: {run_id} at {minute} active minutes", "",
+        f"THE TASK THE CODER WAS GIVEN:\n{prompt}", "",
+        f"TASK METADATA:\n{meta}", "",
+        f"FROZEN WORKSPACE SNAPSHOT (inspect with read-only tools):\n{snapshot}", "",
+        f"EVERY VISIBLE DELIVERED FILE:\n{_tree(snapshot)}", "",
+    ])
+    (out / "packet.txt").write_text(packet)
+    return out
+
+
+def parse(text: str) -> dict | None:
+    try:
+        value = json.loads(text)
+    except (TypeError, json.JSONDecodeError):
+        return None
+    if not isinstance(value, dict) or value.get("decision") not in DECISIONS:
+        return None
+    reason = value.get("reason")
+    deliverables = value.get("deliverables")
+    if not isinstance(reason, str) or not reason.strip() or not isinstance(deliverables, list):
+        return None
+    return {"decision": value["decision"], "reason": reason.strip(),
+            "deliverables": deliverables}
+
+
+def verdict_path(checkpoint: Path) -> Path:
+    return checkpoint / "verdict.json"
+
+
+def wait(checkpoint: Path, poll_seconds: float = 2.0) -> dict:
+    """Wait until the campaign agent records a valid inference judgment."""
+    path = verdict_path(checkpoint)
+    while True:
+        if path.is_file():
+            verdict = parse(path.read_text(errors="replace"))
+            if verdict is not None:
+                return verdict
+        time.sleep(poll_seconds)
+
+
+def pending() -> list[Path]:
+    if not ROOT.is_dir():
+        return []
+    return sorted((p for p in ROOT.iterdir()
+                   if p.is_dir() and (p / "packet.txt").is_file()
+                   and not verdict_path(p).is_file()), key=lambda p: p.stat().st_mtime)
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    sub.add_parser("pending")
+    emit = sub.add_parser("emit")
+    emit.add_argument("checkpoint")
+    record = sub.add_parser("record")
+    record.add_argument("checkpoint")
+    args = ap.parse_args()
+
+    if args.cmd == "pending":
+        questions = pending()
+        for path in questions:
+            print(path.name)
+        if not questions:
+            print("(nothing pending)")
+        return 0
+
+    checkpoint = ROOT / args.checkpoint
+    if not checkpoint.is_dir():
+        raise SystemExit(f"no such checkpoint: {checkpoint}")
+    if args.cmd == "emit":
+        print((checkpoint / "packet.txt").read_text())
+        return 0
+
+    verdict = parse(sys.stdin.read())
+    if verdict is None:
+        raise SystemExit("expected decision complete|continue|stalled, reason, and deliverables")
+    verdict_path(checkpoint).write_text(json.dumps(verdict, indent=1) + "\n")
+    print(f"{checkpoint.name}: {verdict['decision']}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

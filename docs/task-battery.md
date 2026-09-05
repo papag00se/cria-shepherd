@@ -1,12 +1,12 @@
 # The task battery — what we test cria against, and why
 
-The suite puts cria under the kinds of pressure real coding work applies so its own footguns surface in exact call captures and finished workspaces. It does not decide quality during a run. Afterward, an independent reasoner infers the requested deliverables from the task, inspects the archived workspace with read-only tools, and records a usefulness judgment.
+The suite puts cria under the kinds of pressure real coding work applies so its own footguns surface in exact call captures and finished workspaces. At each milestone the campaign agent inspects a frozen workspace snapshot and infers whether the run is complete, progressing, or stalled. Afterward, an independent reasoner inspects the archived final workspace with read-only tools and records a usefulness judgment.
 
 ## Design rules
 
 1. **Comparable work.** Tasks carry several substantial deliverables: research, implementation, tests, documentation, integration, or operational behavior.
 2. **Inference judges usefulness.** The judgment concerns how much usable work was actually delivered. Coder claims are not evidence.
-3. **Elapsed time is only a budget.** A run ends when the harness exits or its wall expires; no quality judgment can end it.
+3. **Milestones are inferred, not counted.** Each additional interval is earned by an agent inspecting the actual workspace. There is no fixed deliverable count due at a particular minute.
 4. **Seeded beats greenfield for finding cria bugs.** Seeded tasks exercise unfamiliar-file reading, surgical editing, and reactions to real gate output.
 5. **No task is special-cased in cria.** The suite is useful only while cria remains harness-, prompt-, and language-agnostic.
 
@@ -36,7 +36,7 @@ A task with `seed/` is copied into a fresh workspace and committed before the ru
 
 ## Time budgets
 
-The default is a flat 30-minute elapsed-time wall. With `--milestone-minutes N`, the total wall is `N × len(meta.deliverables)`. Despite the historical option name, it performs no interval judgment; the metadata count only sizes the task budget.
+The default interval is 30 active minutes. At every interval the harness pauses while the campaign agent inspects a frozen snapshot and records `complete`, `continue`, or `stalled`. A `continue` judgment earns one more interval, up to the maximum active budget of `N × len(meta.deliverables)`; waiting for the judge consumes no active time.
 
 ## Task prompts
 
