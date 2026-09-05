@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import difflib
 import hashlib
+import inspect
 import json
 import os
 import fnmatch
@@ -302,6 +303,8 @@ class GuardState:
     refused_names: set = None  # coordinates/packages the coder's toolchain REFUSED (refusalledger):
     # DURABLE like fetched_pages, because compaction folds the refusal away and a seat then re-blesses
     # the pin the tools rejected (walked: cart-billing-go 1788241229 0095->0096)
+    refusal_events: object = None  # authoritative RefusalLedger: raw spelling, ecosystem, source,
+    # event order and exact-success supersession. ``refused_names`` remains its compatibility view.
     same_checks_relooked: bool = False  # the ONE second look at unchanged findings has been spent
     #                                     (rearms whenever the findings move; see author_steer)
 
@@ -2205,8 +2208,21 @@ class LoopStore:
             if prev is not None and _stable_session(key) and getattr(prev, "fetched_pages", None):
                 sess.fetched_pages = _merge_fetches(dict(sess.fetched_pages or {}),
                                                     prev.fetched_pages)
-            if prev is not None and _stable_session(key) and getattr(prev, "refused_names", None):
-                sess.refused_names = (sess.refused_names or set()) | prev.refused_names
+            if prev is not None and _stable_session(key):
+                previous_refusals = _session_refusals(prev)
+                current_refusals = _session_refusals(sess)
+                if isinstance(previous_refusals, refusalledger.RefusalLedger):
+                    newer = (current_refusals if isinstance(current_refusals, refusalledger.RefusalLedger)
+                             else refusalledger.RefusalLedger.from_legacy(current_refusals or set()))
+                    sess.refusal_events = previous_refusals.merged(newer)
+                    sess.refused_names = sess.refusal_events.active_names()
+                elif previous_refusals:
+                    if isinstance(current_refusals, refusalledger.RefusalLedger):
+                        sess.refusal_events = refusalledger.RefusalLedger.from_legacy(
+                            previous_refusals).merged(current_refusals)
+                        sess.refused_names = sess.refusal_events.active_names()
+                    else:
+                        sess.refused_names = set(current_refusals or set()) | set(previous_refusals)
             self._sessions.pop(key, None)          # re-put refreshes recency
             self._sessions[key] = sess
             self._bound_sessions_locked()
@@ -4622,6 +4638,12 @@ def _session_to_dict(sess: PlanSession) -> dict:
         "verify_fails": sess.verify_fails,
         "synthetic": sess.synthetic,  # a resumed single-item session must stay single-item, not
         #                               flip to multi-step framing after a restart
+        # Optional additions preserve old state-file compatibility. The structured stream is what
+        # keeps event freshness and success supersession truthful after a service restart; the set
+        # remains for readers of the earlier schema.
+        "refusal_events": (sess.refusal_events.to_dict()
+                           if isinstance(sess.refusal_events, refusalledger.RefusalLedger) else None),
+        "refused_names": sorted(sess.refused_names or set()),
     }
 
 
@@ -4633,10 +4655,15 @@ def _session_from_dict(d) -> PlanSession | None:
                     status=str(p.get("status", "in_progress")),
                     items=[PlanItem(text=str(it["text"]), done=bool(it.get("done")), note=it.get("note"))
                            for it in p["items"]])
+        ledger = (refusalledger.RefusalLedger.from_dict(d.get("refusal_events"))
+                  if isinstance(d.get("refusal_events"), dict) else None)
+        legacy = {str(name) for name in (d.get("refused_names") or [])}
         return PlanSession(plan=plan, summary=str(d.get("summary", "")),
                            prior_work=str(d.get("prior_work", "")),
                            verify_fails=int(d.get("verify_fails", 0)),
-                           synthetic=bool(d.get("synthetic")))
+                           synthetic=bool(d.get("synthetic")),
+                           refusal_events=ledger,
+                           refused_names=(ledger.active_names() if ledger is not None else legacy))
     except Exception:  # noqa: BLE001
         return None
 
@@ -7073,17 +7100,36 @@ def _track_fetched_pages(sess, messages: list[dict]) -> None:
     _merge_fetches(sess.fetched_pages, _extract_fetches(messages))
 
 
+def _session_refusals(sess):
+    """The structured refusal ledger when present, otherwise the legacy set.
+
+    The distinction between ``None`` and an empty ledger matters: an empty structured ledger may be
+    the truthful result of a later success superseding its last refusal. Falling back to the old set
+    there would resurrect the stale event.
+    """
+    if sess is None:
+        return None
+    ledger = getattr(sess, "refusal_events", None)
+    if isinstance(ledger, refusalledger.RefusalLedger):
+        return ledger
+    return getattr(sess, "refused_names", None)
+
+
 def _track_refused_names(sess, messages: list[dict]) -> None:
-    """Accumulate coordinates/packages the toolchain refused, DURABLY on the GuardState, so a steer
-    that re-blesses a refused pin is caught even after compaction has folded the refusal out of the
-    live window (the point it is most needed — walked on cart-billing-go 1788241229 0095->0096).
-    A union: once a name is known-refused this session it stays refused (a later success does not
-    un-refuse a coordinate the coder should not be told to re-add)."""
+    """Track ordered refusal/success provenance and refresh the compatibility name set.
+
+    Tool-call ids de-duplicate the append-only history, while the event sequence survives history
+    compaction. A later exact successful coordinate, or an unambiguously successful rerun of the
+    exact command that produced the refusal, supersedes it; unrelated successes do not.
+    """
     if sess is None:
         return
-    if getattr(sess, "refused_names", None) is None:
-        sess.refused_names = set()
-    sess.refused_names |= refusalledger.scan_messages(messages)
+    ledger = getattr(sess, "refusal_events", None)
+    if not isinstance(ledger, refusalledger.RefusalLedger):
+        ledger = refusalledger.RefusalLedger.from_legacy(getattr(sess, "refused_names", None) or set())
+    ledger.observe(messages)
+    sess.refusal_events = ledger
+    sess.refused_names = ledger.active_names()
 
 
 # The read tools by their canonical names — `massage.normalize_tool_names` has already mapped a
@@ -8581,7 +8627,7 @@ def _provider_rejected_name_the_steer_relies_on(
 
 def _diagnostic_action_verdict(directive: str, findings: str, refused, rlog, ask,
                                grounding: str = "") -> str:
-    """Whether an optional authored steer is supported by the current red-check evidence.
+    """Whether an optional authored steer is supported by current check/refusal evidence.
 
     The old guard asked a lexical question for each identifier-shaped token shared by a directive
     and the findings.  That made ``go.mod:5`` the subject while a steer restored a rejected version,
@@ -8591,18 +8637,20 @@ def _diagnostic_action_verdict(directive: str, findings: str, refused, rlog, ask
 
     ``SUPPORTED`` is the positive sentinel (#21).  An unreadable judgment is ``UNDECIDABLE`` and the
     caller withholds the optional steer: silence preserves the coder's own work, while shipping a
-    supervisor directive gives an ungrounded guess cria's authority (#1, #3, #4).  No findings means
-    this guard has no subject and leaves the other grounding guards to decide.
+    supervisor directive gives an ungrounded guess cria's authority (#1, #3, #4). A refusal-only
+    call is made only when the directive names a current event; it uses this same whole-action
+    judgment rather than restoring a second per-provider veto.
     """
-    if not directive or not (findings or "").strip():
+    refused_text = refusalledger.render_active(refused)
+    if not directive or not ((findings or "").strip() or refused_text.strip()):
         return "SUPPORTED"
     if ask is None:
         return "UNDECIDABLE"
-    refused_text = "\n".join(f"- {name}" for name in sorted(refused or set())) or "(none recorded)"
     ans = strip_think(ask(prompts.render(
-        "steer_diagnostic_action", directive=directive, findings=findings,
-        grounding=(grounding or "(no additional task or workspace evidence supplied)"),
-        refusals=refused_text)) or "").strip()
+        "steer_diagnostic_action", directive=directive,
+        findings=(findings or prompts.load("steer_diagnostic_no_findings")),
+        grounding=(grounding or prompts.load("steer_diagnostic_no_grounding")),
+        refusals=(refused_text or prompts.load("steer_diagnostic_no_refusals")))) or "").strip()
     head = ans.upper().split()[0].strip(".,:;`*\"'") if ans.split() else ""
     verdict = (head if head in {"SUPPORTED", "CONTRADICTED", "UNSUPPORTED", "UNRELATED"}
                else "UNDECIDABLE")
@@ -8633,9 +8681,30 @@ def _prescribes_a_refused_coordinate(directive: str, refused, rlog, ask) -> str:
     coord = refusalledger.prescribed(directive, refused)
     if not coord:
         return ""
-    ans = strip_think(ask(prompts.render("steer_prescribes_broken",
-                                         findings="the coder's toolchain could not resolve: " + coord,
-                                         directive=directive, symbol=coord), "") or "").strip()
+    question = prompts.render("steer_prescribes_broken",
+                              findings=prompts.render("steer_prescribes_refusal_finding",
+                                                      coordinate=coord),
+                              directive=directive, symbol=coord)
+    # Compatibility: this helper historically documented a one-argument closed ask while its unit
+    # tests supplied a two-required-argument callback. Inspect the callable instead of catching a
+    # TypeError from inside it; the refusal-only production adapter takes exactly one argument.
+    try:
+        signature = inspect.signature(ask)
+    except (TypeError, ValueError):
+        # Some extension callables expose no signature. Production's closed adapter accepts one
+        # argument, so that remains the conservative default when introspection is unavailable.
+        one_argument = True
+    else:
+        try:
+            signature.bind(question)
+        except TypeError:
+            one_argument = False
+        else:
+            one_argument = True
+    # Keep the call outside the signature probe: a TypeError raised *inside* the provider must not
+    # be mistaken for evidence that the callback wants the historical two-argument shape.
+    answer = ask(question) if one_argument else ask(question, "")
+    ans = strip_think(answer or "").strip()
     head = ans.upper().split()[0].strip(".,:;`*") if ans.split() else ""
     if head == "PRESCRIBES":
         rlog.emit("loop.steer_prescribes_refused", level="warn", coordinate=coord,
@@ -8855,34 +8924,33 @@ def _vet_steer(directive: str | None, evidence: str, rlog, ask=None,
     if sess is not None and _blames_a_service_that_answered(
             directive, sess, messages or [], rlog, (lambda sysm: ask(sysm, "")) if ask else None):
         return None, "blames_a_service"
+    action_judged = False
+    refusal_triggered = False
     if sess is not None:
         findings = (getattr(sess, "last_gate_flag", "") or "").strip()
-        if findings and ask is not None:
+        refusals = _session_refusals(sess)
+        refused_coordinate = refusalledger.prescribed(directive, refusals)
+        refusal_triggered = bool(refused_coordinate)
+        if ask is not None and (findings or refused_coordinate):
             # A check observed the workspace at one point in the transcript.  If a later write
             # changed it, that finding is still true historically but cannot ground a new precise
             # supervisor action.  Do not ask a judge to turn stale evidence into present-tense
             # advice; withhold the optional steer until a fresh gate supplies a current subject.
-            written = _writes_since_last_gate(messages or [])
+            written = _writes_since_last_gate(messages or []) if findings else []
             if written:
                 rlog.emit("loop.steer_diagnostic_stale", level="warn", files=written,
                           head=_clip(directive, 120))
                 return None, "diagnostic_stale"
             verdict = _diagnostic_action_verdict(
-                directive, findings, getattr(sess, "refused_names", None), rlog,
+                directive, findings, refusals, rlog,
                 (lambda sysm: ask(sysm, "")) if ask else None, grounding=evidence)
             if verdict != "SUPPORTED":
                 return None, "diagnostic_" + verdict.lower()
-            # The whole-action judge has the checker, exact refusal coordinates, and the same task /
-            # disk evidence the author saw. A second lexical pass over every shared token duplicated
-            # that judgment and promoted incidental local filenames such as go.mod to "providers".
-        # The durable refusal ledger exists specifically for the post-compaction case where the
-        # current finding-set is gone.  With current findings the whole-action judgment above owns
-        # the question; asking the old per-coordinate question too would be two judges over one
-        # invariant, and either one could falsely veto a supported repair.
-        elif not findings and _prescribes_a_refused_coordinate(
-                directive, getattr(sess, "refused_names", None), rlog,
-                (lambda sysm: ask(sysm, "")) if ask else None):
-            return None, "prescribes_refused"
+            action_judged = True
+            # This is the sole semantic ruling over the action. Exact-coordinate matching above is
+            # only the refusal-only trigger; it never decides what naming the coordinate means. A
+            # second provider/token pass would duplicate the judgment and can falsely veto a
+            # supported removal because an incidental filename or bare package shares text.
     ghost = _symbol_not_in_the_file(directive, workspace_root)
     if ghost:
         # cria READ the file; the steer names something that is not in it. Refused, not reworded —
@@ -8890,7 +8958,11 @@ def _vet_steer(directive: str | None, evidence: str, rlog, ask=None,
         rlog.emit("loop.steer_phantom_symbol", level="warn", symbol=ghost,
                   head=_clip(directive, 120))
         return None, "phantom_symbol"
-    made_up = _invented_version(directive, evidence)
+    # The whole-action judge has already ruled on every external version in this directive against
+    # stronger checker/refusal evidence. Re-running the lexical version-shape veto here makes a
+    # supported removal indistinguishable from inventing that version and restores the same
+    # two-owner failure the provider veto caused.
+    made_up = "" if (action_judged or refusal_triggered) else _invented_version(directive, evidence)
     if made_up:
         # The author cannot know a version it was not told; the one it invents is pasted into a
         # manifest and poisons every build after it. See _invented_version for the run this cost.

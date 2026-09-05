@@ -1,0 +1,2 @@
+- raw coordinate: {{COORDINATE}}
+  outcome: REFUSED (legacy compatibility record; exact event provenance unavailable)

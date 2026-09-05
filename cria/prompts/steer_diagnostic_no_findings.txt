@@ -1,0 +1,1 @@
+(no current checker diagnostic; judge only whether the action relies on a current refusal event)

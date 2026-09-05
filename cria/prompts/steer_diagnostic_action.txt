@@ -4,7 +4,7 @@ The repo's most recently measured checks said:
 
 {{FINDINGS}}
 
-Earlier in this same session the toolchain refused these exact package, module, or dependency coordinates. This is historical evidence: a later successful check may supersede it, so do not treat a bare module as permanently poisoned.
+These are the session's current dependency-refusal events. Each structured row preserves the resolver's raw coordinate and exact tool evidence. A newer observable success for that exact package/version has already superseded and removed an older refusal, so do not revive events absent from this list. A bare package is current evidence only about that package name; other versions remain unclassified.
 
 {{REFUSALS}}
 
@@ -18,7 +18,7 @@ A supervisor proposes this one directive:
 
 Judge the relationship between the DIRECTIVE'S ACTION and the exact evidence. Answer with ONE word:
 
-SUPPORTED — the action can directly repair at least one reported failure, and every external name, member, coordinate, or version it tells the engineer to use has affirmative support in the evidence.
+SUPPORTED — the action can directly repair at least one current diagnostic, or (when there is no current diagnostic) it does not rely on a current refusal event; every external name, member, coordinate, or version it tells the engineer to use has affirmative support in the evidence.
 
 CONTRADICTED — the action imports, calls, downloads, keeps, restores, or otherwise relies on something the evidence reports does not exist, does not resolve, or does not work. A spelling-only change does not establish that an unknown external version exists.
 

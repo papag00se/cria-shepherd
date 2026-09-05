@@ -16,6 +16,7 @@ A terse index of the assists cria **actually implements** today, in five familie
 - **Failing-fetch guard** — 3 consecutive non-2xx external fetches → a "stop guessing URLs" nudge; localhost exempt.
 - **Shared-install guard** — a package install whose destination is the user/system environment (`pip install`, `npm -g`, `gem`/`cargo`/`go install`, `apt`/`brew`) → refused with the in-project venv route; project-local installs (`npm install`, `composer require`, `cargo add`) pass untouched.
 - **Missing-dependency note** — beside the latest real loader/compiler failure, quote the exact unresolved package and distinguish an undeclared dependency from an invalid package name. For Go, the note explicitly withholds `go get` as a remedy until authoritative package source establishes that the import path exists.
+- **Dependency refusal events** — preserve session-scoped raw resolver coordinates, tool provenance, and event order across npm/pnpm/Yarn/Bun, pip/uv/Poetry, Cargo, Go, Maven/Gradle, NuGet, Composer, RubyGems/Bundler, and Hex/Mix; a later observable exact success supersedes the current refusal without deleting its history. Exact-name matching only triggers the existing whole-action reasoner judgment; it never vetoes semantically. See [dependency refusal events](refusal-events.md).
 
 ## Massages — silent output repair so the harness accepts it
 

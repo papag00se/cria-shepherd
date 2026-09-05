@@ -1,0 +1,4 @@
+- ecosystem: {{ECOSYSTEM}}
+  raw coordinate: {{COORDINATE}}
+  latest observable outcome: REFUSED (session event {{SEQUENCE}}, tool result {{SOURCE}})
+  exact tool evidence: {{EVIDENCE}}
