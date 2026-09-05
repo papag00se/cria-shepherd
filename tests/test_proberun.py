@@ -19,7 +19,6 @@ from cria.probeparse import Finding, ProbeResult
 from cria.proberun import (
     BLOCK_NUDGE_PREAMBLE,
     PROBE_EXIT_SENTINEL,
-    PROBE_OUTPUT_CAP_BYTES,
     ProbeReport,
     completion_block_nudge,
     completion_probe_digest,
@@ -446,22 +445,12 @@ class TestComposeProbeCommand(unittest.TestCase):
         c = synth(["echo", "a b"])
         c.working_dir = "/tmp/with space"
         line = compose_probe_command(c, 10.0)
-        # A QUARTER TO EACH END AND HALF TO THE DIAGNOSTICS. The ends are context; the middle is the
-        # answer, and a blind head+tail cut removed exactly it — four of nine java compile errors
-        # never reached cria on the 2026-08-22 walk, out of a section whose own marker announced the
-        # bytes it had dropped.
-        quarter, middle = max(PROBE_OUTPUT_CAP_BYTES // 8, 120), (PROBE_OUTPUT_CAP_BYTES * 3) // 4
         self.assertIn("cd '/tmp/with space' && ", line)        # cwd, quoted
         self.assertIn("timeout -k 5 10 echo 'a b'", line)      # hard timeout + quoted argv
         self.assertIn("</dev/null 2>&1", line)                 # stdin null, merged streams
-        self.assertIn(f"head -c {quarter}", line)              # an EARLY failure survives
-        self.assertIn(f"tail -c {quarter}", line)              # ...and a late one
-        self.assertIn(f"head -c {middle}", line)               # ...and the diagnostics between them
-        # Kept by SHAPE — path:line, any language — with context on BOTH sides: a compiler puts its
-        # message under the location, a test runner puts it above the first frame.
-        self.assertIn("grep -E -B", line)
-        self.assertIn("-A", line)
-        self.assertIn("elided", line)                          # middle-elision disclosed, never silent
+        self.assertNotIn("head -c", line)
+        self.assertNotIn("tail -c", line)
+        self.assertNotIn("elided", line)
         self.assertIn(PROBE_EXIT_SENTINEL, line)               # exit-code sentinel
 
     def test_fractional_timeout_is_not_truncated_to_zero(self):
@@ -584,10 +573,7 @@ class TestComposedRoundtrip(unittest.TestCase):
         self.assertIsNone(r.exit_code)
         self.assertIn("failed to launch", r.summary)
 
-    def test_head_tail_preserves_an_early_failure_under_a_huge_tail(self):
-        # THE tail-only footgun: a real failure printed EARLY, then buried under a long teardown/summary.
-        # head+tail keeps the head, so parse_output still localizes it (a tail -c clip would have lost
-        # the failure entirely). The elided middle is disclosed, never silently dropped.
+    def test_a_huge_tail_does_not_remove_an_early_failure_or_any_output(self):
         code = ("import sys\n"
                 "print('src/x.py:9: error: boom')\n"     # the real failure, printed FIRST
                 "print('z' * 40000)\n"                    # a huge teardown tail > the output budget
@@ -597,7 +583,8 @@ class TestComposedRoundtrip(unittest.TestCase):
         r = interpret_probe_output(c, " ".join(c.command), proc.stdout, None, 10.0)
         self.assertEqual(r.exit_code, 1)
         self.assertTrue(any(f.file == "src/x.py" and f.line == 9 for f in r.findings))
-        self.assertIn("elided", proc.stdout)              # the middle-elision was disclosed
+        self.assertIn("z" * 40000, proc.stdout)
+        self.assertNotIn("elided", proc.stdout)
 
 
 class GateSkippedCountTests(unittest.TestCase):

@@ -63,7 +63,7 @@ class TheRealCommandSurvivesAndNothingElseTests(unittest.TestCase):
     def test_it_is_the_bulk_of_the_bytes(self):
         raw = composed(["python3", "-m", "pytest", "-q"])
         out = probegate._strip_gate_plumbing(raw)
-        self.assertGreater(len(wrapped(["python3", "-m", "pytest", "-q"])), 400)
+        self.assertGreater(len(wrapped(["python3", "-m", "pytest", "-q"])), 100)
         self.assertLess(len(out), 40)
 
     def test_nothing_about_the_wrapper_is_load_bearing(self):

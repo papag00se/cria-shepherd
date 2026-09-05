@@ -1,106 +1,55 @@
-"""cria's gate composed probes whose output cria then threw away.
+"""The completion gate transports all evidence instead of choosing a printable subset.
 
-Two budgets, set independently:
-
-    proberun.PROBE_OUTPUT_CAP_BYTES      16,384   what a probe may print
-    content_reduce.INLINE_RESULT_MAX_BYTES 9,000  what cria will hand back inline
-
-Anything landing between them was replaced by the model-facing size refusal — "too much to return,
-so nothing is shown". cria's own gate parser then read that refusal, found no findings, and recorded
-the check as never having run. Nobody saw the failing tests: not the coder, not the judges, not the
-gate.
-
-    ternary-bonsai/python 0034. Tool result: "[10,104 bytes over 182 lines — too much to return, so
-    nothing is shown...]". The steer built on that silence: "each new `bind()` fails with 'Address
-    already in use.' The output was truncated, but that's the root cause."
-
-Seven wrong turns, and twelve consecutive gates in one cell produced nothing at all.
-
-The fix is arithmetic, not a new mechanism: the probe's budget is DERIVED from the bound that has to
-accept it, so the refusal can never fire on cria's own instrument. No exemption is added — a gate
-result that always fits needs none, and exempting it would risk the raw blob riding into the
-model's window on any path that does not clean it.
+Previously a per-probe cap and a separate harness-result bound disagreed. Ordinary compiler output
+was clipped before the gate parser saw it. The gate now writes its aggregate to a harness-side
+temporary file and returns checked pages; no output-size policy appears in probe composition.
 """
 
+import tempfile
 import unittest
+from unittest import mock
 
-from cria import content_reduce, proberun, prompts, writeproxy
-
-
-class TheBudgetsCannotDisagreeTests(unittest.TestCase):
-    def test_a_full_probe_result_fits_the_bound_that_accepts_it(self):
-        self.assertLessEqual(
-            proberun.PROBE_OUTPUT_CAP_BYTES + proberun.PROBE_ENVELOPE_RESERVE_BYTES,
-            content_reduce.INLINE_RESULT_MAX_BYTES)
-
-    def test_the_cap_is_derived_not_typed(self):
-        """A literal here is how the two drifted apart in the first place. EXACT equality, not the
-        `<=` fit-check above: a hand-typed cap that merely happened to fit (e.g. forgetting to
-        subtract the envelope reserve) would still pass that one — this catches the arithmetic
-        itself, against the live constants, not a textual mention of the other constant's name."""
-        self.assertEqual(proberun.PROBE_OUTPUT_CAP_BYTES,
-                         content_reduce.INLINE_RESULT_MAX_BYTES - proberun.PROBE_ENVELOPE_RESERVE_BYTES)
-
-    def test_the_reserve_covers_the_harness_envelope(self):
-        envelope = ("Chunk ID: be2fc9\nWall time: 0.9s\nOriginal token count: 41\n"
-                    "Process exited with code 1\nOutput:\n" + proberun.PROBE_EXIT_SENTINEL + "1\n")
-        self.assertLess(len(envelope.encode()), proberun.PROBE_ENVELOPE_RESERVE_BYTES)
+from cria import probegate, proberun, writeproxy
+from cria.probediscovery import ProbeCandidate, ProbeCost, ProbeKind
 
 
-class AMaximalProbeResultSurvivesTests(unittest.TestCase):
-    def envelope(self, payload: str) -> str:
-        return (f"Chunk ID: be2fc9\nWall time: 0.9s\nProcess exited with code 1\nOutput:\n"
-                f"{payload}\n{proberun.PROBE_EXIT_SENTINEL}1")
+def candidate() -> ProbeCandidate:
+    return ProbeCandidate(
+        kind=ProbeKind.Test,
+        command=["python3", "-c", "print('x' * 50000)"],
+        working_dir=tempfile.gettempdir(),
+        confidence=90,
+        expected_value=80,
+        cost=ProbeCost.Cheap,
+        mutates_code=False,
+        may_hang=False,
+        may_need_services=False,
+        reason="test",
+    )
 
-    def test_a_result_at_the_cap_reaches_the_model_whole(self):
-        body = self.envelope("x" * proberun.PROBE_OUTPUT_CAP_BYTES)
-        msgs = [{"role": "tool", "tool_call_id": "t1", "content": body}]
-        self.assertEqual(writeproxy.represent_inbound(msgs, None)[0]["content"], body)
 
-    def test_the_inbound_bound_is_gone(self):
-        """A flood is the context floor's problem now -- the one place window-fitting may
-        lose anything (#5) -- and `content_reduce` is the lossless-first owner above it."""
+class ProbeCompositionHasNoEvidenceBudgetTests(unittest.TestCase):
+    def test_the_old_budget_api_is_gone(self):
+        self.assertFalse(hasattr(proberun, "PROBE_OUTPUT_CAP_BYTES"))
+        self.assertFalse(hasattr(proberun, "probe_output_budget"))
+
+    def test_the_composed_probe_has_no_head_tail_or_elision(self):
+        command = proberun.compose_probe_command(candidate(), 120)
+        self.assertNotIn("head -c", command)
+        self.assertNotIn("tail -c", command)
+        self.assertNotIn("elided", command)
+        self.assertIn(proberun.PROBE_EXIT_SENTINEL, command)
+
+    def test_the_gate_spools_before_returning_a_page(self):
+        with tempfile.TemporaryDirectory() as workspace:
+            with mock.patch.object(proberun, "select_completion_probes", return_value=[candidate()]):
+                plan = probegate.plan_gate(workspace)
+        self.assertTrue(plan.transport_required)
+        self.assertIn("mktemp", plan.script)
+        self.assertIn(probegate.TRANSPORT_PREFIX, plan.script)
+
+    def test_the_inbound_bound_remains_gone(self):
         self.assertFalse(hasattr(writeproxy, "_bounded_exec_result"))
-
-
-class TheComposedProbeStillDisclosesItsOwnElisionTests(unittest.TestCase):
-    """Halving the budget makes the head+tail path fire more often, so its marker matters more."""
-
-    def test_the_composed_command_carries_the_cap_and_the_marker(self):
-        import types
-        c = types.SimpleNamespace(command=["pytest", "-q"], working_dir="/w")
-        cmd = proberun.compose_probe_command(c, 120)
-        self.assertIn(str(proberun.PROBE_OUTPUT_CAP_BYTES), cmd)
-        self.assertIn("elided", cmd)
-        self.assertIn("head -c", cmd)
-        self.assertIn("tail -c", cmd)
-
-
-class TheSurvivingRefusalKeepsTheLessonTests(unittest.TestCase):
-    """The `exec` fragment this class used to read is deleted — its renderer went with the exec-output
-    bound on 2026-08-14, leaving a model-facing string nothing rendered. `list` is the live member of
-    the same family and carries the same rule, so the lesson is pinned where it can still fire.
-
-    THE LESSON: a runner prints its verdict LAST, so `| head -50` hides exactly what was wanted, and a
-    pipe replaces the program's exit status with the filter's — in the same sentence that tells the
-    coder the status is accurate (#5b). Name a route that keeps the whole answer and the real status."""
-
-    def setUp(self):
-        self.text = prompts.load_map("oversize_refusal")["list"]
-
-    def test_head_is_never_recommended(self):
-        self.assertNotIn("head -50", self.text)
-
-    def test_the_dead_fragments_are_gone_not_merely_unused(self):
-        self.assertNotIn("exec", prompts.load_map("oversize_refusal"))
-        self.assertNotIn("exec_spilled", prompts.load_map("oversize_refusal"))
-
-    def test_every_surviving_fragment_has_a_renderer(self):
-        """A model-facing string nothing renders is coverage that does not exist."""
-        import glob
-        src = "\n".join(open(f).read() for f in glob.glob("cria/*.py"))
-        for key in prompts.load_map("oversize_refusal"):
-            self.assertIn(f'"oversize_refusal")["{key}"]', src, f"{key} has no renderer")
 
 
 if __name__ == "__main__":

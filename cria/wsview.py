@@ -572,9 +572,8 @@ class View:
         prev = self._files.get(rel)
         # A FILE CRIA JUST WATCHED BEING WRITTEN IS THE NEWEST FILE IN THE WORKSPACE. A brand-new
         # path has no previous mtime, and epoch is not "unknown" here — it sorts LAST in every
-        # newest-first listing cria renders, so the file the coder wrote this turn went to the bottom
-        # of the judge's inventory and to the back of the seeded-file budget. cria knows when this
-        # happened: now.
+        # newest-first inventory view, hiding the file the coder wrote this turn from consumers that
+        # use recency as signal. cria knows when this happened: now.
         self._files[rel] = (len(raw), prev[1] if prev else time.time())
         self._dirs.discard(rel)
         for d in _parents(rel):

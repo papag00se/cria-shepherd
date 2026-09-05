@@ -1,17 +1,11 @@
 # The workspace files handed to a JUDGE up front, so it does not spend a model call per file asking
-# for them. Parsed by prompts.load_map. See groundtruth.files_for_a_judge for the budget and why.
+# for them. Parsed by prompts.load_map. See groundtruth.files_for_a_judge.
 # SAY WHERE THE PATHS ARE ROOTED. The first live run seeded relative names while the coder log the
 # judge is grading uses absolute paths under a long run-id directory, and the judge said so in its
 # own words before re-reading a file it had already been given: "The paths I was given in the log
 # are different from where the actual files live." It spent 5 of its 6 inspection rounds on that,
 # hit the cap, and its verdict — which had named the run's exact bug — was withheld as unfinished.
-header = ⟦ctx:files⟧ THE CONTENTS OF THE {{COUNT}} MOST RECENTLY CHANGED FILES IN {{ROOT}}, read from disk just now. Paths below are relative to that directory, so `lib/x.rb` here is the same file the log calls `{{ROOT}}/lib/x.rb`. This is what is actually there, not a claim by anyone. Judge against these rather than asking for them again.
+header = ⟦ctx:files⟧ THE COMPLETE CONTENTS OF ALL {{COUNT}} READABLE TEXT WORK FILES CURRENTLY AVAILABLE FROM {{ROOT}}. Dependency/install trees and the internal read-only reference spill are excluded from this block; they remain represented by the workspace inventory. Paths below are relative to that directory, so `lib/x.rb` here is the same file the log calls `{{ROOT}}/lib/x.rb`. These bytes came from the harness's workspace view, not from a claim by anyone. Judge against them rather than asking for them again. Any file whose bytes have not arrived is named below as unknown, never treated as absent or empty.
 file = ----- {{PATH}} -----\n{{BODY}}
-skipped = NOT INCLUDED ABOVE (too large to fit alongside the rest, so they are named instead of cut): {{PATHS}}. Use read_file if you need one of them.
-# TWO MORE WAYS A NEWER FILE CAN BE ABSENT, both of which used to be a bare `continue`. The header
-# says these are the most recently changed files and tells the judge not to ask for them again, so a
-# file it stepped over has to be named or that sentence is false about the one file that matters —
-# the one the coder just wrote. `read_file` recovers the first kind and cannot help with the second,
-# so they say different things.
 not_quoted = NOT INCLUDED ABOVE (their contents have not reached this seat, so they are named instead of guessed at): {{PATHS}}. Use read_file if you need one of them.
 binary = NOT INCLUDED ABOVE (not text — there is nothing to read): {{PATHS}}.

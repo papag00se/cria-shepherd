@@ -818,6 +818,7 @@ def _unparseable():
 
 
 _SHELL = {"type": "function", "function": {"name": "shell", "parameters": {"type": "object", "properties": {"command": {"type": "array"}}}}}
+_LEGACY_CLEAN_GATE = "___CRIA_GATE_probe-0___\nEXIT:0"
 
 
 def _ctx(coder, reasoner, plan=None, workspace_root=None):
@@ -1079,7 +1080,7 @@ class CompactionTests(unittest.TestCase):
         C = _Classification()
         c1 = loop.drive(_body(), "sid:k", C, _Rlog())                              # work → coder tool call
         c2 = loop.drive(_body(), "sid:k", C, _Rlog())                              # coder done → probe
-        final = loop.drive(_body_with_probe(_tc_id(c2), "PROBE_EXIT=0"), "sid:k", C, _Rlog())  # verify → all done → loop.done
+        final = loop.drive(_body_with_probe(_tc_id(c2), _LEGACY_CLEAN_GATE), "sid:k", C, _Rlog())  # verify → all done → loop.done
         closing = final["choices"][0]["message"]["content"]
         self.assertIn("plan complete", closing)
         from cria.loop import BRIEFING_OPEN
@@ -1326,7 +1327,7 @@ class ReviewFixTests(unittest.TestCase):
         C = _Classification()
         c1 = loop.drive(_body(), "task:abc123", C, _Rlog())
         c2 = loop.drive(_body(), "task:abc123", C, _Rlog())
-        final = loop.drive(_body_with_probe(_tc_id(c2), "PROBE_EXIT=0"), "task:abc123", C, _Rlog())  # → loop.done
+        final = loop.drive(_body_with_probe(_tc_id(c2), _LEGACY_CLEAN_GATE), "task:abc123", C, _Rlog())  # → loop.done
         from cria.loop import BRIEFING_OPEN
         self.assertIn(BRIEFING_OPEN, final["choices"][0]["message"]["content"])  # briefing still rides the convo
         self.assertFalse(store.shape_done("task:abc123"))               # …but NO server-side marker/shape
@@ -2740,13 +2741,13 @@ class LoopDriveTests(unittest.TestCase):
 
         # 3: no-marker result → fail-open → critic verifies item 0 → advance → item 1: coder proses,
         #    the no-tools leg nudges once, coder proses again → item 1's gate is emitted
-        c3 = loop.drive(_body_with_probe(_tc_id(c2), "PROBE_EXIT=0"), "k", _Classification(), rlog)
+        c3 = loop.drive(_body_with_probe(_tc_id(c2), _LEGACY_CLEAN_GATE), "k", _Classification(), rlog)
         self.assertIn("loop.step_done", rlog.kinds())
         self.assertIn("loop.probe", rlog.kinds())
         self.assertIn(GATE_SENTINEL, json.loads(c3["choices"][0]["message"]["tool_calls"][0]["function"]["arguments"])["command"][-1])
 
         # 4: gate result → critic verifies item 1 → all steps done → a final answer ends the harness turn
-        c4 = loop.drive(_body_with_probe(_tc_id(c3), "PROBE_EXIT=0"), "k", _Classification(), rlog)
+        c4 = loop.drive(_body_with_probe(_tc_id(c3), _LEGACY_CLEAN_GATE), "k", _Classification(), rlog)
         self.assertEqual(c4["choices"][0]["finish_reason"], "stop")
         self.assertIn("plan complete", c4["choices"][0]["message"]["content"])
         self.assertIn("loop.done", rlog.kinds())
@@ -2841,7 +2842,7 @@ class LoopDriveTests(unittest.TestCase):
         loop = Loop(_ctx(coder, reasoner, _plan(1)))
         rlog = _Rlog()
         c1 = loop.drive(_body(), "sid:v", _Classification(), rlog)                           # work → done → PROBE
-        c2 = loop.drive(_body_with_probe(_tc_id(c1), "PROBE_EXIT=0"), "sid:v", _Classification(), rlog)  # probe clean → verify → done
+        c2 = loop.drive(_body_with_probe(_tc_id(c1), _LEGACY_CLEAN_GATE), "sid:v", _Classification(), rlog)  # probe clean → verify → done
         self.assertIn("plan complete", c2["choices"][0]["message"]["content"])  # 1-step plan → completes this turn
         self.assertIn("loop.step_done", rlog.kinds())
 
@@ -4881,6 +4882,26 @@ class VerifyPromptStepIsRestatedLast(unittest.TestCase):
         tail = self._user_message().rsplit(self.CODER, 1)[1]
         self.assertIn("CODER", tail.upper())                  # says whose numbering to ignore
         self.assertIn(self.STEP, tail)                        # and repeats the real step
+
+
+class VerifyPromptKeepsOrdinarySummariesWholeTests(unittest.TestCase):
+    def test_a_summary_larger_than_the_old_8000_char_tail_reaches_the_critic_whole(self):
+        """Fails before: the critic saw only the last 8,000 characters without a disclosure."""
+        seen = {}
+
+        def reasoner(body, rlog):
+            seen["user"] = body["messages"][-1]["content"]
+            payload = {"choices": [{"message": {"content": '{"done": true, "reason": "ok"}'}}]}
+            return json.dumps(payload).encode()
+
+        from cria.config import Role
+        summary = "SUMMARY_START\n" + "a" * 5000 + "\nSUMMARY_MIDDLE\n" + "b" * 5000 + "\nSUMMARY_END"
+        ctx = _ctx(_Scripted([_toolcall()]), reasoner)
+        ctx.reasoner_role = Role(name="reasoner", backend="local")
+        Loop(ctx)._verify("Implement the feature", summary, "", "", _Rlog(), idx=1, total=1)
+        self.assertIn(summary, seen["user"])
+        self.assertLess(seen["user"].index("SUMMARY_START"), seen["user"].index("SUMMARY_MIDDLE"))
+        self.assertLess(seen["user"].index("SUMMARY_MIDDLE"), seen["user"].index("SUMMARY_END"))
 
 
 class ReplanNoiseIsVisibleTests(unittest.TestCase):

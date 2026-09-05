@@ -1,4 +1,4 @@
-"""The block that says "these are the newest files" stepped over files without saying so.
+"""A complete file-evidence block names every file whose bytes it cannot quote.
 
 `files_for_a_judge` heads its block with
 
@@ -11,9 +11,8 @@ written, which is the whole reason a judge is looking — and then N was counted
 and the judge was told not to ask. The oversize case was named for exactly this reason; these two
 were not.
 
-Named only where the claim reaches: `entries` is newest-first, so a drop before the last file shown
-is one the sentence stepped over. A drop after it is an older file the block never claimed to carry,
-and naming every one would print the workspace under a header about recent work.
+The old newest-first/budget selection named only omissions reached before its byte ceiling. The
+lossless producer makes no recency claim and therefore names every unavailable or binary file.
 """
 
 import os
@@ -36,7 +35,7 @@ def _workspace(files):
     return ws
 
 
-class ADroppedNewerFileIsNamedTests(unittest.TestCase):
+class EveryUnquotableFileIsNamedTests(unittest.TestCase):
     def test_a_binary_newer_than_the_shown_files_is_named(self):
         ws = _workspace([("rates.rb", "def total; 1; end\n"),
                          ("orders.db", b"SQLite format 3\x00" + os.urandom(512))])
@@ -68,17 +67,27 @@ class ADroppedNewerFileIsNamedTests(unittest.TestCase):
         self.assertIn("read_file", labels["not_quoted"])
         self.assertNotIn("read_file", labels["binary"])
 
-
-class ItStillSaysNothingAboutOlderFilesTests(unittest.TestCase):
-    def test_an_older_unquotable_file_is_not_listed(self):
-        """It is in the workspace inventory beside this block. Under a header about recent work it
-        would be noise, and the whole reason this block exists is that a judge stops reading."""
+    def test_an_older_unquotable_file_is_also_named(self):
         ws = _workspace([("legacy.png", b"\x89PNG\r\n\x1a\n" + os.urandom(512)),
                          ("rates.rb", "def total; 1; end\n")])
         out = groundtruth.files_for_a_judge(ws)
         self.assertIn("rates.rb", out)
-        self.assertNotIn("legacy.png", out)
+        self.assertIn("legacy.png", out)
 
+    def test_an_unknown_size_does_not_crash_or_hide_a_readable_file(self):
+        ws = _workspace([("rates.rb", "def total; 1; end\n")])
+
+        class _UnknownSize(wsview.DirectView):
+            def size(self, path):
+                return None
+
+        token = wsview.bind(_UnknownSize())
+        self.addCleanup(wsview.unbind, token)
+        out = groundtruth.files_for_a_judge(ws)
+        self.assertIn("def total", out)
+
+
+class EmptyWorkspaceTests(unittest.TestCase):
     def test_an_empty_workspace_still_says_nothing_at_all(self):
         self.assertEqual(groundtruth.files_for_a_judge(tempfile.mkdtemp()), "")
 

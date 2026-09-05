@@ -34,11 +34,10 @@ expressed as one composed shell line (:func:`compose_probe_command`) and the
 tool result that flows back is mapped onto the identical ProbeResult contract
 (:func:`interpret_probe_output`): coreutils ``timeout`` stands in for the kill
 loop (exit 124), ``exit 127`` / "command not found" stands in for the spawn
-error, an output cap stands in for RAM being cheap (upstream drained pipes
-unbounded and let probe_parse truncate — in cria the capture lands in the
-model's context, so it is capped at composition time), and a trailing
-``EXIT:<n>`` sentinel recovers the exit code when the harness returns text
-only.
+error, and a trailing ``EXIT:<n>`` sentinel recovers the exit code when the
+harness returns text only.  The gate transport spools the complete combined
+result on the harness and pages it back over later requests; this function
+therefore never selects or clips the checker's bytes.
 
 Timeout interplay (proxy path): the harness's own shell-tool timeout must
 exceed the probe timeout, or the harness kills the command before timeout(1)
@@ -52,7 +51,7 @@ import shlex
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Optional
 
-from . import content_reduce, probediscovery, probeparse, prompts, toolpath, wsview
+from . import probediscovery, probeparse, prompts, toolpath, wsview
 from .probeparse import (
     EMPTY_COMMAND_SUMMARY,
     LAUNCH_FAILURE_FMT,
@@ -103,113 +102,8 @@ LAUNCH_FAILURE_MARKER = "failed to launch"
 DIGEST_EXIT_NO_TESTS = _DIGEST["exit_no_tests"]
 DIGEST_MISSING_FMT = _DIGEST["missing_fmt"]
 
-# ---------------------------------------------------------------------------
-# cria constants (proxy path — NOT probe_run.rs values)
-# ---------------------------------------------------------------------------
-
-# Output budget applied at composition time. Upstream read_to_string'd the pipes unbounded and let
-# probe_parse truncate per-line; in cria the capture lands in the model's context, so the composed
-# command bounds it. NOT tail-only: a test/build that prints its real failure EARLY then a long
-# teardown/summary would lose the failure under a tail clip. compose_probe_command keeps HEAD + TAIL
-# (half the budget each, with a disclosed "middle N bytes elided" marker) so an early failure AND a
-# late one both survive. Only bites on genuinely huge output; the window-aware context floor is the one
-# place a real truncation may happen.
-#
-# DERIVED, NEVER PICKED. This was a standalone 16,384 while the bound that must ACCEPT the result is
-# content_reduce.INLINE_RESULT_MAX_BYTES = 9,000 — so cria composed probes whose output cria then
-# refused. The refusal is the model-facing one ("too much to return, so nothing is shown"), and
-# cria's own gate parser reads it, finds no findings, and records the check as never run. Measured
-# on ternary-bonsai/python 0034: a 10,104-byte test run was discarded whole, the gate reported
-# nothing, and the steer built on that silence told the coder "The output was truncated, but that's
-# the root cause" about a failure no one had seen. Seven wrong turns; twelve consecutive gates in
-# one cell produced nothing at all.
-#
-# The reserve covers the harness's own envelope, which is added AFTER this budget is applied and
-# counts against the same 9,000: `Chunk ID:`, `Wall time:`, `Original token count:`, `Process exited
-# with code N`, `Output:`, plus the EXIT: sentinel and the elision marker. 500 bytes is generous for
-# six short lines and keeps the arithmetic obvious.
-PROBE_ENVELOPE_RESERVE_BYTES = 500
-PROBE_OUTPUT_CAP_BYTES = content_reduce.INLINE_RESULT_MAX_BYTES - PROBE_ENVELOPE_RESERVE_BYTES
-
-# ...AND DERIVED PER *RESULT*, NOT PER COMMAND. Deriving the number above from the bound fixed the
-# constant and left the arithmetic wrong, because a gate joins EVERY probe into ONE shell result and
-# the bound is applied to that one result. Six probes at 8,500 each cannot fit in 9,000, so the gate
-# went straight back to being discarded whole — and this time cria read its own refusal as the probe
-# output, recorded `ran = False`, and told its judge "PROBES: none ran" 5.24 seconds and 10,104 bytes
-# after one had. Measured over cycle 1 of the 100% campaign: refusals in 7 of 24 cells, every one in
-# a narrow band just over the bound (8,912–10,107 bytes); in `rust-toml-cli × ternary-bonsai` three
-# gates ran and not one `⟦ctx:checks⟧` block reached the model; in `orders-api-py × nemotron-elastic`
-# a fragment survived and cria reported "the repo's automated checks pass" 8 times while pytest was
-# red. One bound, two opposite falsehoods (docs/audits/cycle-1-walk.md).
-#
-# So the budget is SHARED and must be divided by however many probes are actually in the plan. Each
-# section still head+tails with its own disclosed marker, so nothing vanishes silently; what changes
-# is that the sum now fits by construction instead of by luck.
-#
-# MARKER_OVERHEAD_BYTES covers everything else riding in the same result and belonging to no probe's
-# budget: the per-section `___cria_probe-N___` echo lines, the litter listing, the git digest, and
-# the offline re-run leg, which is separately fixed at its own `tail -c 600`.
-MARKER_OVERHEAD_BYTES = 1100
-# A section smaller than this cannot carry a compiler diagnostic or a test tally, which is the whole
-# point of running the probe. Hitting the floor means the plan is asking one shell result to carry
-# more than it can — the honest response is a smaller plan, not a starved section, and
-# :func:`probe_output_budget` says so via `fits`.
-MIN_PROBE_SECTION_BYTES = 700
-
-# A LINE THAT NAMES A FILE AND A LINE NUMBER — the one shape every checker in every language prints
-# and the one `probeparse.split_diag` reads. `path:12:` (gcc, ruff, go, ruby), `path:[12,30]` (javac
-# through Maven), `path:12` bare (phpunit). Used only to decide which bytes are worth keeping when a
-# probe overruns its share; nothing is parsed here.
-# Written without a POSIX class and with no two adjacent `[` so the gate script stays free of the
-# `[[` a portability check forbids. A path token in a diagnostic never contains a space, and the
-# optional `[` covers Maven's `path:[12,30]` beside everyone else's `path:12`.
-_DIAG_LINE_RE = r"[^ :]+:\[?[0-9]+"
-
-# The same shape again, spelled for `awk -v`. `-v` expands escape sequences in the value before the
-# regex engine sees it, so a bare `\[` arrives as a plain `[` and awk warns about it on stderr —
-# straight into the gate result. Doubled here, it arrives as `\[`.
-_DIAG_AWK_RE = r"[^ :]+:\\[?[0-9]+"
-
-# DROP A REPEAT OF A DIAGNOSTIC, NOT A REPEAT OF A LINE.
-#
-# This was `awk '!seen[$0]++'` for one day. That drops a repeat of any LINE, globally, across the
-# whole `-B/-A` stream — and a compiler's continuation lines are identical by design. javac prints
-# `symbol:` and `location:` under every error; rustc prints `  |` and `  ^`; gcc prints its caret
-# row. Every one of them survived under the FIRST diagnostic and was deleted from all the rest.
-# Measured on session 20260823T025404, the only run since the change landed: 78 of 210
-# `cannot find symbol` headers arrived with no `symbol:` line, and one arrived with neither —
-# a compile error whose whole message was the words "cannot find symbol". The block ships under a
-# sentence promising "each with the lines just above and below it" (#5b).
-#
-# So the unit is the RECORD, in the shape every checker in every language prints it: a line carrying
-# `path:line`, followed by the lines under it that do not. A record ends where the next one begins.
-# Key it on its whole text and print it the first time that key appears — so the repeated
-# `ConcurrentHashMap` import collapses to one slot while a second error that merely SHARES a
-# `symbol:` line keeps its own copy of it. Not grep's `--` groups: javac prints repeats back to back,
-# so the duplicates the bound was losing budget to all arrive inside one group.
-_DIAG_RECORD_DEDUP = (
-    'function flush(){ if (b != "" && (k == "" || !(k in s))) { s[k]; printf "%s", b } b=""; k="" } '
-    '$0 ~ d { if (k != "") flush(); b = b $0 "\\n"; k = k $0 "\\n"; next } '
-    '{ b = b $0 "\\n"; if (k != "") k = k $0 "\\n" } '
-    'END { flush() }')
-# javac and rustc put the symbol, the location and the note on the lines UNDER the header.
-_DIAG_CONTEXT_LINES = 3
-# …AND EVERY TEST RUNNER PUTS THE MESSAGE ABOVE THE FIRST FRAME. minitest, JUnit, RSpec, pytest and
-# `go test` print the exception class and its text, then the stack. `-A` context alone therefore kept
-# the frames and threw away the reason — under a header that reads "each is the checker's OWN message
-# and the line it flagged", which is then the one thing it does not contain.
-#
-# Walked on shipping-rates-rb x ternary-bonsai 1787471013. Four identical errors reached the coder as
-# `rates.rb:21` sixteen times with no message; `NoMethodError: undefined method 'new' for
-# Countries:Module` sat in the 394 elided bytes. The model spent 25 minutes on load-path theories,
-# eventually ran the check itself with a plain command cria had not composed, read the message, and
-# named the real cause in ONE turn — 90 seconds later it had the correct fix. The run was killed on
-# that call.
-#
-# Two shapes, one filter: the compiler's message is below its location, the runner's is above its
-# frames, and the located line is the anchor either way (#20).
-_DIAG_BEFORE_LINES = 2
-# The offline re-run's own window. Named, because every other budget in this file is.
+# The offline re-run's non-model-visible raw parse fallback. Its tally lines travel whole above it;
+# this is not part of the completion gate's evidence transport.
 OFFLINE_TAIL_BYTES = 600
 # A RUNNER'S TALLY, BY SHAPE. `7 runs, 1 failures`, `12 passed, 1 failed`, `ok 3 - …`, `FAIL` — the
 # counts every runner prints, wherever they sit in the output. Used only to make sure the tally
@@ -217,15 +111,6 @@ OFFLINE_TAIL_BYTES = 600
 _TALLY_LINE_RE = r"[0-9]+ (runs|tests|passed|failed|failures|errors|examples)|^(ok|not ok|FAIL|PASS)\b"
 
 
-def probe_output_budget(n_sections: int) -> tuple[int, bool]:
-    """Per-section byte budget when ``n_sections`` probes share ONE shell result, and whether the
-    plan fits. Returns ``(cap, fits)``; ``fits`` is False when the division fell to the floor, which
-    means the joined result may still exceed the bound and the caller should shrink the plan."""
-    if n_sections <= 0:
-        return PROBE_OUTPUT_CAP_BYTES, True
-    usable = content_reduce.INLINE_RESULT_MAX_BYTES - PROBE_ENVELOPE_RESERVE_BYTES - MARKER_OVERHEAD_BYTES
-    cap = usable // n_sections
-    return (max(cap, MIN_PROBE_SECTION_BYTES), cap >= MIN_PROBE_SECTION_BYTES)
 # Trailing sentinel that smuggles the probe's exit code through a text-only
 # shell-tool result; scrape_exit() recovers it.
 PROBE_EXIT_SENTINEL = "EXIT:"
@@ -867,126 +752,24 @@ def display_command(command) -> str:
     return shlex.join(command)
 
 
-def compose_probe_command(c: ProbeCandidate, timeout_s: float, cap: int | None = None) -> str:
-    """One shell line the harness executes in place of upstream's spawn.
+def compose_probe_command(c: ProbeCandidate, timeout_s: float) -> str:
+    """The uncut probe invocation the harness writes into the gate spool.
 
-    Every upstream host mechanic has a shell equivalent: current_dir -> ``cd
-    <dir> &&``; the kill loop -> coreutils ``timeout -k 5`` (fractional seconds
-    kept — ``timeout 0`` would DISABLE the timeout); Stdio::null ->
-    ``</dev/null`` (probes must not block on interactive prompts); the drain
-    threads -> the harness's own capture, with 2>&1 merging the streams the way
-    parse_output already combines them; unbounded read_to_string -> a HEAD+TAIL
-    budget of PROBE_OUTPUT_CAP_BYTES (half each end) so a failure printed EARLY
-    survives a long teardown/summary tail — with a disclosed ``middle N bytes
-    elided`` marker so nothing vanishes silently; exit-code retrieval -> the
-    EXIT: sentinel. Small output (the common case) passes through untouched.
-    Every argv token is shlex-quoted — mandatory correctness under joining,
-    not sanitization (discovery already vetted the command).
+    The harness still supplies the execution mechanics: working directory, a hard
+    timeout, closed stdin, merged stdout/stderr, and the exit sentinel consumed by
+    :func:`scrape_exit`. Output is not held in a shell variable, filtered, or
+    clipped. :mod:`cria.probegate` redirects the complete combined gate stream to
+    a harness-side temporary file and transports it back losslessly over as many
+    request/response turns as are required.
     """
     if not c.command:
         raise ValueError(EMPTY_COMMAND_SUMMARY)
     argv = " ".join(shlex.quote(t) for t in c.command)
-    # `cap` is this SECTION's share of the one result every probe in the plan writes into; the
-    # default is the whole-result budget, for a caller composing a single probe on its own.
-    budget = PROBE_OUTPUT_CAP_BYTES if cap is None else max(int(cap), 1)
-    # MOST OF THE SPACE GOES TO THE DIAGNOSTICS. The ends were carrying the whole burden and could
-    # not: their stated job — "a failure printed EARLY survives a long teardown tail" — is now done
-    # by the shape filter, which finds a diagnostic wherever it sits. What the ends are still for is
-    # the part that carries no file:line and still matters: a runner's tally line ("7 runs, 1
-    # failures"), a build's opening banner. An eighth of even the smallest section holds those.
-    end, middle = max(budget // 8, 120), (budget * 3) // 4
-    # One physical shell line (no literal newlines — ``\\n`` are printf escapes): capture, then if the
-    # byte size is within budget print it whole, else print the first half + an elided-count marker +
-    # the last half, so BOTH an early and a late failure land in the parseable capture.
     return (
         f"cd {shlex.quote(str(c.working_dir))} && "
-        f"__cria_out=$(timeout -k {TIMEOUT_KILL_GRACE_S} {timeout_s:g} {argv} "
-        f"</dev/null 2>&1); __cria_ec=$?; "
-        f"__cria_n=$(printf '%s' \"$__cria_out\" | wc -c | tr -cd '0-9'); "
-        f"if [ \"$__cria_n\" -le {budget} ]; then "
-        f"printf '%s\\n' \"$__cria_out\"; "
-        # WHOLE LINES ON BOTH SIDES OF THE CUT. `head -c`/`tail -c` slice mid-token, and the two
-        # halves then read as ONE record. Walked on `shipping-rates-rb x ternary-bonsai` 1787111689,
-        # where the model was handed a failure block headed `test_zone_for_non_eu_country_is_
-        # international`, carrying a US country object, ending in GERMANY's data, attributed to
-        # `test_zone_for_eu_member_is_eu` — the head of error 1 spliced to the tail of error 5, under
-        # the label "the checker's OWN message and the line it flagged". The join was invisible
-        # because the cut landed inside `"subregio` / `ec"=>"10.38…`.
-        #
-        # A shortened record is missing information; a spliced one is information that was never
-        # true. `sed '$d'` drops the head's trailing partial line and `sed '1d'` drops the tail's
-        # leading partial line, so neither side can contain a token the tool never printed. It costs
-        # at most one whole line per side and it is language-agnostic — no runner's format is parsed
-        # here (#20).
-        f"else printf '%s' \"$__cria_out\" | head -c {end} | sed '$d'; "
-        # WHAT THE MARKER MAY PROMISE. It used to say "EVERY line from the removed middle that
-        # carries a file and a line number is reproduced below" — which the byte bound below can
-        # falsify, and the context bound (`-A3`) falsifies for any diagnostic with more than three
-        # continuation lines, which rustc routinely prints. A claim cria cannot keep is a false fact
-        # in cria's own voice (#5b), so the sentence says what it actually does.
-        f"printf '\\n...[%d bytes elided here — the lines above and below are NOT continuous. The "
-        f"lines from the removed middle that carry a file and a line number follow, each with the "
-        f"lines just above and below it]...\\n' "
-        f"\"$((__cria_n - {budget}))\"; "
-        # THE DIAGNOSTICS ARE THE POINT OF RUNNING THE PROBE, AND THEY LIVE IN THE MIDDLE.
-        # A blind head+tail cut removes exactly the part a checker exists to produce. Measured on
-        # the 2026-08-22 walks: with four probes in a plan each section gets 1,850 bytes — 925 from
-        # each end — while one javac error with its `symbol:`/`location:` lines is ~200 bytes and one
-        # minitest failure with a backtrace is ~500. Four of nine java compile errors never reached
-        # cria at all, and the ruby run's located failure was cut out of a section whose own marker
-        # announced 3,504 bytes removed. cria then said "a specific line could not be parsed".
-        #
-        # So the middle is not dropped, it is FILTERED: every line carrying `path:line` — the shape
-        # `probeparse.split_diag` itself parses, in every language — survives with the lines indented
-        # under it, which is where javac, rustc, clang and tsc put the part that says what is wrong.
-        # Shape, not a tool list (#20). Nothing here parses a runner's format; it decides only which
-        # bytes are worth the space.
-        # WHOLE LINES HERE TOO. `head -c` slices mid-token, and the marker below then reads as the
-        # continuation of a half-line: `symbol:   ` followed by `...[end of the recovered lines`.
-        # That is the same splice the head and tail legs carry `sed '$d'`/`sed '1d'` to prevent, and
-        # this leg shipped without it for a day. A shortened record is missing information; a spliced
-        # one is information that was never true.
-        # COUNTED, NOT JUST CAPPED. The filtered band had its own byte cap and no count, so when the
-        # diagnostics themselves overran it the block ended "there may be more of them than fit here"
-        # — a maybe, about a number cria was holding. Walked on feed-pipeline-java x nemotron-elastic
-        # 1787436645 prompt 0086: `class Row` reached the model ZERO times while `CSVParserBuilder`
-        # reached it fifteen, and the three errors that were cut are the three that say plainest that
-        # the API does not exist. The model concluded it had one bad import line.
-        #
-        # So: count the matching headers first, show as many WHOLE diagnostics as the budget allows,
-        # and state the two numbers. `grep -c` and `grep -m` are the same matcher as the line below,
-        # so the count and the shown set cannot disagree (#12).
-        f"__cria_dn=$(printf '%s' \"$__cria_out\" | grep -E -c {shlex.quote(_DIAG_LINE_RE)}); "
-        # DISTINCT ONES FIRST. The band is bounded, and it kept whichever diagnostics came first —
-        # so a file with the same missing import reported twice spent two of six slots on one fact
-        # while the errors that appeared once were cut. Measured on feed-pipeline-java x
-        # nemotron-elastic 1787469110: of the six kept, two were the same `ConcurrentHashMap`, while
-        # `method parse()` and the constructor candidate list — the two that say what the library's
-        # API really is — were among the fifteen cut. `awk` drops a repeat of a line already shown
-        # and keeps the first of each, so the same budget carries more distinct facts.
-        f"__cria_dall=$(printf '%s' \"$__cria_out\" | grep -E -B{_DIAG_BEFORE_LINES} "
-        f"-A{_DIAG_CONTEXT_LINES} {shlex.quote(_DIAG_LINE_RE)} "
-        f"| awk -v d={shlex.quote(_DIAG_AWK_RE)} {shlex.quote(_DIAG_RECORD_DEDUP)}); "
-        # `sed '$d'` DELETES A REAL LINE WHEN NOTHING WAS CUT. It is there to drop the half-line
-        # `head -c` leaves behind, and on the head and tail legs `head -c` always cuts so it is
-        # always right. This band is a FILTERED subset and usually fits whole — so the unconditional
-        # `$d` was eating its last line, and when that line was a `symbol:`/`location:` the loss was
-        # silent (the counted headers were all still there). Cut only when there is something to cut.
-        f"if [ \"$(printf '%s' \"$__cria_dall\" | wc -c)\" -gt {middle} ]; then "
-        f"__cria_ds=$(printf '%s' \"$__cria_dall\" | head -c {middle} | sed '$d'); "
-        f"else __cria_ds=$__cria_dall; fi; "
-        f"printf '%s\\n' \"$__cria_ds\"; "
-        f"__cria_dshown=$(printf '%s' \"$__cria_ds\" | grep -E -c {shlex.quote(_DIAG_LINE_RE)}); "
-        f"if [ \"$__cria_dshown\" -lt \"$__cria_dn\" ]; then "
-        f"printf '...[%d of %d located diagnostics shown here — the other %d were cut for space. "
-        f"Re-run this check yourself to see them all]...\\n' "
-        f"\"$__cria_dshown\" \"$__cria_dn\" \"$((__cria_dn - __cria_dshown))\"; "
-        f"else printf '...[end of the located lines recovered from the middle]...\\n'; fi; "
-        f"printf '%s' \"$__cria_out\" | tail -c {end} | sed '1d'; printf '\\n'; fi; "
-        f"printf '{PROBE_EXIT_SENTINEL}%d\\n' \"$__cria_ec\""
+        f"timeout -k {TIMEOUT_KILL_GRACE_S} {timeout_s:g} {argv} </dev/null 2>&1; "
+        f"__cria_ec=$?; printf '\\n{PROBE_EXIT_SENTINEL}%d\\n' \"$__cria_ec\""
     )
-
-
 # The network block for the OFFLINE re-run: an empty KERNEL network namespace, not a language shim.
 #
 # `unshare -rn` puts the test process in a namespace with no route to anywhere, so the block lands at

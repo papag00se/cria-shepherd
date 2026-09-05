@@ -128,7 +128,8 @@ class CompletionGateBackstopTests(unittest.TestCase):
         rlog = _Rlog()
         probe = loop._work(sess, "k", _body(), rlog)
         call_id = probe["choices"][0]["message"]["tool_calls"][0]["id"]
-        out = loop._work(sess, "k", _body_with_probe(call_id, "PROBE_EXIT=0"), rlog)
+        clean = "___CRIA_GATE_probe-0___\nEXIT:0"
+        out = loop._work(sess, "k", _body_with_probe(call_id, clean), rlog)
         self.assertIn("loop.done", rlog.kinds())
         self.assertIn("plan complete", out["choices"][0]["message"]["content"])
 

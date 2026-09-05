@@ -268,30 +268,6 @@ def _fold_install_prefixes(entries):
     return kept, [(m, p, c) for p, (m, c) in sorted(buckets.items())]
 
 
-# How much of the workspace a JUDGE is handed outright, before it starts asking for files.
-#
-# ITS STATED DERIVATION NO LONGER EXISTED. This read "a third of `verifytools.VERIFY_MAX_CHARS`, so
-# the inspection loop keeps most of its budget" — and that budget was removed when the loop stopped
-# bounding itself by characters (`tests/test_the_judge_looks_until_it_is_done.py` pins that
-# `_judge_completion` does not reference it). So the number was justified by a constant nothing
-# read. It is justified by the measurement below instead, which is what actually chose it.
-#
-# WHY IT EXISTS. The judge's inspection is a tool-use loop: it names one file, cria reads it, the
-# whole conversation is re-sent, repeat. Measured across every captured session: 1,511 rounds, 87%
-# of them fetching exactly ONE file — and the cost is quadratic, because round 4 re-sends everything
-# rounds 1-3 read. One steer's loop grew 47K -> 62K -> 83K -> 102K chars and its final call alone
-# took 247 SECONDS. That is a reasoner doing fact-gathering, which is deterministic code's job (#8).
-#
-# BOUNDED BY THE WORK, NOT BY THE REPO. Newest-first is the inventory's own order and dependency
-# trees are already folded out of it, so a ten-thousand-file monorepo where the session touched three
-# files yields those three files. Measured over the captures: a session writes a median of 2 distinct
-# files, p90 4, max 5.
-#
-# WHOLE FILES ONLY. A file that does not fit is not included and is NAMED as not included — cria
-# never hands a model half a file (#5), and a judge told which files it has NOT been given knows to
-# go and read them. The tools stay available either way.
-JUDGE_FILE_BUDGET = 20_000
-
 # cria's own spill directory, workspace-relative. Derived from the one owner (webfetch.SPILL_DIR)
 # rather than restated, so a rename cannot leave this filter pointing at the old name.
 def _spill_rel() -> str:
@@ -309,7 +285,7 @@ def _walk_entries(view, root: str) -> list[tuple[float, str, int | None]] | None
     tree = view.walk(root, skip_names=_INVENTORY_EXCLUDE)
     if tree is None:
         return None
-    out: list[tuple[float, str, int]] = []
+    out: list[tuple[float, str, int | None]] = []
     for dirpath, _dirnames, filenames in tree:
         for name in filenames:
             path = os.path.join(dirpath, name)
@@ -321,12 +297,13 @@ def _walk_entries(view, root: str) -> list[tuple[float, str, int | None]] | None
     return out
 
 
-def files_for_a_judge(root: str | None, budget: int = JUDGE_FILE_BUDGET) -> str:
-    """The newest files in the workspace, whole, up to ``budget`` — "" when there is no workspace.
+def files_for_a_judge(root: str | None) -> str:
+    """Every readable text file in the workspace, whole — ``""`` when none are available.
 
-    Same walk, same exclusions and same newest-first order as :func:`workspace_inventory`, because
-    they answer the same question one level apart: that one says what exists, this one says what is
-    in it. Binary and unreadable files are skipped silently (they are still in the listing)."""
+    The workspace view is the sole source: production never opens a harness-supplied path on cria's
+    machine.  A body the harness has not delivered is named as unknown and queued by ``View.read``
+    for a later survey; a binary is named as such.  Nothing is ranked by recency, skipped for a byte
+    budget, or partially quoted.  Window fitting remains the context floor's one responsibility."""
     if not root:
         return ""
     view = wsview.current(root)
@@ -344,48 +321,27 @@ def files_for_a_judge(root: str | None, budget: int = JUDGE_FILE_BUDGET) -> str:
     # it to the party that only had to grade it. The listing still names these files; only their
     # CONTENTS are cria's to leave out here.
     entries = [e for e in entries if not e[1].replace(os.sep, "/").startswith(_SPILL_REL)]
-    entries.sort(key=lambda e: (-e[0], e[1]))
+    entries.sort(key=lambda e: e[1])
 
-    # WHAT THE HEADER CLAIMS IS WHAT THIS HAS TO DELIVER. It says "THE CONTENTS OF THE N MOST
-    # RECENTLY CHANGED FILES … judge against these rather than asking for them again", and the loop
-    # used to step over a file cria had no bytes for, or a binary one, with a bare `continue`. Newer
-    # file dropped, N counted from what was left, and a judge told not to ask — so the file the coder
-    # had just written could be absent from a block that says it is the newest work, with nothing
-    # naming it. The oversize case was already named for exactly this reason; these two were not.
-    #
-    # NAMED ONLY WHERE THE CLAIM REACHES. `entries` is newest-first, so a drop BEFORE the last file
-    # shown is one the "most recently changed" sentence stepped over — that is the lie, and there are
-    # a handful. A drop after it is simply an older file the block never claimed to carry, and naming
-    # every one of those would be a list of the whole workspace under a header about recent work
-    # (#3). The inventory beside this block is where completeness lives.
-    shown: list[tuple[int, str]] = []
-    oversize: list[str] = []
-    no_bytes: list[tuple[int, str]] = []
-    binary: list[tuple[int, str]] = []
-    spent = 0
-    for i, (_mtime, rel, size) in enumerate(entries):
-        if size > budget - spent:
-            oversize.append(rel)
-            continue
+    shown: list[str] = []
+    no_bytes: list[str] = []
+    binary: list[str] = []
+    for _mtime, rel, _size in entries:
         body = view.read(os.path.join(root, rel))
         if body is None:
-            no_bytes.append((i, rel))   # cria has never been handed this file's contents
+            no_bytes.append(rel)   # cria has never been handed this file's contents
             continue
         if content_reduce_mod.looks_binary(body):
-            binary.append((i, rel))
+            binary.append(rel)
             continue
-        spent += len(body)
-        shown.append((i, prompts.fill(labels["file"], path=rel, body=body)))
-    if not shown:
+        shown.append(prompts.fill(labels["file"], path=rel, body=body))
+    if not shown and not no_bytes and not binary:
         return ""
-    reach = max(i for i, _ in shown)
     out = (prompts.fill(labels["header"], count=str(len(shown)), root=os.path.abspath(root))
-           + "\n\n" + "\n\n".join(t for _i, t in shown))
-    for key, dropped in (("skipped", [(0, r) for r in oversize]),
-                         ("not_quoted", no_bytes), ("binary", binary)):
-        names = sorted(r for i, r in dropped if key == "skipped" or i < reach)
+           + ("\n\n" + "\n\n".join(shown) if shown else ""))
+    for key, names in (("not_quoted", no_bytes), ("binary", binary)):
         if names:
-            out += "\n\n" + prompts.fill(labels[key], paths=", ".join(names))
+            out += "\n\n" + prompts.fill(labels[key], paths=", ".join(sorted(names)))
     return out
 
 

@@ -57,7 +57,7 @@ Six families. Every one of them exists because a captured run failed without it 
 |---|---|
 | **Nudges** | directives the model *sees* — break repetition, wheel-spinning, thrash, rumination, quiet flailing |
 | **Massages** | silent repairs it *doesn't* — byte-exact write lowering, leaked/fused tool-call recovery, dialect salvage, poisoned-history repair |
-| **Probes** | cria gathers its own ground truth — syntax floors, a completion gate that runs the repo's real checks on every "done" claim, computed facts (it counts the parens; the model just fixes them) |
+| **Probes** | cria gathers its own ground truth — syntax floors, a completion gate that runs the repo's real checks on every "done" claim and transports their output losslessly in verified harness pages, computed facts (it counts the parens; the model just fixes them) |
 | **Reasoned guidance** | detectors *trigger*, a reasoner *judges* — stuck-loop steers authored from fresh on-disk truth, living-plan re-derivation, step verdicts. Guarded both ways: fabricated steers and impossible judge claims get dropped, traced |
 | **Context shaping** | every request fits the model's real window, cria's own responsibility — auto-detected, budget-aware, never truncating what the model must read; rolling self-compaction that points at files on disk instead of quoting stale copies |
 | **Guards** | for how small models actually fail — invented endpoints (route-grounding against really-fetched specs), dropped/invented actions and completions (fail-closed accountability), false signals (an unfinished check reads UNFINISHED — never "passed", never "tool missing") |

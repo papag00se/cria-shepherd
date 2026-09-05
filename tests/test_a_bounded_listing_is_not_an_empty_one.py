@@ -22,9 +22,9 @@ Two more of the same family, from the write side rather than the read side:
 
 * `note_changed` recorded an edited path the survey never named as `(0, 0.0)`, so the inventory
   printed `app.py (0 B)` while `read()` correctly answered None for the same file;
-* `note_written` gave a brand-new file mtime `0.0`, which sorts LAST in every newest-first listing —
-  the file the coder wrote this turn went to the bottom of the judge's inventory and to the back of
-  the seeded-file budget, under a header saying "the N most recently changed files".
+* `note_written` gave a brand-new file mtime `0.0`, which sorts LAST in every newest-first inventory
+  view — the file the coder wrote this turn was treated as the oldest entry even though cria had
+  observed the write itself.
 
 And one from the discovery side: `_carries_test_code` folded "cria has not been told this file's
 bytes" — which is the ORDINARY case — into "contains no test code". For Rust, where the decoration

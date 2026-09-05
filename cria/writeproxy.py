@@ -1235,6 +1235,9 @@ _SURVEYABLE = _WRITE_NAMES | _EDIT_NAMES
 # is here to keep the arithmetic honest if a chattier carrier is ever added: the survey shrinks to
 # fit, and below TREE_MIN_BYTES it does not ride at all rather than overflowing the result.
 _RIDE_ALONG_HOST_RESERVE = 1_000
+# The lowered write/list command and its harness envelope share the result with the survey. This is
+# local transport overhead, not a probe evidence budget; gate evidence now uses checked pages.
+_RIDE_ALONG_COMMAND_RESERVE = 1_100
 
 # How many surveyable calls pass between surveys once the view is populated. The tree is re-walked
 # on the harness's side each time, so this is a cost on the CODER's box, not cria's; four is often
@@ -1463,14 +1466,15 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
                 # `represent_inbound` strips it back out, so the model sees its own call's result
                 # and nothing else.
                 if name in _SURVEYABLE and _survey_due(session, name):
-                    # BUDGETED, the way the gate budgets its own copy (probegate: survey_bytes).
+                    # BUDGETED for this one-result ride-along. The completion gate no longer shares
+                    # this arithmetic: it carries the survey and probe evidence in checked pages.
                     # Riding along without one is how cria's instrumentation came to push a result
                     # past what a harness keeps — and the half the harness then cut was the MODEL'S
                     # content, on a result cria itself composed. cria does not truncate; asking for
                     # more than a result's worth let something else do it on cria's behalf, which
                     # the never-truncate rule covers just the same.
                     room = (content_reduce_mod.INLINE_RESULT_MAX_BYTES
-                            - _RIDE_ALONG_HOST_RESERVE - proberun.MARKER_OVERHEAD_BYTES)
+                            - _RIDE_ALONG_HOST_RESERVE - _RIDE_ALONG_COMMAND_RESERVE)
                     if room >= wsview.TREE_MIN_BYTES:
                         cmd = (f"{cmd}\n{wsview.survey_command(session or '', cd=workspace_root or '', budget=room)}")
                     elif rlog is not None:

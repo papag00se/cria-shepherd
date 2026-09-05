@@ -82,16 +82,15 @@ class TheCodersOwnOutputReachesTheModelWholeTests(unittest.TestCase):
         self.assertEqual(self.inbound(small), small)
 
 
-class TheOutboundUseOfTheNumberSurvivesTests(unittest.TestCase):
-    """cria still caps what its OWN composed commands print. That is the coherent half."""
+class TheOutboundReadGuardSurvivesTests(unittest.TestCase):
+    """Interactive reads retain their explicit size refusal; gate output uses paged transport."""
 
     def test_the_read_guard_still_shares_the_constant(self):
         self.assertEqual(READ_INLINE_MAX, content_reduce.INLINE_RESULT_MAX_BYTES)
 
-    def test_the_probe_composer_still_bounds_what_it_asks_for(self):
+    def test_the_probe_composer_no_longer_preselects_evidence(self):
         from cria import proberun
-        self.assertGreater(proberun.PROBE_OUTPUT_CAP_BYTES, 0)
-        self.assertLess(proberun.PROBE_OUTPUT_CAP_BYTES, content_reduce.INLINE_RESULT_MAX_BYTES)
+        self.assertFalse(hasattr(proberun, "PROBE_OUTPUT_CAP_BYTES"))
 
 
 class ASizeRefusalExitsZeroTests(unittest.TestCase):

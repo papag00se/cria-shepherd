@@ -399,6 +399,83 @@ class CleanGateOutputTests(unittest.TestCase):
         out = probegate.clean_gate_results(msgs)
         self.assertEqual([m.get("role") for m in out], ["user"])   # both the call and result are gone
 
+    def test_paged_transport_collapses_to_one_clean_wire_valid_result(self):
+        import json
+        from cria.probediscovery import ProbeCandidate, ProbeCost, ProbeKind
+        candidate = ProbeCandidate(
+            kind=ProbeKind.Test, command=["pytest", "-q"], working_dir="/ws",
+            confidence=90, expected_value=80, cost=ProbeCost.Cheap, mutates_code=False,
+            may_hang=False, may_need_services=False, reason="test")
+        raw = self._raw("x.py:5:4 undefined name 'foo'\nEXIT:1")
+        plan = probegate.GatePlan(workspace="/ws", candidates=[candidate], transport_required=True)
+        plan.transport_data = bytearray(raw.encode())
+        plan.transport_total = len(plan.transport_data)
+        plan.transport_complete = True
+        marker = probegate._transport_marker(plan.transport_id)
+        first_command = probegate._gate_sentinel(["pytest -q"]) + "\ninternal transport"
+        next_command = probegate._gate_sentinel([]) + "\ninternal next page"
+        messages = [
+            {"role": "assistant", "tool_calls": [{"id": "p0", "type": "function", "function": {
+                "name": "exec_command", "arguments": json.dumps({"cmd": first_command})}}]},
+            {"role": "tool", "tool_call_id": "p0", "content": marker + "\npage zero"},
+            {"role": "assistant", "tool_calls": [{"id": "p1", "type": "function", "function": {
+                "name": "exec_command", "arguments": json.dumps({"cmd": next_command})}}]},
+            {"role": "tool", "tool_call_id": "p1", "content": marker + "\npage one"},
+        ]
+        out = probegate.clean_gate_results(messages, plan)
+        self.assertEqual([m.get("role") for m in out], ["assistant", "tool"])
+        self.assertEqual(json.loads(out[0]["tool_calls"][0]["function"]["arguments"])["cmd"],
+                         "pytest -q")
+        self.assertIn("undefined name 'foo'", out[1]["content"])
+        self.assertNotIn(probegate.TRANSPORT_PREFIX, str(out))
+        self.assertNotIn("internal next page", str(out))
+
+    def test_incomplete_transport_history_says_unknown(self):
+        plan = probegate.GatePlan(workspace="/ws", transport_required=True)
+        marker = probegate._transport_marker(plan.transport_id)
+        out = probegate.clean_gate_results(
+            [{"role": "tool", "tool_call_id": "p0", "content": marker + "\ncut"}], plan)
+        self.assertIn("UNKNOWN", out[0]["content"])
+        self.assertNotIn(probegate.TRANSPORT_PREFIX, out[0]["content"])
+
+    def test_a_complete_older_transport_is_reverified_not_replaced_with_unknown(self):
+        import base64
+        import hashlib
+
+        old = probegate.GatePlan(workspace="/ws", transport_required=True)
+        raw = ("Chunk ID: old\n"
+               + _sec(0, "runner chatter\n" + "x" * 7000 + "\nEXIT:0")
+               + _sec(1, "old.py:9:2 undefined name 'kept'\nEXIT:1")
+               + _git("deadbeef"))
+        raw_bytes = raw.encode()
+        digest = hashlib.sha256(raw_bytes).hexdigest()
+        path = f"/tmp/.cria-gate-{old.transport_id}.history"
+        pages = []
+        for offset in range(0, len(raw_bytes), probegate.TRANSPORT_CHUNK_BYTES):
+            chunk = raw_bytes[offset:offset + probegate.TRANSPORT_CHUNK_BYTES]
+            pages.append("\n".join([
+                probegate._transport_marker(old.transport_id),
+                "path\t" + base64.b64encode(path.encode()).decode(),
+                f"offset\t{offset}",
+                f"total\t{len(raw_bytes)}",
+                f"sha256\t{digest}",
+                "data\t" + base64.b64encode(chunk).decode(),
+                probegate._transport_marker(old.transport_id, end=True),
+            ]))
+
+        current = probegate.GatePlan(workspace="/ws", transport_required=True)
+        messages = [
+            {"role": "tool", "tool_call_id": f"old-{i}", "content": page}
+            for i, page in enumerate(pages)
+        ] + [{"role": "tool", "tool_call_id": "current",
+              "content": probegate._transport_marker(current.transport_id) + "\ncut"}]
+
+        out = probegate.clean_gate_results(messages, current)
+        rendered = "\n".join(m["content"] for m in out)
+        self.assertIn("old.py:9:2 undefined name 'kept'", rendered)
+        self.assertEqual(rendered.count("UNKNOWN"), 1)  # only the genuinely incomplete current gate
+        self.assertNotIn(probegate.TRANSPORT_PREFIX, rendered)
+
 
 class CleanGateResultsDedupTests(unittest.TestCase):
     """Repeated identical ⟦ctx:checks⟧ results (a finding that recurs unchanged across turns) pile up

@@ -1,5 +1,5 @@
-"""The completion gate's transport: compose ONE shell script the HARNESS runs, then
-re-interpret its output through the ported probe modules — cria owns no executors.
+"""The completion gate's transport: the HARNESS runs and spools one complete script,
+then pages its bytes back for the existing probe parsers — cria owns no executors.
 
 The gate is CONGRUENT across ecosystems (operator direction): there is no privileged
 per-language floor anymore. ``proberun.select_completion_probes`` returns one ranked
@@ -10,26 +10,29 @@ candidates) plus the top-ranked probe and the top TEST probe. This module:
 
 * :func:`plan_gate` — select the candidates (READ-ONLY workspace inspection) and
   compose one marker-delimited script: each candidate via
-  :func:`cria.proberun.compose_probe_command` (timeout-bounded, output-capped,
-  EXIT-sentineled), plus a ``git status`` snapshot for the changed-files signal. The
-  plan REMEMBERS what it composed so interpretation doesn't re-inspect a
+  :func:`cria.proberun.compose_probe_command` (timeout-bounded, uncut,
+  EXIT-sentineled). The combined stream is written to a temporary file on the
+  harness machine and returned in checked pages over later request/response turns.
+  The plan REMEMBERS what it composed so interpretation doesn't re-inspect a
   possibly-changed world.
 * :func:`interpret_gate` — split the harness's result into sections and map each onto
   the upstream ProbeResult contract (:func:`cria.proberun.interpret_probe_output`):
   timeout → 124, launch failure → 127/"command not found", findings via the per-tool
   parsers (tier-0 checks included — every ecosystem's parse floor yields file:line).
 
-A result with NO section markers means the script never ran (harness declined,
-old-format response, tool error): ``GateOutcome.ran`` is False and the caller keeps
-the pre-existing don't-wedge semantics instead of inventing a verdict.
+Only a complete byte count plus SHA-256 is handed to the existing section parser.
+A missing, cut, reordered, or malformed transport page is explicit UNKNOWN and can
+never become a clean gate.
 """
 
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import os
 import re
+import secrets
 import shlex
 from dataclasses import dataclass, field
 
@@ -45,7 +48,6 @@ from .proberun import ProbeReport
 # runner_tally lives in probeparse now (it parses runner OUTPUT, and the tally must be taken at
 # parse time while the raw text still exists). Re-exported so existing callers are unmoved.
 from .probeparse import COMPILES_FIRST, runner_and_tally, runner_tally  # noqa: F401
-from . import content_reduce
 
 # Marker line delimiting each section of the composed script's output. The id after the
 # prefix names the section ("probe-0", "git"). Chosen to never collide with tool output.
@@ -60,6 +62,62 @@ LITTER_SECTION = "litter"
 # on a timed-out hard-failure probe, so a repo whose tests take a minute is permanently
 # un-completable: every round re-nudges with "TIMEOUT after 45s" and no edit can ever clear it.
 COMPLETION_PROBE_TIMEOUT_S = 240.0
+
+# The raw gate may be arbitrarily larger than one harness result. The harness keeps it in a
+# temporary file OUTSIDE the workspace and returns one base64 page per request. 6,000 raw bytes
+# encode to 8,000 characters, leaving room for the harness envelope under the observed ~9–10 KiB
+# result boundary. This is a TRANSPORT page size, not an evidence budget: every page is requested.
+TRANSPORT_CHUNK_BYTES = 6_000
+TRANSPORT_PREFIX = "___CRIA_GATE_TRANSPORT_"
+TRANSPORT_SUFFIX = "___"
+TRANSPORT_END_PREFIX = "___CRIA_GATE_TRANSPORT_END_"
+_TRANSPORT_HEREDOC = "__CRIA_GATE_TRANSPORT_PY__"
+
+
+def _transport_marker(transport_id: str, *, end: bool = False) -> str:
+    prefix = TRANSPORT_END_PREFIX if end else TRANSPORT_PREFIX
+    return f"{prefix}{transport_id}{TRANSPORT_SUFFIX}"
+
+
+def _transport_reader(path_arg: str, offset: int, transport_id: str) -> str:
+    """Harness-side page reader. ``path_arg`` is a shell expression or quoted path.
+
+    The final page is read into the helper's memory before the temporary file is unlinked. If its
+    result is cut in transit, cria sees a missing close/count/hash and reports UNKNOWN; it never
+    interprets the prefix as a complete check. Normal completion leaves no harness-side artifact.
+    """
+    program = f'''import base64, hashlib, os, sys
+path = sys.argv[1]
+offset = int(sys.argv[2])
+opening = {_transport_marker(transport_id)!r}
+closing = {_transport_marker(transport_id, end=True)!r}
+try:
+    total = os.path.getsize(path)
+    if offset < 0 or offset > total:
+        raise ValueError("offset outside spool")
+    digest = hashlib.sha256()
+    with open(path, "rb") as source:
+        for block in iter(lambda: source.read(65536), b""):
+            digest.update(block)
+        source.seek(offset)
+        chunk = source.read({TRANSPORT_CHUNK_BYTES})
+    final = offset + len(chunk) == total
+    if final:
+        os.unlink(path)
+    print(opening)
+    print("path\\t" + base64.b64encode(path.encode()).decode())
+    print("offset\\t" + str(offset))
+    print("total\\t" + str(total))
+    print("sha256\\t" + digest.hexdigest())
+    print("data\\t" + base64.b64encode(chunk).decode())
+    print(closing)
+except Exception as exc:
+    print(opening)
+    print("error\\t" + base64.b64encode(str(exc).encode()).decode())
+    print(closing)
+'''
+    return (f"python3 - {path_arg} {offset} <<'{_TRANSPORT_HEREDOC}'\n"
+            f"{program}{_TRANSPORT_HEREDOC}")
 
 
 @dataclass
@@ -80,9 +138,19 @@ class GatePlan:
     # The subdirectory every real probe had to be run in, when NONE of them could run at the
     # workspace root — "" in the ordinary case. See :func:`_checks_ran_elsewhere`.
     ran_in: str = ""
-    # cria-facing observations about the PLAN itself (not about the repo) — currently only the
-    # shared-budget floor. Never shown to the model; it is a note for the log and the operator.
+    # cria-facing observations about the PLAN itself (not about the repo).
     notes: list = field(default_factory=list)
+    # Lossless asynchronous transport state. The path names the HARNESS-side spool and is learned
+    # only from its first response; cria never opens it. Bytes accumulate in session-scoped plan
+    # state until the declared total and hash both verify. Any protocol gap is terminal UNKNOWN.
+    transport_required: bool = False
+    transport_id: str = field(default_factory=lambda: secrets.token_hex(12))
+    transport_path: str = ""
+    transport_total: int | None = None
+    transport_sha256: str = ""
+    transport_data: bytearray = field(default_factory=bytearray)
+    transport_complete: bool = False
+    transport_error: str = ""
     # THE OFFLINE FACT THIS PLAN'S LAST CLEAN GATE PRODUCED, so a reader that is not the coder can
     # have it. `_offline_fact` is one sentence cria owns outright — the suite passed, and it passed
     # again with the network taken away — and it reached the coder in 20 prompts of L5
@@ -117,10 +185,122 @@ class GateOutcome:
     # the caller must plan once more against the newly populated view.
     replan_after_survey: bool = False
     participation: participation.ParticipationReport | None = None
+    transport_pending: bool = False  # more checked pages are required before parsing
+    transport_unknown: bool = False  # transport ended incomplete/invalid; never a clean result
 
 
 def _marker(section_id: str) -> str:
     return f"{SECTION_PREFIX}{section_id}{SECTION_SUFFIX}"
+
+
+def fail_transport(plan: GatePlan, reason: str) -> str:
+    """Make this gate's transport terminally UNKNOWN."""
+    plan.transport_error = reason
+    plan.transport_complete = False
+    return "unknown"
+
+
+def ingest_transport(plan: GatePlan, result_text: str) -> str:
+    """Ingest one harness-returned page: ``pending``, ``complete``, ``unknown`` or ``legacy``.
+
+    No prefix is ever parsed as evidence. A page is accepted only when both envelope markers are
+    present, all fields occur exactly once, its offset is the next byte cria needs, its path/total/
+    hash agree with earlier pages, and the decoded chunk stays inside the declared total. Only the
+    complete byte string is eligible for :func:`split_sections`.
+
+    ``legacy`` preserves old gate results already present in a conversation and hand-built parser
+    fixtures. A newly composed transport never emits raw section markers outside its base64 page.
+    """
+    if not plan.transport_required:
+        return "legacy"
+    if plan.transport_complete:
+        return "complete"
+    if plan.transport_error:
+        return "unknown"
+    # Raw marker-delimited results predate this transport and remain readable from history. The
+    # current script redirects every such marker into the spool, so a live page cannot take this arm.
+    if SECTION_PREFIX in (result_text or "") and TRANSPORT_PREFIX not in (result_text or ""):
+        return "legacy"
+    opening = _transport_marker(plan.transport_id)
+    closing = _transport_marker(plan.transport_id, end=True)
+    text = result_text or ""
+    start = text.find(opening)
+    if start < 0:
+        return fail_transport(plan, "transport page opener did not arrive")
+    end = text.find(closing, start + len(opening))
+    if end < 0:
+        return fail_transport(plan, "transport page was cut before its closing marker")
+    if text.count(opening) != 1 or text.count(closing) != 1:
+        return fail_transport(plan, "transport page contains duplicate envelope markers")
+    body = text[start + len(opening):end].strip("\r\n")
+    fields: dict[str, str] = {}
+    for line in body.splitlines():
+        key, sep, value = line.partition("\t")
+        if not sep or key in fields:
+            return fail_transport(plan, "transport page contains malformed or duplicate fields")
+        fields[key] = value
+    if "error" in fields:
+        try:
+            detail = base64.b64decode(fields["error"], validate=True).decode("utf-8", "replace")
+        except Exception:  # noqa: BLE001 — an unreadable error is still a transport failure
+            detail = "harness-side page reader failed"
+        return fail_transport(plan, detail)
+    if set(fields) != {"path", "offset", "total", "sha256", "data"}:
+        return fail_transport(plan, "transport page is missing required fields")
+    try:
+        path = base64.b64decode(fields["path"], validate=True).decode("utf-8")
+        offset, total = int(fields["offset"]), int(fields["total"])
+        chunk = base64.b64decode(fields["data"], validate=True)
+    except (ValueError, UnicodeError):
+        return fail_transport(plan, "transport page contains undecodable fields")
+    digest = fields["sha256"].lower()
+    if (not path or "\x00" in path or "\n" in path or "\r" in path
+            or not re.fullmatch(r"[0-9a-f]{64}", digest)):
+        return fail_transport(plan, "transport page path or hash is invalid")
+    expected_name = f".cria-gate-{plan.transport_id}."
+    if not os.path.basename(path).startswith(expected_name):
+        return fail_transport(plan, "transport page named an unexpected spool")
+    if offset != len(plan.transport_data) or total < 0 or len(chunk) > TRANSPORT_CHUNK_BYTES:
+        return fail_transport(plan, "transport page offset, total, or chunk size is inconsistent")
+    if plan.transport_path and path != plan.transport_path:
+        return fail_transport(plan, "transport spool changed between pages")
+    if plan.transport_total is not None and total != plan.transport_total:
+        return fail_transport(plan, "transport total changed between pages")
+    if plan.transport_sha256 and digest != plan.transport_sha256:
+        return fail_transport(plan, "transport hash changed between pages")
+    if offset + len(chunk) > total or (offset < total and not chunk):
+        return fail_transport(plan, "transport page made no valid forward progress")
+    plan.transport_path = path
+    plan.transport_total = total
+    plan.transport_sha256 = digest
+    plan.transport_data.extend(chunk)
+    if len(plan.transport_data) < total:
+        return "pending"
+    if len(plan.transport_data) != total:
+        return fail_transport(plan, "transport delivered more bytes than declared")
+    if hashlib.sha256(plan.transport_data).hexdigest() != digest:
+        return fail_transport(plan, "transport hash did not match the delivered bytes")
+    plan.transport_complete = True
+    return "complete"
+
+
+def transported_result(plan: GatePlan) -> str:
+    """The verified complete gate stream as text, or ``""`` until transport completes."""
+    if not plan.transport_complete:
+        return ""
+    return bytes(plan.transport_data).decode("utf-8", "replace")
+
+
+def continue_transport_command(plan: GatePlan) -> str:
+    """The next harness-side page request, or ``""`` when transport cannot continue."""
+    if (not plan.transport_required or plan.transport_complete or plan.transport_error
+            or not plan.transport_path):
+        return ""
+    return "\n".join([
+        _gate_sentinel([]),
+        _transport_reader(shlex.quote(plan.transport_path), len(plan.transport_data),
+                          plan.transport_id),
+    ])
 
 
 def _checks_ran_elsewhere(workspace: str, candidates: list) -> str:
@@ -168,8 +348,11 @@ def plan_gate(workspace: str, session: str = "", rlog=None) -> GatePlan:
     the workspace path, so it must not discover against its OWN cwd (that once composed a
     probe over cria's repo itself). The harness's shell already runs in the workspace, so
     the git leg still lands; the checks just abstain (digest says none ran)."""
-    plan = GatePlan(workspace=workspace,
-                    surveyed_before=bool(wsview.current(workspace or None).surveyed))
+    plan = GatePlan(
+        workspace=workspace,
+        surveyed_before=bool(wsview.current(workspace or None).surveyed),
+        transport_required=True,
+    )
     if workspace:
         plan.candidates = proberun.select_completion_probes(workspace)
         plan.untested = probediscovery.undiscoverable_tests(workspace)
@@ -207,21 +390,9 @@ def plan_gate(workspace: str, session: str = "", rlog=None) -> GatePlan:
     # something must be deleted, cria deletes it itself, under the dirguard's bounds.
     if workspace:
         parts.append("__cria_pre=$(git status --porcelain 2>/dev/null | sed -n 's/^?? //p' | sort)")
-    # ONE RESULT, SHARED BUDGET. Every probe below writes into the same shell result, and the bound
-    # that decides whether the model ever sees it is applied to that whole result — so the per-probe
-    # cap has to be this plan's share of it, not a constant. When each probe carried the full
-    # whole-result budget the gate reliably overran and was discarded, and cria then read its own
-    # refusal as the probe output. See proberun.probe_output_budget.
-    section_cap, fits = proberun.probe_output_budget(len(plan.candidates))
-    if not fits:
-        # Say it rather than starve the sections silently (#5b): the plan is asking one result to
-        # carry more than it can, and a reader of the log should see that, not a mysteriously
-        # clipped check.
-        plan.notes.append(f"gate plan has {len(plan.candidates)} probes sharing one result; "
-                          f"each section floored at {section_cap} bytes")
     for i, c in enumerate(plan.candidates):
         parts.append(f"echo {_marker(f'probe-{i}')}")
-        parts.append(proberun.compose_probe_command(c, COMPLETION_PROBE_TIMEOUT_S, cap=section_cap))
+        parts.append(proberun.compose_probe_command(c, COMPLETION_PROBE_TIMEOUT_S))
         if c.kind is probediscovery.ProbeKind.Test:
             # Remember THIS probe's exit code for the offline leg below. compose_probe_command
             # leaves it in __cria_ec, which the next probe overwrites, so it is captured here under
@@ -260,37 +431,32 @@ def plan_gate(workspace: str, session: str = "", rlog=None) -> GatePlan:
     # harness offers its own file tools and cria lowers nothing. Appended AFTER the last marker and
     # taken back off by `interpret_gate`, so no section ever contains a byte of it.
     #
-    # IT SHARES THE RESULT WITH THE PROBES, so it is budgeted with them. The probe sections and the
-    # marker overhead are already sized to fill one result on their own, and the survey was being
-    # appended on top with a bound of its own that was five times larger — so on the two task
-    # families that have been running (22 of 35 ruby workspaces, 10 of 10 rust) the survey was cut in
-    # transit and rejected wholesale, and the view was never surveyed at all.
-    #
-    # The arithmetic is self-balancing, which is what makes it safe: an unsurveyed view yields NO
-    # probe candidates (`linterprobe.collect_files` reads the view), so the first gate of a session
-    # spends almost the whole result on the survey; once the survey has landed and the probes exist,
-    # the survey folds to what is left and reports itself incomplete — which every reader downstream
-    # already handles as unknown rather than absent.
-    survey_bytes = (content_reduce.INLINE_RESULT_MAX_BYTES
-                    - (section_cap * len(plan.candidates)) - proberun.MARKER_OVERHEAD_BYTES)
-    if survey_bytes >= wsview.TREE_MIN_BYTES:
-        parts.append(wsview.survey_command(session, cd=workspace, budget=survey_bytes))
-    elif rlog is not None:
-        # Say it (#12). The survey not riding is a real gap in what cria will know next turn, and it
-        # used to happen silently — by being destroyed in transit rather than by not being sent.
-        rlog.emit("gate.survey_not_carried", level="info", probes=len(plan.candidates),
-                  left=survey_bytes, need=wsview.TREE_MIN_BYTES)
+    # The survey rides inside the same lossless spool. It keeps its own structural tree bound (a
+    # folded directory is explicit UNKNOWN), but it no longer competes with probe bytes for one
+    # harness result and therefore needs no per-gate byte arithmetic.
+    parts.append(wsview.survey_command(session, cd=workspace))
     # STATE IT NOW, while cria still knows. A probe the coder could retype is one line of argv; a
     # manifest check cria composed is a multi-line inline program. The distinction is free here and
     # unrecoverable downstream — see GATE_SENTINEL.
     retypable = [" ".join(c.command) for c in plan.candidates
                  if c.command and not c.composed_by_cria]
-    plan.script = "\n".join([_gate_sentinel(retypable), *parts])
+    # The harness owns the filesystem and the asynchronous clock. It writes the complete aggregate
+    # outside the workspace, then sends only the first checked page now. Later pages are requested by
+    # :func:`continue_transport_command`; cria never reaches into the remote machine itself.
+    template = f'"${{TMPDIR:-/tmp}}/.cria-gate-{plan.transport_id}.XXXXXX"'
+    plan.script = "\n".join([
+        _gate_sentinel(retypable),
+        f"__cria_gate_file=$(mktemp {template}) || exit 98",
+        "{",
+        *parts,
+        '} >"$__cria_gate_file" 2>&1',
+        _transport_reader('"$__cria_gate_file"', 0, plan.transport_id),
+    ])
     return plan
 
 
 def gate_is_partial(outcome) -> bool:
-    """A section cria selected never came back, so this gate verified LESS than it was asked to.
+    """Some selected evidence is missing, so this gate verified LESS than it was asked to.
 
     `unran` was recorded and then read by exactly one caller — `_verify_after_probe`, the plan-ON
     per-step gate. `loop.gate` events carrying `probes_run` (the plan-ON reading) per day over the
@@ -301,8 +467,11 @@ def gate_is_partial(outcome) -> bool:
 
     With no reader, `findings` came back "" and `record_gate_state` wrote GREEN — a gate that
     verified a subset reading as a gate that verified everything, which is the completion side of
-    #13 failing open. `ran` cannot carry this: it is True as long as ANY section came back."""
-    return bool(getattr(outcome, "unran", None))
+    #13 failing open. `ran` cannot carry this: it is True as long as ANY section came back. A pending
+    or failed page transport is partial for the same reason, before sections may be parsed at all."""
+    return bool(getattr(outcome, "unran", None)
+                or getattr(outcome, "transport_pending", False)
+                or getattr(outcome, "transport_unknown", False))
 
 
 def split_sections(text: str) -> dict[str, str]:
@@ -1174,7 +1343,7 @@ def cria_authored_call_ids(m: dict) -> set:
     for tc in m.get("tool_calls") or []:
         fn = tc.get("function") or {}
         raw = fn.get("arguments")
-        if not (isinstance(raw, str) and SECTION_PREFIX in raw):
+        if not isinstance(raw, str):
             continue
         try:
             a = jsontext.loads(raw)
@@ -1185,7 +1354,7 @@ def cria_authored_call_ids(m: dict) -> set:
         for field in ("cmd", "command"):
             v = a.get(field)
             text = v if isinstance(v, str) else ("\n".join(str(x) for x in v) if isinstance(v, list) else "")
-            if SECTION_PREFIX in text and not _strip_gate_plumbing(text).strip():
+            if gate_probes_of(text) is not None and not _strip_gate_plumbing(text).strip():
                 if tc.get("id"):
                     ids.add(tc["id"])
     return ids
@@ -1202,22 +1371,26 @@ def _strip_command_plumbing(m: dict) -> dict:
     for tc in tcs:
         fn = tc.get("function") or {}
         raw = fn.get("arguments")
-        if isinstance(raw, str) and SECTION_PREFIX in raw:
+        if isinstance(raw, str):
             try:
                 a = jsontext.loads(raw)
             except (ValueError, TypeError):
                 a = None
             if isinstance(a, dict):
+                call_changed = False
                 for field in ("cmd", "command"):
                     v = a.get(field)
-                    if isinstance(v, str) and SECTION_PREFIX in v:
+                    if isinstance(v, str) and gate_probes_of(v) is not None:
                         a[field] = _strip_gate_plumbing(v)
+                        call_changed = True
                     elif isinstance(v, list):
                         joined = "\n".join(str(x) for x in v)
-                        if SECTION_PREFIX in joined:
+                        if gate_probes_of(joined) is not None:
                             a[field] = [_strip_gate_plumbing(joined)]
-                tc = {**tc, "function": {**fn, "arguments": json.dumps(a)}}
-                changed = True
+                            call_changed = True
+                if call_changed:
+                    tc = {**tc, "function": {**fn, "arguments": json.dumps(a)}}
+                    changed = True
         new_tcs.append(tc)
     return {**m, "tool_calls": new_tcs} if changed else m
 
@@ -1241,16 +1414,85 @@ def clean_gate_results(messages: list, plan: "GatePlan | None" = None) -> list:
     # in the model's own history with cria's answer under it. Its RESULT is real ground truth and
     # is kept — as a plain message, which is what it always was.
     own_ids: set = set()
-    last_gate = max((i for i, m in enumerate(messages)
-                     if isinstance(m, dict)
-                     and (m.get("role") == "tool" or m.get("type") == "function_call_output")
-                     and isinstance(m.get("content") or m.get("output"), str)
-                     and SECTION_PREFIX in (m.get("content") or m.get("output"))), default=-1)
+    # A paged gate occupies several harness turns, but it is one piece of evidence. Retain the first
+    # result in each transport as the wire-valid seat for its final rendering and drop the remaining
+    # page calls/results. Reassemble and verify OLDER transports from their page envelopes: the
+    # conversation still holds every byte/count/hash even after the session's current plan advances.
+    # Treating a formerly-complete check as UNKNOWN merely because a newer plan exists would destroy
+    # evidence the model had already read. An actually incomplete/invalid history remains UNKNOWN.
+    transport_re = re.compile(re.escape(TRANSPORT_PREFIX) + r"([0-9a-f]{24})" +
+                              re.escape(TRANSPORT_SUFFIX))
+    transport_first: dict[str, int] = {}
+    transport_ids: dict[int, str] = {}
+    transport_pages: dict[str, list[str]] = {}
+    for i, message in enumerate(messages):
+        if not isinstance(message, dict):
+            continue
+        is_tool = message.get("role") == "tool" or message.get("type") == "function_call_output"
+        payload = message.get("content") or message.get("output")
+        match = transport_re.search(payload) if is_tool and isinstance(payload, str) else None
+        if match:
+            transport_id = match.group(1)
+            transport_ids[i] = transport_id
+            transport_first.setdefault(transport_id, i)
+            transport_pages.setdefault(transport_id, []).append(payload)
+    transport_states: dict[str, GatePlan] = {}
+    for transport_id, pages in transport_pages.items():
+        if plan is not None and plan.transport_id == transport_id:
+            # The live bridge already consumed these pages. Re-ingesting them would correctly look
+            # like an offset regression, so use its verified session state directly.
+            transport_states[transport_id] = plan
+            continue
+        historical = GatePlan(workspace="", transport_required=True,
+                              transport_id=transport_id)
+        for page in pages:
+            if historical.transport_complete:
+                fail_transport(historical, "transport history continued after its final page")
+                break
+            if ingest_transport(historical, page) == "unknown":
+                break
+        transport_states[transport_id] = historical
+    retained_transport = set(transport_first.values())
+    raw_gate_indices = [i for i, m in enumerate(messages)
+                        if isinstance(m, dict)
+                        and (m.get("role") == "tool" or m.get("type") == "function_call_output")
+                        and isinstance(m.get("content") or m.get("output"), str)
+                        and SECTION_PREFIX in (m.get("content") or m.get("output"))]
+    last_gate = max([*raw_gate_indices, *retained_transport], default=-1)
     for i, m in enumerate(messages):
         if isinstance(m, dict):
             is_tool = m.get("role") == "tool" or m.get("type") == "function_call_output"
             key = "content" if m.get("content") is not None else "output"
             c = m.get(key)
+            if is_tool and i in transport_ids:
+                tid = m.get("tool_call_id") or m.get("call_id")
+                if i not in retained_transport:
+                    if tid:
+                        drop_ids.add(tid)
+                    continue
+                transport_id = transport_ids[i]
+                current = plan is not None and plan.transport_id == transport_id
+                transport_state = transport_states[transport_id]
+                if transport_state.transport_complete:
+                    c = clean_gate_output(
+                        transported_result(transport_state), plan if current else None,
+                        annotate=(i == last_gate),
+                        changed_paths=_paths_written_after(messages, i) if i == last_gate else frozenset(),
+                        a_command_ran_since=(i == last_gate
+                                             and _a_command_could_have_changed_things_after(messages, i)),
+                        checks_reran=(i == last_gate
+                                      and _probe_reran_after_last_change(messages, i, plan)))
+                else:
+                    c = prompts.load("probe_transport_unknown")
+                if c is None or _NO_SIGNAL_CHECK in c:
+                    if tid:
+                        drop_ids.add(tid)
+                    continue
+                if tid in own_ids:
+                    out.append({"role": "user", "content": c})
+                else:
+                    out.append({**m, key: c})
+                continue
             if is_tool and isinstance(c, str) and SECTION_PREFIX in c:
                 # ANNOTATE ONLY THE NEWEST GATE RESULT. This function re-renders every gate result
                 # in the history on EVERY prompt build, and the disk quote is read at render time —
@@ -1431,6 +1673,16 @@ def sweep_litter(plan: GatePlan, sections: dict) -> list[str]:
 
 def interpret_gate(plan: GatePlan, result_text: str, rlog=None) -> GateOutcome:
     """Replay the harness's gate output through the ported interpreters."""
+    state = ingest_transport(plan, result_text)
+    if state == "pending":
+        return GateOutcome(ran=False, transport_pending=True)
+    if state == "unknown":
+        if rlog is not None:
+            rlog.emit("gate.transport_unknown", level="warn", reason=plan.transport_error,
+                      received=len(plan.transport_data), total=plan.transport_total)
+        return GateOutcome(ran=False, transport_unknown=True)
+    if state == "complete":
+        result_text = transported_result(plan)
     # The workspace survey rode home on this result (see plan_gate). Take it off first — it is
     # cria's own instrumentation, it belongs to no probe, and left in place it would land inside
     # whichever section happened to be open when it started.

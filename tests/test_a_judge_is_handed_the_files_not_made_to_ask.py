@@ -9,12 +9,9 @@ Read in the walked run: of six inspection rounds, four fetched a real fact, one 
 workspace's PARENT and was refused, and one produced no call at all. A judge handed the files cannot
 spend a round asking for them.
 
-BOUNDED BY THE WORK, NOT BY THE REPO. Newest-first is the inventory's own order and dependency trees
-are already folded out of it, so a ten-thousand-file monorepo where the session touched three files
-yields those three. (Operator, 2026-08-18: "I don't like the 'median 6 files' assertion because we're
-only testing with clean repos and small asks.")
-
-WHOLE FILES ONLY. One that does not fit is NAMED, never cut (#5), and the tools stay available.
+LOSSLESS BY CONSTRUCTION. Every readable workspace file arrives whole. Dependency/install trees and
+the shim's own spill remain excluded by identity, not by recency or a byte budget. Window fitting is
+owned by the context floor; this evidence producer never preselects what a judge may see.
 
 THE ONE SEAT THAT DOES NOT GET THIS, deliberately: the steer author. `6726b8a` removed inlined
 contents from it after a 57K curl'd spec was inlined TWICE under two path spellings — 115K of a 210K
@@ -71,30 +68,29 @@ class TheFilesArriveWithoutBeingAskedForTests(unittest.TestCase):
         self.assertEqual(groundtruth.files_for_a_judge("/nonexistent-for-this-test"), "")
 
 
-class TheBudgetIsBoundedByTheWorkTests(unittest.TestCase):
-    def test_a_file_that_does_not_fit_is_NAMED_never_cut(self):
-        """#5. The 57K-spec shape that `6726b8a` was written about."""
-        big = "x" * (groundtruth.JUDGE_FILE_BUDGET + 5_000)
+class EveryReadableFileArrivesWholeTests(unittest.TestCase):
+    def test_a_large_file_is_included_whole(self):
+        """Fails before: the old 20K budget named this file but withheld every byte."""
+        big = "START\n" + "x" * 60_000 + "\nEND\n"
         with _WS({"small.py": "print(1)\n", "huge_spec.json": big}) as root:
             out = groundtruth.files_for_a_judge(root)
             self.assertIn("huge_spec.json", out)
-            self.assertNotIn(big[:2000], out, "the oversized file was pasted in")
-            self.assertIn("NOT INCLUDED ABOVE", out)
-            self.assertIn("print(1)", out, "the file that DID fit is still there")
+            self.assertIn(big, out)
+            self.assertIn("print(1)", out)
 
-    def test_the_whole_block_stays_under_budget(self):
+    def test_many_files_are_not_preselected_to_fit_a_budget(self):
         files = {f"f{i}.py": "y" * 4_000 for i in range(20)}
         with _WS(files) as root:
             out = groundtruth.files_for_a_judge(root)
-            body = out[out.index("-----"):]
-            self.assertLessEqual(len(body), groundtruth.JUDGE_FILE_BUDGET + 4_000)
+            for rel, body in files.items():
+                self.assertIn(rel, out)
+                self.assertIn(body, out)
 
-    def test_a_big_repo_still_yields_only_what_fits(self):
-        """Repo size does not set the cost; the budget does."""
+    def test_a_big_repo_yields_every_readable_file(self):
         files = {f"pkg/mod{i}/file{j}.py": "z" * 900 for i in range(40) for j in range(5)}
         with _WS(files) as root:
             out = groundtruth.files_for_a_judge(root)
-            self.assertLess(len(out), groundtruth.JUDGE_FILE_BUDGET * 2)
+            self.assertEqual(out.count("----- pkg/"), len(files))
 
     def test_dependency_trees_are_not_quoted(self):
         with _WS({"app.rb": "puts 1\n",

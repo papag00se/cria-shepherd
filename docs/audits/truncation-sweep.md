@@ -11,14 +11,14 @@ Four sweeps, one per channel: shell composed for the harness, Python slicing, pr
 | site | what is cut | measured | status |
 |---|---|---|---|
 | `contextfloor.py:674` compaction note | whole turns dropped with **no digest at all**, only a `(+N)` counter | **6,725 turns** across 965 prompts; 219 prompts dropped ≥10 | FIXED |
-| `proberun.py:921,927,985` gate head+tail band | a check's stdout/stderr around a filtered middle | **23.9 MB** cut across 5,703 renderings; worst single elision 421,414 bytes, section delivered 2,811 | OPEN |
-| `proberun.py:959` diagnostics band | located diagnostics past a byte budget | 2,022 renderings; worst **12 of 308 shown** | OPEN |
+| `proberun.py` former gate head+tail band | a check's stdout/stderr around a filtered middle | **23.9 MB** cut across 5,703 renderings; worst single elision 421,414 bytes, section delivered 2,811 | FIXED |
+| `proberun.py` former diagnostics band | located diagnostics past a byte budget | 2,022 renderings; worst **12 of 308 shown** | FIXED |
 
 `contextfloor.fit` is the one point rule 5 sanctions, *because* it is lossless-first. Lever 5 (drop inside the protected span) fired in **477 of 837** floor events, up to **220 turns in one request**, and 250 events still reported `over_budget` after every lever ran. The sanction does not describe the behaviour.
 
 ## Fixed
 
-Every item below is landed, tested and pushed. Test pins that encoded the old behaviour were reversed with the reasoning written into each.
+Every item below is implemented and pinned by tests. Test pins that encoded the old behaviour were reversed with the reasoning written into each.
 
 | site | what changed |
 |---|---|
@@ -42,6 +42,9 @@ Every item below is landed, tested and pushed. Test pins that encoded the old be
 | `dedup.volatile_key` | the clock scrub is scoped to a runner's own tally line; a program's `elapsed: 12.50 s` keeps its number |
 | `massage._recover_fused_call` | records how much it discarded |
 | `ROLLUP_MAX_TOKENS` | 2048 → 8192 (rule 6: never cap output for latency) |
+| completion-gate output | removed every per-probe/head/middle/tail byte cut. The harness spools the complete marker-delimited stream outside the workspace and returns 6,000-byte pages over ordinary asynchronous shell calls. cria accepts it only after byte count and SHA-256 verify; a cut, reordered, malformed or missing page is explicit `UNKNOWN`, never green |
+| judge file evidence | removed `JUDGE_FILE_BUDGET` and newest-first preselection. Every readable text file supplied by the harness workspace view is quoted whole; every unavailable/binary file is named. Unknown size is data, not an integer comparison |
+| step-critic summary | removed the undisclosed 8,000-character tail. Ordinary summary prose reaches the critic whole; only a detected tool-call payload is rejected as not being a summary |
 
 ## Superseded notes
 
@@ -52,8 +55,7 @@ Every item below is landed, tested and pushed. Test pins that encoded the old be
 
 | site | what is cut | reaches |
 |---|---|---|
-| `proberun.py:1106` `OFFLINE_TAIL_BYTES = 600` | the whole network-off test run, twice tailed to 600 B | underpins the offline claim in **3,218 prompts** |
-| `proberun.py:967` `grep -B2 -A3` | a diagnostic's own continuation lines; the marker claims the opposite | coder, gate parser, judges |
+| `proberun.py` `OFFLINE_TAIL_BYTES = 600` | the raw network-off parse fallback (recognized tally lines travel whole) | fallback underpinning the offline claim |
 | `probeparse.py:982,938` `_CONTINUATION_MAX = 6`, `lines[i+1:i+4]` | the indented part that says *what* is wrong | coder, step critic, steer author |
 | `planner_tools.py:120` `_GREP_MAX_HITS = 60` | files past the 60th hit are never opened; reads as exhaustive | planner |
 | `writeproxy.py:1567` envelope strip | the harness's own `Warning: truncated output` line | coder reads a holed payload as whole |
@@ -65,11 +67,10 @@ Every item below is landed, tested and pushed. Test pins that encoded the old be
 
 ## Open — disclosed, and still truncation under the tightened rule
 
-`writeproxy.py:963` spill cut (46,080 B; worst **46,075 of 917,740**, 95% lost, 794 occurrences) · `focustrim.py:372` `_SPAM_KEEP` squash of *distinct* failed lookups (158 prompts; three different URLs folded as one "dead-end") · `selfcompact.py:667` replaced-fragment and refused-write stubs that point at nothing (**1,665** of 10,258 elisions) · `groundtruth.py:322` `JUDGE_FILE_BUDGET` (577 prompts; one run withheld **the deliverable and its tests** from the judge) · `webfetch.py:2042` `FIND_TOP_K = 3` (worst residual "1700 more matches") · `webfetch.py:991` endpoint/field caps · `apidiscovery.py` four caps · `loop.py:3708` step-critic summary tail · `loop.py:6943` `_READ_LEDGER_CAP` (alphabetical, so *which* files vanish is arbitrary) · `loop.py:9397` `TOUCHED_PATHS_CAP` · `loop.py:6359` `WRITES_SINCE_GATE_CAP` · `prompts/__init__.py:112` `named_list` — **one helper, ten seats**, including stranded test files the coder must fix · `probeparse.py:961` assertion message at 200 (expected-vs-got lives in the tail) · `probegate.py:492` the flagged source line at 200 · `planner_tools.py:168` grep match lines at 200.
+`writeproxy.py:963` spill cut (46,080 B; worst **46,075 of 917,740**, 95% lost, 794 occurrences) · `focustrim.py:372` `_SPAM_KEEP` squash of *distinct* failed lookups (158 prompts; three different URLs folded as one "dead-end") · `selfcompact.py:667` replaced-fragment and refused-write stubs that point at nothing (**1,665** of 10,258 elisions) · `webfetch.py:2042` `FIND_TOP_K = 3` (worst residual "1700 more matches") · `webfetch.py:991` endpoint/field caps · `apidiscovery.py` four caps · `loop.py:6943` `_READ_LEDGER_CAP` (alphabetical, so *which* files vanish is arbitrary) · `loop.py:9397` `TOUCHED_PATHS_CAP` · `loop.py:6359` `WRITES_SINCE_GATE_CAP` · `prompts/__init__.py:112` `named_list` — **one helper, ten seats**, including stranded test files the coder must fix · `probeparse.py:961` assertion message at 200 (expected-vs-got lives in the tail) · `probegate.py:492` the flagged source line at 200 · `planner_tools.py:168` grep match lines at 200.
 
 ## Correctness bugs found alongside
 
-- **`proberun.py` miscounts what it discloses.** "N located diagnostics" counts lines matching `path:number` — every traceback frame matches. The famous "308" are pytest stack frames, not 308 diagnostics. cria states a number it did not measure (5b).
 - **`content_reduce.strip_prose_text` is still on the coder's path.** The function-word deleter that cria's own docstring records turning *"could **be read from** it"* into *"could read it"*. Rare today (6 events), live.
 - **`dedup.volatile_key` blanks any decimal followed by a time unit, unanchored.** Two benchmark runs printing `elapsed: 12.50 s` and `elapsed: 3.10 s` fold into one group and the earlier is deleted. Latent — no timing task has run through it — and principle 25c names "4× faster" as a task shape the suite carries.
 - **`massage._recover_fused_call` keeps the first call and discards the second.** The last surviving member of the class fixed everywhere else.
@@ -86,11 +87,11 @@ Every item below is landed, tested and pushed. Test pins that encoded the old be
 
 ## Open, with the reason each is not a clean call
 
-### The gate's head+tail band — `proberun.py`
+### The gate's head+tail band — `proberun.py` — fixed 2026-09-05
 
-The largest single site: **23.9 MB** cut across 5,703 renderings, worst single elision 421,414 bytes against 2,811 delivered. It is not fixed because the fix is a design change, not a bound change: the check output has to reach the model somehow, and the honest options are (a) spill the full output to a file and route to it, the shape `_read_command` already uses, or (b) send it whole and let `contextfloor.fit` be the only narrowing, which is what rule 5 literally says. (a) writes into the workspace; (b) risks the harness cutting it mid-token instead, which is worse than cria cutting it knowingly. Both are defensible and they produce different systems.
+The largest single site cut **23.9 MB** across 5,703 renderings, with a worst single elision of 421,414 bytes against 2,811 delivered. The resolution is asynchronous harness-mediated transport, not a larger bound. The harness writes the complete gate aggregate to a temporary file outside the workspace and returns base64 pages through the same shell-tool request/response channel. Session-scoped `GatePlan` state enforces the next offset, a stable path/total/hash, exact final byte count, and SHA-256 before the existing section parser receives anything. cria never opens the harness path. The final page removes the temporary file on the harness side.
 
-Related and also open: the disclosure **miscounts**. "N located diagnostics" counts lines matching `path:number`, and every traceback frame matches — the famous "308" were pytest stack frames. That is a 5b bug inside a rule-5 violation and it should be fixed with whichever design wins.
+The old diagnostic selection and its false count disappeared with the clipping implementation. If any page is cut, replayed, reordered, malformed, or unavailable, the result is `UNKNOWN`; completion remains unsatisfied and no clean-gate wording can be produced.
 
 ### The fetch spill cut — `writeproxy.py:963`
 

@@ -1,10 +1,8 @@
 """The workspace survey was 4.7x the size of the tool result it rode home in, and was destroyed.
 
-`plan_gate` appends the survey to the gate script, so the probe sections and the survey travel in
-ONE tool result. The probe sections are already budgeted to fill that result on their own
-(`probe_output_budget` divides `INLINE_RESULT_MAX_BYTES` less the marker overhead). The survey was
-appended on top under a bound of its own — `TREE_MAX_BYTES = 48_000` — beneath a comment claiming
-those bounds "keep the whole survey comfortably inside a normal cap".
+`plan_gate` appends the survey to the gate script. It once competed with probe sections for ONE tool
+result, each under independently derived byte limits. It now travels inside the same lossless,
+checked spool as the probe output; its own structural fold remains explicit.
 
 Measured two ways. Across 401 real harness-truncated results in `~/.cria/calls` the retained size is
 9,292 min / 10,212 median / 10,223 p90. Running the real survey program against all 87 archived run
@@ -29,7 +27,7 @@ import subprocess
 import tempfile
 import unittest
 
-from cria import content_reduce, probegate, proberun, wsview
+from cria import content_reduce, probegate, wsview
 
 
 def _tree(files, per_dir=40):
@@ -97,40 +95,18 @@ class ASurveyFitsOneResultTests(unittest.TestCase):
         self.assertFalse(view.surveyed)
 
 
-class TheGateGivesTheSurveyWhatIsLeftTests(unittest.TestCase):
-    def test_a_gate_with_no_probes_hands_over_nearly_the_whole_result(self):
-        root = _tree(600)
-        plan = probegate.plan_gate(root)
-        budget = (content_reduce.INLINE_RESULT_MAX_BYTES
-                  - proberun.probe_output_budget(len(plan.candidates))[0] * len(plan.candidates)
-                  - proberun.MARKER_OVERHEAD_BYTES)
-        if plan.candidates:
-            self.skipTest("this workspace produced probes; the no-probe arm is covered by the unit above")
-        self.assertGreater(budget, 5_000)
+class TheSurveyRidesInsideTheLosslessSpoolTests(unittest.TestCase):
+    def test_the_gate_does_not_give_probe_output_a_competing_budget(self):
+        plan = probegate.plan_gate(_tree(600))
+        self.assertTrue(plan.transport_required)
+        self.assertNotIn("head -c", plan.script)
+        self.assertNotIn("tail -c", plan.script)
 
-    def test_the_whole_gate_script_still_fits_when_probes_and_survey_share_it(self):
-        """The property the sweep found broken: sections + overhead + survey inside one result."""
-        for probes in (0, 1, 4, 6):
-            with self.subTest(probes=probes):
-                cap, _ = proberun.probe_output_budget(probes) if probes else (0, True)
-                left = (content_reduce.INLINE_RESULT_MAX_BYTES - cap * probes
-                        - proberun.MARKER_OVERHEAD_BYTES)
-                carried = max(left, 0) if left >= wsview.TREE_MIN_BYTES else 0
-                self.assertLessEqual(cap * probes + proberun.MARKER_OVERHEAD_BYTES + carried,
-                                     content_reduce.INLINE_RESULT_MAX_BYTES)
-
-    def test_a_ranked_plan_still_leaves_the_survey_a_real_share(self):
-        """Up to the ranked cap the survey must still be worth carrying — otherwise every gate after
-        the first stops feeding the view, and an unsurveyed view is what `_confirm_completion` fails
-        open on. (A plan can exceed this count via the per-file syntax floor; that plan already
-        reports `fits=False`, which is its own finding.)"""
-        for probes in range(1, proberun.MAX_RANKED_GATE_PROBES + 1):
-            with self.subTest(probes=probes):
-                cap, fits = proberun.probe_output_budget(probes)
-                self.assertTrue(fits)
-                left = (content_reduce.INLINE_RESULT_MAX_BYTES - cap * probes
-                        - proberun.MARKER_OVERHEAD_BYTES)
-                self.assertGreaterEqual(left, wsview.TREE_MIN_BYTES)
+    def test_the_survey_is_written_before_the_transport_reader_runs(self):
+        plan = probegate.plan_gate(_tree(20))
+        self.assertIn(wsview.SURVEY_OPEN, plan.script)
+        self.assertLess(plan.script.index(wsview.SURVEY_OPEN),
+                        plan.script.index(probegate.TRANSPORT_PREFIX))
 
 
 if __name__ == "__main__":

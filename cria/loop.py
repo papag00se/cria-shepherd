@@ -945,16 +945,14 @@ def _judge_completion(chat_fn, role, system: str, user: str, rlog, *, phase: str
     # reading it, and the whole conversation being re-sent — 1,511 rounds across the captures, 87% of
     # them fetching exactly one file, at a cost that grows with every round (47K -> 62K -> 83K ->
     # 102K chars on one measured steer, its last call alone 247 seconds). Gathering facts is
-    # deterministic code's job; judging them is the reasoner's (#8). The tools stay: this covers the
-    # newest files under a budget, not the repository, and the block names anything it could not fit.
+    # deterministic code's job; judging them is the reasoner's (#8). The tools stay: every readable
+    # text file the harness has delivered is carried whole; unavailable bodies are named as unknown.
     # OPT-IN, and the steer author deliberately does not opt in. `6726b8a` removed inlined contents
     # from THAT seat after a 57K curl'd spec went in twice under two path spellings — 115K of a 210K
     # prompt, in a composed two-message call the context floor has no turns to drop from, and the
     # reasoner died four times. Its answer was a LIST plus tools, and it measured out at 210K -> 89K
-    # chars with zero dead calls. That decision stands where it was made. What is different for a
-    # JUDGE is the bound: whole files under JUDGE_FILE_BUDGET, canonical paths so one file cannot
-    # arrive twice, dependency trees already folded out, and anything that does not fit NAMED rather
-    # than cut — so the 57K spec would be skipped and pointed at, not inlined.
+    # chars with zero dead calls. That decision stands where it was made. Judges are different: the
+    # context floor is their only window-fit point, so this site does not preselect or clip files.
     if inspectable and seed_files:
         seeded = groundtruth.files_for_a_judge(workspace_root)
         if seeded:
@@ -2714,6 +2712,12 @@ class Loop:
                         sess.completion_probe_id = sess.probe_call_id = probe_tc["id"]
                         rlog.emit("loop.probe_reissued", plan_off=False, attempt=sess.probe_reissues)
                         return _completion_toolcalls([probe_tc], note="re-running checks (history was compacted)")
+                transport_tc = guard_gate_transport(
+                    sess, body, rlog, call_id=sess.completion_probe_id)
+                if transport_tc is not None:
+                    sess.completion_probe_id = transport_tc["id"]
+                    return _completion_toolcalls(
+                        [transport_tc], note="verifying — receiving the repo's complete check output")
                 sess.probe_call_id, sess.completion_probe_id = sess.completion_probe_id, ""
                 sess.probe_reissues = 0
                 errors = guard_gate_verdict(sess, body, rlog)
@@ -2740,8 +2744,9 @@ class Loop:
                     rlog.emit("loop.gate", plan_off=False, at="completion", blocked=True,
                               reds=sess.completion_gate_reds)
                     sess.steer_source = "completion gate (repo checks failed)"
-                    return self._renudge(sess, key, body,
-                                         prompts.render("gate_fail_steer", errors=errors), rlog)
+                    steer = (errors if getattr(sess.gate_plan, "transport_error", "") else
+                             prompts.render("gate_fail_steer", errors=errors))
+                    return self._renudge(sess, key, body, steer, rlog)
             elif not sess.gate_fresh:
                 probe_tc = guard_gate_op(sess, body, rlog, workspace_root=sess.workspace_root)
                 if probe_tc is not None:
@@ -3225,6 +3230,11 @@ class Loop:
         if sess.periodic_probe:  # M2 parity: a mid-step PERIODIC check-in, NOT a completion gate. Inject any
             # ground-truth error and keep working; NEVER advance the step (the coder didn't claim done). A
             # CLEAN check-in stays silent (guard_periodic_result returns None), so this can't complete a step.
+            transport_tc = guard_gate_transport(sess, body, rlog)
+            if transport_tc is not None:
+                sess.awaiting_probe = True
+                return _completion_toolcalls(
+                    [transport_tc], note=f"receiving complete check output for step {idx}/{total}")
             truth = guard_periodic_result(sess, body, rlog)
             return self._renudge(sess, key, body, truth, rlog) if truth else self._work(sess, key, body, rlog)
         probe = _read_tool_result(body.get("messages", []), sess.probe_call_id)
@@ -3236,6 +3246,11 @@ class Loop:
                 sess.probe_reissues += 1
                 rlog.emit("loop.probe_reissued", step=idx, attempt=sess.probe_reissues)
                 return _completion_toolcalls([probe_tc], note=f"re-running checks for step {idx}/{total} (history was compacted)")
+        transport_tc = guard_gate_transport(sess, body, rlog)
+        if transport_tc is not None:
+            sess.awaiting_probe = True
+            return _completion_toolcalls(
+                [transport_tc], note=f"receiving complete check output for step {idx}/{total}")
         sess.probe_reissues = 0  # a result (or the capped fallback) resolves the streak
 
         # Interpret the gate output through the ported probe modules (floor + probes + git).
@@ -3264,9 +3279,12 @@ class Loop:
             getattr(outcome, "participation", None), fresh=getattr(sess, "gate_fresh", None))
         if not outcome.ran:
             # The script never ran (harness declined / no markers). Don't wedge — the pre-existing
-            # fail-open: the critic still judges, told explicitly that no diagnostics ran.
-            rlog.emit("loop.probe", step=idx, passed=True, gate_ran=False)
-            digest = prompts.load("probe_digest_none")
+            # fail-open: the critic still judges. A broken transport is distinct: the check did run,
+            # but its evidence is UNKNOWN, which must never be logged or described as a pass.
+            unknown = bool(getattr(outcome, "transport_unknown", False))
+            rlog.emit("loop.probe", step=idx, passed=not unknown, gate_ran=False,
+                      transport_unknown=unknown)
+            digest = gate_error_text(outcome) if unknown else prompts.load("probe_digest_none")
             evidence = self._grounded_evidence(sess, body, rlog)
             ok, reason = self._verify(item.text, sess.pending_coder_text, digest, evidence, rlog, idx=idx, total=total, key=key,
                                       coder_tools=_coder_tools_summary(body.get("tools")),
@@ -3752,12 +3770,10 @@ class Loop:
         # The summary slot is a CLAIM, labeled as such — but unbounded it carried a measured 119KB
         # leaked edit_file blob into a 151KB critic prompt (0567-critic, run 0728T000013), 5x the
         # evidence budget in the same prompt. A leaked tool call is not a summary at all; a huge
-        # summary keeps only its tail, disclosed.
+        # tool-shaped output is rejected as not being a summary at all. Ordinary summary prose is
+        # evidence and reaches the critic whole; context fitting belongs only at the context floor.
         if massage.has_tool_call_leak(coder_text):
             coder_text = labels["summary_leak"]
-        elif len(coder_text) > 8000:
-            coder_text = (f"[{len(coder_text) - 8000:,} characters of the coder's summary elided — "
-                          f"its most recent part follows]\n" + coder_text[-8000:])
         parts.append(prompts.fill(labels["summary"], coder_summary=coder_text))
         # The critic is reasoning about the coder's work — give it the coder's tools too, so a NOT-done
         # reason it writes back names an action the coder can actually take (blind to them, it can't).
@@ -4188,6 +4204,11 @@ class Loop:
         reissue = guard_probe_reissue(sess, body, rlog, rewritten=rewritten, workspace_root=sess.workspace_root)
         if reissue is not None:
             return reissue
+        if sess.done_probe or sess.periodic_probe or sess.awaiting_probe:
+            transport_tc = guard_gate_transport(sess, body, rlog)
+            if transport_tc is not None:
+                return _completion_toolcalls(
+                    [transport_tc], note="verifying — receiving the repo's complete check output")
         # A completion-gate probe we emitted last turn (to verify a 'done') has now run.
         if sess.done_probe:
             sess.done_probe = False
@@ -4219,8 +4240,12 @@ class Loop:
                         [probe_tc], note="verifying — running the repo's checks")
             if errors:  # a check FAILED → steer to fix (pass the FULL output; the context floor bounds it)
                 rlog.emit("loop.gate", plan_off=True, blocked=True)
-                sess.nudge_reason = prompts.render("gate_fail_steer", errors=errors)
-                sess.steer_source = "completion gate (repo checks failed)"
+                if getattr(sess.gate_plan, "transport_error", ""):
+                    sess.nudge_reason = errors
+                    sess.steer_source = "completion gate (check evidence unknown)"
+                else:
+                    sess.nudge_reason = prompts.render("gate_fail_steer", errors=errors)
+                    sess.steer_source = "completion gate (repo checks failed)"
             elif self._ctx.reasoner_role is not None and (critic_reason := self._done_critic_reason(sess, body, rlog)):
                 # The objective gate is GREEN, but the task-level reasoner critic (parity with the loop's
                 # _verify) says the WHOLE task isn't done. NO once-bound: this re-runs on EVERY green
@@ -5715,6 +5740,42 @@ def guard_gate_replan_after_survey(gs: GuardState, body: dict, rlog, *, workspac
     return probe
 
 
+def guard_gate_transport(gs: GuardState, body: dict, rlog, *, call_id: str = "") -> dict | None:
+    """Consume the current gate page and, when needed, ask the HARNESS for the next one.
+
+    This is the asynchronous bridge shared by completion, periodic, and guard probes. It never
+    reads the harness filesystem: the next offset is composed into another ordinary shell call.
+    A malformed/cut page arms ``transport_error`` and returns no continuation; the subsequent gate
+    interpretation reports explicit UNKNOWN and cannot produce a clean verdict.
+    """
+    plan = getattr(gs, "gate_plan", None)
+    if plan is None or not getattr(plan, "transport_required", False):
+        return None
+    raw = _read_tool_result(body.get("messages", []), call_id or gs.probe_call_id)
+    state = probegate.ingest_transport(plan, raw)
+    if state != "pending":
+        if state == "unknown":
+            rlog.emit("gate.transport_unknown", level="warn", reason=plan.transport_error,
+                      received=len(plan.transport_data), total=plan.transport_total)
+        return None
+    command = probegate.continue_transport_command(plan)
+    tool = find_shell_tool(body.get("tools"))
+    if not command or tool is None:
+        probegate.fail_transport(plan, "the harness no longer offers a shell for the next page")
+        rlog.emit("gate.transport_unknown", level="warn", reason=plan.transport_error,
+                  received=len(plan.transport_data), total=plan.transport_total)
+        return None
+    call = {
+        "id": "call_" + uuid.uuid4().hex[:16],
+        "type": "function",
+        "function": {"name": tool["name"],
+                     "arguments": json.dumps(shell_args(tool, command))},
+    }
+    gs.probe_call_id = call["id"]
+    rlog.emit("gate.transport_page", received=len(plan.transport_data), total=plan.transport_total)
+    return call
+
+
 def _refusals_in_window(messages: list[dict] | None) -> tuple[int, str]:
     """How many of the last REPEAT_WINDOW forwarded calls cria itself refused, and the most recent
     refused call's ``name args`` — bounded to REPEAT_ACTION_CHARS.
@@ -6256,18 +6317,22 @@ def record_gate_state(gs: GuardState, outcome, findings: str, rlog=None) -> None
 
     A gate that could not RUN is a neutral non-signal: never red, never green, and it must not touch
     the stall streak (:func:`track_gate_progress` says so in its own words). It still counts as
-    ATTEMPTED — the completion backstop's long-standing fail-open — so `gate_fresh` is set. The one
-    exception is a survey-only bootstrap: it enables a newly discovered gate but attempted none of
-    those checks, so it requires that new plan and remains stale."""
+    ATTEMPTED — the completion backstop's long-standing fail-open — so `gate_fresh` is set. The two
+    exceptions are a survey-only bootstrap, which requires a newly planned gate, and incomplete
+    transport, which is explicit UNKNOWN. Neither is fresh evidence."""
     gs.last_gate_ran = bool(outcome.ran)
     # Stored before every early return: missing/partial/failed gate sections are exactly where
     # unknown participation must survive rather than inheriting an older green event.
     gs.last_gate_participation = getattr(outcome, "participation", None)
     gs.gate_replan_required = bool(getattr(outcome, "replan_after_survey", False))
+    if getattr(outcome, "transport_unknown", False):
+        # A missing byte is not the older, deliberately fail-open "the harness declined to run"
+        # case. The gate did run, but its evidence cannot be proved complete. Preserve any prior red,
+        # leave completion unsatisfied, and make the UNKNOWN visible to the caller.
+        gs.gate_fresh = False
+        return
     if gs.gate_replan_required:
-        # Only the survey ran.  It made a better plan possible; it did not attempt that plan and may
-        # not satisfy freshness.  Every completion reader consumes this flag through the shared
-        # guard_gate_replan_after_survey helper above.
+        # Only the survey ran. It made a better plan possible; it did not attempt that plan.
         gs.gate_fresh = False
         if rlog is not None:
             rlog.emit("loop.gate_survey_only", level="info")
@@ -6325,6 +6390,8 @@ def guard_gate_verdict(gs: GuardState, body: dict, rlog) -> str | None:
     # error. Its wording lives in prompts (#22); the old one was an inline f-string here.
     findings = gate_error_text(outcome)
     record_gate_state(gs, outcome, findings, rlog)
+    if getattr(outcome, "transport_unknown", False):
+        return prompts.load("probe_transport_unknown")
     if not outcome.ran:
         rlog.emit("loop.gate", plan_off=True, blocked=False, gate_ran=False,
                   replan_after_survey=bool(getattr(outcome, "replan_after_survey", False)))
@@ -6373,8 +6440,10 @@ def read_gate(plan, probe_text: str, rlog) -> "probegate.GateOutcome":
 
 
 def gate_error_text(outcome) -> str:
-    """The ERROR-class ground truth from a gate outcome — file:line findings, or a check that RAN and
-    FAILED with no parseable location. Returns '' when the gate is clean, couldn't run, or never ran.
+    """The blocking ground truth from a gate outcome: findings, hard failure, or transport UNKNOWN.
+
+    Returns '' when the gate is clean, could not run, or never ran. Transport UNKNOWN is deliberately
+    nonempty so every completion path fails closed without mislabeling it as a checker failure.
 
     This is the ONLY part a PERIODIC check-in surfaces. On a clean check-in there is nothing to fix, so
     injecting the "the checks pass, but that's not proof of correct behaviour — keep fixing" hedge just
@@ -6394,6 +6463,8 @@ def gate_error_text(outcome) -> str:
     contradicting each other. Both are now surfaced together, and the "could not be parsed" framing
     is reserved for the case where nothing was.
     """
+    if getattr(outcome, "transport_unknown", False):
+        return prompts.load("probe_transport_unknown")
     if not outcome.ran:
         return ""
     findings = proberun.completion_block_nudge(outcome.report)
