@@ -12,34 +12,18 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import shutil
 import sys
 import time
 from pathlib import Path
 
+import workspace_evidence
+
 
 SUITE = Path(__file__).resolve().parent
 ROOT = Path.home() / ".cria" / "suite" / "_milestones"
 SYSTEM = SUITE / "prompts" / "milestone_judge.txt"
-SKIP_DIRS = {".git", "target", "node_modules", "vendor", "__pycache__", ".venv", "venv",
-             "build", "dist", "tmp", ".mvn", ".cell-installs"}
 DECISIONS = {"complete", "continue", "stalled"}
-
-
-def _tree(ws: Path, limit: int = 400) -> str:
-    out = []
-    for dirpath, dirnames, filenames in os.walk(ws):
-        dirnames[:] = sorted(d for d in dirnames if d not in SKIP_DIRS)
-        for name in sorted(filenames):
-            p = Path(dirpath) / name
-            try:
-                out.append(f"  {p.relative_to(ws)} ({p.stat().st_size} B)")
-            except OSError:
-                continue
-            if len(out) >= limit:
-                return "\n".join(out) + f"\n  … listing stopped at {limit} entries"
-    return "\n".join(out) or "  (empty)"
 
 
 def checkpoint_name(run_id: str, minute: int) -> str:
@@ -55,15 +39,14 @@ def create(run_id: str, minute: int, ws: Path, task_dir: Path) -> Path:
         shutil.rmtree(snapshot)
     shutil.copytree(ws, snapshot, symlinks=True)
     prompt = (task_dir / "prompt.txt").read_text(errors="replace").strip()
-    meta = (task_dir / "meta.toml").read_text(errors="replace").strip()
     packet = "\n".join([
         SYSTEM.read_text().strip(),
         "", "=" * 78, "",
         f"CHECKPOINT: {run_id} at {minute} active minutes", "",
         f"THE TASK THE CODER WAS GIVEN:\n{prompt}", "",
-        f"TASK METADATA:\n{meta}", "",
         f"FROZEN WORKSPACE SNAPSHOT (inspect with read-only tools):\n{snapshot}", "",
-        f"EVERY VISIBLE DELIVERED FILE:\n{_tree(snapshot)}", "",
+        "COMPLETE FROZEN WORKSPACE TREE (all entries; symlinks are not followed):\n"
+        f"{workspace_evidence.tree(snapshot)}", "",
     ])
     (out / "packet.txt").write_text(packet)
     return out

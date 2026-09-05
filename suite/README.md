@@ -15,7 +15,7 @@ python3 suite/run.py \
   --note "experiment label"
 ```
 
-The default milestone interval is 30 active minutes. `--milestone-minutes N` changes that interval; the maximum active budget is `N × declared deliverables`, but each additional interval must be earned by an inference judgment.
+The default milestone interval is 30 active minutes. `--milestone-minutes N` changes that interval; the maximum active budget is `N × meta.budget_intervals`, but each additional interval must be earned by an inference judgment. `budget_intervals` is pacing only: `prompt.txt` is the sole judgment contract.
 
 When a checkpoint appears:
 
@@ -38,7 +38,7 @@ printf '%s' '<judgment JSON>' | python3 suite/usefulness.py record <run-id>
 python3 suite/usefulness.py show
 ```
 
-The judge infers deliverables from the task, inspects the archived workspace with read-only tools, and records a 0–100 usefulness judgment with per-deliverable reasons. Claims from the coding session are not evidence.
+The judge infers deliverables only from the original `prompt.txt`, inspects the archived workspace with read-only tools, and records a 0–100 usefulness judgment with per-deliverable reasons. Task metadata and claims from the coding session are not judgment contracts or evidence.
 
 ## Replays and walks
 

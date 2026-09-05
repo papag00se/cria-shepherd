@@ -1,6 +1,7 @@
 name = "handles-go"
 language = "go"
 shape = "api-integration"   # HTTP API research + client + tests + live test + docs
-deliverables = ["resolver program", "unit tests", "live test", "README"]
+# Pacing only; prompt.txt is the sole task and judgment contract.
+budget_intervals = 4
 # Deliberately the SAME problem as ada-handles (python). The battery varies ONE thing at a
 # time; this axis is the language. Shape variation is a separate axis, added as its own tasks.

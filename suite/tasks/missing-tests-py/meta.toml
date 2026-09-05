@@ -2,4 +2,5 @@ name = "missing-tests-py"
 language = "python"
 shape = "seeded-test-design"   # starts from EXISTING untested code
 category = 4                   # "write missing unit tests" (operator's battery list)
-deliverables = ["test suite that passes", "tests that actually catch bugs (mutation-scored)"]
+# Pacing only; prompt.txt is the sole task and judgment contract.
+budget_intervals = 2

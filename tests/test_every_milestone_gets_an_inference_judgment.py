@@ -1,6 +1,6 @@
-import inspect
 import json
 import sys
+import tomllib
 from pathlib import Path
 
 
@@ -17,7 +17,7 @@ def test_checkpoint_freezes_the_workspace_for_read_only_inspection(tmp_path, mon
     task = tmp_path / "task"
     task.mkdir()
     (task / "prompt.txt").write_text("Deliver the answer.")
-    (task / "meta.toml").write_text('deliverables = ["answer"]\n')
+    (task / "meta.toml").write_text('budget_intervals = 1\nprivate_hint = "not a requirement"\n')
     monkeypatch.setattr(milestones, "ROOT", tmp_path / "checkpoints")
 
     checkpoint = milestones.create("run-1", 30, workspace, task)
@@ -27,6 +27,9 @@ def test_checkpoint_freezes_the_workspace_for_read_only_inspection(tmp_path, mon
     packet = (checkpoint / "packet.txt").read_text()
     assert "run-1 at 30 active minutes" in packet
     assert str(checkpoint / "workspace") in packet
+    assert "Deliver the answer." in packet
+    assert "TASK METADATA" not in packet
+    assert "private_hint" not in packet
 
 
 def test_only_inference_decisions_are_accepted():
@@ -39,15 +42,6 @@ def test_only_inference_decisions_are_accepted():
     assert milestones.parse('{"decision":"continue","deliverables":[]}') is None
 
 
-def test_runner_pauses_and_waits_at_every_interval():
-    src = inspect.getsource(suite_run.main)
-    assert "next_milestone = milestone_s" in src
-    assert "pause_run()" in src
-    assert "milestones.create(" in src
-    assert "milestones.wait(" in src
-    assert "next_milestone += milestone_s" in src
-
-
 def test_inference_controls_whether_another_interval_is_earned():
     assert suite_run.milestone_terminal("complete", 30, False) == "milestone-complete-30min"
     assert suite_run.milestone_terminal("stalled", 30, False) == "milestone-stalled-30min"
@@ -55,12 +49,38 @@ def test_inference_controls_whether_another_interval_is_earned():
     assert suite_run.milestone_terminal("continue", 150, True) == "budget-killed"
 
 
+def test_every_task_declares_an_integer_budget_not_a_second_judgment_contract():
+    for prompt_path in sorted((ROOT / "suite" / "tasks").glob("*/prompt.txt")):
+        task_dir = prompt_path.parent
+        meta_path = task_dir / "meta.toml"
+        assert meta_path.is_file(), f"{task_dir.name} has no pacing metadata"
+        meta = tomllib.loads(meta_path.read_text())
+        with_budget = meta.get("budget_intervals")
+        assert isinstance(with_budget, int) and not isinstance(with_budget, bool)
+        assert with_budget > 0
+        assert "deliverables" not in meta
+
+
+def test_maximum_active_budget_tracks_only_the_declared_budget(tmp_path):
+    task = tmp_path / "task"
+    task.mkdir()
+    (task / "meta.toml").write_text('budget_intervals = 3\n')
+    assert suite_run.budget_intervals(task) == 3
+    pacing = suite_run.MilestonePacing(started_at=0.0, interval_seconds=7 * 60,
+                                       budget_intervals=suite_run.budget_intervals(task))
+    assert pacing.maximum_active_seconds == 21 * 60
+
+
 def test_waiting_for_the_judge_does_not_consume_active_time():
-    src = inspect.getsource(suite_run.main)
-    assert "time.time() - t0 - paused_seconds" in src
-    assert "paused_seconds += time.time() - pause_started" in src
-
-
-def test_maximum_active_budget_tracks_declared_deliverables():
-    src = inspect.getsource(suite_run.main)
-    assert "wall = milestone_s * deliverable_count(task_dir)" in src
+    pacing = suite_run.MilestonePacing(started_at=100.0, interval_seconds=60,
+                                       budget_intervals=3)
+    assert not pacing.due(159.9)
+    assert pacing.due(160.0)
+    pacing.record_pause(40.0)
+    assert not pacing.due(199.9)
+    assert pacing.due(200.0)
+    assert not pacing.at_limit
+    pacing.advance()
+    assert pacing.next_milestone == 120
+    pacing.advance()
+    assert pacing.at_limit

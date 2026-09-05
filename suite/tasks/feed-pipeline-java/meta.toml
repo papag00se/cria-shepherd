@@ -2,13 +2,8 @@ name = "feed-pipeline-java"
 language = "java"
 shape = "seeded-multi"          # slow, racy, and fed malformed data
 categories = [17, 10, 13, 20]   # data transform / optimise slow code / concurrency / code review
-deliverables = [
-  "messy rows handled + skip counts",
-  "four times faster, same numbers",
-  "race fixed, workers on",
-  "REVIEW.md with file and line",
-  "third-party CSV library",
-]
+# Pacing only; prompt.txt is the sole task and judgment contract.
+budget_intervals = 5
 
 [capabilities]
 coding    = ["executable", "concurrency", "docs", "deps"]

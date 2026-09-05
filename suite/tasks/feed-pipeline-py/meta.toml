@@ -2,4 +2,5 @@ name = "feed-pipeline-py"
 language = "python"
 shape = "seeded-multi"        # slow, racy, and fed malformed data
 categories = [17, 10, 13, 20] # data transform / optimise slow code / concurrency / code review
-deliverables = ["handles malformed rows + reports skips", "substantially faster", "race fixed with workers on", "REVIEW.md naming real issues"]
+# Pacing only; prompt.txt is the sole task and judgment contract.
+budget_intervals = 4

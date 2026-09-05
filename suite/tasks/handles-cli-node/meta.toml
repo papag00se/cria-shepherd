@@ -2,12 +2,8 @@ name = "handles-cli-node"
 language = "node"
 shape = "seeded-multi"         # a working script that must become a shippable tool
 categories = [18, 16, 7, 15]   # external service / CLI tooling / dependency migration / containerise
-deliverables = [
-  "CLI with --json/--help/exit codes and holder + total handles",
-  "off `request` onto fetch, no runtime deps",
-  "tests incl. live",
-  "Dockerfile",
-]
+# Pacing only; prompt.txt is the sole task and judgment contract.
+budget_intervals = 4
 
 [capabilities]
 coding    = ["executable", "tests", "deps", "packaging"]

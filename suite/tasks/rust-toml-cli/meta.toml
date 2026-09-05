@@ -1,7 +1,8 @@
 name = "rust-toml-cli"
 language = "rust"
 shape = "needs-search"      # must discover/use a third-party crate correctly; compile loop pressure
-deliverables = ["cargo project", "dotted-path lookup", "unit tests", "README"]
+# Pacing only; prompt.txt is the sole task and judgment contract.
+budget_intervals = 4
 
 [capabilities]
 coding    = ["executable", "deps", "tests", "docs"]

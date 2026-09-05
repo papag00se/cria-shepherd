@@ -8,6 +8,7 @@ SUITE = ROOT / "suite"
 
 def test_no_task_specific_graders_exist():
     assert not list((SUITE / "tasks").glob("*/verify.py"))
+    assert not list((SUITE / "tasks").glob("*/hidden/*"))
     assert not (SUITE / "results" / "gates").exists()
 
 

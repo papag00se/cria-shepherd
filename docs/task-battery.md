@@ -32,12 +32,12 @@ The matrix deliberately spans languages. A pattern seen only in one ecosystem ca
 
 ## Seeding
 
-A task with `seed/` is copied into a fresh workspace and committed before the run. This keeps `git status` clean and makes the coder's changes legible. Task-specific hidden grading material is not part of the suite.
+A task with `seed/` is copied into a fresh workspace and committed before the run. This keeps `git status` clean and makes the coder's changes legible. The retired hidden graders sometimes enforced requirements their prompts left open; they and their source-text tests are gone, so a task cannot punish work against a contract the coder never received.
 
 ## Time budgets
 
-The default interval is 30 active minutes. At every interval the harness pauses while the campaign agent inspects a frozen snapshot and records `complete`, `continue`, or `stalled`. A `continue` judgment earns one more interval, up to the maximum active budget of `N × len(meta.deliverables)`; waiting for the judge consumes no active time.
+The default interval is 30 active minutes. At every interval the harness pauses while the campaign agent inspects a frozen snapshot and records `complete`, `continue`, or `stalled`. A `continue` judgment earns one more interval, up to the maximum active budget of `N × meta.budget_intervals`; waiting for the judge consumes no active time. The positive integer `budget_intervals` sizes time only and describes no deliverable.
 
 ## Task prompts
 
-Each task's `prompt.txt` is its sole instruction source. `suite/run.py` reads it at the beginning of every run. A material prompt change requires incrementing `PROMPT_REV` in `suite/battery_run.py` so later usefulness comparisons do not silently mix task definitions.
+Each task's `prompt.txt` is its sole instruction and judgment contract. `suite/run.py` reads it at the beginning of every run, and neither judge receives `meta.toml`. A material prompt change requires incrementing `PROMPT_REV` in `suite/battery_run.py` so later usefulness comparisons do not silently mix task definitions.

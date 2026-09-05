@@ -2,13 +2,8 @@ name = "shipping-rates-rb"
 language = "ruby"
 shape = "seeded-multi"     # starts from EXISTING code; debug + feature + tests + docs
 categories = [3, 1, 4, 19] # resolve failing tests / feature from spec / write missing tests / update docs
-deliverables = [
-  "threshold bug fixed",
-  "express zone",
-  "own tests for express",
-  "README rate table",
-  "country code -> zone via a maintained gem",
-]
+# Pacing only; prompt.txt is the sole task and judgment contract.
+budget_intervals = 5
 
 [capabilities]
 coding    = ["executable", "tests", "docs", "deps"]

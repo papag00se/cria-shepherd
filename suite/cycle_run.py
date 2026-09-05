@@ -11,11 +11,11 @@ place that defines it.
     python3 suite/cycle_run.py --start 9       # resume at cell 9 after a kill
     python3 suite/cycle_run.py --dry-run       # print the cell order and exit
 
-NO TIMEOUT OF ITS OWN. The suite already owns the wall clock — 15 minutes per deliverable, read
+NO TIMEOUT OF ITS OWN. The suite already owns the wall clock — 15 minutes per budget interval, read
 from each task's `meta.toml` — and a second one layered on top does not bound anything, it only
 kills the long cells. A `timeout 3000` here once killed `orders-api-py` at 52 minutes of its own
-60-minute wall while it sat at 3 of 4 deliverables: no archive, no row, no evidence, and the rerun
-finished in 21 minutes at 4 of 4. The only reason to stop a cell early is the operator killing it.
+60-minute wall: no archive, no row, no evidence, and the rerun finished in 21 minutes. The only
+reason to stop a cell early is the operator killing it.
 
 Nothing here refreshes a report. `suite/run.py` already rewrites both grids as its last act, and a
 second refresh from out here is a copy of a fact with its own way of going stale.

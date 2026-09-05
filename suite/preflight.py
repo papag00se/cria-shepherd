@@ -42,9 +42,9 @@ TOOLS = {
     "phpunit": (["phpunit", "--version"], "PHP task execution"),
     "composer": (["composer", "--version"], "PHP dependency install inside a run"),
     "mvn": (["mvn", "-v"], "handles-java"),
-    # OPTIONAL: the containerise deliverable is scored by READING the Dockerfile (FROM + CMD), not
-    # by building it. Docker Desktop's binary is on PATH under WSL but its engine is not exposed to
-    # this distro, and requiring it would fail readiness over a check nothing performs.
+    # OPTIONAL: the read-only usefulness judge can inspect the Dockerfile but cannot build it.
+    # Docker Desktop's binary is on PATH under WSL but its engine is not exposed to this distro,
+    # and requiring it would fail readiness over an operation the suite never performs.
     "docker": (["docker", "--version"], "OPTIONAL — handles-cli-node's Dockerfile is read, not built"),
     "unshare": (["unshare", "--version"], "the network block every live-test check depends on"),
 }

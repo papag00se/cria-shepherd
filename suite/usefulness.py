@@ -11,19 +11,19 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
-import os
 import sys
 from pathlib import Path
+
+import workspace_evidence
 
 
 SUITE = Path(__file__).resolve().parent
 ROOT = SUITE.parent
 RESULTS = SUITE / "results" / "results.jsonl"
-SKIP_DIRS = {".git", "target", "node_modules", "vendor", "__pycache__", ".venv", "venv",
-             "build", "dist", "tmp", ".mvn"}
 
 
 SYSTEM = SUITE / "prompts" / "usefulness_judge.txt"
+PACKET_VERSION = "SUITE EVIDENCE PACKET: 2"
 
 # The stop-looking line, in THIS judge's schema. See the call site.
 ANSWER_NOW = ('You have inspected enough. Answer NOW with ONLY the JSON object: '
@@ -31,20 +31,25 @@ ANSWER_NOW = ('You have inspected enough. Answer NOW with ONLY the JSON object: 
               '"deductions": [{"points": <n>, "for": "<what cost it>"}]}')
 
 
-def _tree(ws: Path, limit: int = 400) -> str:
-    """Every file the coder produced, with sizes — the disk, not the transcript's idea of it."""
-    out = []
-    for dirpath, dirnames, filenames in os.walk(ws):
-        dirnames[:] = sorted(d for d in dirnames if d not in SKIP_DIRS)
-        for name in sorted(filenames):
-            p = Path(dirpath) / name
-            try:
-                out.append(f"  {p.relative_to(ws)} ({p.stat().st_size} B)")
-            except OSError:
-                continue
-            if len(out) >= limit:
-                return "\n".join(out) + f"\n  … listing stopped at {limit} entries"
-    return "\n".join(out) or "  (empty)"
+def _current_contract(text: str) -> str:
+    """Remove retired task metadata from legacy frozen packets.
+
+    New packets never contain it. Old packets can outlive their archive, though, and replaying a
+    hand-authored deliverables list would quietly restore the second judgment contract this module
+    removed. A legacy capped inventory is labelled partial because its missing paths cannot be
+    recovered after the archive is gone.
+    """
+    if text.startswith(PACKET_VERSION + "\n"):
+        return text
+    before, marker, after = text.rpartition("\n\nTASK METADATA:\n")
+    if marker:
+        _metadata, workspace_marker, workspace = after.partition("\n\nWORKSPACE ARCHIVE ")
+        if workspace_marker:
+            text = before + workspace_marker + workspace
+    if "… listing stopped at " in text:
+        text = text.replace("EVERY VISIBLE FILE DELIVERED (on disk, with sizes):",
+                            "PARTIAL LEGACY WORKSPACE TREE (the archived inventory was capped):")
+    return text
 
 
 def packet_path(run_id: str) -> Path:
@@ -75,16 +80,16 @@ def evidence(row: dict, _saved: bool = True) -> tuple[str, str]:
     saved = packet_path(row.get("run_id", ""))
     ws_gone = not (Path(row.get("archive") or "") / "workspace").is_dir()
     if _saved and ws_gone and saved.is_file():
-        text = saved.read_text(errors="replace")
+        text = _current_contract(saved.read_text(errors="replace"))
         stamp = text + "\n\n---RUBRIC---\n" + SYSTEM.read_text()
         return text, hashlib.sha1(stamp.encode("utf-8", "replace")).hexdigest()[:16]
     task_dir = SUITE / "tasks" / row["task"]
     ws = Path(row.get("archive") or "") / "workspace"
     prompt = (task_dir / "prompt.txt").read_text(errors="replace").strip()
-    meta = (task_dir / "meta.toml").read_text(errors="replace").strip()
-    lines = [f"THE TASK THE CODER WAS GIVEN:\n{prompt}", "", f"TASK METADATA:\n{meta}", "",
+    lines = [PACKET_VERSION, "", f"THE TASK THE CODER WAS GIVEN:\n{prompt}", "",
              f"WORKSPACE ARCHIVE (inspect it with read-only tools):\n{ws}", "",
-             f"EVERY VISIBLE FILE DELIVERED (on disk, with sizes):\n{_tree(ws)}"]
+             "COMPLETE WORKSPACE TREE (all entries; symlinks are not followed):\n"
+             f"{workspace_evidence.tree(ws)}"]
 
     lines += ["", f"HOW THE SESSION ENDED: {row.get('terminal')} after {row.get('calls')} model "
                   f"calls and {round((row.get('wall_seconds') or 0) / 60, 1)} minutes."]

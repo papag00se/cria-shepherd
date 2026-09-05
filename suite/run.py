@@ -8,7 +8,7 @@ appends one JSON row to suite/results/results.jsonl.
 
 At every milestone interval the runner pauses the harness, freezes the workspace, and waits for the
 campaign agent to infer whether the work is complete, progressing, or stalled. A progressing run
-earns the next interval, up to one interval per declared deliverable; no checklist count or
+earns the next interval, up to the task's explicitly budget-only interval limit; no checklist count or
 mechanical task result participates. The default interval is 30 minutes.
 
 Kill mechanics follow the runctl scars: match the codex process list explicitly (ps + grep of
@@ -30,6 +30,7 @@ import sys
 import tempfile
 import time
 import tomllib
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import sampling
@@ -378,21 +379,50 @@ def collect_assists(t0: float, t1: float) -> dict:
     return {k: v for k, v in kinds.items() if not any(k.startswith(p) for p in plumbing)}
 
 
-def deliverable_names(task_dir: Path) -> list:
-    """The things this task must produce, in the task's own words — meta.toml is the authority.
-
-    This fixed denominator sets the task-sized time budget and final judgment denominator."""
+def budget_intervals(task_dir: Path) -> int:
+    """Maximum milestone intervals for this task; never a description of required work."""
     meta = tomllib.loads((task_dir / "meta.toml").read_text())
-    names = [str(d) for d in (meta.get("deliverables") or [])]
-    if not names:
-        raise RuntimeError(f"{task_dir.name}/meta.toml declares no deliverables — "
-                           "pacing has nothing to pace against")
-    return names
+    value = meta.get("budget_intervals")
+    if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+        raise RuntimeError(f"{task_dir.name}/meta.toml must declare a positive integer "
+                           "budget_intervals for pacing")
+    return value
 
 
-def deliverable_count(task_dir: Path) -> int:
-    """How many things this task must produce, so the maximum budget follows the task."""
-    return len(deliverable_names(task_dir))
+@dataclass
+class MilestonePacing:
+    """Active-time milestone schedule; judge wait time is excluded from every deadline."""
+
+    started_at: float
+    interval_seconds: int
+    budget_intervals: int
+    paused_seconds: float = 0.0
+    next_milestone: int = field(init=False)
+
+    def __post_init__(self) -> None:
+        if self.interval_seconds <= 0 or self.budget_intervals <= 0:
+            raise ValueError("milestone pacing values must be positive")
+        self.next_milestone = self.interval_seconds
+
+    @property
+    def maximum_active_seconds(self) -> int:
+        return self.interval_seconds * self.budget_intervals
+
+    @property
+    def at_limit(self) -> bool:
+        return self.next_milestone >= self.maximum_active_seconds
+
+    def active_elapsed(self, now: float) -> float:
+        return now - self.started_at - self.paused_seconds
+
+    def due(self, now: float) -> bool:
+        return self.active_elapsed(now) >= self.next_milestone
+
+    def record_pause(self, seconds: float) -> None:
+        self.paused_seconds += seconds
+
+    def advance(self) -> None:
+        self.next_milestone += self.interval_seconds
 
 
 def milestone_terminal(decision: str, minute: int, at_limit: bool) -> str | None:
@@ -446,7 +476,7 @@ def main() -> None:
     ap.add_argument("--level", type=int, default=None)
     ap.add_argument("--milestone-minutes", type=int, default=DEFAULT_MILESTONE_MINUTES,
                     help="active minutes per inference checkpoint (default: 30). A progressing run "
-                         "earns another interval, up to one interval per declared deliverable.")
+                         "earns another interval, up to the task's budget_intervals limit.")
     args = ap.parse_args()
     if args.milestone_minutes <= 0:
         ap.error("--milestone-minutes must be positive")
@@ -517,19 +547,14 @@ def main() -> None:
             proc.kill()
 
     milestone_s = args.milestone_minutes * 60
-    wall = milestone_s * deliverable_count(task_dir)
+    pacing = MilestonePacing(started_at=t0, interval_seconds=milestone_s,
+                             budget_intervals=budget_intervals(task_dir))
     terminal = "exited"
-    next_milestone = milestone_s
-    paused_seconds = 0.0
     milestone_judgments = []
 
-    def active_elapsed() -> float:
-        return time.time() - t0 - paused_seconds
-
     while proc.poll() is None:
-        elapsed = active_elapsed()
-        if elapsed >= next_milestone:
-            minute = round(next_milestone / 60)
+        if pacing.due(time.time()):
+            minute = round(pacing.next_milestone / 60)
             pause_started = time.time()
             if not pause_run():
                 terminal = "exited"
@@ -547,17 +572,17 @@ def main() -> None:
                 stop_run()
                 raise
             finally:
-                paused_seconds += time.time() - pause_started
+                pacing.record_pause(time.time() - pause_started)
             milestone_judgments.append({"at_active_minutes": minute, **verdict})
             print(f"[milestone] {minute}min decision={verdict['decision']}: "
                   f"{verdict['reason']}", flush=True)
             outcome = milestone_terminal(verdict["decision"], minute,
-                                         at_limit=next_milestone >= wall)
+                                         at_limit=pacing.at_limit)
             if outcome is not None:
                 terminal = outcome
                 stop_run()
                 break
-            next_milestone += milestone_s
+            pacing.advance()
             resume_run()
         time.sleep(2)
     t1 = time.time()
@@ -591,8 +616,9 @@ def main() -> None:
         "planner": args.planner, "note": args.note, "sampling": spec,
         **({"level": args.level} if args.level is not None else {}),
         "started": t0, "wall_seconds": round(t1 - t0, 1),
-        "active_seconds": round(t1 - t0 - paused_seconds, 1), "terminal": terminal,
+        "active_seconds": round(pacing.active_elapsed(t1), 1), "terminal": terminal,
         "milestone_minutes": args.milestone_minutes,
+        "budget_intervals": pacing.budget_intervals,
         "milestone_judgments": milestone_judgments,
         **capture,
         "assists": collect_assists(t0, t1),

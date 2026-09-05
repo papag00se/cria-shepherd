@@ -1,4 +1,5 @@
 name = "sqlite-inventory"
 language = "python"
 shape = "sql-backed-cli"    # schema design + SQL queries + CLI + tests + docs, fully offline
-deliverables = ["inventory.py CLI", "SQLite schema", "unit tests", "README"]
+# Pacing only; prompt.txt is the sole task and judgment contract.
+budget_intervals = 4

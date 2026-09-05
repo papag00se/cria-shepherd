@@ -1,7 +1,8 @@
 name = "ada-handles"
 language = "python"
 shape = "api-integration"   # HTTP API research + client + tests + live test + docs
-deliverables = ["resolver script", "unit tests", "live test", "README"]
+# Pacing only; prompt.txt is the sole task and judgment contract.
+budget_intervals = 4
 
 # The live service this task depends on. preflight refuses to start when it is not answering,
 # and run.py marks a run ABORTED when the captures show it throttling us mid-run.
