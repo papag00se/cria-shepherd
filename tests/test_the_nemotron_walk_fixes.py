@@ -162,7 +162,7 @@ class A4_AnApprovalFromAJudgeThatNeverLookedIsNotAnApproval(unittest.TestCase):
         ok, why = loop._confirm_completion("Write tests", "written", self._ws(), chat,
                                            self._role(), _Rlog(), phase="critic-confirm")
         self.assertFalse(ok)
-        self.assertIn("no test file", why)
+        self.assertEqual(why, "")  # no task-named path or evidence quote: prose is unsupported
 
 
 class A5_EveryLanguagesFloorAnswersTheSameQuestion(unittest.TestCase):

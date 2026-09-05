@@ -4,12 +4,14 @@ import pathlib
 import tempfile
 import types
 import unittest
+from unittest import mock
 from pathlib import Path
 
 from cria.probegate import GATE_SENTINEL
 from cria.loop import (Loop, LoopContext, LoopStore, PlanSession, TASK_COMPLETE_TOOL, _add_completion_tool,
                        _frame_for_item, _has_tool_calls, _completion_text, _normalize_completion,
-                       completion_to_sse, guard_rumination, guard_truncation, session_key)
+                       completion_to_sse, guard_rumination, guard_truncation, session_key,
+                       VerdictNudge)
 from cria import prompts, webfetch
 
 from cria.plan import Plan, PlanItem
@@ -195,15 +197,17 @@ class CompletionCriticTests(unittest.TestCase):
 
     def test_reopens_with_a_corrective_step_when_not_satisfied(self):
         from cria.loop import _COMPLETION_FIX_PREFIX
-        loop = self._loop(_Scripted([_sat(False, "the resolver 404s on the wrong endpoint",
-                                          fix="point the client at the fetched /handles route")]))
+        loop = self._loop(_Scripted([_sat(False)]))
         sess = self._done_sess()
-        reason = loop._reopen_if_unsatisfied(sess, _body(), _Rlog())
+        guidance = VerdictNudge("current check evidence: HTTP 404", sess.plan.task)
+        with mock.patch("cria.loop.judge_satisfaction",
+                        return_value=(False, guidance, guidance.action)):
+            reason = loop._reopen_if_unsatisfied(sess, _body(), _Rlog())
         self.assertIsNotNone(reason)                          # not None → caller re-drives, doesn't complete
         self.assertIn("404", reason)
         self.assertEqual(sess.plan.status, "in_progress")
         self.assertTrue(sess.plan.items[-1].text.startswith(_COMPLETION_FIX_PREFIX))
-        self.assertIn("point the client at", sess.plan.items[-1].text)   # the ACTION, not the essay
+        self.assertIn(sess.plan.task, sess.plan.items[-1].text)   # exact task requirement, not raw fix prose
         self.assertIsNotNone(sess.plan.current())             # a step to drive again
         self.assertEqual(sess.completion_checks, 1)
 
@@ -222,7 +226,8 @@ class CompletionCriticTests(unittest.TestCase):
         self.assertIsNotNone(reason)                          # still re-opens, still not "done"
         self.assertEqual(len(sess.plan.items), before)        # ...but the plan gained no essay
         self.assertFalse(any(i.text.startswith(_COMPLETION_FIX_PREFIX) for i in sess.plan.items))
-        self.assertIn("not in the workspace", sess.nudge_reason)   # the essay's real channel
+        self.assertNotIn("not in the workspace", sess.nudge_reason)  # unsupported essay was suppressed
+        self.assertIn("not confirmed", sess.nudge_reason)
 
     def test_no_step_means_no_step_quality_judge_is_called(self):
         # A judge asked to rate the quality of nothing is a wasted call.
@@ -247,16 +252,19 @@ class CompletionCriticTests(unittest.TestCase):
 
     def test_corrective_step_is_reused_while_open_appended_when_done(self):
         from cria.loop import _COMPLETION_FIX_PREFIX
-        loop = self._loop(_Scripted([_sat(False, "broken A", fix="fix the A path"),
-                                     _sat(False, "broken B", fix="fix the B path"),
-                                     _sat(False, "broken C", fix="fix the C path")]))
+        loop = self._loop(_Scripted([_sat(False)]))
         sess = self._done_sess()
-        loop._reopen_if_unsatisfied(sess, _body(), _Rlog())   # adds one corrective step
-        loop._reopen_if_unsatisfied(sess, _body(), _Rlog())   # still OPEN → reused in place (no bloat)
+        guidance = VerdictNudge("current evidence", sess.plan.task)
+        with mock.patch("cria.loop.judge_satisfaction",
+                        return_value=(False, guidance, guidance.action)):
+            loop._reopen_if_unsatisfied(sess, _body(), _Rlog())   # adds one corrective step
+            loop._reopen_if_unsatisfied(sess, _body(), _Rlog())   # still OPEN → reused in place (no bloat)
         fixes = [it for it in sess.plan.items if it.text.startswith(_COMPLETION_FIX_PREFIX)]
         self.assertEqual(len(fixes), 1)
         sess.plan.items[-1].done = True                       # it got verified — that record is history
-        loop._reopen_if_unsatisfied(sess, _body(), _Rlog())   # AUDIT 2026-08-04: a DONE corrective step
+        with mock.patch("cria.loop.judge_satisfaction",
+                        return_value=(False, guidance, guidance.action)):
+            loop._reopen_if_unsatisfied(sess, _body(), _Rlog())  # a DONE corrective step is retained
         fixes = [it for it in sess.plan.items if it.text.startswith(_COMPLETION_FIX_PREFIX)]
         self.assertEqual(len(fixes), 2)                       # …is never overwritten; a new one appends
         self.assertTrue(fixes[0].done)                        # the completed record survives, done bit intact
@@ -4344,7 +4352,7 @@ class SatisfactionCheckTests(unittest.TestCase):
         self.assertIn("keep working", reason)
 
     def test_reasoning_off_retry_CAN_confirm_not_satisfied(self):
-        # Rejecting is safe — a reasoning-off NOT-satisfied is trustworthy and respected with its reason.
+        # Rejecting remains fail-closed, but unsupported free-form prose is not forwarded.
         from cria.loop import judge_satisfaction
         calls = []
 
@@ -4356,7 +4364,7 @@ class SatisfactionCheckTests(unittest.TestCase):
 
         sat, reason, _fx = judge_satisfaction("t", "e", fake, None, _Rlog())
         self.assertFalse(sat)
-        self.assertIn("never run", reason)
+        self.assertEqual(reason, "")
 
     def test_careful_reasoning_on_pass_CAN_approve(self):
         # The reasoning-ON pass cleanly saying satisfied=true IS trusted — the only approval path — and
@@ -5372,12 +5380,15 @@ class SatisfactionJudgeToolTests(unittest.TestCase):
                         {"id": "s1", "type": "function",
                          "function": {"name": "list_dir", "arguments": "{}"}}]}}]}).encode()
                 return json.dumps({"choices": [{"message": {"content": json.dumps(
-                    {"satisfied": False, "reason": "README.md is not in the workspace"})}}]}).encode()
+                    {"satisfied": False, "reason": "README.md is not in the workspace",
+                     "proposed_fix": "Add README.md.", "diagnosis_kind": "missing_file",
+                     "subject": "README.md", "task_quote": "Add README.md.",
+                     "evidence_source": "workspace_absence", "evidence_quote": ""})}}]}).encode()
 
-            ok, reason, _fx = judge_satisfaction("task needing a README", "ev", chat, self._role(),
+            ok, reason, _fx = judge_satisfaction("Add README.md.", "ev", chat, self._role(),
                                             _Rlog(), workspace_root=ws)
         self.assertFalse(ok)
-        self.assertIn("README.md is not in the workspace", reason)
+        self.assertIn("README.md is not present", reason)
         self.assertTrue(any(t["function"]["name"] == "list_dir" for t in bodies[0]["tools"]))
         protocol = bodies[1]["messages"]
         self.assertEqual(protocol[-1]["role"], "tool")            # the REAL listing went back
@@ -5445,7 +5456,8 @@ class ApprovePathConfirmTests(unittest.TestCase):
                                       "", "ev", _Rlog(), idx=4, total=6, key="sid:x",
                                       workspace_root=ws)
         self.assertFalse(ok)                                       # the DONE did not survive
-        self.assertIn("no test file exists", reason)               # the checker's why is the nudge
+        self.assertIn("not yet verified", reason)                  # control survives; untyped why does not
+        self.assertNotIn("no test file exists", reason)
 
     def test_a_consistent_done_passes_through(self):
         verdict = {"choices": [{"message": {"content": json.dumps(
@@ -5569,11 +5581,18 @@ class ApprovePathConfirmTests(unittest.TestCase):
             {"satisfied": True, "reason": "everything delivered"})}}]}
         with tempfile.TemporaryDirectory() as ws:
             Path(ws, "resolve_handle.py").write_text("x\n")        # no README anywhere
-            chat = _Scripted([sat, self._confirm(False, "README.md is not in the workspace")])
-            ok, reason, _fx = judge_satisfaction("script plus README", "ev", chat, self._role(),
+            negative = self._confirm(False, "README.md is not in the workspace")
+            negative["choices"][0]["message"]["content"] = json.dumps({
+                "consistent": False, "why": "README.md is not in the workspace",
+                "proposed_fix": "Write README.md.", "diagnosis_kind": "missing_file",
+                "subject": "README.md", "task_quote": "Write README.md.",
+                "evidence_source": "workspace_absence", "evidence_quote": ""})
+            chat = _Scripted([sat, negative])
+            ok, reason, _fx = judge_satisfaction(
+                "Write resolve_handle.py and Write README.md.", "ev", chat, self._role(),
                                             _Rlog(), workspace_root=ws)
         self.assertFalse(ok)
-        self.assertIn("README.md is not in the workspace", reason)
+        self.assertIn("README.md is not present", reason)
 
 
 class ConfirmCheckerInspectsTests(unittest.TestCase):
@@ -5629,7 +5648,7 @@ class ConfirmCheckerInspectsTests(unittest.TestCase):
             ok, why = _confirm_completion("Write unit tests", "tests parameterized with live data",
                                           ws, chat, self._role(), _Rlog(), phase="critic-confirm")
         self.assertFalse(ok)
-        self.assertIn("no test file", why)
+        self.assertEqual(why, "")       # untyped diagnosis withheld; NOT_DONE remains
         protocol = bodies[1]["messages"]
         self.assertEqual(protocol[-1]["role"], "tool")
         self.assertIn("tmp/", protocol[-1]["content"])             # the REAL disk answered
@@ -5768,10 +5787,7 @@ class ConfirmRestatesItsOwnClaimTests(unittest.TestCase):
 
 
 class SatisfactionRouteGroundingTests(unittest.TestCase):
-    """THE COMPLETION CRITIC'S PROPOSED FIX WAS NEVER ROUTE-GROUNDED (run 0728-m10): its corrective
-    step handed the coder `GET https://api.handle.me/v1/resolve/{handle}` — an INVENTED route — while
-    the step critic's fixes have been ledger-checked since 94327f4. judge_satisfaction now takes the
-    same `routes` and _verdict_nudge withholds an ungrounded fix (the reason survives)."""
+    """Raw proposed routes never bypass the typed diagnosis contract."""
 
     def _role(self):
         from cria.config import Role
@@ -5785,8 +5801,7 @@ class SatisfactionRouteGroundingTests(unittest.TestCase):
         ok, reason, _fx = judge_satisfaction("t", "ev", _Scripted([sat]), self._role(), _Rlog(),
                                         routes="/handles/{handle}, /holders/{address}")
         self.assertFalse(ok)
-        self.assertIn("no resolver exists yet", reason)     # the reason survives
-        self.assertNotIn("/v1/resolve", reason)             # the invented route does not
+        self.assertEqual(reason, "")
 
     def test_a_ledger_route_in_the_corrective_is_kept(self):
         from cria.loop import judge_satisfaction
@@ -5796,7 +5811,7 @@ class SatisfactionRouteGroundingTests(unittest.TestCase):
         ok, reason, _fx = judge_satisfaction("t", "ev", _Scripted([sat]), self._role(), _Rlog(),
                                         routes="/handles/{handle}, /holders/{address}")
         self.assertFalse(ok)
-        self.assertIn("/handles/{handle}", reason)
+        self.assertEqual(reason, "")  # even a real route is not task/evidence provenance
 
 
 class GateNotesTests(unittest.TestCase):
@@ -5874,14 +5889,15 @@ class KeylessVerdictTests(unittest.TestCase):
         self.assertNotIn(("loop.verdict_flag_inferred",),
                          [(k,) for k, _ in rlog.events])
 
-    def test_nonempty_fix_infers_the_flag_false_and_keeps_the_fix(self):
+    def test_nonempty_free_form_fix_does_not_infer_a_typed_verdict(self):
         from cria.loop import judge_satisfaction
         sat, reason, _fx = judge_satisfaction(
             "t", "e",
             self._chat('{"reason": "README missing", "proposed_fix": "write README.md"}'),
             None, _Rlog())
         self.assertFalse(sat)
-        self.assertIn("README", reason)
+        self.assertIn("not yet verified", reason)
+        self.assertNotIn("README", reason)
 
     def test_no_fix_key_still_routes_to_the_retry(self):
         from cria.loop import judge_satisfaction
@@ -5902,7 +5918,11 @@ class KeylessVerdictTests(unittest.TestCase):
         rlog = _Rlog()
         self.assertEqual(_fill_missing_verdict_flag({"done": False, "proposed_fix": "x"}, "done", rlog, "p")["done"], False)
         self.assertIsNone(_fill_missing_verdict_flag({"reason": "r", "proposed_fix": " "}, "done", rlog, "p"))
-        self.assertFalse(_fill_missing_verdict_flag({"reason": "r", "proposed_fix": "do x"}, "done", rlog, "p")["done"])
+        self.assertIsNone(_fill_missing_verdict_flag({"reason": "r", "proposed_fix": "do x"}, "done", rlog, "p"))
+        typed = {"reason": "r", "proposed_fix": "do x", "diagnosis_kind": "other",
+                 "subject": "", "task_quote": "t", "evidence_source": "action_log",
+                 "evidence_quote": "e"}
+        self.assertFalse(_fill_missing_verdict_flag(typed, "done", rlog, "p")["done"])
         self.assertIsNone(_fill_missing_verdict_flag({"reason": "r"}, "done", rlog, "p"))
 
 
@@ -5952,10 +5972,8 @@ class TouchedPathsTests(unittest.TestCase):
         self.assertEqual(_touched_paths([]), [])
 
 
-class FabricatedActionVerdictTests(unittest.TestCase):
-    """A judge holds only read-only inspection tools; a verdict claiming "confirmed by curling"
-    is fabricated evidence (its reasoning shows only the INTENT — run 0729-mellum2 0153/0154).
-    Such a verdict routes to the retry/fail-closed path instead of standing."""
+class UnsupportedDiagnosisTests(unittest.TestCase):
+    """An untyped claim stays NOT_DONE without a second generic judge or coder-facing prose."""
 
     def test_fabricated_claim_never_stands(self):
         from cria.loop import judge_satisfaction
@@ -5972,19 +5990,9 @@ class FabricatedActionVerdictTests(unittest.TestCase):
         rlog = _Rlog()
         sat, reason, _fx = judge_satisfaction("t", "e", fake, None, rlog)
         self.assertFalse(sat)
-        self.assertEqual(len(calls), 2)                       # careful verdict rejected → retry ran
-        self.assertNotIn("curling", reason)                   # the fabricated fact never surfaces
-        self.assertIn(("loop.verdict_fabricated_action",), [(k,) for k, _ in rlog.events])
-
-    def test_third_person_report_is_fine(self):
-        from cria.loop import _claims_impossible_action
-        ok = {"reason": "the coder ran pytest and 7 tests passed; README exists on disk"}
-        self.assertFalse(_claims_impossible_action(ok, _Rlog(), "critic"))
-
-    def test_first_person_run_claim_is_flagged(self):
-        from cria.loop import _claims_impossible_action
-        bad = {"reason": "I ran the live test and it fails with 403"}
-        self.assertTrue(_claims_impossible_action(bad, _Rlog(), "critic"))
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(reason, "")
+        self.assertNotIn("curling", repr(rlog.events))
 
 
 class SteerDedupeAndFirstPersonTests(unittest.TestCase):
@@ -6140,10 +6148,13 @@ class TextualNullFixTests(unittest.TestCase):
                                              "done", _Rlog(), "verify")
             self.assertIsNone(obj, word)
 
-    def test_a_real_fix_still_infers_not_done_and_survives(self):
+    def test_a_typed_diagnosis_still_infers_not_done(self):
         from cria.loop import _fill_missing_verdict_flag, _fix_text
-        obj = _fill_missing_verdict_flag({"reason": "x", "proposed_fix": "add the missing README"},
-                                         "done", _Rlog(), "verify")
+        obj = _fill_missing_verdict_flag({
+            "reason": "x", "proposed_fix": "add the missing README",
+            "diagnosis_kind": "missing_file", "subject": "README.md",
+            "task_quote": "Add README.md.", "evidence_source": "workspace_absence",
+            "evidence_quote": ""}, "done", _Rlog(), "verify")
         self.assertFalse(obj["done"])
         self.assertEqual(_fix_text(obj), "add the missing README")
         self.assertEqual(_fix_text({"proposed_fix": "None"}), "")   # never becomes a step named "None"

@@ -22,6 +22,13 @@ Output fields:
 - `satisfied`: `true` only when every requested deliverable is present, verified, and working; otherwise `false`.
 - `reason`: a short evidence-based verdict naming what proves completion or the exact deliverable that is missing, failing, fake, or unproven.
 - `proposed_fix`: when `satisfied` is `false`, NAME the missing or failing deliverable in one line — what must become true, not how to make it true. Never a command, a tool call, a library, a filename the task did not name, or an approach; those belong to the coder. When `true`, use `""`.
+- `diagnosis_kind`: when false, exactly one of `missing_file`, `missing_content`, `failed_check`, `unverified_requirement`, or `other`; when true, `""`. `missing_file` means the whole task-named file is absent. `missing_content` means the task-named file exists but its content lacks a task requirement. Never confuse those types.
+- `subject`: the exact task-named workspace path for `missing_file` or `missing_content`; otherwise `""` unless one exact subject is useful.
+- `task_quote`: when false, an exact contiguous quote from the original task that states the requirement at issue; when true, `""`.
+- `evidence_source`: when false, exactly one of `workspace_absence`, `workspace_file`, `action_log`, `checks`, or `participation`; when true, `""`. Use `workspace_absence` only with `missing_file`, `workspace_file` for an exact quote read from a file, and `checks` for a failed-check claim.
+- `evidence_quote`: when false, an exact contiguous quote from that evidence source, with no paraphrase. Use `""` only for `workspace_absence`; when true, use `""`.
+
+A requested document's discussion of risks, limitations, future work, or an unvalidated exact benchmark does not make eliminating those risks or producing that benchmark a task requirement. Anchor every negative diagnosis in `task_quote`; if no exact task/evidence pair supports the diagnosis, keep `satisfied=false` but leave all diagnosis fields, `reason`, and `proposed_fix` empty.
 
 Output only:
-{"satisfied": true|false, "reason": "<evidence-based verdict>", "proposed_fix": "<the missing deliverable named, or empty string>"}
+{"satisfied": true|false, "reason": "<evidence-based verdict or empty>", "proposed_fix": "<missing deliverable or empty>", "diagnosis_kind": "<typed value or empty>", "subject": "<task-named path or empty>", "task_quote": "<exact task quote or empty>", "evidence_source": "<typed source or empty>", "evidence_quote": "<exact evidence quote or empty>"}

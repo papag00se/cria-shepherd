@@ -210,55 +210,51 @@ class SurveyGateProvenanceTests(unittest.TestCase):
 
 
 class AcceptedActionProvenanceTests(unittest.TestCase):
-    def test_the_validated_action_is_the_one_returned_for_both_consumers(self):
-        raw_action = "replace this raw proposed action"
-        accepted_action = "inspect the artifact, then correct the observed mismatch"
-        obj = {
+    @staticmethod
+    def _missing(task):
+        return {
             "satisfied": False,
-            "reason": "the artifact does not match the requested behavior",
-            "proposed_fix": raw_action,
+            "reason": "raw provider diagnosis",
+            "proposed_fix": "raw provider action",
+            "diagnosis_kind": "missing_file",
+            "subject": "REPORT.md",
+            "task_quote": task,
+            "evidence_source": "workspace_absence",
+            "evidence_quote": "",
         }
 
-        with mock.patch.object(loop, "_satisfaction_verdict", return_value=obj), \
-             mock.patch.object(loop, "_grounded_steer_or_none", return_value=accepted_action) as validate:
+    def test_the_task_requirement_is_the_one_returned_for_both_consumers(self):
+        task = "Add REPORT.md."
+        with tempfile.TemporaryDirectory() as root, \
+             mock.patch.object(loop, "_satisfaction_verdict", return_value=self._missing(task)), \
+             mock.patch.object(loop, "_grounded_steer_or_none") as old_guard:
             satisfied, nudge, plan_action = loop.judge_satisfaction(
-                "make the artifact match the request",
-                "the observed output differs",
-                lambda *_: b"",
-                None,
-                _Rlog(),
-                messages=[],
-                sess=loop.GuardState(),
-            )
+                task, "the observed output", lambda *_: b"", None, _Rlog(),
+                workspace_root=root, messages=[], sess=loop.GuardState())
 
         self.assertFalse(satisfied)
         self.assertIsInstance(nudge, loop.VerdictNudge)
-        self.assertEqual(nudge.evidence, obj["reason"])
-        self.assertEqual(nudge.action, accepted_action)
-        self.assertEqual(plan_action, accepted_action)
-        self.assertIn(accepted_action, str(nudge))
-        self.assertNotIn(raw_action, str(nudge))
-        validate.assert_called_once()
+        self.assertIn("REPORT.md", nudge.evidence)
+        self.assertEqual(nudge.action, task)
+        self.assertEqual(plan_action, task)
+        self.assertNotIn("raw provider", str(nudge))
+        old_guard.assert_not_called()
 
     def test_the_retry_also_reuses_the_validated_action_without_raw_fallback(self):
-        obj = {
-            "satisfied": False,
-            "reason": "the observed result is incomplete",
-            "proposed_fix": "raw provider action",
-        }
-        accepted_action = "inspect the observed result and complete the missing behavior"
-
-        with mock.patch.object(loop, "_satisfaction_verdict", side_effect=[None, obj]), \
-             mock.patch.object(loop, "_grounded_steer_or_none", return_value=accepted_action) as validate:
+        task = "Add REPORT.md."
+        obj = self._missing(task)
+        with tempfile.TemporaryDirectory() as root, \
+             mock.patch.object(loop, "_satisfaction_verdict", side_effect=[None, obj]), \
+             mock.patch.object(loop, "_grounded_steer_or_none") as old_guard:
             satisfied, nudge, plan_action = loop.judge_satisfaction(
-                "complete the artifact", "the observed result", lambda *_: b"", None, _Rlog(),
-                messages=[], sess=loop.GuardState())
+                task, "the observed result", lambda *_: b"", None, _Rlog(),
+                workspace_root=root, messages=[], sess=loop.GuardState())
 
         self.assertFalse(satisfied)
-        self.assertEqual(nudge.action, accepted_action)
-        self.assertEqual(plan_action, accepted_action)
+        self.assertEqual(nudge.action, task)
+        self.assertEqual(plan_action, task)
         self.assertNotIn(obj["proposed_fix"], str(nudge))
-        validate.assert_called_once()
+        old_guard.assert_not_called()
 
     def test_the_same_accepted_action_reaches_the_nudge_and_plan_without_a_second_veto(self):
         accepted_action = "inspect the artifact, then correct the observed mismatch"

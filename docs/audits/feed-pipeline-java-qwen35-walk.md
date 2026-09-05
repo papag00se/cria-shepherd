@@ -83,6 +83,8 @@ Both halves fixed in `d99f82e` (path spellings fold by component-suffix) and `cc
 
 **Fixed in `bb85452`.** `_veto_refuted_by_disk` — cria's one owner of "does the file this verdict calls missing actually exist" — ran only from the approve-path brake on a false DONE, so a NOT-satisfied verdict never reached it (#11b). The gap steer now asks the disk too: a corroborated absence arrives carrying the filesystem facts instead of the hedge, and a claim the disk refutes is dropped whole rather than softened. Claims the disk cannot settle keep the hedge untouched — that is what it was written for.
 
+**Superseded 2026-09-05.** That free-form missing-word owner and the periodic second pass were replaced by the typed task/evidence provenance contract documented in [heuristic assists](../heuristic-assists.md). The historical incident and first fix remain recorded here; they are no longer the current mechanism.
+
 The shape repeats verbatim: *"Let me first benchmark the performance and then create the REVIEW.md"* (0128), *"Let me verify the performance more carefully and then create REVIEW.md"* (0088). The 4× speedup it chained the file behind was never achievable — its own benchmarks put parallel at ~1.24 s against ~1.17 s single-threaded, about 1.0× — so the precondition never cleared. A sixty-word file needing no build starved for thirty minutes behind a target that could not be met.
 
 *(One measurement error nobody caught, not cria's: the "single-threaded baseline" was taken with `-Dpipeline.Workers_ENABLED=false`, which does nothing — `WORKERS_ENABLED` is a compile-time `static final`. Both numbers are the parallel path.)*

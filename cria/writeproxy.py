@@ -1983,8 +1983,8 @@ def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | Non
                 #
                 # It is worse than a bad body: `note_read` delegates to `note_written`, so a refused
                 # read of a file that does not exist ADDS it to the view — `isfile` then answers
-                # True and `_veto_refuted_by_disk` prints "EXISTS on disk — 52 bytes" as a verified
-                # fact. It also re-opens the incident `loop.search_file_text` records as fixed
+                # True and a completion diagnosis can treat those exact bytes as current evidence.
+                # It also re-opens the incident `loop.search_file_text` records as fixed
                 # (searching cria's own pointer instead of the file). The mark is on the text
                 # already, applied at the site that decided to refuse — this just reads it.
                 view.note_read(read_whole[tid], _strip_exec_envelope(content))

@@ -7,6 +7,7 @@ Measured over the recorded drops: 57% named a snake_case field, 17% named a URL 
 fetched spec.
 """
 import json
+import tempfile
 import unittest
 
 from cria import groundtruth, loop, planner
@@ -98,22 +99,25 @@ class WiringTests(unittest.TestCase):
 
         def reasoner(body, rlog):
             bodies.append(body)
-            if len(bodies) == 1:
-                return json.dumps({"choices": [{"message": {"content": json.dumps(
-                    {"satisfied": False, "reason": "still broken", "proposed_fix": "fix it"})}}]}).encode()
-            return json.dumps({"choices": [{"message": {"content": "NONE"}}]}).encode()
+            return json.dumps({"choices": [{"message": {"content": json.dumps({
+                "satisfied": False, "reason": "REPORT.md is missing",
+                "proposed_fix": "raw provider action", "diagnosis_kind": "missing_file",
+                "subject": "REPORT.md", "task_quote": "Add REPORT.md.",
+                "evidence_source": "workspace_absence", "evidence_quote": ""})}}]}).encode()
 
         ctx = loop.LoopContext(planner=None, coder_chat=lambda b, r: b"{}", reasoner_chat=reasoner,
                                runs_dir="", workspace_root=None)
         ctx.reasoner_role = Role(name="reasoner", backend="local")
-        plan = Plan(id="x", task="build a resolver", created="c",
+        plan = Plan(id="x", task="Add REPORT.md.", created="c",
                     items=[PlanItem("step 1", done=True, note="verified")])
         sess = loop.PlanSession(plan=plan)
         sess.fetched_pages = dict(LEDGER)
-        loop.Loop(ctx)._reopen_if_unsatisfied(sess, {"messages": []}, _Rlog())
+        with tempfile.TemporaryDirectory() as root:
+            sess.workspace_root = root
+            loop.Loop(ctx)._reopen_if_unsatisfied(sess, {"messages": []}, _Rlog())
         self.assertEqual(len(bodies), 1, "only the satisfaction judge should run")
         self.assertEqual(sess.plan.items[-1].text,
-                         loop._COMPLETION_FIX_PREFIX + "fix it")
+                         loop._COMPLETION_FIX_PREFIX + "Add REPORT.md.")
 
     def test_the_living_replans_noise_judge_sees_the_session_ledger(self):
         """The third caller, reached through two hops: Loop._replan_tail hands the session's

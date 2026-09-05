@@ -1,0 +1,33 @@
+Judge one narrow provenance question. Deterministic code has already confirmed that TASK QUOTE is an exact quote from the current task and EVIDENCE QUOTE is an exact quote from the named current evidence source.
+
+Answer SUPPORTED only when that exact evidence supports keeping the task requirement open and the proposed fix does not add a requirement or choose an implementation the task did not specify. A documented risk, limitation, caveat, future improvement, or benchmark uncertainty in a requested report is not a requirement to eliminate unless TASK QUOTE itself requires that outcome. Current check and participation facts outrank a contrary diagnosis. If the relationship is unsupported or cannot be decided from these inputs, answer UNSUPPORTED or UNDECIDABLE.
+
+DIAGNOSIS TYPE: {{DIAGNOSIS_KIND}}
+SUBJECT: {{SUBJECT}}
+
+TASK QUOTE:
+{{TASK_QUOTE}}
+
+EVIDENCE SOURCE: {{EVIDENCE_SOURCE}}
+EVIDENCE QUOTE:
+{{EVIDENCE_QUOTE}}
+
+UNTRUSTED DIAGNOSIS:
+{{DIAGNOSIS}}
+
+UNTRUSTED PROPOSED FIX:
+{{PROPOSED_FIX}}
+
+CURRENT WORKSPACE FACTS:
+{{WORKSPACE_FACTS}}
+
+CURRENT CHECK FACTS:
+{{CHECKS}}
+
+CURRENT PARTICIPATION FACTS:
+{{PARTICIPATION}}
+
+CURRENT ACTION LOG:
+{{ACTION_LOG}}
+
+Output exactly one word: SUPPORTED, UNSUPPORTED, or UNDECIDABLE.

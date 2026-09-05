@@ -1222,64 +1222,16 @@ def _confirm_applies(claim: str, red_findings: str = "", *, gate_red: bool = Fal
     return True   # YES, or anything unreadable → the brake runs
 
 
-# The veto shapes that assert ABSENCE — the one claim class cria can refute with a stat() of its
-# own. A trigger, not a verdict: the file check below is the verdict.
-_VETO_MISSING = re.compile(r"(?i)\b(?:does not exist|not founds?|missing|no such files?|absent|"
-                           r"no files? (?:or artifact )?named|was not found"
-                           # EMPTINESS is the same class as ABSENCE: a claim that the artifact is
-                           # there but holds nothing. Walked on mellum2 1785996352 call 0060, where
-                           # the confirm judge called list_dir, never read_file, and then asserted
-                           # resolve_handle.py "is a 1.8 KB file with no imports, no function
-                           # definitions, no API calls, and no evidence of any Ada Handles
-                           # integration" — about a file with four imports, two defs and a urllib
-                           # POST. None of the old alternatives matched, so the disk refuter never
-                           # ran and cria forwarded the falsehood to the coder as its own steer. The
-                           # coder read the file, saw cria was wrong, dismissed the steer and quit.
-                           r"|no (?:imports|functions?|function definitions|code|content|evidence)"
-                           r"|is empty|are empty|contains nothing|no actual)\b")
-# Path tokens including ABSOLUTE ones — _STEP_ARTIFACT starts at \w and silently drops a leading
-# slash, which would re-root an absolute path under the workspace and miss the file.
-#
-# THE TRAILING BOUNDARY IS LOAD-BEARING. "A word, a dot, a short suffix" is also every method
-# reference in every dotted language, and without a boundary the suffix bound bites the tail off the
-# longer name: `Shipping.zone_for` matched as `Shipping.zone`, which cria then printed as
-# `- Shipping.zone: NOT on disk` under "a verified fact about the workspace as it stands, not one
-# reader's opinion" (shipping-rates-rb x ternary-bonsai 1787442206, call 0024). Requiring the match to
-# END at a non-identifier character means a dotted identifier does not match at all, while a real
-# filename — always followed by space, quote, comma or end — still does (#5b, #20).
-_VETO_PATH = re.compile(r"(/?[\w][\w./-]*\.[A-Za-z][A-Za-z0-9]{0,4})(?![\w-])")
-
-# …AND THE SUFFIX HAS TO BE ONE A FILE ACTUALLY USES. "A word, a dot, a short suffix" is also a
-# HOSTNAME and an abbreviation, and cria printed both as verified facts about the workspace:
-#
-#     - api.handle.me: NOT on disk        (5 times — the task's own API host)
-#     - e.g: NOT on disk                  (6 times — the judge's own prose)
-#
-# under `veto_disk_confirms`'s sentence "That part is a verified fact about the workspace as it
-# stands, not one reader's opinion." The source extensions come from `probediscovery.TEST_CONVENTIONS`
-# — the same table every language claim is made from, so there is no second list to drift (#23) —
-# plus the config and document suffixes a workspace also holds.
-#
-# STILL A BOUND (#11b): `Node.js` survives it, because `.js` is a real extension and a file may
-# genuinely be called that. Measured at 1 occurrence against the 11 this removes.
-_VETO_SUFFIXES = frozenset(
-    e for c in probediscovery.TEST_CONVENTIONS for e in c.exts) | frozenset({
-        "c", "h", "cc", "cpp", "hpp", "cs", "kt", "swift", "scala", "ex", "exs", "sh", "bash",
-        "json", "toml", "yaml", "yml", "ini", "cfg", "conf", "xml", "lock", "md", "txt", "csv",
-        "sql", "html", "css", "gradle", "mod", "sum", "gemspec", "cabal", "dockerfile",
-    })
-
-
-def _veto_paths(text: str) -> list[str]:
-    """Path-shaped tokens cria may make an on-disk claim about, in order."""
-    out = []
-    for tok in _VETO_PATH.findall(text or ""):
-        if tok.rsplit(".", 1)[-1].lower() in _VETO_SUFFIXES and tok not in out:
-            out.append(tok)
-    return out
-
-
-_VETO_FACT_MAX_BYTES = 200_000   # past this, state existence only — a count from a clip is false
+# A negative verdict is not coder-facing evidence merely because its JSON parsed.  These are the
+# finite claim and source types the judge may choose.  The source names are deliberately about
+# authoritative inputs cria already owns — never the judge's own prose.  Exact quotes are checked
+# against the selected source below before any semantic question is asked.
+_NEGATIVE_DIAGNOSIS_KINDS = frozenset({
+    "missing_file", "missing_content", "failed_check", "unverified_requirement", "other",
+})
+_NEGATIVE_EVIDENCE_SOURCES = frozenset({
+    "workspace_absence", "workspace_file", "action_log", "checks", "participation",
+})
 
 
 # A FILE PATH or a VERSION in a directive — the two classes of invention the walks caught. Both are
@@ -1323,7 +1275,7 @@ def _invented_names(text: str, source: str) -> list[str]:
     return out
 
 
-def _basename_matches(root: str, name: str) -> list[str] | None:
+def _workspace_basename_matches(root: str, name: str) -> list[str] | None:
     """Workspace-relative paths whose basename is ``name`` — ``None`` when cria cannot say.
 
     A judge writes file names in prose, and `groundtruth.resolve` is `os.path.join`, so `feed.csv`
@@ -1337,9 +1289,8 @@ def _basename_matches(root: str, name: str) -> list[str] | None:
     # …AND NOTHING FOLDED. A folded directory is one the survey listed only as a count, so its files
     # are absent from the walk while `complete` stays True — the sibling in `groundtruth` checks both
     # and says why. Measured against a real 1,169-file run workspace: `complete` True, 7 folded
-    # directories, 503 of 1,169 files known, and `_basename_matches('PT.yaml')` returned `[]` — the
-    # "genuinely absent" answer — for a file that is on disk. It feeds `_veto_refuted_by_disk`,
-    # which prints "NOT on disk" under a sentence calling it a verified fact.
+    # directories, 503 of 1,169 files known. An absence diagnosis is suppressed until this walk is
+    # complete; a partial inventory is never converted into "not present".
     if walked is None or not view.listed_everything(root):
         return None
     want = os.path.basename(name)
@@ -1347,127 +1298,140 @@ def _basename_matches(root: str, name: str) -> list[str] | None:
             for d, _subs, names in walked for n in names if n == want]
 
 
-def _facts_agree_with_a_missing_claim(facts: str) -> bool:
-    """Do these disk facts SUPPORT the report's missing/empty claim, or merely sit beside it?
+def _workspace_subject(root: str, subject: str) -> tuple[str, bool | None, str | None]:
+    """Resolve one typed diagnosis subject through wsview.
 
-    The confirmation wording opens "The filesystem was checked just now and AGREES with the report
-    above", and it was attached whenever any fact resolved at all. So a report saying "the code
-    compilation failed (mvn compile error on InterruptedException)" was corroborated with
-    `- REVIEW.md: EXISTS on disk` (walked at 20260822T174652 call 0454) — a true fact, presented as
-    agreement with a claim it has nothing to do with (#5b).
+    Returns ``(workspace-relative path, is_file, complete_body)``. A bare basename may resolve to
+    one unique file anywhere in a completely listed workspace. Ambiguous, incomplete,
+    outside-workspace and unreadable states remain unknown; they are never absence.
+    """
+    if not root or not subject:
+        return "", None, None
+    view = wsview.current(root)
+    path = groundtruth.resolve(root, subject)
+    # Use the production path algebra even under DirectView tests; DirectView deliberately treats
+    # paths literally and therefore does not root a relative subject for us.
+    rel = wsview.View(root).rel(path)
+    if rel is None:
+        return "", None, None
+    present = view.isfile(path)
+    if present is False and os.path.basename(subject) == subject:
+        hits = _workspace_basename_matches(root, subject)
+        if hits is None or len(hits) > 1:
+            return "", None, None
+        if hits:
+            rel, path, present = hits[0], groundtruth.resolve(root, hits[0]), True
+    body = view.read(path) if present is True else None
+    return rel, present, body
 
-    A veto is triggered by `_VETO_MISSING`, so what agrees with it is a file that is NOT there, or
-    one that is there and empty. Everything else is still worth telling the coder — it is exact and
-    freshly checked — under wording that says only what cria did."""
-    empty = re.compile(r"\b0 (?:bytes|non-comment code lines)\b")
-    return any(("NOT on disk" in ln) or empty.search(ln) for ln in (facts or "").splitlines())
+
+def _subject_is_exact_in_quote(subject: str, quote: str) -> bool:
+    """Whether ``subject`` occurs as a whole path/name token, not a dotted-name prefix."""
+    if not subject or not quote:
+        return False
+    token = re.escape(subject)
+    return re.search(rf"(?<![\w./-]){token}(?![\w/-])", quote) is not None
 
 
-def _veto_refuted_by_disk(why: str, workspace_root: str, ask=None, rlog=None) -> tuple[str, str]:
-    """``(refuted_path, disk_facts)`` for a NOT-consistent veto — ``("", "")`` when nothing applies.
+def _negative_diagnosis_nudge(obj: dict, *, task: str, action_log: str = "", checks: str = "",
+                               participation_facts: str = "", workspace_root: str = "",
+                               ask=None, rlog=None, phase: str = "negative-diagnosis") -> VerdictNudge:
+    """Return only a negative diagnosis whose typed provenance survives deterministic checks.
 
-    ``refuted_path`` is the file the veto wrongly claims is MISSING, or "" when the veto stands.
-    ``disk_facts`` is what the filesystem actually says about every path the veto named, returned in
-    BOTH directions: a veto the disk corroborates is a verified fact, not one reader's opinion.
+    The caller's completion control remains NOT_DONE whatever this returns. This function controls
+    only what may be said to the coder. Exact task/evidence quotes are checked against their named
+    authoritative source. File state comes only from wsview. Relationships code cannot establish
+    are put to at most one focused semantic question; anything except SUPPORTED suppresses the
+    prose and action.
+    """
+    kind = str(obj.get("diagnosis_kind") or "").strip()
+    subject = str(obj.get("subject") or "").strip()
+    task_quote = str(obj.get("task_quote") or "").strip()
+    source = str(obj.get("evidence_source") or "").strip()
+    evidence_quote = str(obj.get("evidence_quote") or "").strip()
 
-    Walked on ada-handles_nemotron-elastic_codex_pon_1785834747 call 0054: the confirm checker
-    ruled {"consistent": false, "why": "Missing swagger.json file at /tmp/…/tmp/read-only/
-    api.handle.me_swagger.json"} — WITHOUT one inspection call — while that exact path existed
-    (the coder `ls`'d it one call later). The false veto re-blocked a step the critic had verified,
-    three times in one run; the coder received "Missing <file>" in cria's voice — the false fact
-    rule 5b forbids. Measured: 31 of 152 captured confirm-false verdicts assert a missing file.
+    def suppress(cause: str) -> VerdictNudge:
+        if rlog is not None:
+            rlog.emit("loop.negative_diagnosis_suppressed", level="info", phase=phase,
+                      cause=cause, diagnosis_kind=kind or "missing")
+        return VerdictNudge()
 
-    DETERMINISTIC CODE GATHERS, THE REASONER JUDGES (principle 8; operator, 2026-08-04). The first
-    version of this decided WHAT "missing" referred to with a regex and a substring rule — and
-    overturned vetoes about content missing INSIDE an existing file, about absent functions, and
-    about a genuinely-missing X.py "covered" by test_X.py (audited same day, one live misfire:
-    a veto about an unverifiable API response overturned because the word "missing" appeared and
-    some file existed). What "missing" refers to is judgment; no pattern separates the shapes.
-    So: the missing-word regex is only the TRIGGER for spending one call, the disk facts are
-    gathered exactly (stat per named path), and ONE focused reasoner question rules STANDS or
-    REFUTED against those facts. Every failure direction keeps the veto: no reasoner, no named
-    file that exists, an unreadable answer — all STANDS. Only a clear REFUTED overturns."""
-    if not why or not workspace_root or ask is None or not _VETO_MISSING.search(why):
-        return "", ""
-    facts, first_existing = [], ""
-    view = wsview.current(workspace_root)
-    for tok in _veto_paths(why):
-        # …AND A ONE-LETTER STEM IS NOT A FILE. `e.g.,` out of the judge's own prose matched as `e.g`
-        # and shipped beside the line above it, as a verified fact about the workspace. (The suffix
-        # filter in `_veto_paths` now removes that one too; both bounds stay — they are different
-        # mistakes.)
-        if len(os.path.splitext(os.path.basename(tok))[0]) < 2:
-            continue
-        try:
-            path = tok if os.path.isabs(tok) else groundtruth.resolve(workspace_root, tok)
-        except (OSError, ValueError):
-            continue
-        # UNANSWERED IS NOT ABSENT. Every failure direction here keeps the veto, and "cria has not
-        # been told about this file" is a failure direction of its own — recording it as NOT on disk
-        # would hand the reasoner a fact nobody established, in the one seat built to overturn a
-        # judgement. A file the harness reported as absent is still the fact it always was.
-        present = view.isfile(path)
-        if present is None:
-            continue
-        if present is False:
-            # A BARE BASENAME IS NOT A PATH. A judge writes file names in prose — `feed.csv`,
-            # `Importer.java` — and `groundtruth.resolve` is `os.path.join`, so those became
-            # `<root>/feed.csv` and `<root>/Importer.java` while the files sat in `data/` and
-            # `src/main/java/pipeline/`. Both were then printed as `NOT on disk` under "a verified
-            # fact about the workspace" (feed-pipeline-java x qwen35 1787392958, call 0041).
-            #
-            # Resolve it the way the steer guard already does: exactly one file in the workspace
-            # with that basename, or nothing. Two matches means cria does not know which was meant
-            # and says nothing at all (#5b, #3).
-            hits = _basename_matches(workspace_root, tok)
-            if hits is None or len(hits) > 1:
-                continue          # unknown, or two files with that name — cria does not guess
-            if hits:
-                path, present = str(Path(workspace_root) / hits[0]), True
-        # SIZE AND SHAPE, not just existence — an emptiness claim is settled by what the file HOLDS.
-        exists = present
-        detail = "NOT on disk"
-        if exists:
-            body = view.read(path)
-            if body is None:
-                continue
-            # COUNT THE WHOLE FILE, OR SAY ONLY THAT IT EXISTS. These numbers ship to the coder
-            # under "That part is a verified fact about the workspace as it stands, not one
-            # reader's opinion" — so a count taken from a clipped copy is a false fact in the one
-            # sentence that claims verification. A 900 KB file was reported as 200,000 bytes.
-            if len(body) > _VETO_FACT_MAX_BYTES:
-                detail = "EXISTS on disk"
-            else:
-                n_lines = body.count("\n") + 1 if body else 0
-                code = sum(1 for ln in body.splitlines()
-                           if ln.strip() and not ln.lstrip().startswith("#"))
-                detail = (f"EXISTS on disk — {len(body):,} bytes, {n_lines} lines, "
-                          f"{code} non-comment code lines")
-        facts.append(f"- {tok}: {detail}")
-        if exists and not first_existing:
-            first_existing = tok
-    if not facts:
-        # NOTHING RESOLVED IS NOT CORROBORATION. When no named token could be checked at all — the
-        # judge wrote bare basenames and `groundtruth.resolve` joins them to the workspace root, so
-        # `feed.csv` became `<root>/feed.csv` while the file sits in `data/` — `first_existing`
-        # stayed empty and this fell into the branch below, turning a resolution failure into
-        # "the filesystem was checked just now and agrees". Reproduced on feed-pipeline-java x
-        # qwen35 1787392958 call 0041: `feed.csv: NOT on disk` and `Importer.java: NOT on disk`,
-        # both printed as verified fact, about files the coder had been running for twenty calls.
-        return "", ""
-    if not first_existing:
-        # THE DISK AGREED, AND cria USED TO THROW THAT AWAY. Only the REFUTED direction had a return
-        # path; when the filesystem corroborated the veto, these facts — freshly stat'ed, exact —
-        # were computed and dropped, and the report reached the coder under done_incomplete's
-        # "one reader's opinion of your work, not a verified fact". In cart-billing-go x gemma4 the
-        # veto said `discounts.json` was missing, cria confirmed it was missing, discarded that, and
-        # the coder declared done twice claiming it had created a file its own `list_dir` showed
-        # absent. A verified fact must not be labelled an opinion (#5b), and telling the coder MORE
-        # about the real state is the additive direction (#2).
-        return "", "\n".join(facts)
-    ans = strip_think(ask(prompts.render("confirm_veto_disk", why=why, facts="\n".join(facts))) or "")
-    head = ans.upper().split()[0].strip(".,:;`*\"'") if ans.split() else ""
-    return (first_existing if head == "REFUTED" else ""), "\n".join(facts)
+    if kind not in _NEGATIVE_DIAGNOSIS_KINDS:
+        return suppress("unknown diagnosis kind")
+    if source not in _NEGATIVE_EVIDENCE_SOURCES:
+        return suppress("unknown evidence source")
+    if not task_quote or task_quote not in (task or ""):
+        return suppress("task quote is not exact")
+    if kind in {"missing_file", "missing_content"}:
+        named = (_subject_is_exact_in_quote(subject, task_quote)
+                 or _subject_is_exact_in_quote(os.path.basename(subject), task_quote))
+        if not subject or not named:
+            return suppress("workspace subject is not task-named")
+
+    workspace_fact = ""
+    source_text = ""
+    if kind == "missing_file":
+        if source != "workspace_absence" or evidence_quote:
+            return suppress("missing-file source contract")
+        rel, present, _body = _workspace_subject(workspace_root, subject)
+        if present is not False:
+            return suppress("file exists or workspace state is unknown")
+        evidence = prompts.render("negative_diagnosis_missing_file", subject=rel or subject)
+        if rlog is not None:
+            rlog.emit("loop.negative_diagnosis_supported", level="info", phase=phase,
+                      diagnosis_kind=kind, evidence_source=source)
+        return VerdictNudge(prompts.render(
+            "negative_diagnosis", task_quote=task_quote, source=source, evidence=evidence),
+            task_quote)
+
+    if kind == "missing_content" and source != "workspace_file":
+        return suppress("missing-content source contract")
+    if kind == "failed_check" and source != "checks":
+        return suppress("failed-check source contract")
+    if source == "workspace_absence":
+        return suppress("absence source is only valid for a missing file")
+    if source == "workspace_file":
+        if not subject:
+            return suppress("workspace-file source has no subject")
+        rel, present, body = _workspace_subject(workspace_root, subject)
+        if present is not True or body is None:
+            return suppress("workspace file or complete content is unknown")
+        source_text = body
+        workspace_fact = prompts.render("negative_diagnosis_existing_file", subject=rel or subject)
+    elif source == "action_log":
+        source_text = action_log or ""
+    elif source == "checks":
+        source_text = checks or ""
+    elif source == "participation":
+        source_text = participation_facts or ""
+    if not evidence_quote or evidence_quote not in source_text:
+        return suppress("evidence quote is not exact")
+    if ask is None:
+        return suppress("semantic support unavailable")
+
+    question = prompts.render(
+        "negative_diagnosis_support",
+        diagnosis_kind=kind,
+        subject=subject or "(none)",
+        task_quote=task_quote,
+        evidence_source=source,
+        evidence_quote=evidence_quote,
+        diagnosis=str(obj.get("reason") or obj.get("why") or "").strip() or "(none)",
+        proposed_fix=_fix_text(obj) or "(none)",
+        workspace_facts=workspace_fact or "(none available)",
+        checks=checks or "(none available)",
+        participation=participation_facts or "(none available)",
+        action_log=action_log or "(none available)")
+    answer = strip_think(ask(question) or "")
+    head = answer.upper().split()[0].strip(".,:;`*\"'") if answer.split() else ""
+    if head != "SUPPORTED":
+        return suppress("semantic support absent or undecidable")
+    if rlog is not None:
+        rlog.emit("loop.negative_diagnosis_supported", level="info", phase=phase,
+                  diagnosis_kind=kind, evidence_source=source)
+    return VerdictNudge(prompts.render(
+        "negative_diagnosis", task_quote=task_quote, source=source, evidence=evidence_quote),
+        task_quote)
 
 
 def _restates_the_verdict(why: str, reason: str) -> bool:
@@ -1544,8 +1508,7 @@ def _confirm_completion(claim: str, reason: str, workspace_root: str, reasoner_c
     A verdict that RESTATES its own claim (see :func:`_restates_the_verdict`) is treated as UNUSABLE,
     exactly like an unparseable one: re-asked once, then failed CLOSED. It is deliberately NOT
     flipped to `consistent: true`. Flipping it would make the step ADVANCE on a judge that gave no
-    evidence — the fail-OPEN on completion principle 13 forbids outright, and the same reasoning that
-    keeps `_claims_impossible_action` from repairing a fabricated reason: an incoherent verdict tells
+    evidence — the fail-OPEN on completion principle 13 forbids outright: an incoherent verdict tells
     you the judge did not answer, never what the answer was. The direction is what makes a false
     positive harmless. Should a done-reason ever legitimately describe missing work (clause (b) of
     the checker's own prompt), quoting it back would be a fair veto — and cria's response here is
@@ -1573,8 +1536,8 @@ def _confirm_completion(claim: str, reason: str, workspace_root: str, reasoner_c
     role = replace(reasoner_role, reasoning="off") if reasoner_role is not None else None
     looked: list[int] = [0]          # inspection rounds spent by the most recent `ask`
 
-    def ask(extra: str = "") -> tuple[bool | None, str]:
-        """One confirm judgement → (consistent, why), or (None, "") when it cannot be read."""
+    def ask(extra: str = "") -> tuple[bool | None, str, dict | None]:
+        """One confirm judgement → (consistent, why, object), or unknown when unreadable."""
         user = prompts.fill(labels["user"], step=claim, reason=reason or "(none stated)")
         # CRIA'S OWN MEASUREMENTS, which this judge deliberately does without the coder's narrative
         # but should never do without. `_offline_fact` — the suite passed, and passed again with the
@@ -1596,7 +1559,7 @@ def _confirm_completion(claim: str, reason: str, workspace_root: str, reasoner_c
         word = _consistent_word(cleaned)
         if word is not None:
             # The one-word answer, plus whatever reason line followed it.
-            return word, "\n".join(cleaned.strip().splitlines()[1:]).strip()
+            return word, "\n".join(cleaned.strip().splitlines()[1:]).strip(), None
         obj = extract_json_object(cleaned)
         if not isinstance(obj, dict) or not isinstance(obj.get("consistent"), bool):
             # One absent closing brace is not "no answer" — but only a NOT-consistent one is
@@ -1609,12 +1572,14 @@ def _confirm_completion(claim: str, reason: str, workspace_root: str, reasoner_c
             recovered = (None if massage.is_truncated(comp)
                          else verdict_from_unclosed(vtext, "consistent", rlog, phase))
             if recovered is not None:
-                return False, str(recovered.get("why") or recovered.get("reason") or "").strip()
+                return (False,
+                        str(recovered.get("why") or recovered.get("reason") or "").strip(),
+                        recovered)
             rlog.emit("loop.confirm_unparsed", level="warn", phase=phase)
-            return None, ""
-        return obj["consistent"], str(obj.get("why") or "").strip()
+            return None, "", None
+        return obj["consistent"], str(obj.get("why") or obj.get("reason") or "").strip(), obj
 
-    verdict, why = ask()
+    verdict, why, diagnosis_obj = ask()
     # AN APPROVAL FROM A JUDGE THAT NEVER LOOKED IS NOT AN APPROVAL.
     #
     # This seat's entire justification, in the docstring above, is that "a judge that must look
@@ -1632,7 +1597,7 @@ def _confirm_completion(claim: str, reason: str, workspace_root: str, reasoner_c
     # the safe direction on completion (#13): the cost is a work turn cria has already paid for.
     if verdict is True and not looked[0]:
         rlog.emit("loop.confirm_without_looking", level="warn", phase=phase)
-        verdict, why = ask("\n\n" + labels["restate"])
+        verdict, why, diagnosis_obj = ask("\n\n" + labels["restate"])
         if verdict is True and not looked[0]:
             rlog.emit("loop.confirm_without_looking_twice", level="warn", phase=phase)
             verdict = None
@@ -1644,7 +1609,7 @@ def _confirm_completion(claim: str, reason: str, workspace_root: str, reasoner_c
         # and asserts nothing about what the judge did — cria cannot see whether it looked, and a
         # "you did not look" it cannot check would be the false fact principle 5b forbids.
         rlog.emit("loop.confirm_restated_claim", level="warn", phase=phase, head=_clip(why, 120))
-        verdict, why = ask("\n\n" + labels["restate"])
+        verdict, why, diagnosis_obj = ask("\n\n" + labels["restate"])
         if verdict is False and _restates_the_verdict(why, reason):
             rlog.emit("loop.confirm_restated_twice", level="warn", phase=phase)
             verdict = None
@@ -1657,64 +1622,19 @@ def _confirm_completion(claim: str, reason: str, workspace_root: str, reasoner_c
         # parsed. Both callers (_verify and judge_satisfaction) inject this string verbatim.
         return False, prompts.load("unverified_step")
     if verdict is False:
-        # Disk facts gathered exactly, ONE reasoner ruling on whether the veto's "missing" claim
-        # survives them (see _veto_refuted_by_disk — the regex is only the trigger; every failure
-        # direction keeps the veto). Rule 5b: a "Missing <file>" the disk disproves must not reach
-        # the coder in cria's voice.
-        disk_ask = (lambda sysm: summarize(reasoner_chat, role, sysm, _ASK_USER_TURN, rlog,
-                                           phase="confirm-disk", temperature=0.0) or "") \
+        # A refuted or undecidable diagnosis cannot approve the task and cannot be forwarded. The
+        # boolean remains false; only a typed, current-evidence-backed explanation may accompany it.
+        semantic_ask = (lambda sysm: summarize(
+            reasoner_chat, role, sysm, _ASK_USER_TURN, rlog,
+            phase=phase + "-diagnosis", max_tokens=16, retry_off=False,
+            temperature=0.0) or "") \
             if reasoner_role is not None else None
-        refuted, disk_facts = _veto_refuted_by_disk(why, workspace_root, ask=disk_ask, rlog=rlog)
-        if refuted:
-            rlog.emit("loop.confirm_refuted_by_disk", level="warn", phase=phase,
-                      path=refuted, head=_clip(why or "", 120))
-            return True, ""
-        if disk_facts:
-            # The disk CORROBORATED the veto — carry that with it, so a report cria has just
-            # verified does not reach the coder labelled one reader's opinion (#5b, #2).
-            rlog.emit("loop.confirm_confirmed_by_disk", level="info", phase=phase,
-                      head=_clip(why or "", 120))
-            key = ("veto_disk_confirms" if _facts_agree_with_a_missing_claim(disk_facts)
-                   else "veto_disk_checked")
-            return verdict, why + "\n\n" + prompts.render(key, facts=disk_facts)
+        nudge = _negative_diagnosis_nudge(
+            diagnosis_obj or {}, task=claim, checks=cria_facts,
+            workspace_root=workspace_root, ask=semantic_ask, rlog=rlog,
+            phase=phase + "-diagnosis")
+        return False, str(nudge)
     return verdict, why
-
-
-# A judge holds ONLY read-only inspection tools (list_dir/read_file) — a verdict whose reason
-# claims it ran, curled, fetched or tested something is FABRICATED evidence (observed: a
-# satisfaction verdict said "confirmed by curling api.handle.me/goose"; its own reasoning shows it
-# merely INTENDED to curl via exec_command — a tool it does not hold — and the retry asserted the
-# intent as fact; that false fact became pinned plan-step text, run 0729-mellum2 calls 0153-0154).
-# Third-person reports ("the coder ran pytest") don't match — only the judge claiming its own acts.
-_JUDGE_ACTION_CLAIM = re.compile(
-    r"(?i)\b(?:i|we)\s+(?:ran|executed|curled|fetch(?:ed)?|tested)\b"
-    r"|\bconfirmed by (?:curl|runn?)ing\b")
-
-
-def _claims_impossible_action(obj: dict | None, rlog, phase: str, ask=None) -> bool:
-    """True (and traced) when a parsed verdict's reason claims a judge-performed action the judge
-    cannot perform — the caller treats the verdict as unusable, which routes to the normal
-    reasoning-off retry / fail-closed path instead of letting fabricated evidence stand.
-
-    TRIGGER, THEN JUDGE (operator, 2026-08-08). `_JUDGE_ACTION_CLAIM` stays as the cheap pre-filter
-    — it costs nothing and most verdicts never mention an action — but WHETHER the sentence claims
-    the judge's own act is a reading, not a pattern. The regex alone cannot tell "I ran the tests"
-    from "I ran through the checklist" or "we tested the assumption that…", and a false hit throws
-    away a good verdict and burns a retry. With no reasoner the trigger decides alone, exactly as
-    before; an unreadable answer keeps the verdict (CLEAN is the safe direction — a fabricated
-    reason that slips through still faces every other guard, while a discarded good verdict is a
-    lost turn)."""
-    reason = str((obj or {}).get("reason") or "")
-    if not _JUDGE_ACTION_CLAIM.search(reason):
-        return False
-    if ask is not None:
-        answer = strip_think(ask(prompts.render("judge_claimed_an_action", reason=reason)) or "")
-        head = answer.strip().upper().split()[0].strip(".,:;`*\"'") if answer.split() else ""
-        if head != "FABRICATED":
-            return False
-    rlog.emit("loop.verdict_fabricated_action", level="warn", phase=phase,
-              head=_clip(reason, 120))
-    return True
 
 
 # A judge's own THINKING, when its final answer was not a verdict. Recovers ONLY a NOT-satisfied
@@ -1902,14 +1822,18 @@ def verdict_from_reasoning(reasoning: str, flag: str, rlog, phase: str, ask=None
 def _fill_missing_verdict_flag(obj: dict, flag: str, rlog, phase: str) -> dict | None:
     """Recover only a negative verdict from a keyless object.
 
-    A concrete ``proposed_fix`` is evidence that the schema's negative branch was intended, so the
-    missing flag can be filled as ``False``.  An empty fix cannot prove completion: positive
-    completion must be explicit and then pass its normal confirmation brake.  Ambiguous objects
-    return ``None`` and take the caller's parse-miss/fail-closed path.
+    The complete typed diagnosis shape is evidence that the schema's negative branch was intended,
+    so the missing flag can be filled as ``False``. Free-form fix prose is not a type discriminator:
+    treating it as one was the path by which an unsupported diagnosis acquired control significance.
+    Positive completion must be explicit and then pass its normal confirmation brake. Ambiguous
+    objects return ``None`` and take the caller's parse-miss/fail-closed path.
     """
     if flag in obj:
         return obj
-    if not _fix_text(obj):
+    provenance_fields = {
+        "diagnosis_kind", "subject", "task_quote", "evidence_source", "evidence_quote",
+    }
+    if not provenance_fields.issubset(obj):
         return None
     rlog.emit("loop.verdict_flag_inferred", flag=flag, inferred=False, phase=phase)
     return {**obj, flag: False}
@@ -1977,11 +1901,6 @@ def judge_satisfaction(task: str, evidence: str, reasoner_chat, reasoner_role, r
                                 workspace_root=workspace_root)
     if obj is not None:
         obj = _fill_missing_verdict_flag(obj, "satisfied", rlog, "satisfaction")
-    fab_ask = ((lambda sysm: ask_closed(reasoner_chat, reasoner_role, sysm, rlog,
-                                        phase="satisfaction-action"))
-               if reasoner_role is not None else None)
-    if obj is not None and _claims_impossible_action(obj, rlog, "satisfaction", fab_ask):
-        obj = None   # fabricated evidence → same path as an unparseable verdict (retry, fail closed)
     if obj is not None:
         # The careful (reasoning-ON) pass produced a clean verdict — the ONLY pass trusted to APPROVE
         # ending the task, because approving requires the verification a reasoning-off judge can't do
@@ -1998,7 +1917,7 @@ def judge_satisfaction(task: str, evidence: str, reasoner_chat, reasoner_role, r
                                                  cria_facts=_cria_measured_facts(sess))
             rlog.emit("loop.satisfaction_confirm", confirmed=confirmed)
             if not confirmed:
-                return False, why or str(obj.get("reason") or "a named deliverable is not on disk"), ""
+                return False, why, ""
         # The ACTION comes back separately so a caller building a plan step can use the fix alone —
         # the old single string (framing + reason essay + fix) became a whole step verbatim
         # (run 0729-mellum2: a diagnostic paragraph as step 3, held for 118 calls).
@@ -2010,7 +1929,14 @@ def judge_satisfaction(task: str, evidence: str, reasoner_chat, reasoner_role, r
         # solution down to 4/5. The VERDICT still stands (not satisfied, fail closed, #13); what is
         # withheld is the invented reason, so the caller falls back to the plain instruction rather
         # than sending the coder to fix work that is already right (#3, #5b).
-        nudge = _verdict_nudge(obj, satisfied, routes, evidence=user,
+        diagnosis_ask = ((lambda sysm: ask_closed(
+            reasoner_chat, reasoner_role, sysm, rlog, phase="satisfaction-diagnosis",
+            max_tokens=16, retry_off=False))
+            if reasoner_role is not None else None)
+        nudge = _verdict_nudge(obj, satisfied, routes, evidence=user, task=task,
+                               action_log=evidence, checks=gate_findings,
+                               participation_facts=measured_participation,
+                               diagnosis_ask=diagnosis_ask, phase="satisfaction-diagnosis",
                                workspace_root=workspace_root, rlog=rlog,
                                messages=messages, sess=sess)
         return satisfied, nudge, nudge.action
@@ -2030,7 +1956,14 @@ def judge_satisfaction(task: str, evidence: str, reasoner_chat, reasoner_role, r
     if retry.get("satisfied"):
         rlog.emit("loop.satisfaction_failclosed", level="info")
         return False, "unverified — the careful check could not confirm completion; keep working", ""
-    nudge = _verdict_nudge(retry, False, routes, evidence=user,
+    retry_ask = ((lambda sysm: ask_closed(
+        reasoner_chat, reasoner_role, sysm, rlog, phase="satisfaction-retry-diagnosis",
+        max_tokens=16, retry_off=False))
+        if reasoner_role is not None else None)
+    nudge = _verdict_nudge(retry, False, routes, evidence=user, task=task,
+                           action_log=evidence, checks=gate_findings,
+                           participation_facts=measured_participation,
+                           diagnosis_ask=retry_ask, phase="satisfaction-retry-diagnosis",
                            workspace_root=workspace_root, rlog=rlog,
                            messages=messages, sess=sess)
     return False, nudge, nudge.action
@@ -3815,8 +3748,6 @@ class Loop:
         obj, raw = self._verdict(system, user, rlog, reasoning_off=False, workspace_root=workspace_root)
         if obj is not None:
             obj = _fill_missing_verdict_flag(obj, "done", rlog, "critic")
-        if obj is not None and _claims_impossible_action(obj, rlog, "critic"):
-            obj = None   # fabricated evidence → the parse-miss retry path, never a standing verdict
         if obj is not None:
             # MEASURED AND DELIBERATELY NOT BUILT (2026-08-02): the mirror of the reasoning recovery in
             # _verdict — "the judge APPROVED but its own thinking says NOT done" — does not exist. Of
@@ -3860,9 +3791,18 @@ class Loop:
                                                          cria_facts=participation_facts)
                     rlog.emit("loop.done_confirm", step=idx, confirmed=confirmed)
                     if not confirmed:
-                        done = False
-                        obj = {**obj, "reason": why or str(obj.get("reason") or ""), "proposed_fix": ""}
-            reason = _verdict_nudge(obj, done, routes, evidence=user,
+                        reason = VerdictNudge(why or prompts.load("unverified_step"))
+                        _dump_verify(self._run_dir(rlog), key, idx, total, item, system, user,
+                                     False, reason, response=raw)
+                        return False, reason
+            diagnosis_ask = ((lambda sysm: ask_closed(
+                self._ctx.reasoner_chat, self._ctx.reasoner_role, sysm, rlog,
+                phase="critic-diagnosis", max_tokens=16, retry_off=False))
+                if self._ctx.reasoner_role is not None else None)
+            reason = _verdict_nudge(obj, done, routes, evidence=user, task=item,
+                                    action_log=evidence, checks=red_findings,
+                                    participation_facts=participation_facts,
+                                    diagnosis_ask=diagnosis_ask, phase="critic-diagnosis",
                                     workspace_root=workspace_root, rlog=rlog,
                                     messages=messages, sess=sess)
             _dump_verify(self._run_dir(rlog), key, idx, total, item, system, user, done, reason, response=raw)
@@ -3884,7 +3824,14 @@ class Loop:
             reason = prompts.load("unverified_step") + _named_gap(red_findings)
             _dump_verify(self._run_dir(rlog), key, idx, total, item, system, user, False, reason, response=raw)
             return False, reason
-        reason = _verdict_nudge(retry, False, routes, evidence=user,   # reasoning-off NOT-done: trustworthy
+        retry_ask = ((lambda sysm: ask_closed(
+            self._ctx.reasoner_chat, self._ctx.reasoner_role, sysm, rlog,
+            phase="critic-retry-diagnosis", max_tokens=16, retry_off=False))
+            if self._ctx.reasoner_role is not None else None)
+        reason = _verdict_nudge(retry, False, routes, evidence=user, task=item,
+                                action_log=evidence, checks=red_findings,
+                                participation_facts=participation_facts,
+                                diagnosis_ask=retry_ask, phase="critic-retry-diagnosis",
                                 workspace_root=workspace_root, rlog=rlog,
                                 messages=messages, sess=sess)
         _dump_verify(self._run_dir(rlog), key, idx, total, item, system, user, False, reason, response=raw)
@@ -4129,48 +4076,8 @@ class Loop:
             # steer_diagnose's own "Do not choose the IMPLEMENTATION").
             named = (reason or "").strip()
             if named and not sess.nudge_reason and named != (sess.last_gap_named or "").strip():
-                # ASK THE DISK, ON THIS PATH TOO. `_veto_refuted_by_disk` is the one owner of "does
-                # the file this verdict calls missing actually exist" (#23), and it ran only on the
-                # APPROVE path — `_confirm_completion` is the brake on a false DONE, so a verdict
-                # that says NOT satisfied never reached it. The gap steer is the other half of the
-                # same claim and it went out unchecked in both directions.
-                #
-                # Walked on feed-pipeline-java x qwen35 1787249436 (0/5). Six verdicts named
-                # `REVIEW.md is missing (required deliverable)` — true, and the judge had confirmed
-                # it on disk itself with `list_dir .` and `find . -name REVIEW.md`. cria delivered
-                # every one of them wrapped in "That report is one reader's opinion of your work,
-                # NOT A VERIFIED FACT and not an instruction, and you did not ask for it." The
-                # coder agreed all six times, wrote the file zero times, and the run lost the one
-                # point that needed no build. A file's absence is not a matter of opinion.
-                #
-                # Both directions, because the hedge exists for a real reason and only half of it
-                # is wrong: where the disk REFUTES the claim the steer is dropped whole rather than
-                # softened (#3 — a false "X is missing" in cria's voice is worse than silence, the
-                # same rule the approve path already applies), and where the disk CORROBORATES it
-                # the facts ride along so the claim arrives as what it is. Everything the disk
-                # cannot speak to — an implementation the judge would like, a test it thinks is
-                # weak — keeps the hedge untouched: that is the case it was written for, and it
-                # has broken working code before.
-                #
-                # PREVALENCE (#15), over the captures: 186 delivered completion-check steers, of
-                # which 17 assert a named file is missing. This can neither silence much nor
-                # promote much, which is what makes it safe in both directions.
-                disk_ask = (lambda sysm: summarize(self._ctx.reasoner_chat, self._ctx.reasoner_role,
-                                                   sysm, _ASK_USER_TURN, rlog,
-                                                   phase="gap-disk", temperature=0.0) or "") \
-                    if self._ctx.reasoner_role is not None else None
-                refuted, disk_facts = _veto_refuted_by_disk(
-                    named, sess.workspace_root or "", ask=disk_ask, rlog=rlog)
-                if refuted:
-                    rlog.emit("loop.satisfaction_gap_refuted_by_disk", level="warn",
-                              path=refuted, head=_clip(named, 120))
-                    return None      # the disk says the deliverable is there; say nothing (#5b)
-                if disk_facts:
-                    rlog.emit("loop.satisfaction_gap_confirmed_by_disk", level="info",
-                              head=_clip(named, 120))
-                    key = ("veto_disk_confirms" if _facts_agree_with_a_missing_claim(disk_facts)
-                           else "veto_disk_checked")
-                    reason = reason + "\n\n" + prompts.render(key, facts=disk_facts)
+                # ``judge_satisfaction`` already passed this through the one typed provenance
+                # owner. A second missing-word/path pass here could disagree with the same facts.
                 sess.last_gap_named = named
                 sess.nudge_reason = prompts.render("periodic_gap", reason=reason)
                 sess.steer_source = "completion check (deliverable not found)"
@@ -6100,13 +6007,15 @@ def guard_periodic_result(gs: GuardState, body: dict, rlog) -> str | None:
 _ASK_USER_TURN = "Answer the question above."
 
 
-def ask_closed(chat_fn, role, question: str, rlog, *, phase: str, max_tokens: int = 1024) -> str:
+def ask_closed(chat_fn, role, question: str, rlog, *, phase: str, max_tokens: int = 1024,
+               retry_off: bool = True) -> str:
     """ONE primitive for every closed question cria puts to a reasoner — reasoning off, temperature
     0, the question in the user turn where the model looks for it. Returns "" on anything unreadable,
-    which every caller already treats as "no answer"."""
+    which every caller already treats as "no answer". A caller whose contract permits only one
+    actual judgment can disable the otherwise loss-preserving empty-answer retry."""
     return summarize(chat_fn, replace(role, reasoning="off") if role is not None else None,
                      question, _ASK_USER_TURN, rlog, phase=phase, max_tokens=max_tokens,
-                     temperature=0.0) or ""
+                     temperature=0.0, retry_off=retry_off) or ""
 
 
 def validate_compaction_briefing(chat_fn, role, briefing: str, *, files: str, checks: str,
@@ -10316,30 +10225,28 @@ def _label_spill_entries(disk: str) -> str:
 
 def _verdict_nudge(obj: dict, done: bool, routes: str = "", *,
                    evidence: str = "", workspace_root: str | None = None, rlog=None,
-                   messages: list | None = None, sess=None) -> VerdictNudge:
-    """The coder-facing nudge from a critic verdict dict: the ``reason``, plus the ``proposed_fix`` (a
-    concrete next action the critic named) when the step is NOT done — so the coder is handed a move,
-    not just a diagnosis. ``proposed_fix`` is meaningless on a pass (nothing to fix), so it is dropped
-    when ``done``. Either field may be absent/empty; the fix is appended on its own line when present.
+                   messages: list | None = None, sess=None, task: str = "",
+                   action_log: str = "", checks: str = "", participation_facts: str = "",
+                   diagnosis_ask=None, phase: str = "negative-diagnosis") -> VerdictNudge:
+    """Build the coder-facing value from a verdict.
 
-    THE SAME BAR AS A STEER, because it is the same kind of thing. A proposed fix is authored text
-    the coder acts on, and it used to face exactly one guard — the route check below — while an
-    authored steer faces the whole of :func:`_grounded_steer_or_none`: role-play, argument blobs,
-    ungrounded URLs, phantom filesystem paths, phantom response fields. Measured over the captures:
-    134 proposed fixes reached the coder across 41 sessions, and replaying them through the steer
-    guards with no evidence at all drops 10 for naming a URL — among them
-    ``https://github.com/guyp/decimal``, a repository that does not exist, and several docs.rs pages
-    the judge invented the shape of. The evidence the judge itself was shown is passed in, so a URL
-    it legitimately READ is still allowed through; the check is against what cria composed, exactly.
-
-    ``ask`` is deliberately not threaded: the reasoner-backed arms of that function stay off here, so
-    this costs no model call. Only the deterministic guards run — and they need the session and the
-    conversation, which were not being passed either, so five of the twelve were inert while the log
-    recorded a verdict from them. The REASON always survives — the step really was not done; only the
-    invented move is dropped."""
+    Every production caller supplies ``task``. Positive verdicts keep their completion reason;
+    negative ones go through the single typed provenance owner and use its exact task quote as the
+    action. The no-task arm remains only for older private unit-level callers of this helper; no
+    completion path can reach it.
+    """
     reason = str(obj.get("reason", "")).strip()
     fix = _fix_text(obj)
-    if done or not fix:
+    if done:
+        return VerdictNudge(reason)
+    if task:
+        return _negative_diagnosis_nudge(
+            obj, task=task, action_log=action_log, checks=checks,
+            participation_facts=participation_facts, workspace_root=workspace_root or "",
+            ask=diagnosis_ask, rlog=rlog, phase=phase)
+    # Compatibility for private callers that do not yet have task provenance. Production verdict
+    # seats always pass ``task`` and therefore cannot enter this free-form path.
+    if not fix:
         return VerdictNudge(reason)
     # A `METHOD /path` route is unambiguous — nothing writes "POST /x" about a file it is creating —
     # and a judge learns that spelling from cria's OWN shape ledger. Measured (run 0727-153326): the

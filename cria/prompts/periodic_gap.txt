@@ -1,6 +1,6 @@
-A completion check looked at the whole task against the work so far and could not confirm it is finished. It reported:
+A completion check looked at the whole task against the work so far and kept completion open:
 {{REASON}}
 
-That report is one reader's opinion of your work, not a verified fact and not an instruction, and you did not ask for it. Check it against the ORIGINAL task before you act on it. If it names a deliverable the task genuinely asked for and you have not built, build that. If it is wrong — the work is already there, or it describes an implementation the task never specified — leave your code as it is and say plainly why the report is mistaken; you are not required to change working code to satisfy it, and doing so has broken passing test suites before.
+Act only on an exact task requirement and current evidence shown above. If no exact pair is shown, treat this only as "not confirmed" and re-check the ORIGINAL task and current workspace. Do not add a requirement or choose an implementation that the task did not specify.
 
 Keep working either way. This is not a request to stop, and it is not permission to declare the task done.

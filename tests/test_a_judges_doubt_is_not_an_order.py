@@ -19,11 +19,10 @@ that bound after a false 'done' shipped a dropped requirement), and the coder st
 done or stop (#14). Many not-satisfied verdicts are correct, so the fix is "do not relay prose as an
 order", never "distrust the verdict".
 
-WHAT CHANGED. The reason is attributed to the check that made it, marked as an opinion about the
-work rather than a verified fact, and the coder is told in as many words that it may leave correct
-code alone and say why the report is wrong. And when the judge named no gap at all, cria says that
-— it used to substitute "a deliverable the task named is missing, stubbed, or does not actually
-work", a concrete finding nobody had made (#5b).
+WHAT CHANGED AGAIN. Free-form diagnoses no longer reach this prompt. A diagnosis arrives only with
+an exact task quote and exact current-evidence provenance; unsupported prose is replaced by the
+plain not-confirmed control. The prompt therefore tells the coder to act only on that exact pair
+and never add a requirement or implementation.
 """
 
 import json
@@ -71,20 +70,19 @@ class TheReportIsAttributedNotCommandedTests(unittest.TestCase):
         self.assertIn("a completion check could not confirm", self.body)
         self.assertIn("It reported:", self.body)
 
-    def test_it_is_called_an_opinion_not_a_fact(self):
-        self.assertIn("not a verified fact and not an instruction", self.body)
+    def test_it_requires_exact_task_and_evidence_provenance(self):
+        self.assertIn("exact task requirement and current evidence", self.body)
 
     def test_the_mandate_sentence_is_gone(self):
         """The clause that converted a verdict into an order."""
         self.assertNotIn("finish exactly what is called out above", self.body)
 
-    def test_the_coder_may_keep_correct_code(self):
-        """The direct counter to the measured harm: a 22/22 suite edited down to 2 failures."""
-        self.assertIn("leave your code as it is", self.body)
-        self.assertIn("not required to change working code", self.body)
+    def test_it_forbids_new_requirements_and_implementations(self):
+        self.assertIn("Do not add a requirement", self.body)
+        self.assertIn("choose an implementation", self.body)
 
-    def test_it_must_check_the_report_against_the_task(self):
-        self.assertIn("Check it against the ORIGINAL task before you act on it", self.body)
+    def test_an_unsupported_report_is_only_not_confirmed(self):
+        self.assertIn('treat this only as "not confirmed"', self.body)
 
 
 class TheBlockIsStillClosedTests(unittest.TestCase):
@@ -138,8 +136,8 @@ class TheBlockIsStillClosedTests(unittest.TestCase):
         r1 = run._done_critic_reason(sess, _body(), _Rlog())
         r2 = run._done_critic_reason(sess, _body(), _Rlog())
         self.assertEqual(len(calls), 2)
-        self.assertEqual(r1, "still missing X")
-        self.assertEqual(r2, "still missing X")
+        self.assertEqual(r1, prompts.load("done_no_named_gap"))
+        self.assertEqual(r2, prompts.load("done_no_named_gap"))
 
 
 class NoGapNamedMeansNoGapClaimedTests(unittest.TestCase):

@@ -1,0 +1,5 @@
+The completion check remains open on this exact task requirement:
+{{TASK_QUOTE}}
+
+Current evidence ({{SOURCE}}):
+{{EVIDENCE}}

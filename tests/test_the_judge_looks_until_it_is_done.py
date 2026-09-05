@@ -144,24 +144,27 @@ class TheJudgesOwnReasonReachesTheCoderTests(unittest.TestCase):
 
         def chat(body, _rlog):
             return json.dumps({"choices": [{"message": {"content": json.dumps(
-                {"satisfied": False, "reason": reason, "proposed_fix": ""})}}]}).encode()
+                {"satisfied": False, "reason": reason, "proposed_fix": "Add REVIEW.md.",
+                 "diagnosis_kind": "missing_file", "subject": "REVIEW.md",
+                 "task_quote": "Add REVIEW.md.", "evidence_source": "workspace_absence",
+                 "evidence_quote": ""})}}]}).encode()
 
         with tempfile.TemporaryDirectory() as ws:
             ok, why, _fix = loop.judge_satisfaction(
-                "build the thing", "x" * 200_000, chat, None, _Rlog(), workspace_root=ws)
+                "Build the thing and Add REVIEW.md.", "x" * 200_000, chat, None, _Rlog(),
+                workspace_root=ws)
         self.assertIs(ok, False)                      # completion still fails closed (#13)
-        self.assertIn("REVIEW.md does not exist", why)
+        self.assertIn("REVIEW.md is not present", why)
         self.assertNotEqual(why, prompts.load("unverified_step"))
 
-    def test_a_finished_look_still_names_its_gap(self):
-        """Unchanged behaviour, kept as the control."""
+    def test_an_untyped_finished_look_keeps_control_but_not_prose(self):
         def chat(body, _rlog):
             return json.dumps({"choices": [{"message": {"content": json.dumps(
                 {"satisfied": False, "reason": "no README on disk"})}}]}).encode()
 
         ok, why, _fix = loop.judge_satisfaction("build the thing", "wrote main.py", chat, None, _Rlog())
         self.assertIs(ok, False)
-        self.assertEqual(why, "no README on disk")
+        self.assertEqual(why, "")
 
 
 class TheForcedAnswerMayAbstainTests(unittest.TestCase):

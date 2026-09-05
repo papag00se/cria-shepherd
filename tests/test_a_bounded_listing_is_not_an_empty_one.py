@@ -14,9 +14,8 @@ Measured on a real 420-file root, which the survey folds to a count (`X\\t420\\t
     loop._workspace_is_empty      True
 
 And on a real 1,169-file run workspace with `complete=True` and 7 folded directories, 503 of 1,169
-files known: `_basename_matches('PT.yaml')` returned `[]` — the "genuinely absent" answer — for a
-file that is on disk. It feeds `_veto_refuted_by_disk`, which prints "NOT on disk" under a sentence
-calling it a verified fact.
+files known, a basename lookup returned `[]` for a file inside a folded directory. The typed
+negative-diagnosis path now consumes `listed_everything` and suppresses that unknown absence.
 
 Two more of the same family, from the write side rather than the read side:
 

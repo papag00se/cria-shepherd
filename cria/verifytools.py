@@ -184,8 +184,14 @@ def verdict_tool(key: str) -> dict:
         "parameters": {"type": "object", "properties": {
             key: {"type": "boolean", "description": _TD["verdict_satisfied"]},
             "reason": {"type": "string", "description": _TD["verdict_reason"]},
-            "proposed_fix": {"type": "string", "description": _TD["verdict_fix"]}},
-            "required": [key, "reason"]}}}
+            "proposed_fix": {"type": "string", "description": _TD["verdict_fix"]},
+            "diagnosis_kind": {"type": "string", "description": _TD["verdict_diagnosis_kind"]},
+            "subject": {"type": "string", "description": _TD["verdict_subject"]},
+            "task_quote": {"type": "string", "description": _TD["verdict_task_quote"]},
+            "evidence_source": {"type": "string", "description": _TD["verdict_evidence_source"]},
+            "evidence_quote": {"type": "string", "description": _TD["verdict_evidence_quote"]}},
+            "required": [key, "reason", "proposed_fix", "diagnosis_kind", "subject",
+                         "task_quote", "evidence_source", "evidence_quote"]}}}
 
 
 def tools_for(verdict_key: str = "") -> list:

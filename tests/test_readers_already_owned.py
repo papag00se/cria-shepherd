@@ -300,7 +300,7 @@ class ConfirmBrakeReadsTheVerdictItWasSentTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             confirmed, why = self._confirm(CONFIRM_0120, d)
         self.assertFalse(confirmed)
-        self.assertIn("web_search", why)
+        self.assertEqual(why, "")  # recovery keeps the veto; its untyped diagnosis is not surfaced
 
     def test_a_repaired_CONSISTENT_never_confirms(self):
         # ADVERSARIAL — the fire-when-it-should-not case for this site. Recovering a `true` here

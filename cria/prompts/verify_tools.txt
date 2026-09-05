@@ -3,7 +3,7 @@
 # the result goes back as protocol. Tool descriptions + steers. Parsed by prompts.load_map.
 list_dir = List a directory INSIDE the workspace: entries with sizes (dirs marked with /). Call with no path (or ".") for the workspace root. Use this to check what actually exists before ruling on a step that promises a file.
 read_file = Read a file INSIDE the workspace and see its REAL content (optionally only lines start_line..end_line, 1-based inclusive). Use this to check that a claimed artifact actually contains what the step requires — a file can exist and still be empty or a stub.
-answer_now = Answer NOW with ONLY the JSON verdict: {"{{KEY}}": true|false, "reason": "<short>", "proposed_fix": "<brief fix prose>"}. If you did not manage to read something you needed, SAY THAT in the reason — "could not verify X" — and do not state as fact anything you did not actually read. A guess written as an observation is worse than no answer: it is handed to the coder as work to do.
+answer_now = Answer NOW with ONLY the JSON verdict: {"{{KEY}}": true|false, "reason": "", "proposed_fix": "", "diagnosis_kind": "", "subject": "", "task_quote": "", "evidence_source": "", "evidence_quote": ""}. Fill diagnosis/prose fields only from the requested verdict schema. If you could not verify something because you did not actually read it, keep {{KEY}} false but leave unsupported diagnosis/prose fields empty. Do not state as fact anything you did not actually read. A guess written as an observation is worse than no answer: it is handed to the coder as work to do.
 outside = [refused: {{PATH}} is outside the workspace — the judge inspects only the workspace under {{ROOT}}]
 unknown_tool = [refused: {{NAME}} is not one of your tools — you have list_dir and read_file; the coder's tools are listed only so the fix you name is one IT can carry out]
 missing = [{{PATH}} does not exist]
@@ -41,6 +41,11 @@ verdict = Give your final answer. Call this once, when you have finished looking
 verdict_satisfied = true only when every requested deliverable is present, verified and working; false otherwise.
 verdict_reason = A short evidence-based verdict: what proves completion, or the exact deliverable that is missing, failing, fake or unproven.
 verdict_fix = When satisfied is false, NAME the missing or failing deliverable in one line — what must become true, not how to make it true. Never a command, a tool call, a library, a filename the task did not name, or an approach; those belong to the coder. Empty string when true.
+verdict_diagnosis_kind = When false, exactly one of missing_file, missing_content, failed_check, unverified_requirement, or other. A whole absent file and missing content inside an existing file are different types. Empty when true.
+verdict_subject = The exact task- or step-named workspace path for missing_file or missing_content; otherwise empty unless one exact subject is useful.
+verdict_task_quote = When false, an exact contiguous quote from the task or step that states the unmet requirement. Empty when true.
+verdict_evidence_source = When false, exactly one of workspace_absence, workspace_file, action_log, checks, or participation. Use workspace_absence only for missing_file, workspace_file for content read from a file, and checks for a failed check. Empty when true.
+verdict_evidence_quote = When false, an exact contiguous quote from the named evidence source with no paraphrase. Empty only for workspace_absence or a true verdict.
 # WHY THE LOOKING STOPPED, prefixed to whichever forced answer follows. All three closers used to
 # open "You have inspected enough" — a statement about the READER's judgement, asserted at the two
 # moments cria could least support it: after the reader had just asked to look at something (its
