@@ -49,6 +49,16 @@ class TheTaskSurvivesTests(unittest.TestCase):
         self.assertTrue(m[1], "the real task must be the protected one")
         self.assertFalse(m[0], "the env preamble is not the task")
 
+    def test_the_session_pin_beats_an_unrecognised_plain_text_banner(self):
+        """The 2026-09-04 harness used this untagged shape; phrase guessing protected it as task."""
+        banner = "Working environment — cwd: /tmp/ws"
+        msgs = [u(banner), u(TASK), a("ok"), u("⟦ctx:steer⟧ go")]
+        m = contextfloor._protected_mask(msgs, pinned_task=TASK)
+        self.assertFalse(m[0])
+        self.assertTrue(m[1])
+        kept, _ = contextfloor._drop_oldest(msgs, 10, pinned_task=TASK)
+        self.assertTrue(any((x.get("content") or "") == TASK for x in kept))
+
     def test_a_transcript_with_only_a_banner_protects_nothing_extra(self):
         msgs = [u(BANNER), a("ok"), u("⟦ctx:steer⟧ go")]
         self.assertFalse(self.mask(msgs)[0])

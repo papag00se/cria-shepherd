@@ -34,6 +34,10 @@ OUTPUT_RESERVE = "cria_output_reserve"
 #: A historical tool_call whose result never arrived, recorded so the repair at the wire can find it.
 LOST_CALL = "cria_lost_call"
 
+#: The conversation's verbatim root task. The loop knows this from session state; the context floor
+#: consumes it to protect the right user turn instead of guessing from the preamble's wording.
+PINNED_TASK = "cria_pinned_task"
+
 # --- response-body hints: cria's own annotations on a completion --------------------------------
 
 #: Human-facing notes cria attaches to a completion for the operator's display, stripped before the
@@ -46,4 +50,4 @@ RUMINATION = "cria_rumination"
 
 #: Every key above. The wire strips this set wholesale, so adding a key here is all it takes to keep
 #: it off the API — the thing five scattered literals could not guarantee.
-ALL = (MERGE_TURNS, OUTPUT_RESERVE, LOST_CALL, NOTES, RUMINATION)
+ALL = (MERGE_TURNS, OUTPUT_RESERVE, LOST_CALL, PINNED_TASK, NOTES, RUMINATION)

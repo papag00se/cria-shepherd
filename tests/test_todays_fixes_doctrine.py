@@ -155,8 +155,15 @@ class BothDriversKeepTheFetchLedger(unittest.TestCase):
                 "tools": [_SHELL], "stream": True}
         l2._drive_single_item(sess2, body2, "sid:x", _Rlog())
         msgs2 = rec2.bodies[-1]["messages"]
-        sys_idx2 = max(i for i, m in enumerate(msgs2) if m["role"] == "system")
-        self.assertIn(selfcompact.FACTS_MARKER, msgs2[sys_idx2 + 1].get("content") or "")
+        fact_at = [i for i, m in enumerate(msgs2)
+                   if selfcompact.FACTS_MARKER in (m.get("content") or "")]
+        self.assertEqual(len(fact_at), 1)
+        # On the single-item path the refreshed authority belongs after historical work, where it is
+        # both marker-protected and the last state the coder reads. Head placement made stale rollups
+        # look newer than current facts in the 2026-09-04 L5 walk.
+        self.assertGreater(fact_at[0], max(i for i, m in enumerate(msgs2)
+                                           if m["role"] == "system"))
+        self.assertEqual(fact_at[0], len(msgs2) - 1)
 
     def test_an_empty_ledger_injects_nothing(self):
         # A task with no web_fetch (a bash/git chore) must not gain an empty block.

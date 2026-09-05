@@ -70,6 +70,35 @@ class ARejectedPayloadIsNotFileContentTests(unittest.TestCase):
         self.assertEqual(out["function"]["name"], "edit_file")
         self.assertIn("cart.go", json.loads(out["function"]["arguments"])["path"])
 
+    def test_a_large_rejected_draft_survives_outside_the_argument_slot(self):
+        tc = {"id": "e1", "type": "function", "function": {
+            "name": "edit_file",
+            "arguments": json.dumps({"path": "cart.go", "old_string": BIG, "new_string": "x"})}}
+        note = writeproxy._rejected_payload_note(tc, "cart.go")
+        collapsed = writeproxy._collapse_rejected_payload(tc, "cart.go")
+        self.assertIn(BIG, note)
+        self.assertIn("never reached disk", note)
+        self.assertIn("⟦ctx:rejected-candidate⟧", note)
+        self.assertNotIn(BIG, collapsed["function"]["arguments"])
+
+    def test_the_real_round_trip_puts_the_draft_in_the_refusal_result(self):
+        from cria import editrecovery
+        tc = {"id": "w1", "type": "function", "function": {
+            "name": "write_file", "arguments": json.dumps({"path": "cart.go", "content": BIG})}}
+        comp = {"choices": [{"message": {"role": "assistant", "tool_calls": [tc]}}]}
+        shell = {"name": "shell", "parameters": {"type": "object", "properties": {
+            "command": {"type": "string"}}}}
+        writeproxy.translate_outbound(comp, shell, injected={"write_file"})
+        call = comp["choices"][0]["message"]
+        refusal = editrecovery.compose(
+            {"mode": "would_break", "path": "cart.go", "err": "syntax error", "current": "old"}, 0)
+        out = writeproxy.represent_inbound(
+            [call, {"role": "tool", "tool_call_id": "w1", "content": refusal}])
+        args = json.loads(out[0]["tool_calls"][0]["function"]["arguments"])
+        self.assertNotIn("content", args)
+        self.assertIn(BIG, out[1]["content"])
+        self.assertIn("never reached disk", out[1]["content"])
+
     def test_a_short_snippet_is_left_alone(self):
         """A targeted old_string is real context for the retry and too short to read as the file."""
         tc = {"id": "e1", "type": "function", "function": {

@@ -1,3 +1,3 @@
 [OUTPUT GUARD] Your last turn was stopped, and nothing it produced was kept. It was stopped here, on this side of the model, after it had filled {{PERCENT}}% of the space it had to answer in — not by the model running out. An answer stopped this way is discarded, not truncated and saved.
 
-Take the smallest concrete next step you already know, and take it now as a single tool call. If you were replacing a whole file to change a few lines, change those lines instead.
+Continue from the task and tool evidence above and take the smallest grounded next step as a single tool call. Prefer reading the current file or rerunning the exact failing check over reconstructing or replacing a file from memory.

@@ -84,7 +84,7 @@ class TheWholeActionIsJudgedTests(unittest.TestCase):
 
     def test_the_prompt_is_a_positive_closed_judgment(self):
         text = prompts.render("steer_diagnostic_action", directive="d", findings="f",
-                              refusals="(none)")
+                              grounding="task and disk", refusals="(none)")
         for answer in ("SUPPORTED", "CONTRADICTED", "UNSUPPORTED", "UNRELATED"):
             self.assertIn(answer, text)
         self.assertIn("ONE word", text)
@@ -132,22 +132,31 @@ class TheSharedSteerGateOwnsTheJudgmentTests(unittest.TestCase):
         outcomes = [kw for name, kw in rlog.events if name == "loop.steer_outcome"]
         self.assertEqual(outcomes[-1]["refused_by"], "diagnostic_unrelated")
 
-    def test_a_supported_whole_action_still_cannot_rely_on_a_provider_rejection(self):
+    def test_a_supported_whole_action_is_not_vetoed_by_a_second_token_judge(self):
         sess = self.session()
         sess.last_gate_flag = JAVA_REJECTS_TYPE
-        def ask(system, user=""):
-            if "PROVIDER_REJECTS" in system:
-                return "PROVIDER_REJECTS"
-            if "PRESCRIBES" in system:
-                return "PRESCRIBES"
-            return "SUPPORTED"
+        calls = []
         rlog = _Rlog()
         out = loop._grounded_steer_or_none(
-            "Add import java.util.concurrent.ConcurrentSet.", JAVA_REJECTS_TYPE, rlog,
-            ask=ask, sess=sess, messages=[])
-        self.assertIsNone(out)
+            "Remove import java.util.concurrent.ConcurrentSet.", JAVA_REJECTS_TYPE, rlog,
+            ask=lambda system, user="": calls.append(system) or "SUPPORTED",
+            sess=sess, messages=[])
+        self.assertEqual(out, "Remove import java.util.concurrent.ConcurrentSet.")
+        self.assertEqual(len(calls), 1)
         outcomes = [kw for name, kw in rlog.events if name == "loop.steer_outcome"]
-        self.assertEqual(outcomes[-1]["refused_by"], "rejected_provider")
+        self.assertTrue(outcomes[-1]["delivered"])
+
+    def test_task_and_disk_grounding_reaches_the_whole_action_judge(self):
+        sess = self.session()
+        seen = []
+        directive = "Keep the task-required discounts.json loader and repair Total."
+        evidence = "TASK: load discounts.json\nDISK: discounts.json exists"
+        out = loop._grounded_steer_or_none(
+            directive, evidence, _Rlog(), ask=lambda system, user="": seen.append(system) or "SUPPORTED",
+            sess=sess, messages=[])
+        self.assertEqual(out, directive)
+        self.assertEqual(len(seen), 1)
+        self.assertIn("DISK: discounts.json exists", seen[0])
 
     def test_a_write_after_the_gate_withholds_without_asking_a_judge(self):
         gate = (f"{probegate.SECTION_PREFIX}probe-0{probegate.SECTION_SUFFIX}\n"

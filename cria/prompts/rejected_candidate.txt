@@ -1,0 +1,4 @@
+⟦ctx:rejected-candidate⟧ This is your earlier {{TOOL}} {{KEY}} for `{{PATH}}`. The tool rejected that call; these bytes never reached disk. Use this only to correct the rejected draft, never as evidence of the file's current contents.
+--- rejected draft begins ---
+{{BODY}}
+--- rejected draft ends ---

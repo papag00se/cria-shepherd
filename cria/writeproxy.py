@@ -677,7 +677,10 @@ if key:
             close=cm[0]
 if ctx:
     _fail('anchor',anchor=ctx,line=dline)
-elif close and new_first and new_first in close:
+elif close and new_first and len([l for l in new.split(chr(10)) if l.strip()]) == 1 and ' '.join(new_first.split()) == ' '.join(close.split()):
+    # "Already done" is a fact only when the complete proposed replacement equals the complete
+    # current line. Substring containment made `require x` equal `require x "v1.5.0"` and falsely
+    # ordered the coder not to remove the rejected version.
     _fail('phantom',anchor=close)   # already-correct line the model misremembers
 elif close:
     _fail('close',anchor=close)     # near-miss: a mistyped token
@@ -1751,6 +1754,21 @@ def _failed_edit_ids(messages: list[dict]) -> set[str]:
     return ids
 
 
+def _rejected_payload_note(tc: dict, path: str) -> str:
+    """Lossless, explicitly provenanced copy of large bytes removed from a rejected tool argument."""
+    fn = tc.get("function") or {}
+    args = _parse(fn.get("arguments"))
+    if not isinstance(args, dict):
+        return ""
+    blocks = []
+    for key in ("old_string", "new_string", "content"):
+        val = args.get(key)
+        if isinstance(val, str) and len(val) > _REJECTED_PAYLOAD_CHARS:
+            blocks.append(prompts.render("rejected_candidate", tool=fn.get("name") or "write",
+                                         key=key, path=path, body=val).strip())
+    return "\n\n".join(blocks)
+
+
 def _collapse_rejected_payload(tc: dict, path: str, rlog=None) -> dict:
     """Take a REJECTED edit's verbatim payload OUT of the call, rather than replacing it with prose.
 
@@ -1853,6 +1871,7 @@ def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | Non
     exec_command calls keep their envelope — there the shell framing is the truth."""
     note_harness_cuts(messages, rlog)   # observe only: did the harness cut anything before cria saw it?
     out: list[dict] = []
+    rejected_notes_by_id: dict[str, str] = {}
     swapped = 0
     # WHICH CALLS FAILED, known before the assistant turn is emitted. A rejected edit_file keeps its
     # arguments in the replayed history, and `old_string` is the model's own idea of the file —
@@ -1908,6 +1927,9 @@ def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | Non
                                 if body_arg is not None:
                                     written[tc.get("id")] = body_arg
                             if tc.get("id") in failed_ids:
+                                note = _rejected_payload_note(tc, _tool_path(p) or "")
+                                if note:
+                                    rejected_notes_by_id[tc.get("id")] = note
                                 tc = _collapse_rejected_payload(tc, _tool_path(p) or "", rlog)
                         elif orig["name"] in (_READ_NAMES | _LIST_NAMES | _FETCH_NAMES | _SEARCH_NAMES):
                             strip_ids.add(tc.get("id"))
@@ -1970,7 +1992,11 @@ def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | Non
                 # then hand a structured edit-fail fact-report to the ONE edit-recovery owner, which
                 # composes the single monotonic directive keyed on this file's failure history so far
                 # (``out``). A non-edit-fail failure (write refusal, real error) passes through unchanged.
-                out.append({**m, "content": editrecovery.recover(_strip_exec_envelope(content), out, rlog)})
+                recovered = editrecovery.recover(_strip_exec_envelope(content), out, rlog)
+                note = rejected_notes_by_id.get(tid, "")
+                if note:
+                    recovered = recovered.rstrip() + "\n\n" + note
+                out.append({**m, "content": recovered})
             elif "externally-managed-environment" in content:
                 # PEP 668: `pip install` fails by design on this box. A weak model retries it forever
                 # (observed: Fabliq wedged a whole step re-running pip). Append the remedy (stdlib /

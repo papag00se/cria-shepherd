@@ -251,7 +251,7 @@ def _sniff_content_type(s: str) -> str | None:
 
 
 def fit(messages: list[dict], tools, *, window: int, reserve: int,
-        safety: float = SAFETY_FACTOR) -> tuple[list[dict], object, FloorReport]:
+        safety: float = SAFETY_FACTOR, pinned_task: str = "") -> tuple[list[dict], object, FloorReport]:
     """Return ``(messages, tools, report)`` reshaped to fit ``window`` (accounting for the
     ``tools`` schema and a generation ``reserve``). Pure — does not mutate the inputs;
     reduced/dropped messages and compressed tools are new objects. ``safety`` inflates the
@@ -293,7 +293,7 @@ def fit(messages: list[dict], tools, *, window: int, reserve: int,
         work, rep.outputs_reduced = _reduce_tool_outputs(work, msg_budget)
         # --- Lever 4: drop oldest droppable turns until it fits. ---
         if _msgs_tokens(work) > msg_budget:
-            work, rep.turns_dropped = _drop_oldest(work, msg_budget)
+            work, rep.turns_dropped = _drop_oldest(work, msg_budget, pinned_task)
         # --- Integrity: never leave a tool result orphaned from its assistant call. ---
         work, rep.orphans_removed = _strip_orphan_tools(work)
 
@@ -476,7 +476,7 @@ def _is_env_preamble(m: dict) -> bool:
     return bool(_ENV_PREAMBLE.search(_msg_text(m)))
 
 
-def _protected_mask(messages: list[dict]) -> list[bool]:
+def _protected_mask(messages: list[dict], pinned_task: str = "") -> list[bool]:
     """True where a message must NOT be dropped: every system message, the active turn — the last
     user message through the end of the list — and THE FIRST REAL USER TURN, which is the task.
 
@@ -498,10 +498,16 @@ def _protected_mask(messages: list[dict]) -> list[bool]:
     skipped; that is the same distinction selfcompact.is_env_context draws."""
     n = len(messages)
     last_user, first_task = -1, -1
+    wanted = pinned_task.strip()
     for i, m in enumerate(messages):
         if m.get("role") == "user":
             last_user = i
-            if first_task < 0 and not _is_env_preamble(m):
+            # Prefer the task the session actually pinned. Environment banners are harness prose and
+            # cannot be recognized reliably by an ever-growing phrase list. Exact equality is enough:
+            # this is the same verbatim root task the loop extracted from the raw request.
+            if wanted and _msg_text(m).strip() == wanted:
+                first_task = i
+            elif first_task < 0 and not wanted and not _is_env_preamble(m):
                 first_task = i
     prot = [False] * n
     if first_task >= 0:
@@ -597,7 +603,7 @@ def _drop_protected_overflow(messages: list[dict], msg_budget: int) -> tuple[lis
     return work, dropped
 
 
-def _drop_oldest(messages: list[dict], msg_budget: int) -> tuple[list[dict], int]:
+def _drop_oldest(messages: list[dict], msg_budget: int, pinned_task: str = "") -> tuple[list[dict], int]:
     """Drop oldest droppable messages (not system, not the active turn) until the transcript fits
     the budget or nothing droppable remains — but SYNTHESIZE their durable state (the files they
     modified) into a protected note in their place, so a long overflowing session doesn't lose track
@@ -605,7 +611,7 @@ def _drop_oldest(messages: list[dict], msg_budget: int) -> tuple[list[dict], int
 
     The note is part of the result, so it is part of the arithmetic: stop when the survivors PLUS the
     note fit, not when the survivors alone do (see ``_note_cost_bound``)."""
-    prot = _protected_mask(messages)
+    prot = _protected_mask(messages, pinned_task)
     keep = [True] * len(messages)
     total = _msgs_tokens(messages)
     dropped = 0

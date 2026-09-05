@@ -859,6 +859,18 @@ class EditCommandTests(unittest.TestCase):
         self.assertEqual(fail["mode"], "phantom")
         self.assertIn("base_url", fail["anchor"])
 
+    def test_a_proposed_prefix_is_not_falsely_reported_done(self):
+        """Go 0217: removing a rejected version is not already done merely because the proposed
+        bare require is a prefix of the current versioned require."""
+        rc, msg, out, fail = self._run(
+            'require github.com/shopspring/decimal "v1.5.0"\n',
+            'require github.com/shopspring/decimal "1.5.0"',
+            'require github.com/shopspring/decimal')
+        self.assertNotEqual(rc, 0)
+        self.assertNotEqual(fail["mode"], "phantom")
+        self.assertNotIn("This change is DONE", msg)
+        self.assertEqual(out, 'require github.com/shopspring/decimal "v1.5.0"\n')
+
     def test_near_miss_reports_close(self):
         rc, msg, out, fail = self._run("    timeout = 30\n", "    timeoutt = 30", "    timeout = 60")
         self.assertNotEqual(rc, 0)

@@ -75,6 +75,19 @@ class ASurveyFitsOneResultTests(unittest.TestCase):
         survey = _run(_tree(1200), budget=48_000)
         self.assertGreater(len(survey), 4 * content_reduce.INLINE_RESULT_MAX_BYTES)
 
+    def test_the_directory_drain_cannot_overrun_its_own_budget(self):
+        """Go 20260904 declared 521 records after the harness retained only 200/233: the post-walk
+        drain bypassed TREE_BYTES. A wide directory reproduces that exact path."""
+        root = tempfile.mkdtemp()
+        for i in range(521):
+            pathlib.Path(root, ".cell-installs", f"d{i:04d}").mkdir(parents=True, exist_ok=True)
+        survey = _run(root, budget=2_000)
+        view = wsview.View(root, "s")
+        self.assertTrue(wsview.apply_survey(view, survey))
+        self.assertTrue(view.surveyed)
+        self.assertFalse(view.complete)
+        self.assertLess(len(survey), 3_000)
+
     def test_a_survey_cut_in_transit_is_still_refused_wholesale(self):
         """The guard that made this silent must stay: a listing cut in transit is indistinguishable
         from a listing of a smaller repo, so every file past the cut would read as deleted."""

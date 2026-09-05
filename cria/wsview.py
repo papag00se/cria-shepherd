@@ -878,10 +878,17 @@ nrec = 0
 spent = 0
 complete = 1
 def EMIT(line):
-    global nrec, spent
+    global nrec, spent, complete
+    # One bound owns every tree record, including the queued-directory drain below. Previously the
+    # main walk stopped at TREE_BYTES and the drain emitted hundreds more records anyway; the harness
+    # cut the block, so its declared count could never match what arrived.
+    if spent + len(line) > TREE_BYTES:
+        complete = 0
+        return False
     W(line)
     nrec += 1
     spent += len(line)
+    return True
 stack = [""]
 while stack and n < TREE_MAX and spent < TREE_BYTES:
     cur = stack.pop(0)

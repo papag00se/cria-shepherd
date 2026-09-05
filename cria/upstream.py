@@ -301,7 +301,9 @@ class Upstream:
                 reserve = contextfloor.reserve_for(body)  # reads cria_output_reserve (stripped below)
                 tools_in = body.get("tools")
                 safety = safety_override if safety_override is not None else tokenratio.observed(body.get("model"))
-                msgs, tools, rep = contextfloor.fit(msgs, tools_in, window=window, reserve=reserve, safety=safety)
+                msgs, tools, rep = contextfloor.fit(
+                    msgs, tools_in, window=window, reserve=reserve, safety=safety,
+                    pinned_task=str(body.get(bodykeys.PINNED_TASK) or ""))
                 if rep.applied or rep.over_budget:
                     lvl = "warning" if rep.over_budget else "info"
                     rlog.emit("context.floor", reshape="floor-trim", level=lvl, safety=round(safety, 2),

@@ -2645,6 +2645,10 @@ class Loop:
         truncation guards → banner/reasoning hygiene → track repetition + write-streak on an acting turn
         → the outgoing search's query judge. Returns the guarded completion ({} on a decode failure — a
         no-tool 'done' the caller's gate then handles)."""
+        # The context floor runs later, at the wire, where prose-based preamble detection is too
+        # brittle to identify the real task. Carry the session's exact root task as an internal hint;
+        # Upstream consumes and strips it before serialization.
+        framed[bodykeys.PINNED_TASK] = getattr(sess.plan, "task", "") or ""
         _add_completion_tool(framed)  # advertise the explicit-done tool for THIS coder call
         rlog.phase = f"coder-s{step}"  # label the call capture with the role + step
         coder = massage.apply(_parse_completion(self._ctx.coder_chat(framed, rlog)), framed.get("tools"), rlog)
@@ -4277,9 +4281,6 @@ class Loop:
         # them. cria held those facts in its own memory the whole time and re-injected them on one
         # path only.
         facts = _fetched_facts_anchor(sess, framed.get("messages", []))
-        if facts is not None:
-            framed = {**framed, "messages": _elide_ledger_copies(   # the anchor is the ONE copy —
-                _insert_after_system(framed["messages"], facts), sess, rlog)}  # duplicates collapse
         extra = []
         if rewritten:  # first turn after a harness compaction → re-orient (a REASONED continuation).
             extra.append({"role": "user", "content": prompts.render(
@@ -4293,6 +4294,11 @@ class Loop:
         # framed has already been reframed) so self-compaction can't summarize it away.
         framed = self._self_compact_single(framed, sess, rlog,
                                            root_task=_history_root(body.get("messages", []))[0])
+        if facts is not None:
+            # Current fetched/disk facts belong after the historical rollup and rejected drafts. The
+            # old after-system insertion made stale chronology the final authority a small model read.
+            base = _elide_ledger_copies(framed["messages"], sess, rlog)
+            framed = {**framed, "messages": base + [facts]}
         if self._ctx.coder_role is not None:  # the coder role's sampling/reasoning from cria.toml
             self._ctx.coder_role.apply(framed)
         if self._ctx.focus_trim:  # focus the OUTBOUND view (logged, not bannered — routine housekeeping)
@@ -8503,7 +8509,8 @@ def _provider_rejected_name_the_steer_relies_on(
     return ""
 
 
-def _diagnostic_action_verdict(directive: str, findings: str, refused, rlog, ask) -> str:
+def _diagnostic_action_verdict(directive: str, findings: str, refused, rlog, ask,
+                               grounding: str = "") -> str:
     """Whether an optional authored steer is supported by the current red-check evidence.
 
     The old guard asked a lexical question for each identifier-shaped token shared by a directive
@@ -8524,6 +8531,7 @@ def _diagnostic_action_verdict(directive: str, findings: str, refused, rlog, ask
     refused_text = "\n".join(f"- {name}" for name in sorted(refused or set())) or "(none recorded)"
     ans = strip_think(ask(prompts.render(
         "steer_diagnostic_action", directive=directive, findings=findings,
+        grounding=(grounding or "(no additional task or workspace evidence supplied)"),
         refusals=refused_text)) or "").strip()
     head = ans.upper().split()[0].strip(".,:;`*\"'") if ans.split() else ""
     verdict = (head if head in {"SUPPORTED", "CONTRADICTED", "UNSUPPORTED", "UNRELATED"}
@@ -8791,13 +8799,12 @@ def _vet_steer(directive: str | None, evidence: str, rlog, ask=None,
                 return None, "diagnostic_stale"
             verdict = _diagnostic_action_verdict(
                 directive, findings, getattr(sess, "refused_names", None), rlog,
-                (lambda sysm: ask(sysm, "")) if ask else None)
+                (lambda sysm: ask(sysm, "")) if ask else None, grounding=evidence)
             if verdict != "SUPPORTED":
                 return None, "diagnostic_" + verdict.lower()
-            if _provider_rejected_name_the_steer_relies_on(
-                    directive, findings, rlog,
-                    (lambda sysm: ask(sysm, "")) if ask else None):
-                return None, "rejected_provider"
+            # The whole-action judge has the checker, exact refusal coordinates, and the same task /
+            # disk evidence the author saw. A second lexical pass over every shared token duplicated
+            # that judgment and promoted incidental local filenames such as go.mod to "providers".
         # The durable refusal ledger exists specifically for the post-compaction case where the
         # current finding-set is gone.  With current findings the whole-action judgment above owns
         # the question; asking the old per-coordinate question too would be two judges over one

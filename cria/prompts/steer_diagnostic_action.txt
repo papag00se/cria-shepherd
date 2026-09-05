@@ -8,6 +8,10 @@ Earlier in this same session the toolchain refused these exact package, module, 
 
 {{REFUSALS}}
 
+The following is the task and workspace evidence that grounded the proposed directive. It can affirm that a file or task requirement exists, but it cannot overrule a newer checker rejection of an external API or version:
+
+{{GROUNDING}}
+
 A supervisor proposes this one directive:
 
 {{DIRECTIVE}}
