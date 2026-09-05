@@ -5834,26 +5834,24 @@ class ReplanPersistsMirrorTests(unittest.TestCase):
 
 class KeylessVerdictTests(unittest.TestCase):
     """A judge that emits {"reason": …, "proposed_fix": …} WITHOUT the verdict key (observed live:
-    qwythos reasoned "done: true" then omitted the key entirely). The schema's own contract decides
-    it — proposed_fix is "" exactly when the flag is true — instead of bool(None) silently reading
-    every such verdict as NOT-done (a doom loop: the retry pass may only reject, so the step could
-    never pass). The inference is traced, and an inferred TRUE still faces the confirm brake."""
+    qwythos reasoned "done: true" then omitted the key entirely). A concrete proposed action can
+    recover only the negative branch; an empty action never invents positive completion."""
 
     def _chat(self, content):
         def fake(body, rlog):
             return json.dumps({"choices": [{"message": {"role": "assistant", "content": content}}]}).encode()
         return fake
 
-    def test_empty_fix_infers_the_flag_true(self):
+    def test_empty_fix_never_infers_the_flag_true(self):
         from cria.loop import judge_satisfaction
         rlog = _Rlog()
         sat, reason, _fx = judge_satisfaction(
             "build a resolver", "wrote resolver.py; pytest: 12 passed",
             self._chat('{"reason": "all deliverables exist and the tests pass", "proposed_fix": ""}'),
             None, rlog)
-        self.assertTrue(sat)
-        self.assertIn(("loop.verdict_flag_inferred",),
-                      [(k,) for k, _ in rlog.events])          # never binds silently
+        self.assertFalse(sat)
+        self.assertNotIn(("loop.verdict_flag_inferred",),
+                         [(k,) for k, _ in rlog.events])
 
     def test_nonempty_fix_infers_the_flag_false_and_keeps_the_fix(self):
         from cria.loop import judge_satisfaction
@@ -5882,7 +5880,7 @@ class KeylessVerdictTests(unittest.TestCase):
         from cria.loop import _fill_missing_verdict_flag
         rlog = _Rlog()
         self.assertEqual(_fill_missing_verdict_flag({"done": False, "proposed_fix": "x"}, "done", rlog, "p")["done"], False)
-        self.assertTrue(_fill_missing_verdict_flag({"reason": "r", "proposed_fix": " "}, "done", rlog, "p")["done"])
+        self.assertIsNone(_fill_missing_verdict_flag({"reason": "r", "proposed_fix": " "}, "done", rlog, "p"))
         self.assertFalse(_fill_missing_verdict_flag({"reason": "r", "proposed_fix": "do x"}, "done", rlog, "p")["done"])
         self.assertIsNone(_fill_missing_verdict_flag({"reason": "r"}, "done", rlog, "p"))
 
@@ -6112,15 +6110,14 @@ class FalseLineCitationTests(unittest.TestCase):
 
 class TextualNullFixTests(unittest.TestCase):
     """gemma writes the literal word "None" where the verdict schema means "" (g2 0141) — the
-    emptiness contract must read null spellings as empty, or a keyless DONE verdict is inferred
-    NOT-done and a finished task is re-opened."""
+    emptiness contract must read null spellings as empty, and empty must never infer completion."""
 
-    def test_null_spellings_infer_done_true(self):
+    def test_null_spellings_do_not_infer_any_verdict(self):
         from cria.loop import _fill_missing_verdict_flag
         for word in ("None", "none", "null", "N/A", "None."):
             obj = _fill_missing_verdict_flag({"reason": "all good", "proposed_fix": word},
                                              "done", _Rlog(), "verify")
-            self.assertTrue(obj["done"], word)
+            self.assertIsNone(obj, word)
 
     def test_a_real_fix_still_infers_not_done_and_survives(self):
         from cria.loop import _fill_missing_verdict_flag, _fix_text

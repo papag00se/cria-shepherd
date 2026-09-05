@@ -268,12 +268,18 @@ class GuardState:
     completion_probe_id: str = ""
     completion_gate_reds: int = 0  # RED results at the completion backstop (ledger visibility; no cap)
     # A completion-gate probe's RESULT has been read since the coder's last forwarded acting turn —
-    # green, or couldn't-run (the per-step fail-open posture, unchanged); RED clears it. The plan-ON
+    # green, or couldn't-run after discovery had a surveyed view (the per-step fail-open posture,
+    # unchanged); RED and a survey-only bootstrap clear it. The plan-ON
     # completion requires this: walked on ada-handles_ternary-bonsai_codex_poff_1785818931, a replan
     # returned [] with the coder mid-step-1, three LLM judges approved files that were never executed,
     # and the session exited 3/4 with ZERO gates run — pytest would have printed "5 failed". A session
     # must not end on judgment alone while cria never even ATTEMPTED the repo's checks.
     gate_fresh: bool = False
+    # A gate planned before the workspace survey can return only that survey.  Once it lands, probe
+    # discovery has new facts and completion must wait for one newly planned gate.  Separate from
+    # ``gate_fresh`` so an already-surveyed project with no applicable probe keeps the bounded
+    # attempted-gate exit, and a harness with no shell keeps its existing no-gate exit.
+    gate_replan_required: bool = False
     leg0_nudged: bool = False  # the no-tools act-first nudge fired once this session
     # NB: there is deliberately NO search-escape state here. cria used to SUBSTITUTE a web_fetch for a
     # search-looping coder's own web_search (streak/volume counters, a convention URL, a domain-root
@@ -1741,27 +1747,6 @@ def leaked_judge_tool(text: str) -> str:
     return name if name and name not in _JUDGE_TOOLS else ""
 
 
-# Past this a recovered reason is an ESSAY, not a directive — and the coder ACTS on it, so it is
-# content a model reads. #5 leaves one way to shorten it: the judge restates its own reason in a
-# line. `reason[:300]` once cut a judge's thinking mid-word and handed the fragment on as the
-# diagnosis; whole-sentences-up-to-a-budget was the same defect with a tidier seam. If the ask is
-# unavailable or empty the long reason rides WHOLE — too much is recoverable, a silent slice is not.
-REASON_ONE_LINE_CHARS = 600
-
-
-def _reason_in_one_line(reason: str, ask, rlog, phase: str) -> str:
-    """A long recovered reason restated by the JUDGE in one line, or the reason unchanged. Failure in
-    any direction returns the input untouched."""
-    if len(reason) <= REASON_ONE_LINE_CHARS or ask is None:
-        return reason
-    short = strip_think(ask(prompts.render("verdict_reason_one_line", reason=reason)) or "").strip()
-    if not short or len(short) >= len(reason):
-        return reason
-    rlog.emit("loop.reason_condensed", level="info", phase=phase,
-              chars_before=len(reason), chars_after=len(short))
-    return short
-
-
 def verdict_from_unclosed(vtext: str, flag: str, rlog, phase: str) -> dict | None:
     """A judge's OWN verdict object, recovered when its only defect is an absent closing brace — and
     ONLY when it rules NOT-done. ``None`` otherwise.
@@ -1883,75 +1868,41 @@ def verdict_from_reasoning(reasoning: str, flag: str, rlog, phase: str, ask=None
     if head[0].strip().upper() != _RECOVERED:
         return None
     recovered = head[1].strip() if len(head) > 1 else ""
-    # The sentence carrying the ruling IS the reason — the coder needs the diagnosis, not "the judge
-    # said no". Bounded because this is a prompt cria COMPOSES, not content the coder reads.
-    # From the ruling sentence ONWARD, not the ruling alone. "The task is not done." tells the coder
-    # nothing; the sentences after it carry the diagnosis ("Holder: unknown and Total Handles: 0 ...
-    # resolve_handle is not correctly extracting the holder"), which is the whole value of the
-    # recovery. Bounded because this is a prompt cria COMPOSES, not content the coder reads.
-    # The reasoner reports the judge's reason IN THE JUDGE'S WORDS; anchor the excerpt on it so the
-    # sentences AFTER the ruling — which carry the diagnosis the coder needs — ride along, exactly as
-    # the regex version did from its match onward.
-    sentences = re.split(r"(?<=[.!?])\s+", text)
-    key = " ".join(recovered.split()[:6]).lower()
-    start = next((i for i, sn in enumerate(sentences) if key and key in " ".join(sn.split()).lower()),
-                 None)
-    if start is None and not key:
-        # A BARE `NOT_DONE` with no sentence after it. The reasoner ruled but quoted nothing, so
-        # there is no anchor to miss and the judge's own text from the top is the best available
-        # reason — the long-standing behaviour, deliberately kept.
-        start = 0
-    if start is None:
-        # THE ANCHOR MISSED, SO THE ANCHORED EXCERPT IS WORTHLESS. This defaulted to 0 and shipped
-        # the thinking FROM THE TOP — which is the model warming up, not its ruling. The one piece of
-        # text known to be about the ruling is the sentence the reasoner just handed back, and it was
-        # thrown away at exactly the moment the recovery had worked.
-        #
-        # Measured, ternary-bonsai/ruby 0085. Recovered: "the code was broken because it used the
-        # wrong API (`EuCountries.eu_members` instead of `ISO3166.EUCountry.codes.include?(code)`)".
-        # Delivered to the coder: "Let me check if there's a way to see what happened after my
-        # write_file call." — sentence zero.
-        #
-        # A fallback that fires precisely when the recovery succeeded is the band-aid (#4), so it is
-        # deleted rather than tuned.
-        reason = recovered
-        if not reason:
-            return None                      # nothing about the ruling to carry — fail closed (#13)
-        rlog.emit("loop.verdict_from_reasoning", level="info", phase=phase, anchor_missed=True,
-                  matched=_clip(recovered, 60), reason=_clip(reason, 120))
-        return {flag: False, "reason": reason, "proposed_fix": ""}
-    # WHOLE SENTENCES up to the budget, never a hard character slice. `reason[:300]` cut a judge's
-    # thinking mid-word and handed the fragment onward as the diagnosis the coder must act on — an
-    # instruction that stops mid-sentence is one the coder completes by guessing. The budget bounds
-    # how MANY sentences, so a single long sentence rides whole rather than being amputated.
-    reason = _reason_in_one_line(" ".join(sentences[start:]).strip() or text, ask, rlog, phase)
+    if not _is_a_finding(recovered):
+        return None
+    # Recovery classifies the source; it does not author replacement evidence.  Require the answer
+    # after NOT_DONE to be an exact, contiguous quote from the source reasoning.  A paraphrase can be
+    # correct and still has no provenance cria can surface as the checker's words.  Case-folding,
+    # whitespace normalization and a second condensation call all erase that boundary, so none are
+    # permitted here.
+    start = text.find(recovered)
+    if start < 0:
+        rlog.emit("loop.verdict_recovery_unanchored", level="info", phase=phase,
+                  chars=len(recovered))
+        return None
+    # Carry the exact source suffix from the quoted ruling onward.  The following source sentences
+    # often contain the actionable diagnosis, and a contiguous slice preserves every byte the judge
+    # actually wrote without a second provider paraphrasing it.
+    reason = text[start:]
     rlog.emit("loop.verdict_from_reasoning", level="info", phase=phase,
               matched=_clip(recovered, 60), reason=_clip(reason, 120))
     return {flag: False, "reason": reason, "proposed_fix": ""}
 
 
 def _fill_missing_verdict_flag(obj: dict, flag: str, rlog, phase: str) -> dict | None:
-    """A verdict object MISSING its verdict key ("done"/"satisfied") is not a verdict — unless the
-    schema's own contract decides it: ``proposed_fix`` is defined as "" when the flag is true and
-    a concrete action when false (verify.txt / satisfaction prompts), so its presence
-    disambiguates a keyless verdict. Returns the object with the flag filled (traced via rlog —
-    an inference must never bind silently), or None when nothing sound can fill it, which routes
-    the caller to its normal parse-miss retry.
+    """Recover only a negative verdict from a keyless object.
 
-    Observed live (suite run, qwythos): the judge reasoned "done: true", then emitted
-    ``{"reason": …, "proposed_fix": ""}`` with NO done key. ``bool(obj.get("done"))`` silently
-    read that as NOT-done — a contradiction the coder was nudged with (a reason arguing complete
-    under a NOT-DONE verdict), re-verified 4× in 2 minutes, and the parse-miss retry never fired
-    because the JSON parsed fine. A doom loop: the retry pass may only REJECT, so a model that
-    consistently omits the key could never pass the step at all. An inferred TRUE is still not
-    blindly trusted — it passes through the approve-path confirm brake like any other approval."""
+    A concrete ``proposed_fix`` is evidence that the schema's negative branch was intended, so the
+    missing flag can be filled as ``False``.  An empty fix cannot prove completion: positive
+    completion must be explicit and then pass its normal confirmation brake.  Ambiguous objects
+    return ``None`` and take the caller's parse-miss/fail-closed path.
+    """
     if flag in obj:
         return obj
-    if "proposed_fix" not in obj:
+    if not _fix_text(obj):
         return None
-    inferred = not _fix_text(obj)
-    rlog.emit("loop.verdict_flag_inferred", flag=flag, inferred=inferred, phase=phase)
-    return {**obj, flag: inferred}
+    rlog.emit("loop.verdict_flag_inferred", flag=flag, inferred=False, phase=phase)
+    return {**obj, flag: False}
 
 
 # Textual null spellings a model writes where the schema means "" — observed live: gemma emits
@@ -1969,10 +1920,29 @@ def _fix_text(obj: dict) -> str:
     return "" if fix.lower().rstrip(".") in _NULL_FIX else fix
 
 
+class VerdictNudge(str):
+    """One accepted satisfaction result with checker evidence and authored action kept separate.
+
+    It remains a ``str`` for the existing coder-facing prompt path, while ``evidence`` and ``action``
+    retain the provenance needed by other consumers.  In particular, a corrective ``PlanItem`` uses
+    this exact accepted ``action`` rather than re-reading the provider's raw ``proposed_fix``.
+    """
+
+    def __new__(cls, evidence: str = "", action: str = ""):
+        evidence = (evidence or "").strip()
+        action = (action or "").strip()
+        action_line = prompts.render("verdict_nudge_action", action=action) if action else ""
+        rendered = "\n".join(part for part in (evidence, action_line) if part)
+        value = super().__new__(cls, rendered)
+        value.evidence = evidence
+        value.action = action
+        return value
+
+
 def judge_satisfaction(task: str, evidence: str, reasoner_chat, reasoner_role, rlog, coder_tools: str = "",
                        workspace_root: str = "", routes: str = "",
                        gate_findings: str = "", messages: list | None = None,
-                       sess=None) -> tuple[bool, str]:
+                       sess=None) -> tuple[bool, str, str]:
     """Reasoner critic for the WHOLE user task (task-level, unlike the step-level _verify): is the user's
     original request satisfied by the REAL work (the coder's tool output — ground truth, not its claim)?
     Returns (satisfied, reason). Reasoning-ON first, then reasoning-OFF on a parse miss (the reasoner
@@ -2022,15 +1992,18 @@ def judge_satisfaction(task: str, evidence: str, reasoner_chat, reasoner_role, r
         # solution down to 4/5. The VERDICT still stands (not satisfied, fail closed, #13); what is
         # withheld is the invented reason, so the caller falls back to the plain instruction rather
         # than sending the coder to fix work that is already right (#3, #5b).
-        return satisfied, _verdict_nudge(obj, satisfied, routes, evidence=user,
-                                         workspace_root=workspace_root, rlog=rlog,
-                                         messages=messages, sess=sess), _fix_text(obj)
+        nudge = _verdict_nudge(obj, satisfied, routes, evidence=user,
+                               workspace_root=workspace_root, rlog=rlog,
+                               messages=messages, sess=sess)
+        return satisfied, nudge, nudge.action
     # No parseable careful verdict (the reasoner over-thought, or leaked a spurious tool call instead of
     # the JSON). A reasoning-OFF retry can RECOVER a verdict, but a reasoning-off judge is a rubber
     # stamp — competent to REJECT, not to APPROVE. So use it only to confirm NOT-satisfied; a
     # "satisfied" that exists ONLY because the careful pass failed is downgraded and we fail CLOSED. A
     # false "done" over fake work is far worse than a few more work turns.
     retry = _satisfaction_verdict(system, user, reasoner_chat, reasoner_role, rlog, reasoning_off=True)
+    if retry is not None:
+        retry = _fill_missing_verdict_flag(retry, "satisfied", rlog, "satisfaction-retry")
     if retry is None:
         # Fail closed — but the CODER-facing reason is a plain instruction, never cria's internal
         # bookkeeping: "unverified (no parseable verdict)" injected as a steer made one model
@@ -2039,10 +2012,10 @@ def judge_satisfaction(task: str, evidence: str, reasoner_chat, reasoner_role, r
     if retry.get("satisfied"):
         rlog.emit("loop.satisfaction_failclosed", level="info")
         return False, "unverified — the careful check could not confirm completion; keep working", ""
-    return False, _verdict_nudge(retry, False, routes, evidence=user,
-                                 workspace_root=workspace_root, rlog=rlog,
-                                 messages=messages, sess=sess), \
-        str(retry.get("proposed_fix") or "").strip()
+    nudge = _verdict_nudge(retry, False, routes, evidence=user,
+                           workspace_root=workspace_root, rlog=rlog,
+                           messages=messages, sess=sess)
+    return False, nudge, nudge.action
 
 
 def satisfaction_done_note(reason: str, *, checks_ran: bool = True) -> str:
@@ -2712,6 +2685,13 @@ class Loop:
                 sess.probe_call_id, sess.completion_probe_id = sess.completion_probe_id, ""
                 sess.probe_reissues = 0
                 errors = guard_gate_verdict(sess, body, rlog)
+                if sess.gate_replan_required:
+                    probe_tc = guard_gate_replan_after_survey(
+                        sess, body, rlog, workspace_root=sess.workspace_root)
+                    if probe_tc is not None:
+                        sess.completion_probe_id = sess.probe_call_id = probe_tc["id"]
+                        return _completion_toolcalls(
+                            [probe_tc], note="verifying — running the repo's checks")
                 if errors:
                     # RED is ground truth about the repo — the task cannot complete over failing
                     # checks. Reopen with the ONE reused corrective step; the findings ride in the
@@ -2806,8 +2786,7 @@ class Loop:
         # paragraph became a step verbatim and pinned a run for 118 calls (0729-mellum2) — carrying
         # literal {{…}} braces the coder shipped into a URL, and "or fallback on…" advice. The essay
         # still reaches the coder through the nudge below; the plan gets only something DOABLE. And
-        # a judge-authored step is NOT exempt from the noise scrub every other authored step passes
-        # (operator: the model may author steps; cria's routing must apply the same quality bar).
+        # the accepted action is the same typed value already used in the coder nudge below.
         # NO ACTION, NO STEP. The comment above states the rule — "the plan gets only something
         # DOABLE" — and `or reason` broke it: with no proposed_fix, the judge's VERDICT ESSAY became
         # the plan step, which is the exact shape that pinned a run for 118 calls. Measured over the
@@ -2817,18 +2796,8 @@ class Loop:
         # present. The essay still reaches the coder — through `nudge_reason` below, which is the
         # channel built for it.
         step_text = fix_action
-        try:
-            noisy = reasoned_noise_indices(
-                lambda sysm, userm: summarize(self._ctx.reasoner_chat, self._ctx.reasoner_role,
-                                              sysm, userm, rlog, phase="reasoner") or "",
-                task, [step_text] if step_text else [],
-                facts=session_research_facts(body.get("messages", []), sess))
-        except Exception:  # noqa: BLE001 — the scrub is advisory; never lose the corrective step to a crash
-            noisy = set()
         if not step_text:
             rlog.emit("loop.completion_fix_absent", level="info", head=_clip(reason, 120))
-        elif 0 in noisy:
-            rlog.emit("loop.completion_fix_noise", level="info", head=_clip(step_text, 120))
         else:
             fix = PlanItem(text=_COMPLETION_FIX_PREFIX + step_text)
             if (sess.plan.items and sess.plan.items[-1].text.startswith(_COMPLETION_FIX_PREFIX)
@@ -3015,7 +2984,8 @@ class Loop:
                                   sources_read=research.sources_read(
                                       _extract_fetches(body.get('messages', [])), body.get('messages', [])),
                                   workspace_root=sess.workspace_root or "",
-                                  gate_red=bool(sess.last_gate_red))
+                                  gate_red=bool(sess.last_gate_red),
+                                  messages=body.get("messages", []), sess=sess)
         if ok:  # advance ONLY on a genuine pass — no fail cap (re-nudge forever otherwise)
             return self._advance(sess, key, body, idx, total, rlog)
         sess.verify_fails += 1
@@ -3246,6 +3216,14 @@ class Loop:
         # itself is always true.
         prev_flag = sess.last_gate_flag
         record_gate_state(sess, outcome, gate_error_text(outcome), rlog)
+        if sess.gate_replan_required:
+            probe_tc = guard_gate_replan_after_survey(
+                sess, body, rlog, workspace_root=sess.workspace_root)
+            if probe_tc is not None:
+                sess.awaiting_probe = True
+                sess.probe_call_id = probe_tc["id"]
+                return _completion_toolcalls(
+                    [probe_tc], note=f"verifying step {idx}/{total} — running checks")
         if not outcome.ran:
             # The script never ran (harness declined / no markers). Don't wedge — the pre-existing
             # fail-open: the critic still judges, told explicitly that no diagnostics ran.
@@ -3258,7 +3236,8 @@ class Loop:
                                   sources_read=research.sources_read(
                                       _extract_fetches(body.get('messages', [])), body.get('messages', [])),
                                       workspace_root=sess.workspace_root or "",
-                                      gate_red=bool(sess.last_gate_red))
+                                      gate_red=bool(sess.last_gate_red),
+                                      messages=body.get("messages", []), sess=sess)
             if ok:
                 return self._advance(sess, key, body, idx, total, rlog)
             sess.verify_fails += 1
@@ -3343,7 +3322,8 @@ class Loop:
                                       _extract_fetches(body.get('messages', [])), body.get('messages', [])),
                                   workspace_root=sess.workspace_root or "",
                                   red_findings=red_findings or "",  # grounded in the coder's own runs
-                                  gate_red=bool(sess.last_gate_red))
+                                  gate_red=bool(sess.last_gate_red),
+                                  messages=body.get("messages", []), sess=sess)
         if nudge is not None:
             if ok:
                 # The critic read the findings and ruled they are not this step's goal. Loud by
@@ -3424,7 +3404,8 @@ class Loop:
             sources_read=research.sources_read(_extract_fetches(msgs), msgs),
             workspace_root=sess.workspace_root or "",
             red_findings=findings if sess.last_gate_red else "",
-            gate_red=bool(sess.last_gate_red))
+            gate_red=bool(sess.last_gate_red),
+            messages=msgs, sess=sess)
         # SAY WHAT IT DID, always — a guard that is silent when it declines cannot be told apart from
         # one that never ran.
         rlog.emit("loop.periodic_step_check", step=idx, done=bool(ok), drive=sess.drive_count,
@@ -3700,7 +3681,8 @@ class Loop:
     def _verify(self, item: str, coder_text: str, probe: str, evidence: str, rlog,
                 *, idx: int = 0, total: int = 0, key: str = "", coder_tools: str = "",
                 routes: str = "", workspace_root: str = "", red_findings: str = "",
-                gate_red: bool = False, sources_read: list | None = None) -> tuple[bool, str]:
+                gate_red: bool = False, sources_read: list | None = None,
+                messages: list | None = None, sess=None) -> tuple[bool, str]:
         # NB: no per-step fast-path around the critic. The one that existed shortcut a research step whose
         # facts cria had surfaced — but it could only recognize a step cria itself had injected and pinned,
         # and that injection is gone. The critic judges every step, grounded on the same durable fetch
@@ -3816,7 +3798,8 @@ class Loop:
                         done = False
                         obj = {**obj, "reason": why or str(obj.get("reason") or ""), "proposed_fix": ""}
             reason = _verdict_nudge(obj, done, routes, evidence=user,
-                                    workspace_root=workspace_root, rlog=rlog)
+                                    workspace_root=workspace_root, rlog=rlog,
+                                    messages=messages, sess=sess)
             _dump_verify(self._run_dir(rlog), key, idx, total, item, system, user, done, reason, response=raw)
             return done, reason
         # No parseable careful verdict — the reasoner over-thought or leaked a tool call. Retry
@@ -3826,6 +3809,8 @@ class Loop:
         # advance the plan (the plan-off satisfaction judge fails closed the same way).
         rlog.emit("loop.verify_retry", level="info", reason="no parseable verdict; retry reasoning-off")
         retry, raw = self._verdict(system, user, rlog, reasoning_off=True)  # raw now = the retry's response
+        if retry is not None:
+            retry = _fill_missing_verdict_flag(retry, "done", rlog, "critic-retry")
         if retry is not None and retry.get("done"):
             rlog.emit("loop.verify_failclosed", level="info")
             retry = None
@@ -3835,7 +3820,8 @@ class Loop:
             _dump_verify(self._run_dir(rlog), key, idx, total, item, system, user, False, reason, response=raw)
             return False, reason
         reason = _verdict_nudge(retry, False, routes, evidence=user,   # reasoning-off NOT-done: trustworthy
-                                workspace_root=workspace_root, rlog=rlog)
+                                workspace_root=workspace_root, rlog=rlog,
+                                messages=messages, sess=sess)
         _dump_verify(self._run_dir(rlog), key, idx, total, item, system, user, False, reason, response=raw)
         return False, reason
 
@@ -4174,6 +4160,15 @@ class Loop:
             # Consumed here, once, by the probe they were held for — the way `done_probe` itself is.
             parts, sess.pending_done_parts = sess.pending_done_parts, ()
             errors = guard_gate_verdict(sess, body, rlog)
+            if sess.gate_replan_required:
+                probe_tc = guard_gate_replan_after_survey(
+                    sess, body, rlog, workspace_root=sess.workspace_root)
+                if probe_tc is not None:
+                    sess.done_probe = True
+                    sess.probe_call_id = probe_tc["id"]
+                    sess.pending_done_parts = parts
+                    return _completion_toolcalls(
+                        [probe_tc], note="verifying — running the repo's checks")
             if errors:  # a check FAILED → steer to fix (pass the FULL output; the context floor bounds it)
                 rlog.emit("loop.gate", plan_off=True, blocked=True)
                 sess.nudge_reason = prompts.render("gate_fail_steer", errors=errors)
@@ -5628,6 +5623,10 @@ def guard_gate_op(gs: GuardState, body: dict, rlog, *, workspace_root=None) -> d
         gs.gate_plan = None
         return None
     gs.gate_plan = plan
+    # Planning against the now-surveyed view consumes the bootstrap obligation.  This assignment is
+    # deliberately after successful planning: no shell or an unreadable workspace must keep the
+    # caller on its existing bounded safe-exit path rather than pretending a second plan exists.
+    gs.gate_replan_required = False
     return {
         "id": "call_" + uuid.uuid4().hex[:16],
         "type": "function",
@@ -5637,6 +5636,24 @@ def guard_gate_op(gs: GuardState, body: dict, rlog, *, workspace_root=None) -> d
         "function": {"name": tool["name"],
                      "arguments": json.dumps(with_time_budget(tool, shell_args(tool, plan.script)))},
     }
+
+
+def guard_gate_replan_after_survey(gs: GuardState, body: dict, rlog, *, workspace_root=None) -> dict | None:
+    """Plan the one follow-up gate required after a survey-only bootstrap result.
+
+    ``None`` preserves the existing no-shell/unreadable-workspace exit.  The obligation is consumed
+    in that case too: repeatedly asking for a shell that the harness does not expose would turn a
+    fail-safe completion check into an unbounded wedge.
+    """
+    if not gs.gate_replan_required:
+        return None
+    probe = guard_gate_op(gs, body, rlog, workspace_root=workspace_root)
+    if probe is None:
+        gs.gate_replan_required = False
+        rlog.emit("loop.gate_replan_after_survey", available=False)
+        return None
+    rlog.emit("loop.gate_replan_after_survey", available=True)
+    return probe
 
 
 def _refusals_in_window(messages: list[dict] | None) -> tuple[int, str]:
@@ -6180,8 +6197,19 @@ def record_gate_state(gs: GuardState, outcome, findings: str, rlog=None) -> None
 
     A gate that could not RUN is a neutral non-signal: never red, never green, and it must not touch
     the stall streak (:func:`track_gate_progress` says so in its own words). It still counts as
-    ATTEMPTED — the completion backstop's long-standing fail-open — so `gate_fresh` is set."""
+    ATTEMPTED — the completion backstop's long-standing fail-open — so `gate_fresh` is set. The one
+    exception is a survey-only bootstrap: it enables a newly discovered gate but attempted none of
+    those checks, so it requires that new plan and remains stale."""
     gs.last_gate_ran = bool(outcome.ran)
+    gs.gate_replan_required = bool(getattr(outcome, "replan_after_survey", False))
+    if gs.gate_replan_required:
+        # Only the survey ran.  It made a better plan possible; it did not attempt that plan and may
+        # not satisfy freshness.  Every completion reader consumes this flag through the shared
+        # guard_gate_replan_after_survey helper above.
+        gs.gate_fresh = False
+        if rlog is not None:
+            rlog.emit("loop.gate_survey_only", level="info")
+        return
     if not outcome.ran:
         gs.gate_fresh = True     # ATTEMPTED — cria's own inability must never wedge a real 'done'
         return
@@ -6236,8 +6264,9 @@ def guard_gate_verdict(gs: GuardState, body: dict, rlog) -> str | None:
     findings = gate_error_text(outcome)
     record_gate_state(gs, outcome, findings, rlog)
     if not outcome.ran:
-        rlog.emit("loop.gate", plan_off=True, blocked=False, gate_ran=False)  # #12: say which happened
-        return None  # the checks couldn't run → accept the 'done' (fail-open, like the loop)
+        rlog.emit("loop.gate", plan_off=True, blocked=False, gate_ran=False,
+                  replan_after_survey=bool(getattr(outcome, "replan_after_survey", False)))
+        return None  # couldn't run → fail-open; survey-only is separately re-planned by every caller
     return findings or None
 
 
@@ -10054,7 +10083,7 @@ def _label_spill_entries(disk: str) -> str:
 
 def _verdict_nudge(obj: dict, done: bool, routes: str = "", *,
                    evidence: str = "", workspace_root: str | None = None, rlog=None,
-                   messages: list | None = None, sess=None) -> str:
+                   messages: list | None = None, sess=None) -> VerdictNudge:
     """The coder-facing nudge from a critic verdict dict: the ``reason``, plus the ``proposed_fix`` (a
     concrete next action the critic named) when the step is NOT done — so the coder is handed a move,
     not just a diagnosis. ``proposed_fix`` is meaningless on a pass (nothing to fix), so it is dropped
@@ -10076,15 +10105,15 @@ def _verdict_nudge(obj: dict, done: bool, routes: str = "", *,
     recorded a verdict from them. The REASON always survives — the step really was not done; only the
     invented move is dropped."""
     reason = str(obj.get("reason", "")).strip()
-    fix = str(obj.get("proposed_fix", "")).strip()
+    fix = _fix_text(obj)
     if done or not fix:
-        return reason
+        return VerdictNudge(reason)
     # A `METHOD /path` route is unambiguous — nothing writes "POST /x" about a file it is creating —
     # and a judge learns that spelling from cria's OWN shape ledger. Measured (run 0727-153326): the
     # critic proposed `POST /handles/resolve`, a route in no spec, 12 times; the coder grepped for
     # that literal string across 322 calls on one step.
     if routes and urlgrounding.ungrounded_routes(fix, routes):
-        return reason
+        return VerdictNudge(reason)
     # THE SESSION AND THE CONVERSATION, because five of the twelve guards cannot run without them.
     # With `messages=None`, `_observed_code(None)` is "" and `_invented_code_spans` short-circuits on
     # "nothing to check against → nothing is invented" — so the dictated-code arm DELIVERED the fix
@@ -10098,10 +10127,10 @@ def _verdict_nudge(obj: dict, done: bool, routes: str = "", *,
     # reasoner-backed arms remain off here, so this still costs no model call. In particular, the
     # current-diagnostic compatibility guard abstains rather than deleting every proposed fix merely
     # because this caller deliberately has no classifier seat.
-    if rlog is not None and _grounded_steer_or_none(fix, evidence, rlog, sess=sess, messages=messages,
-                                                    workspace_root=workspace_root) is None:
-        return reason
-    return f"{reason}\nProposed fix: {fix}" if reason else f"Proposed fix: {fix}"
+    accepted = (_grounded_steer_or_none(fix, evidence, rlog, sess=sess, messages=messages,
+                                        workspace_root=workspace_root)
+                if rlog is not None else fix)
+    return VerdictNudge(reason, accepted or "")
 
 
 def _dump_verify(run_dir, key: str, idx: int, total: int, step: str, system: str, user: str,

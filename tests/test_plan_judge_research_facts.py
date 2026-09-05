@@ -75,8 +75,7 @@ class WiringTests(unittest.TestCase):
         self.assertEqual(seen["user"], "TASK:\nthe task\n\nPLAN:\n1. step one")
 
     def test_the_planners_own_noise_judge_sees_the_gathered_facts(self):
-        """There are three callers of the shared noise judge; this is the planner's own
-        (Planner._reasoned_noise_indices), fed from the gather's research ledger
+        """The planner's own noise judge is fed from the gather's research ledger
         (self._gather_facts). Drive the REAL method — a fixture beats a source-text grep: it
         would have caught a caller that kept the `facts=` spelling but stopped supplying real
         data just as surely as one that dropped the kwarg outright."""
@@ -92,11 +91,9 @@ class WiringTests(unittest.TestCase):
         p._reasoned_noise_indices("the task", ["step one"], _Rlog())
         self.assertIn("resolved_addresses", seen["user"])
 
-    def test_the_completion_critics_noise_judge_sees_the_session_ledger(self):
-        """The second caller: Loop._reopen_if_unsatisfied scrubs its corrective step through the
-        same judge, fed the SESSION's research ledger (session_research_facts). Drive the whole
-        completion-critic path — satisfaction judge answers "not satisfied" with a fix, which is
-        what feeds the noise judge next."""
+    def test_the_completion_critic_does_not_submit_its_accepted_action_to_a_second_judge(self):
+        """The satisfaction path validates its authored action once.  Reopening the plan reuses that
+        exact action instead of giving a second provider veto over it."""
         bodies = []
 
         def reasoner(body, rlog):
@@ -114,8 +111,9 @@ class WiringTests(unittest.TestCase):
         sess = loop.PlanSession(plan=plan)
         sess.fetched_pages = dict(LEDGER)
         loop.Loop(ctx)._reopen_if_unsatisfied(sess, {"messages": []}, _Rlog())
-        self.assertEqual(len(bodies), 2, "satisfaction judge, then the noise judge")
-        self.assertIn("resolved_addresses", bodies[1]["messages"][-1]["content"])
+        self.assertEqual(len(bodies), 1, "only the satisfaction judge should run")
+        self.assertEqual(sess.plan.items[-1].text,
+                         loop._COMPLETION_FIX_PREFIX + "fix it")
 
     def test_the_living_replans_noise_judge_sees_the_session_ledger(self):
         """The third caller, reached through two hops: Loop._replan_tail hands the session's

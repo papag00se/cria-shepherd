@@ -65,7 +65,7 @@ A terse index of the assists cria **actually implements** today, in five familie
 - **Command-safety classifier** — unwrap `sudo`/`npx`/`poetry run`/…, reject installers/mutators/watch, identify probe kind.
 - **Bounded probe runner** — the harness runs ONE composed script; cria replays the output through the ported parsers, never mutating the workspace.
 - **Diagnostic parsers** — rustc/cargo, tsc, ESLint, pytest, and generic `file:line` → structured findings + a one-line summary; **error-class only** (unused-import/style advisories don't block).
-- **Ground-truth completion gate** — on a "done" claim, run the floor + top probe + top TEST probe; broken code or failing tests block, and the exact `file:line` becomes the re-prompt.
+- **Ground-truth completion gate** — on a "done" claim, run the floor + top probe + top TEST probe; broken code or failing tests block, and the exact `file:line` becomes the re-prompt. A first gate that only bootstraps the workspace survey is not fresh evidence: cria plans one new gate from that survey before completion. An already-surveyed workspace with no applicable probe, or a harness with no shell, keeps the bounded safe exit.
 - **Changed-a-file leg** — a coder turn ends only if it actually modified a file on disk this task.
 
 ## Reasoned guidance — the reasoner as the stuck-loop response

@@ -17,8 +17,6 @@ _ROOT = pathlib.Path(__file__).resolve().parent.parent / "cria"
 _ALLOWED = {
     ("loop.py", "cleaned[i][:160]"): "an EVENT field for the operator's jsonl, not model-facing text",
     ("loop.py", "cleaned.strip().splitlines()[1:]"): "parsing: drops a header line, keeps the rest",
-    ("loop.py", "recovered.split()[:6]"): "a MATCH KEY used to locate a sentence; never displayed",
-    ("loop.py", "sentences[start:]"): "keeps everything from the match onward — a tail, not a cut",
     ("loop.py", "_task_key(task)[:8]"): "a short id for a filename/log, not prose",
     ("loop.py", "d[1:]"): "strips one leading character",
     ("plan.py", "lines[i + 1:]"): "parsing: the remainder of a block",

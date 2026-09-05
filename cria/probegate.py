@@ -67,6 +67,11 @@ class GatePlan:
     """Everything :func:`interpret_gate` needs to replay the output faithfully."""
 
     workspace: str
+    # Probe discovery reads the session-scoped workspace view, never cria's local filesystem.  On
+    # the first gate that view may still be empty, so the plan contains no candidates and its only
+    # useful result is the survey appended below.  The reader needs to retain that provenance: once
+    # the survey lands, this plan is obsolete and a newly discovered gate must run before completion.
+    surveyed_before: bool = False
     script: str = ""
     candidates: list = field(default_factory=list)  # selected ProbeCandidates, in section order
     # Test-naming conventions cria searched by and found nothing for (probediscovery.undiscoverable_tests).
@@ -104,6 +109,10 @@ class GateOutcome:
     # whole 24-cell arm to a verb Codex's sandbox disliked, silently. #12 — a lost instrument is an
     # event, not an absence.
     offline_ran: "bool | None" = None
+    # The gate was planned before the workspace survey and this result successfully supplied that
+    # survey, but no actual probe section ran.  This is bootstrap state, not a fresh attempted gate:
+    # the caller must plan once more against the newly populated view.
+    replan_after_survey: bool = False
 
 
 def _marker(section_id: str) -> str:
@@ -155,7 +164,8 @@ def plan_gate(workspace: str, session: str = "", rlog=None) -> GatePlan:
     the workspace path, so it must not discover against its OWN cwd (that once composed a
     probe over cria's repo itself). The harness's shell already runs in the workspace, so
     the git leg still lands; the checks just abstain (digest says none ran)."""
-    plan = GatePlan(workspace=workspace)
+    plan = GatePlan(workspace=workspace,
+                    surveyed_before=bool(wsview.current(workspace or None).surveyed))
     if workspace:
         plan.candidates = proberun.select_completion_probes(workspace)
         plan.untested = probediscovery.undiscoverable_tests(workspace)
@@ -1421,6 +1431,7 @@ def interpret_gate(plan: GatePlan, result_text: str, rlog=None) -> GateOutcome:
     # cria's own instrumentation, it belongs to no probe, and left in place it would land inside
     # whichever section happened to be open when it started.
     result_text, survey = wsview.strip_survey(result_text)
+    survey_applied = False
     if survey:
         # A SURVEY THAT DID NOT LAND IS AN EVENT, NOT AN ABSENCE (#12). `apply_survey` refuses a
         # survey that arrived cut, or that is about a different tree, and refusing is right — but
@@ -1428,7 +1439,8 @@ def interpret_gate(plan: GatePlan, result_text: str, rlog=None) -> GateOutcome:
         # this module cannot notice from the outside was also the one nobody was told about. An
         # unsurveyed view is what `_confirm_completion` fails open on and what leaves
         # `linterprobe.collect_files` with no probes to compose.
-        if not wsview.apply_survey(wsview.current(), survey) and rlog is not None:
+        survey_applied = wsview.apply_survey(wsview.current(), survey)
+        if not survey_applied and rlog is not None:
             rlog.emit("gate.survey_rejected", level="warn", bytes=len(survey),
                       closed=wsview.SURVEY_CLOSE in survey, **wsview.last_reject())
     sections = split_sections(result_text)
@@ -1440,7 +1452,11 @@ def interpret_gate(plan: GatePlan, result_text: str, rlog=None) -> GateOutcome:
     # that as "ran" made guard_ground_truth emit a clean "no error-class problems" verdict when NO check
     # actually ran. No probe-* section → ran=False → silence, not a false pass.
     if not any(k.startswith("probe-") for k in sections):
-        return GateOutcome(ran=False, refused=refusal_reason(result_text))
+        return GateOutcome(
+            ran=False,
+            refused=refusal_reason(result_text),
+            replan_after_survey=bool(survey_applied and not plan.surveyed_before),
+        )
     out = GateOutcome(ran=True, swept=swept)
 
     results = []

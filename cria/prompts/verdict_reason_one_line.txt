@@ -1,7 +1,0 @@
-Below is your own reason for ruling that the task is not done. Restate it in ONE line for the engineer who has to act on it.
-
-Name the deliverable or behaviour that is missing or wrong, and the evidence you saw. Do not add anything you did not already say, and do not describe how to fix it.
-
-Output only that line.
-
-{{REASON}}

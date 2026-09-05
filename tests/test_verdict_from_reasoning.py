@@ -32,8 +32,10 @@ def _reads(text):
     low = (text or "").lower()
     if any(w in low for w in ("not done", "not complete", "inconsistent", "still missing",
                               "unfinished", "no readme", "no live test")):
-        first = (text or "").strip().split(". ")[0]
-        return _ask(f"NOT_DONE: {first}.")
+        source = (text or "").strip()
+        first, separator, _rest = source.partition(". ")
+        exact = first + "." if separator else source
+        return _ask(f"NOT_DONE: {exact}")
     return _ask("UNCLEAR")
 
 
@@ -106,11 +108,9 @@ class TheContractWithTheReasonerTests(unittest.TestCase):
             self.assertIsNone(loop.verdict_from_reasoning(REAL, "satisfied", _Rlog(), "x",
                                                           _ask(junk)), junk)
 
-    def test_a_bare_NOT_DONE_with_no_reason_still_recovers(self):
+    def test_a_bare_NOT_DONE_with_no_source_quote_recovers_nothing(self):
         out = loop.verdict_from_reasoning(REAL, "satisfied", _Rlog(), "x", _ask("NOT_DONE"))
-        self.assertIsNotNone(out)
-        self.assertIs(out["satisfied"], False)
-        self.assertTrue(out["reason"])            # falls back to the judge's own text
+        self.assertIsNone(out)
 
     def test_the_answer_can_never_produce_an_approval(self):
         """Structural, not prompt-dependent: even a reasoner that says the work is DONE cannot make
@@ -118,7 +118,7 @@ class TheContractWithTheReasonerTests(unittest.TestCase):
         for answer in ("NOT_DONE: the work is complete and every test passes.",
                        "NOT_DONE: everything is satisfied."):
             out = loop.verdict_from_reasoning(REAL, "satisfied", _Rlog(), "x", _ask(answer))
-            self.assertIs(out["satisfied"], False)
+            self.assertIsNone(out)  # unanchored provider prose cannot manufacture a verdict
 
     def test_the_prompt_offers_only_the_two_answers(self):
         from cria import prompts
@@ -242,10 +242,7 @@ class PhantomToolTests(unittest.TestCase):
 
 
 class TheReasonIsNeverCutTests(unittest.TestCase):
-    """The reason is the diagnosis the coder is handed and must act on, so it is content a model
-    reads and #5 applies: it is never clipped. A long one is restated in a line BY THE JUDGE, and if
-    that is unavailable it rides whole. The old behaviour built whole sentences up to 300 characters
-    and hard-sliced at 600, which handed the coder an instruction that stopped mid-thought."""
+    """Recovered evidence is a contiguous, unmodified slice of the source reasoning."""
 
     LONG = ("The task is not done. " + " ".join(
         f"Observation number {i} concerns the resolver and its handling of the holder field."
@@ -261,19 +258,16 @@ class TheReasonIsNeverCutTests(unittest.TestCase):
         words = {w.strip(".!?…,") for w in self.LONG.split()}
         self.assertIn(out["reason"].split()[-1].strip(".!?…,"), words)
 
-    def test_a_long_reason_is_restated_by_the_judge_not_sliced(self):
-        """The only allowed way to shorten it: the judge says it again, shorter."""
-        asked = {}
+    def test_a_long_reason_is_not_sent_to_a_second_provider(self):
+        calls = []
 
         def ask(prompt):
-            if "Restate it in ONE line" in prompt:
-                asked["prompt"] = prompt
-                return "The resolver does not extract the holder field."
+            calls.append(prompt)
             return "NOT_DONE: " + self.LONG.split(". ")[0] + "."
 
         out = loop.verdict_from_reasoning(self.LONG, "satisfied", _Rlog(), "x", ask)
-        self.assertEqual(out["reason"], "The resolver does not extract the holder field.")
-        self.assertIn("Observation number 11", asked["prompt"])   # it saw the WHOLE reason
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(out["reason"], self.LONG)
 
     def test_without_the_restatement_the_long_reason_rides_WHOLE(self):
         def ask(prompt):
@@ -316,24 +310,23 @@ class TheAnchorMissMustNotShipSentenceZeroTests(unittest.TestCase):
     THINKING = ("Let me check if there's a way to see what happened after my write_file call. "
                 "I will look at the gem docs. The constant is wrong.")
 
-    def test_an_unfound_anchor_uses_the_recovered_sentence(self):
+    def test_an_unfound_anchor_is_rejected(self):
         recovered = "the code used EuCountries.eu_members instead of ISO3166.EUCountry.codes"
         out = loop.verdict_from_reasoning(self.THINKING, "satisfied", _Rlog(), "x",
                                           _ask("NOT_DONE: " + recovered))
-        self.assertIn("EuCountries.eu_members", out["reason"])
+        self.assertIsNone(out)
 
     def test_it_does_not_ship_the_opening_sentence(self):
         out = loop.verdict_from_reasoning(
             self.THINKING, "satisfied", _Rlog(),
             "x", _ask("NOT_DONE: the code used the wrong constant for EU membership"))
-        self.assertNotIn("Let me check if there", out["reason"])
+        self.assertIsNone(out)
 
     def test_the_miss_is_recorded(self):
         rlog = _Rlog()
         loop.verdict_from_reasoning(self.THINKING, "satisfied", rlog, "x",
                                     _ask("NOT_DONE: a sentence that is not in the thinking"))
-        kw = next(kw for k, kw in rlog.events if k == "loop.verdict_from_reasoning")
-        self.assertTrue(kw.get("anchor_missed"))
+        self.assertIn("loop.verdict_recovery_unanchored", [k for k, _ in rlog.events])
 
     def test_a_found_anchor_still_carries_the_sentences_after_it(self):
         """Unchanged: the diagnosis usually lives in the sentences FOLLOWING the ruling."""
@@ -341,8 +334,7 @@ class TheAnchorMissMustNotShipSentenceZeroTests(unittest.TestCase):
                                           _ask("NOT_DONE: I will look at the gem docs"))
         self.assertIn("The constant is wrong", out["reason"])
 
-    def test_a_bare_NOT_DONE_still_falls_back_to_the_judges_text(self):
-        """Deliberately kept: with no quoted sentence there is no anchor to miss."""
+    def test_a_bare_NOT_DONE_has_no_text_to_surface(self):
         out = loop.verdict_from_reasoning(self.THINKING, "satisfied", _Rlog(), "x",
                                           _ask("NOT_DONE"))
-        self.assertTrue(out["reason"])
+        self.assertIsNone(out)

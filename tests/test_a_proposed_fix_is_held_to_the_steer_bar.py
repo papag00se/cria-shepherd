@@ -150,36 +150,42 @@ class EveryJudgeSiteIsWiredTests(unittest.TestCase):
 
         def fake_nudge(obj, done, routes="", **kw):
             calls.append(kw)
-            return "STUBBED"
+            return loop.VerdictNudge("STUBBED")
 
         with mock.patch.object(loop, "_verdict_nudge", fake_nudge):
             def chat_careful_sat(body, rlog):
                 return content(_json.dumps({"satisfied": False, "reason": "x"}))
-            loop.judge_satisfaction("t", "e", chat_careful_sat, role(), _Rlog())
+            loop.judge_satisfaction("t", "e", chat_careful_sat, role(), _Rlog(),
+                                    messages=[], sess=object())
 
             def chat_retry_sat(body, rlog):
                 if rlog.phase == "satisfaction":
                     return content("I am thinking it over without a verdict")
                 return content(_json.dumps({"satisfied": False, "reason": "y"}))
-            loop.judge_satisfaction("t", "e", chat_retry_sat, role(), _Rlog())
+            loop.judge_satisfaction("t", "e", chat_retry_sat, role(), _Rlog(),
+                                    messages=[], sess=object())
 
             def chat_careful_verify(body, rlog):
                 return content(_json.dumps({"done": False, "reason": "not done"}))
             a_loop(chat_careful_verify)._verify("write the DELETE route", "did it", "",
-                                                "the coder ran tests", _Rlog())
+                                                "the coder ran tests", _Rlog(),
+                                                messages=[], sess=object())
 
             def chat_retry_verify(body, rlog):
                 if rlog.phase == "critic":
                     return content("thinking without a verdict")
                 return content(_json.dumps({"done": False, "reason": "still not done"}))
             a_loop(chat_retry_verify)._verify("write the DELETE route", "did it", "",
-                                              "the coder ran tests", _Rlog())
+                                              "the coder ran tests", _Rlog(),
+                                              messages=[], sess=object())
 
         self.assertEqual(len(calls), 4)
         for kw in calls:
             with self.subTest(kw=list(kw)):
                 self.assertTrue((kw.get("evidence") or "").strip(), "evidence not passed")
                 self.assertIsNotNone(kw.get("rlog"), "rlog not passed")
+                self.assertIsNotNone(kw.get("messages"), "messages not passed")
+                self.assertIsNotNone(kw.get("sess"), "session not passed")
 
     def test_no_reasoner_is_spent_on_it(self):
         """Asserted by handing it an `ask` that EXPLODES. The first version searched the source for
