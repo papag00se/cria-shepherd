@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the engagement ladder: 6 levels x 4 models x 6 tasks, skipping what is already done.
+"""Run the engagement ladder: 6 levels x 5 models x 6 tasks, skipping what is already done.
 
 RESUMABLE BY CONSTRUCTION. The worklist is derived from `suite/results/results.jsonl` on every pass,
 so a kill, a crash, a reboot or an operator's Ctrl-C costs the cell in flight and nothing else. There
@@ -28,7 +28,7 @@ SUITE = Path(__file__).resolve().parent
 RESULTS = SUITE / "results" / "results.jsonl"
 
 LEVELS = (0, 1, 2, 3, 4, 5)
-MODELS = ("gemma4", "qwen35", "ternary-bonsai", "nemotron-elastic")
+MODELS = ("gemma4", "qwen35", "ternary-bonsai", "ornith15", "gigachat31")
 TASKS = ("shipping-rates-rb", "cart-billing-go", "orders-api-py",
          "feed-pipeline-java", "handles-cli-node", "rust-toml-cli")
 

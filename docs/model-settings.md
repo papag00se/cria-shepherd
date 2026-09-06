@@ -25,10 +25,10 @@ Sampling is **client-side** (`cria.toml`); set the role you're driving to these.
 | **ternary-bonsai** (27B) | Q2_0 (custom **Q2_0_g128** ternary) | **per-role, CANONICAL (m15-verified — see block below)**: coder `0.2/0.95/20`, reasoner `0.6/0.90/40`, classifier+compactor `temp 0`; `repeat_penalty 1.1` all | PrismML (Qwen3.6-derived) | needs Q2_0_g128 kernels (§Server launch — TurboQuant merged fork); ~8.0 GB on the 3080; `n_ctx_train` **262144** (comfortable @ 48K) |
 | **mellum2** (12B A2.5B MoE) | Q4_K_M | `temp 0.6, top_p 0.95, top_k 20` | JetBrains (Thinking model) | reasoning-OFF clean (see §Reasoning) |
 | **gemma4** (12B) | Q4_K_M | `temp 1.0, top_p 0.95, top_k 64, repeat_penalty 1.1` — ALL roles | Gemma 4 defaults (same pair the finetune's card pinned; kept identical so the 2026-08-05 ablation isolated weights) | replaced the yuxinlu1 finetune 2026-08-05 after repeated runs showed stock completing substantially more of the same lane |
-| **ornith** (9B) | Q6_K | `temp 1.0, top_p 0.95` (agentic: `temp 0.6`) | deepreinforce evals | reasoning model; `--reasoning-format deepseek` |
+| **ornith15** (Ornith 1.5, 9B) | Q6_K | coder `temp 0.6, top_p 0.95, top_k 20, min_p 0, presence_penalty 0, repeat_penalty 1`; reasoner `temp 1.0, top_p 0.95, top_k 20, min_p 0, presence_penalty 1.5, repeat_penalty 1` | [ornith-ai card](https://huggingface.co/ornith-ai/Ornith-1.5-9B-GGUF) | **Current Ornith as of 2026-09-05.** Reasoning + XML tool calls are native in the embedded template; 262144-token training context. Previous testing was Ornith **1.0**, not 1.5. Stock b9893 cannot load the MTP block; dedicated upstream 74a7c897 does. Service and native tool/reasoning-toggle smoke verified at ~82 tok/s. |
 | **qwythos** (9B) | Q6_K | `temp 0.6, top_p 0.95, top_k 20` | empero-ai (Qwen3.5 thinking) | **V2 swapped in 2026-07-12** (`/home/jesse/models/Qwythos-9B-v2-Q6_K.gguf`, alias `qwythos_9b_v2_q6`). The UNVERIFIED flag this row carried until 2026-08-08 is retired: V2 has run the ladder repeatedly at these values, and its newest capture (20260804T155422) shows `reasoning_content` on 20/20 sampled coder replies |
 | **qwopus** (9B, Qwen3.5) | Q6_K | `temp 0.6, top_p 0.95, top_k 20` *(inferred — Qwen3.5)* | ⚠ not stated on card | verify before trusting |
-| **nemotron-elastic** (12B-A2B) | Q4_K_M | `temp 0.6, top_p 0.95` (tool-calling; general chat `1.0/1.0`) | NVIDIA (Nemotron 3 guide) | `nemotron_h_moe` mamba-hybrid MoE (128 experts/6 active, elastic-pruned from Nano-30B-A3B); ctx_train **1M**; 9.64 GB file auto-fits the 3080; **service-verified 86 t/s** on stock b9893. No plain Q4_0 exists anywhere — Q4_K_M substituted. Reasoning = automatic `<think>` in template; ON confirmed from real runs (`reasoning_content` on 20/20 sampled coder replies, capture 20260805T210927). The OFF recipe is still unexercised on this model |
+| **gigachat31** (GigaChat 3.1 Lightning, 10B-A1.8B) | Q4_K_M | `temp 0` all roles initially | [ai-sage card](https://huggingface.co/ai-sage/GigaChat3.1-10B-A1.8B-GGUF) | **Replaces nemotron-elastic in current runs as of 2026-09-05.** `deepseek2` MoE with MLA, native tool-use template, 262144-token context; exact file `GigaChat3.1-10B-A1.8B-q4_K_M.gguf` (6,474,702,976 bytes). The publisher's llama.cpp chat and function-call examples both use temperature 0; no broader sampling recommendation is published. Requires llama.cpp build ≥8495; fleet stock b9893 qualifies. Service and native tool-call smoke verified at ~224 tok/s; GGUF header reports 64 experts / 4 active. |
 | **qwen3.5** (9B) | Q6_K | `temp 0.6, top_p 0.95, top_k 20` | Qwen's own thinking-mode card | the BASE the fleet's two 9B finetunes come from (qwythos = empero-ai's, qwopus = Jackrong's) — same size, quant, build and sampling as both, so a repeated usefulness gap is attributable to the weights. Added 2026-08-08; `unsloth/Qwen3.5-9B-GGUF:Q6_K`, 7.46 GB. Reasoning toggle **verified on load** (0 chars off / 649 on). Stock CUDA build, default q8_0 KV — TurboQuant was considered and dropped so a runtime change would not land in the same step as a model change |
 | **qwen38** (27B, Qwen3.8) | UD-Q4_K_S | `temp 0.7, top_p 0.80, top_k 20` (instruct mode; thinking mode `1.0/0.95/20`) | Qwen's own card | **the only DUAL-GPU model** (3080 + 1080). Arch reports as `qwen35` — hybrid Gated-DeltaNet with a full-attention layer every 4th, so only 16 of 65 blocks hold a growing KV: ~34.8 KB/token at q8_0, roughly a quarter of a same-size dense model. `ctx_train` **262144**. Needs the `~/src/llama.cpp-qwen38` build (§Server launch) — the stock b9893 tree has a `qwen35` builder but predates the NextN/MTP handling these GGUFs carry and will not load the file. KV **`q8_0` — do NOT use `iq4_nl`/4-bit here**, it cost 2.3× decode and 11× prefill in the field (§The field regression). Runs `--spec-type draft-mtp`; the draft block is **inline** in the GGUF (blk.64), so speculation costs one block, not a second model — but acceptance is only 47–76% on reasoning prose, so it is close to a wash on cria traffic. See §VRAM accounting on WSL for the `--fit-target` requirement — without it this model quietly runs a quarter of itself on the CPU |
 | **maple-preview** (20B-A1B MoE) | **tq2_0** (ternary, GGML type 35) | `temp 1.0, top_p 0.95, top_k 64, repeat_penalty 1.0` | ⚠ no publisher card — NEUTRAL start | DeepGrove; 256 experts / 8 active. Needs the **stamsam/llama.cpp fork @ prism 9ee03ee** (its commit IS the tq2_0 CUDA kernel work — mainline cannot load the arch). Embedded template, no toggle template earned yet; emits `reasoning_content` on every coder reply (25/25 sampled, run 1786228135). `repeat_penalty 1.0` is deliberate: the penalty is a per-model finding, never a default |
@@ -43,6 +43,8 @@ cria's coder path is ~100% tool calls and its assists assume a thinking channel,
 
 ### Still in `models.toml`, NOT on the ladder
 
+- **nemotron-elastic** (12B-A2B) — paused 2026-09-05 and replaced in the run matrix by `gigachat31`; its service and reproducible launch entry remain installed. Historical runs and incident references retain the old model name.
+- **ornith 1.0** (9B) — the version tested before 2026-09-05 (`deepreinforce-ai/Ornith-1.0-9B-GGUF:Q6_K`). Replaced by `ornith15`; historical result rows remain `ornith` so releases are never conflated.
 - **fabliq-reasoning** (8B) — `mradermacher/Fabliq-8B-Agent-Reasoning-i1-GGUF`, `fabliq-toggle.jinja`. Retired from the suite; its unit is `disabled` and `inactive`, and it is in no sampling or SERVICES table. The entry stays so the launch config is reproducible. It auto-started on :18084 once after a WSL restart and had to be stopped by hand — if you see an unexpected model serving, check this one.
 - **zaya1** (8B) — draft-PR arch, launchable but never laddered. See §Server launch for its fork.
 - **gemma4-finetune** (12B) — replaced by stock `gemma4` on 2026-08-05; kept for its history rows.
@@ -64,16 +66,15 @@ Raised by the operator, investigated, and dropped the same day. Recorded here so
 
 > ⚠ **`qwopus` is unverified** — the values are inferred. Confirm from the model card or empirically before treating them as recommended.
 
-> **Dense vs MoE, read from the GGUF headers (2026-08-01)** — `general.architecture` plus
-> `<arch>.expert_count` / `expert_used_count`, never a card or a name. The fleet is **five dense, four MoE**:
+> **Dense vs MoE, read from GGUF headers** — `general.architecture` plus
+> `<arch>.expert_count` / `expert_used_count`, never a card or a name. The current run matrix is:
 >
-> | dense | | MoE | experts (active) |
+> | dense | architecture | MoE | experts (active) |
 > |---|---|---|---|
-> | ternary-bonsai 27B | `qwen35` | mellum2 12B/A2.5B | `mellum` 64 (8) |
-> | gemma4 12B | `gemma4` | nemotron-elastic 12B/A2B | `nemotron_h_moe` 128 (6) |
-> | qwythos 9B | `qwen35` | | |
-> | qwopus 9B | `qwen35` | | |
-> | ornith 9B | `qwen35` | | |
+> | ternary-bonsai 27B | `qwen35` | gigachat31 10B/A1.8B | `deepseek2` 64 (4) |
+> | gemma4 12B | `gemma4` | | |
+> | qwen35 9B | `qwen35` | | |
+> | ornith15 9B | `qwen35` | | |
 >
 > `lfm25` has a systemd unit but **no entry in `models.toml`**, so it cannot launch — fix that before putting it in any run order.
 
@@ -95,7 +96,7 @@ Raised by the operator, investigated, and dropped the same day. Recorded here so
 > | q8_0   | 80 | 68 | 51 | 38 | — | **~143K** |
 > | turbo3 | 76 | 59 | 49 | 33 | 26 | **~375K** |
 >
-> Per-token KV (from the GGUF header: 8 attn layers × 4 kv-heads × 256+256): q8_0 ≈ 17 KiB, turbo3 ≈ 6.5 KiB. Rule: **q8_0 up to ~131K; turbo3 only past q8_0's ~143K ceiling** (3–12% slower at every shared depth — its gift is reach, not speed). qwythos trains to 1M so VRAM is the only limit; note the fleet's 49K default is conservative for this model — 131K on plain q8_0 fits TODAY. **ornith and qwopus are KV-identical** (same 32 blocks / every-4th attention / 4 heads / 256+256, verified from headers) so these numbers transfer — but they train to 262K, which becomes their useful cap. WSL caveat (measured, correcting an earlier bogus-probe claim): a beyond-VRAM ctx neither loads nor fails fast — the load HANGS (>5 min timeout at 262K q8_0 on qwythos; WSL UVM). Derive ceilings by arithmetic (per-token KV × ctx + weights vs 10 GB), never by load-probing.
+> Per-token KV (from the GGUF header: 8 attn layers × 4 kv-heads × 256+256): q8_0 ≈ 17 KiB, turbo3 ≈ 6.5 KiB. Rule: **q8_0 up to ~131K; turbo3 only past q8_0's ~143K ceiling** (3–12% slower at every shared depth — its gift is reach, not speed). qwythos trains to 1M so VRAM is the only limit; note the fleet's 49K default is conservative for this model — 131K on plain q8_0 fits TODAY. **the retired Ornith 1.0 and qwopus are KV-identical** (same 32 blocks / every-4th attention / 4 heads / 256+256, verified from headers) so these numbers transfer — but they train to 262K, which becomes their useful cap. WSL caveat (measured, correcting an earlier bogus-probe claim): a beyond-VRAM ctx neither loads nor fails fast — the load HANGS (>5 min timeout at 262K q8_0 on qwythos; WSL UVM). Derive ceilings by arithmetic (per-token KV × ctx + weights vs 10 GB), never by load-probing.
 >
 > **gemma4 (measured 2026-07-28; tg64, tok/s):** q8_0 = 62 / 57 / 49 / 40 at 8K / 32K / 65K / 131K; turbo3 = 58 / 52 / 46 / 36 — **q8_0 wins every depth (~7–9%), and gemma4's SWA (1024-token window on most of its 48 layers) keeps KV small at any context, so turbo has no reach advantage either. TurboQuant: nothing to offer gemma4.** 131K verified on q8_0; the 262K training cap likely fits too.
 
@@ -158,14 +159,14 @@ The fold preserves order, never drops text, and creates a user turn when a body 
 | Model | ON | OFF (`enable_thinking=false`) | Why |
 |-------|----|--------------------------------|-----|
 | **mellum2** | ✅ | ✅ clean direct answer | trained for it (embedded template) |
-| **qwopus / ornith / qwythos** | ✅ | ✅ clean direct answer | **Qwen3-derived** — honor the empty `<think></think>` control block |
+| **qwopus / ornith15 / qwythos** | ✅ | ✅ clean direct answer | **Qwen3-derived** — honor the empty `<think></think>` control block |
 | **ternary-bonsai** | ✅ | ✅ clean direct answer | **Qwen3.6-derived** — embedded ChatML honors `enable_thinking` (verified on/off at load) |
 | **gemma4-finetune** (retired) | ✅ | ✅ clean direct answer | honors the empty `<|channel>thought` — finetune-era record; gemma4 NOT yet verified for the OFF recipe |
 | **qwen3.5** | ✅ | ✅ clean direct answer | Qwen3.5 base — **verified at load 2026-08-08**: `enable_thinking=false` → 0 chars of `reasoning_content`, `true` → 649, both answered correctly |
 | **maple-preview** | ✅ | ⚠ UNVERIFIED | embedded template, no `*-toggle.jinja` earned yet. ON is certain — 25/25 sampled coder replies carried `reasoning_content`. OFF has never been exercised |
 | **nemotron-nano** | ✅ `detailed thinking on` | ✅ `detailed thinking off` | **cria's THIRD reasoning convention** — the switch is a sentence in the system prompt, not a body parameter. `reasoning.system_directive()` renders it; `config._set_reasoning_directive` prepends it to the leading system message (the mutation lives with the messages, same as the chat_template OFF prefill). Reasoning-unset leaves the model's own default alone |
 
-**Every current fleet model does OFF cleanly** (mellum2, qwopus, ornith, qwythos; verified on the retired gemma4-finetune — re-verify gemma4 before relying on OFF). Some template families (LFM2-style) empty `reasoning_content` under `enable_thinking=false` yet still deliberate in prose in `content`, which cria's parsers can't strip (no `<think>` tags) — a model limitation to check when adding a model, not a missing manipulation.
+**Known native-OFF models** include mellum2, qwopus, ornith15, and qwythos (verified on the retired gemma4-finetune — re-verify gemma4 before relying on OFF). GigaChat 3.1's embedded template does not expose `enable_thinking`; its reasoning-channel behavior must be established by the service smoke test before being claimed. Some template families (LFM2-style) empty `reasoning_content` under `enable_thinking=false` yet still deliberate in prose in `content`, which cria's parsers can't strip (no `<think>` tags) — a model limitation to check when adding a model, not a missing manipulation.
 
 **The per-model "manipulation" you built** was exactly these `*-toggle.jinja` files (and, for a whole-instance off, `.reason-off` launch scripts that bake the `-nothink` template via `--chat-template-file`, plus `--reasoning-format deepseek` for ornith). qwopus's *stock* template hardcoded `<think>` with no gate — which is precisely why the toggle had to be hand-built.
 
@@ -175,7 +176,7 @@ The fold preserves order, never drops text, and creates a user turn when a body 
 3. **strips any leaked reasoning** ahead of a `</think>` marker from the model's `content`.
 
 **Honest result (verified end-to-end 2026-07-08):**
-- **Native-off models** (mellum2, qwopus, ornith, qwythos; verified on the retired gemma4-finetune — re-verify gemma4 before relying on OFF) → OFF is **clean**.
+- **Native-off models** (mellum2, qwopus, ornith15, qwythos; verified on the retired gemma4-finetune — re-verify gemma4 before relying on OFF) → OFF is **clean**.
 - On a prose-deliberating template family, OFF engages and is clean on direct tasks, but reasoning-heavy prompts stay verbose (no `</think>` marker for the strip to catch). It never breaks cria — just chatty. A *harder* directive makes such models terser but **wrong** (a reasoning-trained model loses accuracy when starved of reasoning), so the directive is deliberately mild.
 
 **Guidance:**
@@ -189,13 +190,14 @@ The fold preserves order, never drops text, and creates a user turn when a body 
 
 All models share: `-c 49152` (48K) · `-b 2048 -ub 512` · `-np 1` · `--device CUDA0 -ngl auto -sm none -mg 0` · `-ctk q8_0 -ctv q8_0` **(except ternary-bonsai: `tbq3` both)** · `-fa on --no-host --no-mmproj --no-warmup --jinja` · `--reasoning auto` (the *parsing* mode — distinct from per-request `enable_thinking`) · `--host 127.0.0.1 --port 18084`. **Sampling is NOT set here** (cria sends it per request).
 
-Most models differ only by source + chat template (all in `~/shepherd-eval/templates/`). **Three override `binary` + `lib_dir`**, because their weight format needs CUDA kernels the stock build does not carry. In every case `lib_dir` must LEAD with the fork's own dir, then `cuda-12.8-local/lib64` and `/usr/lib/wsl/lib`.
+Most models differ only by source + chat template (all in `~/shepherd-eval/templates/`). **Five override `binary` + `lib_dir`**, because their weight format or model layout needs support the stock build does not carry. In every case `lib_dir` must LEAD with the fork's own dir, then `cuda-12.8-local/lib64` and `/usr/lib/wsl/lib`.
 
 | Model | Fork | Why |
 |-------|------|-----|
 | ternary-bonsai | `~/src/llama.cpp-tq-prism/llama-v0.0.0/` | `Q2_0_g128` kernels **+ TurboQuant `tbq3` KV**. Also the only model overriding `-ctk`/`-ctv` (see below). Rollback, known-good and ~4× slower at depth: `~/src/llama.cpp-prism/llama-prism-b9596-9fcaed7/` with `-ctk q8_0 -ctv q4_0` and `--spec-type ngram-cache` |
 | maple-preview | `~/src/llama.cpp-maple-prism/build-cuda/bin/` | `tq2_0` ternary kernels (stamsam fork @ prism 9ee03ee); mainline cannot load the arch |
 | zaya1 | `~/src/llama.cpp-zaya/build/bin/` | draft-PR build for the `zaya` arch — exists in no release |
+| ornith15 | `~/src/llama.cpp-ornith15/build-cuda/bin/` | upstream 74a7c897. Stock b9893 rejects Ornith 1.5's final MTP block with missing `blk.32.ssm_conv1d.weight`; the dedicated current build loads it. |
 | qwen38 | `~/src/llama.cpp-qwen38/build-cuda/bin/` | upstream b10497 (9731ad3f2). NOT a fork — the stock tree is simply too old (b9893, Apr 22) and lacks the NextN/MTP layer handling. Built for `CMAKE_CUDA_ARCHITECTURES=61;86` so it drives the Pascal 1080 as well as the 3080; NCCL vendored at `vendor-nccl/`. ⚠ Rebuilds MUST run with `LD_LIBRARY_PATH` including `cuda-12.8-local/lib64`, or the executable link fails resolving `libcudart.so.12` |
 
 | Model | Source | Template |
@@ -203,7 +205,8 @@ Most models differ only by source + chat template (all in `~/shepherd-eval/templ
 | ternary-bonsai | `-m …/Ternary-Bonsai-27B/Ternary-Bonsai-27B-Q2_0.gguf` **(PrismML fork binary + lib_dir)** | *(embedded ChatML)* |
 | mellum2 | `-hf yuxinlu1/Mellum2-12B-A2.5B-…-GGUF --hf-file mellum2-claude-Q4_K_M.gguf` | *(embedded)* |
 | gemma4 | `-m …/gemma4-v2-Q4_K_M.gguf` | `gemma-toggle.jinja` |
-| ornith | `-hf deepreinforce-ai/Ornith-1.0-9B-GGUF:Q6_K` | `ornith-toggle.jinja` |
+| ornith15 | `-hf ornith-ai/Ornith-1.5-9B-GGUF --hf-file Ornith-1.5-9B-Q6_K.gguf` **(dedicated upstream 74a7c897 binary + lib_dir)** | *(embedded Qwen3 XML tools + `enable_thinking`)* |
+| gigachat31 | `-hf ai-sage/GigaChat3.1-10B-A1.8B-GGUF --hf-file GigaChat3.1-10B-A1.8B-q4_K_M.gguf` | *(embedded GigaChat tool template)* |
 | qwopus | `-hf Jackrong/Qwopus3.5-9B-v3-GGUF:Q6_K` | `qwopus-toggle.jinja` |
 | qwythos | `-m …/Qwythos-9B-v2-Q6_K.gguf` | *(embedded)* |
 | qwen3.5 | `-m …/Qwen3.5-9B-Q6_K.gguf` | *(embedded)* |

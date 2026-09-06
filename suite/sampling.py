@@ -94,10 +94,22 @@ MODEL_SAMPLING = {
         "classifier": {"temperature": 0.0},
         "compactor":  {"temperature": 0.0},
     },
-    # deepreinforce evals: temp 1.0 / top_p 0.95 general, temp 0.6 agentic. Coding is agentic here.
-    "ornith": {
-        "coder":      {"temperature": 0.6, "top_p": 0.95},
-        "reasoner":   {"temperature": 1.0, "top_p": 0.95},
+    # Ornith 1.5 publisher card: precise coding 0.6/.95/k20/min-p0/presence0/repetition1;
+    # general 1.0/.95/k20/min-p0/presence1.5/repetition1. Coding maps to coder; general maps
+    # to the reasoner. Deterministic roles retain temp 0 and neutral penalties.
+    "ornith15": {
+        "coder":      {"temperature": 0.6, "top_p": 0.95, "top_k": 20, "min_p": 0.0,
+                       "presence_penalty": 0.0, "repeat_penalty": 1.0},
+        "reasoner":   {"temperature": 1.0, "top_p": 0.95, "top_k": 20, "min_p": 0.0,
+                       "presence_penalty": 1.5, "repeat_penalty": 1.0},
+        "classifier": {"temperature": 0.0, "presence_penalty": 0.0, "repeat_penalty": 1.0},
+        "compactor":  {"temperature": 0.0, "presence_penalty": 0.0, "repeat_penalty": 1.0},
+    },
+    # ai-sage's llama.cpp chat and function-call examples both use temperature 0. No broader
+    # sampling recommendation is published, so parity starts from that exact demonstrated value.
+    "gigachat31": {
+        "coder":      {"temperature": 0.0},
+        "reasoner":   {"temperature": 0.0},
         "classifier": {"temperature": 0.0},
         "compactor":  {"temperature": 0.0},
     },
@@ -120,7 +132,7 @@ MODEL_SAMPLING = {
 # `collapse_system_prompt` is not sampling, but it is the same KIND of thing: a per-model, per-role
 # value cria.toml carries and run.py rewrites on every swap. Listed here so a stale one from the
 # previous model is dropped, exactly like a stale temperature.
-KNOBS = ("temperature", "top_p", "top_k", "min_p", "repeat_penalty",
+KNOBS = ("temperature", "top_p", "top_k", "min_p", "repeat_penalty", "presence_penalty",
          "collapse_system_prompt", "think_protocol", "merge_consecutive_turns")
 
 

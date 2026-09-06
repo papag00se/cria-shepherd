@@ -95,12 +95,14 @@ backend = "local"
 reasoning = "off"
 temp = 0.0
 repeat_penalty = 1.05
+presence_penalty = 1.5
 """)
             cfg = Config.load(p)
             role = cfg.routing.roles["coder"]
             self.assertEqual(role.backend, "local")
             self.assertEqual(role.temperature, 0.0)
             self.assertEqual(role.repeat_penalty, 1.05)
+            self.assertEqual(role.presence_penalty, 1.5)
             self.assertIsNone(cfg.routing.backends["local"].model)  # served backend → no wire model pinned
 
     def test_backend_carries_base_url_and_role_resolves_to_it(self):

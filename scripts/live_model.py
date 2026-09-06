@@ -31,12 +31,13 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from cria.config import (  # noqa: E402
-    Config, IndicatorsConfig, LoggingConfig, PlannerConfig,
+    Backend, Config, IndicatorsConfig, LoggingConfig, PlannerConfig, Role,
     RoutingConfig, ServerConfig, ToolsConfig, UpstreamConfig,
 )
 from cria.events import EventLog  # noqa: E402
 from cria.server import CriaServer  # noqa: E402
 from cria.upstream import Upstream  # noqa: E402
+from suite import sampling  # noqa: E402
 
 PROMPT = (
     "I would like you to write a Python Lambda handler that accepts an Ada Handle as input "
@@ -164,15 +165,23 @@ def run(endpoint: str, model: str, turns: int, timeout: float, label: str) -> in
     log = EventLog(level="warn", dir=str(logdir), console=False, jsonl=True)
     logpath = log.path
 
+    try:
+        role_sampling = sampling.render(label)
+    except KeyError:
+        role_sampling = {}
+
     cfg = Config(
         server=ServerConfig(host="127.0.0.1", port=port, heartbeat_seconds=5.0),
         upstream=UpstreamConfig(base_url=endpoint.rstrip("/"), timeout_seconds=int(timeout)),
         logging=LoggingConfig(level="warn", console=False, jsonl=True),
         routing=RoutingConfig(
-            local_only=True,
-            local_models={"classifier": model, "reasoner": model, "coder": model, "compactor": model},
+            backends={"local": Backend(name="local", transport="http", base_url=endpoint.rstrip("/"))},
+            roles={name: Role(name=name, backend="local", reasoning="on",
+                              **role_sampling.get(name, {}))
+                   for name in ("classifier", "reasoner", "coder", "compactor")},
             failover={"coding": ("coder",), "reasoning": ("reasoner",)},
             engagement_bias="task",
+            defaults_base_url=endpoint.rstrip("/"),
         ),
         indicators=IndicatorsConfig(enabled=True, metrics=True),
         tools=ToolsConfig(cheatsheet=True),

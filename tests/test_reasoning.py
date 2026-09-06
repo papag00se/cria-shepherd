@@ -7,7 +7,8 @@ class ApplySamplingTests(unittest.TestCase):
     """Sampling is translated per backend dialect — a llama.cpp-only knob must never 400 or silently
     vanish on a cloud backend (the same portability fix as reasoning)."""
 
-    P = {"temperature": 0.1, "top_p": 0.95, "top_k": 64, "repeat_penalty": 1.1, "min_p": 0.0, "max_tokens": 4096}
+    P = {"temperature": 0.1, "top_p": 0.95, "top_k": 64, "repeat_penalty": 1.1,
+         "presence_penalty": 1.5, "min_p": 0.0, "max_tokens": 4096}
 
     def _apply(self, style):
         b = {}
@@ -17,7 +18,8 @@ class ApplySamplingTests(unittest.TestCase):
     def test_chat_template_passes_all_natively(self):
         self.assertEqual(self._apply("chat_template"),
                          {"temperature": 0.1, "top_p": 0.95, "top_k": 64, "min_p": 0.0,
-                          "repeat_penalty": 1.1, "max_tokens": 4096})
+                          "repeat_penalty": 1.1, "presence_penalty": 1.5,
+                          "max_tokens": 4096})
 
     def test_openrouter_keeps_extensions_and_renames_repeat_penalty(self):
         b = self._apply("openrouter")
@@ -28,7 +30,8 @@ class ApplySamplingTests(unittest.TestCase):
 
     def test_openai_drops_the_llama_only_knobs(self):
         b = self._apply("openai")
-        self.assertEqual(b, {"temperature": 0.1, "top_p": 0.95, "max_tokens": 4096})
+        self.assertEqual(b, {"temperature": 0.1, "top_p": 0.95,
+                             "presence_penalty": 1.5, "max_tokens": 4096})
         for k in ("top_k", "min_p", "repeat_penalty", "repetition_penalty"):
             self.assertNotIn(k, b)                          # would 400 / have no equivalent
 

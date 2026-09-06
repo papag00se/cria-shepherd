@@ -259,6 +259,7 @@ class Role:
     top_p: float | None = None
     top_k: int | None = None
     repeat_penalty: float | None = None
+    presence_penalty: float | None = None
     min_p: float | None = None
     # `max_tokens` and `output_reserve` are SEPARATE knobs, on purpose (codex-local's split):
     #   * max_tokens    — the conventional HARD output cap. Unset = uncapped, the default for
@@ -328,7 +329,8 @@ class Role:
         # instead of 400-ing or silently vanishing. See reasoning.apply_sampling.
         reasoning.apply_sampling(body, {
             "temperature": self.temperature, "top_p": self.top_p, "top_k": self.top_k,
-            "repeat_penalty": self.repeat_penalty, "min_p": self.min_p, "max_tokens": self.max_tokens,
+            "repeat_penalty": self.repeat_penalty, "presence_penalty": self.presence_penalty,
+            "min_p": self.min_p, "max_tokens": self.max_tokens,
         }, self.think_protocol)
         if floor is not None and isinstance(body.get("max_tokens"), int) and body["max_tokens"] < floor:
             body["max_tokens"] = floor
@@ -819,6 +821,7 @@ def _role(name: str, spec, backends: Mapping[str, Backend]) -> Role:
         top_p=_num("top_p"),
         top_k=_int("top_k"),
         repeat_penalty=_num("repeat_penalty"),
+        presence_penalty=_num("presence_penalty"),
         min_p=_num("min_p"),
         collapse_system_prompt=bool(spec.get("collapse_system_prompt", False)),
         merge_consecutive_turns=bool(spec.get("merge_consecutive_turns", False)),

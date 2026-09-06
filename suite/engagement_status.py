@@ -30,7 +30,7 @@ RESULTS = SUITE / "results" / "results.jsonl"
 VERDICTS = Path.home() / ".cria" / "suite" / "_usefulness"
 LEVEL_TEST = REPO / "tests" / "test_engagement_levels.py"
 
-# The matrix the goal commits to: six cumulative levels over the battery's four models and six tasks.
+# The matrix the goal commits to: six cumulative levels over the battery's five models and six tasks.
 # Kept here rather than derived from the rows, so a level nobody ran is MISSING rather than invisible.
 LEVELS = (0, 1, 2, 3, 4, 5)
 LEVEL_NAMES = {
@@ -41,7 +41,7 @@ LEVEL_NAMES = {
     4: "DONE_REFUSALS_ENABLED",
     5: "ASSISTS_ENABLED",
 }
-MODELS = ("gemma4", "qwen35", "ternary-bonsai", "nemotron-elastic")
+MODELS = ("gemma4", "qwen35", "ternary-bonsai", "ornith15", "gigachat31")
 TASKS = ("shipping-rates-rb", "cart-billing-go", "orders-api-py",
          "feed-pipeline-java", "handles-cli-node", "rust-toml-cli")
 TOTAL = len(LEVELS) * len(MODELS) * len(TASKS)

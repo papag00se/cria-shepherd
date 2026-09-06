@@ -84,11 +84,11 @@ def apply_reasoning(body: dict, reasoning: str | None, style: str) -> None:
         body["reasoning_effort"] = effort
 
 
-# temperature/top_p/max_tokens are the OpenAI-standard sampling knobs every backend understands.
+# temperature/top_p/presence_penalty/max_tokens are OpenAI-standard knobs every backend understands.
 # top_k/min_p are llama.cpp/vLLM/OpenRouter extensions; repeat_penalty is llama.cpp's NAME for what
 # OpenRouter/vLLM call `repetition_penalty` and strict OpenAI has no equivalent for (its
 # frequency_penalty is different, additive math). Same portability problem the reasoning knob had.
-_UNIVERSAL_SAMPLING = ("temperature", "top_p", "max_tokens")
+_UNIVERSAL_SAMPLING = ("temperature", "top_p", "presence_penalty", "max_tokens")
 _EXTENSION_SAMPLING = ("top_k", "min_p")
 
 
@@ -98,9 +98,9 @@ def apply_sampling(body: dict, params: dict, style: str) -> None:
     only the SET values (None = leave the backend default). Per dialect:
 
     * ``chat_template`` (served llama.cpp / vLLM) — all of them, native.
-    * ``openrouter`` — the universal three + top_k/min_p, with ``repeat_penalty`` renamed to the name
+    * ``openrouter`` — the universal knobs + top_k/min_p, with ``repeat_penalty`` renamed to the name
       OpenRouter uses (``repetition_penalty``).
-    * ``openai`` (OpenAI / Groq / strict gateways) — ONLY the universal three; top_k/min_p/repeat_penalty
+    * ``openai`` (OpenAI / Groq / strict gateways) — ONLY the universal knobs; top_k/min_p/repeat_penalty
       are DROPPED (they'd be rejected or ignored, and repeat_penalty has no same-semantics equivalent).
     * ``none`` (a cli backend) — nothing; the CLI owns its own sampling.
     """
