@@ -1,6 +1,6 @@
 # Battery — the engagement ladder
 
-**Last updated 2026-09-05 16:41** — newest row `cart-billing-go_nemotron-elastic_codex_poff_1788649795`, finished 2026-09-05 16:41.
+**Last updated 2026-09-05 20:04** — newest row `cart-billing-go_nemotron-elastic_codex_poff_1788661992`, finished 2026-09-05 20:04.
 
 Tables only. Status: `python3 suite/engagement_status.py`.
 
@@ -58,7 +58,7 @@ Tables only. Status: `python3 suite/engagement_status.py`.
 | gemma4 | ? | ? | ? | ? | ? | ? | — | 20 | 74 |
 | qwen35 | ? | ? | ? | ? | ? | ? | — | 40 | 227 |
 | ternary-bonsai | ? | ? | ? | ? | ? | ? | — | 48 | 89 |
-| nemotron-elastic | ? | ? | ? | ? | ? | ? | — | 50 | 170 |
+| nemotron-elastic | ? | ? | ? | ? | ? | ? | — | 50 | 166 |
 
 
 Every number is a judgement of how much of the task was actually delivered. `?` = the cell RAN and is waiting on a verdict; `·` = it never ran. A total reading `77% (3/6)` is an average over the judged cells only and cannot speak for the rest of the row.
