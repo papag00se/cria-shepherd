@@ -44,6 +44,15 @@ class ModelMajor(unittest.TestCase):
         switches = sum(1 for a, b in zip(order, order[1:]) if a != b)
         self.assertEqual(switches, len(bs.MODELS) - 1)
 
+    def test_selected_models_still_get_complete_rows_in_requested_order(self):
+        chosen = ("ornith15", "gigachat31")
+        cells = cycle_run.cells(chosen)
+        self.assertEqual(len(cells), len(chosen) * len(bs.TASKS))
+        self.assertEqual([model for _task, model in cells[:len(bs.TASKS)]],
+                         [chosen[0]] * len(bs.TASKS))
+        self.assertEqual([model for _task, model in cells[len(bs.TASKS):]],
+                         [chosen[1]] * len(bs.TASKS))
+
     def test_each_model_gets_every_task(self):
         seen = {}
         for t, m in cycle_run.cells():

@@ -9,6 +9,7 @@ place that defines it.
 
     python3 suite/cycle_run.py                 # the whole 24-cell CRIA arm, from the top
     python3 suite/cycle_run.py --start 9       # resume at cell 9 after a kill
+    python3 suite/cycle_run.py --models ornith15 gigachat31  # selected complete model rows
     python3 suite/cycle_run.py --dry-run       # print the cell order and exit
 
 NO TIMEOUT OF ITS OWN. The suite already owns the wall clock — 15 minutes per budget interval, read
@@ -35,7 +36,7 @@ from battery_status import MODELS, TASKS  # noqa: E402  — one definition of th
 LOG = SUITE.parent / "docs" / "audits" / "cycle-run.log"
 
 
-def cells() -> list[tuple[str, str]]:
+def cells(models=MODELS) -> list[tuple[str, str]]:
     """MODEL-major, task-minor: one model is loaded, then taken through every language.
 
     This was task-major until 2026-08-16, on the reasoning that a whole language finishing meant a
@@ -59,7 +60,7 @@ def cells() -> list[tuple[str, str]]:
     still loading, and a leftover harness session from the previous cell POSTs into it. Every 503 and
     every `connection refused` in the campaign's logs sits in one of those windows (cycle 2's walk,
     the 12x503 entry). Four of those windows instead of twenty-four is worth having on its own."""
-    return [(t, m) for m in MODELS for t in TASKS]
+    return [(t, m) for m in models for t in TASKS]
 
 
 def note(line: str) -> None:
@@ -75,9 +76,11 @@ def main() -> int:
     ap.add_argument("--arm", default="CRIA", choices=("BASE", "CRIA"))
     ap.add_argument("--start", type=int, default=1, help="1-based cell number to resume at")
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--models", nargs="+", choices=MODELS,
+                    help="run complete rows for only these models, in the supplied order")
     args = ap.parse_args()
 
-    order = cells()
+    order = cells(args.models or MODELS)
     if args.dry_run:
         for i, (t, m) in enumerate(order, 1):
             print(f"{i:>3}  {t:<20}{m}")
