@@ -28,6 +28,13 @@ def test_gigachat_replaces_nemotron_and_ornith_names_its_release():
     assert "ornith" not in models
 
 
+def test_replaced_models_remain_visible_in_historical_reports():
+    old = {"model": "nemotron-elastic", "task": "shipping-rates-rb", "level": 5,
+           "started": 1, "note": "BATTERY2 L5 nemotron-elastic", "usefulness_percent": 37}
+    text = battery_status.report([old], now=2)
+    assert "| nemotron-elastic | shipping-rates-rb | 37% useful |" in text
+
+
 def test_ornith15_uses_the_publishers_distinct_coding_and_general_sampling():
     spec = sampling.render("ornith15")
     assert spec["coder"]["temperature"] == 0.6

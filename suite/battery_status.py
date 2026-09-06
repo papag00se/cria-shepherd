@@ -107,6 +107,11 @@ def _stamp(rs: list[dict], now: float | None = None) -> str:
 
 
 def report(rs: list[dict], now: float | None = None) -> str:
+    # Current matrices govern future runs, not historical visibility. Keep every model with a
+    # recorded row in the report after the active models, so a fleet replacement never erases data.
+    historical = tuple(dict.fromkeys(str(row.get("model")) for row in rs
+                                     if row.get("model") and row.get("model") not in MODELS))
+    report_models = MODELS + historical
     out = ["# Battery — usefulness status", "", _stamp(rs, now), "",
            "Every checkpoint progress report and final judgment is an inferred percentage of "
            "usefulness backed by inspected workspace evidence.", ""]
@@ -115,7 +120,7 @@ def report(rs: list[dict], now: float | None = None) -> str:
     for level in levels:
         out += [f"## Engagement configuration {level}", "",
                 "| model | task | judgment |", "|---|---|---|"]
-        for model in MODELS:
+        for model in report_models:
             for task in TASKS:
                 row = level_cell(rs, level, model, task)
                 if row:
