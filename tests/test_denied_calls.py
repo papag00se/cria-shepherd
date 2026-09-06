@@ -7,7 +7,7 @@ voice that "each ``-> ...`` line is what it returned". Measured 2026-08-03 over 
 sessions in ~/.cria/calls, anchoring every refusal on cria's OWN prompt files rather than a copy of
 their wording:
 
-  * 216 of 537 step-critic prompts that carry an action log (40%) render at least one refusal that way
+  * 216 of 537 step-critic prompts that carry an action log render at least one refusal that way
   * 140 of 370 satisfaction prompts (38%); 4 of 16 compaction prompts
   * 965 of 6,288 ``-> `` result bodies in critic prompts (15%)
 

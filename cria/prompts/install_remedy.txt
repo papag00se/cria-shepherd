@@ -23,7 +23,7 @@
 # sentence through a {{TOOL}} token. The presence check answers "is it there"; the token carries
 # "what is it called". Splitting those two is how the ruby row came to be SELECTED on the
 # strength of `bundle3.2` and PRINTED as `bundle`, which this box does not have — ten refusals,
-# half a coder budget, 80% to 20% (cycle 2, shipping-rates-rb x ternary-bonsai). When none of an ecosystem's routes are
+# half a coder budget and collapsed the run (cycle 2, shipping-rates-rb x ternary-bonsai). When none of an ecosystem's routes are
 # available the honest answer is the empty one: say what is forbidden and stop. That is already how
 # apt, dnf, brew and pacman are handled — they install to the machine and have no project-local
 # form, so no route is invented for them (#3).

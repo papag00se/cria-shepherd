@@ -7,7 +7,7 @@ renders it as ``  -> <refusal text>``, byte-identical to a real result, and ``pr
 tells the step critic in cria's own words that "each ``-> ...`` line is what it returned". So the
 judge is told cria's sentence is the coder's tool's answer — cria stating a false fact about the
 world in its own voice (principle 5b). Measured 2026-08-03 over the 127 captured sessions: 216 of
-537 step-critic prompts carrying an action log (40%) render at least one refusal that way, and 140
+537 step-critic prompts carrying an action log render at least one refusal that way, and 140
 of 370 satisfaction prompts (38%).
 
 WHERE THE MARK GOES, AND WHY IT IS NOT A MATCHER. The mark is applied at the site that DECIDES to

@@ -323,7 +323,7 @@ def _local_install_advice(command: str) -> str:
     used to be selected on the strength of `bundle3.2` and then printed with the literal `bundle` —
     which does not exist on this box. Measured on shipping-rates-rb × ternary-bonsai, cycle 2: ten
     refusals, all naming `bundle install --path vendor/bundle`, calls 0037–0057 spent on installs
-    that could not succeed, 80% → 20%. The coder never tried `bundle3.2` because nothing named it.
+    that could not succeed, collapsing the run. The coder never tried `bundle3.2` because nothing named it.
     That is the same #5b failure the header of `install_remedy.txt` already records as fixed twice:
     the DISCOVERY was repaired and the SENTENCE was left behind. Now the discovered name is filled
     into the route's `{{TOOL}}` token, so the two can no longer disagree."""
@@ -468,7 +468,7 @@ def _after_unresolved_expansion(command: str, start: int) -> bool:
     comes from a command cria never ran, so whether the result is inside the workspace is unknown —
     and #11b is explicit that a mechanism which cannot observe the thing it is judging must abstain
     rather than answer. It answered: 11 distinct commands, 263 occurrences, all refused for a suffix.
-    Together with the parameter-value case that is 492 of 1,242 captured refusals, 40%.
+    Together with the parameter-value case that is 492 of 1,242 captured refusals.
 
     A GLOB IS THE SAME SHAPE. `*` is excluded from the path-token character class, so it TERMINATES
     the token before it and the remainder starts at the following `/` — which then reads as rooted.

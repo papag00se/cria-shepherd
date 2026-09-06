@@ -4688,7 +4688,7 @@ def _work_log(messages: list[dict], *, keep_checks: bool = False, rlog=None,
     refusal arrives as a tool result and rendered as ``  -> …`` it is byte-identical to a real one —
     while ``prompts/verify.txt`` tells the step critic, in cria's voice, that "each ``-> ...`` line is
     what it returned". Measured 2026-08-03 across 127 sessions: 216 of 537 step-critic prompts with an
-    action log (40%) and 140 of 370 satisfaction prompts (38%) carry at least one. The label goes on
+    action log and 140 of 370 satisfaction prompts carry at least one. The label goes on
     the ``$`` CALL line, because the call is the only thing cria knows did not happen; the result body
     is left entirely alone, verbatim and unqualified. That restraint is the fix's whole shape — a
     refusal frequently carries REAL ground truth (a repeat-fetch refusal embeds the document's own

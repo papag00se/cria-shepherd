@@ -10,7 +10,7 @@ leading `cd`:
 
     refused, before        51 distinct / 1,225 occurrences
     refused, after         31 distinct /   733 occurrences
-    no longer refused      20 distinct /   492 occurrences   (40%)
+    no longer refused      20 distinct /   492 occurrences
 
 Two shapes, both of them cria answering a question it could not observe.
 

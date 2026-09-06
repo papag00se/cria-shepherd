@@ -61,7 +61,7 @@ _MIN_PER_TURN_TOKENS = 64       # per-turn floor: each digested turn gets at lea
 # deleting the model's most recent turns for no gain: 350 turns + 736 protected messages destroyed in
 # one 30-minute run, over_budget declared 60 times. Every drop must net at least (1 - this) of what it
 # removed, and the drop loops count the same bound against the budget instead of discovering it after.
-_NOTE_MAX_SHARE_OF_DROPPED = 0.6   # every drop nets at least 40% of what it removed. Tighter starves
+_NOTE_MAX_SHARE_OF_DROPPED = 0.6   # every drop must reclaim substantial space. Tighter starves
                                    # the digest: a fetched HTML page — the biggest thing these
                                    # transcripts drop — compresses about 2x, and a 0.4 share would
                                    # reject it and lose the page's substance to buy back 20% more.

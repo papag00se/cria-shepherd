@@ -4,7 +4,7 @@ The incident (cycle 2, shipping-rates-rb x ternary-bonsai): `_tool_present("bund
 because `_versioned_variant` found `/usr/bin/bundle3.2`, so the `gem_bundler` route won selection —
 and `install_remedy.txt` then printed the literal `bundle`, which does not exist on this box. Ten
 refusals carried that sentence; calls 0037-0057 are one continuous install fight; the cell went
-80% -> 20%. The coder never tried `bundle3.2` because nothing ever named it.
+The run collapsed sharply. The coder never tried `bundle3.2` because nothing ever named it.
 
 `install_remedy.txt`'s own header records this same bug as fixed twice. Both earlier fixes repaired
 the DISCOVERY and left the SENTENCE alone. This pins them together.

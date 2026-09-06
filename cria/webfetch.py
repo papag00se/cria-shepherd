@@ -427,7 +427,7 @@ def outline_for_url(url: str) -> str:
 
     MEASURED over the 124 captured sessions, and re-measurable at any time with
     ``suite/replay_logic.py --check spill-outline``: 2,102 coder calls carried the spill refusal or
-    the spill-file read steer, and 840 of them (40%) had NO outline anywhere in the prompt — the
+    the spill-file read steer, and 840 of them had NO outline anywhere in the prompt — the
     initial spill's outline had been compacted away while the durable refusal kept firing. (An
     earlier reading of this said 981 of 2,074; the population is confirmed, the no-outline count
     was over-stated. The refusal ALONE accounts for 1,438 of those calls, 695 without an outline.)
