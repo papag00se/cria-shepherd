@@ -5,8 +5,8 @@ The suite puts cria under the kinds of pressure real coding work applies so its 
 ## Design rules
 
 1. **Comparable work.** Tasks carry several substantial deliverables: research, implementation, tests, documentation, integration, or operational behavior.
-2. **Inference judges usefulness.** At checkpoints, in progress reports, and at the final, the judgment is always a percentage of usefulness inferred from the delivered workspace as a whole. Coder claims are not evidence.
-3. **Milestones are holistic.** The first judgment is at minute 30 and later judgments are 15 active minutes apart. The reasoner infers the usefulness percentage without counting task items or passed checks, and separately decides whether to stop or continue; deterministic code does not translate a percentage into that decision.
+2. **Inference judges usefulness.** At checkpoints, in progress reports, and at the final, the percentage means how much requested coding work the model usefully wrote so the user does not have to write it. Correct reusable code retains value despite incomplete integration, a failing build, or missed behavior; pre-existing code is not model-delivered work. Coder claims are not evidence.
+3. **Milestones are holistic.** The first judgment is at minute 30 and later judgments are 15 active minutes apart. The reasoner infers the usefulness percentage without counting task items, lines, or passed checks, and separately decides whether to stop or continue; deterministic code does not translate a percentage into that decision.
 4. **Seeded beats greenfield for finding cria bugs.** Seeded tasks exercise unfamiliar-file reading, surgical editing, and reactions to real gate output.
 5. **No task is special-cased in cria.** The suite is useful only while cria remains harness-, prompt-, and language-agnostic.
 

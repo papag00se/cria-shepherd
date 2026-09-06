@@ -38,7 +38,7 @@ printf '%s' '<judgment JSON>' | python3 suite/usefulness.py record <run-id>
 python3 suite/usefulness.py show
 ```
 
-The judge infers usefulness only from the original `prompt.txt` and the archived workspace inspected with read-only tools. The final judgment is always a percentage of usefulness, inferred holistically rather than calculated from item counts or passed checks; task metadata and claims from the coding session are not judgment contracts or evidence.
+The judge infers usefulness only from the original `prompt.txt` and the archived workspace inspected with read-only tools. The percentage asks how much requested coding work the model usefully wrote so the user does not have to write it: correct reusable code keeps its value despite incomplete integration or a failing build, while pre-existing code does not count as model-delivered work. The final judgment is inferred holistically rather than calculated from item, line, or check counts; task metadata and claims from the coding session are not judgment contracts or evidence.
 
 ## Replays and walks
 

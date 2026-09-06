@@ -62,6 +62,16 @@ def test_first_gate_is_30_minutes_and_has_no_numeric_completion_threshold():
         "milestone-complete-30min"
 
 
+def test_usefulness_means_model_written_work_the_user_does_not_have_to_write():
+    milestone_prompt = (ROOT / "suite" / "prompts" / "milestone_judge.txt").read_text()
+    final_prompt = (ROOT / "suite" / "prompts" / "usefulness_judge.txt").read_text()
+    for prompt in (milestone_prompt, final_prompt):
+        assert "so the user does not have to write it" in prompt
+        assert "Correct, reusable model-authored code retains value" in prompt
+        assert "pre-existing code is not work delivered by the model" in prompt
+        assert "not a count of task items, lines, passed checks" in prompt
+
+
 def test_every_checkpoint_progress_report_states_the_usefulness_percentage():
     report = suite_run.milestone_progress(_judgment("continue", 37), 45)
     assert "45min" in report
