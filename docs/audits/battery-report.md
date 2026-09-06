@@ -1,6 +1,6 @@
 # Battery — usefulness status
 
-**Last updated 2026-09-05 23:08** — newest row `shipping-rates-rb_ornith15_codex_poff_1788669619`, finished 2026-09-05 23:00.
+**Last updated 2026-09-06 03:50** — newest row `rust-toml-cli_ornith15_codex_poff_1788688897`, finished 2026-09-06 03:40.
 
 Every checkpoint progress report and final judgment is an inferred percentage of usefulness backed by inspected workspace evidence.
 
@@ -172,6 +172,11 @@ Every checkpoint progress report and final judgment is an inferred percentage of
 | ternary-bonsai | handles-cli-node | awaiting judgment |
 | ternary-bonsai | rust-toml-cli | awaiting judgment |
 | ornith15 | shipping-rates-rb | 5% useful |
+| ornith15 | cart-billing-go | 84% useful |
+| ornith15 | orders-api-py | 85% useful |
+| ornith15 | feed-pipeline-java | 35% useful |
+| ornith15 | handles-cli-node | 75% useful |
+| ornith15 | rust-toml-cli | 95% useful |
 | nemotron-elastic | shipping-rates-rb | awaiting judgment |
 | nemotron-elastic | cart-billing-go | 10% useful |
 | nemotron-elastic | orders-api-py | awaiting judgment |
