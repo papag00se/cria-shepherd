@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Battery campaign status without numeric grading.
+"""Battery campaign status using inferred usefulness percentages.
 
-The suite records whether a cell ran and whether an independent qualitative usefulness judgment is
-available. It preserves the qualitative judgment directly and never derives a numeric grade from it.
+Checkpoint progress reports and final judgments always report usefulness as a percentage. The
+percentage is inferred holistically by a reasoner, never assembled by deterministic task counting.
 """
 from __future__ import annotations
 
@@ -62,14 +62,14 @@ def level_cell(rs: list[dict], level: int, model: str, task: str) -> dict | None
 
 
 def judged(row: dict | None) -> bool:
-    return bool(row and row.get("usefulness_judgment"))
+    return bool(row and isinstance(row.get("usefulness_percent"), int))
 
 
 def judgment_of(row: dict | None) -> str:
     if not row:
         return "not run"
-    if row.get("usefulness_judgment"):
-        return str(row["usefulness_judgment"])
+    if isinstance(row.get("usefulness_percent"), int):
+        return f"{row['usefulness_percent']}% useful"
     return "awaiting judgment"
 
 
@@ -107,8 +107,9 @@ def _stamp(rs: list[dict], now: float | None = None) -> str:
 
 
 def report(rs: list[dict], now: float | None = None) -> str:
-    out = ["# Battery — qualitative status", "", _stamp(rs, now), "",
-           "Judgments are holistic prose backed by inspected workspace evidence.", ""]
+    out = ["# Battery — usefulness status", "", _stamp(rs, now), "",
+           "Every checkpoint progress report and final judgment is an inferred percentage of "
+           "usefulness backed by inspected workspace evidence.", ""]
     levels = sorted({int(row["level"]) for row in rs
                      if row.get("level") is not None and not row.get("superseded")})
     for level in levels:
@@ -136,7 +137,7 @@ def main() -> int:
         print(f"wrote {write_report(rs)}")
         return 0
 
-    print("BATTERY CAMPAIGN — qualitative judgments only\n")
+    print("BATTERY CAMPAIGN — inferred usefulness percentages\n")
     for task in TASKS:
         for model in MODELS:
             base = cell(rs, "BASE", model, task)

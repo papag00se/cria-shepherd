@@ -2,7 +2,8 @@
 """Create, inspect, and answer inference checkpoints for live suite runs.
 
 The runner freezes the workspace and waits at each interval. The campaign agent inspects that
-snapshot with read-only tools and records `complete`, `continue`, or `stalled`:
+snapshot with read-only tools and records an inferred usefulness percentage together with
+`complete`, `continue`, or `stalled`:
 
     python3 suite/milestones.py pending
     python3 suite/milestones.py emit <checkpoint>
@@ -59,13 +60,17 @@ def parse(text: str) -> dict | None:
         return None
     if not isinstance(value, dict) or value.get("decision") not in DECISIONS:
         return None
+    usefulness = value.get("usefulness_percent")
     reason = value.get("reason")
     evidence = value.get("evidence")
+    if not isinstance(usefulness, int) or isinstance(usefulness, bool) or not 0 <= usefulness <= 100:
+        return None
     if not isinstance(reason, str) or not reason.strip() or not isinstance(evidence, list) or not evidence:
         return None
     if not all(isinstance(item, str) and item.strip() for item in evidence):
         return None
-    return {"decision": value["decision"], "reason": reason.strip(), "evidence": evidence}
+    return {"usefulness_percent": usefulness, "decision": value["decision"],
+            "reason": reason.strip(), "evidence": evidence}
 
 
 def verdict_path(checkpoint: Path) -> Path:
@@ -118,9 +123,9 @@ def main() -> int:
 
     verdict = parse(sys.stdin.read())
     if verdict is None:
-        raise SystemExit("expected decision complete|continue|stalled, reason, and evidence")
+        raise SystemExit("expected usefulness_percent, decision complete|continue|stalled, reason, and evidence")
     verdict_path(checkpoint).write_text(json.dumps(verdict, indent=1) + "\n")
-    print(f"{checkpoint.name}: {verdict['decision']}")
+    print(f"{checkpoint.name}: {verdict['usefulness_percent']}% useful; {verdict['decision']}")
     return 0
 
 

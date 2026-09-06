@@ -1,8 +1,8 @@
-# Battery — qualitative status
+# Battery — usefulness status
 
-**Last updated 2026-09-05 20:25** — newest row `cart-billing-go_nemotron-elastic_codex_poff_1788661992`, finished 2026-09-05 20:04.
+**Last updated 2026-09-05 20:34** — newest row `cart-billing-go_nemotron-elastic_codex_poff_1788661992`, finished 2026-09-05 20:04.
 
-Judgments are holistic prose backed by inspected workspace evidence.
+Every checkpoint progress report and final judgment is an inferred percentage of usefulness backed by inspected workspace evidence.
 
 ## Engagement configuration 0
 
@@ -172,9 +172,9 @@ Judgments are holistic prose backed by inspected workspace evidence.
 | ternary-bonsai | handles-cli-node | awaiting judgment |
 | ternary-bonsai | rust-toml-cli | awaiting judgment |
 | nemotron-elastic | shipping-rates-rb | awaiting judgment |
-| nemotron-elastic | cart-billing-go | Unusable as delivered |
+| nemotron-elastic | cart-billing-go | 10% useful |
 | nemotron-elastic | orders-api-py | awaiting judgment |
-| nemotron-elastic | feed-pipeline-java | Unusable as delivered |
+| nemotron-elastic | feed-pipeline-java | 10% useful |
 | nemotron-elastic | handles-cli-node | awaiting judgment |
 | nemotron-elastic | rust-toml-cli | awaiting judgment |
 

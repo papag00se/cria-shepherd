@@ -6,10 +6,12 @@ drives one harness run of the task prompt under an active-time budget, then coll
 cria's own capture/events, preserves the workspace for an independent usefulness judgment, and
 appends one JSON row to suite/results/results.jsonl.
 
-At every milestone interval the runner pauses the harness, freezes the workspace, and waits for the
-campaign agent to infer whether the work is complete, progressing, or stalled. A progressing run
-earns the next interval, up to the task's explicitly budget-only interval limit; no checklist count or
-mechanical task result participates. The default interval is 30 minutes.
+At every checkpoint the runner pauses the harness, freezes the workspace, and waits for the
+campaign agent to infer a percentage of usefulness plus whether the work is complete, progressing,
+or stalled. That percentage appears in every checkpoint progress report and the final archived-
+workspace judgment is also a usefulness percentage. A progressing run earns the next interval, up
+to the task's explicitly budget-only limit; no checklist count or mechanical percentage threshold
+participates. Checkpoints begin at 30 active minutes and recur every 15 active minutes.
 
 Kill mechanics follow the runctl scars: match the codex process list explicitly (ps + grep of
 the exec pattern, excluding shells), never `pkill -f` (it matches the invoking shell).
@@ -431,6 +433,12 @@ class MilestonePacing:
         self.next_milestone += self.interval_seconds
 
 
+def milestone_progress(verdict: dict, minute: int) -> str:
+    """The canonical checkpoint progress report: always an inferred usefulness percentage."""
+    return (f"[milestone] {minute}min usefulness={verdict['usefulness_percent']}% "
+            f"decision={verdict['decision']}: {verdict['reason']}")
+
+
 def milestone_terminal(verdict: dict, minute: int, at_limit: bool) -> str | None:
     """Translate one grounded, holistic usefulness inference into run control."""
     decision = verdict.get("decision")
@@ -579,8 +587,7 @@ def main() -> None:
             finally:
                 pacing.record_pause(time.time() - pause_started)
             milestone_judgments.append({"at_active_minutes": minute, **verdict})
-            print(f"[milestone] {minute}min decision={verdict['decision']}: "
-                  f"{verdict['reason']}", flush=True)
+            print(milestone_progress(verdict, minute), flush=True)
             outcome = milestone_terminal(verdict, minute, at_limit=pacing.at_limit)
             if outcome is not None:
                 terminal = outcome

@@ -10,8 +10,9 @@ import milestones  # noqa: E402
 import run as suite_run  # noqa: E402
 
 
-def _judgment(decision="continue"):
+def _judgment(decision="continue", usefulness_percent=50):
     return {
+        "usefulness_percent": usefulness_percent,
         "decision": decision,
         "reason": "The frozen workspace supports this holistic usefulness judgment.",
         "evidence": ["The implementation changed and the current checks are visible."],
@@ -44,9 +45,10 @@ def test_checkpoint_freezes_the_workspace_for_read_only_inspection(tmp_path, mon
 def test_only_holistic_inference_decisions_are_accepted():
     raw = _judgment()
     assert milestones.parse(json.dumps(raw)) == raw
-    assert milestones.parse('{"decision":"yes","reason":"x","evidence":[]}') is None
-    assert milestones.parse('{"decision":"continue","reason":"x","evidence":[]}') is None
-    assert milestones.parse('{"decision":"continue","reason":"x","tasks":[]}') is None
+    assert milestones.parse('{"usefulness_percent":50,"decision":"yes","reason":"x","evidence":["x"]}') is None
+    assert milestones.parse('{"decision":"continue","reason":"x","evidence":["x"]}') is None
+    assert milestones.parse('{"usefulness_percent":101,"decision":"continue","reason":"x","evidence":["x"]}') is None
+    assert milestones.parse('{"usefulness_percent":50,"decision":"continue","reason":"x","tasks":[]}') is None
 
 
 def test_first_gate_is_30_minutes_and_has_no_numeric_completion_threshold():
@@ -60,10 +62,19 @@ def test_first_gate_is_30_minutes_and_has_no_numeric_completion_threshold():
         "milestone-complete-30min"
 
 
-def test_a_continue_judgment_runs_until_the_time_budget_not_a_completion_quota():
-    assert suite_run.milestone_terminal(_judgment("continue"), 45, False) is None
-    assert suite_run.milestone_terminal(_judgment("continue"), 60, False) is None
-    assert suite_run.milestone_terminal(_judgment("continue"), 75, True) == "budget-killed"
+def test_every_checkpoint_progress_report_states_the_usefulness_percentage():
+    report = suite_run.milestone_progress(_judgment("continue", 37), 45)
+    assert "45min" in report
+    assert "usefulness=37%" in report
+    assert "decision=continue" in report
+
+
+def test_the_inferred_percentage_is_reported_but_never_mechanically_controls_the_run():
+    assert suite_run.milestone_terminal(_judgment("continue", 1), 45, False) is None
+    assert suite_run.milestone_terminal(_judgment("stalled", 99), 45, False) == \
+        "milestone-stalled-45min"
+    assert suite_run.milestone_terminal(_judgment("continue", 50), 60, False) is None
+    assert suite_run.milestone_terminal(_judgment("continue", 50), 75, True) == "budget-killed"
 
 
 def test_every_task_declares_an_integer_budget_not_a_second_judgment_contract():

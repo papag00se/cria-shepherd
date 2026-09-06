@@ -2,7 +2,7 @@
 
 One matrix cell per `run.py` invocation. A run receives active working time in milestone intervals, preserves its workspace and exact call captures, and appends one metadata row to `results/results.jsonl`.
 
-The first inference checkpoint is at 30 active minutes; later checkpoints are 15 active minutes apart. At each checkpoint the campaign agent inspects a frozen workspace snapshot and makes one holistic `complete`, `continue`, or `stalled` usefulness judgment. No numeric grading input participates.
+The first inference checkpoint is at 30 active minutes; later checkpoints are 15 active minutes apart. At every checkpoint, every progress report, and the final judgment, usefulness is always reported as an inferred percentage. The campaign agent inspects a frozen workspace snapshot and also makes a separate holistic `complete`, `continue`, or `stalled` control decision; no percentage mechanically determines that decision.
 
 ## Run a cell
 
@@ -25,7 +25,7 @@ python3 suite/milestones.py emit <checkpoint>
 printf '%s' '<judgment JSON>' | python3 suite/milestones.py record <checkpoint>
 ```
 
-The runner remains paused until the campaign agent records the holistic inference judgment. Waiting time does not consume the run's active budget.
+The runner remains paused until the campaign agent records the inferred usefulness percentage and control decision. Its progress log prints that percentage at every checkpoint. Waiting time does not consume the run's active budget.
 
 Each row records run identity, settings, elapsed time, terminal state, call/phase counts, throughput, assist events, workspace/archive paths, captures, and harness log. Delivered-work quality is absent until an independent usefulness judgment is recorded.
 
@@ -38,7 +38,7 @@ printf '%s' '<judgment JSON>' | python3 suite/usefulness.py record <run-id>
 python3 suite/usefulness.py show
 ```
 
-The judge infers usefulness only from the original `prompt.txt` and the archived workspace inspected with read-only tools. The judgment is qualitative and evidence-based; task metadata and claims from the coding session are not judgment contracts or evidence.
+The judge infers usefulness only from the original `prompt.txt` and the archived workspace inspected with read-only tools. The final judgment is always a percentage of usefulness, inferred holistically rather than calculated from item counts or passed checks; task metadata and claims from the coding session are not judgment contracts or evidence.
 
 ## Replays and walks
 

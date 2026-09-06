@@ -92,13 +92,22 @@ class ThePacketOutlivesTheWorkspaceTests(unittest.TestCase):
 
     def test_the_emergency_answer_contract_matches_the_rubric(self):
         rubric = usefulness.SYSTEM.read_text()
-        self.assertIn('"judgment"', usefulness.ANSWER_NOW)
+        self.assertIn('"usefulness_percent"', usefulness.ANSWER_NOW)
         self.assertIn('"evidence"', usefulness.ANSWER_NOW)
-        self.assertNotIn('"score"', usefulness.ANSWER_NOW)
-        self.assertIn('"judgment"', rubric)
-        self.assertNotIn("percentage", rubric.lower())
+        self.assertIn('"usefulness_percent"', rubric)
+        self.assertIn("percentage", rubric.lower())
         self.assertNotIn("`list_dir`", rubric)
         self.assertNotIn("`read_file`", rubric)
+
+    def test_the_final_judgment_is_always_a_usefulness_percentage(self):
+        verdict = usefulness.parse(
+            '{"usefulness_percent":10,"reason":"Delivered work exists. It is broken.",'
+            '"evidence":["The build fails."]}')
+        self.assertEqual(verdict["usefulness_percent"], 10)
+        self.assertIsNone(usefulness.parse(
+            '{"judgment":"low","reason":"x","evidence":["x"]}'))
+        self.assertIsNone(usefulness.parse(
+            '{"usefulness_percent":101,"reason":"x","evidence":["x"]}'))
 
 
 class TheWorklistOnlyHoldsJudgEABLERowsTests(unittest.TestCase):
@@ -131,7 +140,7 @@ class TheWorklistOnlyHoldsJudgEABLERowsTests(unittest.TestCase):
         (self.packets / "done.txt").write_text("frozen")
         row = {"run_id": "done", "archive": "/nowhere"}
         (self.verdicts / "done.json").write_text(
-            json.dumps({"judgment": "useful", "evidence_digest": usefulness.evidence(row)[1]}))
+            json.dumps({"usefulness_percent": 50, "evidence_digest": usefulness.evidence(row)[1]}))
         self.assertEqual(usefulness.pending([row]), [])
 
     def test_a_verdict_written_against_a_DIFFERENT_rubric_is_reopened(self):
@@ -139,7 +148,7 @@ class TheWorklistOnlyHoldsJudgEABLERowsTests(unittest.TestCase):
         (self.packets / "done.txt").write_text("frozen")
         row = {"run_id": "done", "archive": "/nowhere"}
         (self.verdicts / "done.json").write_text(
-            json.dumps({"judgment": "useful", "evidence_digest": usefulness.evidence(row)[1]}))
+            json.dumps({"usefulness_percent": 50, "evidence_digest": usefulness.evidence(row)[1]}))
         with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False) as fh:
             fh.write("a different rubric entirely\n")
             other = Path(fh.name)
@@ -150,7 +159,7 @@ class TheWorklistOnlyHoldsJudgEABLERowsTests(unittest.TestCase):
     def test_a_verdict_with_no_digest_at_all_is_reopened(self):
         # It predates the stamp, so nothing can vouch for what it was written against.
         (self.packets / "done.txt").write_text("frozen")
-        (self.verdicts / "done.json").write_text(json.dumps({"judgment": "useful"}))
+        (self.verdicts / "done.json").write_text(json.dumps({"usefulness_percent": 50}))
         rows = [{"run_id": "done", "archive": "/nowhere"}]
         self.assertEqual([r["run_id"] for r in usefulness.pending(rows)], ["done"])
 

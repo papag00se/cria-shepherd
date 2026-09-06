@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Prepare and record an independent usefulness judgment for a finished cell.
 
-The judge reads the task and delivered workspace with read-only tools, identifies the requested
-deliverables, and decides how much usable work was actually delivered. `--emit` writes the packet;
-`--record` stores the judgment. No task-specific executable grades or aggregate mechanical measures
+The judge reads the task and delivered workspace with read-only tools and infers the percentage of
+usefulness actually delivered. `--emit` writes the packet; `--record` stores the judgment. The
+percentage is holistic: no task-specific executable grades or aggregate mechanical measures
 participate in this path.
 """
 from __future__ import annotations
@@ -27,7 +27,7 @@ PACKET_VERSION = "SUITE EVIDENCE PACKET: 2"
 
 # The stop-looking line, in THIS judge's schema. See the call site.
 ANSWER_NOW = ('You have inspected enough. Answer NOW with ONLY the JSON object: '
-              '{"judgment": "<holistic usefulness judgment>", '
+              '{"usefulness_percent": <integer from 0 through 100>, '
               '"reason": "<two evidence-based sentences>", '
               '"evidence": ["<specific inspected fact>"]}')
 
@@ -120,16 +120,16 @@ def parse(text: str) -> dict | None:
         return None
     if not isinstance(d, dict):
         return None
-    judgment = d.get("judgment")
+    usefulness = d.get("usefulness_percent")
     reason = d.get("reason")
     evidence = d.get("evidence")
-    if not isinstance(judgment, str) or not judgment.strip():
+    if not isinstance(usefulness, int) or isinstance(usefulness, bool) or not 0 <= usefulness <= 100:
         return None
-    if not isinstance(reason, str) or not reason.strip() or not isinstance(evidence, list):
+    if not isinstance(reason, str) or not reason.strip() or not isinstance(evidence, list) or not evidence:
         return None
     if not all(isinstance(item, str) and item.strip() for item in evidence):
         return None
-    return {"judgment": judgment.strip(), "reason": reason.strip(), "evidence": evidence}
+    return {"usefulness_percent": usefulness, "reason": reason.strip(), "evidence": evidence}
 
 
 VERDICTS = Path.home() / ".cria" / "suite" / "_usefulness"
@@ -186,9 +186,11 @@ def pending(rows: list[dict]) -> list[dict]:
 
 
 def record(run_id: str, verdict: dict) -> dict:
-    """Store a qualitative verdict and attach its provenance to the row."""
-    v = dict(verdict)
-    v.setdefault("judged_by", "campaign agent, full toolset")
+    """Store an inferred usefulness percentage and attach its provenance to the row."""
+    normalized = parse(json.dumps(verdict))
+    if normalized is None:
+        raise ValueError("final judgment requires usefulness_percent, reason, and evidence")
+    v = {**normalized, "judged_by": verdict.get("judged_by", "campaign agent, full toolset")}
     rows = [json.loads(l) for l in RESULTS.read_text().splitlines() if l.strip()]
     row = next((r for r in rows if r.get("run_id") == run_id), None)
     if row is None:
@@ -199,9 +201,11 @@ def record(run_id: str, verdict: dict) -> dict:
     out = []
     for r in rows:
         if r.get("run_id") == run_id:
-            r = {**r, "usefulness_judgment": v["judgment"],
-                 "usefulness_reason": v.get("reason", ""),
-                 "usefulness_model": v["judged_by"]}
+            r = dict(r)
+            r.pop("usefulness_judgment", None)
+            r.update({"usefulness_percent": v["usefulness_percent"],
+                      "usefulness_reason": v.get("reason", ""),
+                      "usefulness_model": v["judged_by"]})
         out.append(json.dumps(r))
     RESULTS.write_text("\n".join(out) + "\n")
     return v
@@ -249,15 +253,18 @@ def main() -> int:
         return 0
 
     if args.cmd == "record":
-        v = record(args.run_id, json.loads(sys.stdin.read()))
-        print(f"{args.run_id}: {v['judgment']}")
+        verdict = parse(sys.stdin.read())
+        if verdict is None:
+            raise SystemExit("expected usefulness_percent, reason, and evidence")
+        v = record(args.run_id, verdict)
+        print(f"{args.run_id}: {v['usefulness_percent']}% useful")
         return 0
 
     want = [r for r in rows
-            if r.get("started", 0) >= args.since and "usefulness_judgment" in r]
-    print(f"{'task':22} {'model':17} judgment")
+            if r.get("started", 0) >= args.since and "usefulness_percent" in r]
+    print(f"{'task':22} {'model':17} usefulness")
     for r in want:
-        print(f"{r['task']:22} {r['model']:17} {r['usefulness_judgment']}")
+        print(f"{r['task']:22} {r['model']:17} {r['usefulness_percent']}%")
     return 0
 
 

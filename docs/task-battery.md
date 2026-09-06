@@ -1,12 +1,12 @@
 # The task battery — what we test cria against, and why
 
-The suite puts cria under the kinds of pressure real coding work applies so its own footguns surface in exact call captures and finished workspaces. At each milestone the campaign agent inspects a frozen workspace snapshot and infers whether the run is complete, progressing, or stalled. Afterward, an independent reasoner inspects the archived final workspace with read-only tools and records a usefulness judgment.
+The suite puts cria under the kinds of pressure real coding work applies so its own footguns surface in exact call captures and finished workspaces. At each milestone the campaign agent inspects a frozen workspace snapshot, reports an inferred percentage of usefulness, and infers whether the run is complete, progressing, or stalled. Every progress report carries that percentage; afterward, an independent reasoner inspects the archived final workspace with read-only tools and records the final percentage of usefulness.
 
 ## Design rules
 
 1. **Comparable work.** Tasks carry several substantial deliverables: research, implementation, tests, documentation, integration, or operational behavior.
-2. **Inference judges usefulness.** The judgment concerns whether the delivered workspace is complete, worth more working time, or stalled. Coder claims are not evidence, and no numeric grading input participates.
-3. **Milestones are holistic.** The first judgment is at minute 30 and later judgments are 15 active minutes apart. One grounded inference over the task and workspace decides whether to stop or continue.
+2. **Inference judges usefulness.** At checkpoints, in progress reports, and at the final, the judgment is always a percentage of usefulness inferred from the delivered workspace as a whole. Coder claims are not evidence.
+3. **Milestones are holistic.** The first judgment is at minute 30 and later judgments are 15 active minutes apart. The reasoner infers the usefulness percentage without counting task items or passed checks, and separately decides whether to stop or continue; deterministic code does not translate a percentage into that decision.
 4. **Seeded beats greenfield for finding cria bugs.** Seeded tasks exercise unfamiliar-file reading, surgical editing, and reactions to real gate output.
 5. **No task is special-cased in cria.** The suite is useful only while cria remains harness-, prompt-, and language-agnostic.
 
@@ -36,7 +36,7 @@ A task with `seed/` is copied into a fresh workspace and committed before the ru
 
 ## Time budgets
 
-The first inference checkpoint is at 30 active minutes and later checkpoints are 15 active minutes apart. The positive integer `budget_intervals` supplies only the maximum active-time budget—five intervals means 75 minutes—and no task content. At every checkpoint one holistic `complete`, `continue`, or `stalled` judgment controls the run. Waiting for the judge consumes no active time.
+The first inference checkpoint is at 30 active minutes and later checkpoints are 15 active minutes apart. The positive integer `budget_intervals` supplies only the maximum active-time budget—five intervals means 75 minutes—and no task content. At every checkpoint the reasoner reports a holistic usefulness percentage and a separate `complete`, `continue`, or `stalled` judgment; the percentage is included in the progress report but is not a mechanical control threshold. The final archived-workspace judgment is also always a usefulness percentage. Waiting for the judge consumes no active time.
 
 ## Task prompts
 
