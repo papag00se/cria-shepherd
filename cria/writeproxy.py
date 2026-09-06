@@ -29,6 +29,7 @@ from pathlib import Path
 from shlex import quote as _qbash  # one bash-quoting rule (was a hand-rolled _qbash)
 
 from . import brave, denial, editrecovery, prompts, webfetch, wsview
+from .probegate import GATE_SENTINEL
 from . import content_reduce as content_reduce_mod
 from . import probeparse
 from . import proberun
@@ -1206,7 +1207,14 @@ def _external_refusal(name, args, fn, injected, level: str, workspace: str | Non
         # echo — so requiring the marker in the first two lines authenticates the shape cria emits
         # rather than any text containing the token.
         head = "\n".join(command.lstrip().splitlines()[:2])
-        if head.startswith("# " + _SENTINEL) or (head.startswith("cd ") and "___CRIA_GATE_" in head):
+        # BOTH cria command sentinels earn the exemption: `# ⟦ctx:tool⟧` leads a lowered synthetic
+        # tool call, `# ⟦ctx:gate⟧` (probegate.GATE_SENTINEL) leads the gate script AND its transport
+        # continuation. The continuation is a `python3 - <spool> <<HEREDOC` reader that NAMES the
+        # /tmp/.cria-gate-* spool; recognising only the tool sentinel made cria refuse its own
+        # multi-page gate as "outside the working directory", so every large gate read UNKNOWN and the
+        # completion path could never verify (cart-billing-go x gigachat31 20260906T124743).
+        if (head.startswith("# " + _SENTINEL) or head.startswith("# " + GATE_SENTINEL)
+                or (head.startswith("cd ") and "___CRIA_GATE_" in head)):
             return None
         return dirguard.command_refusal(command, level, workspace)
     return None
