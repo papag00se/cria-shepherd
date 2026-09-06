@@ -1115,6 +1115,40 @@ def _consistent_word(text: str) -> bool | None:
     return None
 
 
+def _ground_coder_view(messages: list, workspace_root: str) -> list:
+    """Return ``messages`` with a single FRESH workspace listing riding at the TAIL — the coder's
+    on-disk ground truth in the most-salient slot (the last thing before the model generates),
+    re-derived from live disk every coder turn. LISTING ONLY: names + sizes, never file content — a
+    blind touch's content grounding is editrecovery's job, and carrying bytes forward is the churn
+    ddd74fd removed. Any prior ⟦ctx:files⟧ listing (last turn's footer, a stale compaction copy) is
+    folded out first, so exactly ONE authoritative copy remains — the same one-copy rule selfcompact
+    already applies to the compacted view (reuses its `_is_files_msg`). Re-derived per turn and never
+    written to durable history, so it cannot go stale the way the reverted briefing arm did (a88e905).
+    No-op without a workspace root or when the survey is empty/unavailable (`workspace_inventory`
+    returns "").
+
+    Placed in `_coder_turn`, the one shared coder core, so BOTH driver halves get it. The listing is
+    the focus-free half of ground truth: it asserts what EXISTS, never which file matters, so it can
+    ride every turn without steering the model at a file it has rightly moved off (that judgement
+    belongs to the model's own next action, which editrecovery grounds).
+    """
+    inv = workspace_inventory(workspace_root or "", flavor="coder")
+    if not inv.strip():
+        return messages
+    kept = [m for m in messages if not selfcompact._is_files_msg(m)]
+    footer = {"role": "user", "content": inv}
+    if not kept:
+        return [footer]
+    # The LAST slot belongs to the current ACTION (a fresh steer/redirect, the task, a tool result) —
+    # state must not bury it (action-framed beats rule-framed for a weak model). So the listing rides
+    # just ABOVE the last message. The one exception is a trailing tool RESULT: a user message may not
+    # be inserted between an assistant tool_call and its result (that orphans the tool at the wire),
+    # and a tool result is state not an action, so the listing is appended AFTER it instead.
+    if kept[-1].get("role") == "tool":
+        return kept + [footer]
+    return kept[:-1] + [footer, kept[-1]]
+
+
 def step_names_absent_artifact(claim: str, workspace_root: str) -> str:
     """The file this step names, when the workspace is EMPTY — else "".
 
@@ -2586,6 +2620,11 @@ class Loop:
         # brittle to identify the real task. Carry the session's exact root task as an internal hint;
         # Upstream consumes and strips it before serialization.
         framed[bodykeys.PINNED_TASK] = getattr(sess.plan, "task", "") or ""
+        # GROUND TRUTH AT THE TAIL: the live workspace listing rides the most-salient slot every turn,
+        # re-derived from disk, exactly one copy (older ⟦ctx:files⟧ folded out). Listing only — content
+        # grounding on a blind touch is editrecovery's job. No-op without a workspace root.
+        if getattr(sess, "workspace_root", None):
+            framed["messages"] = _ground_coder_view(framed.get("messages", []), sess.workspace_root)
         _add_completion_tool(framed)  # advertise the explicit-done tool for THIS coder call
         rlog.phase = f"coder-s{step}"  # label the call capture with the role + step
         coder = massage.apply(_parse_completion(self._ctx.coder_chat(framed, rlog)), framed.get("tools"), rlog)
