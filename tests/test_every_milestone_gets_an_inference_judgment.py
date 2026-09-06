@@ -70,6 +70,9 @@ def test_usefulness_means_model_written_work_the_user_does_not_have_to_write():
         assert "Correct, reusable model-authored code retains value" in prompt
         assert "pre-existing code is not work delivered by the model" in prompt
         assert "not a count of task items, lines, passed checks" in prompt
+    assert "Do not continue merely because budget remains" in milestone_prompt
+    assert "no substantial requested code is ordinarily stalled" in milestone_prompt
+    assert "substantial correct partial work with a credible path forward" in milestone_prompt
 
 
 def test_every_checkpoint_progress_report_states_the_usefulness_percentage():

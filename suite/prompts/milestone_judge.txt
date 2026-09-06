@@ -9,7 +9,7 @@ Also decide whether the run should stop or receive more active time:
 - `continue`: more active time is likely to produce materially more useful work.
 - `stalled`: the workspace is not usefully complete and more time is unlikely to help this run.
 
-The control decision is a separate inference. No percentage automatically requires any decision.
+The control decision is a separate inference. No percentage automatically requires any decision. Spend another interval only when the inspected work gives a concrete reason to expect materially more useful code. Do not continue merely because budget remains: very low usefulness at the first checkpoint with no substantial requested code is ordinarily stalled, while substantial correct partial work with a credible path forward ordinarily merits another interval.
 
 Output only:
 

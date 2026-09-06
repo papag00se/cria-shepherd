@@ -1,6 +1,6 @@
 # Battery — usefulness status
 
-**Last updated 2026-09-05 20:34** — newest row `cart-billing-go_nemotron-elastic_codex_poff_1788661992`, finished 2026-09-05 20:04.
+**Last updated 2026-09-05 23:00** — newest row `shipping-rates-rb_ornith15_codex_poff_1788669619`, finished 2026-09-05 23:00.
 
 Every checkpoint progress report and final judgment is an inferred percentage of usefulness backed by inspected workspace evidence.
 
@@ -26,12 +26,6 @@ Every checkpoint progress report and final judgment is an inferred percentage of
 | ternary-bonsai | feed-pipeline-java | awaiting judgment |
 | ternary-bonsai | handles-cli-node | awaiting judgment |
 | ternary-bonsai | rust-toml-cli | awaiting judgment |
-| nemotron-elastic | shipping-rates-rb | awaiting judgment |
-| nemotron-elastic | cart-billing-go | awaiting judgment |
-| nemotron-elastic | orders-api-py | awaiting judgment |
-| nemotron-elastic | feed-pipeline-java | awaiting judgment |
-| nemotron-elastic | handles-cli-node | awaiting judgment |
-| nemotron-elastic | rust-toml-cli | awaiting judgment |
 
 ## Engagement configuration 1
 
@@ -55,12 +49,6 @@ Every checkpoint progress report and final judgment is an inferred percentage of
 | ternary-bonsai | feed-pipeline-java | awaiting judgment |
 | ternary-bonsai | handles-cli-node | awaiting judgment |
 | ternary-bonsai | rust-toml-cli | awaiting judgment |
-| nemotron-elastic | shipping-rates-rb | awaiting judgment |
-| nemotron-elastic | cart-billing-go | awaiting judgment |
-| nemotron-elastic | orders-api-py | awaiting judgment |
-| nemotron-elastic | feed-pipeline-java | awaiting judgment |
-| nemotron-elastic | handles-cli-node | awaiting judgment |
-| nemotron-elastic | rust-toml-cli | awaiting judgment |
 
 ## Engagement configuration 2
 
@@ -84,12 +72,6 @@ Every checkpoint progress report and final judgment is an inferred percentage of
 | ternary-bonsai | feed-pipeline-java | awaiting judgment |
 | ternary-bonsai | handles-cli-node | awaiting judgment |
 | ternary-bonsai | rust-toml-cli | awaiting judgment |
-| nemotron-elastic | shipping-rates-rb | awaiting judgment |
-| nemotron-elastic | cart-billing-go | awaiting judgment |
-| nemotron-elastic | orders-api-py | awaiting judgment |
-| nemotron-elastic | feed-pipeline-java | awaiting judgment |
-| nemotron-elastic | handles-cli-node | awaiting judgment |
-| nemotron-elastic | rust-toml-cli | awaiting judgment |
 
 ## Engagement configuration 3
 
@@ -113,12 +95,6 @@ Every checkpoint progress report and final judgment is an inferred percentage of
 | ternary-bonsai | feed-pipeline-java | awaiting judgment |
 | ternary-bonsai | handles-cli-node | awaiting judgment |
 | ternary-bonsai | rust-toml-cli | awaiting judgment |
-| nemotron-elastic | shipping-rates-rb | awaiting judgment |
-| nemotron-elastic | cart-billing-go | awaiting judgment |
-| nemotron-elastic | orders-api-py | awaiting judgment |
-| nemotron-elastic | feed-pipeline-java | awaiting judgment |
-| nemotron-elastic | handles-cli-node | awaiting judgment |
-| nemotron-elastic | rust-toml-cli | awaiting judgment |
 
 ## Engagement configuration 4
 
@@ -142,12 +118,6 @@ Every checkpoint progress report and final judgment is an inferred percentage of
 | ternary-bonsai | feed-pipeline-java | awaiting judgment |
 | ternary-bonsai | handles-cli-node | awaiting judgment |
 | ternary-bonsai | rust-toml-cli | awaiting judgment |
-| nemotron-elastic | shipping-rates-rb | awaiting judgment |
-| nemotron-elastic | cart-billing-go | awaiting judgment |
-| nemotron-elastic | orders-api-py | awaiting judgment |
-| nemotron-elastic | feed-pipeline-java | awaiting judgment |
-| nemotron-elastic | handles-cli-node | awaiting judgment |
-| nemotron-elastic | rust-toml-cli | awaiting judgment |
 
 ## Engagement configuration 5
 
@@ -171,10 +141,5 @@ Every checkpoint progress report and final judgment is an inferred percentage of
 | ternary-bonsai | feed-pipeline-java | awaiting judgment |
 | ternary-bonsai | handles-cli-node | awaiting judgment |
 | ternary-bonsai | rust-toml-cli | awaiting judgment |
-| nemotron-elastic | shipping-rates-rb | awaiting judgment |
-| nemotron-elastic | cart-billing-go | 10% useful |
-| nemotron-elastic | orders-api-py | awaiting judgment |
-| nemotron-elastic | feed-pipeline-java | 10% useful |
-| nemotron-elastic | handles-cli-node | awaiting judgment |
-| nemotron-elastic | rust-toml-cli | awaiting judgment |
+| ornith15 | shipping-rates-rb | awaiting judgment |
 
