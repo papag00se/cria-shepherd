@@ -27,9 +27,9 @@ PACKET_VERSION = "SUITE EVIDENCE PACKET: 2"
 
 # The stop-looking line, in THIS judge's schema. See the call site.
 ANSWER_NOW = ('You have inspected enough. Answer NOW with ONLY the JSON object: '
-              '{"usefulness": <0-100>, "reason": "<two evidence-based sentences>", '
-              '"deliverables": [{"name": "<task deliverable>", "score": <0-100>, '
-              '"why": "<specific inspected evidence>"}]}')
+              '{"judgment": "<holistic usefulness judgment>", '
+              '"reason": "<two evidence-based sentences>", '
+              '"evidence": ["<specific inspected fact>"]}')
 
 
 def _current_contract(text: str) -> str:
@@ -118,14 +118,18 @@ def parse(text: str) -> dict | None:
         d = json.loads(t[i:j + 1])
     except json.JSONDecodeError:
         return None
-    if not isinstance(d, dict) or "usefulness" not in d:
+    if not isinstance(d, dict):
         return None
-    try:
-        u = float(d["usefulness"])
-    except (TypeError, ValueError):
+    judgment = d.get("judgment")
+    reason = d.get("reason")
+    evidence = d.get("evidence")
+    if not isinstance(judgment, str) or not judgment.strip():
         return None
-    return {"usefulness": max(0.0, min(100.0, u)), "reason": str(d.get("reason") or "").strip(),
-            "deductions": d.get("deductions") or []}
+    if not isinstance(reason, str) or not reason.strip() or not isinstance(evidence, list):
+        return None
+    if not all(isinstance(item, str) and item.strip() for item in evidence):
+        return None
+    return {"judgment": judgment.strip(), "reason": reason.strip(), "evidence": evidence}
 
 
 VERDICTS = Path.home() / ".cria" / "suite" / "_usefulness"
@@ -148,8 +152,8 @@ def _needs_judging(row: dict) -> bool:
     rubric changed nothing — every stale verdict stayed on its row, and the grid went on reporting
     numbers earned under a scale that no longer exists (#11b: a mechanism must reach what it judges).
 
-    Found when the operator replaced the global 0-100 band with per-deliverable scoring, which
-    invalidates every verdict in the file. A verdict with no stored digest is treated as stale: it
+    Found when the operator changed the judgment rubric, which invalidates every verdict written
+    against the old rubric. A verdict with no stored digest is treated as stale: it
     predates the stamp, so nothing can vouch for what it was written against."""
     p = verdict_path(row["run_id"])
     if not p.exists():
@@ -182,7 +186,7 @@ def pending(rows: list[dict]) -> list[dict]:
 
 
 def record(run_id: str, verdict: dict) -> dict:
-    """Store a verdict and write its number onto the row."""
+    """Store a qualitative verdict and attach its provenance to the row."""
     v = dict(verdict)
     v.setdefault("judged_by", "campaign agent, full toolset")
     rows = [json.loads(l) for l in RESULTS.read_text().splitlines() if l.strip()]
@@ -195,7 +199,7 @@ def record(run_id: str, verdict: dict) -> dict:
     out = []
     for r in rows:
         if r.get("run_id") == run_id:
-            r = {**r, "usefulness": float(v["usefulness"]),
+            r = {**r, "usefulness_judgment": v["judgment"],
                  "usefulness_reason": v.get("reason", ""),
                  "usefulness_model": v["judged_by"]}
         out.append(json.dumps(r))
@@ -246,15 +250,14 @@ def main() -> int:
 
     if args.cmd == "record":
         v = record(args.run_id, json.loads(sys.stdin.read()))
-        print(f"{args.run_id}: usefulness {v['usefulness']}")
+        print(f"{args.run_id}: {v['judgment']}")
         return 0
 
-    want = [r for r in rows if r.get("started", 0) >= args.since and "usefulness" in r]
-    print(f"{'task':22} {'model':17} {'delivered':>10}")
+    want = [r for r in rows
+            if r.get("started", 0) >= args.since and "usefulness_judgment" in r]
+    print(f"{'task':22} {'model':17} judgment")
     for r in want:
-        print(f"{r['task']:22} {r['model']:17} {r['usefulness']:9.0f}%")
-    if want:
-        print(f"{'':22} {'':17} {sum(r['usefulness'] for r in want) / len(want):9.0f}%")
+        print(f"{r['task']:22} {r['model']:17} {r['usefulness_judgment']}")
     return 0
 
 

@@ -15,7 +15,6 @@ import json
 import shutil
 import sys
 import time
-import tomllib
 from pathlib import Path
 
 import workspace_evidence
@@ -24,7 +23,7 @@ import workspace_evidence
 SUITE = Path(__file__).resolve().parent
 ROOT = Path.home() / ".cria" / "suite" / "_milestones"
 SYSTEM = SUITE / "prompts" / "milestone_judge.txt"
-TASK_STATES = {"complete", "partial", "missing"}
+DECISIONS = {"complete", "continue", "stalled"}
 
 
 def checkpoint_name(run_id: str, minute: int) -> str:
@@ -40,16 +39,10 @@ def create(run_id: str, minute: int, ws: Path, task_dir: Path) -> Path:
         shutil.rmtree(snapshot)
     shutil.copytree(ws, snapshot, symlinks=True)
     prompt = (task_dir / "prompt.txt").read_text(errors="replace").strip()
-    meta = tomllib.loads((task_dir / "meta.toml").read_text())
-    task_count = meta.get("budget_intervals")
-    if not isinstance(task_count, int) or isinstance(task_count, bool) or task_count < 2:
-        raise RuntimeError("milestone pacing requires at least two task slots")
-    (out / "task-count.txt").write_text(f"{task_count}\n")
     packet = "\n".join([
         SYSTEM.read_text().strip(),
         "", "=" * 78, "",
         f"CHECKPOINT: {run_id} at {minute} active minutes", "",
-        f"TASK SLOTS: {task_count}. Infer exactly {task_count} substantive task items from the task text; metadata supplies only this pacing count, never their content.", "",
         f"THE TASK THE CODER WAS GIVEN:\n{prompt}", "",
         f"FROZEN WORKSPACE SNAPSHOT (inspect with read-only tools):\n{snapshot}", "",
         "COMPLETE FROZEN WORKSPACE TREE (all entries; symlinks are not followed):\n"
@@ -59,43 +52,32 @@ def create(run_id: str, minute: int, ws: Path, task_dir: Path) -> Path:
     return out
 
 
-def parse(text: str, *, expected_tasks: int) -> dict | None:
+def parse(text: str) -> dict | None:
     try:
         value = json.loads(text)
     except (TypeError, json.JSONDecodeError):
         return None
-    if not isinstance(value, dict):
+    if not isinstance(value, dict) or value.get("decision") not in DECISIONS:
         return None
     reason = value.get("reason")
-    tasks = value.get("tasks")
-    if not isinstance(reason, str) or not reason.strip() or not isinstance(tasks, list):
+    evidence = value.get("evidence")
+    if not isinstance(reason, str) or not reason.strip() or not isinstance(evidence, list) or not evidence:
         return None
-    if len(tasks) != expected_tasks:
+    if not all(isinstance(item, str) and item.strip() for item in evidence):
         return None
-    for task in tasks:
-        if not isinstance(task, dict) or task.get("state") not in TASK_STATES:
-            return None
-        if not all(isinstance(task.get(key), str) and task[key].strip()
-                   for key in ("name", "evidence")):
-            return None
-    return {"reason": reason.strip(), "tasks": tasks}
+    return {"decision": value["decision"], "reason": reason.strip(), "evidence": evidence}
 
 
 def verdict_path(checkpoint: Path) -> Path:
     return checkpoint / "verdict.json"
 
 
-def _expected_tasks(checkpoint: Path) -> int:
-    return int((checkpoint / "task-count.txt").read_text().strip())
-
-
 def wait(checkpoint: Path, poll_seconds: float = 2.0) -> dict:
     """Wait until the campaign agent records a valid inference judgment."""
     path = verdict_path(checkpoint)
-    expected_tasks = _expected_tasks(checkpoint)
     while True:
         if path.is_file():
-            verdict = parse(path.read_text(errors="replace"), expected_tasks=expected_tasks)
+            verdict = parse(path.read_text(errors="replace"))
             if verdict is not None:
                 return verdict
         time.sleep(poll_seconds)
@@ -134,12 +116,11 @@ def main() -> int:
         print((checkpoint / "packet.txt").read_text())
         return 0
 
-    verdict = parse(sys.stdin.read(), expected_tasks=_expected_tasks(checkpoint))
+    verdict = parse(sys.stdin.read())
     if verdict is None:
-        raise SystemExit("expected reason and exactly the configured number of typed task judgments")
+        raise SystemExit("expected decision complete|continue|stalled, reason, and evidence")
     verdict_path(checkpoint).write_text(json.dumps(verdict, indent=1) + "\n")
-    complete = sum(task["state"] == "complete" for task in verdict["tasks"])
-    print(f"{checkpoint.name}: {complete}/{len(verdict['tasks'])} tasks complete")
+    print(f"{checkpoint.name}: {verdict['decision']}")
     return 0
 
 

@@ -2,7 +2,7 @@
 
 One matrix cell per `run.py` invocation. A run receives active working time in milestone intervals, preserves its workspace and exact call captures, and appends one metadata row to `results/results.jsonl`.
 
-The harness gets fifteen active minutes per task item. The minute-15 gate is skipped; at minute 30 the campaign agent inspects a frozen workspace snapshot and two task items must be complete, in any order, to continue. Later gates require three complete items at minute 45, four at minute 60, and so on; missing the quota stops the run early.
+The first inference checkpoint is at 30 active minutes; later checkpoints are 15 active minutes apart. At each checkpoint the campaign agent inspects a frozen workspace snapshot and makes one holistic `complete`, `continue`, or `stalled` usefulness judgment. No numeric grading input participates.
 
 ## Run a cell
 
@@ -15,7 +15,7 @@ python3 suite/run.py \
   --note "experiment label"
 ```
 
-Pacing is fixed at 15 active minutes per task item. `meta.budget_intervals` supplies the number of task slots and therefore the maximum active budget; five slots means 75 minutes. It supplies no task content: `prompt.txt` is the sole judgment contract, and the judge infers exactly that many substantive task items from it.
+Pacing is fixed in 15-minute intervals, with the first checkpoint delayed until minute 30. `meta.budget_intervals` supplies only the maximum active-time budget; five intervals means 75 minutes. It supplies no task content: `prompt.txt` is the sole judgment contract.
 
 When a checkpoint appears:
 
@@ -25,7 +25,7 @@ python3 suite/milestones.py emit <checkpoint>
 printf '%s' '<judgment JSON>' | python3 suite/milestones.py record <checkpoint>
 ```
 
-The runner remains paused until the campaign agent records the task-state judgment. Waiting time does not consume the run's active budget. Only completed task items earn later time; partial progress does not.
+The runner remains paused until the campaign agent records the holistic inference judgment. Waiting time does not consume the run's active budget.
 
 Each row records run identity, settings, elapsed time, terminal state, call/phase counts, throughput, assist events, workspace/archive paths, captures, and harness log. Delivered-work quality is absent until an independent usefulness judgment is recorded.
 
@@ -38,7 +38,7 @@ printf '%s' '<judgment JSON>' | python3 suite/usefulness.py record <run-id>
 python3 suite/usefulness.py show
 ```
 
-The judge infers deliverables only from the original `prompt.txt`, inspects the archived workspace with read-only tools, and records a 0–100 usefulness judgment with per-deliverable reasons. Task metadata and claims from the coding session are not judgment contracts or evidence.
+The judge infers usefulness only from the original `prompt.txt` and the archived workspace inspected with read-only tools. The judgment is qualitative and evidence-based; task metadata and claims from the coding session are not judgment contracts or evidence.
 
 ## Replays and walks
 

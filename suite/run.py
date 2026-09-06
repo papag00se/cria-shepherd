@@ -391,28 +391,28 @@ def budget_intervals(task_dir: Path) -> int:
 
 @dataclass
 class MilestonePacing:
-    """Fifteen active minutes per task, with the first two tasks judged together at minute 30."""
+    """First inference at minute 30, then every 15 active minutes; judge waits cost no time."""
 
     started_at: float
-    task_minutes: int
-    task_count: int
+    interval_minutes: int
+    budget_intervals: int
     paused_seconds: float = 0.0
     next_milestone: int = field(init=False)
 
     def __post_init__(self) -> None:
-        if self.task_minutes != TASK_MINUTES:
-            raise ValueError("suite pacing is fixed at 15 active minutes per task")
-        if self.task_count < 2:
-            raise ValueError("suite pacing requires at least two task slots")
-        self.next_milestone = 2 * self.task_minutes * 60
+        if self.interval_minutes != TASK_MINUTES:
+            raise ValueError("suite pacing is fixed at 15 active minutes")
+        if self.budget_intervals < 2:
+            raise ValueError("suite pacing requires a budget of at least 30 active minutes")
+        self.next_milestone = 30 * 60
 
     @property
     def interval_seconds(self) -> int:
-        return self.task_minutes * 60
+        return self.interval_minutes * 60
 
     @property
     def maximum_active_seconds(self) -> int:
-        return self.interval_seconds * self.task_count
+        return self.interval_seconds * self.budget_intervals
 
     @property
     def at_limit(self) -> bool:
@@ -432,18 +432,12 @@ class MilestonePacing:
 
 
 def milestone_terminal(verdict: dict, minute: int, at_limit: bool) -> str | None:
-    """Enforce the task-completion clock; None earns the next fifteen-minute task slot.
-
-    There is no minute-15 judgment. At minute 30, two inferred task items must be complete in any
-    order; minute 45 requires three, minute 60 four, and so on. Meaningful progress is not enough.
-    """
-    tasks = verdict.get("tasks") or []
-    complete = sum(task.get("state") == "complete" for task in tasks if isinstance(task, dict))
-    if tasks and complete == len(tasks):
+    """Translate one grounded, holistic usefulness inference into run control."""
+    decision = verdict.get("decision")
+    if decision == "complete":
         return f"milestone-complete-{minute}min"
-    required = minute // TASK_MINUTES
-    if complete < required:
-        return f"milestone-quota-miss-{minute}min"
+    if decision == "stalled":
+        return f"milestone-stalled-{minute}min"
     if at_limit:
         return "budget-killed"
     return None
@@ -488,7 +482,7 @@ def main() -> None:
     # must not depend on a regex over prose surviving the next edit.
     ap.add_argument("--level", type=int, default=None)
     ap.add_argument("--milestone-minutes", type=int, choices=[TASK_MINUTES], default=TASK_MINUTES,
-                    help="fixed at 15 active minutes per task; the minute-15 gate is skipped")
+                    help="fixed 15-minute pacing; the first inference judgment is at minute 30")
     args = ap.parse_args()
     if args.milestone_minutes <= 0:
         ap.error("--milestone-minutes must be positive")
@@ -558,8 +552,8 @@ def main() -> None:
         except subprocess.TimeoutExpired:
             proc.kill()
 
-    pacing = MilestonePacing(started_at=t0, task_minutes=args.milestone_minutes,
-                             task_count=budget_intervals(task_dir))
+    pacing = MilestonePacing(started_at=t0, interval_minutes=args.milestone_minutes,
+                             budget_intervals=budget_intervals(task_dir))
     terminal = "exited"
     milestone_judgments = []
 
@@ -585,8 +579,7 @@ def main() -> None:
             finally:
                 pacing.record_pause(time.time() - pause_started)
             milestone_judgments.append({"at_active_minutes": minute, **verdict})
-            complete_tasks = sum(task["state"] == "complete" for task in verdict["tasks"])
-            print(f"[milestone] {minute}min complete={complete_tasks}/{len(verdict['tasks'])}: "
+            print(f"[milestone] {minute}min decision={verdict['decision']}: "
                   f"{verdict['reason']}", flush=True)
             outcome = milestone_terminal(verdict, minute, at_limit=pacing.at_limit)
             if outcome is not None:
@@ -629,7 +622,7 @@ def main() -> None:
         "started": t0, "wall_seconds": round(t1 - t0, 1),
         "active_seconds": round(pacing.active_elapsed(t1), 1), "terminal": terminal,
         "milestone_minutes": args.milestone_minutes,
-        "budget_intervals": pacing.task_count,
+        "budget_intervals": pacing.budget_intervals,
         "milestone_judgments": milestone_judgments,
         **capture,
         "assists": collect_assists(t0, t1),

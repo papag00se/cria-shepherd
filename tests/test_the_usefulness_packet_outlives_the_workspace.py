@@ -92,9 +92,11 @@ class ThePacketOutlivesTheWorkspaceTests(unittest.TestCase):
 
     def test_the_emergency_answer_contract_matches_the_rubric(self):
         rubric = usefulness.SYSTEM.read_text()
-        self.assertIn('"deliverables"', usefulness.ANSWER_NOW)
-        self.assertNotIn('"deductions"', usefulness.ANSWER_NOW)
-        self.assertIn('"deliverables"', rubric)
+        self.assertIn('"judgment"', usefulness.ANSWER_NOW)
+        self.assertIn('"evidence"', usefulness.ANSWER_NOW)
+        self.assertNotIn('"score"', usefulness.ANSWER_NOW)
+        self.assertIn('"judgment"', rubric)
+        self.assertNotIn("percentage", rubric.lower())
         self.assertNotIn("`list_dir`", rubric)
         self.assertNotIn("`read_file`", rubric)
 
@@ -129,18 +131,15 @@ class TheWorklistOnlyHoldsJudgEABLERowsTests(unittest.TestCase):
         (self.packets / "done.txt").write_text("frozen")
         row = {"run_id": "done", "archive": "/nowhere"}
         (self.verdicts / "done.json").write_text(
-            json.dumps({"usefulness": 80, "evidence_digest": usefulness.evidence(row)[1]}))
+            json.dumps({"judgment": "useful", "evidence_digest": usefulness.evidence(row)[1]}))
         self.assertEqual(usefulness.pending([row]), [])
 
     def test_a_verdict_written_against_a_DIFFERENT_rubric_is_reopened(self):
-        """The digest covers the rubric, and this is what makes that mean something. `pending` used
-        to ask only whether a verdict FILE existed, so rewriting the rubric silently kept every
-        stale verdict on its row and the grid went on reporting numbers earned under a scale that no
-        longer exists."""
+        """The digest covers the rubric, so changing the judgment contract reopens stale verdicts."""
         (self.packets / "done.txt").write_text("frozen")
         row = {"run_id": "done", "archive": "/nowhere"}
         (self.verdicts / "done.json").write_text(
-            json.dumps({"usefulness": 80, "evidence_digest": usefulness.evidence(row)[1]}))
+            json.dumps({"judgment": "useful", "evidence_digest": usefulness.evidence(row)[1]}))
         with tempfile.NamedTemporaryFile("w", suffix=".txt", delete=False) as fh:
             fh.write("a different rubric entirely\n")
             other = Path(fh.name)
@@ -151,7 +150,7 @@ class TheWorklistOnlyHoldsJudgEABLERowsTests(unittest.TestCase):
     def test_a_verdict_with_no_digest_at_all_is_reopened(self):
         # It predates the stamp, so nothing can vouch for what it was written against.
         (self.packets / "done.txt").write_text("frozen")
-        (self.verdicts / "done.json").write_text(json.dumps({"usefulness": 80}))
+        (self.verdicts / "done.json").write_text(json.dumps({"judgment": "useful"}))
         rows = [{"run_id": "done", "archive": "/nowhere"}]
         self.assertEqual([r["run_id"] for r in usefulness.pending(rows)], ["done"])
 
