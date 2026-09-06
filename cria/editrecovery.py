@@ -57,6 +57,34 @@ def _wrote_since(prior_msgs: list, path: str) -> int:
     return at
 
 
+# Read-family tool names, matched by shape so this stays harness-agnostic (read_file, view_file,
+# open_file, Cline's read, …). editrecovery may NOT import writeproxy (writeproxy imports it), so the
+# shape rule lives here rather than reaching for writeproxy's _READ_NAMES.
+def _is_grounded_in(prior_msgs: list, path: str) -> bool:
+    """True when the coder already has THIS file's real bytes in context — it read the file, or it
+    wrote the file itself. A blind touch (edit/write of a file never read or written this session) is
+    the case where surgical mismatch-windows cannot help: the coder has no basis to pin an old_string
+    outside the window cria happens to show, so it re-guesses. Stateless, reconstructed from history."""
+    base = os.path.basename(path or "")
+    if not base:
+        return True  # can't identify the file → do not force early escalation
+    if _wrote_since(prior_msgs, path):
+        return True  # the coder produced this file's content, so it is not blind to it
+    for m in prior_msgs:
+        if not isinstance(m, dict) or m.get("role") != "assistant":
+            continue
+        for tc in m.get("tool_calls") or []:
+            fn = tc.get("function") or {}
+            name = str(fn.get("name") or "").lower()
+            if "read" not in name and "view" not in name and "open" not in name:
+                continue
+            args = fn.get("arguments")
+            hay = args if isinstance(args, str) else str((args or {}).get("path") or "")
+            if base in hay:
+                return True
+    return False
+
+
 def _prior_edit_steers(prior_msgs: list, path: str) -> int:
     """How many times this module has steered edits on ``path`` SINCE the coder last wrote it
     successfully — the clock that decides when to escalate to a whole-file rewrite.
@@ -76,9 +104,14 @@ def _prior_edit_steers(prior_msgs: list, path: str) -> int:
                if isinstance(m, dict) and tag in str(m.get("content") or ""))
 
 
-def compose(fail: dict, prior: int) -> str:
+def compose(fail: dict, prior: int, grounded: bool = True) -> str:
     """The ONE directive for an edit failure, given the file's prior edit-steer count. Monotonic:
-    surgical first, then a single committed whole-file-rewrite escalation."""
+    surgical first, then a single committed whole-file-rewrite escalation. When ``grounded`` is False
+    (a blind touch — a file the coder never read or wrote this session), the "can't pin the text"
+    family escalates on the FIRST miss instead of the third: surgical windows cannot help a coder that
+    has no copy of the file, so it is handed the whole current file at once rather than re-guessing an
+    old_string two more times. Measured origin: cart-billing-go x gigachat31 confabulated cart.go's
+    body and ground its way through repeated window-only mismatches before the whole file appeared."""
     path = os.path.basename(fail.get("path") or "the file")
     cur = fail.get("current") or ""
     anchor = (fail.get("anchor") or "").strip("\n")
@@ -112,7 +145,7 @@ def compose(fail: dict, prior: int) -> str:
         return report("identical")
 
     # The "can't pin the exact current text" family: anchor / close / no_anchor.
-    if prior + 1 >= ESCALATE_AFTER:
+    if prior + 1 >= ESCALATE_AFTER or not grounded:
         # COMMITTED escalation: stop editing this file, rewrite it whole from the exact bytes shown. One
         # directive from here on — no "copy the exact text" that the model keeps failing to do.
         #
@@ -179,15 +212,23 @@ def recover(content: str, prior_msgs: list, rlog=None) -> str:
         # is what leaked the blob for ten calls; the marker proves an edit_file failed, so cria can
         # always say that much in words even when it can no longer say which line (#5, #5b).
         return head + prompts.load("editfail_unreadable")
-    prior = _prior_edit_steers(prior_msgs, fail.get("path") or "")
+    path = fail.get("path") or ""
+    prior = _prior_edit_steers(prior_msgs, path)
+    grounded = _is_grounded_in(prior_msgs, path)
     # TELEMETRY (provenance audit 2026-08-04): the whole-file escalation had no event at all — its
     # window-fill cost on dense models (both gemma4 0/4s compacted mid-run under forced rewrites)
-    # was uncountable from the logs. The event makes the re-measure possible; behavior unchanged.
-    if (rlog is not None and prior + 1 >= ESCALATE_AFTER
-            and fail.get("mode") not in ("phantom", "would_break", "multi", "multi_flex")):
-        rlog.emit("editrecovery.escalated", path=os.path.basename(fail.get("path") or ""),
-                  fails=prior + 1)
-    return head + compose(fail, prior)
+    # was uncountable from the logs. The event makes the re-measure possible. `blind` marks the
+    # first-miss escalations this change added, so their prevalence and cost are measurable apart
+    # from the count-driven ones.
+    # `identical` is self-resolving (old_string == new_string) and `compose` answers it BEFORE the
+    # escalation clock, so the blind-touch early escalation must not fire for it either — only the
+    # count clock does (a high prior on identical still emits, unchanged).
+    self_resolving = ("phantom", "would_break", "multi", "multi_flex")
+    escalates = (prior + 1 >= ESCALATE_AFTER) or (not grounded and fail.get("mode") != "identical")
+    if rlog is not None and escalates and fail.get("mode") not in self_resolving:
+        rlog.emit("editrecovery.escalated", path=os.path.basename(path),
+                  fails=prior + 1, blind=not grounded)
+    return head + compose(fail, prior, grounded)
 
 
 def summarize(content: str) -> str:

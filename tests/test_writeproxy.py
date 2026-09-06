@@ -949,11 +949,16 @@ class EditRecoveryTests(unittest.TestCase):
         from cria import editrecovery
         raw = editrecovery.EDITFAIL + base64.b64encode(
             json.dumps(self._fail("no_anchor")).encode()).decode()
-        # no prior steers → surgical; ESCALATE_AFTER prior steers for this file → committed rewrite
-        self.assertNotIn("FULL file", editrecovery.recover(raw, []))
+        # no prior steers on a GROUNDED file (the coder read it) → surgical; ESCALATE_AFTER prior
+        # steers → committed rewrite.
+        read = [{"role": "assistant", "tool_calls": [
+            {"function": {"name": "read_file", "arguments": json.dumps({"path": "resolve_handle.py"})}}]}]
+        self.assertNotIn("FULL file", editrecovery.recover(raw, read))
         hist = [{"role": "tool", "content": f"{editrecovery.EDIT_MARK} resolve_handle.py — x"}
                 for _ in range(editrecovery.ESCALATE_AFTER)]
         self.assertIn("FULL file", editrecovery.recover(raw, hist))
+        # A BLIND touch (never read or wrote resolve_handle.py) escalates on the FIRST miss.
+        self.assertIn("FULL file", editrecovery.recover(raw, []))
 
     def test_non_editfail_passes_through(self):
         from cria import editrecovery
