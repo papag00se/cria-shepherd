@@ -190,3 +190,28 @@ Every checkpoint progress report and final judgment is an inferred percentage of
 | nemotron-elastic | handles-cli-node | awaiting judgment |
 | nemotron-elastic | rust-toml-cli | awaiting judgment |
 
+
+## GigaChat 3.1 row RE-RUN — 2026-09-06, all cria-side fixes live
+
+Re-ran the full gigachat31 L5 row after landing three cria-side fixes (`a3f82da` gate-transport
+exemption, `f83fbf6` blind-touch grounding, `337b483` living listing footer) plus the stripped
+template (no injected Russian developer-system prompt). Pacing: first checkpoint 30 active min,
+then every 15; non-strict-relative stop applied per cell. The ORIGINAL row above is preserved.
+
+| task | original | re-run | note |
+|---|---|---|---|
+| shipping-rates-rb | 2% | ~2% (stopped 34m) | locked on nonexistent `shipping.rb`; real `rates.rb` untouched |
+| cart-billing-go | 1% | ~6% (stopped 30m) | go.mod decimal dep + go.sum real; `cart.go` unconverted, churned `item.*.go` |
+| orders-api-py | 0% | ~5% (stopped 30m) | churned `__init__.py`; `GET /customers` never landed in app.py |
+| feed-pipeline-java | 0% | ~2% (stopped 30m) | confabulated `SupplierFeedImporter.java`; real `Importer.java` untouched |
+| handles-cli-node | 0% | ~6% (stopped 30m) | 51-line confabulated `resolver.js`; real `lookup.js` untouched |
+| rust-toml-cli | 0% | ~18% (stopped 30m) | real files: 126L main.rs + 3 tests + toml dep; 9→14 compile errors (regressing) |
+
+Row average ~0.5% → ~6.5%. **The three fixes are confirmed working across all six cells**: 0
+`/tmp/cria-gate` denials anywhere (was every gated check), footer `⟦ctx:files⟧` and real
+`⟦ctx:checks⟧` present throughout, and the model now reads/lists the workspace (never did in the
+original). The lift is real but small and uniformly sub-viable: the reasoning-free core still
+confabulates filenames the footer lists correctly, and cannot turn the now-real check output into a
+converging fix (rust-toml-cli regressed 9→14 errors). **gigachat31 stays quarantined from the
+coding fleet** — the fixes removed cria's own footguns (so the quarantine is now for the model, not
+the harness), and every cell tripped the non-strict-relative checkpoint stop.
