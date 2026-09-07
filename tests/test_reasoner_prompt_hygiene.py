@@ -117,8 +117,9 @@ class CriasOwnVoiceIsMarkedTests(unittest.TestCase):
 
 class ThePromptRanksItsSourcesTests(unittest.TestCase):
     """Naming a section is not enough — 0166 read a section correctly labelled 'ITS RECENT PRIVATE
-    REASONING' and still treated it as fact. The label has to carry a WEIGHT, the way the fetch
-    ledger's already does ('trust these over any note or reasoning claiming a fetch failed')."""
+    REASONING' and still treated it as fact. The label has to carry a WEIGHT — the way the fetch
+    ledger asserts its authority by PROVENANCE ('the recorded transcript of the actual tool results
+    from this session'), not by an imperative to distrust the model's own reasoning."""
 
     TEXT = prompts.load("steer_diagnose_user")
 

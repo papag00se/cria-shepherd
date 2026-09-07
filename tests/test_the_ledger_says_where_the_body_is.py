@@ -58,10 +58,14 @@ class TheLedgerNamesTheSpillTests(unittest.TestCase):
         self.assertNotIn("in the transcript", body)
 
     def test_the_narrow_true_fact_survives(self):
-        """"no endpoint definitions were found in it" is TRUE and was deliberately kept — it is what
-        the swagger-shell incident needed. Only the false half is removed."""
+        """The narrow fact — the page answered but cria parsed no structure from it — is TRUE and
+        kept. Its API wording ("no endpoint definitions … machine-readable API definition") was read
+        as an off-task injection on ornith15 x shipping-rates-rb, so the fact now stands in neutral
+        words that import no API subtask."""
         body = prompts.load_map("fetched_facts_sections")["no_structure"]
-        self.assertIn("no endpoint definitions were found in it", body)
+        self.assertIn("no structured data could be parsed out of it", body)
+        self.assertNotIn("endpoint", body)
+        self.assertNotIn("machine-readable API", body)
 
 
 class OneOwnerDecidesWhetherASpillHappenedTests(unittest.TestCase):

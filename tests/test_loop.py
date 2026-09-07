@@ -2331,7 +2331,9 @@ class FetchGroundTruthTests(unittest.TestCase):
         self.assertIn("https://api.handle.me/openapi.json", out)
         self.assertIn("HTTP 200", out)
         self.assertIn("/handles/{handle}", out)
-        self.assertIn("trust these", out.lower())
+        # Authority is asserted by PROVENANCE now (the actual tool transcript), not by an imperative
+        # to distrust the model's own reasoning — the latter read as an injection on shipping-rates-rb.
+        self.assertIn("actual tool results", out.lower())
 
     def test_ignores_a_hallucinated_status_in_prose(self):
         # The coder's narration ("returned HTTP 400 Bad Request") has no ` · <url>` → not a real result.
@@ -4689,14 +4691,16 @@ class BareStatusLedgerEntryTests(unittest.TestCase):
 
     A status alone is a fact about the REQUEST, not about the API. Say so on the line."""
 
-    def test_a_2xx_with_no_structure_says_it_carries_no_endpoints(self):
+    def test_a_2xx_with_no_structure_says_it_carries_no_structure(self):
         from cria.loop import _format_fetches
         out = _format_fetches({"https://api.handle.me/swagger/": ("HTTP 200", "", "")})
         self.assertIn("HTTP 200", out)
-        self.assertRegex(out, r"no endpoint definitions|no endpoints|no routes")
-        # …and that nothing read so far provides one — true here, and now stated as the condition it
-        # always was rather than as an assertion that this task has an API at all.
-        self.assertIn("nothing read so far provides one", out)
+        # The narrow fact survives — the page answered but cria parsed no structure — now in words
+        # that import no API subtask (ornith15 x shipping-rates-rb read the old "endpoint
+        # definitions / machine-readable API definition" wording as an injection about a different
+        # task, turns 0024–0125).
+        self.assertIn("no structured data could be parsed out of it", out)
+        self.assertNotRegex(out, r"endpoint|machine-readable API")
 
     def test_an_entry_WITH_facts_is_not_given_the_note(self):
         from cria.loop import _format_fetches
@@ -4722,22 +4726,23 @@ class BareStatusLedgerEntryTests(unittest.TestCase):
         self.assertNotIn("nothing read so far provides one", out)   # a spec WAS read this session
         self.assertIn("its body is in the transcript above", out)
 
-    def test_the_unread_claim_survives_when_NOTHING_has_yielded_routes(self):
-        # The swagger-shell case this note was built for is untouched — but stated as the CONDITION
-        # it always was. The tail used to read "nothing read so far DEFINES the API's routes", which
-        # presumes the task involves an HTTP API; on cycle 4 cell 24 (`rust-toml-cli x
-        # nemotron-elastic`) that sentence rode every turn from call 0004 to 0058 over a crate
-        # documentation page in a task with no API in it at all.
+    def test_the_narrow_fact_survives_without_api_jargon_when_nothing_yielded_routes(self):
+        # b64b9df made the API-definition CLAIM conditional; ornith15 x shipping-rates-rb (turns
+        # 0024–0125) then showed the residual "endpoint definitions / machine-readable API
+        # definition" wording STILL reads as an off-task injection on a task with no API. The narrow
+        # fact — page answered, no structure parsed — stays; the API words are gone.
         from cria.loop import _format_fetches
         out = _format_fetches({"https://api.handle.me/swagger/": ("HTTP 200", "", "")})
-        self.assertIn("If this task needs a machine-readable API definition", out)
-        self.assertIn("nothing read so far provides one", out)
+        self.assertIn("no structured data could be parsed out of it", out)
+        self.assertNotIn("machine-readable API definition", out)
+        self.assertNotIn("endpoint definitions", out)
 
     def test_it_no_longer_asserts_the_task_has_an_api(self):
         from cria.loop import _format_fetches
         out = _format_fetches({"https://docs.rs/toml": ("HTTP 200", "", "")})
         self.assertNotIn("DEFINES the API's routes", out)
-        self.assertIn("no endpoint definitions were found in it", out)   # the narrow fact stays
+        self.assertIn("no structured data could be parsed out of it", out)   # the narrow fact stays
+        self.assertNotIn("endpoint", out)                                    # …now with no API word at all
 
     def test_a_failed_fetch_keeps_its_own_wording(self):
         from cria.loop import _format_fetches

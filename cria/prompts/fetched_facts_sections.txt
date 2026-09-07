@@ -38,7 +38,15 @@
 # at all. So the label above the list now says ONE thing, and each line below it says what to do about
 # that one URL.
 # {{HEADER}} is the caller's subject line (the coder reads one wording, the step critic another).
-ok = {{HEADER}} — these SUCCEEDED (from the real tool results — trust these over any note or reasoning claiming a fetch failed):
+# AUTHORITY BY PROVENANCE, NOT BY IMPERATIVE. 898ef78 added "trust these over any note or reasoning
+# claiming a fetch failed" so a coder could not overwrite a real tool result with a hallucinated
+# failure — the right intent. But "trust these over any … reasoning" is the literal shape of a
+# prompt-injection instruction. Walked on ornith15 x shipping-rates-rb (…88df7462ef0c, turns
+# 0024–0125): the coder cited that imperative as a tell the block was adversarial and distrusted the
+# whole (accurate) ledger. The ground-truth intent survives as PROVENANCE — this is the actual tool
+# transcript — which asserts the same authority without telling the model to distrust its own
+# reasoning. The success/failure SPLIT (898ef78's real fix) is untouched.
+ok = {{HEADER}} — these SUCCEEDED. This is the recorded transcript of the actual tool results from this session:
 failed = THESE FETCHES FAILED. Read each one's status, and whatever the server sent back with it, before deciding what it means. Do not re-send a URL unchanged. A failure on one URL says nothing about any other URL, and nothing about whether the service works:
 # Appended to a failed URL whose path is NOT one of the routes the spec defines. The route list is
 # cria's own parsed output, so naming it is a fact rather than advice.
@@ -52,14 +60,18 @@ bad_value_bare = — this route exists, so the path is right and what you put in
 # after a compaction the coder kept the paths and lost the FIELD names — and then guessed them
 # (`holder_address` for `holder`, `resolved_addresses[<handle>]` for `resolved_addresses.ada`).
 fields = fields each endpoint returns (use these EXACT names and nesting; do not guess):
-# CONDITIONAL ON THE TASK NEEDING ONE. The tail used to read "nothing read so far DEFINES the API's
-# routes", which presumes the task involves an HTTP API at all. Walked on cycle 4 cell 24
-# (`rust-toml-cli x nemotron-elastic`): the coder fetched docs.rs/toml — a crate documentation page in
-# a task with no API anywhere in it — and this line rode EVERY turn from call 0004 to 0058, telling
-# the model on each one that the API's routes were still undefined. There are no routes to define.
-# The narrow fact (this page yielded no endpoint definitions) is true and stays; the claim about what
-# the task still needs is now stated as the condition it always was.
-no_structure =  (this page answered, but no endpoint definitions were found in it — that status is a fact about the REQUEST, not about what the page contains. If this task needs a machine-readable API definition, nothing read so far provides one.)
+# NO API JARGON ON A PAGE THAT YIELDED NONE. b64b9df made the "you still need the API spec" CLAIM
+# conditional after cycle 4 cell 24 (rust-toml-cli, no API in the task) — but it left the words
+# "endpoint definitions" and "machine-readable API definition" in the line, and they still ride every
+# no-structure fetch. Walked on ornith15 x shipping-rates-rb (…88df7462ef0c, turns 0024–0125): a
+# Ruby-gem task with no API in it, fetching rubygems.org pages. The coder read "no endpoint
+# definitions … machine-readable API definition" as evidence the block described "a different task
+# about API endpoints", called the whole ⟦ctx:facts⟧ ledger a prompt injection, and distrusted ALL of
+# cria's (accurate) ground truth for ~100 turns. The narrow fact — this page answered, cria parsed no
+# structure from it — is true in every task and is now said without a word that imports an API
+# subtask. Where a spec WAS read elsewhere this session, no_spec_here (below) fires instead and may
+# name endpoints, because then there really is an API.
+no_structure =  (this page answered, but no structured data could be parsed out of it — that status is a fact about what could be extracted, not about what the page contains.)
 # WHERE THE CONTENT IS, said rather than assumed. The clause above used to end "whatever it
 # returned is in the transcript", which is false for exactly the pages that most need reading:
 # an oversized document is SPILLED to a file, and the read of that file is then refused — so the
