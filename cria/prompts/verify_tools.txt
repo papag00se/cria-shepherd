@@ -13,7 +13,12 @@ missing = [{{PATH}} does not exist]
 # them, so the answer can never change inside this check. Three of the four sub-50% walks found
 # judges spending 5 of 6 rounds obeying it and then ruling from memory, which is the failure
 # these tools exist to prevent (#5b, #11b).
-unknown = [{{PATH}} could not be read — this is NOT evidence that it is absent, and you must not treat it as such. It will not become readable later in this check, so do not spend another round on it: judge from what you do have, and say plainly in your reason that you could not read it.]
+# BUT SCOPE THE MISS TO THE FILE, NOT THE TOOL. Walked on ornith15 x shipping-rates-rb 2026-09-07:
+# the satisfaction judge read this on the deliverable files and generalised it to "read_file is
+# blocked (read-only harness restriction)" (its own words), then stopped reading EVERY file and
+# ruled on file-size heuristics and a stale log. It says plainly that read_file still serves the
+# files whose bytes DID arrive, so the judge keeps reading those; only this one path is unavailable.
+unknown = [{{PATH}} could not be read here — its current bytes have not reached this check. This is NOT evidence the file is absent or empty, and it does NOT mean read_file is unavailable: read_file still returns any file whose bytes have arrived, so keep using it on the others. Only this path cannot be served, and it will not change inside this check — do not ask for it again. Judge from what you do have, say plainly you could not read it, and do not call the work done on a deliverable you could not see.]
 # read_file on a DIRECTORY must state the truth, not "does not exist" — walked on maple
 # 1785956867 call 0054: the steer author read __pycache__/ (which existed), was told it did
 # not exist, and built a wrong stale-cache theory on that false fact (rule 5b).

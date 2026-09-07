@@ -57,8 +57,12 @@ class EveryUnquotableFileIsNamedTests(unittest.TestCase):
         token = wsview.bind(_Partial())
         self.addCleanup(wsview.unbind, token)
         out = groundtruth.files_for_a_judge(ws)
-        self.assertIn("shipping.rb", out)
-        self.assertIn("Use read_file", out)                   # the judge is told how to get it
+        self.assertIn("shipping.rb", out)                     # named, not silently dropped
+        # It is NOT falsely invited to read this file: its bytes cannot arrive inside the check
+        # (walked 2026-09-07 — the invite→refuse pair taught the judge that reads do not work).
+        # read_file is still affirmed for the files that ARE available.
+        self.assertNotIn("Use read_file if you need one of them", out)
+        self.assertIn("read_file cannot return these inside this check", out)
         self.assertIn("def total", out)                       # the readable one is still quoted
 
     def test_the_two_reasons_say_different_things(self):
