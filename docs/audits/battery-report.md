@@ -1,17 +1,11 @@
-# Battery — the engagement ladder + usefulness
+# Battery — the engagement ladder
 
-**Two measures live here, and they are NOT the same number — do not compare a cell in one section to a cell in the other.**
+**Last updated 2026-09-06 18:30** — added ornith15 and gigachat31 (original + re-run) L5 rows.
 
-1. **Mechanical task-grade (historical, through 2026-09-02).** The per-cell % is the deterministic task grader's "fraction of the task the checker could confirm delivered." These graders were **deliberately removed** on 2026-09-05 (`dd0b604 refactor(suite): remove mechanical task grading`), which blanked this data in the live report. It is restored below, labelled as historical, because it is hard-won measurement across four models × six languages × six rungs — preserved, not resurrected as the current truth.
-2. **Holistic usefulness % (current, 2026-09-05 →).** An independent read-only judgment of *how much reusable coding the model wrote that the user no longer has to write* — inferred from the task and the archived workspace, never a checker re-count. This is the live measure.
+Tables only. Findings, walks and the retired two-arm campaign: [`battery-history.md`](battery-history.md).
+Per-cell judging: [`ladder-progress.md`](ladder-progress.md). Status: `python3 suite/engagement_status.py`.
 
 `[engagement] level = 0..5`, each rung implying every rung below it. `·` = not run. Superseded cells are excluded and re-run.
-
-Legend (mechanical section): 🟢 ≥88% · 🟡 70–87% · 🟠 45–69% · 🔴 <45%. Columns map task→language: ruby=shipping-rates-rb, go=cart-billing-go, python=orders-api-py, java=feed-pipeline-java, node=handles-cli-node, rust=rust-toml-cli.
-
----
-
-## Section A — Engagement ladder · MECHANICAL task-grade (historical, through 2026-09-02)
 
 ### Level 0 — pure proxy — wire translation only — 42%
 
@@ -66,23 +60,9 @@ Legend (mechanical section): 🟢 ≥88% · 🟡 70–87% · 🟠 45–69% · �
 | qwen35 | 🟢 100% | 🟡 63% | 🟡 71% | 🟢 96% | 🟢 93% | 🟢 100% | 87% | 40 | 227 |
 | ternary-bonsai | 🟢 100% | 🟢 97% | 🟡 74% | 🟢 100% | 🟢 89% | 🟢 100% | 93% | 48 | 89 |
 | nemotron-elastic | 🟠 59% | 🔴 31% | 🟡 76% | 🔴 20% | 🟡 70% | 🟡 84% | 57% | 50 | 180 |
+| ornith15 | 🔴 5% | 🟡 84% | 🟡 85% | 🔴 35% | 🟡 75% | 🟢 95% | 63% | · | · |
+| gigachat31 | 🔴 2% | 🔴 1% | 🔴 0% | 🔴 0% | 🔴 0% | 🔴 0% | 1% | · | · |
+| gigachat31 (re-run) | 🔴 2% | 🔴 6% | 🔴 5% | 🔴 2% | 🔴 6% | 🔴 18% | 7% | · | · |
 
----
 
-## Section B — HOLISTIC usefulness % (current measure, 2026-09-05 →)
-
-All rows are Level 5 (ASSISTS_ENABLED), the current run configuration. Each cell is inferred reusable-coding-saved, judged independently from the archived workspace. `·` = not judged holistically yet.
-
-| model | ruby | go | python | java | node | rust | when / note |
-|---|---|---|---|---|---|---|---|
-| **ornith15** | 5% | 84% | 85% | 35% | 75% | 95% | 2026-09-05; strong Go/Python/Rust, weak Ruby/Java |
-| **gigachat31** (original) | 2% | 1% | 0% | 0% | 0% | 0% | 2026-09-05; pre-fix, Russian developer prompt live |
-| **gigachat31** (re-run, cria-side fixes live) | ~2% | ~6% | ~5% | ~2% | ~6% | ~18% | 2026-09-06; gate-transport exemption `a3f82da` + blind-touch grounding `f83fbf6` + listing footer `337b483` + stripped template; every cell checkpoint-stopped |
-| **nemotron-elastic** (holistic partial) | · | 10% | · | 10% | · | · | partial re-judgment; paused, replaced by gigachat31 in the active matrix |
-| gemma4 / qwen35 / ternary-bonsai | · | · | · | · | · | · | mechanical L5 in Section A; holistic re-judgment not yet run |
-
-### gigachat31 re-run findings (2026-09-06)
-
-Row average ~0.5% → ~6.5% with all three cria-side fixes + stripped template live. **The fixes are confirmed working across all six cells**: 0 `/tmp/cria-gate` denials anywhere (was every gated check), footer `⟦ctx:files⟧` and real `⟦ctx:checks⟧` present throughout, and the model now reads/lists the workspace (never did in the original). Per-cell: shipping ~2% (locked on nonexistent `shipping.rb`), cart ~6% (go.mod decimal dep real; `cart.go` unconverted), orders ~5% (`GET /customers` never landed), feed-java ~2% (confabulated `SupplierFeedImporter.java`), handles ~6% (51-line confabulated `resolver.js`), rust ~18% (126L main.rs + 3 tests on the real files, but 9→14 compile errors — regressing).
-
-The lift is real but uniformly sub-viable: the reasoning-free core still confabulates filenames the footer lists correctly, and cannot turn the now-real check output into a converging fix. **gigachat31 stays quarantined from the coding fleet** — the fixes removed cria's own footguns (so the quarantine is now for the model, not the harness), and every cell tripped the non-strict-relative checkpoint stop.
+Every number is a judgement of how much of the task was actually delivered. `?` = the cell RAN and is waiting on a verdict; `·` = it never ran. A total reading `77% (3/6)` is an average over the judged cells only and cannot speak for the rest of the row.
