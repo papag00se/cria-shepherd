@@ -7200,7 +7200,15 @@ def _extract_reads(messages: list[dict]) -> dict:
                 continue
             path, start, end = calls[tid]
             raw = c.encode("utf-8", "replace")
-            label = f"{len(raw):,} bytes, {c.count(chr(10)) + 1} lines"
+            # LINE COUNT ONLY, NO BYTE COUNT. The live ⟦ctx:files⟧ listing owns the byte size of
+            # every present file, read from os.stat. This ledger measured `len(read-result)`, which
+            # the read tool returns with the trailing newline stripped — so for one unchanged file it
+            # said 984 where the listing said 985, in the same prompt. Walked on ornith15 x
+            # shipping-rates-rb 2026-09-07: that uniform 1-byte gap across every file was the exact
+            # "the numbers are slightly off, so cria is fabricating" tell the original run weaponised
+            # into a ~100-turn distrust cascade. One owner for the byte metric; this ledger keeps the
+            # per-file fact it owns (you looked) and its line count, which never collides.
+            label = f"{c.count(chr(10)) + 1} lines"
             if start or end:
                 label = prompts.fill(prompts.load_map("fetched_facts_sections")["read_range"],
                                      range=_line_range(start, end), size=label)
@@ -7270,7 +7278,7 @@ def _extract_writes(messages: list[dict]) -> dict:
                 continue                      # refused — the file on disk is unchanged
             path, body = calls[tid]
             raw = body.encode("utf-8", "replace")
-            out[path] = (len(raw), f"{len(raw):,} bytes, {body.count(chr(10)) + 1} lines")
+            out[path] = (len(raw), f"{body.count(chr(10)) + 1} lines")   # bytes owned by the ⟦ctx:files⟧ listing
     return out
 
 

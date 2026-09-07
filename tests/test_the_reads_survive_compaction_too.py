@@ -25,9 +25,11 @@ def _read(cid, path, **args):
 
 
 def _ledger(**paths):
-    """The ledger's stored shape: path -> (bytes, label). The bytes are what decides which of two
-    readings of the same file is kept, so they are part of the entry, not derived from the label."""
-    return {p: (int(label.split()[0].replace(",", "")), label) for p, label in paths.items()}
+    """The ledger's stored shape: path -> (nbytes, label). ``nbytes`` is the keep-largest key (real
+    byte length of the read), kept internally; the LABEL no longer prints a byte count — the live
+    ⟦ctx:files⟧ listing owns file size, so the ledger prints only its line count. Fixtures pass the
+    label and a separate nbytes key."""
+    return {p: (nbytes, label) for p, (nbytes, label) in paths.items()}
 
 
 class _Sess:
@@ -60,8 +62,18 @@ class TheReadLedgerTests(unittest.TestCase):
         self.assertEqual(sorted(sess.read_files), ["a.rb", "b.rb"])
 
     def test_the_block_names_the_files_and_no_contents(self):
-        out = loop._read_ground_truth(_Sess(_ledger(**{"lib/rates.rb": "986 bytes, 40 lines"})), [])
-        self.assertIn("lib/rates.rb (986 bytes, 40 lines)", out)
+        out = loop._read_ground_truth(_Sess(_ledger(**{"lib/rates.rb": (986, "40 lines")})), [])
+        self.assertIn("lib/rates.rb (40 lines)", out)
+
+    def test_the_ledger_prints_no_byte_count(self):
+        """Walked on ornith15 x shipping-rates-rb 2026-09-07: this ledger measured the read result
+        (trailing newline stripped) as 984 bytes while the live ⟦ctx:files⟧ listing stat'd the same
+        unchanged file at 985, in the same prompt. That 1-byte gap on every file read as cria
+        fabricating. The listing owns byte size now; the ledger states no byte count that can
+        collide with it."""
+        out = loop._read_ground_truth(_Sess(_ledger(**{"lib/rates.rb": (985, "25 lines")})), [])
+        self.assertIn("lib/rates.rb (25 lines)", out)
+        self.assertNotIn("bytes", out)
 
     def test_the_header_does_not_contradict_the_system_prompt(self):
         """It used to close with "read it again rather than working it out from memory", while
@@ -70,7 +82,7 @@ class TheReadLedgerTests(unittest.TestCase):
         runs recorded repeat reads of files whose full text was in the same request, and in the java
         cell the third such read was swallowed by the repetition redirect, costing the whole turn."""
         from cria import prompts
-        out = loop._read_ground_truth(_Sess(_ledger(**{"a.rb": "1 bytes, 1 lines"})), [])
+        out = loop._read_ground_truth(_Sess(_ledger(**{"a.rb": (1, "1 lines")})), [])
         self.assertNotIn("read it again", out)
         self.assertIn("do not read or run the same thing again",
                       prompts.load("coder_system"))
@@ -79,7 +91,7 @@ class TheReadLedgerTests(unittest.TestCase):
         """"their contents are not repeated here" is a claim about the whole prompt, which this
         function cannot see. It was false in every run walked: the files it named were sitting in
         the same request, in full, further down."""
-        out = loop._read_ground_truth(_Sess(_ledger(**{"a.rb": "1 bytes, 1 lines"})), [])
+        out = loop._read_ground_truth(_Sess(_ledger(**{"a.rb": (1, "1 lines")})), [])
         self.assertNotIn("not repeated here", out)
 
     def test_a_write_supersedes_the_size_a_read_recorded(self):
@@ -95,7 +107,7 @@ class TheReadLedgerTests(unittest.TestCase):
                     "arguments": r'{"path":"/w/c.go","content":"package p\nfunc A(){}\n"}'}}]},
                 {"role": "tool", "tool_call_id": "w1", "content": "Wrote /w/c.go"}]
         out = loop._read_ground_truth(_Sess(), msgs)
-        self.assertIn("/w/c.go (21 bytes, 3 lines)", out)
+        self.assertIn("/w/c.go (3 lines)", out)
         self.assertNotIn("894", out)
 
     def test_a_refused_write_does_not_enter_the_ledger(self):
@@ -115,7 +127,7 @@ class TheReadLedgerTests(unittest.TestCase):
         so which files vanished was arbitrary — a `z*.py` read a moment ago always went first. The
         ledger's stated purpose is "the KNOWLEDGE THAT IT HAS ALREADY LOOKED", which is per-file and
         is not recoverable from a number (rule 5, as tightened 2026-08-16)."""
-        many = _ledger(**{f"f{i}.rb": "10 bytes, 1 lines" for i in range(27)})
+        many = _ledger(**{f"f{i}.rb": (10, "1 lines") for i in range(27)})
         out = loop._read_ground_truth(_Sess(many), [])
         for name in many:
             self.assertIn(name, out)
@@ -123,7 +135,7 @@ class TheReadLedgerTests(unittest.TestCase):
 
     def test_it_rides_in_the_durable_facts_anchor(self):
         anchor = loop._fetched_facts_anchor(
-            _Sess(_ledger(**{"lib/rates.rb": "986 bytes, 40 lines"})), [])
+            _Sess(_ledger(**{"lib/rates.rb": (986, "40 lines")})), [])
         self.assertIsNotNone(anchor)
         self.assertIn("lib/rates.rb", anchor["content"])
 
