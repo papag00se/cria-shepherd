@@ -1873,6 +1873,21 @@ def names_a_workspace_file(name: str, workspace_root: str) -> bool:
     return False
 
 
+# The directory names an installed dependency lives under (its file IS the library, never a shadow of
+# it), plus `bin/` handled alongside them (executables are not on any language's require/import path).
+_INSTALL_TREE_DIRS = frozenset({
+    "vendor", "node_modules", "site-packages", "dist-packages", "bower_components",
+    ".venv", "venv", ".bundle", ".cargo", ".gradle", ".m2", ".nuget", ".hex", ".tox", ".eggs",
+})
+
+
+def _outside_load_path(rel: str) -> bool:
+    """True when `rel`'s directory is an installed-dependency tree or a `bin/` dir -- where a name
+    match is the library itself or an executable, not a project file shadowing the library."""
+    parts = rel.replace("\\", "/").split("/")[:-1]
+    return any(p == "bin" or p in _INSTALL_TREE_DIRS for p in parts)
+
+
 def resolves_to_workspace_file(name: str, workspace_root: str) -> str:
     """The workspace-relative FILE this import name resolves to, or "" — the same walk as
     :func:`names_a_workspace_file`, answering with WHICH file rather than merely that there is one.
@@ -1887,7 +1902,17 @@ def resolves_to_workspace_file(name: str, workspace_root: str) -> str:
 
     A shadowing file is the one dependency failure where cria holds the answer outright and the
     coder cannot see it: the name it typed is real, the gem it installed is real, and the file in
-    between is the one thing neither the error nor the package manager mentions."""
+    between is the one thing neither the error nor the package manager mentions.
+
+    BUT ONLY A FILE ON THE LOAD PATH CAN SHADOW. Walked on ornith15 x shipping-rates-rb 2026-09-07:
+    `require "minitest/autorun"` failed with a LoadError (nothing resolved at all), and the head
+    match found the gem's OWN `vendor/cache/bin/minitest` executable inside the install tree. cria
+    then told the coder "the fix is the file, not the install" about a file that shadowed nothing --
+    the model correctly protested that a `bin/` executable cannot shadow a `require`, and burned ~6
+    turns and a rumination abort proving cria wrong. A file inside an installed-dependency tree IS
+    the library, not a project file pre-empting it, and a `bin/` executable is not on the require
+    path at all. The head match stays (europe/version still resolves to lib/europe.rb); only these
+    locations are excluded."""
     from . import wsview
     raw = (name or "").strip("'\"")
     if not raw or not workspace_root:
@@ -1901,7 +1926,10 @@ def resolves_to_workspace_file(name: str, workspace_root: str) -> str:
     for dirpath, _dirnames, filenames in tree:
         for f in filenames:
             if f == head or f.rsplit(".", 1)[0] == head:
-                return os.path.relpath(os.path.join(dirpath, f), workspace_root)
+                rel = os.path.relpath(os.path.join(dirpath, f), workspace_root)
+                if _outside_load_path(rel):
+                    continue
+                return rel
     return ""
 
 # A COMMAND THAT WENT LOOKING FOR DEPENDENCY SOURCE. Shape-level, not per-language (a rule keyed to

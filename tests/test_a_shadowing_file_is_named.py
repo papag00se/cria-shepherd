@@ -51,6 +51,31 @@ class TheShadowIsNamedTests(unittest.TestCase):
     def test_it_answers_empty_when_the_tree_is_unknown(self):
         self.assertEqual(probeparse.resolves_to_workspace_file("europe", ""), "")
 
+    def test_a_gem_own_bin_stub_in_the_install_tree_is_not_a_shadow(self):
+        """Walked on ornith15 x shipping-rates-rb 2026-09-07: `require "minitest/autorun"` failed with
+        a LoadError (nothing resolved), and the head match found the gem's OWN
+        `vendor/cache/bin/minitest` executable. That file IS the install, not a project file
+        shadowing it — naming it as a shadow sent the coder to fix a file that shadowed nothing (~6
+        turns and a rumination abort, the model correctly protesting a `bin/` file cannot shadow a
+        require). A file inside the install tree, and any `bin/` executable, is excluded."""
+        Path(self.ws, "vendor", "cache", "bin").mkdir(parents=True)
+        Path(self.ws, "vendor", "cache", "bin", "minitest").write_text("#!/usr/bin/env ruby\n")
+        Path(self.ws, "vendor", "cache", "gems", "minitest-6.0.6", "lib").mkdir(parents=True)
+        Path(self.ws, "vendor", "cache", "gems", "minitest-6.0.6", "lib",
+             "minitest.rb").write_text("module Minitest\nend\n")
+        self.assertEqual(probeparse.resolves_to_workspace_file("minitest/autorun", self.ws), "")
+        note = self._note("cannot load such file -- minitest/autorun (LoadError)")
+        self.assertNotIn("resolves to", note)
+
+    def test_a_real_lib_shadow_still_wins_over_an_install_tree_match(self):
+        """The exclusion skips install-tree matches but still finds a genuine project shadow: a
+        scratch `lib/minitest.rb` DOES pre-empt the gem, so it is still named."""
+        Path(self.ws, "vendor", "cache", "bin").mkdir(parents=True)
+        Path(self.ws, "vendor", "cache", "bin", "minitest").write_text("#!/usr/bin/env ruby\n")
+        Path(self.ws, "lib", "minitest.rb").write_text("module Minitest\nend\n")
+        self.assertEqual(probeparse.resolves_to_workspace_file("minitest", self.ws),
+                         os.path.join("lib", "minitest.rb"))
+
     def test_the_model_never_reads_the_shims_name(self):
         from cria import prompts
         self.assertNotIn("cria", prompts.load_map("dependency_note")["shadowed"].lower())
