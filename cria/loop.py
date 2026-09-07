@@ -2622,9 +2622,13 @@ class Loop:
         framed[bodykeys.PINNED_TASK] = getattr(sess.plan, "task", "") or ""
         # GROUND TRUTH AT THE TAIL: the live workspace listing rides the most-salient slot every turn,
         # re-derived from disk, exactly one copy (older ⟦ctx:files⟧ folded out). Listing only — content
-        # grounding on a blind touch is editrecovery's job. No-op without a workspace root.
-        if getattr(sess, "workspace_root", None):
-            framed["messages"] = _ground_coder_view(framed.get("messages", []), sess.workspace_root)
+        # grounding on a blind touch is editrecovery's job. The cwd is read from the body here (not just
+        # sess.workspace_root) because the plan-OFF driver never populates that field — _coder_turn is
+        # the shared core both driver halves reach, so the listing must not depend on a field only the
+        # plan-ON path sets. No-op when there is no cwd or the workspace has not been surveyed yet.
+        _ws = getattr(sess, "workspace_root", None) or _extract_cwd(body.get("messages", []))
+        if _ws:
+            framed["messages"] = _ground_coder_view(framed.get("messages", []), _ws)
         _add_completion_tool(framed)  # advertise the explicit-done tool for THIS coder call
         rlog.phase = f"coder-s{step}"  # label the call capture with the role + step
         coder = massage.apply(_parse_completion(self._ctx.coder_chat(framed, rlog)), framed.get("tools"), rlog)
