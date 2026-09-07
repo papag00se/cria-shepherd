@@ -7416,6 +7416,27 @@ def _fetch_ground_truth(messages: list[dict], sess=None,
     return f"{out}\n\n{mismatch}" if mismatch else out
 
 
+def _unresolved_deps(sess) -> str:
+    """The dependencies this session's own toolchain refused and never afterwards resolved, read from
+    the authoritative RefusalLedger (not a transcript re-scan). Handed to the on-target query judge so
+    it cannot bless a package as viable on the strength of an HTTP 200 on that package's registry PAGE
+    while the same package has repeatedly failed to INSTALL or LOAD.
+
+    Walked on ornith15 x shipping-rates-rb: the judge read `eu_countries -> HTTP 200` and reasoned
+    "it did NOT fail, so I can recommend it" — but the gem's `require` failed every time (its
+    transitive `iso3166` dependency does not exist on rubygems). A page that answers is not a package
+    that loads, and the ledger already holds the difference. Empty (no block) when the ledger holds no
+    active refusal, so a clean session sends the judge nothing new."""
+    ledger = getattr(sess, "refusal_events", None)
+    if not isinstance(ledger, refusalledger.RefusalLedger):
+        return ""
+    active = ledger.active()
+    if not active:
+        return ""
+    deps = "\n".join(f"- {event.coordinate} ({event.ecosystem})" for event in active)
+    return prompts.render("unresolved_deps", deps=deps)
+
+
 # An HTTP failure the CODER's own process ACTUALLY HIT, in the exact form a RUNTIME prints it.
 #
 # THE FIRST CUT MATCHED A BARE `HTTP 404` AND SHIPPED A FALSE FACT. Test files are full of status
@@ -9583,9 +9604,15 @@ def guard_search_query(sess: GuardState, coder: dict, body: dict,
     if query in sess.query_verdicts:
         on_target, rec = sess.query_verdicts[query]
     else:
+        # `tried` is what the session has already LEARNED: the fetch record (404s / repo-not-found)
+        # AND the packages the toolchain refused to install/load. The judge keyed "already failed" off
+        # HTTP status alone and blessed a gem that 200'd on its page but never once `require`d
+        # (ornith15 x shipping-rates-rb 0045). The ledger carries the other half of the truth.
+        _tried = _fetch_ground_truth(body.get("messages", []), sess)
+        _refused = _unresolved_deps(sess)
         on_target, rec = judge_query(reasoner_chat, reasoner_role, task, query, rlog,
                                      coder_tools=tools_summary,
-                                     tried=_fetch_ground_truth(body.get("messages", []), sess))
+                                     tried=f"{_tried}\n\n{_refused}" if _refused else _tried)
         sess.query_verdicts[query] = (on_target, rec)
     # A CONCRETE URL IS WORTH ACTING ON EVEN WHEN THE QUERY IS FINE. The judge's own prompt says: "make
     # the recommendation a concrete URL to fetch (the API's .../openapi.json, or the docs page) — the

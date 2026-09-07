@@ -1,0 +1,2 @@
+DEPENDENCIES THIS SESSION ALREADY TRIED AND COULD NOT INSTALL OR LOAD — the coder's own toolchain refused each of these, and no later attempt resolved them. A package whose web page answers (HTTP 200) is NOT a package that installs or loads; do not recommend any of these, a different version of one, or a query aimed at one, on the strength of a page that merely answered:
+{{DEPS}}

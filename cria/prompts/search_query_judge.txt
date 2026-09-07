@@ -6,7 +6,7 @@ Also give a recommendation for what it SHOULD do instead — grounded in the tas
 - If the task names a specific API/domain/library and the right next move is to READ it, make the recommendation a concrete URL to fetch (the API's `.../openapi.json`, or the docs page) — the supervisor will fetch it directly.
 - Otherwise make the recommendation a better search string.
 
-A URL OR NAME THIS SESSION HAS ALREADY TRIED AND FAILED IS NOT A RECOMMENDATION. If the fetch record below shows a page returned 404 or a repository was not found, that thing does not exist — do not recommend it, do not recommend a different version of it, and do not call a query for it on-target. Say so in the recommendation instead.
+A URL OR NAME THIS SESSION HAS ALREADY TRIED AND FAILED IS NOT A RECOMMENDATION. If the fetch record below shows a page returned 404 or a repository was not found, that thing does not exist — do not recommend it, do not recommend a different version of it, and do not call a query for it on-target. The same holds for any package listed below as one this session could not install or load: a page that answered (HTTP 200) does NOT make the package viable — do not recommend it or call a query aimed at it on-target. Say so in the recommendation instead.
 
 Reply with ONE JSON object only:
 {"on_target": true|false, "recommendation": "<a better query, OR a concrete https:// URL to fetch>"}
