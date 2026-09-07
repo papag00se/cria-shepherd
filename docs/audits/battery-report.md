@@ -61,8 +61,7 @@ Per-cell judging: [`ladder-progress.md`](ladder-progress.md). Status: `python3 s
 | ternary-bonsai | 🟢 100% | 🟢 97% | 🟡 74% | 🟢 100% | 🟢 89% | 🟢 100% | 93% | 48 | 89 |
 | nemotron-elastic | 🟠 59% | 🔴 31% | 🟡 76% | 🔴 20% | 🟡 70% | 🟡 84% | 57% | 50 | 180 |
 | ornith15 | 🔴 5% | 🟡 84% | 🟡 85% | 🔴 35% | 🟡 75% | 🟢 95% | 63% | · | · |
-| gigachat31 | 🔴 2% | 🔴 1% | 🔴 0% | 🔴 0% | 🔴 0% | 🔴 0% | 1% | · | · |
-| gigachat31 (re-run) | 🔴 2% | 🔴 6% | 🔴 5% | 🔴 2% | 🔴 6% | 🔴 18% | 7% | · | · |
+| gigachat31 | 🔴 2% | 🔴 6% | 🔴 5% | 🔴 2% | 🔴 6% | 🔴 18% | 7% | · | · |
 
 
 Every number is a judgement of how much of the task was actually delivered. `?` = the cell RAN and is waiting on a verdict; `·` = it never ran. A total reading `77% (3/6)` is an average over the judged cells only and cannot speak for the rest of the row.
