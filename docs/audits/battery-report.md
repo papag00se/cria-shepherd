@@ -1,6 +1,6 @@
 # Battery — the engagement ladder
 
-**Last updated 2026-09-08 14:28** — newest row `rust-toml-cli_qwen38_codex_poff_1788863865`, finished 2026-09-08 03:39.
+**Last updated 2026-09-08 16:47** — newest row `feed-pipeline-java_ornith15_codex_poff_1788907072`, finished 2026-09-08 16:46.
 
 Each cell is an inferred usefulness percentage 🟢≥88 🟡≥63 🟠≥38 🔴 below; `·` = not judged. `[engagement] level = 0..5`, each rung implying every rung below it. gemma4 / qwen35 / ternary-bonsai / nemotron-elastic are FROZEN historical inference rows recovered into suite/historical_ladder.json; every other model reads live from results.jsonl.
 
@@ -62,6 +62,6 @@ Each cell is an inferred usefulness percentage 🟢≥88 🟡≥63 🟠≥38 �
 | qwen35 | 🟢 100% | 🟡 63% | 🟡 71% | 🟢 96% | 🟢 93% | 🟢 100% | 87% | 40 | 227 |
 | ternary-bonsai | 🟢 100% | 🟢 97% | 🟡 74% | 🟢 100% | 🟢 89% | 🟢 100% | 93% | 48 | 89 |
 | nemotron-elastic | 🟠 59% | 🔴 31% | 🟡 76% | 🔴 20% | 🟡 70% | 🟡 84% | 57% | 50 | 180 |
-| ornith15 | 🟢 95% | 🟡 84% | 🟡 85% | 🔴 35% | 🟡 75% | 🟢 95% | 78% | 56 | 116 |
+| ornith15 | 🟢 95% | 🟡 84% | 🟡 85% | 🟠 50% | 🟡 75% | 🟢 95% | 81% | 58 | 112 |
 | qwen38 | 🟢 100% | 🟢 100% | 🟢 100% | 🟡 85% | 🟢 98% | 🟢 100% | 97% | 24 | · |
 
