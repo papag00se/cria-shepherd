@@ -115,12 +115,6 @@ MODEL_SAMPLING = {
         "compactor":  {"temperature": 0.0, "presence_penalty": 0.0, "repeat_penalty": 1.0},
     },
     # JetBrains (Thinking model): temp 0.6 / top_p 0.95 / top_k 20.
-    "mellum2": {
-        "coder":      {"temperature": 0.6, "top_p": 0.95, "top_k": 20},
-        "reasoner":   {"temperature": 0.6, "top_p": 0.95, "top_k": 20},
-        "classifier": {"temperature": 0.0},
-        "compactor":  {"temperature": 0.0},
-    },
     # NVIDIA Nemotron 3 guide: temp 0.6 / top_p 0.95 for tool-calling, 1.0/1.0 general chat.
     "nemotron-elastic": {
         "coder":      {"temperature": 0.6, "top_p": 0.95},
