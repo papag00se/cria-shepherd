@@ -1,13 +1,10 @@
 # Battery — the engagement ladder
 
-**Last updated 2026-09-06 18:30** — added ornith15 and gigachat31 (original + re-run) L5 rows.
+**Last updated 2026-09-07 23:15** — newest row `cart-billing-go_qwen38_codex_poff_1788846685`, finished 2026-09-07 23:01.
 
-Tables only. Findings, walks and the retired two-arm campaign: [`battery-history.md`](battery-history.md).
-Per-cell judging: [`ladder-progress.md`](ladder-progress.md). Status: `python3 suite/engagement_status.py`.
+Each cell is an inferred usefulness percentage 🟢≥88 🟡≥63 🟠≥38 🔴 below; `·` = not judged. `[engagement] level = 0..5`, each rung implying every rung below it. gemma4 / qwen35 / ternary-bonsai / nemotron-elastic are FROZEN historical inference rows recovered into suite/historical_ladder.json; every other model reads live from results.jsonl.
 
-`[engagement] level = 0..5`, each rung implying every rung below it. `·` = not run. Superseded cells are excluded and re-run.
-
-### Level 0 — pure proxy — wire translation only — 42%
+### Level 0 — pure proxy — wire translation only — 52%
 
 | model | ruby | go | python | java | node | rust | total | avg min | avg calls |
 |---|---|---|---|---|---|---|---:|---:|---:|
@@ -15,8 +12,9 @@ Per-cell judging: [`ladder-progress.md`](ladder-progress.md). Status: `python3 s
 | qwen35 | 🔴 0% | 🔴 21% | 🔴 0% | 🔴 0% | 🔴 0% | 🔴 0% | 4% | 1 | 8 |
 | ternary-bonsai | 🟠 54% | 🟢 90% | 🟢 89% | 🔴 0% | 🟢 100% | 🟢 98% | 72% | 25 | 67 |
 | nemotron-elastic | 🔴 0% | 🔴 0% | 🔴 0% | 🔴 0% | 🔴 0% | 🔴 0% | 0% | 3 | 6 |
+| qwen38 | 🟢 90% | 🟢 92% | 🟢 93% | 🟢 90% | 🟢 92% | 🟢 95% | 92% | 14 | · |
 
-### Level 1 — TOOL_CALL_FIXES — dialect and template repair — 36%
+### Level 1 — TOOL_CALL_FIXES — dialect and template repair — 47%
 
 | model | ruby | go | python | java | node | rust | total | avg min | avg calls |
 |---|---|---|---|---|---|---|---:|---:|---:|
@@ -24,8 +22,9 @@ Per-cell judging: [`ladder-progress.md`](ladder-progress.md). Status: `python3 s
 | qwen35 | 🟠 55% | 🟢 92% | 🟡 83% | 🟠 62% | 🔴 0% | 🟢 100% | 65% | 14 | 73 |
 | ternary-bonsai | 🔴 7% | 🔴 32% | 🟠 61% | 🔴 14% | 🟢 99% | 🔴 11% | 37% | 31 | 53 |
 | nemotron-elastic | 🔴 0% | 🔴 6% | 🔴 0% | 🔴 0% | 🔴 0% | 🔴 0% | 1% | 2 | 5 |
+| qwen38 | 🟢 92% | 🟢 92% | 🟢 93% | 🟢 94% | 🟢 92% | 🟢 95% | 93% | 8 | · |
 
-### Level 2 — SIMPLE_TOOLS — cria's tool menu, lowered to shell — 59%
+### Level 2 — SIMPLE_TOOLS — cria's tool menu, lowered to shell — 66%
 
 | model | ruby | go | python | java | node | rust | total | avg min | avg calls |
 |---|---|---|---|---|---|---|---:|---:|---:|
@@ -33,8 +32,9 @@ Per-cell judging: [`ladder-progress.md`](ladder-progress.md). Status: `python3 s
 | qwen35 | 🟡 76% | 🟢 89% | 🟢 88% | 🟢 100% | 🟡 63% | 🟢 100% | 86% | 6 | 50 |
 | ternary-bonsai | 🟢 100% | 🔴 33% | 🟢 100% | 🟢 94% | 🟡 76% | 🔴 11% | 69% | 31 | 82 |
 | nemotron-elastic | 🔴 0% | 🔴 6% | 🟠 45% | 🔴 0% | 🔴 0% | 🔴 18% | 12% | 4 | 8 |
+| qwen38 | 🟢 92% | 🟢 92% | 🟢 93% | 🟢 93% | 🟢 92% | 🟢 95% | 93% | 12 | · |
 
-### Level 3 — CONTEXT_FIXES — floor, trims, dedups, compaction reframing — 61%
+### Level 3 — CONTEXT_FIXES — floor, trims, dedups, compaction reframing — 67%
 
 | model | ruby | go | python | java | node | rust | total | avg min | avg calls |
 |---|---|---|---|---|---|---|---:|---:|---:|
@@ -42,6 +42,7 @@ Per-cell judging: [`ladder-progress.md`](ladder-progress.md). Status: `python3 s
 | qwen35 | 🟢 93% | 🟢 100% | 🟡 83% | 🟡 80% | 🟠 58% | 🟡 74% | 81% | 9 | 54 |
 | ternary-bonsai | 🔴 1% | 🟡 78% | 🟢 93% | 🟢 99% | 🟢 94% | 🔴 18% | 64% | 30 | 51 |
 | nemotron-elastic | 🔴 0% | 🔴 0% | 🟠 50% | 🔴 12% | 🔴 0% | 🔴 15% | 13% | 4 | 7 |
+| qwen38 | 🟢 92% | 🟢 92% | 🟢 93% | 🟡 78% | 🟢 92% | 🟢 95% | 90% | 13 | · |
 
 ### Level 4 — DONE_REFUSALS_ENABLED — refusing a completion CLAIM — 69%
 
@@ -52,7 +53,7 @@ Per-cell judging: [`ladder-progress.md`](ladder-progress.md). Status: `python3 s
 | ternary-bonsai | 🟢 100% | 🟢 97% | 🟡 64% | 🟡 80% | 🟡 76% | 🔴 16% | 72% | 45 | 82 |
 | nemotron-elastic | 🔴 26% | 🔴 28% | 🟠 40% | 🔴 19% | 🟠 40% | 🔴 20% | 29% | 33 | 141 |
 
-### Level 5 — ASSISTS_ENABLED — steers, periodic gates, detectors, planner — 82%
+### Level 5 — ASSISTS_ENABLED — steers, periodic gates, detectors, planner — 65%
 
 | model | ruby | go | python | java | node | rust | total | avg min | avg calls |
 |---|---|---|---|---|---|---|---:|---:|---:|
@@ -60,8 +61,6 @@ Per-cell judging: [`ladder-progress.md`](ladder-progress.md). Status: `python3 s
 | qwen35 | 🟢 100% | 🟡 63% | 🟡 71% | 🟢 96% | 🟢 93% | 🟢 100% | 87% | 40 | 227 |
 | ternary-bonsai | 🟢 100% | 🟢 97% | 🟡 74% | 🟢 100% | 🟢 89% | 🟢 100% | 93% | 48 | 89 |
 | nemotron-elastic | 🟠 59% | 🔴 31% | 🟡 76% | 🔴 20% | 🟡 70% | 🟡 84% | 57% | 50 | 180 |
-| ornith15 | 🔴 5% | 🟡 84% | 🟡 85% | 🔴 35% | 🟡 75% | 🟢 95% | 63% | · | · |
-| gigachat31 | 🔴 2% | 🔴 6% | 🔴 5% | 🔴 2% | 🔴 6% | 🔴 18% | 7% | · | · |
+| ornith15 | 🔴 5% | 🟡 84% | 🟡 85% | 🔴 35% | 🟡 75% | 🟢 95% | 63% | 60 | 126 |
+| gigachat31 | 🔴 2% | 🔴 1% | 🔴 0% | 🔴 0% | 🔴 0% | 🔴 0% | 0% | 27 | 333 |
 
-
-Every number is a judgement of how much of the task was actually delivered. `?` = the cell RAN and is waiting on a verdict; `·` = it never ran. A total reading `77% (3/6)` is an average over the judged cells only and cannot speak for the rest of the row.

@@ -106,25 +106,88 @@ def _stamp(rs: list[dict], now: float | None = None) -> str:
     return f"**Last updated {written}** — newest row `{latest.get('run_id', '?')}`, finished {finished}."
 
 
+_HIST_PATH = SUITE / "historical_ladder.json"
+
+
+def _historical() -> dict:
+    """FROZEN inference-usefulness data for models whose per-cell scores no longer survive in
+    results.jsonl (a field rename orphaned them). Recovered from a committed report and never
+    regenerated; see suite/historical_ladder.json. Empty dict if the file is missing."""
+    try:
+        return json.loads(_HIST_PATH.read_text())
+    except (OSError, ValueError):
+        return {}
+
+
+def _badge(pct: float) -> str:
+    """Quarter bands off the midpoints: green at/above 87.5, yellow 62.5, orange 37.5, red below."""
+    return ("\U0001F7E2" if pct >= 87.5 else "\U0001F7E1" if pct >= 62.5
+            else "\U0001F7E0" if pct >= 37.5 else "\U0001F534")
+
+
+def _dot(pct) -> str:
+    return f"{_badge(pct)} {round(pct)}%" if pct is not None else "\u00b7"
+
+
 def report(rs: list[dict], now: float | None = None) -> str:
-    # Current matrices govern future runs, not historical visibility. Keep every model with a
-    # recorded row in the report after the active models, so a fleet replacement never erases data.
-    historical = tuple(dict.fromkeys(str(row.get("model")) for row in rs
-                                     if row.get("model") and row.get("model") not in MODELS))
-    report_models = MODELS + historical
-    out = ["# Battery — usefulness status", "", _stamp(rs, now), "",
-           "Every checkpoint progress report and final judgment is an inferred percentage of "
-           "usefulness backed by inspected workspace evidence.", ""]
-    levels = sorted({int(row["level"]) for row in rs
-                     if row.get("level") is not None and not row.get("superseded")})
-    for level in levels:
-        out += [f"## Engagement configuration {level}", "",
-                "| model | task | judgment |", "|---|---|---|"]
-        for model in report_models:
-            for task in TASKS:
-                row = level_cell(rs, level, model, task)
-                if row:
-                    out.append(f"| {model} | {task} | {judgment_of(row)} |")
+    """The engagement ladder: one colored-dot cell per (level, model, task), the cell an inferred
+    usefulness percentage. FROZEN models render from suite/historical_ladder.json (recovered
+    inference judgments the field rename orphaned); every other model reads LIVE usefulness_percent
+    from results.jsonl. The ladder format persists here in the generator so a regeneration can never
+    eat it again."""
+    hist = _historical()
+    frozen = hist.get("frozen", {})
+    labels = hist.get("levels", {})
+    tasks = hist.get("tasks", list(TASKS))
+    tlabels = hist.get("task_labels", list(tasks))
+    live = []
+    for row in rs:
+        m = row.get("model")
+        if m and m not in frozen and isinstance(row.get("usefulness_percent"), int) and m not in live:
+            live.append(m)
+    ordered = list(frozen.keys()) + live
+    out = ["# Battery — the engagement ladder", "", _stamp(rs, now), "",
+           "Each cell is an inferred usefulness percentage \U0001F7E2\u226588 \U0001F7E1\u226563 "
+           "\U0001F7E0\u226538 \U0001F534 below; `\u00b7` = not judged. `[engagement] level = 0..5`, "
+           "each rung implying every rung below it. gemma4 / qwen35 / ternary-bonsai / "
+           "nemotron-elastic are FROZEN historical inference rows recovered into "
+           "suite/historical_ladder.json; every other model reads live from results.jsonl.", ""]
+    for lvl in range(6):
+        lv = str(lvl)
+        rowdata = []
+        for m in ordered:
+            if m in frozen and lv in frozen[m]:
+                cells = list(frozen[m][lv]["pct"])
+                mn, cl = frozen[m][lv].get("min"), frozen[m][lv].get("calls")
+            else:
+                cells, mins, calls = [], [], []
+                for t in tasks:
+                    r = level_cell(rs, lvl, m, t)
+                    cells.append(r.get("usefulness_percent")
+                                 if r and isinstance(r.get("usefulness_percent"), int) else None)
+                    if r and r.get("wall_seconds"):
+                        mins.append(r["wall_seconds"] / 60)
+                    if r and r.get("calls"):
+                        calls.append(r["calls"])
+                mn = round(sum(mins) / len(mins)) if mins else None
+                cl = round(sum(calls) / len(calls)) if calls else None
+            if any(p is not None for p in cells):
+                rowdata.append((m, cells, mn, cl))
+        if not rowdata:
+            continue
+        allp = [p for _m, cells, _mn, _cl in rowdata for p in cells if p is not None]
+        lvavg = round(sum(allp) / len(allp)) if allp else 0
+        label = labels.get(lv, "")
+        out.append(f"### Level {lvl}" + (f" \u2014 {label}" if label else "") + f" \u2014 {lvavg}%")
+        out.append("")
+        out.append("| model | " + " | ".join(tlabels) + " | total | avg min | avg calls |")
+        out.append("|---|" + "---|" * len(tlabels) + "---:|---:|---:|")
+        for m, cells, mn, cl in rowdata:
+            present = [p for p in cells if p is not None]
+            total = f"{round(sum(present) / len(present))}%" if present else "\u00b7"
+            cellstr = " | ".join(_dot(p) for p in cells)
+            out.append(f"| {m} | {cellstr} | {total} | "
+                       f"{mn if mn is not None else '\u00b7'} | {cl if cl is not None else '\u00b7'} |")
         out.append("")
     return "\n".join(out) + "\n"
 
