@@ -87,6 +87,15 @@ MODEL_SAMPLING = {
         "classifier": {"temperature": 0.0},
         "compactor":  {"temperature": 0.0},
     },
+    # Qwen3.8-27B (W4A16 + MTP) on the vLLM/3090 endpoint, not the llama.cpp fleet. Qwen's card:
+    # thinking mode temp 0.6 / top_p 0.95 / top_k 20; cria drives coder+reasoner with thinking on and
+    # the deterministic roles with it off, so the thinking numbers map onto the four roles here too.
+    "qwen38": {
+        "coder":      {"temperature": 0.6, "top_p": 0.95, "top_k": 20},
+        "reasoner":   {"temperature": 0.6, "top_p": 0.95, "top_k": 20},
+        "classifier": {"temperature": 0.0},
+        "compactor":  {"temperature": 0.0},
+    },
     # ⚠ INFERRED from Qwen3.5, not stated on the card — docs/model-settings.md flags it unverified.
     "qwopus": {
         "coder":      {"temperature": 0.6, "top_p": 0.95, "top_k": 20},

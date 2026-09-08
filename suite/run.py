@@ -83,6 +83,14 @@ SERVICES = {
     "gigachat31": "llama-gigachat31-q4",
 }
 
+# EXTERNALLY MANAGED MODELS — not llama.cpp systemd units on :18084. Qwen3.8-27B runs as a vLLM
+# container on its OWN card (the RTX 3090, :18020), which cria's [backends.local] points straight at,
+# so there is no GPU-swap to do here: the endpoint is already up and the llama.cpp fleet on the 3080
+# does not contend with it. swap_model just confirms the endpoint is live. Value = its health URL.
+EXTERNAL = {
+    "qwen38": "http://127.0.0.1:18020/health",
+}
+
 # Harness launchers: name -> argv builder (headless/exec mode only). Phase 0 ships codex;
 # the other adapters land with their harness phases.
 def _codex_argv(prompt: str):
@@ -137,6 +145,12 @@ def wait_health(url: str, tries=90, delay=10) -> bool:
 
 
 def swap_model(model: str) -> None:
+    if model in EXTERNAL:
+        # A container-managed endpoint on its own card — nothing to start or stop. cria's base_url
+        # already points at it; just confirm it answers before the cell runs.
+        if not wait_health(EXTERNAL[model]):
+            raise RuntimeError(f"external model {model} endpoint {EXTERNAL[model]} not healthy")
+        return
     target = SERVICES[model]
     for svc in SERVICES.values():
         if svc != target:
@@ -481,7 +495,7 @@ def throttled_mid_run(session_dir) -> str:
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--task", required=True)
-    ap.add_argument("--model", required=True, choices=sorted(SERVICES))
+    ap.add_argument("--model", required=True, choices=sorted(set(SERVICES) | set(EXTERNAL)))
     ap.add_argument("--harness", default="codex", choices=sorted(HARNESSES))
     ap.add_argument("--planner", required=True, choices=["on", "off"])
     ap.add_argument("--note", default="")
