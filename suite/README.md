@@ -9,7 +9,7 @@ The first inference checkpoint is at 30 active minutes; later checkpoints are 15
 ```bash
 python3 suite/run.py \
   --task cart-billing-go \
-  --model gigachat31 \
+  --model ornith15 \
   --harness codex \
   --planner off \
   --note "experiment label"

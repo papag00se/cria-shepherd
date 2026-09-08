@@ -5,7 +5,7 @@ editrecovery is monotonic: surgical mismatch-windows for the first ESCALATE_AFTE
 committed whole-file reveal. That is right when the coder HAS the file (a close miss it can fix from
 the window). It is wrong when the coder never read the file: it has no basis to pin an old_string
 outside the window cria shows, so it re-guesses two more times before the whole file appears. Walked
-live: cart-billing-go x gigachat31 20260906T124743 confabulated cart.go's body and ground through
+live: cart-billing-go, session 20260906T124743 — confabulated cart.go's body and ground through
 repeated window-only mismatches.
 """
 import base64

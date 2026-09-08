@@ -28,7 +28,7 @@ SUITE = Path(__file__).resolve().parent
 RESULTS = SUITE / "results" / "results.jsonl"
 
 LEVELS = (0, 1, 2, 3, 4, 5)
-MODELS = ("gemma4", "qwen35", "ternary-bonsai", "ornith15", "gigachat31")
+MODELS = ("gemma4", "qwen35", "ternary-bonsai", "ornith15")
 TASKS = ("shipping-rates-rb", "cart-billing-go", "orders-api-py",
          "feed-pipeline-java", "handles-cli-node", "rust-toml-cli")
 

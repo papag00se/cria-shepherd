@@ -20,9 +20,8 @@ def test_every_current_matrix_model_has_service_and_sampling_configuration():
     assert models <= set(sampling.MODEL_SAMPLING)
 
 
-def test_gigachat_replaces_nemotron_and_ornith_names_its_release():
+def test_the_matrix_names_the_current_ornith_release_not_the_retired_names():
     models = set(battery_status.MODELS)
-    assert "gigachat31" in models
     assert "ornith15" in models
     assert "nemotron-elastic" not in models
     assert "ornith" not in models

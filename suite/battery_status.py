@@ -17,7 +17,7 @@ SUITE = Path(__file__).resolve().parent
 RESULTS = SUITE / "results" / "results.jsonl"
 NOTE_PREFIX = "BATTERY2"
 COUNTED_PREFIXES = (NOTE_PREFIX, "LOWSCORE", "RERANK")
-MODELS = ("gemma4", "qwen35", "ternary-bonsai", "ornith15", "gigachat31")
+MODELS = ("gemma4", "qwen35", "ternary-bonsai", "ornith15")
 TASKS = ("shipping-rates-rb", "cart-billing-go", "orders-api-py",
          "feed-pipeline-java", "handles-cli-node", "rust-toml-cli")
 ARMS = ("BASE", "CRIA")

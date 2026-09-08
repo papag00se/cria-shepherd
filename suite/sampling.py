@@ -114,14 +114,6 @@ MODEL_SAMPLING = {
         "classifier": {"temperature": 0.0, "presence_penalty": 0.0, "repeat_penalty": 1.0},
         "compactor":  {"temperature": 0.0, "presence_penalty": 0.0, "repeat_penalty": 1.0},
     },
-    # ai-sage's llama.cpp chat and function-call examples both use temperature 0. No broader
-    # sampling recommendation is published, so parity starts from that exact demonstrated value.
-    "gigachat31": {
-        "coder":      {"temperature": 0.0},
-        "reasoner":   {"temperature": 0.0},
-        "classifier": {"temperature": 0.0},
-        "compactor":  {"temperature": 0.0},
-    },
     # JetBrains (Thinking model): temp 0.6 / top_p 0.95 / top_k 20.
     "mellum2": {
         "coder":      {"temperature": 0.6, "top_p": 0.95, "top_k": 20},

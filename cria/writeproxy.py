@@ -1212,7 +1212,7 @@ def _external_refusal(name, args, fn, injected, level: str, workspace: str | Non
         # continuation. The continuation is a `python3 - <spool> <<HEREDOC` reader that NAMES the
         # /tmp/.cria-gate-* spool; recognising only the tool sentinel made cria refuse its own
         # multi-page gate as "outside the working directory", so every large gate read UNKNOWN and the
-        # completion path could never verify (cart-billing-go x gigachat31 20260906T124743).
+        # completion path could never verify (cart-billing-go, session 20260906T124743).
         if (head.startswith("# " + _SENTINEL) or head.startswith("# " + GATE_SENTINEL)
                 or (head.startswith("cd ") and "___CRIA_GATE_" in head)):
             return None

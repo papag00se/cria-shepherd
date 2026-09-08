@@ -80,7 +80,6 @@ SERVICES = {
     "gemma4": "llama-gemma4",
     "maple-preview": "llama-maple-preview",  # DeepGrove ternary MoE 20B-A1B (stamsam prism fork)
     "mellum2": "llama-mellum2-q4",
-    "gigachat31": "llama-gigachat31-q4",
 }
 
 # EXTERNALLY MANAGED MODELS — not llama.cpp systemd units on :18084. Qwen3.8-27B runs as a vLLM

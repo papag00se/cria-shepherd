@@ -9,7 +9,7 @@ The mismatch made cria refuse its OWN multi-page gate continuation as "writing/r
 working directory", so every large gate came back UNKNOWN — the completion path could never verify,
 and the coder looped on task_complete.
 
-Walked live: cart-billing-go x gigachat31 20260906T124743, the /tmp/.cria-gate-* denial rode every
+Walked live: cart-billing-go, session 20260906T124743 — the /tmp/.cria-gate-* denial rode every
 gated build/test after the output grew past one transport page.
 """
 import json

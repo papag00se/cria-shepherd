@@ -110,8 +110,8 @@ def compose(fail: dict, prior: int, grounded: bool = True) -> str:
     (a blind touch — a file the coder never read or wrote this session), the "can't pin the text"
     family escalates on the FIRST miss instead of the third: surgical windows cannot help a coder that
     has no copy of the file, so it is handed the whole current file at once rather than re-guessing an
-    old_string two more times. Measured origin: cart-billing-go x gigachat31 confabulated cart.go's
-    body and ground its way through repeated window-only mismatches before the whole file appeared."""
+    old_string two more times. Measured origin: a cart-billing-go run confabulated cart.go's body and
+    ground its way through repeated window-only mismatches before the whole file appeared."""
     path = os.path.basename(fail.get("path") or "the file")
     cur = fail.get("current") or ""
     anchor = (fail.get("anchor") or "").strip("\n")
