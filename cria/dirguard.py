@@ -576,6 +576,38 @@ def _exempt(path: str) -> bool:
     return p in _EXEMPT_EXACT or any(p == pre.rstrip("/") or p.startswith(pre) for pre in _EXEMPT_PREFIXES)
 
 
+# Package-manager dependency caches: the read-only artifact stores an installed dependency resolves
+# into. A model grounding a library's REAL api (javap a jar, read a wheel/crate/module source) must
+# reach these — they hold public library files, never the project's own code and never secrets.
+# Matched at the ARTIFACT subtree ONLY, never the manager's config root, so credential files
+# (~/.m2/settings.xml, ~/.cargo/credentials.toml, ~/.gem/credentials, ~/.npmrc) stay refused. A READ
+# here writes nothing outside the workspace and is allowed even at ``none``; a WRITE into a cache is a
+# different act — it corrupts a machine-shared store (the eaf480f leak class) — and still falls
+# through to refusal (only ``write`` permits it). Walked: feed-pipeline-java x ornith15 1788684045
+# hallucinated the OpenCSV 5.9 API across 50+ turns and never compiled, because cria's own steer told
+# it to "inspect its jar in your local Maven cache" and then refused every read of the resolved
+# opencsv-5.9.jar under ~/.m2/repository.
+_DEP_CACHE_MARKERS = (
+    "/.m2/repository/",       # Maven / Gradle artifacts (not ~/.m2/settings.xml)
+    "/.gradle/caches/",       # Gradle
+    "/.cargo/registry/",      # Rust crates (not ~/.cargo/credentials.toml)
+    "/.cargo/git/",
+    "/go/pkg/mod/",           # Go module cache (read-only by design)
+    "/site-packages/",        # Python installed packages
+    "/dist-packages/",
+)
+
+
+def _is_dependency_cache(path: str) -> bool:
+    """True when ``path`` is inside a package manager's read-only dependency-artifact cache — the
+    ground truth for an installed dependency's API. The artifact subtree only, so a manager's
+    credential-bearing config root is never matched."""
+    if not path or not path.strip():
+        return False
+    p = os.path.normpath(os.path.expanduser(path.strip())) + "/"
+    return any(marker in p for marker in _DEP_CACHE_MARKERS)
+
+
 def _typo_fold(s: str) -> str:
     """Case-fold and collapse dash/underscore — the two one-glyph workspace-typo classes walked so
     far. Anything looser would start matching genuinely different directories."""
@@ -659,6 +691,10 @@ def path_refusal(path: str, is_write: bool, level: str, workspace: str | None) -
     are reads; write_file/edit_file are writes."""
     if level == "write" or _exempt(path) or not is_external(path, workspace):
         return None
+    # A READ of a dependency-artifact cache is grounding, not exfiltration — allowed at every level.
+    # A WRITE into it is refused unless the operator chose `write` (falls through below).
+    if not is_write and _is_dependency_cache(path):
+        return None
     if level == "read" and not is_write:
         return None
     return _refusal("Writing" if is_write else "Reading", path, workspace)
@@ -699,6 +735,12 @@ def command_refusal(command: str, level: str, workspace: str | None) -> str | No
         if _after_unresolved_expansion(command, m.start()):
             continue
         if not is_external(tok, workspace) or _exempt(tok):
+            continue
+        # A READ of a dependency-artifact cache grounds an installed library's real API (javap a jar,
+        # read a module's source); it writes nothing outside the workspace, so allow it even at
+        # `none` and keep scanning for a MORE serious external token. A WRITE targeting the cache is
+        # not skipped — it falls through and is refused.
+        if _is_dependency_cache(tok) and not _is_write_target(command, m.start()):
             continue
         # In a network request, a rooted path token is a URL fragment, not a file access — exempt it
         # unless it is an explicit write TARGET (curl -o /etc/x, > /tmp/y), which is a real external write.
