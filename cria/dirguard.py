@@ -608,6 +608,20 @@ def _is_dependency_cache(path: str) -> bool:
     return any(marker in p for marker in _DEP_CACHE_MARKERS)
 
 
+# `/1_000_000` in `cents /1_000_000` is integer division, not a filesystem path: a single rooted
+# token that is ALL digits/underscores (with an optional decimal part), a shape no real path uses.
+# The path-token scan grabs it because a space precedes the `/`. Walked: feed-pipeline-java x
+# ornith15 1788907072 drew 11 "The path '/1_000_000' is outside it" refusals on a Java milli-cent
+# literal in a heredoc, which fed a false "the workspace was reset" belief that recharged the model's
+# verification loop. Same class as the quoted-pattern and URL-fragment false-positives already fixed.
+_NUMERIC_LITERAL = re.compile(r"^/\d[\d_]*(?:\.[\d_]+)?$")
+
+
+def _is_numeric_literal(tok: str) -> bool:
+    """True for a rooted arithmetic literal like ``/1_000_000`` or ``/3.14`` — never a real path."""
+    return bool(_NUMERIC_LITERAL.match(tok))
+
+
 def _typo_fold(s: str) -> str:
     """Case-fold and collapse dash/underscore — the two one-glyph workspace-typo classes walked so
     far. Anything looser would start matching genuinely different directories."""
@@ -733,6 +747,9 @@ def command_refusal(command: str, level: str, workspace: str | None) -> str | No
                                    or _is_param_value_quote(command, inside)):
             continue
         if _after_unresolved_expansion(command, m.start()):
+            continue
+        # `n /1_000_000` is integer division, not a path outside the workspace.
+        if _is_numeric_literal(tok):
             continue
         if not is_external(tok, workspace) or _exempt(tok):
             continue
