@@ -595,6 +595,9 @@ _DEP_CACHE_MARKERS = (
     "/go/pkg/mod/",           # Go module cache (read-only by design)
     "/site-packages/",        # Python installed packages
     "/dist-packages/",
+    "/gem/ruby/",             # Ruby gems: ~/.gem/ruby/, ~/.local/share/gem/ruby/ (not ~/.gem/credentials)
+    "/ruby/gems/",            # Ruby gems: /usr/lib/ruby/gems/, rbenv/rvm, bundler .../ruby/gems/
+    "/node_modules/",         # Node packages: any node_modules holds public JS source, never secrets
 )
 
 
@@ -618,12 +621,17 @@ def _is_dependency_cache(path: str) -> bool:
 # was fine (it downloaded opencsv 5.8 the same session). Naming the readable artifact subtree, and
 # that this is a PATH limit and not a network one, is the sentence that ends that rabbit hole. This is
 # the reader-facing complement of a00ce45 (which allowed the artifact subtree itself): same jar, same
-# task, the layer up.
+# task, the layer up. Covers all six battery languages (Maven/Gradle, Cargo, Go, Python, Ruby, Node);
+# each entry's named subtree is one the read-allow markers above actually permit, so the note can
+# never point a model at a location a read would refuse (#5b).
 _DEP_CACHE_ROOTS = (
     ("/.m2/", "~/.m2/repository"),
     ("/.gradle/", "~/.gradle/caches"),
     ("/.cargo/", "~/.cargo/registry"),
     ("/go/pkg/", "~/go/pkg/mod"),
+    ("/lib/python", "its site-packages/ subdirectory"),
+    ("/.gem/", "~/.gem/ruby (the installed gem sources)"),
+    ("/.npm/", "any node_modules/ directory (the project's, or the global one shown by `npm root -g`)"),
 )
 
 
