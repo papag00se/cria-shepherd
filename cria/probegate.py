@@ -496,10 +496,20 @@ def split_sections(text: str) -> dict[str, str]:
 
 _DELIM_PAIRS = {"(": ")", "[": "]", "{": "}", ")": "(", "]": "[", "}": "{"}
 _UNMATCHED_RE = re.compile(r"^(.+?):(\d+):.*?\bunmatched\b.*?['\"]([()\[\]{}])")
-# Any finding that NAMES a position: `path:LINE[:COL]: …` (pyflakes/compileall style) or
-# `path: … (at line LINE, column COL)` (tomllib style).
-_FLAGGED_LINE_RE = re.compile(r"^(.+?):(\d+)(?::\d+)?:")
+# `path: … (at line LINE, column COL)` is not a compiler location prefix, so it remains the
+# one shape outside probeparse.split_diag's canonical location parser.
 _AT_LINE_RE = re.compile(r"^(.+?): .*\(at line (\d+), column \d+\)")
+
+
+def _finding_location(finding: str) -> "tuple[str, int] | None":
+    """The path and line named by a finding, across the location formats cria already parses."""
+    parsed = probeparse.split_diag(finding)
+    if parsed is not None and parsed[1] is not None:
+        return parsed[0], parsed[1]
+    at_line = _AT_LINE_RE.match(finding)
+    if at_line:
+        return at_line.group(1), int(at_line.group(2))
+    return None
 
 
 # A TOOL THAT CAN CHANGE THE WORKSPACE, not a tool that writes A FILE. The staleness ledger counted
@@ -685,10 +695,10 @@ def _with_delimiter_facts(findings: list[str], plan, annotate: bool = True,
         if not annotate:
             continue        # HISTORY — see clean_gate_results; the quote would be read from a
                             # file that has moved on since these findings were produced.
-        m = _FLAGGED_LINE_RE.match(f) or _AT_LINE_RE.match(f)
-        if not m:
+        location = _finding_location(f)
+        if location is None:
             continue
-        path, line_no = m.group(1), int(m.group(2))
+        path, line_no = location
         if os.path.basename(path) in changed_paths:
             continue        # the file moved since this check ran — quoting today's line under
                             # yesterday's finding manufactures the contradiction; the finding stands
@@ -722,12 +732,15 @@ def _with_delimiter_facts(findings: list[str], plan, annotate: bool = True,
 
 
 # A finding produced by a program CRASHING rather than by a checker inspecting code. Matched on the
-# shapes runtimes actually print — an exception class name, a traceback frame, an assertion report —
-# not on one language's phrasing.
+# shapes runtimes actually print — an exception class at the HEAD of a located finding's message, a
+# traceback frame, an assertion report — not on one language's phrasing. The position matters: a
+# compiler diagnostic can mention a type named `SomeException` later in its own sentence (javac's
+# `unreported exception …; must be caught or declared`), and that is a source defect, not a runtime
+# raise site. The old anywhere-in-line match suppressed the grounded source quote for exactly that.
 _EXCEPTION_FINDING = re.compile(
-    r"(?im)^\s*(?:Traceback|Exception in thread|goroutine \d+)|\bpanic:"
-    r"|\b[A-Z]\w*(?:Error|Exception)\b"
-    r"|\bassertion failed\b|\bAssertionError\b|\bpanicked at\b"
+    r"(?im)^\s*(?:Traceback|Exception in thread|goroutine \d+)"
+    r"|(?:^|:\d+(?::\d+)?:\s+)(?:[\w.$]+\.)*[A-Z]\w*(?:Error|Exception)\b"
+    r"|\bpanic:|\bassertion failed\b|\bpanicked at\b"
     r"|\bat [\w.$]+\([\w.]+\.(?:java|kt|scala):\d+\)")
 
 
@@ -760,10 +773,10 @@ def _line_on_disk(finding: str, workspace: str) -> "str | None":
     """The on-disk text of the line a ``path:LINE…`` finding flags, or None. Feeds probeparse's
     F811 discriminator (def/class shadow = real bug; import rebinding = advisory) — the file
     access the pure predicate can't do itself."""
-    m = _FLAGGED_LINE_RE.match(finding)
-    if not m or not workspace:
+    location = _finding_location(finding)
+    if location is None or not workspace:
         return None
-    return _source_line(m.group(1), int(m.group(2)), workspace)
+    return _source_line(*location, workspace)
 
 
 def _is_hard_failure(plan, sid: str) -> bool:
