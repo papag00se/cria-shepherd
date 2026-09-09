@@ -46,7 +46,7 @@ from enum import Enum, auto
 from pathlib import Path
 
 from . import bodykeys, wsview
-from . import callcapture, dedup, denial, editrecovery, execcheck, focustrim, groundtruth, indicators, massage, participation, probediscovery, probegate, probeparse, proberun, prompts, selfcompact, shellshape, toolmenu, urlgrounding, verifytools, webfetch
+from . import callcapture, dedup, denial, editrecovery, execcheck, focustrim, groundtruth, indicators, massage, participation, probediscovery, probegate, probeparse, proberun, prompts, reasoning, selfcompact, shellshape, toolmenu, urlgrounding, verifytools, webfetch
 from .classify import _task_key, latest_user_text
 from . import jsontext, planner, refusalledger, writeproxy
 from .jsontext import extract_json_object, strip_think
@@ -2633,7 +2633,8 @@ class Loop:
         rlog.phase = f"coder-s{step}"  # label the call capture with the role + step
         coder = massage.apply(_parse_completion(self._ctx.coder_chat(framed, rlog)), framed.get("tools"), rlog)
         coder = _normalize_completion(coder, rlog)  # a task_complete call → step 'done' (or dropped)
-        coder = guard_rumination(coder, framed, self._ctx.coder_chat, rlog, step=step, phase=f"coder-s{step}")
+        coder = guard_rumination(coder, framed, self._ctx.coder_chat, rlog, step=step,
+                                 phase=f"coder-s{step}", coder_role=self._ctx.coder_role)
         coder = guard_truncation(coder, framed, self._ctx.coder_chat, rlog, step=step, phase=f"coder-s{step}")
         _strip_completion_banners(coder)  # scrub cria's own banners the coder parroted
         if self._ctx.coder_role is not None:  # strip leaked reasoning from the coder's content when off
@@ -9740,7 +9741,8 @@ def guard_probe_steer(gs: GuardState, body: dict, rlog, *, author, step=None) ->
     return authored or canned
 
 
-def guard_rumination(coder: dict, body: dict, coder_chat, rlog, *, step=None, phase: str = "coder") -> dict:
+def guard_rumination(coder: dict, body: dict, coder_chat, rlog, *, step=None, phase: str = "coder",
+                     coder_role=None) -> dict:
     """Rumination guard (ported from codex-local §19). The streaming coder aborted this turn as
     a reasoning loop (``finish_reason == "rumination"``) — the model was second-guessing itself
     into the ground and would otherwise return an empty turn or run to truncation. Re-prompt to
@@ -9827,8 +9829,26 @@ def guard_rumination(coder: dict, body: dict, coder_chat, rlog, *, step=None, ph
         _last_sent = list(conv)
         _last_notice = notice
         rlog.phase = f"{phase}-focus{attempt}"
+        retry_body = {**body, "messages": conv}
+        # BREAK THE LOOP BY TAKING THE CHANNEL AWAY. A rumination abort is runaway (or empty/looping)
+        # THINKING; re-prompting with reasoning still ON lets a weak model ruminate straight into the
+        # same wall. Replay of feed-pipeline-java x ornith15 1788907072 call 0054-focus1: reasoning ON,
+        # the retry emitted a tool call 1/8; reasoning OFF, 7/8 — and it was the OFF, not the notice
+        # wording (the ORIGINAL notice worked 3/3 off). So force reasoning OFF for the RETRY ONLY.
+        # retry_body is a shallow copy of body, so chat_template_kwargs must be COPIED before the flip
+        # or the next turn inherits reasoning-off; the original body keeps the role's reasoning, so the
+        # guard is bounded and self-reverting. The documented cost — a reasoning-trained model is less
+        # accurate starved of reasoning — is the deliberate trade: on a turn otherwise producing
+        # NOTHING, an imperfect artifact to iterate on beats another empty turn (#10, #14). A coder body
+        # always carries tools, so chat_template OFF is only the enable_thinking parameter (the nothink
+        # message-prefill is gated on no-tools), never a message rewrite.
+        if coder_role is not None and getattr(coder_role, "reasoning", None) not in (None, "off"):
+            retry_body["chat_template_kwargs"] = dict(retry_body.get("chat_template_kwargs") or {})
+            reasoning.apply_reasoning(retry_body, "off", coder_role.think_protocol)
+            rlog.emit("loop.rumination_reasoning_off", attempt=attempt, guard=which,
+                      protocol=coder_role.think_protocol)
         coder = massage.apply(
-            _parse_completion(coder_chat({**body, "messages": conv}, rlog)), body.get("tools"), rlog)
+            _parse_completion(coder_chat(retry_body, rlog)), body.get("tools"), rlog)
     coder.pop(bodykeys.RUMINATION, None)  # internal marker — never forward it
     for ch in coder.get("choices", []):  # normalize the sentinel finish_reason for downstream
         if ch.get("finish_reason") == "rumination":
