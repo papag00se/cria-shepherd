@@ -608,6 +608,39 @@ def _is_dependency_cache(path: str) -> bool:
     return any(marker in p for marker in _DEP_CACHE_MARKERS)
 
 
+# The package-manager cache ROOTS (~/.m2, ~/.gradle, ~/.cargo, ~/go/pkg) whose ARTIFACT subtree cria
+# DOES allow to be read (_DEP_CACHE_MARKERS above). A read of the ROOT itself — `find ~/.m2` to
+# discover the cache layout, or a stray settings.xml — stays refused (the root holds the manager's
+# credential/config files), but a bare "outside the workspace" makes a weak model infer it is OFFLINE
+# and abandon the network entirely. Walked: feed-pipeline-java x ornith15 1788933193 ran `find ~/.m2`,
+# drew the plain refusal, reasoned "there's likely NO network access" and burned ~5 early turns
+# hand-building a scratch ./tmp/m2repo and guessing unresolvable OpenCSV versions — while the network
+# was fine (it downloaded opencsv 5.8 the same session). Naming the readable artifact subtree, and
+# that this is a PATH limit and not a network one, is the sentence that ends that rabbit hole. This is
+# the reader-facing complement of a00ce45 (which allowed the artifact subtree itself): same jar, same
+# task, the layer up.
+_DEP_CACHE_ROOTS = (
+    ("/.m2/", "~/.m2/repository"),
+    ("/.gradle/", "~/.gradle/caches"),
+    ("/.cargo/", "~/.cargo/registry"),
+    ("/go/pkg/", "~/go/pkg/mod"),
+)
+
+
+def _dep_cache_root_hint(path: str) -> str:
+    """The readable artifact subtree (e.g. ``~/.m2/repository``) when ``path`` sits inside a package
+    manager's cache tree — else "". Only reached from ``_refusal`` for an already-REFUSED path, so it
+    names the cache ROOT or a credential sibling, never the allowed artifact subtree (which
+    ``path_refusal``/``command_refusal`` clear before any refusal is built)."""
+    if not path or not path.strip():
+        return ""
+    p = os.path.normpath(os.path.expanduser(path.strip())) + "/"
+    for marker, subtree in _DEP_CACHE_ROOTS:
+        if marker in p:
+            return subtree
+    return ""
+
+
 # `/1_000_000` in `cents /1_000_000` is integer division, not a filesystem path: a single rooted
 # token that is ALL digits/underscores (with an optional decimal part), a shape no real path uses.
 # The path-token scan grabs it because a space precedes the `/`. Walked: feed-pipeline-java x
@@ -695,7 +728,14 @@ def _refusal(verb: str, path: str, workspace: str | None = None) -> str:
     # left a blocked model inventing roots (/tmp/src, /tmp/project) for whole runs — the refusal is
     # the one place cria can state the real one.
     root = f" ({workspace})" if workspace else ""
-    note = prompts.load("external_path_case_note") if _case_typo_of_workspace(path, workspace) else ""
+    if _case_typo_of_workspace(path, workspace):
+        note = prompts.load("external_path_case_note")
+    else:
+        # A refused package-manager cache root (~/.m2, ~/.gradle, ...) draws the offline-misdiagnosis
+        # note: the artifact subtree IS readable and this is not a network limit.
+        subtree = _dep_cache_root_hint(path)
+        note = (prompts.fill(prompts.load("external_path_depcache_note"), subtree=subtree)
+                if subtree else "")
     return prompts.fill(prompts.load("external_path_refusal"), verb=verb, path=repr(path), root=root,
                         casenote=note)
 
