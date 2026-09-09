@@ -526,14 +526,24 @@ def _drop_superseded_writes(messages: list[dict]) -> tuple[list[dict], int]:
     # that concludes the file was never written and starts again (the disown-your-own-work failure
     # the re-orientation seat exists for).
     if dropped:
-        out.append({"role": "user",
-                    # THE REMAINDER IS NAMED. `paths` was cut at six with no marker, so a note could
-                    # read "9 earlier write(s) removed … : a, b, c, d, e, f" and the model had no
-                    # way to learn which files the missing bytes belonged to. The two units in the
-                    # sentence are deliberate — N writes were removed, ACROSS these files — and the
-                    # count stays a count of calls.
-                    "content": prompts.render("superseded_writes_dropped", count=str(dropped),
-                                              paths=prompts.named_list(dropped_paths))})
+        note = {"role": "user",
+                # THE REMAINDER IS NAMED. `paths` was cut at six with no marker, so a note could
+                # read "9 earlier write(s) removed … : a, b, c, d, e, f" and the model had no
+                # way to learn which files the missing bytes belonged to. The two units in the
+                # sentence are deliberate — N writes were removed, ACROSS these files — and the
+                # count stays a count of calls.
+                "content": prompts.render("superseded_writes_dropped", count=str(dropped),
+                                          paths=prompts.named_list(dropped_paths))}
+        # THIS IS HISTORICAL CONTEXT, NOT THE LATEST ACTION. Appending it after the read ledger and
+        # workspace inventory made its old "To be sure, read the file" clause the most salient line.
+        # On feed-pipeline-java x ornith15 1788984830 calls 0094/0096/0102, the complete file bytes
+        # and a do-not-rediscover read record were already visible; the coder quoted this later note
+        # and reread Importer.java anyway. Keep the notice (a vanished write otherwise gets disowned),
+        # but place it before an existing trailing user block so newer facts/actions retain the tail.
+        insert_at = len(out)
+        while insert_at and out[insert_at - 1].get("role") == "user":
+            insert_at -= 1
+        out.insert(insert_at, note)
     return (out if dropped else messages), dropped
 
 
