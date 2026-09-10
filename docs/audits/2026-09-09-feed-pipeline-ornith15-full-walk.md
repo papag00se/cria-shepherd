@@ -51,14 +51,12 @@ circles and must read the file properly. CALL 0102 acknowledges the earlier read
 **C — repeated action.** Those calls request `Importer.java` ranges already present in the prompt,
 instead of repairing the four exact Maven failures.
 
-**Upstream correction.** The notice now states only what the transform authoritatively knows: an
-earlier call was removed, the later whole-file replacement remains in full, and no placeholder was
-inserted into a surviving tool argument. It no longer claims current disk state or orders a reread.
-As historical context, it is inserted before an already-trailing user fact/action block instead of
-burying that newer information.
-
-This preserves the safeguard from `d387b64`: superseded write calls and results still disappear as
-whole units, the newest replacement payload remains byte-complete, and the removal is still stated.
+**Experimental upstream correction, rejected.** Commit `3ebcc6a` changed the notice to state only
+historical transform facts and placed it before an already-trailing user fact/action block. This
+preserved the whole-call removal safeguard from `d387b64` and improved the narrow exact-call replay,
+but the required live full-cell replay regressed from 35% to 30%. Under the replay rule, the change
+was invalidated and reverted; the causal observation remains open rather than being promoted into a
+shipping mechanism.
 
 ### 2. Maven/source grounding was accurate; the coder inverted it
 
@@ -126,26 +124,33 @@ Experiments rejected before the final arm:
   the earlier safeguard that tells the coder why its writes vanished.
 - Ordering-only: rereads fell from 4/6 to 2/6, while retaining the misleading disk/reread sentence.
 
-Final combined arm—factual historical wording plus placement before newer tail facts:
+Final experimental arm—factual historical wording plus placement before newer tail facts:
 
 | arm | repeated `Importer.java` read | other grounded action | invalid |
 |---|---:|---:|---:|
 | captured | 6/8 | 2/8 | 0 |
 | corrected | 1/8 | 7/8 | 0 |
 
-The corrected arm preserved the notice and produced no empty/no-tool response in this replay. It did
-not magically solve the Java task: most displaced actions inspected data or dependency evidence.
-The claim is deliberately narrow—the cria-authored instruction no longer makes the already-read
-source the dominant next action.
+The experimental arm preserved the notice and produced no empty/no-tool response in this replay. It
+did not solve the Java task: most displaced actions inspected data or dependency evidence.
 
 Replay script: `/tmp/replay_superseded_note.py`.
 
-## Regression test
+## Required full-cell replay — experiment invalidated
 
-`tests/test_a_superseded_write_note_does_not_order_a_reread.py` recreates the incident shape:
-multiple whole-file writes followed by newer read/inventory facts. It fails before the correction
-because the note is last and says to read; it passes afterward only when the historical notice
-precedes newer facts and contains neither a disk-current claim nor a reread imperative.
+Run `feed-pipeline-java_ornith15_codex_poff_1788996499` exercised `3ebcc6a` live at L5, planner off:
+
+- 30 active minutes: **30% / continue**.
+- 45 active minutes: **30% / stalled**.
+- Terminal: `milestone-stalled-45min`, 124 model calls, 52.6 wall minutes.
+
+The model wrote OpenCSV integration, linear SKU tracking, currency cleanup, and skipped-row
+scaffolding. The final importer still did not compile, launched no parallel workers, truncated
+currency values through `LongAdder.add((long) value)`, let malformed numbers escape, and omitted
+`REVIEW.md`. Between the frozen 30- and 45-minute snapshots it made only one narrow constructor
+change. This is worse than the 35%-useful source run and therefore invalidates the otherwise
+plausible exact-call result. Commit `3ebcc6a` was reverted; its incident-specific regression test
+was removed because it asserted behavior the live replay rejected.
 
 The existing superseded-write tests remain in force: only genuinely landed whole-file replacements
 supersede earlier writes, refused writes do not, path aliases converge, removed tool results do not

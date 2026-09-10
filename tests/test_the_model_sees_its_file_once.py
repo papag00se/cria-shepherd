@@ -104,8 +104,7 @@ class TheSupersededCopiesGoTests(unittest.TestCase):
         self.assertEqual(note["role"], "user")
         self.assertIn("⟦ctx:facts⟧", note["content"])
         self.assertIn("removed from the history", note["content"])
-        self.assertIn("whole-file write", note["content"])
-        self.assertIn("remains above in full", note["content"])
+        self.assertIn("Nothing was lost", note["content"])
 
     def test_nothing_cria_wrote_is_left_in_an_ARGUMENT_slot(self):
         """THE WHOLE POINT. The old rendering put cria's prose in the `content` argument of a
