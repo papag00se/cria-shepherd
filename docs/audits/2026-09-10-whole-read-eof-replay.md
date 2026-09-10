@@ -33,6 +33,14 @@ CALL 0051 originally cited the 7551-versus-7552 discrepancy as evidence of stale
 
 The earlier late-boundary 0099 replay also remained trapped in false compiler/version theories. That is negative recovery evidence, not proof that preserving file bytes lacks preventive value.
 
+## Fresh cell outcome
+
+The unchanged Ornith/Codex/planner-off cell `feed-pipeline-java_ornith15_codex_poff_1789025662` ended `milestone-stalled-60min`. Independent checkpoint judgments were 30% (continue), 45% (continue), and 50% (stalled). Independent final archive inspection confirmed 50% usefulness and no deliverable changes after the last checkpoint. This does not meet the strictly-above-75% campaign target and does not establish the proposed preventive benefit.
+
+The final code compiles and includes reusable Commons CSV integration, linear SKU tracking and partial malformed-row handling. Workers remain disabled, their returned partial maps are discarded, shared mutable worker state persists, and `REVIEW.md` is absent. Runtime comparisons confirmed baseline-equivalent printed clean-feed totals, not bit-level map equality. The auxiliary benchmark's speedup is against the coder's reconstruction of the original algorithm, not an independently preserved original executable; whole-process timings were lower. These limitations remain part of the judgment, not waived requirements.
+
+Final verdict is recorded through `suite/usefulness.py`, attributed to independent evaluator `38594da7-3e17-4c7f-8e38-53bd7a0a6441`. Probe artifacts remain under `/tmp/feed-pipeline-eval-060.L0CS2R/tmp/`; workspace and milestone snapshots are preserved under `~/.cria/suite/`. Full transcript walking is underway in `/tmp/feedwalk-1789025662/`, with repeated prompts included and per-reader coverage ledgers. Findings require parent verification before any next fix.
+
 ## Status
 
 Transport correctness has fails-before/passes-after evidence. Independent review found no blocking correctness issue and approved exactly one fresh prevention-test cell after an atomic commit. Status-less results remain eligible for existing non-Codex compatibility: the rule is not evidenced unsuccessful, not universally proven exit-zero. Behavioral replay is mixed, not a demonstrated recovery or campaign win. Independent holistic usefulness must exceed 75%; compilation alone cannot satisfy the target. At 75% or below the campaign-effect hypothesis is rejected, while the correctness fix remains unless the failed-run walk establishes a regression. Archived workspaces were read but not modified.

@@ -1,6 +1,6 @@
 # Battery — the engagement ladder
 
-**Last updated 2026-09-09 17:21** — newest row `feed-pipeline-java_ornith15_codex_poff_1788969546`, finished 2026-09-09 10:19.
+**Last updated 2026-09-10 01:53** — newest row `feed-pipeline-java_ornith15_codex_poff_1788969546`, finished 2026-09-09 10:19.
 
 Each cell is an inferred usefulness percentage 🟢≥88 🟡≥63 🟠≥38 🔴 below; `·` = not judged. `[engagement] level = 0..5`, each rung implying every rung below it. gemma4 / qwen35 / ternary-bonsai / nemotron-elastic are FROZEN historical inference rows recovered into suite/historical_ladder.json; every other model reads live from results.jsonl.
 
