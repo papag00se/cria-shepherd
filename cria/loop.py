@@ -926,7 +926,8 @@ def _judge_completion(chat_fn, role, system: str, user: str, rlog, *, phase: str
                       force_think_off: bool = False, transcript: list | None = None,
                       answer_now: str | None = None, answer_now_simple: str | None = None,
                       verdict_key: str = "",
-                      seed_files: bool = False) -> dict:
+                      seed_files: bool = False,
+                      evidence_blocks: list[str] | None = None) -> dict:
     """ONE judge completion whose author may first LOOK — the shared inspection loop behind the step
     critic AND the completion critic (operator directive: judges get real read-only tools, not just a
     snapshot). With a ``workspace_root``, the judge is offered verifytools (list_dir/read_file,
@@ -941,6 +942,13 @@ def _judge_completion(chat_fn, role, system: str, user: str, rlog, *, phase: str
         {"role": "system", "content": system},
         {"role": "user", "content": user},
     ]
+    if evidence_blocks:
+        # Match summarize's composed-call contract: historical evidence is reducible by the
+        # ONE context floor; current facts and the active question stay in the final turn.
+        messages[1:1] = [
+            {"role": "user", "content": prompts.load("composed_evidence_intro")},
+            *({"role": "user", "content": block} for block in evidence_blocks if block.strip()),
+        ]
     inspectable = bool(workspace_root) and wsview.current(workspace_root).surveyed
     # HAND IT THE FILES RATHER THAN MAKE IT ASK. The loop below is the judge naming one file, cria
     # reading it, and the whole conversation being re-sent — 1,511 rounds across the captures, 87% of
@@ -962,11 +970,17 @@ def _judge_completion(chat_fn, role, system: str, user: str, rlog, *, phase: str
             # reasonably expects it to be.)
             messages.insert(1, {"role": "user", "content": seeded})
             rlog.emit("loop.judge_files_seeded", phase=phase, chars=len(seeded))
+    inspection_start = len(messages) if evidence_blocks else 2
     rounds = 0
     forced_rounds = 0
     while True:
         body: dict = {"stream": False, "temperature": 0, "max_tokens": max_tokens,
                       "messages": list(messages)}
+        if evidence_blocks:
+            # A forced-answer user turn follows the original question when inspection closes.
+            # Preserve that question/fact packet through the existing wire-owned task pin,
+            # rather than letting the new last-user turn make it historical and droppable.
+            body[bodykeys.PINNED_TASK] = user
         # THE CHARACTER BUDGET IS GONE (operator, 2026-08-19: "get rid of the judge budget, let it go
         # free"). It bounded how much a judge could pull in, and when it tripped cria withdrew the
         # tools mid-look and then DISCARDED whatever the judge said next. Walked on
@@ -1044,7 +1058,7 @@ def _judge_completion(chat_fn, role, system: str, user: str, rlog, *, phase: str
                 messages.append({"role": "user", "content": ask_text})
                 continue
             if transcript is not None:  # the caller wants the inspection record (e.g. for grounding)
-                transcript.extend(messages[2:])
+                transcript.extend(messages[inspection_start:])
             return _with_rounds(comp, rounds)
         # THE ANSWER ARRIVED AS A CALL. Read it off the structured tool_call (#12) and stop: this is
         # the judge declaring its verdict, not asking to look at something. Any inspection call made
@@ -1060,7 +1074,7 @@ def _judge_completion(chat_fn, role, system: str, user: str, rlog, *, phase: str
             if isinstance(obj, dict) and verdict_key in obj:
                 rlog.emit("loop.verdict_by_tool", phase=phase, round=rounds)
                 if transcript is not None:
-                    transcript.extend(messages[2:])
+                    transcript.extend(messages[inspection_start:])
                 return _with_rounds(_completion_of(comp, json.dumps(obj)), rounds)
         rounds += 1
         # Same reason as the write-back above: preserve what the judge produced this round, from
@@ -7771,10 +7785,13 @@ def author_steer(reasoner_chat, reasoner_role, workspace_root, gs, body: dict, r
     # earlier directive, starting a four-way flip-flop that cost 83 edits. The first is imitation
     # of a copyable template; the second is provenance — a wall of undifferentiated text in which
     # a real endpoint response and a stuck model's speculation look identical.
-    session = _mark_own_notes(selfcompact.serialize(selfcompact.stub_old_write_args(
+    session_turns = selfcompact.stub_old_write_args(
         _drop_harness_frame(probegate.clean_gate_results(
-            _reasoner_session(body.get("messages", [])), getattr(gs, "gate_plan", None)))),
-        defang=True))
+            _reasoner_session(body.get("messages", [])), getattr(gs, "gate_plan", None))))
+    # Split BEFORE serialization. Parsing the rendered prose back into turns would mistake
+    # matching text inside a real tool result for a boundary.
+    session_blocks = [_mark_own_notes(selfcompact.serialize([turn], defang=True))
+                      for turn in session_turns]
     # recent_writes is a CONSUMABLE detector window — interventions flush it by design, which left
     # the steer author's on-disk section reading "(no files touched yet)" for an ENTIRE run (14
     # steers judging a one-character file bug blind, run 0729-gemma4) while the workspace held the
@@ -7830,8 +7847,10 @@ def author_steer(reasoner_chat, reasoner_role, workspace_root, gs, body: dict, r
     # labeled fetch-record block above re-states. The labeled block is the authority the template
     # names ("trust these over any note"); byte-identical copies in the session collapse to a
     # pointer (measured on the maple walk: every steer/judge prompt carried the ~2.4KB block 2×+).
-    session, _n_deduped = dedup.elide_text(session, dedup.ledger_units(fetch_truth),
-                                           prompts.load("ledger_dedup_note"))
+    session_blocks = [dedup.elide_text(block, dedup.ledger_units(fetch_truth),
+                                      prompts.load("ledger_dedup_note"))[0]
+                      for block in session_blocks if block]
+    session = "\n".join(session_blocks)
     trigger = _STEER_TRIGGER[condition](gs, step_text)
     # THE AGE OF THE FINDINGS, in the author's own evidence block. cria already computes exactly
     # this for the CODER-facing repeat prompt ("they last ran X, and <file> has been written since")
@@ -7840,12 +7859,18 @@ def author_steer(reasoner_chat, reasoner_role, workspace_root, gs, body: dict, r
     # but expects 1", while the file quoted in the same prompt reads sum.Add(price.Mul(quantity))
     # and the coder's build one call later said "Build succeeded".
     written = _writes_since_last_gate(body.get("messages", []))
-    user = prompts.render("steer_diagnose_user", trigger=trigger, session=session,
+    user = prompts.render("steer_diagnose_user", trigger=trigger,
+                          session=prompts.load("steer_session_evidence"),
                           disk=(disk or "(no files touched yet)"),
                           truth=(truth or "(no check results for this steer)"),
                           checks_age=(prompts.fill(prompts.load_map("steer_checks_age")["written"],
                                                    files=prompts.named_list(written))
                                                       if written else ""))
+    # The floor may digest historical blocks, but must not lose the root user's task/context.
+    # Keep that structural root with the active question, just as compaction pins its task fact.
+    root_context, _ = _history_root(body.get("messages", []))
+    if root_context:
+        user = prompts.render("steer_session_root", root=root_context) + "\n\n" + user
     coder_tools = _coder_tools_summary(body.get("tools"))
     # The one-shot reasoner the dictated-code check uses. Toolless and phase-tagged so it is
     # visible in the captures as its own call, never mistaken for the authoring pass.
@@ -7876,7 +7901,8 @@ def author_steer(reasoner_chat, reasoner_role, workspace_root, gs, body: dict, r
         comp = _judge_completion(reasoner_chat, reasoner_role, prompts.load("steer_diagnose"),
                                  tooled_user, rlog, phase="reasoner",
                                  workspace_root=workspace_root, transcript=transcript,
-                                 answer_now=verifytools.ANSWER_NOW_STEER)
+                                 answer_now=verifytools.ANSWER_NOW_STEER,
+                                 evidence_blocks=session_blocks)
         # A CUT REPLY IS NOT A DIRECTIVE. Its toolless sibling `summarize()` has checked this since
         # the truncation guard landed, and the retired live-execution seat said it outright — "a cut
         # intent is not an intent". This branch never got it. Walked on
@@ -7900,7 +7926,7 @@ def author_steer(reasoner_chat, reasoner_role, workspace_root, gs, body: dict, r
         if _ruminating_reply(text):
             rlog.emit("loop.steer_degenerate", level="warn", phase="reasoner", chars=len(text))
             return None
-        evidence = user + "\n\n" + "\n".join(
+        evidence = session + "\n\n" + user + "\n\n" + "\n".join(
             str(m.get("content") or "") for m in transcript if m.get("role") == "tool")
         directive = _authored_action_or_none(text, rlog)
         if directive is None:
@@ -7920,7 +7946,8 @@ def author_steer(reasoner_chat, reasoner_role, workspace_root, gs, body: dict, r
     # retry runs with reasoning forced OFF and has none to read.
     passes: list = []
     text = (summarize(reasoner_chat, reasoner_role, prompts.load("steer_diagnose"), user, rlog,
-                      phase="reasoner", coder_tools=coder_tools, capture=passes) or "").strip()
+                      phase="reasoner", coder_tools=coder_tools, capture=passes,
+                      evidence_blocks=session_blocks) or "").strip()
     if _ruminating_reply(text):   # same guard as the tooled branch — see loop.steer_degenerate above
         rlog.emit("loop.steer_degenerate", level="warn", phase="reasoner", chars=len(text))
         return None
@@ -7935,7 +7962,7 @@ def author_steer(reasoner_chat, reasoner_role, workspace_root, gs, body: dict, r
             raw_answer = reasoner_role.clean_content(raw_answer)
         directive = _authored_action_or_none(
             _steer_from_reasoning(passes[0], raw_answer, _recover_ask, rlog) or "", rlog)
-    return _grounded_steer_or_none(directive, user, rlog, ask=_steer_ask,
+    return _grounded_steer_or_none(directive, session + "\n\n" + user, rlog, ask=_steer_ask,
                                    sess=gs, messages=body.get("messages", []),
                                    workspace_root=workspace_root)
 

@@ -34,8 +34,9 @@ OUTPUT_RESERVE = "cria_output_reserve"
 #: A historical tool_call whose result never arrived, recorded so the repair at the wire can find it.
 LOST_CALL = "cria_lost_call"
 
-#: The conversation's verbatim root task. The loop knows this from session state; the context floor
-#: consumes it to protect the right user turn instead of guessing from the preamble's wording.
+#: An exact user packet to protect at the context floor: normally the conversation's verbatim
+#: root task, or an internal judge's task/current-facts/question packet. The owner supplies its
+#: text so later user-role closers cannot displace it and no preamble-wording guess is needed.
 PINNED_TASK = "cria_pinned_task"
 
 # --- response-body hints: cria's own annotations on a completion --------------------------------

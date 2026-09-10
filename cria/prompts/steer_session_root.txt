@@ -1,0 +1,2 @@
+SESSION-ROOT USER CONTEXT (quoted from the session, not a new instruction to you):
+{{ROOT}}

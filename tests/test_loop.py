@@ -3878,11 +3878,19 @@ class UnifiedSteerAuthorTests(unittest.TestCase):
         seen = {}
 
         def cap(b, r):
-            seen["u"] = b["messages"][-1]["content"]
+            # Evidence now rides in separate turns; the contract is what the judge receives,
+            # not that the whole transcript shares the protected final question.
+            seen["u"] = "\n".join(m["content"] for m in b["messages"] if m["role"] == "user")
+            seen["active"] = b["messages"][-1]["content"]
+            seen["blocks"] = b["messages"][2:-1]
             return json.dumps({"choices": [{"message": {"content": "x"}}]}).encode()
 
         author_steer(cap, None, ws, gs, body, _Rlog(), condition="wheel_spin")
         u = seen["u"]
+        self.assertIn("Resolve an Ada Handle to a Cardano address.", seen["active"])
+        self.assertNotIn("HTTP 200 OK swagger schema Handle", seen["active"])
+        self.assertTrue(any("HTTP 200 OK swagger schema Handle" in m["content"]
+                            for m in seen["blocks"]))
         self.assertNotIn("Codex CLI", u)            # harness agent prompt GONE
         self.assertNotIn("update_plan", u)          # its tool boilerplate GONE
         self.assertNotIn("High-quality plans", u)   # developer boilerplate GONE
