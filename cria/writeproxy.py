@@ -1668,7 +1668,7 @@ def _blind_pipe_failure(command: str, content: str) -> bool:
     return _strip_exec_envelope(content).strip() == ""
 
 
-def _strip_exec_envelope(content: str) -> str:
+def _strip_exec_envelope(content: str, *, preserve_eof: bool = False) -> str:
     """The harness exec envelope around a re-presented synthetic-tool result → just the payload.
     Untouched when the envelope isn't present (a native path, an already-clean or non-exec result)."""
     if not content:
@@ -1676,14 +1676,18 @@ def _strip_exec_envelope(content: str) -> str:
     m = _ENVELOPE_OUTPUT_LINE.search(content)
     if not m or "Process exited with code" not in content[:m.start()]:
         return content
-    lines = content[m.end():].split("\n")
+    # The newline immediately after Output: belongs to framing; subsequent blank lines
+    # in a whole-file payload belong to the file, just like its trailing newlines.
+    lines = content[m.end():].removeprefix("\n").split("\n")
     kept_warning = ""
-    while lines and (_ENVELOPE_ADVISORY.match(lines[0]) or not lines[0].strip()
+    while lines and (_ENVELOPE_ADVISORY.match(lines[0]) or (not preserve_eof and not lines[0].strip())
                      or _ENVELOPE_CUT_WARNING.match(lines[0])):
         line = lines.pop(0)
         if _ENVELOPE_CUT_WARNING.match(line):
             kept_warning = line.strip()      # the payload is a piece — say so above it
-    body = "\n".join(lines).rstrip("\n")
+    body = "\n".join(lines)
+    if not preserve_eof:
+        body = body.rstrip("\n")
     return f"{kept_warning}\n{body}" if kept_warning else body
 
 
@@ -1838,8 +1842,8 @@ _HARNESS_CUT_HEAD = re.compile(r"^Warning: truncated output(?:\s*\(original toke
 def note_harness_cuts(messages: list, rlog=None) -> int:
     """Count tool results the HARNESS truncated before cria ever saw them, and say so in the log.
 
-    OBSERVE, NEVER ACT. Nothing is altered and nothing reaches the model: this is cria learning a
-    fact about the harness it is fronting, on the only channel where that fact is visible.
+    Nothing is altered and no new text reaches the model. The returned fact also prevents a
+    known-cut whole read from being cached as a complete file by represent_inbound.
 
     Why it exists. `content_reduce.INLINE_RESULT_MAX_BYTES = 9000` is a hardcoded copy of a constant
     from ONE harness's source — Codex's `TruncationPolicyConfig::bytes(10_000)` — in a project whose
@@ -1971,14 +1975,18 @@ def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | Non
                 if not wsview.apply_survey(view, survey) and rlog is not None:
                     rlog.emit("wsview.survey_rejected", level="warn", bytes=len(survey),
                               closed=wsview.SURVEY_CLOSE in survey, **wsview.last_reject())
+            exit_code = _EXIT_CODE.search(content)
+            preserve_eof = (tid in read_whole and not denial.is_denied(content)
+                            and (exit_code is None or exit_code.group(1) == "0")
+                            and not note_harness_cuts([m]))
             if tid in write_paths and write_paths[tid] and tid not in failed_ids \
                     and any(ln.strip() == _WROTE for ln in content.splitlines()):
                 if tid in written:
                     view.note_written(write_paths[tid], written[tid])
                 elif tid in edited:
                     view.note_changed(write_paths[tid])
-            elif tid in read_whole and not denial.is_denied(content):
-                # A REFUSAL IS NOT THE FILE. The write path two lines up requires proof the call
+            elif preserve_eof:
+                # A REFUSAL, FAILED READ OR CUT RESULT IS NOT THE FILE. The write path requires proof the call
                 # landed (`_WROTE`); this one had no equivalent, so every whole read cria itself
                 # refused — oversize, spilled, missing, unreadable, a directory — was recorded as
                 # that file's BYTES. Found in the captures: 20260822T174652 call 0112, the
@@ -1995,9 +2003,11 @@ def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | Non
                 # It also re-opens the incident `loop.search_file_text` records as fixed
                 # (searching cria's own pointer instead of the file). The mark is on the text
                 # already, applied at the site that decided to refuse — this just reads it.
-                view.note_read(read_whole[tid], _strip_exec_envelope(content))
+                # Whole successful reads become authoritative file bytes, including EOF.
+                # Raw Codex ingress fixtures prove it does not append a payload newline.
+                view.note_read(read_whole[tid], _strip_exec_envelope(content, preserve_eof=preserve_eof))
             if tid in strip_ids:                          # read/nav result → drop the shell envelope
-                out.append({**m, "content": _strip_exec_envelope(content)})
+                out.append({**m, "content": _strip_exec_envelope(content, preserve_eof=preserve_eof)})
             elif tid in write_paths and any(ln.strip() == _WROTE for ln in content.splitlines()):  # write/edit SUCCESS
                 out.append({**m, "content": prompts.render("write_confirm", path=write_paths[tid])})
             elif tid in write_paths:                      # write/edit FAILURE → strip the shell envelope,
