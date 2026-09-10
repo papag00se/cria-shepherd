@@ -155,3 +155,6 @@ was removed because it asserted behavior the live replay rejected.
 The existing superseded-write tests remain in force: only genuinely landed whole-file replacements
 supersede earlier writes, refused writes do not, path aliases converge, removed tool results do not
 become orphans, and the surviving payload remains complete.
+
+The required line-by-line walk of this rejected full-cell replay is recorded in
+[`2026-09-10-feed-pipeline-ornith15-rejected-rerun-walk.md`](2026-09-10-feed-pipeline-ornith15-rejected-rerun-walk.md).
