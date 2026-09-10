@@ -844,6 +844,10 @@ def _read_command(args: dict) -> str | None:
         return None
     q = _qbash(path)
     start, end = args.get("start_line"), args.get("end_line")
+    # An end-only range is a prefix, not a whole read. Keep explicit invalid starts
+    # and non-integer ends on their existing paths; only supply the omitted bound.
+    if "start_line" not in args and type(end) is int and end > 0:
+        start = 1
     # An INVERTED range is its own defect and gets its own answer. The old flow dropped the
     # end_line silently (the `end >= start` guard below fails, so the start-only branch read
     # start→EOF) and then refused THAT as "too large — narrow your window" — about a request the
