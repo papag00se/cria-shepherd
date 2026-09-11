@@ -1,0 +1,3 @@
+The user's original task is supplied below only as protected context for deciding which historical evidence matters. Do not perform the task or give a verdict. This block is not part of the numbered source page and must not be included in the selected source lines.
+
+{{TASK}}

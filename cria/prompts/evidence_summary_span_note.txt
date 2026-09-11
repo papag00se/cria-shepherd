@@ -1,0 +1,2 @@
+⟦ctx:summary⟧ Model-made summary of historical action-log bytes [{{START}}, {{END}}) of {{TOTAL}}. This covers only that source span. It is a summary/claim, not verbatim tool output or a statement of the current workspace.
+{{SUMMARY}}

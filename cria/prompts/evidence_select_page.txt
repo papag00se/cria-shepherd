@@ -1,0 +1,7 @@
+Historical source-log UTF-8 byte span [{{START}}, {{END}}) of {{TOTAL}}. This is one page, not the complete session. It may begin or end inside an action or result. Do not infer missing context.
+
+The page has {{LINES}} numbered source lines. These labels identify log-page lines, NOT line numbers in a source-code file. Labels were added for selection and are not part of the original text.
+
+BEGIN NUMBERED SOURCE PAGE
+{{SOURCE}}
+END NUMBERED SOURCE PAGE

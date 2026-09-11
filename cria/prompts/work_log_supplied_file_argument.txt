@@ -1,0 +1,2 @@
+[argument-reference view, not literal call syntax] {{ARGUMENTS}}
+The content argument was exactly the file contents quoted for {{PATH}} in the complete file block supplied with this request.
