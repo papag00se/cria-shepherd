@@ -257,6 +257,95 @@ class WorkLogLabelsTheCallNotTheBodyTests(unittest.TestCase):
                          '$ write_file {"path":"a.py"}\n  -> wrote a.py\n'
                          '$ exec_command {"cmd":"pytest -q"}\n  -> 3 passed')
 
+    def test_boundary_bearing_refusal_keeps_exact_arguments_body_and_call_frame(self):
+        # The decoded OpenAI text fields, including their EOF boundary bytes, are evidence.  A
+        # refusal remains attributed to the `$` header, never a later literal-argument line.
+        args = "\n\t{\"path\":\"tmp/a\"}\r\n"
+        body = denial.mark("\n\ttool-provided refusal context\r\n")
+        label = prompts.load("work_log_denied")
+        rendered = self._log(_turn("refused", "read_file", args, body))
+
+        self.assertEqual(rendered, f"$ read_file {label} {args}\n  -> {body}")
+        self.assertEqual(next(line for line in rendered.splitlines() if line.startswith("$ read_file")),
+                         f"$ read_file {label} ")
+        self.assertIn(args, rendered)
+        self.assertEqual(rendered.split("  -> ", 1)[1], body)
+        self.assertNotIn(label, rendered.split("  -> ", 1)[1])
+
+    def test_label_like_multiline_real_payload_cannot_steal_refusal_attribution(self):
+        # Appearance is not authority.  The first payload resembles a denial header, but only the
+        # second call has both the structured call id and a denial-marked result.
+        label = prompts.load("work_log_denied")
+        real_payload = f"\n$ read_file {label} (literal tool text)\r\n"
+        refused_args = "\n\t{\"path\":\"denied\"}\r\n"
+        refused_body = denial.mark("\nactual refusal ground truth\r\n")
+        messages = [{"role": "assistant", "tool_calls": [
+            {"id": "real", "type": "function",
+             "function": {"name": "read_file", "arguments": '{"path":"real"}'}},
+            {"id": "refused", "type": "function",
+             "function": {"name": "read_file", "arguments": refused_args}},
+        ]},
+        {"role": "tool", "tool_call_id": "real", "content": real_payload},
+        {"role": "tool", "tool_call_id": "refused", "content": refused_body}]
+
+        rendered = self._log(messages)
+        headers = [line for line in rendered.splitlines() if line.startswith("$ read_file")][:2]
+        self.assertEqual(len(headers), 2)
+        self.assertNotIn(label, headers[0])
+        self.assertIn(label, headers[1])
+        self.assertFalse(denial.is_denied(real_payload))
+        self.assertTrue(denial.is_denied(refused_body))
+        self.assertIn(real_payload, rendered)
+        self.assertIn(refused_args, rendered)
+        self.assertIn(refused_body, rendered)
+
+    def test_nonempty_whitespace_result_is_preserved_but_empty_result_stays_absent(self):
+        whitespace = " \r\n\t"
+        self.assertEqual(self._log(_turn("empty", "exec_command", '{"cmd":"true"}', "")),
+                         '$ exec_command {"cmd":"true"}')
+        self.assertEqual(self._log(_turn("space", "exec_command", '{"cmd":"printf"}', whitespace)),
+                         '$ exec_command {"cmd":"printf"}\n  -> ' + whitespace)
+
+    def test_ordinary_refused_framing_is_unchanged(self):
+        args = '{"path":"ordinary"}'
+        body = denial.mark("ordinary refusal text")
+        self.assertEqual(self._log(_turn("ordinary", "read_file", args, body)),
+                         f"$ read_file {args} {prompts.load('work_log_denied')}\n  -> {body}")
+
+    def test_literal_boundary_blocks_reach_evidence_owners_and_fold_only_when_identical(self):
+        # This stays below the model-summary threshold.  It proves the immediate real consumers
+        # preserve literal boundaries and that the existing exact deduplicator, rather than a
+        # whitespace normalizer, performs the allowed reduction.
+        args = "\n\t{\"path\":\"tmp/a\",\"payload\":\"" + ("x" * 260) + "\"}\r\n"
+        result = "\n" + ("literal tool result " * 18) + "\r\n"
+        messages = (_turn("one", "read_file", args, result)
+                    + _turn("two", "read_file", args, result))
+        log = self._log(messages)
+        folded = loop._dedup_evidence(log)
+        sess = loop.PlanSession(plan=loop.Plan(id="p", task="t", created="c", items=[]))
+        sess.workspace_root = ""
+        lp = loop.Loop.__new__(loop.Loop)
+        grounded = lp._grounded_evidence(sess, {"messages": messages}, _Rlog())
+        satisfaction = loop._satisfaction_evidence(messages, rlog=_Rlog())
+
+        self.assertEqual(log.count(args), 2)
+        self.assertEqual(log.count(result), 2)
+        self.assertEqual(folded.count(args), 1)
+        self.assertEqual(folded.count(result), 1)
+        self.assertIn("repeat 1× more", folded)
+        self.assertIn(args, grounded)
+        self.assertIn(result, grounded)
+        self.assertIn(args, satisfaction)
+        self.assertIn(result, satisfaction)
+
+    def test_boundary_whitespace_does_not_bypass_the_existing_checker_visibility_owner(self):
+        from cria import probegate
+
+        checker = "\n  " + probegate.CHECKS_MARKER + "\r\n    exact checker line\r\n"
+        messages = _turn("check", "exec_command", '{"cmd":"pytest"}', checker)
+        self.assertNotIn(checker, loop._work_log(messages))
+        self.assertIn(checker, loop._work_log(messages, keep_checks=True))
+
 
 class TheSearchDenialIsLabelledNotDeletedTests(unittest.TestCase):
     """``_is_cria_scaffolding`` used to DELETE the search-read denial from the log. That removed the

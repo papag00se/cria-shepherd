@@ -4788,16 +4788,20 @@ def _work_log(messages: list[dict], *, keep_checks: bool = False, rlog=None,
         if role == "assistant":
             for tc in m.get("tool_calls") or []:
                 fn = tc.get("function") or {}
-                args = str(fn.get("arguments", "")).strip()
+                args = str(fn.get("arguments", ""))
                 if _is_cria_scaffolding(args, keep_checks=keep_checks):
                     continue
                 mark = ""
                 if tc.get("id") in denied_ids:
                     mark = " " + DENIED_CALL_LABEL
                     labelled += 1
-                lines.append(f"$ {fn.get('name')} {args}{mark}")
+                # An argument's CR/LF is tool text, not a structural boundary cria may erase.  Keep
+                # the existing call-only denial label on the physical `$` frame in that one case.
+                frame_mark = mark if mark and ("\n" in args or "\r" in args) else ""
+                suffix_mark = "" if frame_mark else mark
+                lines.append(f"$ {fn.get('name')}{frame_mark} {args}{suffix_mark}")
         elif role == "tool":
-            c = str(m.get("content") or "").strip()
+            c = str(m.get("content") or "")
             if c and not _is_cria_scaffolding(c, keep_checks=keep_checks):
                 lines.append(f"  -> {c}")
     if rlog is not None and (labelled or unpaired):
