@@ -55,6 +55,28 @@ class UpstreamError(Exception):
     """The upstream model server could not be reached or errored."""
 
 
+class ContextRefitNoChange(UpstreamError):
+    """A parsed context rejection whose normal inner refit has identical final bytes.
+
+    This is private wire provenance, not a classification reconstructed by a caller from an HTTP
+    code or event text.  ``final_wire`` is the exact ``Request.data`` that the server rejected.
+    """
+
+    def __init__(self, source: BaseException, final_wire: bytes):
+        super().__init__(str(source))
+        self.code = getattr(source, "code", None)
+        self.final_wire = final_wire
+
+
+class CallerContextRetryNoChange(UpstreamError):
+    """The one opted-in caller retry re-prepared to the same final wire and was not sent."""
+
+    def __init__(self, source: ContextRefitNoChange, final_wire: bytes):
+        super().__init__(str(source))
+        self.code = source.code
+        self.final_wire = final_wire
+
+
 def _abort_header(aborted: dict) -> str:
     """One line naming the backstop that stopped this stream, with the numbers THAT backstop holds.
 
@@ -436,8 +458,17 @@ class Upstream:
         safety_override: float | None = None
         sent_data: bytes | None = None
         last_err: BaseException | None = None
+        caller_refit = body.get(bodykeys.CONTEXT_REFIT_NO_CHANGE)
         for attempt in range(2):
             data, sent_estimate, capture_path = self._prep(body, stream, rlog, safety_override=safety_override)
+            if attempt == 0 and isinstance(caller_refit, ContextRefitNoChange) and data == caller_refit.final_wire:
+                # ``summarize`` supplies this private provenance only for its single forced-off
+                # retry after a real parsed context rejection whose inner refit already could not
+                # change the wire.  Compare HERE, after ordinary Role.apply/_prep, so a changed
+                # role, tool schema, floor result, reserve, or model discovery remains a real POST.
+                rlog.emit("upstream.caller_retry_no_change", level="warn", bytes=len(data),
+                          model=body.get("model"), est=sent_estimate)
+                raise CallerContextRetryNoChange(caller_refit, data) from caller_refit
             if attempt and data == sent_data:
                 # A REFIT THAT CHANGES NOTHING IS NOT A RETRY. The floor's lever is dropping whole
                 # oldest turns, and a COMPOSED two-message prompt — a compaction request, a judge
@@ -453,8 +484,7 @@ class Upstream:
                 rlog.emit("upstream.refit_no_change", level="warn", bytes=len(data),
                           model=body.get("model"), est=sent_estimate)
                 rlog.emit("upstream.error", level="error", url=self._chat_url, error=str(last_err))
-                err = UpstreamError(str(last_err))
-                err.code = getattr(last_err, "code", None)
+                err = ContextRefitNoChange(last_err, data)
                 raise err from last_err
             sent_data = data
             req = urllib.request.Request(self._chat_url, data=data, method="POST", headers=self._headers(sse=stream))

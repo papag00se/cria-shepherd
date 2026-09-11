@@ -135,6 +135,8 @@ class ABodyThatCannotShrinkIsNotResentTests(unittest.TestCase):
         finally:
             upstream.urllib.request.urlopen = real
         self.assertEqual(caught.exception.code, 400)
+        self.assertIsInstance(caught.exception, upstream.ContextRefitNoChange)
+        self.assertEqual(caught.exception.final_wire, b"x" * 100)
 
 
 if __name__ == "__main__":

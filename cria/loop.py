@@ -47,6 +47,7 @@ from pathlib import Path
 
 from . import bodykeys, wsview
 from . import callcapture, dedup, denial, editrecovery, execcheck, focustrim, groundtruth, indicators, massage, participation, probediscovery, probegate, probeparse, proberun, prompts, reasoning, selfcompact, shellshape, toolmenu, urlgrounding, verifytools, webfetch
+from .upstream import CallerContextRetryNoChange, ContextRefitNoChange
 from .classify import _task_key, latest_user_text
 from . import jsontext, planner, refusalledger, writeproxy
 from .jsontext import extract_json_object, strip_think
@@ -6155,7 +6156,13 @@ def summarize(chat_fn, role, system: str, user: str, rlog, *, phase: str = "comp
     what is returned; capture[0] is always the reasoning-ON pass."""
     if coder_tools:
         user = prompts.render("reasoner_coder_tools", tools=coder_tools) + "\n\n" + user
+    # A private outcome from the FIRST pass.  It exists only for the immediate forced-off retry,
+    # never in session/global state and never on the API wire (`bodykeys.ALL` is stripped in _prep).
+    # The wire, rather than this caller, compares the retry's final serialized bytes.
+    context_refit_no_change: ContextRefitNoChange | None = None
+
     def _one(reasoning_off: bool) -> str:
+        nonlocal context_refit_no_change
         messages = [{"role": "system", "content": system}]
         if evidence_blocks:
             # A composed two-message call has no reducible turn: both its system and active user
@@ -6187,6 +6194,8 @@ def summarize(chat_fn, role, system: str, user: str, rlog, *, phase: str = "comp
             # were full of literal code; at 0 it answered correctly every time. A one-word verdict
             # has no use for sampling diversity — the dice only ever cost accuracy.
             call["temperature"] = temperature
+        if reasoning_off and context_refit_no_change is not None:
+            call[bodykeys.CONTEXT_REFIT_NO_CHANGE] = context_refit_no_change
         try:
             rlog.phase = phase + ("-noreason" if reasoning_off else "")
             received = _parse_completion(chat_fn(call, rlog))
@@ -6255,6 +6264,21 @@ def summarize(chat_fn, role, system: str, user: str, rlog, *, phase: str = "comp
                 rlog.emit("summarize.truncated", level="warn", phase=rlog.phase, chars=len(text))
                 return ""
             return text
+        except CallerContextRetryNoChange as e:
+            # The first attempt's original parsed context error/capture/events already exist.  The
+            # wire has just proved this one opt-in retry would be the identical final request, so
+            # return the normal unavailable result without a POST.  `_summarised_evidence` keeps
+            # its whole source when this is empty.
+            rlog.emit("summarize.context_retry_no_change", level="warn", phase=rlog.phase,
+                      bytes=len(e.final_wire))
+            return ""
+        except ContextRefitNoChange as e:
+            # Do not infer this from a status, error string, or log record.  Only the wire owner can
+            # construct it after parsing a context error and comparing the unsent inner refit bytes.
+            if not reasoning_off and retry_off:
+                context_refit_no_change = e
+            rlog.emit("summarize.error", level="warn", error=str(e))
+            return ""
         except Exception as e:
             rlog.emit("summarize.error", level="warn", error=str(e))
             return ""

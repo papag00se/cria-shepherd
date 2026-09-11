@@ -39,6 +39,12 @@ LOST_CALL = "cria_lost_call"
 #: text so later user-role closers cannot displace it and no preamble-wording guess is needed.
 PINNED_TASK = "cria_pinned_task"
 
+#: A typed wire-owner outcome from a parsed context rejection whose inner refit would have resent
+#: identical final bytes.  ``summarize`` carries it only into its one forced-off retry; the wire
+#: compares that retry's final bytes and consumes it before a POST.  It is deliberately an object,
+#: not a status/text flag, so only ``Upstream._open_with_refit`` can originate the provenance.
+CONTEXT_REFIT_NO_CHANGE = "cria_context_refit_no_change"
+
 # --- response-body hints: cria's own annotations on a completion --------------------------------
 
 #: Human-facing notes cria attaches to a completion for the operator's display, stripped before the
@@ -51,4 +57,5 @@ RUMINATION = "cria_rumination"
 
 #: Every key above. The wire strips this set wholesale, so adding a key here is all it takes to keep
 #: it off the API — the thing five scattered literals could not guarantee.
-ALL = (MERGE_TURNS, OUTPUT_RESERVE, LOST_CALL, PINNED_TASK, NOTES, RUMINATION)
+ALL = (MERGE_TURNS, OUTPUT_RESERVE, LOST_CALL, PINNED_TASK, CONTEXT_REFIT_NO_CHANGE,
+       NOTES, RUMINATION)
