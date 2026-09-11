@@ -38,7 +38,30 @@ control-flow regression, and the independent verdict finds the delivered candida
 unexecutable.  This note does not infer a cause for the failed task, claim a
 behavioral benefit, or change the earlier runs' scores.
 
-The repeated-prompt walk is **not complete**.  Its 63 materialized chunks are an
-assignment boundary rather than a read/comprehension claim: reader20 was assigned
-001–032, and reader19 is reserved for 033–063.  Their completion and any findings
-remain separate evidence work.
+## Subsequent walk and delivery closure
+
+The repeated-prompt readers have finished all 63 materialized chunks, and the
+independent paired-return audits now close source delivery through each actual
+EOF. The audit chain under `/tmp/feedwalk-1789123549/delivery-audit/` is:
+`first17`, `completed18-20`, `completed21-22`, `completed23-24`, `completed25`,
+`completed26-27`, `completed28-29`, `completed30-32`, and `secondhalf`.
+
+Closure includes explicit recovery, not retrospective credit for unsupported
+reader claims. The initial 026–027 audit found discontinuous historical proof for
+026 and none for 027; separate uncapped returns recovered the missing spans.
+Rounded requested page ends were corrected to actual source extents, and the
+reassignment overlap at 028:1–50 counts only once. Initial manifests and capped
+returns remain preserved. Source counts, empty probes above a requested bound,
+and reader ledgers alone do not prove delivery.
+
+The semantic synthesis is retained at
+`/tmp/feedwalk-1789123549/consolidated-findings.md`; separate reviews are
+`runtime-root-cause-review.md` and `semantic-26-27-cross-review.md` in the same
+directory. Their conclusions remain bounded by original event and revision
+provenance. An applied edit is not a verified working repair, and a trailing
+success-looking pipeline marker does not override compiler diagnostics.
+
+Delivery closure does not itself establish comprehension, semantic correctness,
+a shared-owner defect, or usefulness. No new behavior change, replay, or candidate
+adoption follows from this documentation update. The independent final outcome
+above is unchanged, and the campaign's strictly-above-75% target remains unmet.
