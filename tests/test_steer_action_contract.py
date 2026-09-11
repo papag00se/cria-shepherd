@@ -50,9 +50,20 @@ class TheAuthorOwnsOnlyTheActionTests(unittest.TestCase):
             "1) Alpha\n2) Beta",
         ):
             with self.subTest(reply=reply):
-                self.assertIsNone(loop._authored_action_or_none(reply, rlog))
-        self.assertEqual(loop._authored_action_or_none("Frobnicate alpha.", rlog),
+                self.assertIsNone(loop._authored_action(reply, rlog).action)
+        self.assertEqual(loop._authored_action("Frobnicate alpha.", rlog).action,
                          "Frobnicate alpha.")
+
+    def test_typed_outcome_distinguishes_no_action_from_structural_refusal(self):
+        rlog = _Rlog()
+        accepted = loop._authored_action("Read Importer.java now.", rlog)
+        on_track = loop._authored_action("ON_TRACK", rlog)
+        empty = loop._authored_action("", rlog)
+        refused = loop._authored_action("Read Importer.java. Run the compile check.", rlog)
+        self.assertEqual(accepted.state, loop._AuthoredActionState.ACCEPTED)
+        self.assertEqual(on_track.state, loop._AuthoredActionState.NO_ACTION)
+        self.assertEqual(empty.state, loop._AuthoredActionState.NO_ACTION)
+        self.assertEqual(refused.state, loop._AuthoredActionState.STRUCTURAL_REFUSAL)
 
 
 class GoCalls0075And0076ReplayTests(unittest.TestCase):

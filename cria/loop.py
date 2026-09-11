@@ -7932,16 +7932,17 @@ def author_steer(reasoner_chat, reasoner_role, workspace_root, gs, body: dict, r
             return None
         evidence = session + "\n\n" + user + "\n\n" + "\n".join(
             str(m.get("content") or "") for m in transcript if m.get("role") == "tool")
-        directive = _authored_action_or_none(text, rlog)
-        if directive is None:
-            # The generic massage layer preserves a finished reasoner's words by copying an otherwise
-            # empty answer out of `reasoning_content`. For answer-vs-thinking recovery that is still
-            # an EMPTY authored answer, not a prose action and not evidence that both channels agreed.
-            msg = ((comp.get("choices") or [{}])[0].get("message") or {})
-            raw_answer = ("" if isinstance(msg.get("reasoning_content"), str)
-                          and msg.get("content") == msg.get("reasoning_content") else text)
-            directive = _authored_action_or_none(
-                _steer_from_reasoning(comp, raw_answer, _recover_ask, rlog) or "", rlog)
+        # The generic massage layer preserves a finished reasoner's words by copying an otherwise
+        # empty answer out of `reasoning_content`. For answer-vs-thinking recovery that is still
+        # an EMPTY authored answer, not a prose action and not evidence that both channels agreed.
+        msg = ((comp.get("choices") or [{}])[0].get("message") or {})
+        raw_answer = ("" if isinstance(msg.get("reasoning_content"), str)
+                      and msg.get("content") == msg.get("reasoning_content") else text)
+        authored = _authored_action(raw_answer, rlog)
+        directive = authored.action
+        if directive is None and authored.state is not _AuthoredActionState.STRUCTURAL_REFUSAL:
+            directive = _authored_action(
+                _steer_from_reasoning(comp, raw_answer, _recover_ask, rlog) or "", rlog).action
         return _grounded_steer_or_none(directive, evidence, rlog, ask=_steer_ask,
                                        sess=gs, messages=body.get("messages", []),
                                        workspace_root=workspace_root)
@@ -7955,17 +7956,19 @@ def author_steer(reasoner_chat, reasoner_role, workspace_root, gs, body: dict, r
     if _ruminating_reply(text):   # same guard as the tooled branch — see loop.steer_degenerate above
         rlog.emit("loop.steer_degenerate", level="warn", phase="reasoner", chars=len(text))
         return None
-    directive = _authored_action_or_none(text, rlog)
-    if directive is None and passes:
-        # `summarize` may coerce private reasoning into text when the actual answer is empty.  That
-        # prose is not an authored action, and using the coerced value as `answer` also makes
-        # `_steer_from_reasoning` believe there is no second signal to recover.  Recovery is about
-        # answer-versus-thinking provenance, so compare the raw answer from the captured completion.
-        raw_answer = _completion_text(passes[0])
-        if reasoner_role is not None:
-            raw_answer = reasoner_role.clean_content(raw_answer)
-        directive = _authored_action_or_none(
-            _steer_from_reasoning(passes[0], raw_answer, _recover_ask, rlog) or "", rlog)
+    # `summarize` may coerce private reasoning into text when the actual answer is empty.  That
+    # prose is not an authored action, and using the coerced value as `answer` also makes
+    # `_steer_from_reasoning` believe there is no second signal to recover.  Recovery is about
+    # answer-versus-thinking provenance, so compare the raw answer from the captured completion.
+    raw_answer = _completion_text(passes[0]) if passes else text
+    if reasoner_role is not None:
+        raw_answer = reasoner_role.clean_content(raw_answer)
+    authored = _authored_action(raw_answer, rlog)
+    directive = authored.action
+    if (directive is None and passes
+            and authored.state is not _AuthoredActionState.STRUCTURAL_REFUSAL):
+        directive = _authored_action(
+            _steer_from_reasoning(passes[0], raw_answer, _recover_ask, rlog) or "", rlog).action
     return _grounded_steer_or_none(directive, session + "\n\n" + user, rlog, ask=_steer_ask,
                                    sess=gs, messages=body.get("messages", []),
                                    workspace_root=workspace_root)
@@ -8078,8 +8081,27 @@ def _steer_or_none(text: str) -> str | None:
     return directive if len(directive) >= 8 else None
 
 
-def _authored_action_or_none(text: str, rlog=None) -> str | None:
-    """A steer-author reply narrowed to the contract's one structural action.
+class _AuthoredActionState(Enum):
+    """Why the steer author did, or did not, yield one action.
+
+    ``NO_ACTION`` deliberately keeps the established ON_TRACK / empty path together: either can
+    still have a separate reasoning channel worth asking about.  ``STRUCTURAL_REFUSAL`` is
+    different provenance.  The author supplied multiple actions, so treating the later absence as
+    an ON_TRACK answer would manufacture the premise of the recovery prompt.
+    """
+    ACCEPTED = auto()
+    NO_ACTION = auto()
+    STRUCTURAL_REFUSAL = auto()
+
+
+@dataclass(frozen=True)
+class _AuthoredAction:
+    action: str | None
+    state: _AuthoredActionState
+
+
+def _authored_action(text: str, rlog=None) -> _AuthoredAction:
+    """A steer-author reply and the provenance of its one-action decision.
 
     Whether prose describes one conceptual action is a judgment and does not belong in a verb list.
     The author contract supplies the cheaper upstream constraint: one imperative sentence.  Code can
@@ -8090,7 +8112,7 @@ def _authored_action_or_none(text: str, rlog=None) -> str | None:
     """
     action = _steer_or_none(text)
     if not action:
-        return None
+        return _AuthoredAction(None, _AuthoredActionState.NO_ACTION)
     # Explicit lists expose multiple units even when the author omitted sentence punctuation. This
     # is structure, not an English verb/conjunction guess, and applies equally to numbered and
     # bulleted actions in any implementation language.
@@ -8101,9 +8123,8 @@ def _authored_action_or_none(text: str, rlog=None) -> str | None:
             rlog.emit("loop.steer_multiple_actions", level="warn",
                       units=max(len(units), len(listed)),
                       head=_clip(action, 120))
-        return None
-    return action
-
+        return _AuthoredAction(None, _AuthoredActionState.STRUCTURAL_REFUSAL)
+    return _AuthoredAction(action, _AuthoredActionState.ACCEPTED)
 
 # ---- THE ANSWER SAYS ON_TRACK; THE THINKING SAYS STUCK ------------------------------------------
 #
