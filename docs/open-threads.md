@@ -152,3 +152,60 @@ The two `_invented_code_spans` false positives fixed on 2026-08-27 were checked 
 Both now pass. Whether that moves the delivered/refused ratio is a question for the next measurement pass, and `loop.steer_outcome` is what will answer it.
 
 **Two candidate fixes were considered and NOT built, on #15.** Naming the packages inside a folded `vendor/bundle` line, and giving `judge_query` the workspace inventory. The evidence is one run — the ruby coder searching nine times for a gem `bundle install` had already put on disk. The first attempt at a shape rule for "which directory is a package" landed on `bin/cache/gems/specifications` rather than the gem names, which is the tell that the rule was being invented rather than found. Both stay here until a second run shows the same thing.
+
+---
+
+## Open: cria has no concept of PROGRESS — the diagnosis holds, the obvious fix measured inert (2026-09-18)
+
+Walked on the first two `ternary-bonsai-2` L5 cells (`shipping-rates-rb` 5%, `cart-billing-go` 0%).
+Across ~54 model calls the coder wrote **one file** (a Gemfile) and never touched a task file.
+
+**The diagnosis, verified three ways in the source and not in doubt:**
+
+1. `cria/prompts/coder_system.txt:5` says *"RESEARCH & INVESTIGATE FIRST … READ its real source/docs
+   before writing code against it."* A grep of every prompt finds **no counterweight** — nothing tells
+   the coder when investigation is finished.
+2. `⟦ctx:facts⟧` records *"FILES YOU HAVE ALREADY READ"*. There is no counterpart for a conclusion
+   reached or a change shipped, which is why the one-line `>` → `>=` fix was re-derived at calls 6, 7,
+   9 and 26 of the same run and written zero times.
+3. Every nudge in [heuristic-assists.md](heuristic-assists.md) keys on **repetition** (same tool+args
+   ×3, same file rewritten ×5) or **doubt**. `unexecuted_write` needs file content in prose;
+   `leg0_nudge_step` needs *zero* tool calls. A coder taking nine *different* read actions matches
+   nothing in the arsenal.
+
+So a coder that reads forever with varied arguments is invisible, and the rumination guard — the only
+thing that ever fires — prescribes *"prefer reading the current file"*, which is the same blind spot
+written as advice.
+
+**The fix that follows from it, and MEASURED INERT.** Replace the guard's generic remedy with a true
+progress fact cria already holds (the gate's failing `file:line`, turns elapsed with no write, and
+whether that file changed). Replayed against the live model on the real captured call
+(`0030-coder-s1-focus1`, the turn immediately after an 8,240-token abort), n=4 per arm:
+
+| notice | writes | touched a task file |
+|---|---|---|
+| as sent (*"prefer reading the current file"*) | **0/4** | 1/4 |
+| progress fact | **0/4** | 1/4 |
+
+Identical. Worth recording *how* this nearly went wrong: at **n=1** the fact arm looked like a win —
+it moved the read from `Gemfile.lock` (irrelevant) to `lib/shipping/rates.rb` (the file to fix) — and
+that difference disappeared at n=4. A single sample was about to be reported as a result.
+
+**THIS IS NOT A UNIVERSAL NEGATIVE, and the idea is kept here rather than in *Considered and
+REFUSED*.** What was measured is one notice wording, on one guard arm, on one turn, of one cell, with
+one model, on one task, at n=4. The cell it was tested against is also the *hardest* case for it: a
+coder deadlocked on an unmade decision, where more true facts are least likely to help. Cases where it
+is still plausible, none of them tested:
+
+- a coder stalled on a **missing fact** rather than a decision (`cart-billing-go` is that shape)
+- a **different model** — nothing here generalises off `ternary-bonsai-2`
+- delivery somewhere other than the rumination notice — the periodic gate, or the step framing
+- a longer horizon: the replay measures ONE turn, and a progress fact may pay over several
+
+**What the negative does establish:** adding a true fact to the prompt is not, by itself, sufficient.
+The coder already knew the fix — it derived it four times. So the blocker is not information, and any
+next attempt should target something other than telling it more.
+
+**Cheapest untested lever, and the most upstream:** delete or counterweight the
+`RESEARCH & INVESTIGATE FIRST` line for a coder that has already read the files it needs. That is
+cria's own prompt, it is one line, and the same replay harness falsifies it in minutes.
