@@ -149,14 +149,45 @@ A cria turn without a tool call is interpreted as completion, so a red session m
 ### 15. Measure prevalence before building a heuristic
 Measure a suspected pattern across real captures before building a detector. One replayed pathological event is not evidence of a systemic problem.
 
-### 16. Assume cria caused it until proven otherwise
-Before blaming the model:
+### 16. It is always cria's fault. "The model's fault" is not a finding.
+
+**Never write, say, or conclude "the model failed", "that's a model limitation", "a real model result,
+not our bug", or any variant. The phrase is banned.** Not because the model is never the proximate
+cause — often it is — but because naming it ENDS the investigation, and cria's entire reason to exist
+begins exactly there. A 9B-class model derailing IS the problem statement. "The model derailed" is a
+restatement of the mission, not an explanation of anything, and it is never a place to stop.
+
+So the attribution is fixed in advance: **whatever the coder did, cria let it happen.** The only
+question worth asking is which assist was absent, silent, mistimed, or wrong. Rumination is not
+"this model overthinks" — it is the rumination steer failing to land. Twelve refused completion
+claims are not "this model lies about being done" — they are twelve chances cria had to redirect the
+coder into writing code, and did not take. A coder that reads for 22 minutes without writing is a
+missing nudge, not a character flaw.
+
+This is what makes principle 19 (a model that breaks is a requirement) operational rather than
+decorative. A model that breaks in a NEW way is a specification for the next assist. Score the
+WORK — usefulness percentages measure delivered code and are honest measurements — but never let a
+low score become a verdict on the weights. The score says the run produced little. The investigation
+says why cria let it.
+
+Before concluding anything:
 1. read what the model received,
 2. read what it reasoned,
 3. compare that context with disk state,
 4. run the real tool.
 
-Do not build machinery to compensate for a failure cria itself introduced.
+Do not build machinery to compensate for a failure cria itself introduced — and do not close a
+finding with a sentence that puts the cause outside cria's reach.
+
+**Incident, 2026-09-18 (the reason this is worded as a ban).** A `shipping-rates-rb` cell scored 5%.
+The first 32 minutes went to the coder fighting a broken Ruby gem path — cria's own suite bug — and
+that was correctly found and fixed. The rerun then scored 5% again, and the campaign agent wrote
+"this time it's a real model result, not our bug" and "not broken, but slow — consistent with the
+heavy reasoning we measured earlier on this model." Both sentences are this principle's violation,
+in a report written hours after reading the principle. The evidence in hand at that moment — one
+write in 30 calls, an 8,240-token rumination abort, twelve blocked completion claims — was a list of
+cria's assists firing and failing to change the outcome. That is the richest possible input for the
+next assist, and it was filed as a fact about the weights instead.
 
 ---
 
