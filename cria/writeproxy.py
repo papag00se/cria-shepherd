@@ -1164,7 +1164,20 @@ def _search_command(args: dict, brave_key: str) -> str:
              r""";api=lambda x:("\n  "+(x.get("description") or "")) if K.search(x.get("description") or "") else str()"""
              r""";full="\n".join("%s\n  %s\n  %s"%(x.get("title",""),x.get("url",""),x.get("description","")) for x in r)"""
              r""";os.makedirs(os.path.dirname(T) or ".",exist_ok=True)"""
-             r""";r and open(T,"w").write(("%d results:\n"%len(r))+full)"""
+             # WRITTEN EVEN WHEN THERE ARE ZERO RESULTS. `note_search_spill` records the path when cria
+             # COMPOSES this command; the write used to be conditional on `r`, so an empty search left a
+             # remembered path and no file, and the later re-hunt refusal sent the coder to grep it.
+             # Measured on cart-billing-go x ternary-bonsai-2 (session 01a0b6aa, calls 0008-0012): the
+             # first search returned "no results", and cria then said "Its results were saved to
+             # ./tmp/reference/search-go.mod_...-29f04005.txt ... READ THAT FILE rather than searching
+             # again". The coder obeyed -- "The search results were saved to a reference file. Let me
+             # read that file" -- and cria answered "is not there - nothing was read", stacking a second
+             # false statement on the first (#5b twice, #11b: the remedy could not be taken). Three tool
+             # calls went to a phantom, and the coder re-ran the same dead query.
+             # A zero-result file is the honest artifact: it terminates the detour with the true fact
+             # ("0 results") instead of a promise of content that was never written. Fixing the WRITE
+             # keeps the warrant in one place -- cria said it wrote a file, so cria writes one.
+             r""";open(T,"w").write(("%d results:\n"%len(r))+full)"""
              r""";brief=("%d results:\n"%len(r))+"\n".join("%s\n  %s%s"%(x.get("title",""),x.get("url",""),api(x)) for x in r)+"\n"+""" + _pyq(inline_note) +
              r""";print(brief if len(brief.encode())<=""" + str(content_reduce_mod.INLINE_RESULT_MAX_BYTES) +
              r""" else """ + _pyq(msg) + r""") if r else print("search API error: "+json.dumps(e) if e else "no results")'""")

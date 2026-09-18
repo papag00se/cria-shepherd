@@ -137,9 +137,28 @@ class TheOtherOutcomesAreUnchangedTests(unittest.TestCase):
     def test_an_unparseable_body_exits_nonzero_so_the_fallback_fires(self):
         self.assertNotEqual(run("<html>429</html>")[0], 0)
 
-    def test_no_spill_file_is_written_for_an_empty_result_set(self):
+    def test_an_empty_result_set_still_writes_the_file_cria_promised(self):
+        """INVERTED 2026-09-18, deliberately. This assertion used to require the opposite — that an
+        empty search leaves no file — which was true of the world cf827a9 (2026-08-13) shipped into:
+        that change was about snippet poison and inline-vs-spill sizing, and nothing depended on the
+        empty case either way, so the test simply pinned what the code then did.
+
+        `note_search_spill` later made the empty case load-bearing. cria now RECORDS this query's
+        spill path when it COMPOSES the search, and that record is the sole warrant for the re-hunt
+        refusal telling the coder "its results were saved to <path> — READ THAT FILE". With no file
+        written, cria promises an artifact that does not exist.
+
+        Measured on cart-billing-go x ternary-bonsai-2 (session 01a0b6aa, calls 0008-0012): the
+        coder obeyed the pointer, cria answered "is not there — nothing was read", and three tool
+        calls went to a phantom before it re-ran the same dead query (#5b twice, #11b).
+
+        cf827a9's actual intent is untouched: a zero-result file carries no descriptions, because
+        there are none, so there is no snippet poison to inline or withhold.
+        """
         run(json.dumps({"web": {"results": []}}))
-        self.assertFalse(os.path.isdir("./tmp/reference") and os.listdir("./tmp/reference"))
+        files = os.listdir("./tmp/reference") if os.path.isdir("./tmp/reference") else []
+        self.assertEqual(len(files), 1, "cria recorded a spill path for this query; it must exist")
+        self.assertTrue(open(os.path.join("./tmp/reference", files[0])).read().startswith("0 results:"))
 
 
 if __name__ == "__main__":
