@@ -214,6 +214,28 @@ class ItIsWiredIntoTheOutboundViewTests(unittest.TestCase):
         import re
         self.assertIsNone(re.search(r"\bcria\b", NOTE, re.I))
 
+    def test_the_note_asserts_the_content_is_INTACT(self):
+        """A fold is a reduction the reader can see, so rule 5 requires it be LABELLED as lossless.
+        The note said only that the content 'is shown once, IN FULL, further down this conversation'
+        — true, and read as damage.
+
+        Walked on shipping-rates-rb x ternary-bonsai-2 (session 01a0b68a, call 0013). The coder had
+        successfully run a connectivity probe; the fold replaced the older copy, and it reasoned:
+        'The earlier curl test output was cut off ("a repeat — identical content is shown once, in
+        full, further down this conversation" — that's weird, looks like a glitch). Let me try again
+        with a clean command.' It re-ran a command that had already answered, and the turn was lost.
+
+        This pins the CONTRACT, not the spelling: whatever the wording, the note must state that
+        nothing was removed. 'Shown once' describes cria's bookkeeping; a reader needs to know its
+        evidence survived.
+        """
+        lowered = NOTE.lower()
+        self.assertTrue(
+            any(w in lowered for w in ("nothing was shortened", "nothing was cut", "nothing was lost",
+                                       "not shortened", "not cut", "not truncated")),
+            f"the fold note must tell the reader its content is intact; got: {NOTE!r}",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
