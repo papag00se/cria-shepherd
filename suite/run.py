@@ -72,14 +72,22 @@ KILL_GRACE = 20
 
 # fleet model name -> systemd service (one model at a time on the 3080)
 SERVICES = {
-    "ternary-bonsai": "llama-ternary-bonsai",
+    "ternary-bonsai-2": "llama-ternary-bonsai-2",
     "qwythos": "llama-qwythos-q6",
     "qwopus": "llama-qwopus-q6",
     "qwen35": "llama-qwen35",
     "ornith15": "llama-ornith-q6",
-    "gemma4": "llama-gemma4",
+    "gemma4-qat": "llama-gemma4-qat",
     "maple-preview": "llama-maple-preview",  # DeepGrove ternary MoE 20B-A1B (stamsam prism fork)
 }
+
+# RETIRED 2026-09-18 — weights, units and (for bonsai) binaries deleted from the box, so these keys
+# could only ever fail a swap. Their historical scores survive in suite/historical_ladder.json and
+# results.jsonl, which is why the KEYS still appear there and must not be renamed:
+#   "ternary-bonsai" -> llama-ternary-bonsai   (Bonsai 1, superseded by ternary-bonsai-2)
+#   "gemma4"         -> llama-gemma4           (stock it Q4_K_M, superseded by gemma4-qat)
+# test_suite_model_registries_agree.py fails if a SERVICES entry names a unit that is not installed,
+# which is exactly how the stale pair above was caught.
 
 # EXTERNALLY MANAGED MODELS — not llama.cpp systemd units on :18084. Qwen3.8-27B runs as a vLLM
 # container on its OWN card (the RTX 3090, :18020), which cria's [backends.local] points straight at,

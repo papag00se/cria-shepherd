@@ -39,6 +39,21 @@ MODEL_SAMPLING = {
         "classifier": {"temperature": 0.0, "repeat_penalty": 1.1},
         "compactor":  {"temperature": 0.0, "repeat_penalty": 1.1},
     },
+    # Bonsai 2 27B (PQ2_0). CARRIED OVER from ternary-bonsai ABOVE, byte-identical, on purpose:
+    # Bonsai 2 is the same qwen35 hybrid backbone and its L5 row exists to be read against Bonsai
+    # 1's frozen row, so sampling is held constant to keep the WEIGHTS the only moving part. A
+    # cited alternative deliberately NOT taken: the Bonsai 2 card's own thinking-mode numbers
+    # (temp 1.0 / top_p 0.95 / top_k 20 / min_p 0 / presence 0 / repeat 1.0). Those would be the
+    # honest default for a standalone deployment, but adopting them here would move sampling and
+    # weights in the same step and make the row uninterpretable as a Bonsai-1 comparison. If the
+    # carried-over values misbehave on these weights (the m15 verification was done on Bonsai 1),
+    # that is a finding to record and re-tune from — not a reason to quietly switch mid-row.
+    "ternary-bonsai-2": {
+        "coder":      {"temperature": 0.2, "top_p": 0.95, "top_k": 20, "repeat_penalty": 1.1},
+        "reasoner":   {"temperature": 0.6, "top_p": 0.90, "top_k": 40, "repeat_penalty": 1.1},
+        "classifier": {"temperature": 0.0, "repeat_penalty": 1.1},
+        "compactor":  {"temperature": 0.0, "repeat_penalty": 1.1},
+    },
     # yuxinlu1 card: temp 1.0 / top_p 0.95 / top_k 64 / repeat_penalty 1.1, coding temp 0.
     # The rep-penalty is load-bearing — without it gemma4 leaks <|tool_call|>/<|channel|> tokens.
     # Card (yuxinlu1 pinned discussion): temp 1.0 + rep_pen 1.1 — the pairing is the point.
@@ -51,6 +66,16 @@ MODEL_SAMPLING = {
     # STOCK Gemma 4 12B it — identical sampling to the finetune so the
     # ablation isolates the WEIGHTS (operator ask 2026-08-05).
     "gemma4": {
+        "coder":      {"temperature": 1.0, "top_p": 0.95, "top_k": 64, "repeat_penalty": 1.1},
+        "reasoner":   {"temperature": 1.0, "top_p": 0.95, "top_k": 64, "repeat_penalty": 1.1},
+        "classifier": {"temperature": 0.0, "repeat_penalty": 1.1},
+        "compactor":  {"temperature": 0.0, "repeat_penalty": 1.1},
+    },
+    # Gemma 4 12B it QAT (UD-Q4_K_XL). Same Gemma 4 card as `gemma4` above — QAT changes how the
+    # weights were quantized, not the sampling the family wants — so these are byte-identical to it,
+    # including the load-bearing repeat_penalty 1.1 that stops the <|tool_call|>/<|channel|> leak.
+    # Carried over for the same reason as ternary-bonsai-2: keep the weights the only moving part.
+    "gemma4-qat": {
         "coder":      {"temperature": 1.0, "top_p": 0.95, "top_k": 64, "repeat_penalty": 1.1},
         "reasoner":   {"temperature": 1.0, "top_p": 0.95, "top_k": 64, "repeat_penalty": 1.1},
         "classifier": {"temperature": 0.0, "repeat_penalty": 1.1},

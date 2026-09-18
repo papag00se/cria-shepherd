@@ -28,7 +28,12 @@ SUITE = Path(__file__).resolve().parent
 RESULTS = SUITE / "results" / "results.jsonl"
 
 LEVELS = (0, 1, 2, 3, 4, 5)
-MODELS = ("gemma4", "qwen35", "ternary-bonsai", "ornith15")
+MODELS = ("qwen35", "ornith15", "ternary-bonsai-2", "gemma4-qat")
+# CURRENT matrix only — a model here must be swappable and have canonical sampling.
+# gemma4 (stock Q4_K_M) and ternary-bonsai (Bonsai 1) left on 2026-09-18 when their weights
+# and units were deleted; like nemotron-elastic before them they stay VISIBLE in the reports
+# through suite/historical_ladder.json, which is where their scores live. Retiring a model
+# means dropping it from here, never deleting its history.
 TASKS = ("shipping-rates-rb", "cart-billing-go", "orders-api-py",
          "feed-pipeline-java", "handles-cli-node", "rust-toml-cli")
 
