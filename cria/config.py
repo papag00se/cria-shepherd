@@ -833,10 +833,20 @@ def _role(name: str, spec, backends: Mapping[str, Backend]) -> Role:
 def _think_protocol(b: Backend) -> str:
     """The reasoning-control convention a role inherits from its backend (see reasoning.py).
     A served (keyless) http backend gates thinking on the chat template; a keyed http backend
-    speaks its provider's convention (explicit override else inferred from base_url); a cli
-    backend manages its own reasoning, so cria sends no wire signal."""
+    speaks its provider's convention; a cli backend manages its own reasoning, so cria sends no
+    wire signal. An EXPLICIT ``reasoning_style`` wins in every http case.
+
+    The explicit override used to reach only the keyed branch, so on a keyless backend — which is
+    what a local llama.cpp server is — naming a style in the config did nothing at all, silently.
+    `cria.toml` advertises the key as an override on the backend block without saying it applies to
+    half of them, so the config promised something that could not happen (#5b, in cria's own
+    documentation rather than on the wire). Template gating remains the DEFAULT for a served
+    backend, which is the part that was right: it is what a jinja-templated local model wants.
+    Naming a style is an operator saying otherwise about their own server, and there is no reason
+    for cria to overrule that — a served endpoint can front anything, including a gateway that
+    speaks effort."""
     if b.transport == "cli":
         return "none"
     if b.api_key_env:
         return b.reasoning_style or reasoning.infer_style(b.base_url)
-    return "chat_template"
+    return b.reasoning_style or "chat_template"

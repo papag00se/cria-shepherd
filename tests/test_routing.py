@@ -266,6 +266,20 @@ class ThinkProtocolTests(unittest.TestCase):
                     reasoning_style="openrouter", model="m")
         self.assertEqual(_think_protocol(b), "openrouter")
 
+    def test_explicit_reasoning_style_is_honoured_on_a_keyless_backend(self):
+        """The override reached only the KEYED branch, so naming a style on a served backend did
+        nothing — silently. That is every local llama.cpp setup, and `cria.toml` advertises the key
+        on the backend block without saying it applies to half of them: the config promised a knob
+        that could not turn. Template gating stays the DEFAULT (above); this is an operator saying
+        otherwise about their own endpoint, which can front a gateway that speaks effort."""
+        b = Backend("local", base_url="http://127.0.0.1:18084", reasoning_style="openai")
+        self.assertEqual(_think_protocol(b), "openai")
+
+    def test_a_keyless_backend_without_an_explicit_style_still_gates_on_the_template(self):
+        """The default must not move: a jinja-templated local model wants enable_thinking."""
+        self.assertEqual(_think_protocol(Backend("local", base_url="http://127.0.0.1:18084")),
+                         "chat_template")
+
     def test_cli_backend_sends_no_wire_signal(self):
         self.assertEqual(_think_protocol(Backend("claude", transport="cli", binary="claude")), "none")
 

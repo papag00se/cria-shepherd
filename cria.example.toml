@@ -72,7 +72,9 @@ transport = "http"                 # OpenAI-compatible endpoint
 base_url = "http://127.0.0.1:18084"   # omit → [defaults].base_url
 # api_key_env = "..."              # names the key var; absent = keyless served endpoint
 # model = "..."                    # wire model; absent = server's loaded model
-# reasoning_style = "openai"       # override; auto-detected from base_url
+# reasoning_style = "openai"       # override. Default: a KEYLESS backend (like this one) gates
+                                   # thinking on the chat template (enable_thinking); a KEYED one
+                                   # infers from base_url. Naming a style here wins either way.
 
 # [backends.groq]                  # example: keyed remote endpoint
 # transport = "http"
