@@ -240,18 +240,31 @@ def _ruby_keep_path() -> list:
     minitest/autorun` in 51 of 61 prompts, and the one-character bug the task opens with was never
     touched. The cell scored 8 — a measurement of this bug, not of the model.
 
-    Asked of Ruby, never spelled out here (#20): `Gem.default_path` is the system search path, and
-    the two entries to drop are `Gem.default_dir` — where a plain `gem install` puts things, so the
-    `countries` and `rspec` somebody installed by hand — and `Gem.user_dir`, the leaked user root.
-    What is left is the distribution's own. Verified: minitest and rake visible, `countries`,
-    `iso_country_codes`, `eu_countries` and `rspec` all hidden, and an install still lands in the
-    cell.
+    Asked of Ruby, never spelled out here (#20). DROP ONLY `Gem.user_dir`, the leaked user root.
+
+    It used to drop `Gem.default_dir` as well, on the theory that a plain `gem install` lands there
+    and the distribution's own gems live somewhere else. That is FALSE on this box and the mistake
+    was invisible: `Gem.default_path` here is exactly `[user_dir, default_dir]`, so subtracting both
+    returned an EMPTY keep-list, GEM_PATH became the cell alone, and minitest / rake / bundler went
+    dark again — the precise regression the drop was added to fix, silently reintroduced, because
+    this function is written to degrade to `[]` without complaint.
+
+    Measured 2026-09-18, shipping-rates-rb x ternary-bonsai-2: the coder spent its whole first 32
+    minutes probing GEM_HOME/GEM_PATH and trying to install into `/usr/lib/ruby/gems/3.4.0` to get
+    a working minitest, which cria correctly denied as a system install; it wrote ZERO lines of the
+    five requested deliverables. Another cell scored as a measurement of this bug, not of a model.
+
+    Dropping only the user root is sound BY CONSTRUCTION rather than by inspection: `gem install`
+    as a non-root user cannot write into `/usr/lib/ruby/gems`, so what is there arrived from the
+    distribution's package manager, and the hand-installed contamination this isolation exists to
+    hide (`--user-install` of `iso_country_codes`, `countries`, `rspec`) lands in `user_dir`, which
+    is still dropped. `user_install_listing` remains the tripwire if that ever stops holding.
 
     Empty when Ruby is not installed or cannot answer, which leaves GEM_PATH as the cell alone — the
     behaviour before this, and no worse for a box with no Ruby on it."""
     try:
         out = subprocess.run(
-            ["ruby", "-e", "print (Gem.default_path - [Gem.default_dir, Gem.user_dir]).join(File::PATH_SEPARATOR)"],
+            ["ruby", "-e", "print (Gem.default_path - [Gem.user_dir]).join(File::PATH_SEPARATOR)"],
             capture_output=True, text=True, timeout=30).stdout.strip()
     except (OSError, subprocess.SubprocessError):
         return []
