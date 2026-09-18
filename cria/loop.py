@@ -9728,7 +9728,30 @@ def guard_search_query(sess: GuardState, coder: dict, body: dict,
     #
     # A search is still a legitimate move, so an on-target query is NOT rewritten — only a URL is acted
     # on, and only through the same host-grounding check below that an off-target one passes.
-    if not rec or (on_target and not _looks_like_url(_usable_query(rec) or "")):
+    #
+    # …UNLESS THE CODER'S QUERY IS NOT A QUERY. `on_target` answers one question — is this the right
+    # THING to look for — and its answer was being used to settle a second one nobody asked: is this
+    # a usable search STRING. A spiral fragment can be both, and cria already owns the test that tells
+    # them apart; it just only ever pointed it at the judge's recommendation, never at the coder's own.
+    #
+    # Walked on cart-billing-go x ternary-bonsai-2 (session 01a0b6aa, call 0005). After a rumination
+    # abort the coder regenerated the spiral INTO its search argument and sent:
+    #   go.mod decimal module golang.org/x/exp math/bits? no — "github.com/bsb" or
+    #   "github.com/joelschaefer"? Actually: which Go library provides a Decimal type for money, e.g.
+    #   github.com/shopspring/supercharge? Let me search properly.
+    # The judge saw that text verbatim, ruled `on_target: true` — correctly, the TOPIC is right — and
+    # returned "Go third-party Decimal type for money calculations go.mod", which cria dropped on the
+    # floor. The spiral went to the network, returned no results, and the empty result then fed the
+    # re-hunt guard and a phantom spill file. `_usable_query` rejects the sent query and accepts the
+    # dropped recommendation; the machinery to prevent the whole detour was already here.
+    #
+    # NARROW ON PURPOSE. Rewriting on-target queries in general is a KNOWN footgun — measured at 47%
+    # of all searches rewritten, with `web_search('…')` wrappers and instruction sentences used
+    # verbatim as the search string — which is why the URL-only rule above exists. This does not widen
+    # that: a query that passes cria's own shape test is still never rewritten. Only one that fails it
+    # is, and only when the judge supplied a usable string to use instead.
+    if not rec or (on_target and _usable_query(query)
+                   and not _looks_like_url(_usable_query(rec) or "")):
         return coder
     # The recommendation must be a QUERY before it can replace the coder's own. Measured: 47% of all
     # searches today were rewritten, and the replacements included `web_search('…')` wrappers and
