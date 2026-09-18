@@ -8141,7 +8141,25 @@ def _authored_action(text: str, rlog=None) -> _AuthoredAction:
     # is structure, not an English verb/conjunction guess, and applies equally to numbered and
     # bulleted actions in any implementation language.
     listed = re.findall(r"(?m)^\s*(?:[-*+]|\d+[.)])\s+", strip_think(text or ""))
-    units = [part for part in re.split(r"(?<=[.!?])\s+", action.strip()) if part.strip()]
+    # COUNT UNITS WITH CODE SPANS INTACT. `_steer_or_none` removes markdown scaffolding by replacing
+    # each backtick with a SPACE, which is right for delivery and destructive for this check: the
+    # backticks are the only thing separating a code span from a sentence end, so `go build ./...`
+    # becomes `go build ./...  passes` and the dot-then-space reads as a boundary.
+    #
+    # Measured on cart-billing-go x ternary-bonsai-2 (session 01a0b6aa, turn 6277f59b). The reasoner
+    # authored ONE correct directive -- "Choose one Go decimal package ... add it to go.mod via
+    # `go get`, and confirm `go build ./...` passes before you change cart.go or cart_test.go." --
+    # and it counted as 2 units, so the whole thing was withheld as STRUCTURAL_REFUSAL and the coder
+    # got `redirect_canned` instead: "Choose a DIFFERENT next action", which is precisely what a
+    # stuck coder cannot do. Live log: `loop.steer_multiple_actions units=2` -> `loop.redirect`.
+    # The stray space in that event's head ("via go get ,") is this substitution's fingerprint.
+    #
+    # Masking to a punctuation-free token rather than special-casing dotted runs in the split: the
+    # defect is lost information, not a regex that is too naive. A dotted-run exception would still
+    # mis-split `pytest tests/.`, `npm run build.`, or any path ending a clause -- every case where a
+    # code span ends in a mark. One mask covers them because it restores what the author marked.
+    shape = _steer_or_none(re.sub(r"`[^`\n]+`", "CODE", text or "")) or action
+    units = [part for part in re.split(r"(?<=[.!?])\s+", shape.strip()) if part.strip()]
     if len(units) > 1 or len(listed) > 1:
         if rlog is not None:
             rlog.emit("loop.steer_multiple_actions", level="warn",
