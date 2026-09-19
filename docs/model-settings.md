@@ -57,6 +57,49 @@ Sampling is **client-side** (`cria.toml`); set the role you're driving to these.
 
 > **Bonsai 2 27B replaces Bonsai 1 — and needs NO TurboQuant (measured 2026-09-18).** `prism-ml/Ternary-Bonsai-2-27B-gguf`, same `qwen35` hybrid arch, two new packings (`PTQ1_0` 5.95 GB dense trits, `PQ2_0` 7.21 GB 2-bit slots) that **only the official PrismML fork can load** — the live TurboQuant build has no `ptq1_0`/`pq2_0` symbols and no Hadamard activation runtime, and TurboQuant is now **discontinued** (archive notice, `amesianx/turboquant`), so tbq3 is a dead end for Bonsai 2 forever. Binary = `prism-b10685-7dffb15` at `~/src/llama.cpp-prism2/` (what `PrismML-Eng/Bonsai-demo` pins; the newer `b10687` tag ships Windows assets only). **The KV trap bit again:** carrying Bonsai 1's rollback-recipe `-ctv q4_0` over to Bonsai 2 reproduced the pathological quantized-KV path exactly as documented above — pp2048@d8192 **17.5 t/s with q8_0/q4_0 vs 1090 t/s with q8_0/q8_0** (tg128@d8192 8.0 → 58.8). A Bonsai 1 control on its own TurboQuant build at q8_0/q4_0 measured 17.5/8.8 — i.e. **the collapse was 100% the V-cache type, not the new model or the new binary.** Final A/B at q8_0/q8_0, same box, same bench: PQ2_0 **pp@8K 1090 / tg@8K 58.8** vs PTQ1_0 602 / 49.1 — PQ2_0 wins both phases for 1.26 GB more, and beats the LIVE Bonsai 1 + tbq3 baseline (188 / 43.3) by **5.8× prefill and 1.36× decode**. Live at `-c 49152`, 8728/10240 MiB VRAM. **So the fleet-wide `-ctk q8_0 -ctv q8_0` default is now truly fleet-wide — ternary-bonsai's override is gone with Bonsai 1.** Behavioral note: the card's default `xhigh` reasoning effort is real — cria's `reasoning = "on"` already maps to `medium` (auto-detected `openai` style), yet coder steps still ruminated 3.8–4.1K reasoning tokens and `rumination.abort` fired twice in a 3-turn live run (~200s each). Plan→coder→tool pipeline otherwise ran clean end-to-end. **No rollback as of 2026-09-18** — operator call to treat new models as replacements: `[models.ternary-bonsai]`, its unit, its GGUFs (8.5 GB) and both Bonsai-1-only binaries (`llama.cpp-tq-prism` TurboQuant, `llama.cpp-prism` b9596) are deleted. Reverting means re-downloading `prism-ml/Ternary-Bonsai-27B-gguf` — and the tbq3 config is **not** reconstructible as-is, since that build is gone from the box and TurboQuant upstream is discontinued. The TurboQuant paragraphs below are kept as the measurement record, not as a live option.
 
+> **The KV rule is MATCH K TO V, not "avoid q4_0" (measured 2026-09-18, Bonsai 2 PQ2_0, 3080).** The
+> morning's note here blamed a `q4_0` V cache specifically. That was wrong, and the corrected sweep is
+> why the wording matters: ANY mismatched pair falls off the fast attention kernel, including two
+> types that are individually fine. `llama-bench`, pp2048 / tg64 @ d8192:
+>
+> | K | V | pp | tg | |
+> |---|---|---|---|---|
+> | f16 | f16 | **1111** | **62.3** | fastest, OOMs at 48K ctx (fits 32K, 9.2 GB) |
+> | q8_0 | q8_0 | 1077 | 58.2 | **LIVE** — 7% slower, fits 48K in 6.8 GB |
+> | q8_0 | f16 | 22.9 | 7.6 | |
+> | f16 | q8_0 | 16.8 | 6.1 | two good types, the worst result of all |
+> | q4_0 | q8_0 | 39.3 | 11.4 | |
+> | q4_0 | f16 | 33.1 | 8.9 | |
+>
+> f16/f16 buys 7% for a third of the context window; agentic runs reach 33K tokens, so q8_0/q8_0 stays.
+
+> **`n_gpu_layers` is 99 fleet-wide and must NEVER be `auto` (measured 2026-09-18).** The fleet is
+> pinned to the 3080 100% of the time, so there is no device-fitting decision to make — and `auto`
+> gets it wrong on a hybrid. On Bonsai 2 it left layer 0 on the CPU while the fused Gated Delta Net
+> op stayed on CUDA0, splitting the graph every token. Same server, same KV, same card, trivial
+> prompt (so not context depth): **`auto` 20.5 tok/s in 8858 MiB; `99` 60.8 tok/s in 6766 MiB** — it
+> used MORE vram to run 3x slower. Every Bonsai 2 cell run before this fix, including the L5 12% and
+> the L0 5% baseline, was measured on a server running at a third speed. A model too big to fit is
+> better off failing to load than silently running a third as fast. `gemma4-qat` was checked and
+> offloads 49/49 correctly under `auto`, so this is a hybrid-architecture failure, not a universal one.
+
+> **Speculative decoding on Bonsai 2: acceptance HALVED versus Bonsai 1, and no paired drafter exists
+> (measured 2026-09-18).** Bonsai 1's numbers are the row above: dspark **62%**, generic Qwen3.5-0.8B
+> **51%**, ngram-cache **48%** on code. Bonsai 2, same box, same generic drafter: **21-28%**. The
+> third-party `ProCreations/…-DFlash2` head reports **35%** and a +0.54% throughput gain over its own
+> predecessor. Acceptance roughly halved across BOTH drafter kinds with the drafter held constant,
+> which makes it a property of the target rather than of the drafters.
+>
+> Measured arms on the 3080, all at `-ngl 99`: baseline (no spec) **60.4 tok/s**; `ngram-cache`
+> **49.8** (−18%, the inverse of Bonsai 1 where ngram nearly doubled decode — at 60 tok/s the
+> verification overhead costs more than the guess saves); `draft-simple` + Qwen3.5-0.8B **OOM at 48K**,
+> and **22.2 tok/s (−63%) at 24K** where it fits.
+>
+> `prism-ml` ships **no dspark drafter for Bonsai 2** — the demo's own downloader says so in a comment
+> (`the projector ships in the same repo; Bonsai 2 has no dspark drafter`). Every `dspark-*` file on
+> the hub is paired to Bonsai 1 or the 1-bit Bonsai, and drafters are target-specific. Bonsai 2 was
+> two days old at the time of measuring, so this is likely "not yet" rather than "not coming".
+
 > **Fleet-wide TurboQuant sweep (2026-07-28): NO win for any other model — q8_0 stays the fleet default.** All 7 fleet models benched on the 3080 (AtomicBot build, q8_0 vs turbo3, shallow + 8K depth, r=3, zero errors): tg@8K deltas par to −13% (lfm25 277→249, mellum2/ornith par, qwythos/gemma4 noisy-worse, qwopus within its control's noise band). The ternary-27B is the ONLY winner because its 2-bit weights make KV reads the dominant decode term at depth — the 8–12B fleet models already decode 65–277 t/s deep (weight-bound, several MoE/hybrid with small KV), so 3-bit KV just adds quantization work. TurboQuant = ternary-only. **32K-depth follow-up (operator: "these weren't deep runs"): the loss GROWS with depth** — tg64@d32768 q8_0→turbo3: lfm25 230→163, ornith 68→49, qwopus 67→50, gemma4 60→44, qwythos 67→64. The hybrids' KV stays small at depth, so turbo3's per-read dequant overhead scales while the savings never arrive. ONE inconclusive cell: mellum2's q8_0 control went unstable at 32K (93±58) while turbo3 held 140±0.6 — repeat before trusting either number if mellum2 ever goes live again.
 
 > **Context-vs-speed tradeoff, qwythos (measured 2026-07-28; tg64, tok/s):**
