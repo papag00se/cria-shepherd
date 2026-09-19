@@ -225,8 +225,37 @@ permission, not by removing the instruction that looked responsible. The coder h
 four times already. Whatever holds it is not reachable by editing the text handed to it, and that
 retires the whole class of fix this thread was drawn to.
 
-**Untested direction, and it is a different kind.** Everything above changes what the coder READS.
-The alternative changes what it CAN DO: the tool menu. cria already curates tools per turn
-(`toolmenu.focused` fired in both walked cells), so a coder that has read the file and holds a named
-failing check need not be offered `read_file` a fourth time. Capability, not persuasion — and a
-mechanism cria already owns. Unmeasured; the two confident predictions above both scored zero.
+**The tool-menu lever WAS then measured, and it splits the two cells.** Same harness. Withholding
+the read-only tools (`read_file`, `list_dir`, `exec_command`) for one turn:
+
+| | baseline | read tools withheld |
+|---|---|---|
+| cell 1 `shipping-rates-rb` (turn after an 8,240-token abort) | 1/12 writes | **9/12 writes**, 4 of them the correct `>=` fix |
+| cell 2 `cart-billing-go` (late research turn) | 0/6 writes | **0/6 writes** |
+
+Withholding `read_file` ALONE does nothing (0/12) — the coder routes around it via `exec_command`.
+And in cell 2 it routed around the full constraint too: `exec_command` became `web_fetch`, six for
+six. No `task_complete` in any constrained sample, so it is not being pushed into a false done.
+
+**This is not a progress fix; it is a DECISION-DEADLOCK fix.** The two cells are the two stalls:
+
+- cell 1 had an **unmade decision** — it had read everything and derived the one-line fix four times.
+  Removing the read tools left nothing to do but act, and it acted, correctly.
+- cell 2 had an **unread fact** — it genuinely did not know which Go decimal package exists. No tool
+  constraint can manufacture that, so it reached for the nearest remaining intake tool and kept
+  hunting. Here the constraint is useless and probably harmful: that coder SHOULD still be looking.
+
+So the same cause-split that defeats the rumination guard's fixed remedy defeats this one, in a
+different mechanism. **Any fix in this area has to tell the two stalls apart first**, and nothing
+deterministic does. That is the original open question, unchanged, and now with a second mechanism
+blocked behind it.
+
+NOT BUILT, deliberately. One arm works on one turn of one cell and does nothing on the other, and
+shipping it would put a mechanism on the live path that fires on the wrong half of cases with no way
+to know which half it is in. 9/12 on a single turn is not a licence — two remedies already looked
+like wins at small n in this same session and evaporated on re-running.
+
+**Incidental, and worth keeping:** the probe calls the model directly, so cria is not in the path.
+One baseline sample then generated for **10 minutes and 10,940 tokens without ever emitting a tool
+call**, and only stopped because the harness timed out. That is what the rumination guard prevents on
+every one of these turns, measured by its absence.
