@@ -536,6 +536,14 @@ class Upstream:
             payload["tools"] = body["tools"]
         if body.get("chat_template_kwargs"):
             payload["chat_template_kwargs"] = body["chat_template_kwargs"]
+        # EVERY KEY THE TEMPLATE BRANCHES ON, or the capture is a different prompt than the one
+        # that ran. `reasoning_effort` was missing, and Bonsai 2's template opens with a line
+        # chosen by it: "Reasoning effort is set to low. Keep your thinking brief" vs "...xhigh.
+        # Please think carefully ... consider plausible alternatives". It defaults to xhigh, so
+        # every capture showed xhigh no matter what was sent, and a walk of those captures reads
+        # a knob as dead when it is live (5b, in the evidence a walk is conducted on).
+        if body.get("reasoning_effort") is not None:
+            payload["reasoning_effort"] = body["reasoning_effort"]
         try:
             req = urllib.request.Request(
                 self._base_url + "/apply-template", data=json.dumps(payload).encode("utf-8"),
