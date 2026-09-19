@@ -1,6 +1,6 @@
 # Battery — the engagement ladder
 
-**Last updated 2026-09-11 09:32** — newest row `feed-pipeline-java_ornith15_codex_poff_1788969546`, finished 2026-09-09 10:19.
+**Last updated 2026-09-19 10:15** — newest row `shipping-rates-rb_ternary-bonsai-2_codex_poff_1789837728`, finished 2026-09-19 10:15.
 
 Each cell is an inferred usefulness percentage 🟢≥88 🟡≥63 🟠≥38 🔴 below; `·` = not judged. `[engagement] level = 0..5`, each rung implying every rung below it. gemma4 / qwen35 / ternary-bonsai / nemotron-elastic are FROZEN historical inference rows recovered into suite/historical_ladder.json; every other model reads live from results.jsonl.
 
@@ -54,7 +54,7 @@ Each cell is an inferred usefulness percentage 🟢≥88 🟡≥63 🟠≥38 �
 | nemotron-elastic | 🔴 26% | 🔴 28% | 🟠 40% | 🔴 19% | 🟠 40% | 🔴 20% | 29% | 33 | 141 |
 | qwen38 | 🟢 100% | 🟢 100% | 🟢 100% | 🟡 85% | 🟢 98% | 🟢 100% | 97% | 29 | · |
 
-### Level 5 — ASSISTS_ENABLED — steers, periodic gates, detectors, planner — 85%
+### Level 5 — ASSISTS_ENABLED — steers, periodic gates, detectors, planner — 83%
 
 | model | ruby | go | python | java | node | rust | total | avg min | avg calls |
 |---|---|---|---|---|---|---|---:|---:|---:|
@@ -64,4 +64,5 @@ Each cell is an inferred usefulness percentage 🟢≥88 🟡≥63 🟠≥38 �
 | nemotron-elastic | 🟠 59% | 🔴 31% | 🟡 76% | 🔴 20% | 🟡 70% | 🟡 84% | 57% | 50 | 180 |
 | ornith15 | 🟢 95% | 🟡 84% | 🟡 85% | 🟡 70% | 🟡 75% | 🟢 95% | 84% | 60 | 126 |
 | qwen38 | 🟢 100% | 🟢 100% | 🟢 100% | 🟡 85% | 🟢 98% | 🟢 100% | 97% | 24 | · |
+| ternary-bonsai-2 | 🔴 12% | · | · | · | · | · | 12% | 40 | 31 |
 
