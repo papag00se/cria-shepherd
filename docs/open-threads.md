@@ -206,6 +206,27 @@ is still plausible, none of them tested:
 The coder already knew the fix — it derived it four times. So the blocker is not information, and any
 next attempt should target something other than telling it more.
 
-**Cheapest untested lever, and the most upstream:** delete or counterweight the
-`RESEARCH & INVESTIGATE FIRST` line for a coder that has already read the files it needs. That is
-cria's own prompt, it is one line, and the same replay harness falsifies it in minutes.
+**The prompt lever was then tested too, and is ALSO inert.** Same harness, same captured turn:
+
+| lever | writes |
+|---|---|
+| baseline (*"prefer reading the current file"*) | 0/12 |
+| progress fact in the guard notice | 0/4 |
+| `STOP INVESTIGATING ONCE YOU CAN ACT` counterweight added | **0/12** |
+| `RESEARCH & INVESTIGATE FIRST` deleted outright | 0/4 |
+
+The counterweight arm also touched FEWER task files than baseline (1/12 vs 4/12). And it repeated the
+n=1 trap exactly: at n=4 it showed 1 write including a real `edit_file`, which vanished at n=12. Two
+different remedies, two false positives at small n, both caught only by re-running.
+
+**So the family is ruled out, which is the useful result.** On this turn, with this model, a
+prompt-level intervention does not convert a read into a write — not by adding facts, not by granting
+permission, not by removing the instruction that looked responsible. The coder had derived the fix
+four times already. Whatever holds it is not reachable by editing the text handed to it, and that
+retires the whole class of fix this thread was drawn to.
+
+**Untested direction, and it is a different kind.** Everything above changes what the coder READS.
+The alternative changes what it CAN DO: the tool menu. cria already curates tools per turn
+(`toolmenu.focused` fired in both walked cells), so a coder that has read the file and holds a named
+failing check need not be offered `read_file` a fourth time. Capability, not persuasion — and a
+mechanism cria already owns. Unmeasured; the two confident predictions above both scored zero.
