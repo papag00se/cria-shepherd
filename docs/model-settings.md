@@ -93,6 +93,51 @@ Sampling is **client-side** (`cria.toml`); set the role you're driving to these.
 > The graft is INERT without spec decode (62.8 vs 63.0) — the appended tensors cost nothing unused,
 > which is the control that says the win comes from drafting and not from the file.
 >
+> **CORRECTION — the acceptance column above is wrong and the gain is bigger than first reported.**
+> Those acceptance figures came from `grep 'draft acceptance' | tail -1`, i.e. ONE prompt's counter
+> presented as the arm's mean. Re-measured per prompt across eight workloads at the live setting
+> (n-max 2): **mean 76.3 tok/s, mean acceptance 0.601** — which matches the publisher's 0.60 exactly.
+> The real gain over the 62.8 baseline is **+21%**, not +11.5%.
+>
+> **It is strongly workload-dependent, and the first prompt set was favourable** (5 of 5 code/math,
+> the best-drafting categories):
+>
+> | workload | tok/s | acceptance |
+> |---|---|---|
+> | python + tests | 88.9 | 0.781 |
+> | reasoning (word problem) | 81.3 | 0.681 |
+> | math steps | 81.2 | 0.671 |
+> | structured list | 80.1 | 0.657 |
+> | code fix | 75.4 | 0.589 |
+> | prose chat | 68.6 | 0.488 |
+> | ruby method | 68.6 | 0.481 |
+> | open prose | 66.5 | 0.463 |
+>
+> 1.34x spread between best and worst prompt. Predictable text drafts well; open prose does not.
+> Agentic work is mostly code and tool output so the mix leans favourable, but a prose-heavy run
+> lands nearer 67 than 89. Caveat: each workload was not re-baselined with MTP off, so the per-row
+> RATIO is inferred from the single 62.8 baseline; the acceptance column is directly measured.
+>
+> **LOSSLESSNESS VERIFIED, not assumed.** The author did not re-benchmark quality; the claim rested
+> on an argument. Greedy (temp 0, top_k 1, fixed seed), same prompt, all three arms produced the
+> byte-identical hash `57ce584e386702c034fe781412b44d95`:
+>   * base model, MTP off
+>   * grafted model, MTP off   -> the graft does not perturb the main path despite block_count 64->65
+>   * grafted model, MTP ON    -> verified drafts reproduce the target exactly
+> The middle arm is the one that mattered: if block 64 were being executed as a normal layer rather
+> than skipped, that hash would differ. It does not.
+>
+> **Why block_count changes.** Stock Qwen3.8 ships the MTP head INSIDE the GGUF; PrismML drops it
+> when producing Bonsai 2 (an FP16-trained head is not something you ternary-quantize, and without
+> runtime support it is dead weight). Parameter totals confirm it: unsloth Qwen3.8 27,320,697,856 vs
+> prism Bonsai 2 26,895,998,464, a delta of 424,699,392 against ~380M per block for a 24.35B/64-block
+> backbone. The graft copies those 15 `blk.64.*` tensors back and sets `nextn_predict_layers=1`,
+> llama.cpp's marker for "the last N blocks are MTP, not main-path". Not an anomaly and not novel —
+> the recipe is credited to `sudoingX/qwen38-mtp`, found on stock Qwen3.8 first.
+>
+> **LIVE as of 2026-09-19** at ctx 40960 (48K OOMs; the draft context costs ~900 MiB), patched sm_86
+> binary, `--spec-draft-n-max 2`. 9572 MiB of 10240 — headroom is thin, watch for OOM on restart.
+>
 > **Why our ratio is a third of theirs.** Their baseline was 41.9 tok/s on a quarter-GPU MIG slice;
 > ours is 62.8 on a full 3080. Speculation trades spare compute for skipped memory round-trips, so a
 > bandwidth-starved baseline has more to win. Their +44% and our +11.5% are not in conflict — but the
