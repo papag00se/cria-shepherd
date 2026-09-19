@@ -190,7 +190,7 @@ def _oversize_command(text: str) -> str:
     return f"printf %s {_qbash(denial.mark(text))}"
 
 
-def _refusal_command(text: str) -> str:
+def _refusal_command(text: str, survey: str = "") -> str:
     """The one way cria lowers a refusal: MARK it as a call that did not run, print it, then exit
     non-zero. ONE owner — the five call sites each hand-rolled `printf %s …` and all five inherited
     printf's exit 0.
@@ -199,8 +199,29 @@ def _refusal_command(text: str) -> str:
     exit code does not survive to the reader that needs it: a refusal comes back as a tool result
     whose text is the only thing a judge's action log carries, and ``represent_inbound`` strips the
     harness's ``Process exited with code`` envelope off read/nav results outright. Marking the text
-    is what lets ``loop._work_log`` say the call never ran without matching a single word of it."""
-    return f"printf %s {_qbash(denial.mark(text))}; exit {REFUSED_EXIT_CODE}"
+    is what lets ``loop._work_log`` say the call never ran without matching a single word of it.
+
+    ``survey`` RIDES BEFORE THE EXIT, and only a refusal that needs one passes it. A refused install
+    is the single moment cria both owes the coder a route and does not have one: ``dirguard`` asks
+    ``toolpath.resolved`` which binary the CODER's shell has, the workspace view QUEUES that question
+    and answers None until a survey lands — and a survey rides only on a write or an edit. A coder
+    looping on raw ``gem install`` makes neither, so the question is asked every time and delivered
+    never, and the refusal renders ``route_unknown_yet`` forever. Measured in dirguard's own notes:
+    580 of 3,704 renderings (16%) routeless, clustered at session start, and once decisive — nine
+    routeless refusals in one prompt, after which the escalation reasoner told the coder to hardcode
+    the data the gem would have provided, while `countries (8.1.0)` sat installed on the box.
+
+    THE EXIT CODE IS UNCHANGED AND STILL LAST. It is read by a small model: a refusal that exits 0
+    reads as a call that ran (the five hand-rolled printfs this function replaced all inherited
+    ``printf``'s exit 0), and a non-zero exit on a READ reads as a missing path (operator ruling,
+    2026-08-12). The survey's own status must not move it, so it is spliced before and discarded."""
+    body = f"printf %s {_qbash(denial.mark(text))}"
+    if survey:
+        # A SUBSHELL, not a brace group. `{ …; } || true` does not contain an `exit`: it ends the
+        # whole script, so a survey that exits non-zero REPLACES the refusal's code and the coder
+        # reads a different failure than the one cria meant. `( … ) || true` confines it.
+        body = f"{body}; ( {survey} ) || true"
+    return f"{body}; exit {REFUSED_EXIT_CODE}"
 
 
 # Tool-call-dialect special-token sentinels a weak model leaks into a shell command when it FUSES two
@@ -1358,9 +1379,22 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
             # gets bounded to the workspace even when the harness runs --yolo. Refuse a synthetic file
             # tool or raw shell command reaching outside the workspace beyond [safety] permission.
             elif (reason := _external_refusal(name, args, fn, injected, external_dir_permission, workspace_root)) is not None:
-                cmd = _refusal_command(reason)
+                # CARRY THE SURVEY WHEN A PROGRAM QUESTION IS STILL UNANSWERED. `dirguard` has just
+                # queued it while composing this very refusal; this is the only carrier a coder
+                # looping on raw installs is guaranteed to produce. Budgeted like any other
+                # ride-along, with the refusal's own (short, fixed) text charged against the room.
+                ride = ""
+                if wsview.pending(session or "")[1]:
+                    room = (content_reduce_mod.INLINE_RESULT_MAX_BYTES - _RIDE_ALONG_HOST_RESERVE
+                            - _RIDE_ALONG_COMMAND_RESERVE - len(reason))
+                    if room >= wsview.TREE_MIN_BYTES:
+                        ride = wsview.survey_command(session or "", cd=workspace_root or "", budget=room)
+                    elif rlog is not None:
+                        rlog.emit("wsview.survey_not_carried", level="info", left=room, carrier=name)
+                cmd = _refusal_command(reason, ride)
                 if rlog is not None:
-                    rlog.emit("writeproxy.blocked_external", tool=name, permission=external_dir_permission)
+                    rlog.emit("writeproxy.blocked_external", tool=name,
+                              permission=external_dir_permission, carried_survey=bool(ride))
             # cria's own dir is off-limits: refuse a synthetic read/write/edit/list whose path lands
             # in ~/.cria BEFORE lowering it, so cria never cats its secrets to the model or lets a
             # stray write corrupt its state. The refusal is a normal tool result the model reads.
