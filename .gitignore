@@ -29,3 +29,4 @@ suite/results/*.log
 # Suite run workspaces. A run's workspace IS its evidence, and /tmp is swept on this box —
 # one cleaner took a workspace mid-run and the row landed 0/0 with nothing to explain it.
 /runs/
+walkdata/
