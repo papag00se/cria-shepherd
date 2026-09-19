@@ -36,6 +36,8 @@ python -m cria                       # cria now serves :18085
 
 Point your harness at `http://127.0.0.1:18085/v1` instead of the model server. That's it. Chat-Completions harnesses set a base URL; Responses-API harnesses (Codex) set `wire_api = "responses"`. No plugin, no model fork, no API key. A `⟦cria⟧` status ticker narrates the pipeline live — planning, steps, checks, compaction, running clock.
 
+cria advertises the model's real context window in `/v1/models` (the standard way), so a compliant harness compacts on its own before the ceiling. **Codex is the exception** — it won't read that window from a keyless local provider and needs one extra config key; see [docs/codex-context-window.md](docs/codex-context-window.md) for the minimal, validated setup.
+
 ## Why it's different
 
 **vs. server-side compound systems** (groq/compound and friends): their model mix is a product decision — cria's is a config file. Bind every role to one scrappy local 9B, or put the judges on a big cloud model and keep the coder local, or anything between. Failover chains handle whatever doesn't resolve. And cria **owns no executors** — every tool runs in *your* harness, on *your* machine, under *your* permissions. cria composes, interprets, verifies. It never runs your code itself.

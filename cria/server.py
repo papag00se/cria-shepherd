@@ -794,15 +794,41 @@ class CriaHandler(BaseHTTPRequestHandler):
         if path == "/health":
             self._send_json(200, {"status": "ok"})
         elif path == "/v1/models":
-            # Two consumers, two shapes: Codex's model manager wants a top-level
-            # `models` list (empty is fine — it falls back to config metadata, and
-            # [server] pins the context window); plain OpenAI clients want `data`.
-            models = [self.server.upstream.loaded_model(self.server.log) or "cria"]
-            self._send_json(200, {
-                "object": "list",
-                "data": [{"id": m, "object": "model", "owned_by": "cria"} for m in models],
-                "models": [],
-            })
+            # THE REAL MODEL, UNDER ITS REAL NAME, WITH ITS REAL RUNTIME WINDOW — advertised the
+            # way the OpenAI-compatible ecosystem actually reads it, so ANY compliant harness can
+            # learn the limit and apply its own compaction policy. There is no wire standard for a
+            # compaction *trigger*: the standard signal is the context *window*, and each harness
+            # derives its own threshold from it (Codex compacts at 90%). cria's only job here is to
+            # state the window truthfully; the trigger is the harness's business.
+            #
+            # No single field name is universal, so we advertise the RUNTIME window under every
+            # recognized key at once:
+            #   meta.n_ctx           — llama.cpp (this stack's native shape; we FRONT llama.cpp)
+            #   max_model_len        — vLLM's OpenAI-compat model card
+            #   context_length       — OpenRouter / HF convention
+            #   context_window / max_context_window — OpenAI/Codex ModelInfo
+            # Every one carries n_ctx (the window the server is RUNNING, e.g. 40960), never
+            # n_ctx_train (the trained 262144): advertising the trained max would tell a harness it
+            # has room it does not, and it would 400 mid-turn (measured: request 41,662 > ctx
+            # 40,960). Sourced live from /props, so it tracks a model swap with nothing to go stale.
+            # A placeholder id would be cria stating a false fact about which model is loaded (5b),
+            # so a not-yet-loaded server yields an empty list, never an invented name.
+            loaded = self.server.upstream.loaded_model(self.server.log)
+            n_ctx = None
+            props = self.server.upstream.props(self.server.log)
+            if isinstance(props, dict):
+                n_ctx = (props.get("default_generation_settings") or {}).get("n_ctx")
+            if not loaded:
+                self._send_json(200, {"object": "list", "data": [], "models": []})
+            else:
+                entry = {"id": loaded, "slug": loaded, "object": "model", "owned_by": "cria"}
+                if isinstance(n_ctx, int) and n_ctx > 0:
+                    entry["context_window"] = n_ctx        # OpenAI / Codex ModelInfo
+                    entry["max_context_window"] = n_ctx
+                    entry["context_length"] = n_ctx        # OpenRouter / HF
+                    entry["max_model_len"] = n_ctx         # vLLM
+                    entry["meta"] = {"n_ctx": n_ctx}       # llama.cpp native
+                self._send_json(200, {"object": "list", "data": [entry], "models": [entry]})
         else:
             self._send_json(404, {"error": "not found"})
 

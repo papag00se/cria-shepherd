@@ -185,6 +185,12 @@ def configure_cria(model: str, planner_enabled: bool) -> dict:
     sh("sudo", "-n", "systemctl", "restart", "cria.service", timeout=60)
     if not wait_health("http://127.0.0.1:18085/health"):
         raise RuntimeError("cria never became healthy after reconfiguration")
+    # cria now serves this model; pin Codex's window to it. Without the real window Codex
+    # uses a 272K fallback, never auto-compacts, and a cell that crosses the server ceiling
+    # 400s mid-turn (measured: request 41,662 > ctx 40,960). sync reads the live window from
+    # cria /v1/models, so it tracks the swap with no hardcoded number.
+    sh(sys.executable, str(Path(__file__).resolve().parent.parent / "scripts" / "sync_codex_model.py"),
+       timeout=30)
     return spec
 
 

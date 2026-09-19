@@ -35,5 +35,19 @@ if [ -z "$ID" ]; then
     echo "!! $SVC did not become ready in 120s"; sudo -n systemctl status "$SVC" --no-pager | tail -20; exit 1
 fi
 
+# cria caches the loaded model id for the life of the process, so a swap needs a cria
+# restart before its /v1/models (and the codex window sync) reflect the new model.
+echo ">> restarting cria.service to pick up $ID …"
+sudo -n systemctl restart cria.service
+for i in $(seq 1 30); do
+    curl -s -m 3 http://127.0.0.1:18085/v1/models 2>/dev/null | grep -q '"id"' && break
+    sleep 1
+done
+
 cd /home/jesse/src/cria-shepherd
+# Keep the isolated Codex config's model + context_window in lockstep with what cria
+# serves. Without the real window Codex uses a 272K fallback and never auto-compacts;
+# with it Codex compacts before the server's ceiling instead of 400-ing mid-turn.
+python3 scripts/sync_codex_model.py || echo "!! codex model sync failed (codex window may be stale)"
+
 python3 scripts/live_model.py --label "$LABEL" --turns "$TURNS"
