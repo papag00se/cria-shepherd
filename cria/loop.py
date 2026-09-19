@@ -1411,11 +1411,36 @@ def _negative_diagnosis_nudge(obj: dict, *, task: str, action_log: str = "", che
         return suppress("unknown evidence source")
     if not task_quote or task_quote not in (task or ""):
         return suppress("task quote is not exact")
-    if kind in {"missing_file", "missing_content"}:
+    # MISSING_FILE ONLY. The claim "the task asked for this file and it is not there" is about a
+    # PATH, so the task had better name that path — that check stays.
+    #
+    # MISSING_CONTENT is a different claim: the task names a BEHAVIOUR and the subject is whatever
+    # file that behaviour belongs in. A feature request essentially never names its implementation
+    # file, so requiring one suppressed almost every true missing_content diagnosis before any of
+    # its real provenance ran — and that provenance is strictly stronger than a filename match:
+    # the subject must be a real workspace file with COMPLETE content, the evidence quote must occur
+    # EXACTLY in that content, and a focused semantic question must return SUPPORTED.
+    #
+    # Measured on shipping-rates-rb x ternary-bonsai-2 (session 01a0b798, call 0018). The judge
+    # returned, all four fields true and checkable:
+    #   subject        lib/shipping/rates.rb
+    #   task_quote     "Add an `express` service costing `14.99` base plus `2.50` per kilogram."
+    #   evidence_quote ZONE_BASE = { "domestic" => 4.99, "eu" => 9.99, "international" => 19.99 }
+    # The task quote is exact, the evidence line is the real current text on disk, and the coder had
+    # written nothing in 22 minutes. It was dropped for "workspace subject is not task-named",
+    # because the sentence about an express service does not contain the string `rates.rb`.
+    #
+    # That is the exact outcome the operator ruling above (loop.py, `if not satisfied`) exists to
+    # prevent, ON THIS TASK: four not-satisfied verdicts naming `Shipping.zone_for` went unheard and
+    # the cell ended with the method absent. The ruling fixed the delivery path; this check voided
+    # it one layer down.
+    if kind == "missing_file":
         named = (_subject_is_exact_in_quote(subject, task_quote)
                  or _subject_is_exact_in_quote(os.path.basename(subject), task_quote))
         if not subject or not named:
             return suppress("workspace subject is not task-named")
+    elif kind == "missing_content" and not subject:
+        return suppress("missing-content has no workspace subject")
 
     workspace_fact = ""
     source_text = ""
