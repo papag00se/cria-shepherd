@@ -73,6 +73,49 @@ Sampling is **client-side** (`cria.toml`); set the role you're driving to these.
 >
 > f16/f16 buys 7% for a third of the context window; agentic runs reach 33K tokens, so q8_0/q8_0 stays.
 
+> **MTP GRAFT: the only spec-decode arm that beats baseline on Bonsai 2 — +11.5%, NOT the claimed
+> +44% (measured 2026-09-19, 3080/sm_86).** `decent-jawfish/bonsai-2-27b-mtp` is not a drafter: it is
+> the Qwen3.8-27B multi-token-prediction head (15 `blk.64.*` tensors) grafted verbatim into the PQ2_0
+> GGUF, `block_count=65`, `nextn_predict_layers=1`, driving `--spec-type draft-mtp`. Nothing trained.
+> Because the head is the target's OWN next-token predictor rather than an external model guessing at
+> a foreign distribution, the "acceptance halved" finding above does not apply to it — which is why it
+> was worth testing against that prior.
+>
+> | arm | tok/s | acceptance | vram |
+> |---|---|---|---|
+> | vanilla, base model | 63.0 | — | 8328 MiB |
+> | vanilla, grafted model | 62.8 | — | 8328 MiB |
+> | MTP `n-max 1` | 69.0 | **0.543** | 9086 MiB |
+> | **MTP `n-max 2`** | **70.2** | 0.391 | 9236 MiB |
+> | MTP `n-max 3` | 61.4 | 0.306 | 9388 MiB |
+> | MTP `n-max 4` | 60.0 | 0.253 | 9538 MiB |
+>
+> The graft is INERT without spec decode (62.8 vs 63.0) — the appended tensors cost nothing unused,
+> which is the control that says the win comes from drafting and not from the file.
+>
+> **Why our ratio is a third of theirs.** Their baseline was 41.9 tok/s on a quarter-GPU MIG slice;
+> ours is 62.8 on a full 3080. Speculation trades spare compute for skipped memory round-trips, so a
+> bandwidth-starved baseline has more to win. Their +44% and our +11.5% are not in conflict — but the
+> ratio is the part they called durable, and it did not transfer. Acceptance is the other half:
+> **0.391 at n-max 2 against their 0.60**, same graft, same mechanism.
+>
+> Acceptance FALLS with draft depth (0.54 -> 0.39 -> 0.31 -> 0.25) since each extra token compounds
+> divergence, while throughput peaks at n-max 2: n-max 1 accepts more often but saves less per
+> acceptance. Still far above every external drafter (0.21-0.28 for Qwen3.5-0.8B).
+>
+> **NOT ADOPTED.** The author states quality was never re-benchmarked — the lossless claim rests on
+> spec decode being verified-lossless and the base tensors being bit-identical, not on a measurement.
+> +11.5% is a much weaker case for an unverified graft than +44% would have been. A usefulness-scored
+> cell must run before this replaces anything live.
+>
+> Reproduction: the published `0001-qwen35-mtp-hadamard-inverse.patch` has MALFORMED HUNK HEADERS
+> (`@@ -1,5 +1,6 @@` describing 5 lines while supplying 3) and `patch` rejects it; the two changes
+> were applied by hand and are correct as described. Patched build at
+> `~/src/llama.cpp-prism2-mtp/src/build/bin` (sm_86, `-DCMAKE_CUDA_ARCHITECTURES=86`), kept SEPARATE
+> from the live unpatched binary. The documented failure was confirmed on the unpatched binary FIRST
+> (`latent lookup 'mtp_tok_embd-64' consumed by op=RMS_NORM`) rather than patching toward an expected
+> error. Needs matched `-ctk q8_0 -ctv q8_0`: at default f16 KV the MTP draft context OOMs on 10 GB.
+
 > **`n_gpu_layers` is 99 fleet-wide and must NEVER be `auto` (measured 2026-09-18).** The fleet is
 > pinned to the 3080 100% of the time, so there is no device-fitting decision to make — and `auto`
 > gets it wrong on a hybrid. On Bonsai 2 it left layer 0 on the CPU while the fused Gated Delta Net
