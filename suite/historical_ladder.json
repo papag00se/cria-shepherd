@@ -1,47 +1,251 @@
 {
   "_comment": "FROZEN historical inference-usefulness ladder, recovered from battery-report.md @8dc5aef after a field rename (usefulness -> usefulness_percent) + a report() rewrite orphaned it out of results.jsonl. These are inferred usefulness judgments (NOT mechanical grades) for the four models whose per-cell scores no longer survive in results.jsonl. battery_status.report() renders these for the frozen models and the LIVE usefulness_percent from results.jsonl for every other model. Task order = shipping-rates-rb, cart-billing-go, orders-api-py, feed-pipeline-java, handles-cli-node, rust-toml-cli (ruby, go, python, java, node, rust).",
   "levels": {
-    "0": "pure proxy — wire translation only",
-    "1": "TOOL_CALL_FIXES — dialect and template repair",
-    "2": "SIMPLE_TOOLS — cria's tool menu, lowered to shell",
-    "3": "CONTEXT_FIXES — floor, trims, dedups, compaction reframing",
-    "4": "DONE_REFUSALS_ENABLED — refusing a completion CLAIM",
-    "5": "ASSISTS_ENABLED — steers, periodic gates, detectors, planner"
+    "0": "pure proxy \u2014 wire translation only",
+    "1": "TOOL_CALL_FIXES \u2014 dialect and template repair",
+    "2": "SIMPLE_TOOLS \u2014 cria's tool menu, lowered to shell",
+    "3": "CONTEXT_FIXES \u2014 floor, trims, dedups, compaction reframing",
+    "4": "DONE_REFUSALS_ENABLED \u2014 refusing a completion CLAIM",
+    "5": "ASSISTS_ENABLED \u2014 steers, periodic gates, detectors, planner"
   },
-  "tasks": ["shipping-rates-rb", "cart-billing-go", "orders-api-py", "feed-pipeline-java", "handles-cli-node", "rust-toml-cli"],
-  "task_labels": ["ruby", "go", "python", "java", "node", "rust"],
+  "tasks": [
+    "shipping-rates-rb",
+    "cart-billing-go",
+    "orders-api-py",
+    "feed-pipeline-java",
+    "handles-cli-node",
+    "rust-toml-cli"
+  ],
+  "task_labels": [
+    "ruby",
+    "go",
+    "python",
+    "java",
+    "node",
+    "rust"
+  ],
   "frozen": {
     "gemma4": {
-      "0": {"pct": [85, 92, 89, 100, 93, 86], "min": 2, "calls": 20},
-      "1": {"pct": [28, 92, 34, 33, 6, 51], "min": 15, "calls": 130},
-      "2": {"pct": [11, 89, 81, 76, 66, 100], "min": 9, "calls": 71},
-      "3": {"pct": [85, 88, 84, 96, 78, 86], "min": 6, "calls": 27},
-      "4": {"pct": [100, 73, 100, 100, 93, 86], "min": 10, "calls": 46},
-      "5": {"pct": [73, 89, 92, 100, 91, 100], "min": 20, "calls": 74}
+      "0": {
+        "pct": [
+          85,
+          92,
+          89,
+          100,
+          93,
+          86
+        ],
+        "min": 2,
+        "calls": 20
+      },
+      "1": {
+        "pct": [
+          28,
+          92,
+          34,
+          33,
+          6,
+          51
+        ],
+        "min": 15,
+        "calls": 130
+      },
+      "2": {
+        "pct": [
+          11,
+          89,
+          81,
+          76,
+          66,
+          100
+        ],
+        "min": 9,
+        "calls": 71
+      },
+      "3": {
+        "pct": [
+          85,
+          88,
+          84,
+          96,
+          78,
+          86
+        ],
+        "min": 6,
+        "calls": 27
+      },
+      "4": {
+        "pct": [
+          100,
+          73,
+          100,
+          100,
+          93,
+          86
+        ],
+        "min": 10,
+        "calls": 46
+      },
+      "5": {
+        "pct": [
+          73,
+          89,
+          92,
+          100,
+          91,
+          100
+        ],
+        "min": 20,
+        "calls": 74
+      }
     },
     "qwen35": {
-      "0": {"pct": [0, 21, 0, 0, 0, 0], "min": 1, "calls": 8},
-      "1": {"pct": [55, 92, 83, 62, 0, 100], "min": 14, "calls": 73},
-      "2": {"pct": [76, 89, 88, 100, 63, 100], "min": 6, "calls": 50},
-      "3": {"pct": [93, 100, 83, 80, 58, 74], "min": 9, "calls": 54},
-      "4": {"pct": [86, 45, 79, 100, 83, 100], "min": 17, "calls": 140},
-      "5": {"pct": [100, 63, 71, 96, 93, 100], "min": 40, "calls": 227}
-    },
-    "ternary-bonsai": {
-      "0": {"pct": [54, 90, 89, 0, 100, 98], "min": 25, "calls": 67},
-      "1": {"pct": [7, 32, 61, 14, 99, 11], "min": 31, "calls": 53},
-      "2": {"pct": [100, 33, 100, 94, 76, 11], "min": 31, "calls": 82},
-      "3": {"pct": [1, 78, 93, 99, 94, 18], "min": 30, "calls": 51},
-      "4": {"pct": [100, 97, 64, 80, 76, 16], "min": 45, "calls": 82},
-      "5": {"pct": [100, 97, 74, 100, 89, 100], "min": 48, "calls": 89}
+      "0": {
+        "pct": [
+          0,
+          21,
+          0,
+          0,
+          0,
+          0
+        ],
+        "min": 1,
+        "calls": 8
+      },
+      "1": {
+        "pct": [
+          55,
+          92,
+          83,
+          62,
+          0,
+          100
+        ],
+        "min": 14,
+        "calls": 73
+      },
+      "2": {
+        "pct": [
+          76,
+          89,
+          88,
+          100,
+          63,
+          100
+        ],
+        "min": 6,
+        "calls": 50
+      },
+      "3": {
+        "pct": [
+          93,
+          100,
+          83,
+          80,
+          58,
+          74
+        ],
+        "min": 9,
+        "calls": 54
+      },
+      "4": {
+        "pct": [
+          86,
+          45,
+          79,
+          100,
+          83,
+          100
+        ],
+        "min": 17,
+        "calls": 140
+      },
+      "5": {
+        "pct": [
+          100,
+          63,
+          71,
+          96,
+          93,
+          100
+        ],
+        "min": 40,
+        "calls": 227
+      }
     },
     "nemotron-elastic": {
-      "0": {"pct": [0, 0, 0, 0, 0, 0], "min": 3, "calls": 6},
-      "1": {"pct": [0, 6, 0, 0, 0, 0], "min": 2, "calls": 5},
-      "2": {"pct": [0, 6, 45, 0, 0, 18], "min": 4, "calls": 8},
-      "3": {"pct": [0, 0, 50, 12, 0, 15], "min": 4, "calls": 7},
-      "4": {"pct": [26, 28, 40, 19, 40, 20], "min": 33, "calls": 141},
-      "5": {"pct": [59, 31, 76, 20, 70, 84], "min": 50, "calls": 180}
+      "0": {
+        "pct": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "min": 3,
+        "calls": 6
+      },
+      "1": {
+        "pct": [
+          0,
+          6,
+          0,
+          0,
+          0,
+          0
+        ],
+        "min": 2,
+        "calls": 5
+      },
+      "2": {
+        "pct": [
+          0,
+          6,
+          45,
+          0,
+          0,
+          18
+        ],
+        "min": 4,
+        "calls": 8
+      },
+      "3": {
+        "pct": [
+          0,
+          0,
+          50,
+          12,
+          0,
+          15
+        ],
+        "min": 4,
+        "calls": 7
+      },
+      "4": {
+        "pct": [
+          26,
+          28,
+          40,
+          19,
+          40,
+          20
+        ],
+        "min": 33,
+        "calls": 141
+      },
+      "5": {
+        "pct": [
+          59,
+          31,
+          76,
+          20,
+          70,
+          84
+        ],
+        "min": 50,
+        "calls": 180
+      }
     }
   }
 }

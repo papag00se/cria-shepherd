@@ -154,7 +154,7 @@ def report(rs: list[dict], now: float | None = None) -> str:
     out = ["# Battery — the engagement ladder", "", _stamp(rs, now), "",
            "Each cell is an inferred usefulness percentage \U0001F7E2\u226588 \U0001F7E1\u226563 "
            "\U0001F7E0\u226538 \U0001F534 below; `\u00b7` = not judged. `[engagement] level = 0..5`, "
-           "each rung implying every rung below it. gemma4 / qwen35 / ternary-bonsai / "
+           "each rung implying every rung below it. gemma4 / qwen35 / "
            "nemotron-elastic are FROZEN historical inference rows recovered into "
            "suite/historical_ladder.json; every other model reads live from results.jsonl.", ""]
     for lvl in range(6):
