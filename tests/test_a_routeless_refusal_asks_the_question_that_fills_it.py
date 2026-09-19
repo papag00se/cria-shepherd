@@ -42,29 +42,47 @@ def test_a_refusal_with_no_survey_is_byte_identical_to_before():
 
 
 def test_the_survey_rides_BEFORE_the_exit():
-    """THE REGRESSION THIS GUARDS: anything appended after `exit` is dead code, so a naive
-    concatenation would ship a survey that never runs."""
+    """Anything after `exit` is dead code, so a naive concatenation ships a survey that never runs."""
     cmd = writeproxy._refusal_command(REFUSAL, "SURVEY_HERE")
     assert "SURVEY_HERE" in cmd, cmd
-    assert cmd.index("SURVEY_HERE") < cmd.index("exit"), f"survey is after the exit: {cmd}"
+    assert cmd.index("SURVEY_HERE") < cmd.rindex("exit"), f"survey is after the exit: {cmd}"
 
 
-def test_the_refusal_still_exits_non_zero_last():
-    """A refusal that exits 0 reads to a small model as a call that RAN. The survey's own status
-    must not be able to change that."""
-    cmd = writeproxy._refusal_command(REFUSAL, "false")
-    assert cmd.rstrip().endswith(f"exit {writeproxy.REFUSED_EXIT_CODE}"), cmd
-    assert "|| true" in cmd, "a failing survey must not replace the refusal's exit code"
+def _real_survey() -> str:
+    sess = "refusal-carrier-test"
+    wsview.want_program(sess, "gem")
+    return wsview.survey_command(sess, cd="/tmp", budget=8000)
 
 
-def test_a_failing_survey_cannot_change_the_exit_code():
-    """Executed, not reasoned about — the exit code is the thing a reader acts on."""
+def test_the_composed_refusal_is_VALID_SHELL_with_the_REAL_survey():
+    """THE REGRESSION THIS EXISTS FOR, and my own.
+
+    The first version of this fix wrapped the survey in `( … ) || true` to keep a stray `exit` from
+    replacing the refusal's code. The real survey is a multi-line block containing a heredoc
+    (`python3 - <<'__CRIA_SV_PY__'`), which cannot be parenthesised on one line — bash rejects the
+    whole command. It SHIPPED, because this file tested the wrapper with the toy payloads
+    "SURVEY_HERE" and "echo SURVEY_OUTPUT", which parse fine inside parens.
+
+    Measured on the next cell run (session 01a0b798, calls 0010-0011): `gem install countries
+    --no-document` returned `bash: -c: line 146: syntax error: unexpected end of file from `('` in
+    0.0 seconds. The coder never saw a refusal — it saw a broken shell, and spent turns diagnosing
+    an environment that was never the problem. cria composed that syntax error.
+
+    So this asserts against the ACTUAL `survey_command` output, not a stand-in."""
     import subprocess
-    cmd = writeproxy._refusal_command(REFUSAL, "exit 3")
-    r = subprocess.run(["bash", "-c", cmd], capture_output=True, text=True, timeout=30)
+    cmd = writeproxy._refusal_command(REFUSAL, _real_survey())
+    r = subprocess.run(["bash", "-n", "-c", cmd], capture_output=True, text=True, timeout=30)
+    assert r.returncode == 0, f"cria composed invalid shell: {r.stderr.strip()[:200]}"
+
+
+def test_the_real_composed_refusal_runs_and_keeps_its_exit_code():
+    """Executed end to end: the coder must get the refusal TEXT and a non-zero code."""
+    import subprocess
+    cmd = writeproxy._refusal_command(REFUSAL, _real_survey())
+    r = subprocess.run(["bash", "-c", cmd], capture_output=True, text=True, timeout=120, cwd="/tmp")
     assert r.returncode == writeproxy.REFUSED_EXIT_CODE, (
-        f"a survey exiting 3 changed the refusal's code to {r.returncode}")
-    assert REFUSAL in r.stdout
+        f"exit code became {r.returncode}; a refusal that exits 0 reads as a call that RAN")
+    assert REFUSAL in r.stdout, r.stdout[:200]
 
 
 def test_the_refusal_text_still_reaches_the_coder_with_a_survey_attached():

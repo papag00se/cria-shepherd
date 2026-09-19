@@ -216,12 +216,23 @@ def _refusal_command(text: str, survey: str = "") -> str:
     ``printf``'s exit 0), and a non-zero exit on a READ reads as a missing path (operator ruling,
     2026-08-12). The survey's own status must not move it, so it is spliced before and discarded."""
     body = f"printf %s {_qbash(denial.mark(text))}"
-    if survey:
-        # A SUBSHELL, not a brace group. `{ …; } || true` does not contain an `exit`: it ends the
-        # whole script, so a survey that exits non-zero REPLACES the refusal's code and the coder
-        # reads a different failure than the one cria meant. `( … ) || true` confines it.
-        body = f"{body}; ( {survey} ) || true"
-    return f"{body}; exit {REFUSED_EXIT_CODE}"
+    if not survey:
+        return f"{body}; exit {REFUSED_EXIT_CODE}"
+    # NEWLINE-JOINED, AND NOT WRAPPED IN ANYTHING. The survey is a multi-line block containing a
+    # heredoc (`python3 - <<'__CRIA_SV_PY__'`), so it cannot be `;`-joined onto one line and it
+    # cannot be parenthesised: `( <heredoc> ) || true` does not parse at all.
+    #
+    # My own first version did exactly that and SHIPPED. Measured on the very next cell run
+    # (session 01a0b798, calls 0010-0011): `gem install countries --no-document` came back as
+    # `bash: -c: line 146: syntax error: unexpected end of file from `('` in 0.0 seconds — so the
+    # coder never saw a refusal at all, just a broken shell, and spent turns diagnosing an
+    # environment that was never the problem. cria composed that syntax error (5b, in the most
+    # literal form: cria's own command lying about what is wrong).
+    #
+    # No wrapper is needed for the exit code either: `survey_command` contains no bare `exit`, so
+    # nothing terminates before the final line, and `exit` last sets the code whatever the survey
+    # returned. Asserted by a test rather than by this comment.
+    return f"{body}\n{survey}\nexit {REFUSED_EXIT_CODE}"
 
 
 # Tool-call-dialect special-token sentinels a weak model leaks into a shell command when it FUSES two
