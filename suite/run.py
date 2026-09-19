@@ -277,6 +277,25 @@ def _ruby_keep_path() -> list:
     return [d for d in out.split(os.pathsep) if d]
 
 
+def _ruby_cell_install_dirs(root) -> list:
+    """The cell's OWN gem dir(s) that must be on GEM_PATH so a gem the model installs LOADS.
+
+    `gem install` on this box defaults to `--user-install` and writes to `Gem.user_dir`, which is
+    derived from XDG_DATA_HOME. We point XDG_DATA_HOME at `root/xdg-data`, so the install lands in
+    `root/xdg-data/gem/ruby/<api>` — a per-cell path. Ask Ruby for the exact directory under that
+    XDG_DATA_HOME rather than spelling the version here (#20). Distinct from `_ruby_keep_path`, which
+    drops the SHARED host `Gem.user_dir` to hide cross-run leaks: this is the cell's own dir, inside
+    the workspace, so naming it leaks nothing. Empty when Ruby is absent or cannot answer, which
+    leaves the prior behaviour (installs unreadable) rather than inventing a path."""
+    env = {**os.environ, "XDG_DATA_HOME": str(root / "xdg-data")}
+    try:
+        out = subprocess.run(["ruby", "-e", "print Gem.user_dir"],
+                             capture_output=True, text=True, timeout=30, env=env).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return []
+    return [out] if out else []
+
+
 def _isolated_installs(ws) -> dict:
     """Environment that keeps this cell's package installs INSIDE its own workspace.
 
@@ -315,7 +334,22 @@ def _isolated_installs(ws) -> dict:
         # ruby: `gem install` and `bundle` honour these. GEM_PATH is not a prefix — it REPLACES the
         # search path — so it has to name Ruby's own gems too. See _ruby_keep_path.
         "GEM_HOME": str(root / "gem"),
-        "GEM_PATH": os.pathsep.join([str(root / "gem"), *_ruby_keep_path()]),
+        # GEM_PATH must also NAME the cell's own user-install dir, or a gem the model installs
+        # cannot be loaded. On this box `gem install` defaults to `--user-install`, so it lands in
+        # `Gem.user_dir` (derived from the XDG_DATA_HOME we set above -> root/xdg-data/gem/ruby/X.Y.Z),
+        # NOT in GEM_HOME. GEM_PATH REPLACES the search path, so if it names only `root/gem` +
+        # Ruby's own gems, the just-installed gem is invisible and `require` fails. Walked on
+        # shipping-rates-rb x ternary-bonsai-2 (2026-09-19): the coder understood the one-line fix
+        # at turn 7, then spent turns 8-45 unable to load the EU gem it had installed, hand-copying
+        # it into GEM_HOME, and ran out of budget as it finally began writing -> scored 0, a
+        # measurement of this bug not the model. This is the SIBLING of _ruby_keep_path (same
+        # GEM_PATH-replaces-not-extends root cause): that adds Ruby's OWN gems back; this adds the
+        # cell's OWN installs back. It is the cell-local dir (per-workspace, inside .cell-installs),
+        # NOT the shared host user_dir _ruby_keep_path still drops, so isolation is unchanged and
+        # `user_install_listing` remains the tripwire.
+        "GEM_PATH": os.pathsep.join([str(root / "gem"),
+                                    *_ruby_cell_install_dirs(root),
+                                    *_ruby_keep_path()]),
         # python: `pip install --user` and `site.getusersitepackages()`.
         "PYTHONUSERBASE": str(root / "py"),
         # node: `npm install -g` and `npm root -g`.
