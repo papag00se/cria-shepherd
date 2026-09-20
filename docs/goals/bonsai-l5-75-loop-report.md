@@ -52,6 +52,7 @@ None yet.
 
 - **Handles serialized URL corruption (2026-09-20): rejected before implementation.** The capture shows malformed current-step URLs, but deterministic focused execution of `loop._item_prompt()` preserves balanced template URLs verbatim, and current history includes prior brace/template-grounding repairs. The capture producer is not yet isolated; changing template cleaning now would duplicate or regress an existing owner.
 - **Make `list_dir` a survey carrier (2026-09-20): rejected by history and adversarial check.** It appears to make the first coder list bootstrap `wsview`, but `tests/test_the_survey_never_outgrows_one_result.py` documents and proves the prior carrier regression: a list result can reach `READ_INLINE_MAX`, so appending a 6KB survey permits harness truncation of the model's real listing and leaves the view rejected. This violates the lossless-output boundary; no implementation/replay is permitted.
+- **Private pre-planner gate survey bootstrap (2026-09-20): rejected after exact-capture replay.** A bounded implementation reused gate transport, cleaned private terminal results, and passed focused (88) and full (4936 passed, 6 skipped) tests. Its archive-root replay only surveyed the archive container and listed `workspace`; the required replay mounted at the nested archived project root did not prove the project-root listing. Per the replay gate, the change was reverted uncommitted; tests/review do not substitute for the missing real-boundary evidence.
 
 ## Artifact hygiene
 
