@@ -1,10 +1,10 @@
 # Battery — the engagement ladder
 
-**Last updated 2026-09-19 17:03** — newest row `feed-pipeline-java_ternary-bonsai-2_codex_poff_1789861887`, finished 2026-09-19 17:03.
+**Last updated 2026-09-19 21:16** — newest row `rust-toml-cli_ternary-bonsai-2_codex_pon_1789877114`, finished 2026-09-19 21:16.
 
 Each cell is an inferred usefulness percentage 🟢≥88 🟡≥63 🟠≥38 🔴 below; `·` = not judged. `[engagement] level = 0..5`, each rung implying every rung below it. gemma4 / qwen35 / nemotron-elastic are FROZEN historical inference rows recovered into suite/historical_ladder.json; every other model reads live from results.jsonl.
 
-### Level 0 — pure proxy — wire translation only — 54%
+### Level 0 — pure proxy — wire translation only — 50%
 
 | model | ruby | go | python | java | node | rust | total | avg min | avg calls |
 |---|---|---|---|---|---|---|---:|---:|---:|
@@ -12,7 +12,7 @@ Each cell is an inferred usefulness percentage 🟢≥88 🟡≥63 🟠≥38 �
 | qwen35 | 🔴 0% | 🔴 21% | 🔴 0% | 🔴 0% | 🔴 0% | 🔴 0% | 4% | 1 | 8 |
 | nemotron-elastic | 🔴 0% | 🔴 0% | 🔴 0% | 🔴 0% | 🔴 0% | 🔴 0% | 0% | 3 | 6 |
 | qwen38 | 🟢 90% | 🟢 100% | 🟢 100% | 🟢 98% | 🟢 98% | 🟢 100% | 98% | 14 | · |
-| ternary-bonsai-2 | · | 🟢 88% | 🟢 90% | · | 🟢 88% | 🟢 92% | 90% | 26 | 36 |
+| ternary-bonsai-2 | 🔴 0% | 🟢 88% | 🟢 90% | 🔴 0% | 🟢 88% | 🟢 92% | 60% | 26 | 36 |
 
 ### Level 1 — TOOL_CALL_FIXES — dialect and template repair — 52%
 
@@ -50,7 +50,7 @@ Each cell is an inferred usefulness percentage 🟢≥88 🟡≥63 🟠≥38 �
 | nemotron-elastic | 🔴 26% | 🔴 28% | 🟠 40% | 🔴 19% | 🟠 40% | 🔴 20% | 29% | 33 | 141 |
 | qwen38 | 🟢 100% | 🟢 100% | 🟢 100% | 🟡 85% | 🟢 98% | 🟢 100% | 97% | 29 | · |
 
-### Level 5 — ASSISTS_ENABLED — steers, periodic gates, detectors, planner — 81%
+### Level 5 — ASSISTS_ENABLED — steers, periodic gates, detectors, planner — 77%
 
 | model | ruby | go | python | java | node | rust | total | avg min | avg calls |
 |---|---|---|---|---|---|---|---:|---:|---:|
@@ -59,5 +59,5 @@ Each cell is an inferred usefulness percentage 🟢≥88 🟡≥63 🟠≥38 �
 | nemotron-elastic | 🟠 59% | 🔴 31% | 🟡 76% | 🔴 20% | 🟡 70% | 🟡 84% | 57% | 50 | 180 |
 | ornith15 | 🟢 95% | 🟡 84% | 🟡 85% | 🟡 70% | 🟡 75% | 🟢 95% | 84% | 60 | 126 |
 | qwen38 | 🟢 100% | 🟢 100% | 🟢 100% | 🟡 85% | 🟢 98% | 🟢 100% | 97% | 24 | · |
-| ternary-bonsai-2 | 🔴 12% | · | · | · | · | · | 12% | 40 | 31 |
+| ternary-bonsai-2 | · | 🔴 0% | 🟠 55% | 🔴 0% | · | · | 18% | 33 | 108 |
 
