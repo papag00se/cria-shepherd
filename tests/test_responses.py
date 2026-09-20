@@ -26,12 +26,15 @@ class ToChatBodyTests(unittest.TestCase):
     def test_tools_flat_to_nested(self):
         r = {"model": "m", "input": [], "tools": [
             {"type": "function", "name": "exec_command", "description": "run", "parameters": {"type": "object"}},
-            {"type": "web_search"},  # non-function → skipped
         ]}
         body = responses.to_chat_body(r)
         self.assertEqual(len(body["tools"]), 1)
         self.assertEqual(body["tools"][0], {"type": "function", "function": {
             "name": "exec_command", "description": "run", "parameters": {"type": "object"}}})
+
+    def test_non_function_tool_is_rejected_not_silently_dropped(self):
+        with self.assertRaisesRegex(ValueError, "unsupported Responses tool type"):
+            responses.to_chat_body({"model": "m", "input": [], "tools": [{"type": "web_search"}]})
 
     def test_function_call_and_output_roundtrip(self):
         r = {"model": "m", "input": [

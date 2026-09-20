@@ -1413,7 +1413,12 @@ class CriaHandler(BaseHTTPRequestHandler):
             return
         sess = responses.session_key_of(rbody)
         rlog = log.bind(session=sess, turn=turn)
-        body = responses.to_chat_body(rbody)
+        try:
+            body = responses.to_chat_body(rbody)
+        except ValueError as e:
+            rlog.emit("request.unsupported", level="warn", api="responses", error=str(e))
+            self._send_json(400, {"error": str(e)})
+            return
         sess_key = f"sid:{sess}" if sess else session_key(None, body.get("messages", []))
 
         # INBOUND STRIP (mirrors the chat path): remove cria's own "⟦cria⟧" indicator lines

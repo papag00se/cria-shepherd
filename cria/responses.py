@@ -164,8 +164,10 @@ def _to_chat_tools(tools) -> list[dict]:
     chat completions nests them under `function`. Non-function tools are skipped."""
     out = []
     for t in tools or []:
-        if not isinstance(t, dict) or t.get("type") != "function":
-            continue
+        if not isinstance(t, dict):
+            raise ValueError("Responses tools must be objects")
+        if t.get("type") != "function":
+            raise ValueError(f"unsupported Responses tool type: {t.get('type')!r}")
         fn = {"name": t.get("name", "")}
         if t.get("description") is not None:
             fn["description"] = t["description"]
