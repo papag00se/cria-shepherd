@@ -124,9 +124,6 @@ def _require_codex_home() -> None:
             f"via an isolated CODEX_HOME; create it with a [model_providers.cria] block "
             f"(base_url http://127.0.0.1:18085/v1, wire_api \"responses\") before running.")
 
-NODE_PATH = "/home/jesse/.nvm/versions/node/v22.13.1/bin"
-
-
 def sh(*cmd, timeout=120):
     return subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
 
@@ -296,6 +293,26 @@ def _ruby_cell_install_dirs(root) -> list:
     return [out] if out else []
 
 
+def _cell_install_bin_dirs(root) -> list:
+    """Every executable directory created by the cell's redirected install roots.
+
+    Redirecting an install root without putting its executable directory on PATH creates the same
+    impossible state Ruby had before 774be9a: installation succeeds, but the next command cannot
+    run what was installed. This is not theoretical: stock npm's prefix bin and Python's ~/.local/bin
+    are on this host's PATH; their cell equivalents were not. `uv tool` also derives its bin as the
+    sibling of XDG_DATA_HOME (root/bin). Keep each tool's cell-local bin ahead of the host PATH so a
+    cell's just-installed command wins over an ambient one. Asked Ruby for its ABI-bearing user dir;
+    the other layouts are tool-defined, stable roots set immediately below."""
+    ruby_bins = [str(Path(d) / "bin") for d in _ruby_cell_install_dirs(root)]
+    return [str(root / "py" / "bin"),        # pip install --user console_scripts
+            str(root / "bin"),               # uv tool (XDG_DATA_HOME/../bin)
+            str(root / "npm" / "bin"),
+            str(root / "gem" / "bin"),
+            *ruby_bins,
+            str(root / "go" / "bin"),
+            str(root / "cargo" / "bin")]
+
+
 def _isolated_installs(ws) -> dict:
     """Environment that keeps this cell's package installs INSIDE its own workspace.
 
@@ -357,6 +374,10 @@ def _isolated_installs(ws) -> dict:
         # go and rust install binaries here; the module/registry caches stay shared.
         "GOBIN": str(root / "go" / "bin"),
         "CARGO_INSTALL_ROOT": str(root / "cargo"),
+        # Install destinations are not usable until their executable dirs are on PATH. This replaces
+        # the dead hard-coded Node 22 prepend at the launch site; preserve the ambient runtime path
+        # after the cell dirs so node/npm/codex remain resolvable while cell installs take precedence.
+        "PATH": os.pathsep.join([*_cell_install_bin_dirs(root), os.environ["PATH"]]),
     }
 
 
@@ -597,7 +618,7 @@ def main() -> None:
     before_sessions = set(p.name for p in CALLS_DIR.glob("2*"))
     installs_before = user_install_listing()
 
-    env = _codex_env(dict(os.environ, PATH=f"{NODE_PATH}:{os.environ['PATH']}", **_isolated_installs(ws)))
+    env = _codex_env(dict(os.environ, **_isolated_installs(ws)))
     t0 = time.time()
     with open(log_path, "w") as lf:
         # stdin MUST be closed explicitly: `codex exec` reads stdin to EOF as "additional input"
