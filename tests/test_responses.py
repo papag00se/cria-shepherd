@@ -73,6 +73,16 @@ class ToChatBodyTests(unittest.TestCase):
         self.assertEqual(fn["parameters"], {"type": "object", "properties": {}})
         self.assertIs(fn["strict"], True)
 
+    def test_behavior_controls_are_mapped_not_silently_lost(self):
+        body = responses.to_chat_body({"model": "m", "input": [], "max_output_tokens": 123,
+                                       "temperature": 0.2, "top_p": 0.9, "stop": ["END"],
+                                       "reasoning": {"effort": "medium"}})
+        self.assertEqual(body["max_tokens"], 123)
+        self.assertEqual(body["temperature"], 0.2)
+        self.assertEqual(body["top_p"], 0.9)
+        self.assertEqual(body["stop"], ["END"])
+        self.assertEqual(body["reasoning_effort"], "medium")
+
     def test_function_call_output_without_id_is_dropped_not_null_paired(self):
         r = {"model": "m", "input": [
             {"type": "function_call_output", "output": "orphaned"}]}  # no call_id/id

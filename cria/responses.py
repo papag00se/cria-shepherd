@@ -91,6 +91,17 @@ def to_chat_body(r: dict) -> dict:
         body["tool_choice"] = choice
     if r.get("parallel_tool_calls") is not None:
         body["parallel_tool_calls"] = r["parallel_tool_calls"]
+    # Preserve the Chat-Completions controls with direct wire equivalents. Silent omission changes
+    # caller behavior; unsupported Responses-only controls are handled explicitly at the HTTP edge.
+    for key in ("temperature", "top_p", "frequency_penalty", "presence_penalty", "seed", "stop",
+                "response_format"):
+        if key in r:
+            body[key] = r[key]
+    if "max_output_tokens" in r:
+        body["max_tokens"] = r["max_output_tokens"]
+    reasoning = r.get("reasoning")
+    if isinstance(reasoning, dict) and reasoning.get("effort") is not None:
+        body["reasoning_effort"] = reasoning["effort"]
     return body
 
 
