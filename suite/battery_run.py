@@ -24,7 +24,10 @@ TOML = Path("~/.cria/cria.toml").expanduser()
 # in the status tool left the runner still stamping BATTERY1, and the first finished run of the new
 # matrix was invisible to the scoreboard that is supposed to be the only source of truth.
 sys.path.insert(0, str(SUITE))
-from battery_status import NOTE_PREFIX  # noqa: E402
+try:  # importable as suite.battery_run and executable as suite/battery_run.py
+    from .battery_status import NOTE_PREFIX  # noqa: E402
+except ImportError:
+    from battery_status import NOTE_PREFIX  # noqa: E402
 
 # Which revision of the TASK PROMPTS a row was earned against. The six prompts were rewritten
 # on 2026-08-12 twice: p2 removed idiom and undefined words, and p3 is the operator's own
@@ -78,6 +81,11 @@ def set_level(want: str) -> str | None:
     return before
 
 
+def planner_for_level(level: int) -> str:
+    """The planner is an L5 assist; lower rungs are deliberately planner-agnostic."""
+    return "on" if level == 5 else "off"
+
+
 def sh(*cmd: str, timeout: int = 120) -> int:
     return subprocess.run(cmd, timeout=timeout).returncode
 
@@ -116,7 +124,7 @@ def main() -> int:
             print("could not restart cria.service", file=sys.stderr)
             return 2
         return sh(sys.executable, str(SUITE / "run.py"), "--task", args.task, "--model", args.model,
-                  "--planner", "off", "--milestone-minutes", str(args.milestone_minutes),
+                  "--planner", planner_for_level(level), "--milestone-minutes", str(args.milestone_minutes),
                   "--note", f"{NOTE_PREFIX} {tag} {args.model} {sha} {PROMPT_REV}",
                   "--level", str(level), timeout=7200)
     finally:
