@@ -1408,7 +1408,8 @@ def _strip_command_plumbing(m: dict) -> dict:
     return {**m, "tool_calls": new_tcs} if changed else m
 
 
-def clean_gate_results(messages: list, plan: "GatePlan | None" = None) -> list:
+def clean_gate_results(messages: list, plan: "GatePlan | None" = None, *,
+                       drop_private_results: bool = False) -> list:
     """Rewrite raw gate-probe tool results (in the model's view) to the cleaned summary. Idempotent;
     a re-run over already-clean messages leaves them untouched. Non-gate messages pass through.
 
@@ -1505,6 +1506,12 @@ def clean_gate_results(messages: list, plan: "GatePlan | None" = None) -> list:
                     out.append({"role": "user", "content": c})
                 else:
                     out.append({**m, key: c})
+                continue
+            # A private survey bootstrap may be refused before it emits a gate marker.  Its raw
+            # tool result cannot reach the planner, because its matching assistant call is private.
+            tid = (m.get("tool_call_id") or m.get("call_id")) if is_tool else None
+            if drop_private_results and tid in own_ids:
+                drop_ids.add(tid)
                 continue
             if is_tool and isinstance(c, str) and SECTION_PREFIX in c:
                 # ANNOTATE ONLY THE NEWEST GATE RESULT. This function re-renders every gate result

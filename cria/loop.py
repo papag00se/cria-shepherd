@@ -312,6 +312,11 @@ class GuardState:
 
 
 @dataclass
+class SurveyBootstrap(GuardState):
+    """One private gate round that surveys an unsurveyed workspace before planning."""
+
+
+@dataclass
 class PlanSession(GuardState):
     plan: Plan = field(kw_only=True)  # required; kw_only so it may follow GuardState's defaulted fields
     # Single-item plan-off mode: the whole task is ONE implicit step. When set, the driver uses
@@ -2187,6 +2192,8 @@ class LoopStore:
 
     def __init__(self, state_path: str | None = None) -> None:
         self._sessions: dict[str, PlanSession] = {}
+        # In-flight pre-plan survey state is not a plan and must not survive a restart.
+        self._bootstraps: dict[str, SurveyBootstrap] = {}
         # session key -> {"fp": sha1-of-root, "n": msg count, "pending": rewrite?, "done": completed a plan?}
         # DETECTION state only — the completion briefing itself is never stored server-side; it
         # rides in the conversation (the closing message) and is re-read from history.
@@ -2198,6 +2205,21 @@ class LoopStore:
     def get(self, key: str) -> PlanSession | None:
         with self._lock:
             return self._sessions.get(key)
+
+    def get_bootstrap(self, key: str) -> SurveyBootstrap | None:
+        with self._lock:
+            return self._bootstraps.get(key)
+
+    def put_bootstrap(self, key: str, bootstrap: SurveyBootstrap) -> None:
+        with self._lock:
+            self._bootstraps.pop(key, None)
+            self._bootstraps[key] = bootstrap
+            while len(self._bootstraps) > _MAX_SESSIONS:
+                self._bootstraps.pop(next(iter(self._bootstraps)))
+
+    def drop_bootstrap(self, key: str) -> None:
+        with self._lock:
+            self._bootstraps.pop(key, None)
 
     def put(self, key: str, sess: PlanSession) -> None:
         with self._lock:
@@ -2332,7 +2354,7 @@ class LoopStore:
         shape. The server keeps routing known sessions through the loop so a post-compaction
         continuation can't be lost to a mis-classified turn."""
         with self._lock:
-            return key in self._sessions or key in self._shapes
+            return key in self._sessions or key in self._bootstraps or key in self._shapes
 
     # ------------------------------------------------------------- persistence
 
@@ -2524,8 +2546,34 @@ class Loop:
         root_text, root_fp = _history_root(messages)
         rewritten = stable and self._store.observe_shape(session_key, root_fp, len(messages))
         sess = self._store.get(session_key)
+        get_bootstrap = getattr(self._store, "get_bootstrap", None)
+        bootstrap = get_bootstrap(session_key) if get_bootstrap is not None else None
+        bootstrap_finished = False
         if rewritten:
-            rlog.emit("loop.history_rewritten", live=sess is not None, n_messages=len(messages))
+            rlog.emit("loop.history_rewritten", live=sess is not None or bootstrap is not None,
+                      n_messages=len(messages))
+
+        if bootstrap is not None:
+            raw = _read_tool_result(messages, bootstrap.probe_call_id)
+            if not raw and rewritten and bootstrap.probe_reissues < MAX_PROBE_REISSUES:
+                probe_tc = guard_gate_op(bootstrap, body, rlog, workspace_root=bootstrap.workspace_root)
+                if probe_tc is not None:
+                    bootstrap.probe_reissues += 1
+                    bootstrap.probe_call_id = probe_tc["id"]
+                    rlog.emit("loop.survey_bootstrap_reissued", attempt=bootstrap.probe_reissues)
+                    return _completion_toolcalls([probe_tc])
+            transport_tc = guard_gate_transport(bootstrap, body, rlog, call_id=bootstrap.probe_call_id)
+            if transport_tc is not None:
+                return _completion_toolcalls([transport_tc])
+            outcome = read_gate(bootstrap.gate_plan, raw, rlog)
+            self._store.drop_bootstrap(session_key)
+            bootstrap_finished = True
+            messages = probegate.clean_gate_results(messages, bootstrap.gate_plan,
+                                                    drop_private_results=True)
+            body = {**body, "messages": messages}
+            rlog.emit("loop.survey_bootstrap_finished",
+                      surveyed=bool(getattr(outcome, "replan_after_survey", False)),
+                      transport_unknown=bool(getattr(outcome, "transport_unknown", False)))
 
         if sess is None:
             # The completion briefing rides IN THE CONVERSATION (embedded in the closing message,
@@ -2584,8 +2632,21 @@ class Loop:
                     rlog.emit("loop.start", id=plan.id, steps=len(plan.items), continued=True, rewritten=True)
                     self._persist_plan(plan, rlog)
                 else:
-                    if classification is None or classification.engagement != "task":
+                    if (classification is None or classification.engagement != "task") and not bootstrap_finished:
                         return None  # a pending rewrite (if any) stays pending for a later task turn
+                    # A fresh planner has no synchronous harness channel. Survey a known harness root
+                    # before its view-backed gather; no shell and rootless paths retain their old route.
+                    view = wsview.current(_extract_cwd(messages) or None)
+                    if not bootstrap_finished and view.root and not view.surveyed:
+                        bootstrap = SurveyBootstrap(workspace_root=_extract_cwd(messages) or self._ctx.workspace_root,
+                                                     web_session=session_key)
+                        probe_tc = guard_gate_op(bootstrap, body, rlog,
+                                                 workspace_root=bootstrap.workspace_root)
+                        if probe_tc is not None:
+                            bootstrap.probe_call_id = probe_tc["id"]
+                            self._store.put_bootstrap(session_key, bootstrap)
+                            rlog.emit("loop.survey_bootstrap_started")
+                            return _completion_toolcalls([probe_tc])
                     # A follow-up on a FINISHED session starts from the completion-compaction of the
                     # prior plan (see loop.done), so the planner isn't blind to what it already built —
                     # it plans the new ask ON TOP of the done work, not from the latest sentence.
