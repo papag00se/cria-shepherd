@@ -27,6 +27,7 @@ from . import (callcapture, compat, focustrim, groundtruth, massage, probegate, 
 from .classify import Classifier
 from . import content_reduce
 from .content_reduce import est_tokens
+from . import config
 from .config import Config
 from . import brave, webfetch
 from .events import EventLog
@@ -1130,6 +1131,11 @@ class CriaHandler(BaseHTTPRequestHandler):
         server: CriaServer = self.server
         ic = server.cfg.indicators
 
+        # L0 is the wire-only control: no classifier/compactor role may replace the requested
+        # model, endpoint, sampling, or reasoning effort. Translation still happens around it.
+        if getattr(server.cfg.routing, "engagement_level", config.MAX_ENGAGEMENT_LEVEL) == config.PURE_PROXY:
+            return server.upstream, Indicator(False, False, model=str(body.get("model") or "?"), role=None)
+
         def banner_model(provider, fallback: str) -> str:
             """The name to SHOW: the model actually loaded at the server (llama.cpp /v1/models), so
             the banner is the TRUTH, not a config label that may not match what's loaded. Cloud
@@ -1229,6 +1235,8 @@ class CriaHandler(BaseHTTPRequestHandler):
         toggle — i.e. NOT the model the toml configures. The plan loop applies the role per call
         (loop.py); the proxy and direct-coder paths must do the same, or the same model behaves like
         a different one."""
+        if getattr(self.server.cfg.routing, "engagement_level", config.MAX_ENGAGEMENT_LEVEL) == config.PURE_PROXY:
+            return pbody
         role = self.server.cfg.routing.roles.get(indic.role) if getattr(indic, "role", None) else None
         if role is not None:
             role.apply(pbody)
