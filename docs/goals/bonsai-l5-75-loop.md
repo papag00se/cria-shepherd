@@ -61,6 +61,8 @@ The plugin gives delegated children no parent context by default. Each child pro
 
 For a single WALK, launch **no more than ten children total**. Parallel read-only walkers may inspect disjoint cells/captures; no two editing children may touch the same code path or worktree. Reconcile every child report against the actual files/captures yourself before treating it as evidence. A child report is a lead, not a finding.
 
+**Partition every walk into compaction-safe segments before delegating — a reader must never compact mid-walk.** Do not hand a walker a whole capture: its context fills, it compacts, and the walk silently degrades into a summarized skim (this is what derailed the prior run). Run `python3 suite/walk.py <capture_dir> --out <dir> --segment-bytes 250000 --label <cell>` for each open cell (resolve `<capture_dir>` from the run's `capture_dir` field in `suite/results/results.jsonl`). It writes self-contained segments under the measured compaction ceiling plus `assignments.json` and `WALK-PLAN.md`. Give each segment its own **fresh** walker — never continue a walker onto a second segment — and require it to write its finding file. Verify a segment's finding file cites real chunks/calls before assigning the next. A capture yields more segments than the ten-child cap, so dispatch in waves of fresh read-only walkers, verifying each wave's finding files before launching the next; the ten-child cap is per wave.
+
 Keep a finite top-level ledger in `docs/goals/bonsai-l5-75-loop-report.md`: per-cell current score/status, the causal findings, rejected candidates with reasons, accepted changes/tests/commits, replays, exact reruns, and the evidence that closed each cell.
 
 ## The loop
