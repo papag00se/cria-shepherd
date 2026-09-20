@@ -1,10 +1,10 @@
 # Battery — the engagement ladder
 
-**Last updated 2026-09-19 16:18** — newest row `rust-toml-cli_ternary-bonsai-2_codex_poff_1789859408`, finished 2026-09-19 16:12.
+**Last updated 2026-09-19 17:03** — newest row `feed-pipeline-java_ternary-bonsai-2_codex_poff_1789861887`, finished 2026-09-19 17:03.
 
 Each cell is an inferred usefulness percentage 🟢≥88 🟡≥63 🟠≥38 🔴 below; `·` = not judged. `[engagement] level = 0..5`, each rung implying every rung below it. gemma4 / qwen35 / nemotron-elastic are FROZEN historical inference rows recovered into suite/historical_ladder.json; every other model reads live from results.jsonl.
 
-### Level 0 — pure proxy — wire translation only — 51%
+### Level 0 — pure proxy — wire translation only — 54%
 
 | model | ruby | go | python | java | node | rust | total | avg min | avg calls |
 |---|---|---|---|---|---|---|---:|---:|---:|
@@ -12,7 +12,7 @@ Each cell is an inferred usefulness percentage 🟢≥88 🟡≥63 🟠≥38 �
 | qwen35 | 🔴 0% | 🔴 21% | 🔴 0% | 🔴 0% | 🔴 0% | 🔴 0% | 4% | 1 | 8 |
 | nemotron-elastic | 🔴 0% | 🔴 0% | 🔴 0% | 🔴 0% | 🔴 0% | 🔴 0% | 0% | 3 | 6 |
 | qwen38 | 🟢 90% | 🟢 100% | 🟢 100% | 🟢 98% | 🟢 98% | 🟢 100% | 98% | 14 | · |
-| ternary-bonsai-2 | 🔴 0% | 🟢 88% | 🟢 90% | 🔴 15% | 🟢 88% | 🟢 92% | 62% | 34 | 47 |
+| ternary-bonsai-2 | · | 🟢 88% | 🟢 90% | · | 🟢 88% | 🟢 92% | 90% | 26 | 36 |
 
 ### Level 1 — TOOL_CALL_FIXES — dialect and template repair — 52%
 
