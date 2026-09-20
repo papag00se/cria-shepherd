@@ -66,6 +66,13 @@ class TheThreeStatesOfARouteTests(unittest.TestCase):
             out = dirguard.install_refusal("gem install countries", "none", WS)
         self.assertIn(_R["route_unknown_yet"], out)
 
+    def test_maven_install_goals_are_refused_before_they_write_the_shared_repository(self):
+        # Maven's repository is retained for downloaded dependencies, but `mvn install` publishes
+        # this cell's artifact into that same shared repository for a later cell to resolve.
+        for cmd in ("mvn install", "mvn -q install", "mvn install:install-file -Dfile=x.jar"):
+            with self.subTest(cmd=cmd):
+                self.assertIsNotNone(dirguard.install_refusal(cmd, "none", WS))
+
     def test_a_manager_with_no_project_local_form_is_still_silent(self):
         """apt, dnf, brew, pacman install to the machine. There is no route to not-know."""
         for cmd in ("apt-get install vim", "brew install jq", "dnf install curl"):

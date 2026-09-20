@@ -85,6 +85,7 @@ _GLOBAL_INSTALL = re.compile(
     r"(?:pip|pip3|python3?\s+-m\s+pip)\s+install"          # user/system site-packages
     r"|(?:npm|pnpm|yarn)\s+(?:install|add|i)\b(?=[^;&|]*(?:\s-g\b|\s--global\b))"
     r"|(?:gem|cargo|go)\s+install"                          # ~/.gem, ~/.cargo/bin, GOPATH/bin
+    r"|mvn\s+(?:-[\w=,.]+\s+)*(?:install\b|install:install-file\b)"  # shared ~/.m2 artifacts
     r"|composer\s+global\b"
     r"|(?:apt|apt-get|dnf|yum|pacman|apk|brew)\s+(?:install|add)\b"
     r")", re.IGNORECASE)
