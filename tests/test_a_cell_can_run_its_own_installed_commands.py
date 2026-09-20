@@ -17,7 +17,7 @@ import run  # noqa: E402
 
 def test_every_cell_redirected_bin_dir_is_on_path_and_runs_its_command(tmp_path):
     env = {**os.environ, **run._isolated_installs(tmp_path)}
-    bins = run._cell_install_bin_dirs(tmp_path / ".cell-installs")
+    bins = run._cell_install_bin_dirs(run._cell_install_root(tmp_path))
     assert all(p in env["PATH"].split(os.pathsep) for p in bins)
 
     # Exercise command discovery, not a string-only PATH assertion. Any package manager that creates
@@ -42,7 +42,7 @@ def test_cell_commands_win_over_an_ambient_command_with_the_same_name(tmp_path, 
     host.chmod(0o755)
     monkeypatch.setenv("PATH", f"{ambient}{os.pathsep}{os.environ['PATH']}")
     env = {**os.environ, **run._isolated_installs(tmp_path)}
-    cell = Path(run._cell_install_bin_dirs(tmp_path / ".cell-installs")[0])
+    cell = Path(run._cell_install_bin_dirs(run._cell_install_root(tmp_path))[0])
     cell.mkdir(parents=True)
     own = cell / name
     own.write_text("#!/bin/sh\nprintf '%s' cell\n")

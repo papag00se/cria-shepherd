@@ -33,7 +33,7 @@ _ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_ROOT))
 sys.path.insert(0, str(_ROOT / "suite"))
 
-from suite.run import _isolated_installs, _ruby_keep_path  # noqa: E402
+from suite.run import _cell_install_root, _isolated_installs, _ruby_keep_path  # noqa: E402
 
 _HAS_RUBY = shutil.which("ruby") is not None
 
@@ -82,9 +82,10 @@ def test_an_install_still_lands_inside_the_cell(tmp_path):
     """Isolation's other half: GEM_HOME must point into the cell, so nothing this run installs is
     visible to the next one."""
     env = _isolated_installs(tmp_path)
-    assert str(tmp_path) in env["GEM_HOME"]
+    assert str(_cell_install_root(tmp_path)) in env["GEM_HOME"]
+    assert str(tmp_path) not in env["GEM_HOME"]
     home = subprocess.run(
         ["ruby", "-e", "print Gem.dir"], capture_output=True, text=True, timeout=60,
         env={**os.environ, **env},
     ).stdout.strip()
-    assert str(tmp_path) in home, f"a gem install would land at {home}, outside the cell"
+    assert str(_cell_install_root(tmp_path)) in home, f"a gem install would land at {home}, outside its private cell root"

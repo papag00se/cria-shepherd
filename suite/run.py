@@ -62,6 +62,11 @@ THROTTLE_PROMPTS = 5
 # SUITE_RUNS_DIR overrides it for anyone who wants elsewhere.
 RUNS_DIR = Path(os.environ.get("SUITE_RUNS_DIR") or (Path.home() / "suite-runs")).expanduser()
 RUNS_DIR.mkdir(parents=True, exist_ok=True)
+# Per-cell package/config state is cria's artifact, not task content. Keep it beside the durable
+# archives rather than under the workspace where the model, milestone snapshot, and usefulness judge
+# mistake cache/install debris for deliverables.
+CELL_INSTALLS_DIR = Path.home() / ".cria" / "suite-installs"
+CELL_INSTALLS_DIR.mkdir(parents=True, exist_ok=True)
 
 CALLS_DIR = Path.home() / ".cria" / "calls"
 EVENTS_DIR = Path.home() / ".cria" / "logs"
@@ -236,6 +241,11 @@ def _user_install_roots() -> dict:
     return roots
 
 
+def _cell_install_root(ws) -> Path:
+    """Private per-workspace install state, deliberately outside the task tree."""
+    return CELL_INSTALLS_DIR / Path(ws).name
+
+
 def _ruby_keep_path() -> list:
     """The gem directories a cell must still SEE: Ruby's own, and nothing anyone installed.
 
@@ -343,7 +353,7 @@ def _isolated_installs(ws) -> dict:
     deliberately: a cached artifact is not discoverable by name, and taking them away would make
     every run re-fetch the world inside a 30-minute budget, which changes what the suite measures
     for a reason unrelated to isolation."""
-    root = Path(ws) / ".cell-installs"
+    root = _cell_install_root(ws)
     return {
         # THE USER-LEVEL ROOT ITSELF. `gem install --user-install` ignores GEM_HOME and writes to
         # `Gem.user_dir`, which is derived from XDG_DATA_HOME — and `--user-install` is exactly the
