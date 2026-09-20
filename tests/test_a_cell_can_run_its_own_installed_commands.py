@@ -43,7 +43,7 @@ def test_cell_commands_win_over_an_ambient_command_with_the_same_name(tmp_path, 
     monkeypatch.setenv("PATH", f"{ambient}{os.pathsep}{os.environ['PATH']}")
     env = {**os.environ, **run._isolated_installs(tmp_path)}
     cell = Path(run._cell_install_bin_dirs(run._cell_install_root(tmp_path))[0])
-    cell.mkdir(parents=True)
+    cell.mkdir(parents=True, exist_ok=True)
     own = cell / name
     own.write_text("#!/bin/sh\nprintf '%s' cell\n")
     own.chmod(0o755)
