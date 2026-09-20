@@ -37,8 +37,10 @@ class ToChatBodyTests(unittest.TestCase):
         # representation and must not block a coding request.
         self.assertNotIn("tools", responses.to_chat_body({"model": "m", "input": [],
                                                             "tools": [{"type": "namespace"}]}))
+        self.assertNotIn("tools", responses.to_chat_body({"model": "m", "input": [],
+                                                            "tools": [{"type": "web_search"}]}))
         with self.assertRaisesRegex(ValueError, "unsupported Responses tool type"):
-            responses.to_chat_body({"model": "m", "input": [], "tools": [{"type": "web_search"}]})
+            responses.to_chat_body({"model": "m", "input": [], "tools": [{"type": "computer_use_preview"}]})
 
     def test_function_call_and_output_roundtrip(self):
         r = {"model": "m", "input": [

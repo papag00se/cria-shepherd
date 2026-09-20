@@ -168,9 +168,10 @@ def _to_chat_tools(tools) -> list[dict]:
     for t in tools or []:
         if not isinstance(t, dict):
             raise ValueError("Responses tools must be objects")
-        if t.get("type") == "namespace":
-            # Codex's client-side plan/namespace control is not a model-callable Chat tool. It has
-            # no Chat-Completions representation and must not prevent ordinary coding requests.
+        if t.get("type") in ("namespace", "web_search"):
+            # Codex sends client-side namespace controls and a native search capability. Neither
+            # has a Chat-Completions schema; L2+ re-advertises search through cria's portable tool
+            # layer, so they must not make a coding request invalid at this boundary.
             continue
         if t.get("type") != "function":
             raise ValueError(f"unsupported Responses tool type: {t.get('type')!r}")
