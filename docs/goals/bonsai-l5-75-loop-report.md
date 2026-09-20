@@ -46,7 +46,7 @@ This proves the upstream reach failure. It does **not** yet establish a safe can
 
 ## Accepted units / replay / reruns
 
-None yet.
+- **Private planner survey bootstrap — `76b904e`.** On a fresh planner-on task with a known unsurveyed harness root, Loop now performs one private existing lossless gate survey before planner gather, routes its asynchronous result through the existing transport/ingestion path, and removes the private call/result together before planner context. Exact Rust capture replay executed actual emitted scripts and both transport pages against `/home/jesse/suite-runs/suite-rust-toml-cli_ternary-bonsai-2_codex_pon_1789877114-6yfsl1v7`; the planner received root entries `Cargo.lock`, `Cargo.toml`, `src`, `target`, `tmp`, with no private protocol, tool role, or tool calls in planner history. Focused 87 passed; implementation full suite 4935 passed, 6 skipped; `cria.service` restarted and `/health` returned ok. All six cells remain open pending comparable reruns.
 
 ## Rejected candidates
 
