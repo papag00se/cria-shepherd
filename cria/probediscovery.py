@@ -1492,6 +1492,11 @@ def test_floor_candidates(root: Path) -> list[ProbeCandidate]:
     for conv in TEST_CONVENTIONS:
         if not conv.floor:
             continue
+        # A declared project runner (notably Rake/Bundler) is authoritative. The config-free floor
+        # exists only when there is no project command; adding bare ruby alongside bundle exec rake
+        # creates a false-red checker under a different dependency environment.
+        if any(wsview.current().exists(root / cfg) is not False for cfg in conv.configs):
+            continue
         paths = _language_files(root, conv)
         if paths and _has_discoverable_test(root, paths, conv):
             ecosystem = {"py": Ecosystem.Python, "rb": Ecosystem.Ruby}.get(conv.exts[0])

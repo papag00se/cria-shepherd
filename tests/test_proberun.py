@@ -205,6 +205,16 @@ class TestCompletionSelection(unittest.TestCase):
             self.assertEqual(len(tests), 1)
             self.assertEqual(tests[0].command, ["python3", "-m", "pytest", "-q"])
 
+    def test_declared_ruby_runner_suppresses_the_zero_config_ruby_floor(self):
+        import tempfile, os
+        with tempfile.TemporaryDirectory() as t:
+            open(os.path.join(t, "Rakefile"), "w").write("task :test do\nend\n")
+            os.makedirs(os.path.join(t, "test"))
+            open(os.path.join(t, "test", "test_app.rb"), "w").write("require 'minitest/autorun'\n")
+            commands = [c.command for c in select_completion_probes(t) if c.kind is ProbeKind.Test]
+            self.assertNotIn(["ruby", "-Ilib", "-Itest", "-e",
+                              'Dir["test/**/test_*.rb"].each { |f| require File.expand_path(f) }'], commands)
+
     def test_bare_dir_without_test_files_gets_no_test_probe(self):
         import tempfile, os
         with tempfile.TemporaryDirectory() as t:
