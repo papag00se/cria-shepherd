@@ -24,6 +24,11 @@ import sys
 import time
 from pathlib import Path
 
+try:  # importable as suite.ladder_cycle and executable as suite/ladder_cycle.py
+    from .run import RUNS_DIR
+except ImportError:
+    from run import RUNS_DIR
+
 SUITE = Path(__file__).resolve().parent
 RESULTS = SUITE / "results" / "results.jsonl"
 
@@ -86,7 +91,7 @@ def leaked_listeners() -> list[tuple[int, str, str]]:
                 subprocess.run(["ss", "-ltnp"], capture_output=True).stdout)}
     except Exception:
         return out
-    runs = (SUITE.parent / "runs").resolve()
+    runs = RUNS_DIR.resolve()
     for pid in pids:
         try:
             cwd = Path(f"/proc/{pid}/cwd").resolve()
@@ -112,7 +117,7 @@ def orphaned_harnesses() -> list[tuple[int, str, str]]:
     run's to stop. A harness working in the CURRENT cell has a live parent and is left alone.
     """
     out = []
-    runs = (SUITE.parent / "runs").resolve()
+    runs = RUNS_DIR.resolve()
     for entry in Path("/proc").iterdir():
         if not entry.name.isdigit():
             continue

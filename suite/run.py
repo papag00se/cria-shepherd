@@ -35,7 +35,10 @@ import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 
-import sampling
+try:  # importable as suite.run and executable as suite/run.py
+    from . import sampling
+except ImportError:
+    import sampling
 
 SUITE = Path(__file__).resolve().parent
 RESULTS = SUITE / "results" / "results.jsonl"
