@@ -399,13 +399,32 @@ def user_install_listing() -> set:
     return out
 
 
-def codex_pids():
-    out = sh("ps", "-eo", "pid,args").stdout
-    pids = []
-    for line in out.splitlines():
-        if "codex exec --yolo" in line and not any(x in line for x in ("/bin/bash", "snapshot", "run.py")):
-            pids.append(int(line.split(None, 1)[0]))
-    return pids
+def stop_process_group(proc, *, grace: float = KILL_GRACE, sleeper=time.sleep) -> None:
+    """Stop only the harness process group this runner created, never another operator's Codex.
+
+    `Popen(..., start_new_session=True)` makes `proc.pid` the group leader. The old process-list
+    sweep matched every host `codex exec --yolo`, so ending one battery cell could SIGKILL unrelated
+    interactive or campaign work. Ownership is already precise; use it."""
+    if proc.poll() is not None:
+        return
+    try:
+        os.killpg(proc.pid, signal.SIGINT)
+    except ProcessLookupError:
+        return
+    if proc.poll() is not None:
+        return
+    sleeper(grace)
+    if proc.poll() is None:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+    try:
+        proc.wait(timeout=30)
+    except subprocess.TimeoutExpired:
+        # The group may have exited while its leader's state has not been reaped. Never broaden
+        # ownership here; the caller records the terminal outcome and the OS reaps the child.
+        pass
 
 
 def collect_capture(session_dirs) -> dict:
@@ -644,15 +663,7 @@ def main() -> None:
 
     def stop_run():
         resume_run()
-        for pid in codex_pids():
-            sh("kill", "-INT", str(pid))
-        time.sleep(KILL_GRACE)
-        for pid in codex_pids():
-            sh("kill", "-9", str(pid))
-        try:
-            proc.wait(timeout=30)
-        except subprocess.TimeoutExpired:
-            proc.kill()
+        stop_process_group(proc)
 
     pacing = MilestonePacing(started_at=t0, interval_minutes=args.milestone_minutes,
                              budget_intervals=budget_intervals(task_dir))
