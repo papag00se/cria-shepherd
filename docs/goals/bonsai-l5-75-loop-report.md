@@ -4,7 +4,7 @@
 
 | Cell | Baseline run | Baseline final usefulness | Status |
 |---|---|---:|---|
-| shipping-rates-rb | `shipping-rates-rb_ternary-bonsai-2_codex_pon_1789865828` | 55% | open |
+| shipping-rates-rb | `shipping-rates-rb_ternary-bonsai-2_codex_pon_1789940747` | 85% | closed |
 | cart-billing-go | `cart-billing-go_ternary-bonsai-2_codex_pon_1789869635` | 0% | open |
 | orders-api-py | `orders-api-py_ternary-bonsai-2_codex_pon_1789870342` | 55% | open |
 | feed-pipeline-java | `feed-pipeline-java_ternary-bonsai-2_codex_pon_1789872767` | 0% | open |
@@ -46,7 +46,7 @@ This proves the upstream reach failure. It does **not** yet establish a safe can
 
 ## Accepted units / replay / reruns
 
-- **Private planner survey bootstrap — `76b904e`.** On a fresh planner-on task with a known unsurveyed harness root, Loop now performs one private existing lossless gate survey before planner gather, routes its asynchronous result through the existing transport/ingestion path, and removes the private call/result together before planner context. Exact Rust capture replay executed actual emitted scripts and both transport pages against `/home/jesse/suite-runs/suite-rust-toml-cli_ternary-bonsai-2_codex_pon_1789877114-6yfsl1v7`; the planner received root entries `Cargo.lock`, `Cargo.toml`, `src`, `target`, `tmp`, with no private protocol, tool role, or tool calls in planner history. Focused 87 passed; implementation full suite 4935 passed, 6 skipped; `cria.service` restarted and `/health` returned ok. An initial post-change shipping run `shipping-rates-rb_ternary-bonsai-2_codex_pon_1789937694` scored 55% by final usefulness but was deliberately excluded from the comparable grid because its note was `planner-survey 76b904e`, not the required `BATTERY2 …` form; it remains evidence only. A comparable detached rerun is now PID `1014693`, log `/tmp/shipping-rates-rb-battery2-rerun.log`, with heartbeat `fbe9517f`. All six cells remain open pending comparable reruns.
+- **Private planner survey bootstrap — `76b904e`.** On a fresh planner-on task with a known unsurveyed harness root, Loop now performs one private existing lossless gate survey before planner gather, routes its asynchronous result through the existing transport/ingestion path, and removes the private call/result together before planner context. Exact Rust capture replay executed actual emitted scripts and both transport pages against `/home/jesse/suite-runs/suite-rust-toml-cli_ternary-bonsai-2_codex_pon_1789877114-6yfsl1v7`; the planner received root entries `Cargo.lock`, `Cargo.toml`, `src`, `target`, `tmp`, with no private protocol, tool role, or tool calls in planner history. Focused 87 passed; implementation full suite 4935 passed, 6 skipped; `cria.service` restarted and `/health` returned ok. An initial post-change shipping run `shipping-rates-rb_ternary-bonsai-2_codex_pon_1789937694` scored 55% by final usefulness but was deliberately excluded from the comparable grid because its note was `planner-survey 76b904e`, not the required `BATTERY2 …` form; it remains evidence only. A comparable detached rerun is now PID `1014693`, log `/tmp/shipping-rates-rb-battery2-rerun.log`, with heartbeat `fbe9517f`. Shipping-rates-rb closed at 85% in comparable run `shipping-rates-rb_ternary-bonsai-2_codex_pon_1789940747`; its monitor heartbeat was deleted. The remaining five cells remain open pending comparable reruns.
 
 ## Rejected candidates
 
