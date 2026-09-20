@@ -89,6 +89,8 @@ def to_chat_body(r: dict) -> dict:
     choice = _to_chat_tool_choice(r.get("tool_choice"))
     if choice is not None:
         body["tool_choice"] = choice
+    elif r.get("tool_choice") is not None:
+        raise ValueError(f"unsupported Responses tool_choice: {r.get('tool_choice')!r}")
     if r.get("parallel_tool_calls") is not None:
         body["parallel_tool_calls"] = r["parallel_tool_calls"]
     # Preserve the Chat-Completions controls with direct wire equivalents. Silent omission changes

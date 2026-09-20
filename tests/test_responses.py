@@ -64,10 +64,10 @@ class ToChatBodyTests(unittest.TestCase):
         body = responses.to_chat_body(r)
         self.assertEqual(body["tool_choice"], {"type": "function", "function": {"name": "f"}})
 
-    def test_tool_choice_string_passes_through_object_unknown_dropped(self):
+    def test_tool_choice_string_passes_through_and_unknown_is_rejected(self):
         self.assertEqual(responses.to_chat_body({"model": "m", "input": [], "tool_choice": "required"})["tool_choice"], "required")
-        # an unrecognized object form (mcp/allowed_tools) is omitted, not sent as garbage
-        self.assertNotIn("tool_choice", responses.to_chat_body({"model": "m", "input": [], "tool_choice": {"type": "mcp"}}))
+        with self.assertRaisesRegex(ValueError, "unsupported Responses tool_choice"):
+            responses.to_chat_body({"model": "m", "input": [], "tool_choice": {"type": "mcp"}})
 
     def test_tool_with_no_parameters_gets_default_object_and_strict_carried(self):
         r = {"model": "m", "input": [], "tools": [
