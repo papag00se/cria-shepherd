@@ -369,6 +369,10 @@ class Upstream:
         # completion-side keys pop harmlessly here, which is what makes the list safe to trust.
         for _k in bodykeys.ALL:
             out.pop(_k, None)
+        # Caller-instruction provenance is a cria message hint, never an upstream API field.
+        if isinstance(out.get("messages"), list):
+            out["messages"] = [{k: v for k, v in m.items() if k != bodykeys.CALLER_INSTRUCTIONS}
+                               if isinstance(m, dict) else m for m in out["messages"]]
         sent_estimate = contextfloor.est_total(out.get("messages"), out.get("tools"))
         capture_path = None
         if self._capture_dir is not None:  # record EXACTLY what the model will see, per call

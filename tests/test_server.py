@@ -35,6 +35,14 @@ class ProxyBodyTests(unittest.TestCase):
         self.assertEqual(out["tools"], body["tools"])          # everything else intact
         self.assertEqual(body["messages"][0]["role"], "system")  # original not mutated
 
+    def test_keeps_responses_caller_instructions_while_dropping_harness_persona(self):
+        body = {"messages": [
+            {"role": "system", "content": "caller", "cria_caller_instructions": True},
+            {"role": "system", "content": "harness"},
+            {"role": "user", "content": "task"},
+        ]}
+        self.assertEqual(_proxy_body(body)["messages"], [body["messages"][0], body["messages"][2]])
+
     def test_noop_when_no_harness_system(self):
         body = {"messages": [{"role": "user", "content": "hi"}]}
         self.assertIs(_proxy_body(body), body)  # same object → no needless copy

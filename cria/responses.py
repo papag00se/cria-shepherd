@@ -20,6 +20,7 @@ import json
 import uuid
 from collections.abc import Iterator
 
+from . import bodykeys
 from .indicators import MARKER, THINK_FENCE
 
 
@@ -75,7 +76,10 @@ def to_chat_body(r: dict) -> dict:
 
     messages: list[dict] = []
     if sys_parts:
-        messages.append({"role": "system", "content": "\n\n".join(p for p in sys_parts if p)})
+        # Preserve the distinction through the pipeline: server may remove a harness persona, but
+        # Responses `instructions` / developer items are caller authority and must reach the model.
+        messages.append({"role": "system", "content": "\n\n".join(p for p in sys_parts if p),
+                         bodykeys.CALLER_INSTRUCTIONS: True})
     messages.extend(rest)
 
     body: dict = {"model": r.get("model"), "messages": messages, "stream": bool(r.get("stream"))}

@@ -239,7 +239,8 @@ def _proxy_body(body: dict) -> dict:
     msgs = body.get("messages")
     if not isinstance(msgs, list):
         return body
-    kept = [m for m in msgs if m.get("role") not in ("system", "developer")]
+    kept = [m for m in msgs if m.get("role") not in ("system", "developer")
+            or m.get(bodykeys.CALLER_INSTRUCTIONS)]
     if len(kept) == len(msgs):
         return body  # nothing to strip → same object
     return {**body, "messages": kept}

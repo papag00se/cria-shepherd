@@ -5241,6 +5241,12 @@ def _frame_for_item(messages: list[dict], item: str, summary: str, idx: int, tot
       system is protected from floor-trimming and authoritative.
     """
     messages = _strip_cria_file_ops(messages)  # don't let the coder see/mimic `.cria/` writes
+    # Responses caller instructions are not harness persona. Fold them into cria's one authoritative
+    # system turn before dropping ordinary harness system messages below.
+    caller = "\n\n".join(str(m.get("content") or "") for m in messages
+                         if isinstance(m, dict) and m.get(bodykeys.CALLER_INSTRUCTIONS))
+    messages = [m for m in messages if not (isinstance(m, dict) and m.get(bodykeys.CALLER_INSTRUCTIONS))]
+    caller_block = f"\n\n{caller}" if caller else ""
     # The plan carries each section's probe KIND, which is what lets a non-zero TEST/BUILD exit whose
     # output is all advisory-shaped (-Werror, deny(warnings), tsc noUnusedLocals) be reported as the
     # failure it is instead of "no error-class problems".
@@ -5252,7 +5258,7 @@ def _frame_for_item(messages: list[dict], item: str, summary: str, idx: int, tot
         # tool hint (+ a follow-up done-context when prior_work is set), NO step prompt, and the user's
         # real task message is KEPT (never replaced). Byte-equivalent to the former _direct_coder_body,
         # so turning the planner off is a fair 'coder without a planner', not a bare passthrough.
-        system = (prompts.load("coder_system") + (f"\n\n{hint}" if hint else "")
+        system = (prompts.load("coder_system") + caller_block + (f"\n\n{hint}" if hint else "")
                   + (f"\n\n{done_block.rstrip()}" if prior_work else ""))
         out: list[dict] = [{"role": "system", "content": system}]
         for m in messages:
@@ -5271,7 +5277,7 @@ def _frame_for_item(messages: list[dict], item: str, summary: str, idx: int, tot
     prompt = _item_prompt(item, summary, idx, total, workspace_root, gate_red)
     hint_block = f"{hint}\n\n" if hint else ""
     out: list[dict] = [{"role": "system",
-                        "content": prompts.load("coder_system") + "\n\n" + hint_block + done_block + prompt}]
+                        "content": prompts.load("coder_system") + caller_block + "\n\n" + hint_block + done_block + prompt}]
     acked = False
     for m in messages:
         if m.get("role") in ("system", "developer"):

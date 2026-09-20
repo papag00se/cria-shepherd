@@ -45,6 +45,10 @@ PINNED_TASK = "cria_pinned_task"
 #: not a status/text flag, so only ``Upstream._open_with_refit`` can originate the provenance.
 CONTEXT_REFIT_NO_CHANGE = "cria_context_refit_no_change"
 
+#: A system/developer message originated from a Responses caller's instructions, not harness persona.
+#: Kept through proxy/framing, then stripped from the message object at the wire.
+CALLER_INSTRUCTIONS = "cria_caller_instructions"
+
 # --- response-body hints: cria's own annotations on a completion --------------------------------
 
 #: Human-facing notes cria attaches to a completion for the operator's display, stripped before the
@@ -58,4 +62,4 @@ RUMINATION = "cria_rumination"
 #: Every key above. The wire strips this set wholesale, so adding a key here is all it takes to keep
 #: it off the API — the thing five scattered literals could not guarantee.
 ALL = (MERGE_TURNS, OUTPUT_RESERVE, LOST_CALL, PINNED_TASK, CONTEXT_REFIT_NO_CHANGE,
-       NOTES, RUMINATION)
+       CALLER_INSTRUCTIONS, NOTES, RUMINATION)
