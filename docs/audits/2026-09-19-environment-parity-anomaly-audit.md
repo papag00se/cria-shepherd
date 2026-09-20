@@ -41,7 +41,7 @@ Directly established here:
 
 ## Tier 1 — broken or measurement-invalidating now
 
-- [ ] **Caller Responses instructions are erased (all levels).**
+- [x] **Caller Responses instructions are erased (all levels).** Fixed in `a9fd611`.
   `cria/responses.py:32-55` folds top-level `instructions` and caller `system`/`developer`
   items into a system message, then `cria/server.py:226-243` drops every system/developer
   message in the proxy path. The L4/L5 framing path does the same (`cria/loop.py:5220-5280`).
@@ -49,7 +49,7 @@ Directly established here:
   **Direction:** carry caller instruction intent separately from removable harness persona
   and preserve it to the wire.
 
-- [ ] **The advertised L0 control is not actually a pure proxy.**
+- [x] **The advertised L0 control is not actually a pure proxy.** Fixed in `3bf0a19`.
   L0 is documented as wire translation only (`cria/config.py:395-405`), yet production
   routing/classification can replace the requested model and role application overwrites
   sampling/reasoning (`cria/server.py:1144-1223`). The captured L0 Ruby body confirmed
@@ -58,7 +58,7 @@ Directly established here:
   production failover, so it cannot catch this. **Direction:** gate routing/role/indicator
   mutations above L0, or rename and test L0 as the non-control it is.
 
-- [ ] **Responses request semantics are silently lost (all levels).**
+- [x] **Responses request semantics are silently lost (all levels).** Direct equivalents fixed in `918be07`; unsupported tool types explicitly reject in `fa16e66`.
   The wire adapter forwards a narrow whitelist (`cria/responses.py:81-94`): it drops such
   behavior-changing controls as `max_output_tokens`, caller sampling/reasoning, text format,
   stop, metadata/store, continuation/previous-response and related fields. Non-function
@@ -66,14 +66,14 @@ Directly established here:
   losslessly map real equivalents; for unsupported semantics return a visible incompatibility
   rather than quietly changing the request.
 
-- [ ] **Cell-local CLI installs are unusable (all levels).**
+- [x] **Cell-local CLI installs are unusable (all levels).** Fixed in `38a886f`.
   `suite/run.py:328-359` redirects package destinations, but the child path at `:600` only
   prepends a dead Node-22 literal. Npm global commands, Python user console scripts, and uv
   tools successfully install but cannot be invoked in a later command. This is the executable
   sibling of the repaired Ruby library path bug. **Direction:** derive each cell's executable
   directories and prepend them to the child `PATH`; test install→invoke for npm, Python and uv.
 
-- [ ] **Maven can poison later cells while the tripwire misses it.**
+- [x] **Maven can poison later cells while the tripwire misses it.** Fixed by refusing publish goals in `0ea27f5`.
   Maven's shared `~/.m2/repository` is deliberately retained as a download cache
   (`suite/run.py:199-237`), but `mvn install` and `install:install-file` are not in
   `cria/dirguard.py`'s global-install guard (`:83-94`). Those write cell-built artifacts into
@@ -83,26 +83,26 @@ Directly established here:
   Maven install goals or isolate locally produced Maven artifacts while retaining a read-only
   dependency cache; use authoritative metadata as a backstop.
 
-- [ ] **Stopping a battery cell can terminate unrelated Codex work.**
+- [x] **Stopping a battery cell can terminate unrelated Codex work.** Fixed in `84e289f`.
   `codex_pids()` matches every host `codex exec --yolo` command (`suite/run.py:381-387`), and
   `stop_run()` sends INT/KILL to all matches (`:624-630`) even though the current run already
   owns a distinct process group. **Direction:** stop only the spawned process group and its
   proven descendants.
 
-- [ ] **The orphan reaper searches an obsolete workspace root.**
+- [x] **The orphan reaper searches an obsolete workspace root.** Fixed in `32cfd9c`.
   Runs moved to the canonical, overrideable `RUNS_DIR` (`suite/run.py:55-61,577`), while
   `suite/ladder_cycle.py:89-126` still looks under `<repo>/runs`. A stale harness/server can
   therefore survive and affect a later cell. **Direction:** import/use the same canonical
   `RUNS_DIR` in the reaper.
 
-- [ ] **L5's published planner capability is not measured.**
+- [x] **L5's published planner capability is not measured.** Fixed in `4a089fe`.
   L5 is labelled as including the planner (`suite/historical_ladder.json:9`), but
   `suite/battery_run.py:118` passes `--planner off` at every level. **Direction:** either run
   L5 with planner enabled or relabel the measured plan-off ladder honestly.
 
 ## Tier 2 — real boundary debt; scope before changing
 
-- [ ] **`.cell-installs` is cria state inside the task workspace.** It is captured by milestones
+- [x] **`.cell-installs` is cria state inside the task workspace.** Fixed in `f35d336`. It is captured by milestones
   and usefulness evidence along with deliverables (`suite/run.py:321-359`,
   `suite/milestones.py:34-58`). That conflicts with the doctrine that cria artifacts stay out of
   the user's tree, and `XDG_CACHE_HOME` also contradicts the runner comment promising shared
