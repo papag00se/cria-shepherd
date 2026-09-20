@@ -46,7 +46,8 @@ Consequences:
 - Fix the upstream cause in cria. Do not paper it over in Codex configuration, task prompts, benchmark-specific hooks, suite scoring, or a fallback that silently changes behavior.
 - Every behavior change needs a fails-before/passes-after test, `python -m pytest`, a commit and push, then `sudo systemctl restart cria.service` and a live health check.
 - The model must not see the literal token `cria`; model-facing text belongs in `cria/prompts/*.txt`.
-- Preserve user work and existing dirty files. In particular, do not overwrite unrelated changes to `docs/walk-prompt.md`.
+- Preserve user work and existing dirty files.
+- Work directly on `main`. Do not create, switch to, or leave work on any other branch; commit and push each accepted unit to `main`.
 
 ## Supervisor operating model
 
