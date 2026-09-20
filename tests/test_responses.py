@@ -32,7 +32,11 @@ class ToChatBodyTests(unittest.TestCase):
         self.assertEqual(body["tools"][0], {"type": "function", "function": {
             "name": "exec_command", "description": "run", "parameters": {"type": "object"}}})
 
-    def test_non_function_tool_is_rejected_not_silently_dropped(self):
+    def test_namespace_control_is_ignored_but_model_callable_non_function_is_rejected(self):
+        # Codex sends namespace controls for its own UI/plan machinery; they have no Chat tool
+        # representation and must not block a coding request.
+        self.assertNotIn("tools", responses.to_chat_body({"model": "m", "input": [],
+                                                            "tools": [{"type": "namespace"}]}))
         with self.assertRaisesRegex(ValueError, "unsupported Responses tool type"):
             responses.to_chat_body({"model": "m", "input": [], "tools": [{"type": "web_search"}]})
 
