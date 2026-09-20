@@ -54,22 +54,26 @@ CHUNK_LINES_DEFAULT = 1_800   # under a 2,000-line read cap, with room for the r
 # budget or it overflows immediately — the exact failure this prevents. Derive it from the reader's
 # window with --reader-context-tokens, or set --segment-bytes outright.
 SEGMENT_BYTES_DEFAULT = 250_000
-# A segment must fit the reader with room for its system prompt, reasoning, and finding write, and
-# stay under the provider's compaction trigger. The fraction and chars-per-token below reproduce the
-# one measured point (272k-token reader -> ~285 kB, matching the observed <300 kB safe ceiling) and
-# stay conservative for small readers (48k-token reader -> ~50 kB). chars-per-token is deliberately
-# low so token count is over-, never under-, estimated.
-READER_WINDOW_FRACTION = 0.35
-CONSERVATIVE_CHARS_PER_TOKEN = 3.0
+# One coefficient, from ONE measured point, honestly labelled as such. The prior walk was safe under
+# ~300 kB of segment text on a reader with a ~272k-token window, i.e. ~1.0 byte of segment per token
+# of the reader's window (272000 * 1.0 = 272 kB, under the observed 300 kB ceiling). That is the only
+# thing measured; do not dress it up as separate "window fraction" and "chars per token" factors,
+# because a single data point constrains only their product. The scaling to other readers assumes the
+# ceiling tracks the window (unproven, but the error is safe for smaller readers: a smaller budget).
+# Adjust this one number if a specific reader is remeasured; the oversized flag makes a bad fit loud.
+SEGMENT_BYTES_PER_WINDOW_TOKEN = 1.0
 _CALL_RE = re.compile(r"^(\d{4})-(.+)\.json$")
 
 
-def budget_for_reader(context_tokens, fraction=READER_WINDOW_FRACTION,
-                      chars_per_token=CONSERVATIVE_CHARS_PER_TOKEN):
-    """A compaction-safe segment byte budget for a reader with the given token window."""
+def budget_for_reader(context_tokens, bytes_per_token=SEGMENT_BYTES_PER_WINDOW_TOKEN):
+    """A compaction-safe segment byte budget for a reader with the given token window.
+
+    Derived from a single measured point (~300 kB safe at a ~272k-token window). Conservative and
+    approximate; the caller flags any single chunk that still exceeds the result.
+    """
     if context_tokens <= 0:
         raise ValueError("context_tokens must be positive")
-    return max(1, int(context_tokens * fraction * chars_per_token))
+    return max(1, int(context_tokens * bytes_per_token))
 
 
 def group_by_budget(sizes, budget):
