@@ -19,6 +19,7 @@ import pathlib
 import subprocess
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from cria import config, editrecovery, focustrim, loop, probegate, prompts
 from cria.writeproxy import translate_outbound
@@ -490,9 +491,8 @@ class _PSCReasoner:
             {"done": self._done, "reason": self._reason})}}]}).encode()
 
 
-class ThePeriodicStepCheckIsObserveOnlyTests(unittest.TestCase):
-    """It asks and records; it does not move the plan. New authority over when a plan advances, whose
-    documented predecessor turned a 1.0 into a 0.0, and which has never run live."""
+class PeriodicStepConfirmationTests(unittest.TestCase):
+    """Scheduled advancement needs the same observed approve-path confirmation as the critic."""
 
     def _loop_and_sess(self, done):
         item = loop.PlanItem("step 1")
@@ -505,34 +505,62 @@ class ThePeriodicStepCheckIsObserveOnlyTests(unittest.TestCase):
         sess.drive_count = 12  # first cadence tick — STEP_CHECK_EVERY
         return drv, sess, item
 
-    def test_the_check_records_the_verdict_but_never_advances_the_step(self):
+    def test_unrooted_confirmation_stays_observe_only(self):
+        """`confirm_unchecked` approves ordinary claims but cannot authorize this schedule."""
         drv, sess, item = self._loop_and_sess(done=True)
         rlog = _PSCRlog()
         result = drv._periodic_step_check(sess, "k", {"messages": []}, 1, 2, rlog)
-        # OBSERVE-ONLY: no advance dict returned, and the step it judged DONE is still open —
-        # the loop's own plan state must be untouched by a critic call that only measures.
         self.assertIsNone(result)
         self.assertFalse(item.done)
-        self.assertEqual(sess.plan.current(), item)
-        # It still SAID what it saw — silence on a guard that only measures is indistinguishable
-        # from one that never ran, so the measurement events are non-negotiable.
-        self.assertIn("loop.periodic_step_check", rlog.kinds())
+        sat = [kw for k, kw in rlog.events if k == "loop.periodic_step_satisfied"]
+        self.assertTrue(sat)
+        self.assertTrue(sat[0]["observe_only"])
 
-    def test_a_satisfied_verdict_is_still_only_recorded(self):
+    def test_observed_success_advances_through_advance(self):
+        """Fails before: the old observe-only block left this genuine confirmation at step 1."""
         drv, sess, item = self._loop_and_sess(done=True)
         rlog = _PSCRlog()
-        drv._periodic_step_check(sess, "k", {"messages": []}, 1, 2, rlog)
-        sat = [kw for k, kw in rlog.events if k == "loop.periodic_step_satisfied"]
-        self.assertTrue(sat, "a DONE verdict must still be logged, even though it cannot act")
-        self.assertTrue(sat[0]["observe_only"])
-        self.assertFalse(item.done)  # said satisfied, but the plan did not move
+        class ObservedConfirmation:
+            confirmed = True
+            observed = True
 
-    def test_a_not_done_verdict_records_nothing_extra_and_still_does_not_advance(self):
-        drv, sess, item = self._loop_and_sess(done=False)
-        rlog = _PSCRlog()
-        drv._periodic_step_check(sess, "k", {"messages": []}, 1, 2, rlog)
-        self.assertNotIn("loop.periodic_step_satisfied", rlog.kinds())
-        self.assertFalse(item.done)
+        class ObservedVerification:
+            done = True
+            reason = "confirmed"
+            confirmation = ObservedConfirmation()
+
+            def __iter__(self):
+                yield self.done
+                yield self.reason
+
+        with (patch.object(drv, "_verify", return_value=ObservedVerification()),
+              patch.object(drv, "_work", return_value={"next": "step 2"})):
+            result = drv._periodic_step_check(sess, "k", {"messages": []}, 1, 2, rlog)
+        self.assertEqual(result, {"next": "step 2"})
+        self.assertTrue(item.done)
+        self.assertEqual(sess.plan.current().text, "step 2")
+        self.assertIn("loop.step_done", rlog.kinds())
+        sat = next(kw for k, kw in rlog.events if k == "loop.periodic_step_satisfied")
+        self.assertNotIn("observe_only", sat)
+
+    def test_false_or_unconfirmed_verdict_leaves_the_plan_unchanged(self):
+        for verification in (loop.Verification(False, "not done"),
+                             loop.Verification(True, "unchecked")):
+            with self.subTest(verification=verification):
+                drv, sess, item = self._loop_and_sess(done=True)
+                with patch.object(drv, "_verify", return_value=verification):
+                    result = drv._periodic_step_check(sess, "k", {"messages": []}, 1, 2, _PSCRlog())
+                self.assertIsNone(result)
+                self.assertFalse(item.done)
+
+    def test_ordinary_verify_keeps_its_two_value_coder_claim_contract(self):
+        """The additional provenance is for periodic authority, not a new ordinary-claim veto."""
+        drv, _sess, _item = self._loop_and_sess(done=True)
+        result = drv._verify("step 1", "coder says done", "", "", _PSCRlog())
+        done, reason = result
+        self.assertTrue(done)
+        self.assertEqual(reason, "looks done")
+        self.assertIsNone(result.confirmation)
 
 
 class AStaleFindingIsNotStampedWithTodaysLineTests(unittest.TestCase):

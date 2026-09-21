@@ -158,6 +158,32 @@ class Phase(Enum):
     DONE = auto()
 
 
+@dataclass(frozen=True)
+class Confirmation:
+    """The approve-path brake's result, including whether it actually inspected a workspace."""
+    confirmed: bool
+    observed: bool
+    reason: str = ""
+
+    def __iter__(self):
+        # Keep the established two-value private-call contract for the task satisfaction caller.
+        yield self.confirmed
+        yield self.reason
+
+
+@dataclass(frozen=True)
+class Verification:
+    """A step-critic result plus its actual approve-path confirmation, if one occurred."""
+    done: bool
+    reason: str
+    confirmation: Confirmation | None = None
+
+    def __iter__(self):
+        # `_verify` historically returned ``(ok, reason)``; ordinary callers retain that contract.
+        yield self.done
+        yield self.reason
+
+
 @dataclass
 class GuardState:
     """Cross-turn repetition / wheel-spin guard state: the ground-truth-probe round-trip plus the
@@ -1560,7 +1586,7 @@ def _cria_measured_facts(sess) -> str:
 
 
 def _confirm_completion(claim: str, reason: str, workspace_root: str, reasoner_chat, reasoner_role,
-                        rlog, *, phase: str, cria_facts: str = "") -> tuple[bool, str]:
+                        rlog, *, phase: str, cria_facts: str = "") -> Confirmation:
     """The APPROVE-path brake — one narrow, reasoning-off check run ONLY on a done/satisfied verdict:
     is the completion claim CONSISTENT with (a) the fresh on-disk listing and (b) the verdict's own
     reason? Measured need (n=3 in one day, both judges): a judge holding contrary ground truth in its
@@ -1570,8 +1596,8 @@ def _confirm_completion(claim: str, reason: str, workspace_root: str, reasoner_c
     ONLY claim + reason — the coder's summary, the confabulation fuel, is deliberately absent — and
     INSPECTS the workspace itself via the shared read-only tools rather than being handed a pasted
     listing (operator's call, twice over: a real repo's complete listing can be massive, and a judge
-    that must look cannot rubber-stamp a narrative). Returns (confirmed, why). No workspace to
-    inspect → confirmed (nothing to check against).
+    that must look cannot rubber-stamp a narrative). Returns the confirmation plus whether it was
+    observed. No workspace to inspect → confirmed (nothing to check against), but unobserved.
 
     An UNPARSEABLE check fails CLOSED — it does not confirm. It used to keep the verdict, on the
     reasoning that an additive brake must never become a new wedge; that is the fail-open on missing
@@ -1606,11 +1632,11 @@ def _confirm_completion(claim: str, reason: str, workspace_root: str, reasoner_c
         # and be refused wholesale, and `linterprobe.collect_files` then found nothing to probe.
         rlog.emit("loop.confirm_unchecked", level="warn", phase=phase,
                   why="no workspace root" if not workspace_root else "workspace not surveyed")
-        return True, ""
+        return Confirmation(True, False)
     absent = step_names_absent_artifact(claim, workspace_root)
     if absent:
         rlog.emit("loop.confirm_absent_artifact", level="info", phase=phase, artifact=absent)
-        return False, prompts.render("confirm_absent_artifact", artifact=absent)
+        return Confirmation(False, True, prompts.render("confirm_absent_artifact", artifact=absent))
     labels = prompts.load_map("verify_confirm")
     role = replace(reasoner_role, reasoning="off") if reasoner_role is not None else None
     looked: list[int] = [0]          # inspection rounds spent by the most recent `ask`
@@ -1699,7 +1725,7 @@ def _confirm_completion(claim: str, reason: str, workspace_root: str, reasoner_c
         # rule was written for the unparseable case and the echo is exactly the case it names: the
         # done-reason arriving back as the not-done reason, only this time through a verdict that
         # parsed. Both callers (_verify and judge_satisfaction) inject this string verbatim.
-        return False, prompts.load("unverified_step")
+        return Confirmation(False, True, prompts.load("unverified_step"))
     if verdict is False:
         # A refuted or undecidable diagnosis cannot approve the task and cannot be forwarded. The
         # boolean remains false; only a typed, current-evidence-backed explanation may accompany it.
@@ -1712,8 +1738,8 @@ def _confirm_completion(claim: str, reason: str, workspace_root: str, reasoner_c
             diagnosis_obj or {}, task=claim, checks=cria_facts,
             workspace_root=workspace_root, ask=semantic_ask, rlog=rlog,
             phase=phase + "-diagnosis")
-        return False, str(nudge)
-    return verdict, why
+        return Confirmation(False, True, str(nudge))
+    return Confirmation(bool(verdict), True, why)
 
 
 # A judge's own THINKING, when its final answer was not a verdict. Recovers ONLY a NOT-satisfied
@@ -3505,10 +3531,9 @@ class Loop:
         `_confirm_completion` brake. The only thing that changes is WHO asked — cria's own
         bookkeeping instead of the model's say-so.
 
-        ADDITIVE, and currently OBSERVE-ONLY: it asks the question and records the answer, and
-        NOTHING changes either way — no advance, no steer, no nudge, no fail counter, no word to the
-        coder. The measurement it produces is what decides whether it ever gets to advance a step;
-        see the note at the bottom of the method for exactly what flips it."""
+        ADDITIVE and bounded: a negative, unparseable, unconfirmed, or unobserved result leaves the
+        plan untouched. A positive periodic verdict advances only after the same evaluation's
+        approve-path brake actually inspected the surveyed workspace."""
         if not periodic_check_due(sess.drive_count, STEP_CHECK_EVERY, STEP_CHECK_EVERY,
                                   sess.step_checked_drive):
             return None
@@ -3535,7 +3560,7 @@ class Loop:
         participation_facts = participation.render_for_judge(
             getattr(sess, "last_gate_participation", None),
             fresh=getattr(sess, "gate_fresh", None))
-        ok, reason = self._verify(
+        verification = self._verify(
             item.text, prompts.load("periodic_step_claim"),
             prompts.load("probe_digest_none") if not sess.last_gate_ran else "",
             self._grounded_evidence(sess, body, rlog), rlog, idx=idx, total=total, key=key,
@@ -3549,33 +3574,19 @@ class Loop:
             participation_facts=participation_facts)
         # SAY WHAT IT DID, always — a guard that is silent when it declines cannot be told apart from
         # one that never ran.
-        rlog.emit("loop.periodic_step_check", step=idx, done=bool(ok), drive=sess.drive_count,
-                  turns=sess.coder_turns, reason=_clip(reason or "", 160))
-        # OBSERVE-ONLY (operator, 2026-08-05: "I'm not too comfortable with #16"). It ASKS and it
-        # RECORDS; it does not advance. The reasoning is the same one that governs the dictated-code
-        # guard beside it: this is new authority over when a plan MOVES, its documented predecessor
-        # turned a 1.0 into a 0.0. A guard earns power on evidence, not on argument.
-        #
-        # STALE PREMISE, CORRECTED 2026-08-16 — this used to add "it has never executed live: both
-        # runs on this code state were plan-off, where this path does not exist". Route-unify made
-        # plan-off a synthetic one-item plan, so the path DOES exist there and has now executed.
-        # cart-billing-go x ternary-bonsai, 14:23:19, three and a half minutes in:
-        #   loop.periodic_step_check  step=1 done=true  reason="the go.mod file ... contains the
-        #                                                       required content"
-        #   loop.periodic_step_satisfied  observe_only=true  step_text="go.mod"
-        # The critic was RIGHT and could not act, so the run spent 26 more minutes on a five-line
-        # file and scored 1 of 5 on a workspace three edits from 4 of 5. That is one case, on the
-        # plan-off path rather than the planner-ON runs the flip condition below asks for, and the
-        # operator's discomfort was with the authority itself — so it is recorded here, not acted on.
-        # The step that caused it no longer exists — the authored reading step was removed on
-        # 2026-08-19 — which removes this instance without granting the guard any new power.
-        #
-        # WHAT FLIPS IT: `loop.periodic_step_check done=true` events across real planner-ON runs,
-        # each read against what the workspace actually held at that turn. If the critic is right
-        # about a step the coder never claimed, drop this block and return `self._advance(...)`. If
-        # it is wrong even once in a way the confirm brake did not catch, delete the whole method.
-        # Until then the cost is one judge call per twelve turns and the risk is zero.
-        if ok:
+        rlog.emit("loop.periodic_step_check", step=idx, done=verification.done, drive=sess.drive_count,
+                  turns=sess.coder_turns, reason=_clip(verification.reason or "", 160))
+        # The periodic critic has authority only when its own evaluation made it through the
+        # approve-path brake after that brake inspected the surveyed workspace.  In particular,
+        # `loop.confirm_unchecked` deliberately leaves ordinary coder-claimed advancement fail-open,
+        # but it cannot grant this scheduled path new authority.
+        confirmation = verification.confirmation
+        if (verification.done and confirmation is not None and confirmation.confirmed
+                and confirmation.observed):
+            rlog.emit("loop.periodic_step_satisfied", level="warn", step=idx, drive=sess.drive_count,
+                      turns=sess.coder_turns, step_text=item.text[:160])
+            return self._advance(sess, key, body, idx, total, rlog)
+        if verification.done:
             rlog.emit("loop.periodic_step_satisfied", level="warn", step=idx, drive=sess.drive_count,
                       turns=sess.coder_turns, observe_only=True, step_text=item.text[:160])
         return None
@@ -3824,7 +3835,7 @@ class Loop:
                 routes: str = "", workspace_root: str = "", red_findings: str = "",
                 gate_red: bool = False, sources_read: list | None = None,
                 messages: list | None = None, sess=None,
-                participation_facts: str = "") -> tuple[bool, str]:
+                participation_facts: str = "") -> Verification:
         # NB: no per-step fast-path around the critic. The one that existed shortcut a research step whose
         # facts cria had surfaced — but it could only recognize a step cria itself had injected and pinned,
         # and that injection is gone. The critic judges every step, grounded on the same durable fetch
@@ -3910,6 +3921,7 @@ class Loop:
             # The careful (reasoning-ON) pass is the ONLY one trusted to APPROVE a step done — it does
             # the verification a reasoning-off judge can't.
             done = bool(obj.get("done"))
+            confirmation = None
             if done and workspace_root:
                 # One focused question when the claim names no file and the repo isn't red — the
                 # verb list this replaces was fuzzy-deterministic (operator, 2026-08-04); the ask
@@ -3930,16 +3942,16 @@ class Loop:
                 else:
                     # The approve-path brake (see _confirm_completion): a DONE must be consistent with
                     # the FRESH on-disk listing and with its own stated reason.
-                    confirmed, why = _confirm_completion(item, str(obj.get("reason") or ""), workspace_root,
-                                                         self._ctx.reasoner_chat, self._ctx.reasoner_role,
-                                                         rlog, phase="critic-confirm",
-                                                         cria_facts=participation_facts)
-                    rlog.emit("loop.done_confirm", step=idx, confirmed=confirmed)
-                    if not confirmed:
-                        reason = VerdictNudge(why or prompts.load("unverified_step"))
+                    confirmation = _confirm_completion(item, str(obj.get("reason") or ""), workspace_root,
+                                                        self._ctx.reasoner_chat, self._ctx.reasoner_role,
+                                                        rlog, phase="critic-confirm",
+                                                        cria_facts=participation_facts)
+                    rlog.emit("loop.done_confirm", step=idx, confirmed=confirmation.confirmed)
+                    if not confirmation.confirmed:
+                        reason = VerdictNudge(confirmation.reason or prompts.load("unverified_step"))
                         _dump_verify(self._run_dir(rlog), key, idx, total, item, system, user,
                                      False, reason, response=raw)
-                        return False, reason
+                        return Verification(False, reason, confirmation)
             diagnosis_ask = ((lambda sysm: ask_closed(
                 self._ctx.reasoner_chat, self._ctx.reasoner_role, sysm, rlog,
                 phase="critic-diagnosis", max_tokens=16, retry_off=False))
@@ -3951,7 +3963,7 @@ class Loop:
                                     workspace_root=workspace_root, rlog=rlog,
                                     messages=messages, sess=sess)
             _dump_verify(self._run_dir(rlog), key, idx, total, item, system, user, done, reason, response=raw)
-            return done, reason
+            return Verification(done, reason, confirmation)
         # No parseable careful verdict — the reasoner over-thought or leaked a tool call. Retry
         # reasoning-off, but a reasoning-off judge is a rubber stamp (competent to REJECT, not APPROVE):
         # use it only to confirm NOT-done. A "done" that exists ONLY because the careful pass failed is
@@ -3968,7 +3980,7 @@ class Loop:
             # Same fail-closed / plain-instruction contract as the satisfaction judge above.
             reason = prompts.load("unverified_step") + _named_gap(red_findings)
             _dump_verify(self._run_dir(rlog), key, idx, total, item, system, user, False, reason, response=raw)
-            return False, reason
+            return Verification(False, reason)
         retry_ask = ((lambda sysm: ask_closed(
             self._ctx.reasoner_chat, self._ctx.reasoner_role, sysm, rlog,
             phase="critic-retry-diagnosis", max_tokens=16, retry_off=False))
@@ -3980,7 +3992,7 @@ class Loop:
                                 workspace_root=workspace_root, rlog=rlog,
                                 messages=messages, sess=sess)
         _dump_verify(self._run_dir(rlog), key, idx, total, item, system, user, False, reason, response=raw)
-        return False, reason
+        return Verification(False, reason)
 
     def _verdict(self, system: str, user: str, rlog, *, reasoning_off: bool,
                  workspace_root: str = "") -> tuple[dict | None, str]:
