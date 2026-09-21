@@ -109,7 +109,7 @@ class ItemPromptTests(unittest.TestCase):
         d = ws(**{"test_resolve_handle.py": "assert False\n"})
         out = loop._item_prompt(MELLUM_STEP, "", 4, 7, d, True)
         self.assertIn(MELLUM_STEP, out)
-        self.assertIn("Do ONLY this step (4 of 7)", out)
+        self.assertIn("Prioritize this step (4 of 7)", out)
         self.assertIn("smallest change", out)
 
     def test_green_prompt_is_byte_identical_to_the_old_behaviour(self):

@@ -1,3 +1,5 @@
-You are completing a larger task one step at a time. This plan was created by another model — not the user — and may contain mistakes; verify before moving on. {{COMPLETED}}Do ONLY this step ({{IDX}} of {{TOTAL}}), then stop:
+You are completing a larger task with an ordered plan. This plan was created by another model — not the user — and may contain mistakes; verify before moving on. {{COMPLETED}}Prioritize this step ({{IDX}} of {{TOTAL}}):
 
 {{STEP}}
+
+Once it is complete, continue with directly related work needed to deliver the full user request. Do not let the plan defer required tests, documentation, and verification when the relevant work is in hand.

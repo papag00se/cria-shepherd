@@ -5265,9 +5265,10 @@ def _frame_for_item(messages: list[dict], item: str, summary: str, idx: int, tot
       agnostic: whatever agent prompt any harness puts in `system`/`developer` is replaced.
     * KEEP the user's real task as HISTORY (the whole goal — every requirement, so the coder works
       from the full ask, not just the terse step text), followed by an acknowledgement that it has been
-      decomposed into a plan — so it reads as BACKGROUND, not a standing "do the whole thing now" ask.
-      The ACTIVE directive is the CURRENT step, appended last and carried in the authoritative system
-      message. The plan's LATER steps are never shown, so the coder still cannot race ahead to one.
+      decomposed into a plan — so it reads as BACKGROUND rather than an unstructured replacement plan.
+      The ACTIVE directive makes the CURRENT step the priority, appended last and carried in the
+      authoritative system message. Later plan steps stay hidden, but the full task remains available
+      so completing the current code can also deliver directly related required tests and documentation.
     * KEEP everything else: the user's own instructions (AGENTS.md), env context, and the work
       history — those are user/assistant/tool messages, not the harness agent prompt.
     * On a FOLLOW-UP (prior_work set), fold the completion-compaction of the earlier plan into the

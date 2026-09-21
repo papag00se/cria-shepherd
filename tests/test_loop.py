@@ -3029,7 +3029,9 @@ class FrameForItemTests(unittest.TestCase):
         blob = json.dumps(framed)
         self.assertIn("cwd: ", blob)                   # env context KEPT — reframed to cria's clean voice
         self.assertNotIn("<environment_context>", blob)     # …no longer the raw harness tags
-        self.assertIn("Do ONLY this step", blob)            # step framing = the ACTIVE directive
+        self.assertIn("Prioritize this step", blob)         # step framing = the active priority
+        self.assertIn("required tests, documentation, and verification", blob)
+        self.assertNotIn("then stop", blob)
         self.assertIn("Create handler.py", blob)
         # the WHOLE task is kept as HISTORY (background context — every requirement), NOT replaced
         self.assertIn("unit tests", blob)
