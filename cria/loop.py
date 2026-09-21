@@ -1237,59 +1237,20 @@ def step_names_absent_artifact(claim: str, workspace_root: str) -> str:
     return ""
 
 
-def _claim_promises_artifacts(claim: str) -> bool:
-    """Does this completion claim promise anything the workspace could hold?
-
-    The confirm brake below inspects the DISK, and every one of its measured wins is a claim that
-    promises an artifact — by a production verb ("write unit tests", m8) or by naming a file (the
-    empty-workspace CLI step). A claim with neither — the model-authored READING step is the common
-    case — leaves the checker nothing it can legitimately inspect: its own prompt says "a
-    research/investigation step needs no files", and a weak checker ignores that and invents one.
-
-    MEASURED over every captured confirm chain on the box (313 final verdicts on claims naming no
-    artifact): 155 confirmed, 158 blocked — a coin flip, across 36 sessions. Walked on
-    ada-handles_ornith_codex_poff_1785830161: the critic ruled the reading step done THREE times on
-    real fetch-ledger evidence, and the confirm vetoed each one — "no resolver script exists" (the
-    resolver is step 2's work), then "move or symlink the file from tmp/read-only/", then a
-    wrong-schema reply that failed closed — ~30 judge calls, and the coder started writing with 7 of
-    its 15 minutes left. 0/4.
-
-    File tokens are _STEP_ARTIFACT with the URL exclusion, minus the one DOMAIN the claim names
-    (first_domain_in is TLD-allowlisted and file-extension-aware, so "api.handle.me" is excluded
-    exactly and "resolve_handle.py" never is). A named file is EXACT — no judgment involved. The
-    first version also carried a production-VERB list; that was a pattern doing judgment's work
-    (operator, 2026-08-04: "fuzzy deterministic code, against principle") and it was verb-blind —
-    "Update the README", "Fix the retry loop", "Rewrite the resolver" all read as artifact-free.
-    The verbless question now goes to the reasoner in :func:`_confirm_applies`."""
-    dom = (first_domain_in(claim or "") or "").lower()
-    for m in _STEP_ARTIFACT.finditer(claim or ""):
-        at = m.start()
-        if "://" in (claim or "")[max(0, at - 60):at]:
-            continue
-        if dom and m.group(1).lower() == dom:
-            continue
-        return True
-    return False
-
-
 def _confirm_applies(claim: str, red_findings: str = "", *, gate_red: bool = False, ask=None,
                      rlog=None, phase: str = "critic-confirm") -> bool:
     """Should the per-STEP confirm brake run on this approved claim at all?
 
-    Grounds, any suffices: the repo's checks are red — per THIS call's findings OR the session's
-    standing red state (the audit found the per-call arm alone left periodic-gate reds invisible
-    here) — then the disk is contested and the brake's look is grounded whatever the step names;
-    or the claim names a FILE (exact, deterministic); or, when it names none, ONE focused reasoner
-    question rules whether the step promises anything on disk at all (deterministic code gathers,
-    the reasoner judges — the verb list this replaces couldn't see "Update the README"). Every
-    failure direction keeps the brake: no reasoner, or an unreadable answer → it runs.
+    A red repo check — this call's findings or the session's standing red state — grounds the
+    brake whatever the step says. Otherwise, ONE focused reasoner question judges whether carrying
+    out the step produces or changes an artifact. A path token cannot settle that: it can be an
+    existing input to a read/investigation step as well as a promised output. Every failure
+    direction keeps the brake: no reasoner, or an unreadable answer → it runs.
 
     Scoped to the per-step confirm on purpose. The whole-TASK satisfaction confirm keeps its brake
     unconditionally: a task names its deliverables as NOUNS ("script plus README"), and the brake's
     measured wins there (satisfied with no README on disk) are exactly that shape."""
     if (red_findings or "").strip() or gate_red:
-        return True
-    if _claim_promises_artifacts(claim):
         return True
     if ask is None:
         return True   # no reasoner → the brake stays (the pre-skip behavior)
@@ -3923,9 +3884,9 @@ class Loop:
             done = bool(obj.get("done"))
             confirmation = None
             if done and workspace_root:
-                # One focused question when the claim names no file and the repo isn't red — the
-                # verb list this replaces was fuzzy-deterministic (operator, 2026-08-04); the ask
-                # fails toward running the brake.
+                # One focused question when the repo is not red.  A path can name either an
+                # artifact the step produces or an existing input it reads, so deterministic path
+                # matching cannot make this semantic decision.  The ask fails toward the brake.
                 off_role = (replace(self._ctx.reasoner_role, reasoning="off")
                             if self._ctx.reasoner_role is not None else None)
                 applies_ask = (lambda sysm: summarize(self._ctx.reasoner_chat, off_role, sysm,

@@ -5428,8 +5428,10 @@ class ApprovePathConfirmTests(unittest.TestCase):
     no README in the listing; m7 attached a failure analysis to a DONE. On done/satisfied ONLY, a
     narrow reasoning-off checker re-judges the claim against (a) the FRESH on-disk listing and (b)
     the verdict's own reason — with the coder's summary (the confabulation fuel) deliberately absent.
-    Inconsistent → downgraded, with the checker's why as the corrective. Unparseable → the verdict
-    stands (additive brake, never a wedge), traced."""
+    Inconsistent → downgraded, with the checker's why as the corrective. Before this path runs,
+    a focused semantic ruling decides whether the step produces an artifact; names can be existing
+    inputs, so a path token alone must not start the brake. Unparseable → the verdict stands
+    (additive brake, never a wedge), traced."""
 
     def _role(self):
         from cria.config import Role
@@ -5477,7 +5479,7 @@ class ApprovePathConfirmTests(unittest.TestCase):
             {"done": True, "reason": "resolver written and verified", "proposed_fix": ""})}}]}
         with tempfile.TemporaryDirectory() as ws:
             Path(ws, "resolve_handle.py").write_text("x = 1\n")
-            loop, _ = self._loop_with([verdict, self._looked(), self._confirm(True)])
+            loop, _ = self._loop_with([verdict, _done("YES"), self._looked(), self._confirm(True)])
             ok, _ = loop._verify("Write resolve_handle.py", "c", "", "ev", _Rlog(),
                                  idx=1, total=2, key="sid:x", workspace_root=ws)
         self.assertTrue(ok)
