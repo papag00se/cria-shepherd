@@ -1,6 +1,6 @@
 # Battery — the engagement ladder
 
-**Last updated 2026-09-19 21:16** — newest row `rust-toml-cli_ternary-bonsai-2_codex_pon_1789877114`, finished 2026-09-19 21:16.
+**Last updated 2026-09-20 18:38** — newest row `orders-api-py_ternary-bonsai-2_codex_pon_1789950190`, finished 2026-09-20 18:27.
 
 Each cell is an inferred usefulness percentage 🟢≥88 🟡≥63 🟠≥38 🔴 below; `·` = not judged. `[engagement] level = 0..5`, each rung implying every rung below it. gemma4 / qwen35 / nemotron-elastic are FROZEN historical inference rows recovered into suite/historical_ladder.json; every other model reads live from results.jsonl.
 
@@ -59,5 +59,5 @@ Each cell is an inferred usefulness percentage 🟢≥88 🟡≥63 🟠≥38 �
 | nemotron-elastic | 🟠 59% | 🔴 31% | 🟡 76% | 🔴 20% | 🟡 70% | 🟡 84% | 57% | 50 | 180 |
 | ornith15 | 🟢 95% | 🟡 84% | 🟡 85% | 🟡 70% | 🟡 75% | 🟢 95% | 84% | 60 | 126 |
 | qwen38 | 🟢 100% | 🟢 100% | 🟢 100% | 🟡 85% | 🟢 98% | 🟢 100% | 97% | 24 | · |
-| ternary-bonsai-2 | · | 🔴 0% | 🟠 55% | 🔴 0% | · | · | 18% | 33 | 108 |
+| ternary-bonsai-2 | 🟡 85% | 🟠 60% | 🟠 55% | 🔴 0% | 🟡 65% | 🔴 0% | 44% | 48 | 150 |
 
