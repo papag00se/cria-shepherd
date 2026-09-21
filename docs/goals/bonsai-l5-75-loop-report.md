@@ -62,6 +62,16 @@ The common first-segment chain is now deterministically located, not inferred fr
 
 This proves the upstream reach failure. It does **not** yet establish a safe candidate: a planner-side synchronous survey would violate the harness asynchronous boundary, while merely suppressing the planner or forcing a generic plan would preserve the missing fact. The existing Handles URL candidate is rejected at this stage: `_item_prompt()` deterministically preserves `https://api.handle.me/handles/{handle}` and `/holders/{holder_address}`; the current code/history already contain brace/template-grounding repairs, so capture coverage must identify the actual producer before any edit.
 
+## Supervisor crash — 2026-09-20 ~19:53
+
+The supervisor session crashed while the serialized follow-up queue was running. Verified aftermath (checked 20:56, live processes / Paseo daemon / logs / results records):
+
+- **Handles rerun `handles-cli-node_ternary-bonsai-2_codex_pon_1789958334` was SIGKILLed mid-flight.** It was launched by `~/.cria/queues/battery2-followups-49a1e43.sh` (log `/tmp/battery2-followups-49a1e43.log`, which records the kill at line 10). It has **no** `suite/results/results.jsonl` row and only a partial workspace at `~/suite-runs/suite-handles-cli-node_ternary-bonsai-2_codex_pon_1789958334-lrssxn1x/` (README, `lookup.js`, `package.json`; last write 19:48). It is **non-comparable — do not judge it**; keep the partial workspace as walk evidence only and relaunch the handles cell fresh.
+- **The rust follow-up never launched**: the queue script is `set -euo pipefail`, so the handles kill aborted the queue before its rust line. No rust rerun exists post-`76b904e`. (A separate earlier attempt `rust-toml-cli_…_1789954571`, workspace `…-j_viluy0` at 18:36–18:40, also has no results row — it died against the not-yet-serving model endpoint right after the reboot; it is not comparable evidence either.)
+- **No processes, queue scripts, heartbeats, or schedules survived**: the Paseo daemon lists zero schedules; nothing is in flight. The feed heartbeat `8c4abbe3` was already deleted at feed completion.
+- The feed rerun result (10%, `…1789956374`) completed and was fully recorded **before** the crash; it is valid.
+- Model-endpoint caveat from the resumption baseline still applies: after a host reboot `llama-ternary-bonsai-2.service` may not be serving on `:18084`; the suite runner owns starting it, but verify before trusting any early-exit run.
+
 ## Strategy reset — periodic completed-step advancement
 
 No more walk segments are being dispatched until this unit is settled. The selected orders chain is complete at its current boundary: in session `01a0c158-8d64-7530-a279-4230b8760875`, the authoritative events at drives 12 and 24 record `loop.periodic_step_check done=true` followed by `loop.periodic_step_satisfied observe_only=true`; exact capture and workspace/check evidence show the migration was complete, and step 1 was reissued until ordinary advancement at `1789951896.064`.
