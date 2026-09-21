@@ -2,16 +2,16 @@
 
 ## Acceptance ledger
 
-| Cell | Baseline run | Baseline final usefulness | Status |
+| Cell | Latest comparable run | Final usefulness | Status |
 |---|---|---:|---|
 | shipping-rates-rb | `shipping-rates-rb_ternary-bonsai-2_codex_pon_1789940747` | 85% | closed |
-| cart-billing-go | `cart-billing-go_ternary-bonsai-2_codex_pon_1789869635` | 0% | open |
-| orders-api-py | `orders-api-py_ternary-bonsai-2_codex_pon_1789870342` | 55% | open |
-| feed-pipeline-java | `feed-pipeline-java_ternary-bonsai-2_codex_pon_1789872767` | 0% | open |
-| handles-cli-node | `handles-cli-node_ternary-bonsai-2_codex_pon_1789874266` | 65% | open |
-| rust-toml-cli | `rust-toml-cli_ternary-bonsai-2_codex_pon_1789877114` | 0% | open |
+| cart-billing-go | `cart-billing-go_ternary-bonsai-2_codex_pon_1789945832` | 60% | open |
+| orders-api-py | `orders-api-py_ternary-bonsai-2_codex_pon_1789950190` | 55% | open |
+| feed-pipeline-java | `feed-pipeline-java_ternary-bonsai-2_codex_pon_1789872767` | 0% | open (baseline; no post-`76b904e` rerun yet) |
+| handles-cli-node | `handles-cli-node_ternary-bonsai-2_codex_pon_1789874266` | 65% | open (baseline; no post-`76b904e` rerun yet) |
+| rust-toml-cli | `rust-toml-cli_ternary-bonsai-2_codex_pon_1789877114` | 0% | open (baseline; no post-`76b904e` rerun yet) |
 
-Strict closure criterion: every cell's latest comparable L5 final usefulness judgment is >75%.
+Strict closure criterion: every cell's latest comparable L5 final usefulness judgment is >75%. Baseline row for delta comparison: shipping 55%, cart 0%, orders 55%, feed 0%, handles 65%, rust 0% (run ids in `docs/goals/bonsai-l5-75-loop.md`).
 
 ## Baseline environment — 2026-09-20
 
@@ -21,6 +21,15 @@ Strict closure criterion: every cell's latest comparable L5 final usefulness jud
 - Live config was inspected at `~/.cria/cria.toml`: planner and L5 are enabled; capture calls are on; coder output reserve is 16384.
 - Exact suite rows and all six capture/archive directories were re-confirmed under `suite/results/results.jsonl`, `~/.cria/calls/`, and `~/.cria/suite/`.
 - Compatibility history check remains required: preflight repairs are `bf15e62` and `f1f903c`; they are excluded from the comparable score ledger and must be walked at their wire boundary.
+
+## Environment discontinuity — 2026-09-20 18:44 reboot
+
+The machine rebooted at 18:44:07 on 2026-09-20 (after the orders rerun finalized; nothing was in flight). Consequences a resuming session must account for:
+
+- **All `/tmp` walk artifacts are destroyed**: the segment tree `/tmp/cria-l5-walk-20260920/` (segments, `assignments.json`, `WALK-PLAN.md`) and every wave finding file cited by the coverage claims below. The coverage statements in this report ("shipping segments 1–2, cart/orders/feed/handles/rust segments 1–4") can no longer be verified by citation and must be treated as **unverified leads**, not coverage. Only two recovered worktree files survive at `~/.cria/walk-findings/20260920/recovered-worktree-findings/` (`seg-04.md`, `seg-05.md`).
+- **No walkers are in flight.** Any "dispatched" reader mentioned below died with the reboot.
+- **Segments are regenerable deterministically**: the capture dirs and archived workspaces for every run in the ledger were re-verified intact after the reboot (`~/.cria/calls/…`, `~/suite-runs/…`, `suite/results/results.jsonl`). Re-run `suite/walk.py` per open cell and persist future finding files somewhere durable (e.g. under `~/.cria/walk-findings/`), not `/tmp`.
+- The `Baseline environment` HEAD reference above (`3aaa99f`) predates later doc commits and the accepted fix records; re-baseline per the goal's loop step 1 before acting.
 
 ## Walks and candidate records
 
