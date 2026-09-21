@@ -268,6 +268,11 @@ class GuardState:
     # opportunity rather than costing a whole interval. -1 means it has never run.
     satisfaction_last_drive: int = -1
     periodic_probe: bool = False  # a periodic check-in gate is in flight (insert its ground truth, no verdict)
+    # A scheduled step critic returned done, but its approve-path brake had no surveyed workspace.
+    # It is NOT an approval: acquire one bounded survey/gate round, then re-run the critic against
+    # that observed view.  Keeping this separate from ``periodic_probe`` matters: that check-in
+    # never has step-advance authority.
+    periodic_observation: bool = False
     last_gate_red: bool = False  # the most recent gate/check-in found real error-class problems (RED). The
     # plan-off satisfaction judge gates on this: while the deterministic checks already say NOT-done, the
     # LLM done-judge is redundant (both say not-done) and — for a model that can't help emitting a "run the
@@ -2685,7 +2690,10 @@ class Loop:
 
         if sess.awaiting_probe:  # the ground-truth probe we emitted last turn has now run
             sess.awaiting_probe = False
-            out = self._verify_after_probe(sess, session_key, body, rlog, rewritten=rewritten)
+            if sess.periodic_observation:
+                out = self._periodic_observation_after_probe(sess, session_key, body, rlog)
+            else:
+                out = self._verify_after_probe(sess, session_key, body, rlog, rewritten=rewritten)
             self._store.clear_rewrite(session_key)  # consumed (probe re-issued or judged)
             return out
 
@@ -3474,7 +3482,48 @@ class Loop:
         rlog.emit("loop.step_incomplete", step=idx, reason=reason, attempt=sess.verify_fails)
         return self._renudge_or_replan(sess, key, body, reason, idx, rlog)  # critic fail → may re-derive a stuck step
 
-    def _periodic_step_check(self, sess: PlanSession, key: str, body: dict, idx: int, total: int, rlog):
+    def _periodic_observation_after_probe(self, sess: PlanSession, key: str, body: dict, rlog) -> dict:
+        """Consume the one survey requested for an unobserved periodic positive.
+
+        The original positive is deliberately discarded.  A survey only makes the workspace
+        inspectable; it does not make that old verdict authoritative.  We therefore re-run the
+        same critic/confirmation path after the survey and advance only its observed positive.
+        """
+        item = sess.plan.current()
+        if item is None:
+            sess.periodic_observation = False
+            return self._work(sess, key, body, rlog)
+        idx = sess.plan.items.index(item) + 1
+        total = len(sess.plan.items)
+        transport_tc = guard_gate_transport(sess, body, rlog)
+        if transport_tc is not None:
+            sess.awaiting_probe = True
+            return _completion_toolcalls(
+                [transport_tc], note=f"receiving workspace observation for step {idx}/{total}")
+        raw = _read_tool_result(body.get("messages", []), sess.probe_call_id)
+        outcome = read_gate(sess.gate_plan, raw, rlog)
+        record_gate_state(sess, outcome, gate_error_text(outcome), rlog)
+        if sess.gate_replan_required:
+            probe_tc = guard_gate_replan_after_survey(
+                sess, body, rlog, workspace_root=sess.workspace_root)
+            if probe_tc is not None:
+                sess.awaiting_probe = True
+                sess.probe_call_id = probe_tc["id"]
+                return _completion_toolcalls(
+                    [probe_tc], note=f"observing step {idx}/{total} — running the repo's checks")
+        root = sess.workspace_root or _extract_cwd(body.get("messages", [])) or ""
+        if not root or not wsview.current(root).surveyed:
+            sess.periodic_observation = False
+            rlog.emit("loop.periodic_step_observation_unavailable", level="warn", step=idx,
+                      why="no workspace root" if not root else "workspace survey unavailable")
+            return self._work(sess, key, body, rlog)
+        sess.periodic_observation = False
+        rlog.emit("loop.periodic_step_observed", step=idx)
+        advanced = self._periodic_step_check(sess, key, body, idx, total, rlog, force=True)
+        return advanced if advanced is not None else self._work(sess, key, body, rlog)
+
+    def _periodic_step_check(self, sess: PlanSession, key: str, body: dict, idx: int, total: int, rlog,
+                             *, force: bool = False):
         """Every STEP_CHECK_EVERY drives, ask THE STEP CRITIC whether the open step is done.
 
         A step advances only when the CODER volunteers that it is finished — `_verify` runs on
@@ -3492,11 +3541,11 @@ class Loop:
         `_confirm_completion` brake. The only thing that changes is WHO asked — cria's own
         bookkeeping instead of the model's say-so.
 
-        ADDITIVE and bounded: a negative, unparseable, unconfirmed, or unobserved result leaves the
-        plan untouched. A positive periodic verdict advances only after the same evaluation's
-        approve-path brake actually inspected the surveyed workspace."""
-        if not periodic_check_due(sess.drive_count, STEP_CHECK_EVERY, STEP_CHECK_EVERY,
-                                  sess.step_checked_drive):
+        ADDITIVE and bounded: a negative, unparseable, or unconfirmed result leaves the plan
+        untouched. An unobserved positive schedules one workspace observation, then is discarded;
+        only a fresh positive whose approve-path brake inspected that surveyed workspace advances."""
+        if not force and not periodic_check_due(sess.drive_count, STEP_CHECK_EVERY, STEP_CHECK_EVERY,
+                                                sess.step_checked_drive):
             return None
         item = sess.plan.current()
         if item is None or item.done:
@@ -3550,6 +3599,18 @@ class Loop:
         if verification.done:
             rlog.emit("loop.periodic_step_satisfied", level="warn", step=idx, drive=sess.drive_count,
                       turns=sess.coder_turns, observe_only=True, step_text=item.text[:160])
+            # An unobserved positive cannot advance, but it must acquire the missing fact rather
+            # than repeatedly re-frame the completed item.  This is one gate/survey round; its
+            # result re-enters through `_periodic_observation_after_probe` and is judged anew.
+            if confirmation is not None and confirmation.confirmed and not confirmation.observed:
+                probe_tc = self._gate_op(body, sess, rlog)
+                if probe_tc is not None:
+                    sess.periodic_observation = True
+                    sess.awaiting_probe = True
+                    sess.probe_call_id = probe_tc["id"]
+                    rlog.emit("loop.periodic_step_observation_scheduled", step=idx)
+                    return _completion_toolcalls(
+                        [probe_tc], note=f"observing workspace before verifying step {idx}/{total}")
         return None
 
     def _advance(self, sess: PlanSession, key: str, body: dict, idx: int, total: int, rlog) -> dict:
