@@ -1,0 +1,4 @@
+THE USER'S ORIGINAL TASK:
+{{TASK}}
+
+A complete, current harness workspace survey is available through your read-only tools. Identify at most one exact task-named whole file that is absent now. This observation cannot approve completion or change repository check state.

@@ -212,18 +212,23 @@ class PeriodicDiagnosisOwnershipTests(unittest.TestCase):
         driver._work_item(sess, "unknown", body, _NullRlog(), sess.plan.current(), 1)
         self.assertEqual(sess.completion_remediation_subject, "")
 
-    def test_all_six_feed_captures_suspend_their_cursor_for_the_same_typed_remediation(self):
-        """Live-faithful body replays: each retained cursor loses only to a validated file gap."""
+    def test_all_seven_feed_terminal_states_arm_before_their_captured_cursor_is_framed(self):
+        """The owner receives live-shaped *unarmed* states, never a pre-armed serializer fixture."""
         captures = (
-            ("20260921T110810-01a0c527-6c46-74b3-bf8d-91cb6d18d707", "0075-coder-s3.json"),
-            ("20260921T131112-01a0c598-12c3-7973-8ebd-3f87b1ce0016", "0108-coder-s3.json"),
-            ("20260921T135359-01a0c5bf-3d05-7fd0-a573-6c95720f4526", "0095-coder-s3.json"),
-            ("20260921T144153-01a0c5eb-172a-7002-b4cf-64ac66d26edf", "0157-coder-s3-focus1.json"),
-            ("20260921T164500-01a0c65b-cd75-7ab3-b3dd-3d839bfb3b35", "0112-coder-s3.json"),
-            ("20260921T180043-01a0c6a1-2038-7a52-95be-552a62330eaf", "0088-coder-s1.json"),
+            ("20260921T110810-01a0c527-6c46-74b3-bf8d-91cb6d18d707", "0075-coder-s3.json", 17, False),
+            ("20260921T131112-01a0c598-12c3-7973-8ebd-3f87b1ce0016", "0108-coder-s3.json", 22, False),
+            ("20260921T135359-01a0c5bf-3d05-7fd0-a573-6c95720f4526", "0095-coder-s3.json", 26, False),
+            ("20260921T144153-01a0c5eb-172a-7002-b4cf-64ac66d26edf", "0157-coder-s3-focus1.json", 75, False),
+            ("20260921T164500-01a0c65b-cd75-7ab3-b3dd-3d839bfb3b35", "0112-coder-s3.json", 37, False),
+            ("20260921T180043-01a0c6a1-2038-7a52-95be-552a62330eaf", "0088-coder-s1.json", 33, False),
+            ("20260921T193024-01a0c6f3-3dc1-7aa2-bc65-951943f81ad4", "0033-coder-s1.json", 11, True),
         )
         home = Path.home() / ".cria" / "calls"
-        for capture, call in captures:
+        evidence = prompts.render("negative_diagnosis", task_quote="Add REVIEW.md.",
+                                  source="workspace_absence",
+                                  evidence=prompts.render("negative_diagnosis_missing_file", subject="REVIEW.md"))
+        gap = loop.VerdictNudge(evidence, diagnosis_kind="missing_file", subject="REVIEW.md")
+        for capture, call, drive, red in captures:
             with self.subTest(capture=capture):
                 body = json.loads((home / capture / call).read_text())["body"]
                 system = body["messages"][0]["content"]
@@ -231,25 +236,37 @@ class PeriodicDiagnosisOwnershipTests(unittest.TestCase):
                           or re.search(r"Do ONLY this step \((\d+) of (\d+)\), then stop:\n\n(.+)", system, re.S))
                 self.assertIsNotNone(active)
                 idx, total, step = active.groups()
+                # Fails-before fixture: this is the exact captured cursor and no remediation state.
                 before = loop._frame_for_item(body["messages"], step, "", int(idx), int(total))
-                self.assertIn("Prioritize this step", before[0]["content"])
-                evidence = prompts.render("negative_diagnosis", task_quote="Add REVIEW.md.",
-                                          source="workspace_absence",
-                                          evidence=prompts.render("negative_diagnosis_missing_file", subject="REVIEW.md"))
-                remediation = prompts.render("periodic_missing_file_gap",
-                    reason=loop.VerdictNudge(evidence, diagnosis_kind="missing_file", subject="REVIEW.md"),
-                    subject="REVIEW.md")
+                self.assertTrue("Prioritize this step" in before[0]["content"]
+                                or "Do ONLY this step" in before[0]["content"])
+                root = f"/captured/{capture}"
+                view = wsview.View(root, capture)
+                self.assertTrue(wsview.apply_survey(view, survey(
+                    "D\tsrc\nD\tsrc/main\nF\t1\t10\tpom.xml\nF\t1\t99\tsrc/main/java/pipeline/Importer.java",
+                    root=root)))
+                token = wsview.bind(view)
+                self.addCleanup(wsview.unbind, token)
                 sent = []
                 driver = loop.Loop(loop.LoopContext(
                     planner=None,
                     coder_chat=lambda frame, _rlog: (sent.append(frame) or json.dumps({"choices": [{"message": {
                         "role": "assistant", "tool_calls": [{"id": "read", "type": "function", "function": {
                             "name": "read_file", "arguments": '{"path":"README.md"}'}}]}}]}).encode()),
-                    reasoner_chat=None, runs_dir="", self_compact=False, focus_trim=False, assists=False))
-                sess = loop.PlanSession(plan=loop.Plan(id=capture, task="Add REVIEW.md.", created="now",
-                    items=[loop.PlanItem(step)]), completion_remediation_subject="REVIEW.md",
-                    completion_remediation_reason=remediation)
-                driver._work_item(sess, capture, body, _NullRlog(), sess.plan.current(), 1)
+                    reasoner_chat=object(), runs_dir="", self_compact=False, focus_trim=False,
+                    assists=True, satisfaction_check_start=1, satisfaction_check_every=1))
+                items = [loop.PlanItem(f"completed {n}", done=True) for n in range(1, int(idx))]
+                items.append(loop.PlanItem(step))
+                items.extend(loop.PlanItem(f"pending {n}") for n in range(int(idx) + 1, int(total) + 1))
+                sess = loop.PlanSession(plan=loop.Plan(id=capture, task="Add REVIEW.md.", created="now", items=items),
+                                        drive_count=drive - 1, last_gate_red=red, gate_stall=int(red),
+                                        workspace_root=root)
+                rlog = _NullRlog()
+                with (mock.patch.object(driver, "_periodic_satisfaction", return_value=None),
+                      mock.patch.object(loop, "observe_task_missing_file", return_value=gap)):
+                    driver._work_item(sess, capture, body, rlog, sess.plan.current(), int(idx))
+                self.assertEqual(sess.completion_remediation_subject, "REVIEW.md")
+                self.assertEqual(sess.last_gate_red, red, "observation must not change check state")
                 raw, _estimate, _capture = upstream.Upstream("http://unused", context_window=49152)._prep(
                     sent[0], False, _NullRlog())
                 wire = json.loads(raw)
@@ -260,6 +277,39 @@ class PeriodicDiagnosisOwnershipTests(unittest.TestCase):
                 self.assertIn("Add REVIEW.md.", text)
                 self.assertIn("workspace_absence", text)
                 self.assertNotIn(bodykeys.COMPLETION_REMEDIATION, wire)
+
+    def test_delivered_comparators_keep_their_ordinary_cursor_without_a_typed_gap(self):
+        """No absence verdict means no global plan override for Handles, Cart, Orders, or Rust."""
+        tasks = (
+            "Build the handles CLI and document it.",
+            "Fix cart rounding and load discounts.json.",
+            "Add the customer orders HTTP route and integration tests.",
+            "Build the TOML CLI with lookup tests and README.",
+        )
+        for task in tasks:
+            with self.subTest(task=task):
+                sent = []
+                driver = loop.Loop(loop.LoopContext(
+                    planner=None,
+                    coder_chat=lambda frame, _rlog: (sent.append(frame) or json.dumps({"choices": [{"message": {
+                        "role": "assistant", "tool_calls": [{"id": "read", "type": "function", "function": {
+                            "name": "read_file", "arguments": '{"path":"README.md"}'}}]}}]}).encode()),
+                    reasoner_chat=object(), runs_dir="", self_compact=False, focus_trim=False,
+                    assists=True, satisfaction_check_start=1, satisfaction_check_every=1))
+                root = f"/comparator/{len(sent)}"
+                view = wsview.View(root, task)
+                self.assertTrue(wsview.apply_survey(view, survey("F\t1\t1\tREADME.md", root=root)))
+                token = wsview.bind(view)
+                self.addCleanup(wsview.unbind, token)
+                sess = loop.PlanSession(plan=loop.Plan(id=task, task=task, created="now",
+                    items=[loop.PlanItem("finish the remaining requested artifact")]), workspace_root=root)
+                with (mock.patch.object(driver, "_periodic_satisfaction", return_value=None),
+                      mock.patch.object(loop, "observe_task_missing_file", return_value=loop.VerdictNudge())):
+                    driver._work_item(sess, task, {"messages": [{"role": "user", "content": task}], "tools": []},
+                                      _NullRlog(), sess.plan.current(), 1)
+                text = "\n".join(str(m.get("content") or "") for m in sent[0]["messages"])
+                self.assertIn("Prioritize this step", text)
+                self.assertEqual(sess.completion_remediation_subject, "")
 
     def test_remediation_persists_until_the_matching_write_result_is_observed(self):
         sess = _sess()

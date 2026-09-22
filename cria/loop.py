@@ -277,7 +277,7 @@ class GuardState:
     # only when the check executes, so a drive where it was skipped is retried at the next
     # opportunity rather than costing a whole interval. -1 means it has never run.
     satisfaction_last_drive: int = -1
-    # The non-terminal red-gate deliverable observer has its own stamp: it must never consume or
+    # The non-terminal durable-deliverable observer has its own stamp: it must never consume or
     # alter the completion critic's cadence/state.
     deliverable_observation_last_drive: int = -1
     periodic_probe: bool = False  # a periodic check-in gate is in flight (insert its ground truth, no verdict)
@@ -2058,28 +2058,28 @@ def judge_satisfaction(task: str, evidence: str, reasoner_chat, reasoner_role, r
     return False, nudge, nudge.action
 
 
-def observe_red_gate_missing_file(task: str, *, workspace_root: str, reasoner_chat, reasoner_role,
-                                  rlog) -> VerdictNudge:
-    """Observe one task-named whole-file absence without judging completion or gate state.
+def observe_task_missing_file(task: str, *, workspace_root: str, reasoner_chat, reasoner_role,
+                              rlog) -> VerdictNudge:
+    """Observe one task-named whole-file absence without judging completion or check state.
 
-    The caller has already established a complete/current harness survey and a red gate.  This
-    observer owns neither fact: it cannot clear, re-run, or reinterpret the gate, and its false or
-    unreadable answer is silence rather than a completion verdict.  The shared negative-diagnosis
-    owner re-checks the exact task quote and current wsview absence before anything reaches a coder.
+    The caller owns the complete/current survey prerequisite.  This observer cannot clear, re-run,
+    or reinterpret checks; false, unreadable, and unsupported answers are silence.  The shared
+    negative-diagnosis owner re-checks the exact task quote and current wsview absence before the
+    pre-frame owner can arm a remediation.
     """
     if not (task.strip() and workspace_root and reasoner_chat is not None):
         return VerdictNudge()
     try:
         comp = _judge_completion(
-            reasoner_chat, reasoner_role, prompts.load("red_gate_deliverable_observation"),
-            prompts.render("red_gate_deliverable_observation_user", task=task), rlog,
-            phase="red-gate-deliverable-observation", workspace_root=workspace_root,
+            reasoner_chat, reasoner_role, prompts.load("deliverable_observation"),
+            prompts.render("deliverable_observation_user", task=task), rlog,
+            phase="deliverable-observation", workspace_root=workspace_root,
             verdict_key="missing_file", seed_files=True)
     except Exception as e:
-        rlog.emit("loop.red_gate_deliverable_observation_error", level="warn", error=str(e))
+        rlog.emit("loop.deliverable_observation_error", level="warn", error=str(e))
         return VerdictNudge()
     if massage.is_truncated(comp):
-        rlog.emit("loop.red_gate_deliverable_observation_truncated", level="warn")
+        rlog.emit("loop.deliverable_observation_truncated", level="warn")
         return VerdictNudge()
     text = _completion_text(comp)
     if reasoner_role is not None:
@@ -2089,7 +2089,7 @@ def observe_red_gate_missing_file(task: str, *, workspace_root: str, reasoner_ch
         return VerdictNudge()
     return _negative_diagnosis_nudge(
         obj, task=task, workspace_root=workspace_root, rlog=rlog,
-        phase="red-gate-deliverable-observation")
+        phase="deliverable-observation")
 
 
 def satisfaction_done_note(reason: str, *, checks_ran: bool = True) -> str:
@@ -3023,11 +3023,12 @@ class Loop:
             sess, body, rlog, plan_off=False, blocked=blocker)
         if done_now is not None:
             return done_now
-        # A red gate remains a hard completion block.  It must not, however, hide a separately
-        # observable task-named file absence forever: this is a non-terminal observation with an
-        # independent cadence and a complete/current survey precondition.
-        if (self._ctx.assists and blocker == "gate-red" and sess.last_gate_red
-                and not sess.nudge_reason and not sess.completion_remediation_subject
+        # A current task-named file absence needs action ownership before the plan cursor is framed.
+        # This is a bounded, non-terminal observer with an independent cadence: it neither clears a
+        # red gate nor waits for the completion critic to be unblocked.  A pending ordinary steer is
+        # deliberately replaced only by a provenance-validated remediation, so the final body has one
+        # owner rather than a cursor plus two competing directives.
+        if (self._ctx.assists and not sess.completion_remediation_subject
                 and periodic_check_due(sess.drive_count, self._ctx.satisfaction_check_start,
                                        self._ctx.satisfaction_check_every,
                                        sess.deliverable_observation_last_drive)):
@@ -3035,7 +3036,7 @@ class Loop:
             if view is not None and view.observation_fingerprint is not None:
                 sess.deliverable_observation_last_drive = sess.drive_count
                 task = sess.plan.task or _history_root(body.get("messages", []))[0]
-                gap = observe_red_gate_missing_file(
+                gap = observe_task_missing_file(
                     task, workspace_root=sess.workspace_root or "",
                     reasoner_chat=self._ctx.reasoner_chat, reasoner_role=self._ctx.reasoner_role,
                     rlog=rlog)
@@ -3047,7 +3048,7 @@ class Loop:
                                                        subject=gap.subject)
                     sess.completion_remediation_subject = gap.subject
                     sess.completion_remediation_reason = sess.nudge_reason
-                    sess.steer_source = "red-gate deliverable observation"
+                    sess.steer_source = "deliverable observation"
                     rlog.emit("loop.satisfaction_gap_named", level="info", head=_clip(str(gap), 120),
                               subject=gap.subject, rearmed=False)
         framed = dict(body)
