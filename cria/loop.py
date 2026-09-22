@@ -4280,7 +4280,15 @@ class Loop:
                 sess.last_gap_named = named
                 sess.last_gap_subject = subject if getattr(reason, "diagnosis_kind", "") == "missing_file" else ""
                 sess.last_gap_observation = observed if sess.last_gap_subject else ""
-                sess.nudge_reason = prompts.render("periodic_gap", reason=reason)
+                # A checked missing *file* already supplies the only bounded next action cria may
+                # select: create that exact task-named path.  The existing generic gap merely asked
+                # the coder to reconsider the requirement, which let the Feed replay spend its next
+                # turn inspecting a verified absence.  Its contents remain entirely with the task
+                # and coder; this does not choose an implementation.
+                gap_prompt = ("periodic_missing_file_gap"
+                              if getattr(reason, "diagnosis_kind", "") == "missing_file"
+                              else "periodic_gap")
+                sess.nudge_reason = prompts.render(gap_prompt, reason=reason, subject=subject)
                 sess.steer_source = "completion check (deliverable not found)"
                 rlog.emit("loop.satisfaction_gap_named", level="info", head=_clip(named, 120),
                           subject=sess.last_gap_subject, rearmed=renewed)
