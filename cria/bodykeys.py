@@ -49,6 +49,10 @@ CONTEXT_REFIT_NO_CHANGE = "cria_context_refit_no_change"
 #: Kept through proxy/framing, then stripped from the message object at the wire.
 CALLER_INSTRUCTIONS = "cria_caller_instructions"
 
+#: A typed missing-file completion remediation owns this coder body.  The loop uses it only as
+#: wire-visible provenance for the suspended plan cursor; it must never reach the model server.
+COMPLETION_REMEDIATION = "cria_completion_remediation"
+
 # --- response-body hints: cria's own annotations on a completion --------------------------------
 
 #: Human-facing notes cria attaches to a completion for the operator's display, stripped before the
@@ -62,4 +66,4 @@ RUMINATION = "cria_rumination"
 #: Every key above. The wire strips this set wholesale, so adding a key here is all it takes to keep
 #: it off the API — the thing five scattered literals could not guarantee.
 ALL = (MERGE_TURNS, OUTPUT_RESERVE, LOST_CALL, PINNED_TASK, CONTEXT_REFIT_NO_CHANGE,
-       CALLER_INSTRUCTIONS, NOTES, RUMINATION)
+       CALLER_INSTRUCTIONS, COMPLETION_REMEDIATION, NOTES, RUMINATION)

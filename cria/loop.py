@@ -254,6 +254,11 @@ class GuardState:
     # the workspace changed and still proves this exact task-named file absent.
     last_gap_subject: str = ""
     last_gap_observation: str = ""
+    # A verified typed missing-file diagnosis temporarily owns the next coder bodies.  The plan
+    # remains intact; only its cursor is withheld until a tool result proves this exact file write
+    # landed.  These are durable because a restart must not restore the stale cursor mid-remediation.
+    completion_remediation_subject: str = ""
+    completion_remediation_reason: str = ""
     nudge_reply: str = ""  # the coder's own no-tool-call reply the pending nudge is ABOUT — re-framed
     # views rebuild history from the harness body, which never saw an internal prose turn, so without
     # this the unexecuted-write nudge says "your last message contained the file's contents" about a
@@ -2934,6 +2939,9 @@ class Loop:
         return reason
 
     def _work_item(self, sess: PlanSession, key: str, body: dict, rlog, item, idx: int) -> dict:
+        # A remediation is released only by the harness's successful result for the exact typed
+        # subject, never by the model proposing a write or by a turn that merely inspected it.
+        _settle_completion_remediation(sess, body.get("messages", []), rlog)
         total = len(sess.plan.items)
         # Repetition/wheel-spin intervention (shared with the plan-off path): emit a ground-truth
         # probe now, or park a canned steer in sess.nudge_reason for the framing below.
@@ -2981,11 +2989,13 @@ class Loop:
         framed = dict(body)
         framed.pop("model", None)  # no alias — the upstream fills the server's loaded model
         framed["stream"] = False
+        remediation = bool(sess.completion_remediation_subject)
         msgs = _frame_for_item(body.get("messages", []), item.text, sess.summary, idx, total,
                                prior_work=sess.prior_work, tools=body.get("tools"),
                                gate_plan=getattr(sess, "gate_plan", None),
                                workspace_root=sess.workspace_root,
-                               gate_red=bool(getattr(sess, "last_gate_red", False)))
+                               gate_red=bool(getattr(sess, "last_gate_red", False)),
+                               remediation=remediation)
         facts = _fetched_facts_anchor(sess, body.get("messages", []))  # durable fetch ledger → the coder keeps the real endpoints it
         if facts is not None:                # already fetched past a HARNESS compaction (re-injected from
             msgs = _insert_after_system(msgs, facts)  # cria's own memory), so it stops re-fetching to rediscover
@@ -2995,9 +3005,16 @@ class Loop:
             if sess.nudge_reply:  # the reply the nudge refers to rides in front of it, as itself
                 msgs = msgs + [{"role": "assistant", "content": sess.nudge_reply}]
                 sess.nudge_reply = ""
-            msgs = msgs + [{"role": "user", "content": prompts.render("nudge", reason=sess.nudge_reason)}]
+            # The remediation evidence is re-injected below from its durable owner, rather than
+            # relying on this one-shot nudge slot.
+            if sess.nudge_reason != sess.completion_remediation_reason:
+                msgs = msgs + [{"role": "user", "content": prompts.render("nudge", reason=sess.nudge_reason)}]
             sess.nudge_reason = ""
             steered, sess.steer_source = sess.steer_source, ""  # set only for a GUARD steer, not a verify re-nudge
+        if remediation:
+            msgs = msgs + [{"role": "user", "content": prompts.render(
+                "nudge", reason=sess.completion_remediation_reason)}]
+            framed[bodykeys.COMPLETION_REMEDIATION] = sess.completion_remediation_subject
         framed["messages"] = msgs
         if self._ctx.self_compact:  # roll the old WORK-HISTORY middle into a rollup (the step framing
             msgs = self._self_compact(msgs, sess, idx, rlog, force=sess.compact_pending)  # lives in the protected system msg
@@ -4289,6 +4306,13 @@ class Loop:
                               if getattr(reason, "diagnosis_kind", "") == "missing_file"
                               else "periodic_gap")
                 sess.nudge_reason = prompts.render(gap_prompt, reason=reason, subject=subject)
+                # This is an action phase, not another competing nudge beside the active cursor.
+                # Only the provenance owner may arm it: the type and subject above survived its
+                # workspace-absence checks, and the stored reason preserves the exact task/evidence
+                # pair for every retry until the harness reports this write landed.
+                if sess.last_gap_subject and not plan_off:
+                    sess.completion_remediation_subject = sess.last_gap_subject
+                    sess.completion_remediation_reason = sess.nudge_reason
                 sess.steer_source = "completion check (deliverable not found)"
                 rlog.emit("loop.satisfaction_gap_named", level="info", head=_clip(named, 120),
                           subject=sess.last_gap_subject, rearmed=renewed)
@@ -4779,6 +4803,8 @@ def _session_to_dict(sess: PlanSession) -> dict:
         "summary": sess.summary,
         "prior_work": sess.prior_work,
         "verify_fails": sess.verify_fails,
+        "completion_remediation_subject": sess.completion_remediation_subject,
+        "completion_remediation_reason": sess.completion_remediation_reason,
         "synthetic": sess.synthetic,  # a resumed single-item session must stay single-item, not
         #                               flip to multi-step framing after a restart
         # Optional additions preserve old state-file compatibility. The structured stream is what
@@ -4804,6 +4830,8 @@ def _session_from_dict(d) -> PlanSession | None:
         return PlanSession(plan=plan, summary=str(d.get("summary", "")),
                            prior_work=str(d.get("prior_work", "")),
                            verify_fails=int(d.get("verify_fails", 0)),
+                           completion_remediation_subject=str(d.get("completion_remediation_subject", "")),
+                           completion_remediation_reason=str(d.get("completion_remediation_reason", "")),
                            synthetic=bool(d.get("synthetic")),
                            refusal_events=ledger,
                            refused_names=(ledger.active_names() if ledger is not None else legacy))
@@ -5345,7 +5373,22 @@ def _reframe_preamble_text(text: str) -> str | None:
     return "\n\n".join(parts) if parts else None
 
 
-def _frame_for_item(messages: list[dict], item: str, summary: str, idx: int, total: int, prior_work: str = "", tools=None, synthetic: bool = False, gate_plan=None, workspace_root: str | None = None, gate_red: bool = False) -> list[dict]:
+def _is_serialized_plan_cursor(message: dict) -> bool:
+    """Whether a replayed message is cria's own active ordered-plan frame.
+
+    Harnesses may preserve an earlier system frame as a user turn.  During remediation that old
+    frame is still an active cursor unless removed alongside the newly-built one.  Match the exact
+    prompt-file-owned introduction plus its cursor token, never a user mention of a plan.
+    """
+    content = str(message.get("content") or "") if isinstance(message, dict) else ""
+    prefix = prompts.load("step_framing").split("{{COMPLETED}}", 1)[0]
+    current = content.startswith(prefix)
+    legacy = (content.startswith("You are completing a larger task")
+              and "This plan was created by another model" in content)
+    return (current or legacy) and ("Prioritize this step (" in content or "Do ONLY this step (" in content)
+
+
+def _frame_for_item(messages: list[dict], item: str, summary: str, idx: int, total: int, prior_work: str = "", tools=None, synthetic: bool = False, gate_plan=None, workspace_root: str | None = None, gate_red: bool = False, remediation: bool = False) -> list[dict]:
     """Rewrite the conversation so the coder's task IS the current step, and so cria — not the
     harness — owns the system prompt:
 
@@ -5368,6 +5411,10 @@ def _frame_for_item(messages: list[dict], item: str, summary: str, idx: int, tot
       system is protected from floor-trimming and authoritative.
     """
     messages = _strip_cria_file_ops(messages)  # don't let the coder see/mimic `.cria/` writes
+    if remediation:
+        # Suspend every replayed copy of cria's cursor too.  The plan itself stays on ``sess``;
+        # this removes only the serializer artifact that would otherwise survive as user history.
+        messages = [m for m in messages if not _is_serialized_plan_cursor(m)]
     # Responses caller instructions are not harness persona. Fold them into cria's one authoritative
     # system turn before dropping ordinary harness system messages below.
     caller = "\n\n".join(str(m.get("content") or "") for m in messages
@@ -5401,7 +5448,11 @@ def _frame_for_item(messages: list[dict], item: str, summary: str, idx: int, tot
     # cria owns the system prompt: base coder prompt → the menu-derived tool hint (so the coder is
     # told to use ONLY the tools actually in this turn's menu — the harness system message that
     # add_cheatsheet folded the hint into is dropped here) → done-context → the step (kept last).
-    prompt = _item_prompt(item, summary, idx, total, workspace_root, gate_red)
+    # The remediation phase intentionally does not serialize the active plan cursor.  The plan
+    # survives in session state and the full user task remains in history; this body is owned by the
+    # checked missing-file action until its write result is observed.
+    prompt = (prompts.load("completion_remediation") if remediation
+              else _item_prompt(item, summary, idx, total, workspace_root, gate_red))
     hint_block = f"{hint}\n\n" if hint else ""
     out: list[dict] = [{"role": "system",
                         "content": prompts.load("coder_system") + caller_block + "\n\n" + hint_block + done_block + prompt}]
@@ -5416,7 +5467,7 @@ def _frame_for_item(messages: list[dict], item: str, summary: str, idx: int, tot
             # assistant turns (this ack + the first work turn) are merged upstream (_merge_consecutive_assistant).
             out.append({"role": "assistant", "content": prompts.load("plan_ack")})
             acked = True
-    out.append({"role": "user", "content": prompt})  # the CURRENT step = the active ask (last turn; also in system)
+    out.append({"role": "user", "content": prompt})  # active step/remediation = the final ask
     return out
 
 
@@ -5755,6 +5806,53 @@ def _path_of_args(args, patch_ok: bool = True) -> str | None:
         return None
     m = _PATCH_FILE_RAW_RE.search(args)
     return (m.group(1).strip() or None) if m else None
+
+
+def _same_workspace_path(one: str, two: str, root: str | None) -> bool:
+    """Whether two tool-path spellings designate one workspace path, without guessing a cwd."""
+    if not one or not two:
+        return False
+    if os.path.normpath(one) == os.path.normpath(two):
+        return True
+    if not root:
+        return False
+    return os.path.normcase(os.path.normpath(groundtruth.resolve(root, one))) == \
+        os.path.normcase(os.path.normpath(groundtruth.resolve(root, two)))
+
+
+def _observed_successful_write(messages: list[dict], subject: str, root: str | None) -> bool:
+    """True only when a paired tool result confirms a write to ``subject`` landed.
+
+    A forwarded call is intent, not a completed action.  The writeproxy emits its exact ``Wrote
+    PATH`` confirmation only after its atomic write succeeds; correlate that authoritative result
+    with the original call before releasing a completion remediation.
+    """
+    calls: dict[str, str] = {}
+    for message in messages or []:
+        if not isinstance(message, dict):
+            continue
+        for tc in message.get("tool_calls") or []:
+            fn = tc.get("function") or {}
+            path = _write_path(fn)
+            if tc.get("id") and path and _same_workspace_path(path, subject, root):
+                calls[tc["id"]] = path
+        tid = message.get("tool_call_id") or message.get("call_id")
+        path = calls.get(tid)
+        if path:
+            content = message.get("content") if message.get("content") is not None else message.get("output")
+            if isinstance(content, str) and content.strip() == prompts.render("write_confirm", path=path).strip():
+                return True
+    return False
+
+
+def _settle_completion_remediation(sess: GuardState, messages: list[dict], rlog) -> None:
+    """Release a typed missing-file remediation after, and only after, its observed write."""
+    subject = getattr(sess, "completion_remediation_subject", "")
+    if subject and _observed_successful_write(messages, subject, getattr(sess, "workspace_root", None)):
+        sess.completion_remediation_subject = ""
+        sess.completion_remediation_reason = ""
+        if rlog is not None:
+            rlog.emit("loop.completion_remediation_written", subject=subject)
 
 
 def _write_path(fn: dict) -> str | None:
