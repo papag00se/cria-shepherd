@@ -342,9 +342,30 @@ class PeriodicDiagnosisOwnershipTests(unittest.TestCase):
             call("write", "write_file", '{"path":"REVIEW.md","content":"x"}'),
             call("mutating-shell", "exec_command", '{"cmd":"rm -f REVIEW.md"}'),
             call("unknown-shell", "exec_command", '{"cmd":"python helper.py"}'),
+            # Reader-shaped names are not evidence of a workspace inspection: they may write or
+            # address an MCP/connector resource.  The remediation must stay silent for all of them.
+            call("read-then-delete", "read_then_delete", '{}'),
+            call("read-and-write", "read_file_and_write", '{}'),
+            call("mcp-resource", "read_mcp_resource", '{}'),
+            call("connector", "connector_read_document", '{}'),
             call("unknown-tool", "task_complete", '{}'),
         ]}}]})
         self.assertEqual(sess.completion_remediation_nonwrite_ids, ("read", "list", "shell-read"))
+
+    def test_remediation_nonwrite_reader_shaped_native_tools_never_trigger(self):
+        for name in ("read_then_delete", "read_file_and_write", "read_mcp_resource",
+                     "connector_read_document", "read_linear_issue"):
+            with self.subTest(name=name):
+                sess, rlog = _sess(), _NullRlog()
+                loop._arm_completion_remediation(sess, "REVIEW.md", "typed absence evidence")
+                loop._record_remediation_delivery(sess, {"choices": [{"message": {"tool_calls": [{
+                    "id": "adversarial", "function": {"name": name, "arguments": "{}"},
+                }]}}]})
+                loop._nudge_after_remediation_nonwrite(
+                    sess, [{"role": "tool", "tool_call_id": "adversarial", "content": "ok"}], rlog)
+                self.assertEqual(sess.completion_remediation_nonwrite_ids, ())
+                self.assertEqual(sess.nudge_reason, "")
+                self.assertNotIn("loop.completion_remediation_nonwrite", rlog.events)
 
     def test_exact_review_remediation_nonwrite_replays_reach_the_following_coder_wire(self):
         """Fails before the result-correlated follow-up: the exact next wire has no such assist."""

@@ -59,8 +59,8 @@ from .planner import (_extract_cwd, missing_deliverables, reasoned_noise_indices
                       surviving_noise_drops)
 from .searchloop import first_domain_in, normalize_search
 from . import probeclassify
-from .shelltool import (_CMD_FIELDS, find_shell_tool, is_read_tool_name, is_shell_tool_name,
-                        shell_args, with_time_budget, writes_something)
+from .shelltool import (_CMD_FIELDS, find_shell_tool, is_shell_tool_name, shell_args,
+                        with_time_budget, writes_something)
 from .toolargs import PATH_KEYS, parse_args
 from .writeproxy import _WRITE_NAMES as writeproxy_names
 
@@ -5980,6 +5980,13 @@ def _arm_completion_remediation(sess: GuardState, subject: str, reason: str) -> 
     sess.completion_remediation_nonwrite_seen = False
 
 
+# Native tools use the canonical workspace reader names that massage has already normalized.  This
+# is intentionally not ``is_read_tool_name``: its family matcher correctly keeps unfamiliar reader
+# tools in the menu, but must not bless a connector or a compound "read and mutate" action here.
+_NATIVE_WORKSPACE_INSPECTION_TOOLS = frozenset({
+    "read_file", "cat_file", "view_file", "list_dir", "grep_files",
+})
+
 # Shell commands admitted here must be mechanically inspection-only.  Everything else — including
 # an unrecognised executable whose side effects we cannot prove absent — is deliberately silent.
 _SHELL_INSPECTION_READERS = frozenset({"ls", "dir", "pwd", "cat", "head", "tail", "wc", "stat",
@@ -5990,7 +5997,7 @@ _SHELL_INSPECTION_INERT = frozenset({"cd", "echo", "printf", "test", "[", "[["})
 def _supported_remediation_inspection(function: dict) -> bool:
     """Whether a delivered remediation reply made a bounded, non-mutating inspection action."""
     name = function.get("name")
-    if is_read_tool_name(name):
+    if name in _NATIVE_WORKSPACE_INSPECTION_TOOLS:
         return True
     if not is_shell_tool_name(name):
         return False
