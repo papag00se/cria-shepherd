@@ -282,6 +282,12 @@ class GuardState:
     # only when the check executes, so a drive where it was skipped is retried at the next
     # opportunity rather than costing a whole interval. -1 means it has never run.
     satisfaction_last_drive: int = -1
+    # The newest authoritative whole-task verdict. A false result is a completion barrier, not just
+    # a steer: no completion-shaped output may cross it until a later current verdict is true.
+    # Keep its exact accepted evidence separately; it is the ground truth that caused the barrier,
+    # never a replacement authored by cria.
+    latest_satisfaction: bool | None = None
+    latest_satisfaction_evidence: object = None
     # The non-terminal durable-deliverable observer has its own stamp: it must never consume or
     # alter the completion critic's cadence/state.
     deliverable_observation_last_drive: int = -1
@@ -539,6 +545,28 @@ def _satisfaction_blocker(*, steer, rewritten: bool, done_probe: bool, gate_red:
     if gate_red and gate_stall < RED_HOLDS_SATISFACTION_FOR:
         return "gate-red"
     return ""
+
+
+def _record_satisfaction(sess, satisfied: bool, evidence) -> None:
+    """Make every authoritative whole-task verdict part of the completion funnel.
+
+    A negative verdict is current evidence that the task is not complete.  It must invalidate any
+    held success wording as well as steer the next coder turn; otherwise a later gate/compactor can
+    certify precisely the work the judge just rejected.  A later true is deliberately the only
+    ordinary release.  The plan-on MAX_COMPLETION_CHECKS escape remains at its existing caller.
+    """
+    sess.latest_satisfaction = bool(satisfied)
+    sess.latest_satisfaction_evidence = evidence
+    if not satisfied:
+        sess.pending_done = ""
+        sess.pending_done_parts = ()
+
+
+def _satisfaction_blocks_completion(sess, *, bounded: bool = False) -> bool:
+    """Whether the newest satisfaction evidence bars a completion-shaped response."""
+    if getattr(sess, "latest_satisfaction", None) is not False:
+        return False
+    return not (bounded and getattr(sess, "completion_checks", 0) >= MAX_COMPLETION_CHECKS)
 
 
 def periodic_check_due(drive_count: int, start: int, every: int, last_ran: int = -1) -> bool:
@@ -2891,6 +2919,15 @@ class Loop:
             if reason is not None:
                 # not satisfied → a corrective step is now current; re-drive it (don't complete green-but-wrong)
                 return self._work(sess, key, body, rlog)
+            # `_reopen_if_unsatisfied` normally cannot return None after a false verdict. Keep
+            # the final funnel explicit nonetheless: a completion, briefing, or compactor must
+            # never be reachable through a future caller that forgets that contract. The existing
+            # bounded plan-on exit remains the one deliberate exception.
+            if _satisfaction_blocks_completion(sess, bounded=True):
+                return self._renudge(sess, key, body, prompts.render(
+                    "done_incomplete",
+                    reason=str(getattr(sess, "latest_satisfaction_evidence", "") or prompts.load("done_no_named_gap")),
+                    check_state=_check_state_words(sess)), rlog)
             sess.phase = Phase.DONE
             sess.plan.status = "done"
             # Completion compaction: summarize the FINISHED work into a briefing and embed it in
@@ -2947,6 +2984,7 @@ class Loop:
                                                routes=known_routes(body.get("messages", []), sess),
                                                gate_findings=getattr(sess, "last_gate_flag", "") or "",
                                                messages=body.get("messages", []), sess=sess)
+        _record_satisfaction(sess, satisfied, reason)
         rlog.emit("loop.done_critic", plan_off=False, satisfied=satisfied, check=sess.completion_checks)
         if satisfied:
             return None
@@ -4327,6 +4365,7 @@ class Loop:
             routes=known_routes(body.get("messages", []), sess),
             gate_findings=getattr(sess, "last_gate_flag", "") or "",
             messages=body.get("messages", []), sess=sess)
+        _record_satisfaction(sess, satisfied, reason)
         rlog.emit("loop.satisfaction_check", plan_off=plan_off, drive=sess.drive_count,
                   satisfied=satisfied)
         if not satisfied:
@@ -4473,22 +4512,33 @@ class Loop:
                 sess.steer_source = "completion critic (task not fully done)"
                 sess.pending_done = ""
             else:  # green + (satisfied / already critiqued / no reasoner) → trust the objective gate, END
-                rlog.emit("loop.gate", plan_off=True, blocked=False)
-                held, sess.pending_done, sess.leg0_nudged = sess.pending_done, "", False
-                if parts:   # recompose now that the gate's own answer is in
-                    held = satisfaction_done_note(*parts, checks_ran=bool(sess.last_gate_ran))
-                # THE SESSION IS OVER, AND THIS PATH NEVER SAID SO. The plan-ON completion marks the
-                # shape done and drops the session; this one — the only completion a real run
-                # reaches — simply returned. Consequences measured over 12 days: `loop.done` fired 0
-                # times, so the store's only eviction site never ran and `loopstate.json` reached
-                # 494 sessions / 1 MB, all `in_progress`, 105 of them already finished here; and
-                # `shape_done()` answered False 256 times out of 256, so the post-compaction pure
-                # handoff has never once had that half of its evidence (`loop.start` fired 265
-                # times, 0 with `continued=True`).
-                if _stable_session(session_key):
-                    self._store.mark_done(session_key)
-                self._store.drop(session_key)
-                return _completion_final(held or "Done.")
+                if _satisfaction_blocks_completion(sess):
+                    sess.nudge_reason = prompts.render(
+                        "done_incomplete",
+                        reason=str(getattr(sess, "latest_satisfaction_evidence", "") or prompts.load("done_no_named_gap")),
+                        check_state=_check_state_words(sess))
+                    sess.steer_source = "completion critic (task not fully done)"
+                    # Do not return None here: the caller interprets that as "not handled" and
+                    # hands the original completion to the proxy. Continue into the ordinary
+                    # steer/coder path below, which is the only safe response to current false
+                    # satisfaction evidence.
+                else:
+                    rlog.emit("loop.gate", plan_off=True, blocked=False)
+                    held, sess.pending_done, sess.leg0_nudged = sess.pending_done, "", False
+                    if parts:   # recompose now that the gate's own answer is in
+                        held = satisfaction_done_note(*parts, checks_ran=bool(sess.last_gate_ran))
+                    # THE SESSION IS OVER, AND THIS PATH NEVER SAID SO. The plan-ON completion marks the
+                    # shape done and drops the session; this one — the only completion a real run
+                    # reaches — simply returned. Consequences measured over 12 days: `loop.done` fired 0
+                    # times, so the store's only eviction site never ran and `loopstate.json` reached
+                    # 494 sessions / 1 MB, all `in_progress`, 105 of them already finished here; and
+                    # `shape_done()` answered False 256 times out of 256, so the post-compaction pure
+                    # handoff has never once had that half of its evidence (`loop.start` fired 265
+                    # times, 0 with `continued=True`).
+                    if _stable_session(session_key):
+                        self._store.mark_done(session_key)
+                    self._store.drop(session_key)
+                    return _completion_final(held or "Done.")
         # A PERIODIC check-in probe's result → insert the ground truth as a steer (no verdict).
         if sess.periodic_probe:
             truth = guard_periodic_result(sess, body, rlog)
@@ -4670,6 +4720,11 @@ class Loop:
             return self._renudge(sess, key, body, prompts.render(
                 "done_incomplete", reason=critic_reason,
                 check_state=prompts.load_map("done_check_state")["never_ran"]), rlog)
+        if _satisfaction_blocks_completion(sess):
+            return self._renudge(sess, key, body, prompts.render(
+                "done_incomplete",
+                reason=str(getattr(sess, "latest_satisfaction_evidence", "") or prompts.load("done_no_named_gap")),
+                check_state=prompts.load_map("done_check_state")["never_ran"]), rlog)
         return comp  # no reasoner AND no shell → can't verify at all; forward the 'done' (Tier-2 fail-open, left)
 
     def _done_critic_reason(self, sess: PlanSession, body: dict, rlog) -> str:
@@ -4702,6 +4757,7 @@ class Loop:
             routes=known_routes(body.get("messages", []), sess),
             gate_findings=getattr(sess, "last_gate_flag", "") or "",
             messages=body.get("messages", []), sess=sess)
+        _record_satisfaction(sess, satisfied, reason)
         rlog.emit("loop.done_critic", plan_off=True, satisfied=satisfied)
         return "" if satisfied else (reason or prompts.load("done_no_named_gap"))
 
@@ -4878,6 +4934,10 @@ def _session_to_dict(sess: PlanSession) -> dict:
         "summary": sess.summary,
         "prior_work": sess.prior_work,
         "verify_fails": sess.verify_fails,
+        # A negative satisfaction verdict is completion-critical session state. Persist it so a
+        # restart cannot turn the same current evidence into a false completion.
+        "latest_satisfaction": sess.latest_satisfaction,
+        "latest_satisfaction_evidence": str(sess.latest_satisfaction_evidence or ""),
         "completion_remediation_subject": sess.completion_remediation_subject,
         "completion_remediation_reason": sess.completion_remediation_reason,
         "completion_remediation_nonwrite_ids": list(sess.completion_remediation_nonwrite_ids),
@@ -4907,6 +4967,9 @@ def _session_from_dict(d) -> PlanSession | None:
         return PlanSession(plan=plan, summary=str(d.get("summary", "")),
                            prior_work=str(d.get("prior_work", "")),
                            verify_fails=int(d.get("verify_fails", 0)),
+                           latest_satisfaction=(d.get("latest_satisfaction")
+                                                if isinstance(d.get("latest_satisfaction"), bool) else None),
+                           latest_satisfaction_evidence=str(d.get("latest_satisfaction_evidence", "")),
                            completion_remediation_subject=str(d.get("completion_remediation_subject", "")),
                            completion_remediation_reason=str(d.get("completion_remediation_reason", "")),
                            completion_remediation_nonwrite_ids=tuple(str(call_id) for call_id in

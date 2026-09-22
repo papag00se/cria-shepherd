@@ -242,6 +242,108 @@ class CompletionCriticTests(unittest.TestCase):
         self.assertIsNone(loop._reopen_if_unsatisfied(sess, _body(), _Rlog()))   # None → complete
         self.assertIsNone(sess.plan.current())                # plan stays complete
 
+    def test_capture_false_verdict_blocks_completion_until_a_later_true(self):
+        """Replay the C3 causal order, without a model or filesystem dependency.
+
+        orders-api-py chunk44 CALL0064 rejected completion for the missing customer route and
+        HTTP tests; chunk45 CALL0065 nevertheless received TASK COMPLETED. shipping-rates-rb
+        chunk230 CALL0277 likewise carried rake test's SystemStackError into an accepted completion
+        confirmation. A false is therefore completion evidence, not merely a one-turn nudge.
+        """
+        loop = self._loop(_Scripted([_sat(True)]))
+        sess = self._done_sess()
+        sess.pending_done = "stale completion instruction"
+        sess.pending_done_parts = ("stale briefing",)
+        orders_false = VerdictNudge(
+            "Missing implementation of GET /customers/<name>/orders route and missing HTTP integration tests")
+        shipping_false = VerdictNudge(
+            "rake test exited 1: stack level too deep (SystemStackError)")
+        with mock.patch("cria.loop.judge_satisfaction", side_effect=[
+                (False, orders_false, ""), (False, shipping_false, ""),
+                (True, VerdictNudge("current workspace now satisfies the task"), "")]):
+            first = loop._reopen_if_unsatisfied(sess, _body(), _Rlog())
+            self.assertIn("GET /customers", first)
+            self.assertFalse(sess.latest_satisfaction)
+            self.assertEqual(sess.latest_satisfaction_evidence, orders_false)
+            self.assertEqual(sess.pending_done, "")
+            self.assertEqual(sess.pending_done_parts, ())
+            from cria.loop import _satisfaction_blocks_completion
+            self.assertTrue(_satisfaction_blocks_completion(sess, bounded=True))
+
+            # The final plan-on funnel must not emit TASK COMPLETED, write a briefing, or compact
+            # when a caller reaches it carrying this false result.
+            blocked = self._done_sess()
+            blocked.gate_fresh = True
+            blocked.latest_satisfaction = False
+            blocked.latest_satisfaction_evidence = orders_false
+            with mock.patch.object(loop, "_reopen_if_unsatisfied", return_value=None), \
+                 mock.patch.object(loop, "_renudge", return_value={"kept_working": True}) as renudge, \
+                 mock.patch.object(loop, "_compact_done") as compact:
+                self.assertEqual(loop._work(blocked, "k", _body(), _Rlog()), {"kept_working": True})
+            renudge.assert_called_once()
+            compact.assert_not_called()
+            from cria.loop import _session_from_dict, _session_to_dict
+            resumed = _session_from_dict(_session_to_dict(blocked))
+            self.assertFalse(resumed.latest_satisfaction)
+            self.assertEqual(resumed.latest_satisfaction_evidence, orders_false)
+            self.assertTrue(_satisfaction_blocks_completion(resumed, bounded=True))
+
+            # The separate shipping capture must also remain a barrier, not be masked by task words.
+            self.assertIn("SystemStackError", loop._reopen_if_unsatisfied(sess, _body(), _Rlog()))
+            self.assertEqual(sess.latest_satisfaction_evidence, shipping_false)
+            self.assertIsNone(loop._reopen_if_unsatisfied(sess, _body(), _Rlog()))
+        self.assertTrue(sess.latest_satisfaction)
+        self.assertFalse(_satisfaction_blocks_completion(sess, bounded=True))
+
+    def test_plan_off_green_gate_false_latch_reenters_the_coder_not_the_proxy(self):
+        """A plan-off gate must consume its false latch as a steer, never return None.
+
+        Returning None here handed the original completion to the normal proxy, bypassing the
+        completion funnel C3 installed.
+        """
+        coder_frames = []
+
+        def coder(body, rlog):
+            coder_frames.append(body)
+            return json.dumps(_toolcall()).encode()
+
+        driver = Loop(_ctx(coder, _Scripted([_sat(True)])))
+        sess = PlanSession(plan=Plan(id="plan-off", task="build a resolver", created="c",
+                                     items=[PlanItem("build it")]), synthetic=True)
+        sess.done_probe = True
+        sess.pending_done = "the stale completion"
+        sess.latest_satisfaction = False
+        sess.latest_satisfaction_evidence = VerdictNudge("the requested resolver is still missing")
+        with mock.patch("cria.loop.guard_gate_verdict", return_value=""):
+            out = driver._drive_single_item(sess, _body(), "k", _Rlog())
+        self.assertIsNotNone(out)
+        self.assertTrue(_has_tool_calls(out))
+        self.assertEqual(len(coder_frames), 1)
+        frame_text = "\n".join(str(m.get("content") or "") for m in coder_frames[0]["messages"])
+        self.assertIn("requested resolver is still missing", frame_text)
+        self.assertNotIn("the stale completion", frame_text)
+
+        # A later current true is the release: the same green gate may now complete normally.
+        sess.done_probe = True
+        sess.pending_done = "the current completion"
+        sess.latest_satisfaction = True
+        sess.latest_satisfaction_evidence = VerdictNudge("the resolver is now verified")
+        with mock.patch("cria.loop.guard_gate_verdict", return_value=""):
+            released = driver._drive_single_item(sess, _body(), "k", _Rlog())
+        self.assertIsNotNone(released)
+        self.assertFalse(_has_tool_calls(released))
+        self.assertIn("current completion", released["choices"][0]["message"]["content"])
+
+    def test_false_satisfaction_does_not_block_an_unrelated_working_turn(self):
+        """The latch guards completion only; normal keep-working routing stays available."""
+        loop = self._loop(_Scripted([_sat(True)]))
+        sess = PlanSession(plan=Plan(id="work", task="build a resolver", created="c",
+                                     items=[PlanItem("continue implementation")]))
+        sess.latest_satisfaction = False
+        out = loop._work(sess, "k", _body(), _Rlog())
+        self.assertTrue(_has_tool_calls(out))
+        self.assertFalse(sess.plan.items[0].done)
+
     def test_bound_lets_an_unfinishable_task_exit(self):
         from cria.loop import MAX_COMPLETION_CHECKS
         loop = self._loop(_Scripted([_sat(False, "still broken")]))
