@@ -36,9 +36,11 @@ continuation exists to prevent. `_rewrite_summary_text` picks the re-anchored co
 there is one and falls back to the root, which is the old behaviour exactly.
 """
 
+import json
+from pathlib import Path
 import unittest
 
-from cria.loop import CONTINUATION_MARKER, LoopStore, _rewrite_summary_text
+from cria.loop import CONTINUATION_MARKER, LoopStore, _history_root, _rewrite_summary_text
 
 
 class TheCodexShapeIsDetectedTests(unittest.TestCase):
@@ -166,6 +168,50 @@ class ItIsWiredIntoTheDriverTests(unittest.TestCase):
         body = {"messages": messages, "tools": [_SHELL]}
         l._drive_locked(body, sk, _Class(), _Rlog())
         return l
+
+    def test_exact_call_0124_toolless_checkpoint_records_the_rewrite_before_deferral(self):
+        """CALL0096's pending work was followed by CALL0124: two messages, no tools.
+
+        The exact checkpoint prose is fixture data; the production decision is solely the
+        prior 40-message shape becoming this two-message shape under the same stable key.
+        """
+        from cria.loop import Loop
+        from tests.test_loop import _ctx, _Rlog
+
+        class _Class:
+            task_type = "reasoning"
+            engagement = "question"
+
+        loop, rlog, key = Loop(_ctx(lambda _body, _rlog: b"{}", None)), _Rlog(), "sid:call0096"
+        root = "Make these five changes to the shipping module"
+        loop._store.observe_shape(key, _history_root([{"role": "user", "content": root}])[1], 40)
+        capture = json.loads((Path(__file__).parent / "fixtures" /
+                              "call0096-0124-classifier.body.json").read_text())
+        self.assertEqual(len(capture["messages"]), 2)
+        self.assertNotIn("tools", capture)
+        out = loop._drive_locked(capture, key, _Class(), rlog)
+
+        self.assertIsNone(out)  # still deferred: no tool may be invented for a harness checkpoint
+        self.assertIn("loop.history_rewritten", rlog.kinds())
+        self.assertTrue(loop._store._shapes[key]["pending"])
+
+    def test_toolless_turn_that_did_not_rewrite_history_stays_deferred_and_unmarked(self):
+        from cria.loop import Loop
+        from tests.test_loop import _ctx, _Rlog
+
+        class _Class:
+            task_type = "reasoning"
+            engagement = "question"
+
+        loop, rlog, key = Loop(_ctx(lambda _body, _rlog: b"{}", None)), _Rlog(), "sid:ordinary"
+        messages = [
+            {"role": "system", "content": "You are a coding agent."},
+            {"role": "user", "content": "Summarize this implementation."},
+        ]
+        loop._store.observe_shape(key, _history_root(messages)[1], len(messages))
+        self.assertIsNone(loop._drive_locked({"messages": messages, "tools": []}, key, _Class(), rlog))
+        self.assertNotIn("loop.history_rewritten", rlog.kinds())
+        self.assertFalse(loop._store._shapes[key]["pending"])
 
     def test_the_planner_call_uses_the_picker(self):
         """The planner must be told the RE-ANCHORED continuation, not the raw root task — handing

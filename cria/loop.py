@@ -2558,6 +2558,17 @@ class Loop:
 
     def _drive_locked(self, body: dict, session_key: str, classification, rlog) -> dict | None:
         messages = body.get("messages", [])
+        # Observe a structural harness rewrite before the tool-less compaction turn is deferred.
+        # The pending state is consumed only by a later actionable continuation.
+        stable = _stable_session(session_key)
+        root_text, root_fp = _history_root(messages)
+        rewritten = stable and self._store.observe_shape(session_key, root_fp, len(messages))
+        sess = self._store.get(session_key)
+        bootstrap = getattr(self._store, "get_bootstrap", lambda _key: None)(session_key)
+        if rewritten:
+            rlog.emit("loop.history_rewritten", live=sess is not None or bootstrap is not None,
+                      n_messages=len(messages))
+
         # The PLAN loop can only run a coding task when the harness will RUN tools for it. The shell
         # tool is the primitive it needs — for its plan file, for the ground-truth probe, AND for the
         # coder's file writes (the writeproxy lowers write_file → a shell command, so NO shell tool =
@@ -2591,16 +2602,7 @@ class Loop:
         # ONLY content-independent (`sid:`) keys can detect this: the `task:` fallback key derives
         # from the root, so its shapes/briefings are skipped entirely (see _stable_session — a
         # briefing under a task-text hash would leak into unrelated same-prompt conversations).
-        stable = _stable_session(session_key)
-        root_text, root_fp = _history_root(messages)
-        rewritten = stable and self._store.observe_shape(session_key, root_fp, len(messages))
-        sess = self._store.get(session_key)
-        get_bootstrap = getattr(self._store, "get_bootstrap", None)
-        bootstrap = get_bootstrap(session_key) if get_bootstrap is not None else None
         bootstrap_finished = False
-        if rewritten:
-            rlog.emit("loop.history_rewritten", live=sess is not None or bootstrap is not None,
-                      n_messages=len(messages))
 
         if bootstrap is not None:
             raw = _read_tool_result(messages, bootstrap.probe_call_id)
