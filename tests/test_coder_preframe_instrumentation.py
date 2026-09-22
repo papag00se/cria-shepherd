@@ -21,6 +21,36 @@ class _Log:
         self.events.append((kind, fields))
 
 
+def test_unavailable_wsview_stays_unknown_in_event_and_capture():
+    """No bound/matching/landed survey may become a complete workspace fact."""
+    root = "/workspace"
+    cases = (("unbound", None), ("mismatched", wsview.View("/another-workspace")),
+             ("unsurveyed", wsview.View(root)))
+    for name, bound in cases:
+        rlog = _Log()
+        token = wsview.bind(bound)
+        try:
+            sess = loop.PlanSession(plan=Plan(id=name, task="Build it.", created="now", items=[
+                PlanItem("implement the change"),
+            ]), workspace_root=root)
+            loop.record_coder_preframe(rlog, sess, sess.plan.current(), 1, 1, driver="plan_on")
+            unknown = {"root": root, "surveyed": False, "complete": None,
+                       "observation_fingerprint": None}
+            assert rlog.coder_preframe["wsview"] == unknown
+
+            with tempfile.TemporaryDirectory() as tmp:
+                raw, _estimate, path = upstream.Upstream("http://unused", capture_dir=tmp,
+                                                          context_window=49152)._prep(
+                    {"model": "m", "stream": False, "messages": []}, False, rlog)
+                receipt = json.loads(Path(path).read_text())["coder_preframe"]
+                assert receipt["state"]["wsview"] == unknown
+                assert receipt["final_wire"] == {
+                    "sha256": hashlib.sha256(raw).hexdigest(), "bytes": len(raw),
+                }
+        finally:
+            wsview.unbind(token)
+
+
 def test_preframe_capture_preserves_observed_state_and_final_wire_identity():
     """The pre-frame receipt records facts, not a synthetic absence or altered body."""
     root = "/workspace"

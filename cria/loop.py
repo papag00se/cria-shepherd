@@ -5467,14 +5467,18 @@ def record_coder_preframe(rlog, sess: PlanSession, item: PlanItem | None, idx: i
     view = wsview.current(root) if root else None
     subject = getattr(sess, "last_gap_subject", "") or ""
     observation = getattr(sess, "last_gap_observation", "") or ""
+    surveyed = view.surveyed if view is not None else False
     state = {
         "driver": driver,
         "cursor": {"index": idx, "total": total, "text": getattr(item, "text", "") if item else ""},
         "wsview": {
             "root": root or None,
-            "surveyed": view.surveyed if view is not None else None,
-            "complete": view.complete if view is not None else None,
-            "observation_fingerprint": view.observation_fingerprint if view is not None else None,
+            "surveyed": surveyed,
+            # ``View.complete`` defaults True before any survey lands.  Completeness is therefore
+            # unknown until a harness survey establishes it; recording that default would turn
+            # unavailable/mismatched state into a false claim that absence is meaningful.
+            "complete": view.complete if surveyed else None,
+            "observation_fingerprint": view.observation_fingerprint if surveyed else None,
         },
         "remediation": {
             "armed": bool(getattr(sess, "completion_remediation_subject", "")),
