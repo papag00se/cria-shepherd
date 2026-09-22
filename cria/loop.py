@@ -58,8 +58,9 @@ from .groundtruth import workspace_inventory
 from .planner import (_extract_cwd, missing_deliverables, reasoned_noise_indices,
                       surviving_noise_drops)
 from .searchloop import first_domain_in, normalize_search
-from .shelltool import (_CMD_FIELDS, find_shell_tool, is_shell_tool_name, shell_args,
-                        with_time_budget)
+from . import probeclassify
+from .shelltool import (_CMD_FIELDS, find_shell_tool, is_read_tool_name, is_shell_tool_name,
+                        shell_args, with_time_budget, writes_something)
 from .toolargs import PATH_KEYS, parse_args
 from .writeproxy import _WRITE_NAMES as writeproxy_names
 
@@ -5979,8 +5980,38 @@ def _arm_completion_remediation(sess: GuardState, subject: str, reason: str) -> 
     sess.completion_remediation_nonwrite_seen = False
 
 
+# Shell commands admitted here must be mechanically inspection-only.  Everything else — including
+# an unrecognised executable whose side effects we cannot prove absent — is deliberately silent.
+_SHELL_INSPECTION_READERS = frozenset({"ls", "dir", "pwd", "cat", "head", "tail", "wc", "stat",
+                                       "grep", "rg", "ag"})
+_SHELL_INSPECTION_INERT = frozenset({"cd", "echo", "printf", "test", "[", "[["})
+
+
+def _supported_remediation_inspection(function: dict) -> bool:
+    """Whether a delivered remediation reply made a bounded, non-mutating inspection action."""
+    name = function.get("name")
+    if is_read_tool_name(name):
+        return True
+    if not is_shell_tool_name(name):
+        return False
+    command = _command_text(function.get("arguments") or "")
+    if not command or writes_something(name, command):
+        return False
+    inspected = False
+    for segment in probeclassify.split_chain(command):
+        argv = probeclassify.tokenize(segment)
+        if not argv:
+            continue
+        base = probeclassify.basename(argv[0])
+        if base in _SHELL_INSPECTION_READERS:
+            inspected = True
+        elif base not in _SHELL_INSPECTION_INERT:
+            return False
+    return inspected
+
+
 def _record_remediation_delivery(sess: GuardState, coder: dict) -> None:
-    """Remember only non-write calls from the reply to an actually framed remediation body."""
+    """Remember only supported inspection calls from the reply to a remediation body."""
     subject = getattr(sess, "completion_remediation_subject", "")
     if not subject:
         return
@@ -5988,7 +6019,7 @@ def _record_remediation_delivery(sess: GuardState, coder: dict) -> None:
     for choice in coder.get("choices", []) if isinstance(coder, dict) else []:
         for call in ((choice.get("message") or {}).get("tool_calls") or []):
             function = call.get("function") or {}
-            if call.get("id") and _write_path(function) is None:
+            if call.get("id") and _supported_remediation_inspection(function):
                 ids.append(str(call["id"]))
     sess.completion_remediation_nonwrite_ids = tuple(ids)
 

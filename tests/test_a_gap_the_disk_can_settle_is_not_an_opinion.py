@@ -329,50 +329,79 @@ class PeriodicDiagnosisOwnershipTests(unittest.TestCase):
         self.assertEqual(sess.completion_remediation_reason, "")
         self.assertIn("loop.completion_remediation_written", rlog.events)
 
+    def test_remediation_nonwrite_tracks_only_supported_inspection_actions(self):
+        def call(ident, name, arguments):
+            return {"id": ident, "type": "function", "function": {"name": name, "arguments": arguments}}
+
+        sess = _sess()
+        loop._arm_completion_remediation(sess, "REVIEW.md", "typed absence evidence")
+        loop._record_remediation_delivery(sess, {"choices": [{"message": {"tool_calls": [
+            call("read", "read_file", '{"path":"README.md"}'),
+            call("list", "list_dir", '{"path":"."}'),
+            call("shell-read", "exec_command", '{"cmd":"cd /work && ls -la && head -20 README.md"}'),
+            call("write", "write_file", '{"path":"REVIEW.md","content":"x"}'),
+            call("mutating-shell", "exec_command", '{"cmd":"rm -f REVIEW.md"}'),
+            call("unknown-shell", "exec_command", '{"cmd":"python helper.py"}'),
+            call("unknown-tool", "task_complete", '{}'),
+        ]}}]})
+        self.assertEqual(sess.completion_remediation_nonwrite_ids, ("read", "list", "shell-read"))
+
     def test_exact_review_remediation_nonwrite_replays_reach_the_following_coder_wire(self):
         """Fails before the result-correlated follow-up: the exact next wire has no such assist."""
         home = Path.home() / ".cria" / "calls"
         captures = (
-            ("20260921T135359-01a0c5bf-3d05-7fd0-a573-6c95720f4526", "0062-coder-s2", "0063-coder-s2"),
-            ("20260921T144153-01a0c5eb-172a-7002-b4cf-64ac66d26edf", "0085-coder-s2", "0086-coder-s2"),
-            ("20260921T164500-01a0c65b-cd75-7ab3-b3dd-3d839bfb3b35", "0112-coder-s3", "0113-coder-s3"),
+            ("20260921T135359-01a0c5bf-3d05-7fd0-a573-6c95720f4526", "0061-satisfaction", "0062-coder-s2", "0063-coder-s2"),
+            ("20260921T144153-01a0c5eb-172a-7002-b4cf-64ac66d26edf", "0084-satisfaction", "0085-coder-s2", "0086-coder-s2"),
+            ("20260921T164500-01a0c65b-cd75-7ab3-b3dd-3d839bfb3b35", "0109-satisfaction", "0112-coder-s3", "0113-coder-s3"),
         )
-        for capture, directive_call, result_call in captures:
+        for capture, satisfaction_call, directive_call, result_call in captures:
             with self.subTest(capture=capture):
                 directive = json.loads((home / capture / f"{directive_call}.json").read_text())["body"]
                 response = json.loads((home / capture / f"{directive_call}.response.json").read_text())
                 after_result = json.loads((home / capture / f"{result_call}.json").read_text())["body"]
-                directive_text = "\n".join(str(message.get("content") or "")
-                                           for message in directive["messages"])
-                self.assertIn("Current evidence (workspace_absence):", directive_text)
-                self.assertIn("The task-named file REVIEW.md is not present in the current workspace.", directive_text)
+                verdict = json.loads((home / capture / f"{satisfaction_call}.response.json").read_text())
+                message = verdict["choices"][0]["message"]
+                raw_verdict = ((message.get("tool_calls") or [{}])[0].get("function") or {}).get("arguments") \
+                    or message.get("content")
+                args = json.loads(raw_verdict)
+                evidence = prompts.render(
+                    "negative_diagnosis", task_quote=args["task_quote"], source=args["evidence_source"],
+                    evidence=prompts.render("negative_diagnosis_missing_file", subject=args["subject"]))
+                gap = loop.VerdictNudge(evidence, diagnosis_kind=args["diagnosis_kind"], subject=args["subject"])
                 original_ids = {call["id"] for choice in response["choices"]
                                 for call in ((choice.get("message") or {}).get("tool_calls") or [])}
                 self.assertTrue(original_ids)
-                self.assertTrue(all(loop._write_path(call.get("function") or {}) is None
-                                    for choice in response["choices"]
-                                    for call in ((choice.get("message") or {}).get("tool_calls") or [])))
                 self.assertTrue(any((m.get("tool_call_id") or m.get("call_id")) in original_ids
                                     for m in after_result["messages"] if isinstance(m, dict)))
 
                 sent = []
+                replies = [response, {"choices": [{"message": {"role": "assistant", "tool_calls": [{
+                    "id": "next", "type": "function", "function": {"name": "read_file",
+                    "arguments": '{"path":"pom.xml"}'}}]}}]}]
                 driver = loop.Loop(loop.LoopContext(
                     planner=None,
-                    coder_chat=lambda frame, _rlog: (sent.append(frame) or json.dumps({"choices": [{"message": {
-                        "role": "assistant", "tool_calls": [{"id": "next", "type": "function", "function": {
-                            "name": "read_file", "arguments": '{"path":"pom.xml"}'}}]}}]}).encode()),
+                    coder_chat=lambda frame, _rlog: (sent.append(frame) or json.dumps(replies.pop(0)).encode()),
                     reasoner_chat=None, runs_dir="", self_compact=False, focus_trim=False,
                     assists=False, satisfaction_check_start=1, satisfaction_check_every=100))
                 sess = loop.PlanSession(plan=Plan(id=capture, task="Add REVIEW.md.", created="now", items=[
                     PlanItem("finish the requested review"),
-                ]))
-                loop._arm_completion_remediation(sess, "REVIEW.md", "typed absence evidence")
-                loop._record_remediation_delivery(sess, response)
-                driver._work_item(sess, capture, after_result, _NullRlog(), sess.plan.current(), 1)
+                ]), drive_count=1)
+                rlog = _NullRlog()
+                # The captured typed verdict arms remediation through its production owner; the
+                # following production coder turn receives the recorded response and records only
+                # its supported inspection calls before the recorded harness results return.
+                with (mock.patch.object(loop, "judge_satisfaction", return_value=(False, gap, "")),
+                      mock.patch.object(loop, "_satisfaction_evidence", return_value=""),
+                      mock.patch.object(loop, "_gate_notes", return_value="")):
+                    driver._periodic_satisfaction(sess, directive, rlog, plan_off=False, blocked=False)
+                self.assertEqual(sess.completion_remediation_subject, "REVIEW.md")
+                driver._work_item(sess, capture, directive, rlog, sess.plan.current(), 1)
+                self.assertTrue(sess.completion_remediation_nonwrite_ids)
+                driver._work_item(sess, capture, after_result, rlog, sess.plan.current(), 1)
 
                 self.assertEqual(sess.completion_remediation_subject, "REVIEW.md")
                 raw, _estimate, _capture = upstream.Upstream("http://unused", context_window=49152)._prep(
-                    sent[0], False, _NullRlog())
+                    sent[-1], False, _NullRlog())
                 wire = json.loads(raw)
                 text = "\n".join(str(message.get("content") or "") for message in wire["messages"])
                 self.assertIn(prompts.load("completion_remediation_nonwrite"), text)
