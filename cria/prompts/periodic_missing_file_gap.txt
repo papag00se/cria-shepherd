@@ -1,6 +1,6 @@
 A completion check confirmed that a task-named file is currently absent:
 {{REASON}}
 
-Create `{{SUBJECT}}` now. Determine its contents from the exact task requirement and current workspace; do not infer a format or implementation that requirement does not specify.
+Create {{SUBJECT}} now. Determine its contents from the exact task requirement and current workspace; do not infer a format or implementation that requirement does not specify.
 
 Keep working after creating it. This is not permission to declare the task done.
