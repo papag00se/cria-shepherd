@@ -63,8 +63,8 @@ _SEARCH_INLINE_CHARS = 1500
 
 @dataclass(frozen=True)
 class ToolResult:
-    """One gather tool call: the text the planner sees, and whether the call actually RETURNED
-    something to learn from.
+    """One gather tool call: its visible text, whether it taught the planner, and whether a
+    workspace-file answer is still pending.
 
     ``learned`` is stated by the code that ran the tool — it knows whether the command printed
     anything, whether the file opened, whether the fetch answered — so the caller never has to
@@ -72,9 +72,15 @@ class ToolResult:
     an empty workspace answered `ls -la` and `find` with nothing, the gather counted two calls as
     having researched, and the planner drafted from memory and invented an endpoint the coder then
     built. A refusal, an error, and a command that printed nothing are all calls that taught it
-    nothing."""
+    nothing.
+
+    ``pending`` is narrower: only a workspace ``read_file`` whose bytes have not reached the view
+    yet sets it. Its result is neither a file answer nor a repeatable refusal; the next harness
+    survey may carry the requested bytes. An empty or missing file is answered even though it may
+    not have taught the planner anything."""
     text: str
     learned: bool
+    pending: bool = False
 
 
 def _nothing(text: str) -> ToolResult:
@@ -265,7 +271,11 @@ def _read_file(args: dict, cwd: str, scratch: str | None = None) -> ToolResult:
     if raw is None:
         if view.isfile(full) is False:
             return _nothing(f"[read_file: {path} does not exist]")
-        return _nothing(prompts.fill(prompts.load_map("planner_steers")["not_yet_known"], path=path))
+        # The view has remembered this demand for the next harness survey.  This is distinct from
+        # a completed empty/missing/error result: retry memory must leave this call runnable once
+        # that survey has delivered the bytes.
+        return ToolResult(prompts.fill(prompts.load_map("planner_steers")["not_yet_known"], path=path),
+                          False, pending=True)
     body = raw.decode("utf-8", errors="replace")
     if content_reduce.looks_binary(body) or content_reduce.binary_kind(raw[:16]):
         return ToolResult(content_reduce.binary_note(len(raw), content_reduce.binary_kind(raw[:16])), True)

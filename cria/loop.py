@@ -2569,6 +2569,33 @@ class Loop:
         reaches the loop's structural rewrite detection instead of being proxied blind."""
         return self._store.knows(key)
 
+    def _plan_for(self, messages: list[dict], rlog, **frame) -> tuple[Plan | None, planner.PlanOutcome]:
+        """Plan with outcome owned by this drive, not the shared Planner instance.
+
+        Test and third-party planner doubles retain the old two-argument contract; only cria's
+        Planner knows the optional outcome carrier.
+        """
+        outcome = planner.PlanOutcome()
+        source = self._ctx.planner
+        if isinstance(source, planner.Planner):
+            return source.plan_for(messages, rlog, outcome=outcome, **frame), outcome
+        return source.plan_for(messages, rlog, **frame), outcome
+
+    def _defer_planner_survey(self, outcome: planner.PlanOutcome, messages: list[dict],
+                              body: dict, session_key: str, rlog) -> dict | None:
+        """Return the one harness command that can answer a deferred planner read."""
+        if not outcome.survey_pending:
+            return None
+        bootstrap = SurveyBootstrap(workspace_root=_extract_cwd(messages) or self._ctx.workspace_root,
+                                    web_session=session_key)
+        probe_tc = guard_gate_op(bootstrap, body, rlog, workspace_root=bootstrap.workspace_root)
+        if probe_tc is None:
+            return None
+        bootstrap.probe_call_id = probe_tc["id"]
+        self._store.put_bootstrap(session_key, bootstrap)
+        rlog.emit("loop.planner_survey_deferred")
+        return _completion_toolcalls([probe_tc])
+
     def drive(self, body: dict, session_key: str, classification, rlog) -> dict | None:
         """Return the completion (OpenAI dict) cria should send, or ``None`` to fall
         through to the normal proxy (not a plan-driven task)."""
@@ -2699,8 +2726,11 @@ class Loop:
                     # over as "the summary" would ask the planner to re-plan the whole job from
                     # scratch, which is the one thing a continuation exists to avoid.
                     summary_text = _rewrite_summary_text(messages, root_text)
-                    plan = self._ctx.planner.plan_for(messages, rlog, rewrite_summary=summary_text)
+                    plan, outcome = self._plan_for(messages, rlog, rewrite_summary=summary_text)
                     if plan is None:
+                        deferred = self._defer_planner_survey(outcome, messages, body, session_key, rlog)
+                        if deferred is not None:
+                            return deferred
                         return None  # rewrite stays PENDING (sticky) — the next turn can still continue
                     # The coder's protected prior-work context: cria's own briefing when we have one
                     # (compact, focused); else the harness summary TAIL, clipped — summaries put the
@@ -2729,8 +2759,17 @@ class Loop:
                     # A follow-up on a FINISHED session starts from the completion-compaction of the
                     # prior plan (see loop.done), so the planner isn't blind to what it already built —
                     # it plans the new ask ON TOP of the done work, not from the latest sentence.
-                    plan = self._ctx.planner.plan_for(messages, rlog, prior_work=briefing)
+                    plan, outcome = self._plan_for(messages, rlog, prior_work=briefing)
                     if plan is None:
+                        # A planner read whose body is unknown has queued a wsview survey demand.
+                        # It cannot receive that answer while this synchronous request is still
+                        # gathering, so return ONE real harness command and start the planner over
+                        # only after writeproxy applies its result on the next request.
+                        deferred = self._defer_planner_survey(outcome, messages, body, session_key, rlog)
+                        if deferred is not None:
+                            return deferred
+                        if outcome.survey_pending:
+                            return None  # no shell means there is no delivery channel; do not fake an answer
                         # Planner gave nothing back even after its own re-draft retries. A gather-overrun
                         # (retriable) will re-plan next turn — let it. But a genuine give-up on a CODING task
                         # must NOT fall to the unguarded proxy (it freewheels and can stop with no reason):

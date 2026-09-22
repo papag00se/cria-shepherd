@@ -1,9 +1,12 @@
 import json
 import json as _json
+import subprocess
+import tempfile
 import unittest
 from datetime import datetime, timezone
 
-from cria.planner import Planner
+from cria import wsview
+from cria.planner import PlanOutcome, Planner
 
 
 class _Rlog:
@@ -343,6 +346,84 @@ class GatherLoopTests(unittest.TestCase):
         nudged_round = next(b for b in prov.bodies if any(
             "you already ran" in str(m.get("content")) for m in b["messages"]))
         self.assertIn("tools", nudged_round)
+
+    def test_capture_replay_pending_workspace_read_runs_again_after_its_survey_answers(self):
+        """handles-cli-node chunk05 CALL0022→0026: an absolute `lookup.js` read returned
+        `not_yet_known`, then the gather's exact-repeat memory refused that same call. Reproduce
+        its call shape with the actual survey protocol: the first gather defers, and the later
+        survey makes the re-entered request answerable.
+
+        This failed before the pending state: a repeat refusal consumed the request before the
+        later 611-byte answer could reach the planner."""
+        root = tempfile.mkdtemp(prefix="handles-cli-node-")
+        path = f"{root}/lookup.js"
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write("x" * 611)
+        session = "handles-cli-node-CALL0022"
+        view = wsview.View(root, session)
+
+        def survey():
+            raw = subprocess.run(["bash", "-c", wsview.survey_command(session)], cwd=root,
+                                 text=True, capture_output=True, check=True).stdout
+            self.assertTrue(wsview.apply_survey(view, wsview.strip_survey(raw)[1]))
+
+        survey()  # CALL0022 knows the tree, but not lookup.js's bytes.
+        provider = _ScriptedProvider([
+            _tool_resp("read_file", {"path": path}),
+            _tool_resp("read_file", {"path": path}),
+            _content_resp("research complete"),
+            _content_resp("1. update the CLI"),
+        ])
+        p, token = Planner(provider, clock=lambda: _FIXED), wsview.bind(view)
+        try:
+            # The first unavailable body DEFERs; it must not burn another synchronous gather round.
+            outcome = PlanOutcome()
+            self.assertIsNone(p.plan_for(_ws_msgs("update the CLI", root), _Rlog(), outcome=outcome))
+            self.assertTrue(outcome.survey_pending)
+            self.assertEqual(len(provider.bodies), 1)
+            survey()  # the later harness turn answers the demand queued above
+            plan = p.plan_for(_ws_msgs("update the CLI", root), _Rlog())
+        finally:
+            wsview.unbind(token)
+        self.assertIsNotNone(plan)
+        # On re-entry the exact request is executed against the newly delivered bytes, never refused.
+        results = [m["content"] for m in provider.bodies[2]["messages"] if m.get("role") == "tool"]
+        self.assertIn("x" * 611, results)
+        self.assertNotIn("you already ran read_file", "\n".join(results))
+
+    def test_an_answered_workspace_read_still_gets_the_repeat_refusal(self):
+        """Adversarial counterpart: an empty/non-learning result is not automatically pending.
+        A file body already delivered by a survey remains an answered exact repeat."""
+        root = tempfile.mkdtemp()
+        path = f"{root}/lookup.js"
+        with open(path, "w", encoding="utf-8") as fh:
+            fh.write("already answered\n")
+        session = "answered-read-repeat"
+        view = wsview.View(root, session)
+
+        def survey():
+            raw = subprocess.run(["bash", "-c", wsview.survey_command(session)], cwd=root,
+                                 text=True, capture_output=True, check=True).stdout
+            self.assertTrue(wsview.apply_survey(view, wsview.strip_survey(raw)[1]))
+
+        survey()
+        self.assertIsNone(view.read(path))  # request its body for the next survey
+        survey()
+        self.assertEqual(view.read(path), "already answered\n")
+        provider = _ScriptedProvider([
+            _tool_resp("read_file", {"path": path}),
+            _tool_resp("read_file", {"path": path}),
+            _content_resp("1. update the CLI"),
+            _content_resp("1. update the CLI"),
+        ])
+        rlog, token = _Rlog(), wsview.bind(view)
+        try:
+            Planner(provider, clock=lambda: _FIXED).plan_for(_ws_msgs("update the CLI", root), rlog)
+        finally:
+            wsview.unbind(token)
+        self.assertIn("plan.repeat_nudge", [kind for kind, _ in rlog.events])
+        results = [m["content"] for m in provider.bodies[2]["messages"] if m.get("role") == "tool"]
+        self.assertTrue(any("you already ran read_file" in text for text in results))
 
     def test_forced_plan_reads_submit_plan_tool(self):
         # gemma-fable won't emit a plain-text plan, so at the force cria offers submit_plan and

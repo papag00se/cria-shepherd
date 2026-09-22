@@ -19,7 +19,7 @@ import shutil
 import tempfile
 import threading
 import urllib.parse
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from datetime import datetime, timezone
 
 from . import groundtruth, massage, planner_tools, prompts, urlgrounding, wsview
@@ -49,6 +49,12 @@ ASK_MAX_TOKENS = JUDGE_MAX_TOKENS
 # never ping-pong: _MAX_FINAL_RETRIES bounds the drafting attempts, and a drafter that insists on its
 # plan gets it.
 MAX_PLAN_HANDBACKS = 2
+@dataclass
+class PlanOutcome:
+    """Per-``plan_for`` outcome, owned by the calling Loop session."""
+    survey_pending: bool = False
+
+
 # The plan-submission tool. gemma-fable is hardwired to emit tool CALLS, so instead of asking for
 # plain text (which it answers with a hallucinated `call:CreateNewProject{…}`), hand it ONE tool
 # that IS the plan and read the steps from the call.
@@ -721,7 +727,7 @@ class Planner:
         self._lock = threading.Lock()
 
     def plan_for(self, messages: list[dict], rlog, prior_work: str = "",
-                 rewrite_summary: str = "") -> Plan | None:
+                 rewrite_summary: str = "", outcome: PlanOutcome | None = None) -> Plan | None:
         """Return the drafted plan for this task, drafting it the first time and
         returning the cached one thereafter. ``None`` if there's no task text or the
         reasoner produced no usable plan.
@@ -735,6 +741,8 @@ class Planner:
         summary as record-of-done + current intent — never as a fresh task to plan verbatim (planning
         the summary text produced placeholder plans). Mutually exclusive with ``prior_work`` on
         purpose: stacking two summaries drowned the planner."""
+        outcome = outcome or PlanOutcome()
+        outcome.survey_pending = False
         task = latest_user_text(messages)
         if not task.strip():
             return None
@@ -748,19 +756,26 @@ class Planner:
         cwd = _extract_cwd(messages)
         self._retriable_failure = False
         self._gather_facts = {}   # reset per draft: last run's findings are not this run's evidence
-        steps = self._gather_and_plan(task, cwd, rlog, prior_work=prior_work, rewrite_summary=rewrite_summary)
+        steps = self._gather_and_plan(task, cwd, rlog, prior_work=prior_work,
+                                      rewrite_summary=rewrite_summary, outcome=outcome)
         # A weak model sometimes drafts an EMPTY / unparseable plan (observed: the reasoner returned just
         # "\n" → no plan → the whole coding session fell to the UNGUARDED proxy and stopped silently). It's
         # non-deterministic, so re-draft a couple times before giving up — one bad draft shouldn't cost the
         # session its guarded loop. Only for the unparseable case (a retriable gather-overrun is not re-tried
         # here — the drive re-plans next turn).
         attempts = 0
-        while not steps and not self._retriable_failure and attempts < PLAN_RETRIES:
+        while not steps and not self._retriable_failure and not outcome.survey_pending and attempts < PLAN_RETRIES:
             attempts += 1
             rlog.emit("plan.retry", attempt=attempts, level="info")
             self._retriable_failure = False
-            steps = self._gather_and_plan(task, cwd, rlog, prior_work=prior_work, rewrite_summary=rewrite_summary)
+            steps = self._gather_and_plan(task, cwd, rlog, prior_work=prior_work,
+                                          rewrite_summary=rewrite_summary, outcome=outcome)
         if not steps:
+            if outcome.survey_pending:
+                # The caller must return to the harness so its survey can answer the requested
+                # body; continuing synchronously can only consume gather rounds on the same view.
+                rlog.emit("plan.survey_deferred", level="info")
+                return None
             if self._retriable_failure:
                 # The model WANTED to keep working (its last response was a tool call, recovered or
                 # native) — a gather overrun, not an unplannable task. Don't poison the cache; the
@@ -939,7 +954,7 @@ class Planner:
             facts=groundtruth.researched_facts(getattr(self, "_gather_facts", None) or {}))
 
     def _gather_and_plan(self, task: str, cwd: str, rlog, prior_work: str = "",
-                         rewrite_summary: str = "") -> list[str] | None:
+                         rewrite_summary: str = "", outcome: PlanOutcome | None = None) -> list[str] | None:
         """The gather loop: hand the reasoner READ-ONLY tools and let it investigate,
         feeding each round back as protocol, until it stops calling tools and answers with
         the plan. A repeated gather signature (looping) forces the plan; so does the round
@@ -988,7 +1003,11 @@ class Planner:
         messages: list[dict] = [{"role": "user", "content": "\n\n".join(
             part for part in (inventory, seed, prompts.load("plan_closing_ask")) if part)}]
         recent_searches: list = []  # normalized word-sets, for the repeated-search 400 guard
-        seen_sigs: set[str] = set()
+        # A signature has three states: absent (never requested), pending (a workspace read
+        # asked the harness for bytes that have not arrived), and answered. Only an ANSWERED
+        # signature is a repeat to refuse. Treating pending as answered turned the survey's
+        # deliberate one-turn delay into a permanent "do not repeat" refusal.
+        seen_sigs: dict[str, bool] = {}  # signature -> answered (False means pending)
         facts: dict = {}      # url -> (status, routes, fields) the RESEARCH really read (Plan.gather_facts)
         looked = False        # did any round actually call a tool? (the research floor, nudged once)
         nudged = False
@@ -1048,18 +1067,19 @@ class Planner:
                 # Feed the round back as PROTOCOL — the structured assistant tool-call turn, then
                 # one `tool` result per call. NOT flattened to prose (the parroting trap).
                 messages.append({"role": "assistant", "content": msg.get("content") or None, "tool_calls": msg["tool_calls"]})
-                if sig in seen_sigs:
-                    # A REPEAT — the model re-ran an identical call. Don't force the plan (a
-                    # sledgehammer that cut off a still-productive gather); NUDGE it to use the
-                    # result it already has (or submit its plan) and keep gathering. The nudge is
-                    # a proper tool result per call, so the protocol stays well-formed, and the
-                    # round cap still bounds a model that ignores it.
+                if seen_sigs.get(sig):
+                    # A REPEAT — the model re-ran an identical call whose earlier result answered
+                    # it. Don't force the plan (a sledgehammer that cut off a still-productive
+                    # gather); NUDGE it to use the result it already has (or submit its plan) and
+                    # keep gathering. A pending workspace read is deliberately not here: its next
+                    # survey may supply the bytes, so refusing it would call unavailable content an
+                    # answer. The nudge is a proper tool result per call, so the protocol stays
+                    # well-formed, and the round cap still bounds a model that ignores it.
                     rlog.emit("plan.repeat_nudge", steer="plan-repeat", tools=[n for _, n, _ in calls])
                     for cid, name, _args in calls:
                         messages.append({"role": "tool", "tool_call_id": cid,
                                          "content": prompts.fill(prompts.load_map("planner_steers")["gather_repeat"], tool=name)})
                     continue
-                seen_sigs.add(sig)
                 # Execute each DISTINCT call once. A round is not bounded in how many calls it may
                 # contain, and a model that loops re-asks the same one many times: measured across
                 # every captured planner round (n=328, 719 calls), 236 — 32.8% — are exact duplicates
@@ -1087,6 +1107,19 @@ class Planner:
                     # planner draft from memory and invent an endpoint.
                     looked = looked or result.learned
                     messages.append({"role": "tool", "tool_call_id": cid, "content": result.text})
+                # An unknown body is an in-flight survey question, not an answered read. Preserve
+                # that third state so a later identical request consults wsview again; all ordinary
+                # results (including empty/missing files) retain the existing repeat policy.
+                pending = any(getattr(result, "pending", False) for result in done.values())
+                seen_sigs[sig] = not pending
+                if pending:
+                    # A survey is carried only by an outbound harness command.  Stop HERE rather
+                    # than asking the reasoner another synchronous gather question against the
+                    # same unanswerable view; Loop will compose the gate/survey and re-enter us
+                    # when writeproxy has applied its result.
+                    if outcome is not None:
+                        outcome.survey_pending = True
+                    return None
                 if pending_note:   # additive: the results come first and whole, the note follows
                     messages.append({"role": "user", "content": pending_note})
                     pending_note = ""
