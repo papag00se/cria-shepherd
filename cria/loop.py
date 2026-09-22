@@ -259,6 +259,10 @@ class GuardState:
     # landed.  These are durable because a restart must not restore the stale cursor mid-remediation.
     completion_remediation_subject: str = ""
     completion_remediation_reason: str = ""
+    # The exact remediation body reached a coder reply with these non-write calls.  Only their
+    # matching harness results can earn the one-shot non-terminal follow-up below.
+    completion_remediation_nonwrite_ids: tuple[str, ...] = ()
+    completion_remediation_nonwrite_seen: bool = False
     nudge_reply: str = ""  # the coder's own no-tool-call reply the pending nudge is ABOUT — re-framed
     # views rebuild history from the harness body, which never saw an internal prose turn, so without
     # this the unexecuted-write nudge says "your last message contained the file's contents" about a
@@ -2979,6 +2983,7 @@ class Loop:
         # A remediation is released only by the harness's successful result for the exact typed
         # subject, never by the model proposing a write or by a turn that merely inspected it.
         _settle_completion_remediation(sess, body.get("messages", []), rlog)
+        _nudge_after_remediation_nonwrite(sess, body.get("messages", []), rlog)
         total = len(sess.plan.items)
         # Repetition/wheel-spin intervention (shared with the plan-off path): emit a ground-truth
         # probe now, or park a canned steer in sess.nudge_reason for the framing below.
@@ -3046,8 +3051,7 @@ class Loop:
                     sess.last_gap_observation = view.observation_fingerprint
                     sess.nudge_reason = prompts.render("periodic_missing_file_gap", reason=gap,
                                                        subject=gap.subject)
-                    sess.completion_remediation_subject = gap.subject
-                    sess.completion_remediation_reason = sess.nudge_reason
+                    _arm_completion_remediation(sess, gap.subject, sess.nudge_reason)
                     sess.steer_source = "deliverable observation"
                     rlog.emit("loop.satisfaction_gap_named", level="info", head=_clip(str(gap), 120),
                               subject=gap.subject, rearmed=False)
@@ -3097,6 +3101,8 @@ class Loop:
         rlog.emit("loop.item", step=idx, total=total, text=item.text)
 
         coder = self._coder_turn(sess, framed, body, step=idx, rlog=rlog)  # SHARED coder turn (see _drive_single_item)
+        if remediation:
+            _record_remediation_delivery(sess, coder)
         if steered:  # no hidden guards: surface WHICH guard steered the coder (same note as plan-off)
             _add_note(coder, f"steered the coder — {steered}")
         if _has_tool_calls(coder):
@@ -4377,8 +4383,7 @@ class Loop:
                 # workspace-absence checks, and the stored reason preserves the exact task/evidence
                 # pair for every retry until the harness reports this write landed.
                 if sess.last_gap_subject and not plan_off:
-                    sess.completion_remediation_subject = sess.last_gap_subject
-                    sess.completion_remediation_reason = sess.nudge_reason
+                    _arm_completion_remediation(sess, sess.last_gap_subject, sess.nudge_reason)
                 sess.steer_source = "completion check (deliverable not found)"
                 rlog.emit("loop.satisfaction_gap_named", level="info", head=_clip(named, 120),
                           subject=sess.last_gap_subject, rearmed=renewed)
@@ -4872,6 +4877,8 @@ def _session_to_dict(sess: PlanSession) -> dict:
         "verify_fails": sess.verify_fails,
         "completion_remediation_subject": sess.completion_remediation_subject,
         "completion_remediation_reason": sess.completion_remediation_reason,
+        "completion_remediation_nonwrite_ids": list(sess.completion_remediation_nonwrite_ids),
+        "completion_remediation_nonwrite_seen": sess.completion_remediation_nonwrite_seen,
         "synthetic": sess.synthetic,  # a resumed single-item session must stay single-item, not
         #                               flip to multi-step framing after a restart
         # Optional additions preserve old state-file compatibility. The structured stream is what
@@ -4899,6 +4906,9 @@ def _session_from_dict(d) -> PlanSession | None:
                            verify_fails=int(d.get("verify_fails", 0)),
                            completion_remediation_subject=str(d.get("completion_remediation_subject", "")),
                            completion_remediation_reason=str(d.get("completion_remediation_reason", "")),
+                           completion_remediation_nonwrite_ids=tuple(str(call_id) for call_id in
+                                                                     (d.get("completion_remediation_nonwrite_ids") or []) if call_id),
+                           completion_remediation_nonwrite_seen=bool(d.get("completion_remediation_nonwrite_seen")),
                            synthetic=bool(d.get("synthetic")),
                            refusal_events=ledger,
                            refused_names=(ledger.active_names() if ledger is not None else legacy))
@@ -5961,12 +5971,58 @@ def _observed_successful_write(messages: list[dict], subject: str, root: str | N
     return False
 
 
+def _arm_completion_remediation(sess: GuardState, subject: str, reason: str) -> None:
+    """Start a typed remediation with no presumed delivery or observed outcome."""
+    sess.completion_remediation_subject = subject
+    sess.completion_remediation_reason = reason
+    sess.completion_remediation_nonwrite_ids = ()
+    sess.completion_remediation_nonwrite_seen = False
+
+
+def _record_remediation_delivery(sess: GuardState, coder: dict) -> None:
+    """Remember only non-write calls from the reply to an actually framed remediation body."""
+    subject = getattr(sess, "completion_remediation_subject", "")
+    if not subject:
+        return
+    ids = []
+    for choice in coder.get("choices", []) if isinstance(coder, dict) else []:
+        for call in ((choice.get("message") or {}).get("tool_calls") or []):
+            function = call.get("function") or {}
+            if call.get("id") and _write_path(function) is None:
+                ids.append(str(call["id"]))
+    sess.completion_remediation_nonwrite_ids = tuple(ids)
+
+
+def _nudge_after_remediation_nonwrite(sess: GuardState, messages: list[dict], rlog) -> None:
+    """One additive follow-up after a delivered remediation's own non-write result.
+
+    Tool-result identity, rather than a tool-name or prose heuristic, keeps unrelated history and
+    undecidable/absent diagnoses silent.  This never settles the remediation: only its matching
+    successful write can do that.
+    """
+    subject = getattr(sess, "completion_remediation_subject", "")
+    ids = set(getattr(sess, "completion_remediation_nonwrite_ids", ()) or ())
+    if (not subject or not ids or getattr(sess, "completion_remediation_nonwrite_seen", False)
+            or getattr(sess, "nudge_reason", "")):
+        return
+    if not any((m.get("tool_call_id") or m.get("call_id")) in ids
+               for m in messages or [] if isinstance(m, dict)):
+        return
+    sess.completion_remediation_nonwrite_seen = True
+    sess.nudge_reason = prompts.load("completion_remediation_nonwrite")
+    sess.steer_source = "completion remediation non-write follow-up"
+    if rlog is not None:
+        rlog.emit("loop.completion_remediation_nonwrite", subject=subject)
+
+
 def _settle_completion_remediation(sess: GuardState, messages: list[dict], rlog) -> None:
     """Release a typed missing-file remediation after, and only after, its observed write."""
     subject = getattr(sess, "completion_remediation_subject", "")
     if subject and _observed_successful_write(messages, subject, getattr(sess, "workspace_root", None)):
         sess.completion_remediation_subject = ""
         sess.completion_remediation_reason = ""
+        sess.completion_remediation_nonwrite_ids = ()
+        sess.completion_remediation_nonwrite_seen = False
         if rlog is not None:
             rlog.emit("loop.completion_remediation_written", subject=subject)
 

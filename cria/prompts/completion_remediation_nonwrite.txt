@@ -1,0 +1,1 @@
+A result for the preceding non-write action is now available. The active task-named missing-file remediation remains open. Reassess the task requirement and current evidence, then continue the task; inspection alone is not completion.

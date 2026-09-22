@@ -329,6 +329,86 @@ class PeriodicDiagnosisOwnershipTests(unittest.TestCase):
         self.assertEqual(sess.completion_remediation_reason, "")
         self.assertIn("loop.completion_remediation_written", rlog.events)
 
+    def test_exact_review_remediation_nonwrite_replays_reach_the_following_coder_wire(self):
+        """Fails before the result-correlated follow-up: the exact next wire has no such assist."""
+        home = Path.home() / ".cria" / "calls"
+        captures = (
+            ("20260921T135359-01a0c5bf-3d05-7fd0-a573-6c95720f4526", "0062-coder-s2", "0063-coder-s2"),
+            ("20260921T144153-01a0c5eb-172a-7002-b4cf-64ac66d26edf", "0085-coder-s2", "0086-coder-s2"),
+            ("20260921T164500-01a0c65b-cd75-7ab3-b3dd-3d839bfb3b35", "0112-coder-s3", "0113-coder-s3"),
+        )
+        for capture, directive_call, result_call in captures:
+            with self.subTest(capture=capture):
+                directive = json.loads((home / capture / f"{directive_call}.json").read_text())["body"]
+                response = json.loads((home / capture / f"{directive_call}.response.json").read_text())
+                after_result = json.loads((home / capture / f"{result_call}.json").read_text())["body"]
+                directive_text = "\n".join(str(message.get("content") or "")
+                                           for message in directive["messages"])
+                self.assertIn("Current evidence (workspace_absence):", directive_text)
+                self.assertIn("The task-named file REVIEW.md is not present in the current workspace.", directive_text)
+                original_ids = {call["id"] for choice in response["choices"]
+                                for call in ((choice.get("message") or {}).get("tool_calls") or [])}
+                self.assertTrue(original_ids)
+                self.assertTrue(all(loop._write_path(call.get("function") or {}) is None
+                                    for choice in response["choices"]
+                                    for call in ((choice.get("message") or {}).get("tool_calls") or [])))
+                self.assertTrue(any((m.get("tool_call_id") or m.get("call_id")) in original_ids
+                                    for m in after_result["messages"] if isinstance(m, dict)))
+
+                sent = []
+                driver = loop.Loop(loop.LoopContext(
+                    planner=None,
+                    coder_chat=lambda frame, _rlog: (sent.append(frame) or json.dumps({"choices": [{"message": {
+                        "role": "assistant", "tool_calls": [{"id": "next", "type": "function", "function": {
+                            "name": "read_file", "arguments": '{"path":"pom.xml"}'}}]}}]}).encode()),
+                    reasoner_chat=None, runs_dir="", self_compact=False, focus_trim=False,
+                    assists=False, satisfaction_check_start=1, satisfaction_check_every=100))
+                sess = loop.PlanSession(plan=Plan(id=capture, task="Add REVIEW.md.", created="now", items=[
+                    PlanItem("finish the requested review"),
+                ]))
+                loop._arm_completion_remediation(sess, "REVIEW.md", "typed absence evidence")
+                loop._record_remediation_delivery(sess, response)
+                driver._work_item(sess, capture, after_result, _NullRlog(), sess.plan.current(), 1)
+
+                self.assertEqual(sess.completion_remediation_subject, "REVIEW.md")
+                raw, _estimate, _capture = upstream.Upstream("http://unused", context_window=49152)._prep(
+                    sent[0], False, _NullRlog())
+                wire = json.loads(raw)
+                text = "\n".join(str(message.get("content") or "") for message in wire["messages"])
+                self.assertIn(prompts.load("completion_remediation_nonwrite"), text)
+                self.assertIn(prompts.load("completion_remediation"), text)
+
+    def test_remediation_nonwrite_followup_requires_the_delivered_call_result(self):
+        sess, rlog = _sess(), _NullRlog()
+        loop._arm_completion_remediation(sess, "REVIEW.md", "typed absence evidence")
+        reply = {"choices": [{"message": {"tool_calls": [{"id": "read", "function": {
+            "name": "read_file", "arguments": '{"path":"pom.xml"}'}}]}}]}
+        loop._record_remediation_delivery(sess, reply)
+        loop._nudge_after_remediation_nonwrite(sess, [], rlog)
+        self.assertEqual(sess.nudge_reason, "")
+        loop._nudge_after_remediation_nonwrite(sess, [{"role": "tool", "tool_call_id": "other", "content": "x"}], rlog)
+        self.assertEqual(sess.nudge_reason, "")
+
+    def test_remediation_nonwrite_followup_does_not_arm_without_a_typed_remediation(self):
+        sess, rlog = _sess(), _NullRlog()
+        sess.completion_remediation_nonwrite_ids = ("read",)
+        loop._nudge_after_remediation_nonwrite(sess, [{"role": "tool", "tool_call_id": "read", "content": "x"}], rlog)
+        self.assertEqual(sess.nudge_reason, "")
+        self.assertNotIn("loop.completion_remediation_nonwrite", rlog.events)
+
+    def test_remediation_nonwrite_followup_never_clears_a_remediation(self):
+        sess, rlog = _sess(), _NullRlog()
+        loop._arm_completion_remediation(sess, "REVIEW.md", "typed absence evidence")
+        sess.completion_remediation_nonwrite_ids = ("read",)
+        loop._nudge_after_remediation_nonwrite(sess, [{"role": "tool", "tool_call_id": "read", "content": "x"}], rlog)
+        self.assertEqual(sess.completion_remediation_subject, "REVIEW.md")
+        self.assertTrue(sess.completion_remediation_nonwrite_seen)
+        loop._settle_completion_remediation(sess, [{"role": "assistant", "tool_calls": [{"id": "write", "function": {
+            "name": "write_file", "arguments": '{"path":"REVIEW.md","content":"x"}'}}]},
+            {"role": "tool", "tool_call_id": "write", "content": "Wrote REVIEW.md"}], rlog)
+        self.assertEqual(sess.completion_remediation_subject, "")
+        self.assertFalse(sess.completion_remediation_nonwrite_seen)
+
     def test_an_unsupported_empty_diagnosis_says_nothing(self):
         sess, rlog, extra = _drive("")
         self.assertEqual(sess.nudge_reason, "")

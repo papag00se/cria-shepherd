@@ -9,6 +9,7 @@ A terse index of the assists cria **actually implements** today, in five familie
 - **Rumination guard** — a mid-generation self-doubt spiral OR reasoning over the token budget → abort the stream and re-prompt.
 - **Output-truncation guard** — a `write_file` cut off at the output-token cap → refuse the partial, steer to incremental `edit_file`.
 - **No-tools (LEG0) nudge** — a no-tool-call "done"/prose turn → act-first nudge (once per step), then the gate.
+- **Remediation nonwrite follow-up** — only after a typed missing-file remediation reached the coder and its own nonwrite tool result returned → one additive reminder that inspection is not completion; it never selects contents, issues a write, or settles the remediation.
 - **Periodic gate** — every 15 acting coder turns → insert the repo's fresh check results as ground truth.
 - **Search exact-repeat guard** — an identical/re-worded search this session → HTTP 400 before the network hit.
 - **Domain-fetch steer** — a search naming a bare domain → "fetch `https://<domain>` directly" hint.
