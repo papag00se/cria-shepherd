@@ -7,11 +7,12 @@
 | shipping-rates-rb | `shipping-rates-rb_ternary-bonsai-2_codex_pon_1789940747` | 85% | closed |
 | cart-billing-go | `cart-billing-go_ternary-bonsai-2_codex_pon_1790015868` | 90% | closed |
 | orders-api-py | `orders-api-py_ternary-bonsai-2_codex_pon_1789970091` | 95% | closed |
-| feed-pipeline-java | `feed-pipeline-java_ternary-bonsai-2_codex_pon_1790038818` | 65% | open; strategy reset, no validation active |
+| feed-pipeline-java | `feed-pipeline-java_ternary-bonsai-2_codex_pon_1790056359` | 85% | closed |
 | handles-cli-node | `handles-cli-node_ternary-bonsai-2_codex_pon_1789964366` | 95% | closed |
 | rust-toml-cli | `rust-toml-cli_ternary-bonsai-2_codex_pon_1790012521` | 90% | closed |
 
 Strict closure criterion: every cell's latest comparable L5 final usefulness judgment is >75%.
+**All six cells are closed — the goal's definition of done is met (2026-09-22).**
 
 ## Feed parked-state reset — 2026-09-22
 
