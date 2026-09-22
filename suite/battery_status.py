@@ -156,26 +156,31 @@ def report(rs: list[dict], now: float | None = None) -> str:
            "\U0001F7E0\u226538 \U0001F534 below; `\u00b7` = not judged. `[engagement] level = 0..5`, "
            "each rung implying every rung below it. gemma4 / qwen35 / "
            "nemotron-elastic are FROZEN historical inference rows recovered into "
-           "suite/historical_ladder.json; every other model reads live from results.jsonl.", ""]
+           "suite/historical_ladder.json; every other model reads live from results.jsonl, and a "
+           "fresh live judgment supersedes a frozen cell.", ""]
     for lvl in range(6):
         lv = str(lvl)
         rowdata = []
         for m in ordered:
-            if m in frozen and lv in frozen[m]:
-                cells = list(frozen[m][lv]["pct"])
-                mn, cl = frozen[m][lv].get("min"), frozen[m][lv].get("calls")
-            else:
-                cells, mins, calls = [], [], []
-                for t in tasks:
-                    r = level_cell(rs, lvl, m, t)
-                    cells.append(r.get("usefulness_percent")
-                                 if r and isinstance(r.get("usefulness_percent"), int) else None)
-                    if r and r.get("wall_seconds"):
-                        mins.append(r["wall_seconds"] / 60)
-                    if r and r.get("calls"):
-                        calls.append(r["calls"])
-                mn = round(sum(mins) / len(mins)) if mins else None
-                cl = round(sum(calls) / len(calls)) if calls else None
+            fro = frozen.get(m, {}).get(lv)
+            cells, mins, calls = [], [], []
+            for t in tasks:
+                r = level_cell(rs, lvl, m, t)
+                cells.append(r.get("usefulness_percent")
+                             if r and isinstance(r.get("usefulness_percent"), int) else None)
+                if r and r.get("wall_seconds"):
+                    mins.append(r["wall_seconds"] / 60)
+                if r and r.get("calls"):
+                    calls.append(r["calls"])
+            if fro:
+                # A frozen row is recovered history for a model whose per-cell judgments were
+                # orphaned. A fresh LIVE judgment supersedes it PER CELL (an un-paused model's
+                # new campaign must be visible, not shadowed by its own past); cells the
+                # campaign has not re-judged keep their frozen value so history never vanishes.
+                cells = [live if live is not None else old
+                         for live, old in zip(cells, list(fro["pct"]) + [None] * len(tasks))]
+            mn = round(sum(mins) / len(mins)) if mins else (fro.get("min") if fro else None)
+            cl = round(sum(calls) / len(calls)) if calls else (fro.get("calls") if fro else None)
             if any(p is not None for p in cells):
                 rowdata.append((m, cells, mn, cl))
         if not rowdata:

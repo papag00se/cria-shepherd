@@ -81,6 +81,7 @@ KILL_GRACE = 20
 # fleet model name -> systemd service (one model at a time on the 3080)
 SERVICES = {
     "ternary-bonsai-2": "llama-ternary-bonsai-2",
+    "nemotron-elastic": "llama-nemotron-elastic",  # un-paused 2026-09-22 for the L5 >75% campaign (docs/goals/nemotron-l5-75-loop.md)
     "qwythos": "llama-qwythos-q6",
     "qwopus": "llama-qwopus-q6",
     "qwen35": "llama-qwen35",
