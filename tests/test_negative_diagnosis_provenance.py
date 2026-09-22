@@ -185,6 +185,94 @@ class NegativeDiagnosisGroundingTests(unittest.TestCase):
         self.assertIn("SOURCE REACH: verified", ask.prompts[0])
 
 
+class CartCriticCaptureReplayTests(unittest.TestCase):
+    """CALL 0233 must not turn an invented map gap into coder-facing evidence.
+
+    The captured step critic called the JSON values an absence of assignments despite the
+    current ``cart.go`` action result containing the assignment loop and ``loadDiscounts()`` call.
+    Its typed fields name ``action_log`` but omit the required existing-file subject, so this is
+    not a source-backed missing-content diagnosis.  The raw false verdict remains fail-closed:
+    the step continues rather than being approved, but the invented diagnosis cannot hold the
+    coder on a fabricated red instruction.
+    """
+
+    STEP = "Read discounts.json from the workspace root directory and populate the discounts map"
+    MAP_JSON = '{\n  "WELCOME10": 0.10,\n  "SUMMER25": 0.25,\n  "VIP50": 0.50\n}'
+    ASSIGNMENT = "for k, v := range m {\n            discounts[k] = v\n        }"
+
+    @staticmethod
+    def _completion(content):
+        return json.dumps({"choices": [{"message": {"content": content}}]}).encode()
+
+    def test_call_0233_unsupported_map_diagnosis_continues_without_a_red_directive(self):
+        # Exact negative branch from chunk179 CALL 0233.  ``evidence`` deliberately retains the
+        # raw tool voice that the critic was given, including the assignment it overlooked.
+        verdict = {
+            "done": False,
+            "reason": "read discounts.json but discounts map not populated; no assignment of values observed",
+            "proposed_fix": "assign values from discounts.json into discounts map",
+            "diagnosis_kind": "missing_content",
+            "subject": "",
+            "task_quote": self.STEP,
+            "evidence_source": "action_log",
+            "evidence_quote": self.MAP_JSON,
+        }
+        evidence = "\n".join((
+            '$ read_file {"path":"discounts.json"}', self.MAP_JSON,
+            '$ read_file {"path":"cart.go"}', self.ASSIGNMENT,
+            "loadDiscounts() // Populate discounts map from discounts.json",
+        ))
+        calls = []
+
+        def chat(_body, _rlog):
+            calls.append(1)
+            return self._completion(json.dumps(verdict))
+
+        critic = loop.Loop(loop.LoopContext(None, None, chat,
+                                             reasoner_role=Role(name="reasoner", backend="local")))
+        rlog = _Rlog()
+        result = critic._verify(self.STEP, "", "", evidence, rlog,
+                                workspace_root="", idx=1, total=1, key="cart-0233")
+
+        done, reason = result
+        self.assertFalse(done)                    # fail open only to more work, never approval
+        self.assertEqual(reason, "")              # unsupported prose cannot hold the coder red
+        self.assertEqual(len(calls), 1)            # invalid provenance does not spend a semantic call
+        self.assertIn("loop.negative_diagnosis_suppressed", rlog.kinds())
+        self.assertNotIn("no assignment of values observed", reason)
+        self.assertNotIn(self.MAP_JSON, reason)
+        self.assertIn(self.ASSIGNMENT, evidence)   # replay fixture preserves the tool's actual words
+
+    def test_a_current_compiler_failure_with_an_exact_checker_quote_is_delivered_verbatim(self):
+        step = "Make cart.go compile."
+        checker_line = "./cart.go:40:31: undefined: decimal.NewFromFloat64"
+        verdict = {
+            "done": False,
+            "reason": "cart.go does not compile",
+            "proposed_fix": "The requested cart.go implementation must compile.",
+            "diagnosis_kind": "failed_check",
+            "subject": "",
+            "task_quote": step,
+            "evidence_source": "checks",
+            "evidence_quote": checker_line,
+        }
+        replies = [self._completion(json.dumps(verdict)), self._completion("SUPPORTED")]
+
+        def chat(_body, _rlog):
+            return replies.pop(0)
+
+        critic = loop.Loop(loop.LoopContext(None, None, chat,
+                                             reasoner_role=Role(name="reasoner", backend="local")))
+        result = critic._verify(step, "", "", "", _Rlog(), idx=1, total=1, key="compiler",
+                                red_findings=checker_line)
+
+        done, reason = result
+        self.assertFalse(done)
+        self.assertIn(checker_line, reason)  # checker voice, not the critic paraphrase
+        self.assertNotIn("cart.go does not compile", reason)
+        self.assertEqual(replies, [])
+
+
 class CompletionControlIntegrationTests(unittest.TestCase):
     @staticmethod
     def _completion(obj):
