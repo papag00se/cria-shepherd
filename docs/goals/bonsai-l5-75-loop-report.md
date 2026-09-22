@@ -5,13 +5,17 @@
 | Cell | Latest comparable run | Final usefulness | Status |
 |---|---|---:|---|
 | shipping-rates-rb | `shipping-rates-rb_ternary-bonsai-2_codex_pon_1789940747` | 85% | closed |
-| cart-billing-go | `cart-billing-go_ternary-bonsai-2_codex_pon_1789945832` | 60% | open |
-| orders-api-py | `orders-api-py_ternary-bonsai-2_codex_pon_1789950190` | 55% | open |
-| feed-pipeline-java | `feed-pipeline-java_ternary-bonsai-2_codex_pon_1789956374` | 10% | open (post-`76b904e` comparable rerun; milestone-stalled-30min) |
-| handles-cli-node | `handles-cli-node_ternary-bonsai-2_codex_pon_1789874266` | 65% | open (baseline; no post-`76b904e` rerun yet) |
-| rust-toml-cli | `rust-toml-cli_ternary-bonsai-2_codex_pon_1789877114` | 0% | open (baseline; no post-`76b904e` rerun yet) |
+| cart-billing-go | `cart-billing-go_ternary-bonsai-2_codex_pon_1790015868` | 90% | closed |
+| orders-api-py | `orders-api-py_ternary-bonsai-2_codex_pon_1789970091` | 95% | closed |
+| feed-pipeline-java | `feed-pipeline-java_ternary-bonsai-2_codex_pon_1790038818` | 65% | open; strategy reset, no validation active |
+| handles-cli-node | `handles-cli-node_ternary-bonsai-2_codex_pon_1789964366` | 95% | closed |
+| rust-toml-cli | `rust-toml-cli_ternary-bonsai-2_codex_pon_1790012521` | 90% | closed |
 
-Strict closure criterion: every cell's latest comparable L5 final usefulness judgment is >75%. Baseline row for delta comparison: shipping 55%, cart 0%, orders 55%, feed 0%, handles 65%, rust 0% (run ids in `docs/goals/bonsai-l5-75-loop.md`).
+Strict closure criterion: every cell's latest comparable L5 final usefulness judgment is >75%.
+
+## Feed parked-state reset — 2026-09-22
+
+Feed alone remains open at 65%. The retained terminal evidence proves that importer/dependency work can land while the task-named `REVIEW.md` remains absent; it does not support reconstructing a current `wsview` state. The stale-survey candidate line is permanently parked. The next admissible assist must instead be a grounded post-delivery steer from an actual observed completion verdict toward the exact named remainder (`REVIEW.md`) and may not use synthesized surveys or pre-armed replays. One exact-capture fails-before/passes-after proof and review are required before the single next comparable run. Baseline row for delta comparison: shipping 55%, cart 0%, orders 55%, feed 0%, handles 65%, rust 0% (run ids in `docs/goals/bonsai-l5-75-loop.md`).
 
 ## Baseline environment — 2026-09-20
 
