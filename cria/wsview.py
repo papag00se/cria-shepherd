@@ -41,6 +41,7 @@ from __future__ import annotations
 
 import base64
 import contextvars
+import hashlib
 import os
 import posixpath
 import time
@@ -194,6 +195,21 @@ class View:
     def usable(self) -> bool:
         """There is a workspace AND something is known about it."""
         return bool(self.root) and (self._surveyed or bool(self._files))
+
+    @property
+    def observation_fingerprint(self) -> str | None:
+        """A complete, current harness-survey generation of this workspace.
+
+        This is deliberately a fingerprint of the survey's tree records, never a local-disk
+        observation and never a tool-call counter.  ``None`` means the survey was incomplete or
+        has been overtaken by a possible mutator, so callers cannot turn an old absence into a
+        fresh fact.  The ordered encoding includes every fact that makes an absence meaningful.
+        """
+        if not self._surveyed or not self._complete or self._folded or self._ran_a_mutator:
+            return None
+        rows = [f"F\t{path}\t{size}\t{mtime!r}" for path, (size, mtime) in sorted(self._files.items())]
+        rows.extend(f"D\t{path}" for path in sorted(self._dirs))
+        return hashlib.sha256("\n".join(rows).encode("utf-8")).hexdigest()
 
     # -- path algebra ------------------------------------------------------
 

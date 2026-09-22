@@ -249,6 +249,11 @@ class GuardState:
     # same verdict being re-delivered: that check fires on a drive counter, so an unchanged workspace
     # produces an unchanged verdict, and one cycle-2 cell produced twelve consecutive identical ones.
     last_gap_named: str = ""
+    # The authoritative survey generation and typed subject behind the last delivered absence.
+    # A later identical verdict may re-deliver only when a complete, current harness survey says
+    # the workspace changed and still proves this exact task-named file absent.
+    last_gap_subject: str = ""
+    last_gap_observation: str = ""
     nudge_reply: str = ""  # the coder's own no-tool-call reply the pending nudge is ABOUT — re-framed
     # views rebuild history from the harness body, which never saw an internal prose turn, so without
     # this the unexecuted-write nudge says "your last message contained the file's contents" about a
@@ -1453,7 +1458,7 @@ def _negative_diagnosis_nudge(obj: dict, *, task: str, action_log: str = "", che
                       diagnosis_kind=kind, evidence_source=source)
         return VerdictNudge(prompts.render(
             "negative_diagnosis", task_quote=task_quote, source=source, evidence=evidence),
-            task_quote)
+            task_quote, diagnosis_kind=kind, subject=rel or subject)
 
     if kind == "missing_content" and source != "workspace_file":
         return suppress("missing-content source contract")
@@ -1933,7 +1938,8 @@ class VerdictNudge(str):
     this exact accepted ``action`` rather than re-reading the provider's raw ``proposed_fix``.
     """
 
-    def __new__(cls, evidence: str = "", action: str = ""):
+    def __new__(cls, evidence: str = "", action: str = "", *, diagnosis_kind: str = "",
+                subject: str = ""):
         evidence = (evidence or "").strip()
         action = (action or "").strip()
         action_line = prompts.render("verdict_nudge_action", action=action) if action else ""
@@ -1941,6 +1947,10 @@ class VerdictNudge(str):
         value = super().__new__(cls, rendered)
         value.evidence = evidence
         value.action = action
+        # Typed provenance survives the user-facing rendering.  The delivery scheduler may use
+        # only this checked missing-file identity; it never extracts a path from judge prose.
+        value.diagnosis_kind = diagnosis_kind
+        value.subject = subject
         return value
 
 
@@ -4254,13 +4264,26 @@ class Loop:
             # the gap is what was ruled on, choosing the implementation is not (#2's corollary, and
             # steer_diagnose's own "Do not choose the IMPLEMENTATION").
             named = (reason or "").strip()
-            if named and not sess.nudge_reason and named != (sess.last_gap_named or "").strip():
+            # The survey is the only topology-safe owner of workspace generation.  It is None for
+            # an incomplete or overtaken listing, so uncertainty never re-arms a prior absence.
+            view = wsview.current(sess.workspace_root) if sess.workspace_root else None
+            observed = view.observation_fingerprint if view is not None else None
+            subject = getattr(reason, "subject", "")
+            same_file = (getattr(reason, "diagnosis_kind", "") == "missing_file"
+                         and bool(subject) and subject == getattr(sess, "last_gap_subject", ""))
+            renewed = bool(same_file and observed and observed != getattr(sess, "last_gap_observation", ""))
+            if named and not sess.nudge_reason and (named != (sess.last_gap_named or "").strip() or renewed):
                 # ``judge_satisfaction`` already passed this through the one typed provenance
                 # owner. A second missing-word/path pass here could disagree with the same facts.
+                # Same prose remains quiet unless a fresh complete survey observed a changed tree
+                # and the provenance owner still confirms that exact file is absent.
                 sess.last_gap_named = named
+                sess.last_gap_subject = subject if getattr(reason, "diagnosis_kind", "") == "missing_file" else ""
+                sess.last_gap_observation = observed if sess.last_gap_subject else ""
                 sess.nudge_reason = prompts.render("periodic_gap", reason=reason)
                 sess.steer_source = "completion check (deliverable not found)"
-                rlog.emit("loop.satisfaction_gap_named", level="info", head=_clip(named, 120))
+                rlog.emit("loop.satisfaction_gap_named", level="info", head=_clip(named, 120),
+                          subject=sess.last_gap_subject, rearmed=renewed)
             return None   # never ENDS the session on a not-satisfied verdict — that is unchanged
         probe_tc = guard_gate_op(sess, body, rlog, workspace_root=sess.workspace_root)
         if probe_tc is not None:  # verify the repo's checks before ending (same backstop as 'done')

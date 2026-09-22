@@ -3,9 +3,12 @@ import json
 import unittest
 import unittest.mock
 
-from cria import loop
+from pathlib import Path
+
+from cria import loop, wsview
 from cria.loop import Loop, LoopContext, PlanSession
 from cria.plan import Plan, PlanItem
+from tests.wsfixture import survey
 
 
 class _RLog:
@@ -233,6 +236,84 @@ class NamesTheMissingDeliverableTests(unittest.TestCase):
         s.drive_count += 40
         self._run(s, verdict=(False, "REVIEW.md has not been written.", ""))
         self.assertIn("REVIEW.md", s.nudge_reason)
+
+    def test_feed_gap_rearms_only_after_a_new_complete_workspace_observation(self):
+        """Four Feed archives lack REVIEW.md; 1790026888 named it at drive 34 then went silent.
+
+        Fails before: text-only ``last_gap_named`` suppresses the same checked gap after the
+        importer changes.  This replays that causal boundary without executing Feed.
+        """
+        cohort = (
+            ("20260921T131112-01a0c598-12c3-7973-8ebd-3f87b1ce0016", "1790021450"),
+            ("20260921T135359-01a0c5bf-3d05-7fd0-a573-6c95720f4526", "1790024016"),
+            ("20260921T144153-01a0c5eb-172a-7002-b4cf-64ac66d26edf", "1790026888"),
+            ("20260921T164500-01a0c65b-cd75-7ab3-b3dd-3d839bfb3b35", "1790034274"),
+        )
+        for capture_id, run_id in cohort:
+            with self.subTest(run=run_id):
+                self.assertTrue((Path.home() / ".cria/calls" / capture_id).is_dir())
+                archive = Path.home() / ".cria/suite" / f"feed-pipeline-java_ternary-bonsai-2_codex_pon_{run_id}/workspace"
+                self.assertFalse((archive / "REVIEW.md").exists())
+        capture = Path.home() / ".cria/calls/20260921T144153-01a0c5eb-172a-7002-b4cf-64ac66d26edf"
+        self.assertTrue((capture / "0141-satisfaction.response.json").is_file())
+
+        root = "/harness/feed"
+        view = wsview.View(root, "feed-gap-replay")
+        self.assertTrue(wsview.apply_survey(view, survey(
+            "D\tsrc\nD\tsrc/main\nF\t1\t100\tsrc/main/Importer.java", root=root)))
+        token = wsview.bind(view)
+        self.addCleanup(wsview.unbind, token)
+        s = self._Sess()
+        s.workspace_root = root
+        gap = loop.VerdictNudge("REVIEW.md is absent.", diagnosis_kind="missing_file",
+                                subject="REVIEW.md")
+
+        _out, _first_log = self._run(s, verdict=(False, gap, ""))
+        self.assertIn("REVIEW.md", s.nudge_reason)
+        first_generation = s.last_gap_observation
+        self.assertTrue(first_generation)
+        s.nudge_reason = ""
+
+        # Same complete survey generation remains silent.
+        s.drive_count += 20
+        self._run(s, verdict=(False, gap, ""))
+        self.assertEqual("", s.nudge_reason)
+
+        # The harness, not cria's disk or a tool counter, observes changed importer metadata while
+        # still completely listing the absent task-named review file.
+        self.assertTrue(wsview.apply_survey(view, survey(
+            "D\tsrc\nD\tsrc/main\nF\t2\t200\tsrc/main/Importer.java", root=root)))
+        s.drive_count += 20
+        _out, rearmed_log = self._run(s, verdict=(False, gap, ""))
+        self.assertIn("REVIEW.md", s.nudge_reason)
+        self.assertNotEqual(first_generation, s.last_gap_observation)
+        self.assertTrue(any(k == "loop.satisfaction_gap_named" and kw.get("rearmed")
+                            for k, kw in rearmed_log.events))
+
+    def test_missing_file_gap_does_not_rearm_on_unknown_or_partial_observation(self):
+        root = "/harness/feed"
+        view = wsview.View(root, "feed-gap-unknown")
+        self.assertTrue(wsview.apply_survey(view, survey("F\t1\t100\tImporter.java", root=root)))
+        token = wsview.bind(view)
+        self.addCleanup(wsview.unbind, token)
+        s = self._Sess(); s.workspace_root = root
+        gap = loop.VerdictNudge("REVIEW.md is absent.", diagnosis_kind="missing_file",
+                                subject="REVIEW.md")
+        self._run(s, verdict=(False, gap, ""))
+        s.nudge_reason = ""
+
+        # A possible mutator overtakes the last survey: there is no current absence fact.
+        view.note_a_mutator_ran()
+        s.drive_count += 20
+        self._run(s, verdict=(False, gap, ""))
+        self.assertEqual("", s.nudge_reason)
+
+        # A later bounded survey also cannot re-arm the missing-file fact.
+        self.assertTrue(wsview.apply_survey(view, survey("F\t2\t200\tImporter.java",
+                                                         root=root, complete=False)))
+        s.drive_count += 20
+        self._run(s, verdict=(False, gap, ""))
+        self.assertEqual("", s.nudge_reason)
 
     def test_an_empty_reason_stays_silent(self):
         """Silence over noise (#3) — a judge that said nothing has nothing to hand on."""
