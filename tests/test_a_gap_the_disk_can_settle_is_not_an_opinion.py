@@ -7,7 +7,9 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
-from cria import bodykeys, loop, prompts, upstream
+from cria import bodykeys, loop, prompts, upstream, wsview
+from cria.plan import Plan, PlanItem
+from tests.wsfixture import survey
 
 
 class _NullRlog:
@@ -127,6 +129,88 @@ class PeriodicDiagnosisOwnershipTests(unittest.TestCase):
         self.assertIn("The task-named file REVIEW.md is not present in the current workspace.", wire_text)
         self.assertIn("Determine its contents from the exact task requirement", wire_text)
         self.assertNotIn(args["proposed_fix"], expected_nudge)
+
+    def test_live_1790044200_red_gate_observation_suspends_step_one_on_the_prepared_wire(self):
+        """The live 0033 boundary: red stays red; only a complete survey can arm REVIEW.md."""
+        capture = Path.home() / ".cria" / "calls" / "20260921T193024-01a0c6f3-3dc1-7aa2-bc65-951943f81ad4"
+        body = json.loads((capture / "0033-coder-s1.json").read_text())["body"]
+        task = next(m["content"] for m in body["messages"]
+                    if m.get("role") == "user" and str(m.get("content", "")).startswith("Fix these three"))
+        active = re.search(r"Prioritize this step \(1 of 9\):\n\n(.*?)\n\nOnce it is complete",
+                           body["messages"][0]["content"], re.S)
+        self.assertIsNotNone(active)
+        root = "/home/jesse/suite-runs/suite-feed-pipeline-java_ternary-bonsai-2_codex_pon_1790044200-vhli_z3m"
+        view = wsview.View(root, "feed-1790044200-red-gate")
+        self.assertTrue(wsview.apply_survey(view, survey(
+            "D\tsrc\nD\tsrc/main\nD\tsrc/main/java\nD\tsrc/main/java/pipeline\n"
+            "F\t1\t9938\tsrc/main/java/pipeline/Importer.java\nF\t1\t980\tpom.xml",
+            root=root)))
+        self.assertTrue(view.observation_fingerprint)
+        token = wsview.bind(view)
+        self.addCleanup(wsview.unbind, token)
+        frames = []
+        verdict = {"missing_file": True, "reason": "REVIEW.md is absent.", "proposed_fix": "",
+                   "diagnosis_kind": "missing_file", "subject": "REVIEW.md",
+                   "task_quote": "Add `REVIEW.md` describing remaining problems or risks in the code you changed. For every issue, include the file name and line number.",
+                   "evidence_source": "workspace_absence", "evidence_quote": ""}
+        driver = loop.Loop(loop.LoopContext(
+            planner=None,
+            coder_chat=lambda frame, _rlog: (frames.append(frame) or json.dumps({"choices": [{"message": {
+                "role": "assistant", "tool_calls": [{"id": "read", "type": "function", "function": {
+                    "name": "read_file", "arguments": '{"path":"README.md"}'}}]}}]}).encode()),
+            reasoner_chat=lambda _body, _rlog: json.dumps({"choices": [{"message": {
+                "role": "assistant", "content": json.dumps(verdict)}}]}).encode(),
+            reasoner_role=None, runs_dir="", self_compact=False, focus_trim=False,
+            assists=True, satisfaction_check_start=1, satisfaction_check_every=100))
+        sess = loop.PlanSession(plan=Plan(id="live-0033", task=task, created="now", items=[PlanItem(active.group(1))]),
+                                drive_count=10, last_gate_red=True, gate_stall=1,
+                                workspace_root=root)
+        rlog = _NullRlog()
+        driver._work_item(sess, "live-0033", body, rlog, sess.plan.current(), 1)
+        self.assertEqual(sess.completion_remediation_subject, "REVIEW.md")
+        self.assertTrue(sess.last_gate_red, "deliverable observer cleared/redetermined the gate")
+        self.assertIn("loop.satisfaction_blocked", rlog.events)
+        self.assertIn("loop.satisfaction_gap_named", rlog.events)
+        raw, _estimate, _capture = upstream.Upstream("http://unused", context_window=49152)._prep(
+            frames[0], False, rlog)
+        wire = json.loads(raw)
+        text = "\n".join(str(m.get("content") or "") for m in wire["messages"])
+        self.assertNotIn("Prioritize this step", text)
+        self.assertIn(prompts.load("completion_remediation"), text)
+        self.assertIn("Create REVIEW.md now.", text)
+        self.assertNotIn(bodykeys.COMPLETION_REMEDIATION, wire)
+        self.assertNotIn("deliverable_observation_last_drive", loop._session_to_dict(sess))
+        # The actual 0033 tool calls have no receipt and cannot release a remediation they did not write.
+        loop._settle_completion_remediation(sess, body["messages"], rlog)
+        self.assertEqual(sess.completion_remediation_subject, "REVIEW.md")
+
+    def test_red_gate_observer_requires_a_complete_current_survey(self):
+        capture = Path.home() / ".cria" / "calls" / "20260921T193024-01a0c6f3-3dc1-7aa2-bc65-951943f81ad4"
+        body = json.loads((capture / "0033-coder-s1.json").read_text())["body"]
+        task = next(m["content"] for m in body["messages"]
+                    if m.get("role") == "user" and str(m.get("content", "")).startswith("Fix these three"))
+        active = re.search(r"Prioritize this step \(1 of 9\):\n\n(.*?)\n\nOnce it is complete",
+                           body["messages"][0]["content"], re.S)
+        root = "/home/jesse/suite-runs/suite-feed-pipeline-java_ternary-bonsai-2_codex_pon_1790044200-vhli_z3m"
+        view = wsview.View(root, "red-gate-unknown")
+        self.assertTrue(wsview.apply_survey(view, survey("F\t1\t1\tImporter.java", root=root,
+                                                         complete=False)))
+        token = wsview.bind(view)
+        self.addCleanup(wsview.unbind, token)
+        calls = []
+        driver = loop.Loop(loop.LoopContext(
+            planner=None,
+            coder_chat=lambda frame, _rlog: (calls.append(frame) or json.dumps({"choices": [{"message": {
+                "role": "assistant", "tool_calls": [{"id": "read", "type": "function", "function": {
+                    "name": "read_file", "arguments": '{"path":"README.md"}'}}]}}]}).encode()),
+            reasoner_chat=lambda *_: self.fail("unknown survey invoked observer"), reasoner_role=None,
+            runs_dir="", self_compact=False, focus_trim=False, assists=True,
+            satisfaction_check_start=1, satisfaction_check_every=1))
+        sess = loop.PlanSession(plan=Plan(id="unknown", task=task, created="now",
+                                          items=[PlanItem(active.group(1))]),
+                                last_gate_red=True, gate_stall=1, workspace_root=root)
+        driver._work_item(sess, "unknown", body, _NullRlog(), sess.plan.current(), 1)
+        self.assertEqual(sess.completion_remediation_subject, "")
 
     def test_all_six_feed_captures_suspend_their_cursor_for_the_same_typed_remediation(self):
         """Live-faithful body replays: each retained cursor loses only to a validated file gap."""

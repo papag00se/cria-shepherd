@@ -277,6 +277,9 @@ class GuardState:
     # only when the check executes, so a drive where it was skipped is retried at the next
     # opportunity rather than costing a whole interval. -1 means it has never run.
     satisfaction_last_drive: int = -1
+    # The non-terminal red-gate deliverable observer has its own stamp: it must never consume or
+    # alter the completion critic's cadence/state.
+    deliverable_observation_last_drive: int = -1
     periodic_probe: bool = False  # a periodic check-in gate is in flight (insert its ground truth, no verdict)
     # A scheduled step critic returned done, but its approve-path brake had no surveyed workspace.
     # It is NOT an approval: acquire one bounded survey/gate round, then re-run the critic against
@@ -2055,6 +2058,40 @@ def judge_satisfaction(task: str, evidence: str, reasoner_chat, reasoner_role, r
     return False, nudge, nudge.action
 
 
+def observe_red_gate_missing_file(task: str, *, workspace_root: str, reasoner_chat, reasoner_role,
+                                  rlog) -> VerdictNudge:
+    """Observe one task-named whole-file absence without judging completion or gate state.
+
+    The caller has already established a complete/current harness survey and a red gate.  This
+    observer owns neither fact: it cannot clear, re-run, or reinterpret the gate, and its false or
+    unreadable answer is silence rather than a completion verdict.  The shared negative-diagnosis
+    owner re-checks the exact task quote and current wsview absence before anything reaches a coder.
+    """
+    if not (task.strip() and workspace_root and reasoner_chat is not None):
+        return VerdictNudge()
+    try:
+        comp = _judge_completion(
+            reasoner_chat, reasoner_role, prompts.load("red_gate_deliverable_observation"),
+            prompts.render("red_gate_deliverable_observation_user", task=task), rlog,
+            phase="red-gate-deliverable-observation", workspace_root=workspace_root,
+            verdict_key="missing_file", seed_files=True)
+    except Exception as e:
+        rlog.emit("loop.red_gate_deliverable_observation_error", level="warn", error=str(e))
+        return VerdictNudge()
+    if massage.is_truncated(comp):
+        rlog.emit("loop.red_gate_deliverable_observation_truncated", level="warn")
+        return VerdictNudge()
+    text = _completion_text(comp)
+    if reasoner_role is not None:
+        text = reasoner_role.clean_content(text)
+    obj = extract_json_object(text)
+    if not isinstance(obj, dict) or obj.get("missing_file") is not True:
+        return VerdictNudge()
+    return _negative_diagnosis_nudge(
+        obj, task=task, workspace_root=workspace_root, rlog=rlog,
+        phase="red-gate-deliverable-observation")
+
+
 def satisfaction_done_note(reason: str, *, checks_ran: bool = True) -> str:
     """The completion text forwarded when the satisfaction check accepts a 'done'.
 
@@ -2979,13 +3016,40 @@ class Loop:
         # rung (see LoopContext.assists), so the level is weighed HERE rather than inside the check —
         # `_periodic_satisfaction` has a deliberate contract that `blocked` is its first word, tested
         # against a Loop with no context at all, and a gate in front of that would break it.
+        blocker = _satisfaction_blocker(steer=sess.nudge_reason, rewritten=False,
+                                        done_probe=sess.done_probe, gate_red=sess.last_gate_red,
+                                        gate_stall=sess.gate_stall)
         done_now = None if not self._ctx.assists else self._periodic_satisfaction(
-            sess, body, rlog, plan_off=False,
-            blocked=_satisfaction_blocker(steer=sess.nudge_reason, rewritten=False,
-                                          done_probe=sess.done_probe, gate_red=sess.last_gate_red,
-                                          gate_stall=sess.gate_stall))
+            sess, body, rlog, plan_off=False, blocked=blocker)
         if done_now is not None:
             return done_now
+        # A red gate remains a hard completion block.  It must not, however, hide a separately
+        # observable task-named file absence forever: this is a non-terminal observation with an
+        # independent cadence and a complete/current survey precondition.
+        if (self._ctx.assists and blocker == "gate-red" and sess.last_gate_red
+                and not sess.nudge_reason and not sess.completion_remediation_subject
+                and periodic_check_due(sess.drive_count, self._ctx.satisfaction_check_start,
+                                       self._ctx.satisfaction_check_every,
+                                       sess.deliverable_observation_last_drive)):
+            view = wsview.current(sess.workspace_root) if sess.workspace_root else None
+            if view is not None and view.observation_fingerprint is not None:
+                sess.deliverable_observation_last_drive = sess.drive_count
+                task = sess.plan.task or _history_root(body.get("messages", []))[0]
+                gap = observe_red_gate_missing_file(
+                    task, workspace_root=sess.workspace_root or "",
+                    reasoner_chat=self._ctx.reasoner_chat, reasoner_role=self._ctx.reasoner_role,
+                    rlog=rlog)
+                if gap.diagnosis_kind == "missing_file" and gap.subject:
+                    sess.last_gap_named = str(gap)
+                    sess.last_gap_subject = gap.subject
+                    sess.last_gap_observation = view.observation_fingerprint
+                    sess.nudge_reason = prompts.render("periodic_missing_file_gap", reason=gap,
+                                                       subject=gap.subject)
+                    sess.completion_remediation_subject = gap.subject
+                    sess.completion_remediation_reason = sess.nudge_reason
+                    sess.steer_source = "red-gate deliverable observation"
+                    rlog.emit("loop.satisfaction_gap_named", level="info", head=_clip(str(gap), 120),
+                              subject=gap.subject, rearmed=False)
         framed = dict(body)
         framed.pop("model", None)  # no alias — the upstream fills the server's loaded model
         framed["stream"] = False
