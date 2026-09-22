@@ -1,5 +1,6 @@
 """The 'task is finished but the session cannot stop' off-ramp must run on BOTH driver paths."""
 import json
+import subprocess
 import unittest
 import unittest.mock
 
@@ -289,6 +290,62 @@ class NamesTheMissingDeliverableTests(unittest.TestCase):
         self.assertNotEqual(first_generation, s.last_gap_observation)
         self.assertTrue(any(k == "loop.satisfaction_gap_named" and kw.get("rearmed")
                             for k, kw in rearmed_log.events))
+
+    def test_exact_feed_terminal_gap_rearms_from_seed_to_terminal_survey(self):
+        """Replay 1790026888's captured typed REVIEW verdict over real harness survey bytes.
+
+        The first survey is the task seed expressed at the terminal workspace root: the same
+        workspace before the importer landed.  The second is a fresh survey command run against
+        the preserved terminal archive.  Before 2fd69ae's observation comparison, equal verdict
+        text made the second call silent; now the changed, complete terminal generation re-arms it.
+        """
+        capture = Path.home() / ".cria/calls/20260921T144153-01a0c5eb-172a-7002-b4cf-64ac66d26edf"
+        archive = Path.home() / ".cria/suite/feed-pipeline-java_ternary-bonsai-2_codex_pon_1790026888/workspace"
+        seed = Path("suite/tasks/feed-pipeline-java/seed").resolve()
+        response = json.loads((capture / "0142-satisfaction.response.json").read_text())
+        args = json.loads(response["choices"][0]["message"]["tool_calls"][0]["function"]["arguments"])
+        task = Path("suite/tasks/feed-pipeline-java/prompt.txt").read_text()
+        self.assertEqual(args["diagnosis_kind"], "missing_file")
+        self.assertEqual(args["subject"], "REVIEW.md")
+        self.assertIn(args["task_quote"], task)
+        self.assertFalse((archive / "REVIEW.md").exists())
+
+        root = str(archive.resolve())
+        pre = subprocess.run(["bash", "-c", wsview.survey_command("feed-terminal-replay")],
+                             cwd=seed, text=True, capture_output=True, check=True).stdout
+        # The harness would have run this pre-change survey at the same workspace path.  Only its
+        # declared root differs because the preserved seed and terminal snapshots live in separate
+        # archive directories.
+        pre = pre.replace(f"root\t{seed}", f"root\t{root}")
+        terminal = subprocess.run(["bash", "-c", wsview.survey_command("feed-terminal-replay")],
+                                  cwd=archive, text=True, capture_output=True, check=True).stdout
+        view = wsview.View(root, "feed-terminal-replay")
+        self.assertTrue(wsview.apply_survey(view, pre))
+        before = view.observation_fingerprint
+        self.assertTrue(before)
+        token = wsview.bind(view)
+        self.addCleanup(wsview.unbind, token)
+        rlog = self._Rlog()
+        captured_gap = loop._negative_diagnosis_nudge(
+            args, task=task, workspace_root=root, rlog=rlog, phase="feed-terminal-replay")
+        self.assertEqual(captured_gap.diagnosis_kind, "missing_file")
+        self.assertEqual(captured_gap.subject, "REVIEW.md")
+
+        s = self._Sess(); s.workspace_root = root
+        self._run(s, verdict=(False, captured_gap, ""))
+        self.assertTrue(s.nudge_reason)
+        self.assertEqual(s.last_gap_observation, before)
+        s.nudge_reason = ""
+
+        self.assertTrue(wsview.apply_survey(view, terminal))
+        after = view.observation_fingerprint
+        self.assertTrue(after)
+        self.assertNotEqual(before, after)
+        s.drive_count += 20
+        _out, rlog = self._run(s, verdict=(False, captured_gap, ""))
+        self.assertIn("REVIEW.md", s.nudge_reason)
+        self.assertTrue(any(k == "loop.satisfaction_gap_named" and kw.get("rearmed")
+                            for k, kw in rlog.events))
 
     def test_missing_file_gap_does_not_rearm_on_unknown_or_partial_observation(self):
         root = "/harness/feed"
