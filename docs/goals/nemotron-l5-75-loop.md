@@ -128,10 +128,19 @@ replays, exact reruns, and the evidence that closed each cell.
   retry through a restarting `cria.service` instead of dying on one refused connection (a
   single-shot `curl` race killed a whole serialized chain), and no `set -e` chain where one
   transient kill strands every downstream cell.
-- **Exactly ONE 10-minute Paseo heartbeat per in-flight run** (`create_heartbeat`), whose prompt
-  says to inspect the live workspace, post the user report, record canonical milestone verdicts
-  via `suite/milestones.py`, and delete itself on completion. Never create a second concurrent
-  heartbeat — duplicate heartbeats caused verdict-staleness churn in the completion gate.
+- **Exactly ONE recurring 10-minute Paseo heartbeat per in-flight run** (`create_heartbeat`),
+  with no one-shot/max-run expiry. Its prompt is a mandatory reporting procedure: inspect the
+  live workspace and current checks; make a fresh holistic usefulness judgment for the work
+  presently on disk; then post the user report in the exact form
+  `usefulness=<N>%` and `material changes since the previous report: <facts|none>`.
+  `pending`, “no usefulness judgment happened”, the last comparable cell score, process liveness,
+  or a bare “still active” are **not** substitutes for that fresh percentage; the prior comparable
+  score may be extra context only. Record canonical milestone verdicts via `suite/milestones.py`
+  when due, record final usefulness via `suite/usefulness.py` immediately on termination, and
+  delete the heartbeat only after that terminal packet and report are recorded. The Supervisor
+  personally issues every heartbeat-triggered report; it may not delegate that obligation or let
+  other work defer it. Never create a second concurrent heartbeat — duplicate heartbeats caused
+  verdict-staleness churn in the completion gate.
 - Record final usefulness via `suite/usefulness.py`, refresh the battery report, preserve run
   and call captures.
 
