@@ -39,12 +39,13 @@ class RouteNamesTheDiscoveredBinary(unittest.TestCase):
         """FAILS BEFORE: the advice said `bundle install`, a command this box cannot run."""
         self._box({"bundle": "bundle3.2", "gem": "gem", "ruby": "ruby"})
         advice = dirguard._local_install_advice("gem install countries")
-        self.assertIn("bundle3.2 install --path vendor/bundle", advice)
-        self.assertNotIn("`bundle install", advice)
+        self.assertIn("bundle3.2 config set path 'vendor/bundle'", advice)
+        self.assertIn("bundle3.2 install", advice)
+        self.assertNotIn("--path vendor/bundle", advice)
 
     def test_a_plain_name_is_left_alone(self):
         self._box({"bundle": "bundle", "gem": "gem", "ruby": "ruby"})
-        self.assertIn("`bundle install --path vendor/bundle`",
+        self.assertIn("`bundle config set path 'vendor/bundle'`",
                       dirguard._local_install_advice("gem install countries"))
 
     def test_no_route_when_nothing_is_present(self):
