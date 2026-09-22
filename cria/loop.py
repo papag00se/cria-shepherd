@@ -3051,6 +3051,7 @@ class Loop:
                     sess.steer_source = "deliverable observation"
                     rlog.emit("loop.satisfaction_gap_named", level="info", head=_clip(str(gap), 120),
                               subject=gap.subject, rearmed=False)
+        record_coder_preframe(rlog, sess, item, idx, total, driver="plan_on")
         framed = dict(body)
         framed.pop("model", None)  # no alias — the upstream fills the server's loaded model
         framed["stream"] = False
@@ -4540,6 +4541,7 @@ class Loop:
             periodic = guard_periodic_gate(sess, body, rlog, workspace_root=sess.workspace_root)
             if periodic is not None:
                 return periodic
+        record_coder_preframe(rlog, sess, sess.plan.current(), 1, 1, driver="plan_off")
         framed = {**body, "messages": _frame_for_item(
             body.get("messages", []), "", sess.summary, 1, 1,
             prior_work=sess.prior_work, tools=body.get("tools"), synthetic=True,
@@ -5451,6 +5453,51 @@ def _is_serialized_plan_cursor(message: dict) -> bool:
     legacy = (content.startswith("You are completing a larger task")
               and "This plan was created by another model" in content)
     return (current or legacy) and ("Prioritize this step (" in content or "Do ONLY this step (" in content)
+
+
+def record_coder_preframe(rlog, sess: PlanSession, item: PlanItem | None, idx: int, total: int, *, driver: str) -> None:
+    """Record the live state immediately before a target coder frame is composed.
+
+    This is evidence only: it reads the already-bound harness survey and session fields, attaches
+    the receipt to the request log for the wire owner, and never adds a field or message to the
+    model body.  ``None`` preserves every unavailable survey/verdict fact as unknown rather than
+    translating it into absence.
+    """
+    root = getattr(sess, "workspace_root", "") or ""
+    view = wsview.current(root) if root else None
+    subject = getattr(sess, "last_gap_subject", "") or ""
+    observation = getattr(sess, "last_gap_observation", "") or ""
+    state = {
+        "driver": driver,
+        "cursor": {"index": idx, "total": total, "text": getattr(item, "text", "") if item else ""},
+        "wsview": {
+            "root": root or None,
+            "surveyed": view.surveyed if view is not None else None,
+            "complete": view.complete if view is not None else None,
+            "observation_fingerprint": view.observation_fingerprint if view is not None else None,
+        },
+        "remediation": {
+            "armed": bool(getattr(sess, "completion_remediation_subject", "")),
+            "subject": getattr(sess, "completion_remediation_subject", "") or None,
+            "reason": getattr(sess, "completion_remediation_reason", "") or None,
+        },
+        "gate": {
+            "drive_count": getattr(sess, "drive_count", None),
+            "last_gate_red": getattr(sess, "last_gate_red", None),
+            "gate_stall": getattr(sess, "gate_stall", None),
+            "gate_fresh": getattr(sess, "gate_fresh", None),
+            "done_probe": getattr(sess, "done_probe", None),
+            "completion_checks": getattr(sess, "completion_checks", None),
+        },
+        # ``last_gap_subject`` is populated only for the validated missing-file path.  The source
+        # is retained as the exact survey generation that justified that typed absence; no subject
+        # means this field remains null rather than guessing from rendered nudge prose.
+        "absence_verdict": ({"diagnosis_kind": "missing_file", "subject": subject,
+                             "workspace_observation_fingerprint": observation or None}
+                            if subject else None),
+    }
+    rlog.coder_preframe = state
+    rlog.emit("loop.coder_preframe", state=state)
 
 
 def _frame_for_item(messages: list[dict], item: str, summary: str, idx: int, total: int, prior_work: str = "", tools=None, synthetic: bool = False, gate_plan=None, workspace_root: str | None = None, gate_red: bool = False, remediation: bool = False) -> list[dict]:

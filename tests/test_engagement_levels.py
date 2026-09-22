@@ -85,6 +85,8 @@ RUNG_KINDS: dict[int, tuple[str, ...]] = {
         "loop.rumination", "loop.truncation",
         "loop.done_critic", "loop.completion_probe", "loop.task_complete",
         "loop.satisfaction_confirm", "loop.verdict_by_tool",
+        # Observation of the loop's own pre-frame state changes neither its frame nor its body.
+        "loop.coder_preframe", "loop.coder_preframe_serialized",
     ),
     cfgmod.ASSISTS_ENABLED: (
         "loop.",   # everything else the driver does

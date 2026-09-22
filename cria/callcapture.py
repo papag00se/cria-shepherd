@@ -122,10 +122,11 @@ def _stats(body: dict) -> dict:
 
 
 def capture(body: dict, rlog, *, calls_dir, phase: str | None = None, url: str = "",
-            rendered: str | None = None) -> str | None:
+            rendered: str | None = None, coder_preframe: dict | None = None) -> str | None:
     """Write the EXACT outbound ``body`` to a per-call file and emit ``upstream.dump``. When
     ``rendered`` (the flat prompt the model tokenizes, chat template applied) is given, also write
-    it as a readable sibling ``.prompt.txt`` — the literal 'what the model sees'. Returns the JSON
+    it as a readable sibling ``.prompt.txt`` — the literal 'what the model sees'. ``coder_preframe``
+    is an out-of-band live-state receipt supplied by the final wire owner. Returns the JSON
     file path, or ``None`` on failure. Best-effort — never breaks the request."""
     try:
         session = getattr(rlog, "session", None)
@@ -147,6 +148,10 @@ def capture(body: dict, rlog, *, calls_dir, phase: str | None = None, url: str =
             "stats": stats,
             "body": body,  # EXACTLY what cria serializes and POSTs to the server
         }
+        if coder_preframe is not None:
+            # A separate observation receipt: never a request-body field and therefore incapable
+            # of changing what the model sees.  The wire owner supplies its final byte identity.
+            record["coder_preframe"] = coder_preframe
         if rendered is not None:
             # the flat string the model ACTUALLY tokenizes (chat template applied) — the ground truth
             prompt_name = f"{seq:04d}-{label}.prompt.txt"

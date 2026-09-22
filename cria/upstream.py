@@ -12,6 +12,7 @@ to forward Server-Sent Events as they arrive.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import time
@@ -374,12 +375,25 @@ class Upstream:
             out["messages"] = [{k: v for k, v in m.items() if k != bodykeys.CALLER_INSTRUCTIONS}
                                if isinstance(m, dict) else m for m in out["messages"]]
         sent_estimate = contextfloor.est_total(out.get("messages"), out.get("tools"))
+        # The pre-frame observer never rides in ``out``.  It is correlated here, after every wire
+        # transform and internal-key strip, with the exact bytes about to be POSTed.  A non-coder
+        # role or a coder call without a fresh observer remains silent rather than inheriting state.
+        data = json.dumps(out).encode("utf-8")
+        phase = getattr(rlog, "phase", None)
+        state = getattr(rlog, "coder_preframe", None)
+        receipt = None
+        if isinstance(phase, str) and phase.startswith("coder-") and isinstance(state, dict):
+            receipt = {"state": state,
+                       "final_wire": {"sha256": hashlib.sha256(data).hexdigest(), "bytes": len(data)}}
         capture_path = None
         if self._capture_dir is not None:  # record EXACTLY what the model will see, per call
             rendered = self._render_prompt(out) if self._capture_rendered else None
             capture_path = callcapture.capture(out, rlog, calls_dir=self._capture_dir,
-                                               phase=getattr(rlog, "phase", None), url=self._chat_url, rendered=rendered)
-        return json.dumps(out).encode("utf-8"), sent_estimate, capture_path
+                                               phase=phase, url=self._chat_url, rendered=rendered,
+                                               coder_preframe=receipt)
+        if receipt is not None:
+            rlog.emit("loop.coder_preframe_serialized", **receipt, capture_path=capture_path)
+        return data, sent_estimate, capture_path
 
     def _window_at_least(self, prompt_tokens, rlog) -> None:
         """A prompt the server ACCEPTED proves its window is at least that big.

@@ -17,6 +17,28 @@ Strict closure criterion: every cell's latest comparable L5 final usefulness jud
 
 Feed alone remains open at 65%. The retained terminal evidence proves that importer/dependency work can land while the task-named `REVIEW.md` remains absent; it does not support reconstructing a current `wsview` state. The stale-survey candidate line is permanently parked. Ground-truth run `feed-pipeline-java_ternary-bonsai-2_codex_pon_1790050189` was deliberately halted at its recorded 30-minute 20% milestone: Maven could not compile non-existent Commons CSV `CSVReader`/`CSVParserConfig`, and no tests or `REVIEW.md` existed. Its unit and sole heartbeat were stopped/deleted. This recurrent 20–65% outcome is a convergence failure, not authorization for another generic rerun. Before any future validation, a dedicated instrumented evidence run must retain the genuinely current pre-frame survey and support an unarmed fails-before/passes-after proof plus independent review. Baseline row for delta comparison: shipping 55%, cart 0%, orders 55%, feed 0%, handles 65%, rust 0% (run ids in `docs/goals/bonsai-l5-75-loop.md`).
 
+## Fresh live evidence classes — 2026-09-22
+
+No Feed validation or acceptance rerun follows from this record. The next controlled evidence run
+must keep these classes separate:
+
+- **Maven-before-delivery:** a Maven result that precedes a target coder delivery. It establishes
+  only that tool event and its order; it does not establish the current workspace survey, a typed
+  `REVIEW.md` absence, the session's unarmed/armed remediation state, or the body that was finally
+  serialized.
+- **Maven-passing REVIEW delivery:** a future fresh live case in which the authoritative Maven
+  result is passing and is correlated with the target coder pre-frame receipt and its final wire
+  capture. The receipt must show the current `wsview` survey/fingerprint/completeness, gate and
+  remediation state, active cursor, and any actual typed absence provenance; the capture must carry
+  the SHA-256 and byte length of the final serialized body. A missing survey, unknown fingerprint,
+  absent typed verdict, or an uncorrelated Maven event is silence/unknown for this class, not a
+  substitute fact.
+
+The repository now emits those receipts as `loop.coder_preframe` and
+`loop.coder_preframe_serialized`, with the same receipt in `coder_preframe` on the exact coder-call
+capture. This is instrumentation for one later controlled evidence run, not evidence that a
+`REVIEW.md` delivery occurred or that Maven passed.
+
 ## Baseline environment — 2026-09-20
 
 - Branch/HEAD: `main` at `3aaa99f`; `git status --short --branch` was clean. The Roles Orchestrator showed no sibling agent modifying this worktree before report maintenance.
