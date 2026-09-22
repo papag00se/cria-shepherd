@@ -2,22 +2,20 @@
 # Model-facing (rule 22), keyed `<manager>_<route>`; dirguard._INSTALL_REMEDY picks the first route
 # whose tools are actually on PATH.
 #
-# VERIFIED ON THE BOX, 2026-08-21, on the shipping-rates-rb seed: `bundle install --path
-# vendor/bundle` with a Gemfile naming ONLY `countries` installs in about a minute, and the suite
-# then runs green under a plain `ruby -Ilib -Itest` — no `bundle exec` anywhere — because the
-# library file's `require "bundler/setup"` puts the bundled gems on the path for whatever loads it.
-# THE SAME ROUTE FAILS COMPLETELY if the Gemfile also names the test framework: the test file has
+# VERIFIED ON THE BOX, 2026-08-21, on the shipping-rates-rb seed: configuring the project path
+# then running `bundle install` with a Gemfile naming ONLY `countries` installs in about a minute,
+# and the suite then runs green under a plain `ruby -Ilib -Itest` — no `bundle exec` anywhere —
+# because the library file's `require "bundler/setup"` puts the bundled gems on the path for whatever
+# loads it. THE SAME ROUTE FAILS COMPLETELY if the Gemfile also names the test framework: the test file has
 # already activated the system minitest by the time the library file runs, and `bundler/setup`
 # raises `Gem::LoadError` rather than accept the mismatch, so every test errors before it runs.
 # ternary-bonsai wrote exactly that Gemfile (`minitest "~> 5.18"` beside `countries "~> 1.2"`) on
 # run 1787340410 and scored 1/5; the pin was the second killer, since countries 1.2 depends on
 # `currencies`, which no longer builds. Both are now named in the route.
 #
-# A ROUTE CRIA HAS NOT VERIFIED IS A ROUTE CRIA IS GUESSING. The ruby row prescribed
-# `bundle install --path vendor/bundle`, and `bundle` is not installed on the box the battery runs
-# on. Two runs followed the advice into `bundle: command not found` and spent the rest of the run on
-# transport rather than the task. cria refused a real command and answered with an imaginary one —
-# the same class as stating a false fact, one step removed (#5b).
+# A ROUTE CRIA HAS NOT VERIFIED IS A ROUTE CRIA IS GUESSING. Its executable must be resolved on
+# the coder's PATH before it is named; otherwise cria refuses the shared install without inventing a
+# command. That avoids answering a real command with an imaginary one (#5b).
 #
 # Every route below names the tools it needs, in code, and writes that tool back into its own
 # sentence through a {{TOOL}} token. The presence check answers "is it there"; the token carries
@@ -39,15 +37,15 @@
 # `-e`/`-c` one-liner co-occurring with a load error. Only the two ecosystems whose install is
 # project-local and needs a launcher; node resolves from ./node_modules with no wrapper.
 #
-# AND A ROUTE MUST NOT NAME A PATH ITS OWN COMMAND DOES NOT CREATE. `gem_bundler` told the coder to
-# run `bundle install --path vendor/bundle` and then unshift `vendor/bundle/gems/<gem>-<version>/lib`.
-# Bundler writes `vendor/bundle/ruby/<abi>/gems/…`; `vendor/bundle/gems` does not exist. That path
+# AND A ROUTE MUST NOT NAME A PATH ITS OWN COMMAND DOES NOT CREATE. `gem_bundler` configures
+# Bundler's project path, whose gems live under `vendor/bundle/ruby/<abi>/gems/…`; `vendor/bundle/gems`
+# does not exist. That path
 # came from a run that installed with `gem install --install-dir` — the OTHER route, where it is
 # correct — and it only became reachable when ruby-bundler was installed, because
 # dirguard._INSTALL_REMEDY takes the first route whose tool is on PATH. Installing an apt package
 # flipped cria onto a route carrying a different route's path.
 #
-# The same sentence also asserted that a `--path` install is unreachable from plain `ruby`. Measured
+# The same sentence also asserted that a Bundler-path install is unreachable from plain `ruby`. Measured
 # in a clean project: `require "bundler/setup"` plus `ruby -Ilib -e` from the project directory
 # WORKS, and every check in shipping-rates-rb/verify.py runs `subprocess.run(cmd, cwd=ws)` — the
 # project directory. It fails only from elsewhere, which BUNDLE_GEMFILE answers.
@@ -56,7 +54,7 @@ pip_venv = First check whether you need it at all: the package may already be im
 
 npm_local = Drop the global flag: `{{NPM}} install <pkg>` installs into this project's own `node_modules`, which is what your code will load.
 
-gem_bundler = Install it into the project instead: add the gem to a `Gemfile` and run `{{BUNDLE}} install --path vendor/bundle`. Gems installed that way are not on the default load path, so make them reachable from your LIBRARY FILE rather than from the command line: put `require "bundler/setup"` at the very top, before the gem require. That covers anything started from the project directory — including tests and scripts you did not write, which are what will be run against your code. A process started from somewhere else needs `BUNDLE_GEMFILE` pointing at your `Gemfile`. A one-off command that does NOT go through your library file — `{{RUBY}} -e "..."` to check something — loads none of it: put `{{BUNDLE}} exec` in front of that one. Put ONLY the gem you actually need in that `Gemfile`, and do not pin its version. Naming your test framework there is what breaks this: the test file loads it before your library file runs `bundler/setup`, and `bundler/setup` then refuses the version already in memory — `You have already activated minitest 5.16.3, but your Gemfile requires minitest 6.0.6` — which fails every test at once, including the ones you did not write. A version pin does the same damage a second way: an old release drags in dependencies that no longer build.
+gem_bundler = Install it into the project instead: add the gem to a `Gemfile`, run `{{BUNDLE}} config set path 'vendor/bundle'`, then run `{{BUNDLE}} install`. Gems installed that way are not on the default load path, so make them reachable from your LIBRARY FILE rather than from the command line: put `require "bundler/setup"` at the very top, before the gem require. That covers anything started from the project directory — including tests and scripts you did not write, which are what will be run against your code. A process started from somewhere else needs `BUNDLE_GEMFILE` pointing at your `Gemfile`. A one-off command that does NOT go through your library file — `{{RUBY}} -e "..."` to check something — loads none of it: put `{{BUNDLE}} exec` in front of that one. Put ONLY the gem you actually need in that `Gemfile`, and do not pin its version. Naming your test framework there is what breaks this: the test file loads it before your library file runs `bundler/setup`, and `bundler/setup` then refuses the version already in memory — `You have already activated minitest 5.16.3, but your Gemfile requires minitest 6.0.6` — which fails every test at once, including the ones you did not write. A version pin does the same damage a second way: an old release drags in dependencies that no longer build.
 
 gem_direct = Install it into the project instead: `{{GEM}} install --install-dir vendor/bundle <gem>`, then make it loadable FROM YOUR CODE — `$LOAD_PATH.unshift` the gem's `lib` directory at the top of your library file, so it is on the load path for anything that requires it. Setting `GEM_HOME=vendor/bundle` only covers commands you launch yourself; tests and scripts you did not write are run without it, and those are what will be run against your code.
 
@@ -70,7 +68,7 @@ maven_dep = A library your code imports is a dependency, not an install: add it 
 
 # THE FACT BEFORE THE ROUTE. cria resolves the binary to build the route's sentence, so when the
 # coder tries to INSTALL that same tool cria already knows the answer. Walked on cycle 4 cell 13:
-# `which bundler; gem install bundler` was refused with "run bundle3.2 install", which answers
+# `which bundler; gem install bundler` was refused with "run bundle3.2", which answers
 # "install bundler" with "run bundler" — and the refusal swallowed the `which` that would have
 # settled it. The coder never learned bundler was installed and spent the rest of the run on
 # transport.

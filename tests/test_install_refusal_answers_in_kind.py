@@ -39,7 +39,7 @@ class TheRemedyMatchesTheManagerTests(unittest.TestCase):
     # See tests/test_install_remedy_names_the_real_binary.py.
     CASES = {
         "pip install requests": (".venv",),
-        "gem install countries": ("--path vendor/bundle", "--install-dir vendor/bundle"),
+        "gem install countries": ("config set path 'vendor/bundle'", "--install-dir vendor/bundle"),
         "cargo install ripgrep": ("Cargo.toml",),
         "go install example.com/x@v1": ("go.mod",),
         "npm install -g eslint": ("node_modules",),
@@ -70,7 +70,7 @@ class TheRemedyMatchesTheManagerTests(unittest.TestCase):
 class TheRoutesWeRecommendAreNotThemselvesRefusedTests(unittest.TestCase):
     def test_the_ruby_project_local_forms_are_allowed(self):
         for cmd in ("gem install --install-dir vendor/bundle countries",
-                    "bundle install --path vendor/bundle"):
+                    "bundle config set path vendor/bundle && bundle install"):
             with self.subTest(cmd=cmd):
                 self.assertFalse(refusal(cmd))
 

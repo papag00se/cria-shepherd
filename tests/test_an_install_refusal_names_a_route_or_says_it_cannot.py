@@ -48,10 +48,14 @@ def _tools(answer):
 
 
 class TheThreeStatesOfARouteTests(unittest.TestCase):
-    def test_a_known_route_is_named(self):
+    def test_exact_capture_denial_uses_bundler_4_project_configuration(self):
+        """CALL0209: Bundler 4 rejects the route this refusal used to prescribe."""
         with _tools(lambda t: t):
-            out = dirguard.install_refusal("gem install countries", "none", WS)
-        self.assertIn("vendor/bundle", out)
+            out = dirguard.install_refusal(
+                "gem install countries -v 0.9.3 -N --no-ri --no-rdoc -d .", "none", WS)
+        self.assertIn("bundle config set path 'vendor/bundle'", out)
+        self.assertIn("bundle install", out)
+        self.assertNotIn("--path vendor/bundle", out)
         self.assertNotIn(_R["route_unknown_yet"], out)
 
     def test_asked_and_absent_still_says_nothing_rather_than_guessing(self):
@@ -88,7 +92,7 @@ class TheGuardJudgesTheDestinationNotTheSpellingTests(unittest.TestCase):
         ("pip install --target=/ws/libs requests", "absolute, inside the workspace"),
         ("gem install -i local_gems europe", "gem's --install-dir short form"),
         ("gem install --install-dir vendor/bundle countries", "the route cria itself prescribes"),
-        ("bundle install --path vendor/bundle", "bundler's form"),
+        ("bundle config set path vendor/bundle && bundle install", "bundler's form"),
         ("cargo install --root ./tools ripgrep", "cargo's real destination flag"),
         ("npm install express", "project-local by default"),
         ("./.venv/bin/pip install requests", "a venv interpreter inside the project"),

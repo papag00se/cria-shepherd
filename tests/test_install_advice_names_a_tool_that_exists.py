@@ -46,8 +46,9 @@ class ARouteIsOnlyOfferedIfItsToolExistsTests(unittest.TestCase):
         # `ruby` is one of that route's needs since 2026-08-19 — it names a one-off `<ruby> -e`
         # command, and a route may only print a binary cria resolved (#5b).
         with _with_tools("bundle", "gem", "ruby"):
-            self.assertIn("bundle install --path vendor/bundle",
-                          dirguard._local_install_advice("gem install countries"))
+            advice = dirguard._local_install_advice("gem install countries")
+        self.assertIn("bundle config set path 'vendor/bundle'", advice)
+        self.assertNotIn("--path vendor/bundle", advice)
 
     def test_bundler_absent_falls_to_the_route_the_box_can_take(self):
         """The measured case. bundle is not on the battery box; gem is."""
