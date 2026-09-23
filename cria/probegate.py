@@ -1600,16 +1600,21 @@ def clean_gate_results(messages: list, plan: "GatePlan | None" = None, *,
     # 'pytest'` THREE times in one coder prompt — on a file the coder had since cut to 7 lines, so it
     # was hunting a line that no longer existed — and the three copies differed only by a
     # `<urllib.request.Request object at 0x…>` address and `in 0.36s` vs `in 0.28s`.
+    def is_gate_check(message: dict) -> bool:
+        return (not linked_only
+                or (message.get("tool_call_id") or message.get("call_id")) in gate_ids)
+
     last_of: dict[str, int] = {}
     for i, m in enumerate(out):
         p = _checks_payload(m)
-        if p is not None:
+        if p is not None and is_gate_check(m):
             last_of[dedup.volatile_key(p[1])] = i
     if any(idx != last_of[dedup.volatile_key(_checks_payload(out[idx])[1])]
-           for idx, m in enumerate(out) if _checks_payload(m) is not None):
+           for idx, m in enumerate(out)
+           if _checks_payload(m) is not None and is_gate_check(m)):
         for i, m in enumerate(out):
             p = _checks_payload(m)
-            if p is not None and last_of[dedup.volatile_key(p[1])] != i:
+            if p is not None and is_gate_check(m) and last_of[dedup.volatile_key(p[1])] != i:
                 out[i] = {**m, p[0]: CHECKS_REPEAT_NOTE}
     return out
 

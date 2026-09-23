@@ -83,6 +83,41 @@ class GateCleaningAtTheWireTests(unittest.TestCase):
         sent = _wire(messages)
         self.assertEqual(sent["messages"], messages)
 
+    def test_gate_dedup_does_not_rewrite_ordinary_checker_results(self):
+        transport_id = "fedcba987654321001234567"
+        command = "\n".join([
+            probegate._gate_sentinel(["pytest -q"]),
+            "__cria_gate_file=/tmp/.cria-gate-internal",
+            probegate._transport_reader('"/tmp/.cria-gate-internal"', 0, transport_id),
+        ])
+        gate_result = (f"{probegate.SECTION_PREFIX}probe-0{probegate.SECTION_SUFFIX}\n"
+                       "tests/test_widget.py:17: AssertionError: expected 200\nEXIT:1\n")
+        ordinary = probegate.CHECKS_MARKER + " ordinary_checker.py:9: duplicate finding"
+        messages = [
+            {"role": "user", "content": "finish the fix"},
+            {"role": "assistant", "tool_calls": [{
+                "id": "gate-1", "type": "function", "function": {
+                    "name": "exec_command", "arguments": json.dumps({"cmd": command}),
+                },
+            }]},
+            {"role": "tool", "tool_call_id": "gate-1",
+             "content": _transport_page(transport_id, gate_result)},
+        ]
+        for call_id in ("ordinary-1", "ordinary-2"):
+            messages.extend([
+                {"role": "assistant", "tool_calls": [{
+                    "id": call_id, "type": "function", "function": {
+                        "name": "exec_command", "arguments": json.dumps({"cmd": "echo ordinary"}),
+                    },
+                }]},
+                {"role": "tool", "tool_call_id": call_id, "content": ordinary},
+            ])
+
+        sent = _wire(messages)
+        ordinary_results = [m["content"] for m in sent["messages"]
+                            if m.get("tool_call_id") in {"ordinary-1", "ordinary-2"}]
+        self.assertEqual(ordinary_results, [ordinary, ordinary])
+
     def test_no_gate_body_is_byte_identical(self):
         messages = [{"role": "system", "content": "system"},
                     {"role": "user", "content": "ordinary request"}]
