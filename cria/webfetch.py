@@ -223,6 +223,12 @@ def _cache_put(url: str, status: int, ct: Optional[str], reduced: str, parsed: O
     _DOC_CACHE[url] = (status, ct, reduced, parsed, truncated)
 
 
+def cached_structure(url: str) -> Optional[bool]:
+    """Whether the fetcher's authoritative cached body parsed structurally; None if unknown."""
+    entry = _DOC_CACHE.get(url)
+    return None if entry is None else entry[3] is not None
+
+
 # --- coder-loop gate state (cria is a persistent server) -----------------------------------
 # A repeat fetch/search is refused ONLY while its prior result is STILL VISIBLE in the conversation
 # — because the gate's whole justification ("it can only return what you already have") is FALSE

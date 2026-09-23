@@ -564,6 +564,29 @@ class PlannerLearnsAPageDefinedNothingTests(unittest.TestCase):
         self.assertNotIn("no endpoints", out.lower())
         self.assertIn("/handles/{handle}", out)
 
+    def test_capture_shaped_json_never_becomes_an_unreadable_page(self):
+        """Replay C11's fetched body through both notes that reached the coder.
+
+        The successful data response is structured JSON but not an OpenAPI document, so it has no
+        routes or extracted API shapes. That is insufficient reach to say no field names could be
+        read. The raw body remains the source the planner sees; the durable ledger must not reverse
+        that fact later.
+        """
+        from cria import loop
+
+        body = json.dumps({"holder": "stake_test", "length": 5,
+                           "resolved_addresses": {"ada": "addr_test"}})
+        facts = {}
+        out = self._fetch(body, facts, ct="application/json")
+        self.assertIn('"holder":"stake_test"', out)
+        self.assertIn('"resolved_addresses":{"ada":"addr_test"}', out)
+        self.assertNotIn("no endpoints or field names could be read", out)
+        self.assertNotIn("Nothing you have read so far DEFINES a route", out)
+
+        ledger = loop._format_fetches(facts)
+        self.assertNotIn("no structured data could be parsed out of it", ledger)
+        self.assertIn("HTTP 200", ledger)
+
 
 class SearchNoStructureNoteTests(unittest.TestCase):
     """THE NO-ROUTES DISCLOSURE RIDES SEARCH RESULTS TOO (run 0728-m11): a gather whose ONLY tool was

@@ -309,6 +309,7 @@ def _web_fetch(args: dict, facts: dict | None = None, scratch: str | None = None
     except Exception as e:  # network, TLS, bad scheme — surface the cause, don't crash the gather
         return _nothing(f"[web_fetch error: {e}]")
     reduced, parsed = webfetch.reduce_for_cache(r.body, r.content_type, r.final_url)
+    webfetch._cache_put(r.final_url, r.status, r.content_type, reduced, parsed, r.truncated)
     _record_fetch(facts, r.final_url, r.status, reduced, r.content_type)
     note = (f"\n[TRUNCATED at {webfetch.MAX_BODY_BYTES // (1024 * 1024)} MB — this document is "
             f"longer than that and the rest was not read; anything defined past this point "
@@ -320,7 +321,7 @@ def _web_fetch(args: dict, facts: dict | None = None, scratch: str | None = None
     # then turned that phrase into a concrete 404-ing route. Additive (a true sentence, never an
     # action) and self-limiting: only while cria knows NO routes at all — once any spec has been read
     # it goes quiet, because then the planner has something real to plan against.
-    note += _no_structure_note(facts)
+    note += _no_structure_note(facts, parsed)
     if len(reduced) > webfetch.OVERSIZE_CHARS:
         spilled = _spill_to_scratch(r, reduced, parsed, scratch)
         if spilled is not None:
@@ -338,10 +339,9 @@ def _search_no_structure_note(facts: dict | None) -> str:
     return prompts.load_map("planner_steers")["search_no_structure"]
 
 
-def _no_structure_note(facts: dict | None) -> str:
-    """The disclosure to append while NOTHING fetched this session defines a route. Empty once any
-    entry carries endpoints — cria says it exactly while it is true and then stops."""
-    if facts is None:
+def _no_structure_note(facts: dict | None, parsed=None) -> str:
+    """Disclose an unstructured page only when the shared fetcher established that fact."""
+    if facts is None or parsed is not None:
         return ""
     if any((e[1] if len(e) > 1 else "") for e in facts.values()):
         return ""

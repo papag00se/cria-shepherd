@@ -7888,7 +7888,8 @@ def _format_fetches(latest: dict, header: str = "PAGES YOU HAVE ALREADY FETCHED"
         # this ledger, so it knows whether ANY fetch this session yielded routes. When one did, the
         # sentence is simply false and is dropped. All that survives is the true, narrow fact — this
         # URL yielded no endpoint definitions — which is what the swagger-shell case needed.
-        if _fetch_succeeded(status) and not routes and not shapes.strip() and not catalog.strip():
+        if (_fetch_succeeded(status) and not routes and not shapes.strip() and not catalog.strip()
+                and webfetch.cached_structure(url) is False):
             any_routes = any(_fetch_facts(e)[1] for e in latest.values())
             line += labels["no_spec_here" if any_routes else "no_structure"]
             # …AND SAY WHERE THE CONTENT ACTUALLY IS. The sentence above used to end "whatever it

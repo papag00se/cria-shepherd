@@ -4857,6 +4857,15 @@ class GaveUpVsFinishedTests(unittest.TestCase):
 
 
 class BareStatusLedgerEntryTests(unittest.TestCase):
+    def setUp(self):
+        webfetch._DOC_CACHE.clear()
+        self.addCleanup(webfetch._DOC_CACHE.clear)
+
+    @staticmethod
+    def _cache(url, body, content_type="text/html"):
+        reduced, parsed = webfetch.reduce_for_cache(body, content_type, url)
+        webfetch._cache_put(url, 200, content_type, reduced, parsed, False)
+
     """The ledger splits fetches that SUCCEEDED from those that errored, and the anchor explains both
     — "where an entry lists endpoints or response fields, code against THOSE"; "where an entry came
     back with an error, you have no content from it". There is a THIRD case it describes to nobody:
@@ -4874,6 +4883,7 @@ class BareStatusLedgerEntryTests(unittest.TestCase):
 
     def test_a_2xx_with_no_structure_says_it_carries_no_structure(self):
         from cria.loop import _format_fetches
+        self._cache("https://api.handle.me/swagger/", "<html><body>Swagger UI</body></html>")
         out = _format_fetches({"https://api.handle.me/swagger/": ("HTTP 200", "", "")})
         self.assertIn("HTTP 200", out)
         # The narrow fact survives — the page answered but cria parsed no structure — now in words
@@ -4899,13 +4909,15 @@ class BareStatusLedgerEntryTests(unittest.TestCase):
         the coder the API "returns 404 for every request", offering to "remove the live test from
         the suite entirely". The coder did."""
         from cria.loop import _format_fetches
+        self._cache("https://api.handle.me/handles/goose", '{"holder":"stake_test"}',
+                    "application/json")
         out = _format_fetches({
             "https://api.handle.me/openapi.json": ("HTTP 200", "/handles/{handle}", ""),
             "https://api.handle.me/handles/goose": ("HTTP 200", "", ""),
         })
         self.assertNotIn("no field names could be read", out)
-        self.assertNotIn("nothing read so far provides one", out)   # a spec WAS read this session
-        self.assertIn("its body is in the transcript above", out)
+        self.assertNotIn("no structured data could be parsed out of it", out)
+        self.assertNotIn("its body is in the transcript above", out)
 
     def test_the_narrow_fact_survives_without_api_jargon_when_nothing_yielded_routes(self):
         # b64b9df made the API-definition CLAIM conditional; ornith15 x shipping-rates-rb (turns
@@ -4913,6 +4925,7 @@ class BareStatusLedgerEntryTests(unittest.TestCase):
         # definition" wording STILL reads as an off-task injection on a task with no API. The narrow
         # fact — page answered, no structure parsed — stays; the API words are gone.
         from cria.loop import _format_fetches
+        self._cache("https://api.handle.me/swagger/", "<html><body>Swagger UI</body></html>")
         out = _format_fetches({"https://api.handle.me/swagger/": ("HTTP 200", "", "")})
         self.assertIn("no structured data could be parsed out of it", out)
         self.assertNotIn("machine-readable API definition", out)
@@ -4920,6 +4933,7 @@ class BareStatusLedgerEntryTests(unittest.TestCase):
 
     def test_it_no_longer_asserts_the_task_has_an_api(self):
         from cria.loop import _format_fetches
+        self._cache("https://docs.rs/toml", "<html><body>toml docs</body></html>")
         out = _format_fetches({"https://docs.rs/toml": ("HTTP 200", "", "")})
         self.assertNotIn("DEFINES the API's routes", out)
         self.assertIn("no structured data could be parsed out of it", out)   # the narrow fact stays
