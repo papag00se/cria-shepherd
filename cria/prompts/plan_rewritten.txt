@@ -1,4 +1,4 @@
-The conversation history was condensed by the harness: earlier turns were replaced by the summary below. The work it describes as completed ALREADY EXISTS in the workspace.
+The conversation history was condensed by the harness. The handoff below contains unverified claims about earlier work; it is not ground truth.
 
 {{SUMMARY}}
 
@@ -6,4 +6,4 @@ The user's current request:
 
 {{TASK}}
 
-Plan ONLY the remaining work. Do NOT re-plan or redo anything the summary describes as done — inspect the existing files with your read-only tools first; never guess filenames. Keep the plan minimal: only the steps the current request still needs.
+Inspect the current workspace and current checks with your read-only tools. Plan only what their actual results show remains. Keep the plan minimal, and never guess filenames.

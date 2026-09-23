@@ -37,10 +37,13 @@ there is one and falls back to the root, which is the old behaviour exactly.
 """
 
 import json
+import shutil
+import subprocess
+import tempfile
 from pathlib import Path
 import unittest
 
-from cria.loop import CONTINUATION_MARKER, LoopStore, _history_root, _rewrite_summary_text
+from cria.loop import CONTINUATION_MARKER, Loop, LoopStore, _history_root, _rewrite_summary_text
 
 
 class TheCodexShapeIsDetectedTests(unittest.TestCase):
@@ -227,6 +230,64 @@ class ItIsWiredIntoTheDriverTests(unittest.TestCase):
         sess = l._store.get("sid:x1")
         self.assertIn("DELETE route is still missing", sess.prior_work)
         self.assertNotIn("Make these four changes", sess.prior_work)
+
+    def test_c13_handoff_reaches_the_real_planner_rewrite_rendering_boundary(self):
+        """Replay C13's rewrite shape through Loop -> Planner, not a planner stand-in.
+
+        The handoff falsely names cartsvc/cart.go and discounts.json; the survey-backed inventory
+        has only the three actual root files. The rendered body must preserve both provenances.
+        """
+        from cria import wsview
+        from cria.planner import Planner
+        from tests.test_loop import _ctx, _Rlog, _SHELL
+
+        class _Class:
+            task_type = "coding"
+            engagement = "task"
+
+        class _Provider:
+            def __init__(self):
+                self.bodies = []
+
+            def chat(self, body, rlog):
+                self.bodies.append(body)
+                return json.dumps({"choices": [{"message": {"content": "1. inspect the cart"}}]}).encode()
+
+        root = tempfile.mkdtemp(prefix="cart-c13-loop-")
+        self.addCleanup(shutil.rmtree, root, ignore_errors=True)
+        for name in ("cart.go", "cart_test.go", "go.mod"):
+            Path(root, name).write_text(name, encoding="utf-8")
+        view = wsview.View(root, "cart-c13-loop")
+        survey = subprocess.run(["bash", "-c", wsview.survey_command("cart-c13-loop")], cwd=root,
+                                text=True, capture_output=True, check=True).stdout
+        self.assertTrue(wsview.apply_survey(view, wsview.strip_survey(survey)[1]))
+        provider = _Provider()
+        ctx = _ctx(lambda _body, _rlog: b"{}", None)
+        ctx.planner = Planner(provider)
+        loop, key = Loop(ctx), "sid:cart-c13"
+        root_task = "Fix the cart rounding bug and add its regression test."
+        loop._store.observe_shape(key, _history_root([{"role": "user", "content": root_task}])[1], 40)
+        handoff = (f"{CONTINUATION_MARKER} Earlier in THIS session you worked on this task.\n"
+                   "HANDOFF SUMMARY: cartsvc/cart.go and discounts.json were created; "
+                   "github.com/rs/decimal was added to go.mod.")
+        messages = [
+            {"role": "user", "content": f"<environment_context><cwd>{root}</cwd></environment_context>"},
+            {"role": "user", "content": root_task},
+            {"role": "assistant", "content": "ok"},
+            {"role": "user", "content": handoff},
+        ]
+        token = wsview.bind(view)
+        try:
+            loop._drive_locked({"messages": messages, "tools": [_SHELL]}, key, _Class(), _Rlog())
+        finally:
+            wsview.unbind(token)
+        seed = provider.bodies[0]["messages"][-1]["content"]
+        self.assertIn(handoff, seed)
+        for name in ("cart.go", "cart_test.go", "go.mod"):
+            self.assertIn(name, seed)
+        self.assertIn("unverified claims", seed)
+        self.assertNotIn("ALREADY EXISTS", seed)
+        self.assertNotIn("Do NOT re-plan or redo", seed)
 
 
 if __name__ == "__main__":
