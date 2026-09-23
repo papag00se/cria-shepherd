@@ -47,7 +47,7 @@ ASK_MAX_TOKENS = JUDGE_MAX_TOKENS
 # How many times ONE draft may be handed back for a fresh problem. Two, so a plan challenged for an
 # invented route can still be challenged for missing every deliverable — and no more, so this can
 # never ping-pong: _MAX_FINAL_RETRIES bounds the drafting attempts, and a drafter that insists on its
-# plan gets it.
+# plan gets a retriable fresh gather instead of admitting a draft cria has already rejected.
 MAX_PLAN_HANDBACKS = 2
 @dataclass
 class PlanOutcome:
@@ -1194,11 +1194,15 @@ class Planner:
                 # checks below stay gated, since a model call that cannot change anything is not a
                 # purposeful call.
                 bad = urlgrounding.ungrounded_urls("\n".join(steps), evidence)
-                if bad and not may_hand_back("url"):
-                    rlog.emit("plan.submit_ungrounded", level="warn", urls=",".join(bad),
-                              handed_back=False)
-                    bad = []
                 if bad:
+                    if not may_hand_back("url"):
+                        # The correction budget bounds prompts, not admission: the same grounder
+                        # still rejects this draft, so it cannot become the coder's plan cursor.
+                        rlog.emit("plan.submit_ungrounded", level="warn", urls=",".join(bad),
+                                  handed_back=False)
+                        rlog.emit("plan.rejected_exhausted", level="warn", check="url")
+                        self._retriable_failure = True
+                        return None
                     fired.add("url")
                     rlog.emit("plan.submit_ungrounded", urls=",".join(bad), handed_back=True)
                     messages = messages + [
@@ -1235,9 +1239,14 @@ class Planner:
                 missing = self._missing_deliverables(task, steps, rlog) \
                     if (may_hand_back("coverage") or challenged_missing) else []
                 new_missing = [x for x in missing if x not in challenged_missing]
-                if missing and not new_missing:
-                    rlog.emit("plan.missing_deliverables", missing=", ".join(missing), handed_back=False)
-                if new_missing:
+                if missing:
+                    if not new_missing:
+                        # A parsed coverage verdict remains a known defect even after its one
+                        # corrective prompt; retry from fresh gather rather than admit it.
+                        rlog.emit("plan.missing_deliverables", missing=", ".join(missing), handed_back=False)
+                        rlog.emit("plan.rejected_exhausted", level="warn", check="coverage")
+                        self._retriable_failure = True
+                        return None
                     fired.add("coverage")
                     challenged_missing.update(missing)
                     rlog.emit("plan.missing_deliverables", missing=", ".join(missing), handed_back=True)

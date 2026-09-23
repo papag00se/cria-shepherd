@@ -482,23 +482,29 @@ class GatherLoopTests(unittest.TestCase):
                          if "UNVERIFIED" in str(m.get("content")))
         self.assertIn("NOT evidence they are wrong", challenge)
 
-    def test_ungrounded_plan_is_challenged_only_once_never_wedges(self):
-        # A planner that insists gets its plan anyway — cria never wedges the session on this, and
-        # never rewrites the step itself (authoring a plan is not cria's job).
+    def test_c6_repeated_raw_search_urls_are_rejected_after_the_one_handback(self):
+        # C6 first submitted one ungrounded docs URL, then re-submitted three raw web_search
+        # strings. The URL grounder must remain the owner: its second known-invalid verdict returns
+        # retriable no-plan, never a cursor that tells the coder to execute invented searches.
         prov = _ScriptedProvider([
             _tool_resp("exec_command", self._SPEC_ECHO),
-            _tool_resp("submit_plan", {"steps": ["1. POST to https://api.handle.me/resolve"]}),
-            _tool_resp("submit_plan", {"steps": ["1. POST to https://api.handle.me/resolve"]}),
+            _tool_resp("submit_plan", {"steps": ["web_search https://api.handle.me/docs/openapi.json"]}),
+            _tool_resp("submit_plan", {"steps": [
+                "web_search https://api.handle.me/docs/openapi.json",
+                "web_search https://api.handle.me/docs/handlers.json",
+                "web_search https://api.handle.me/docs/handlers",
+            ]}),
         ])
         rlog = _Rlog()
         plan = Planner(prov, search_key="", max_gather_rounds=1, clock=lambda: _FIXED).plan_for(
-            _msgs("t"), rlog)
-        # ONE HAND-BACK, which is the invariant this test is named for — not one detection. cria
-        # keeps LOOKING after the budget is spent (that is how an accepted-but-ungrounded plan leaves
-        # a record at all); what is bounded is how often it sends the plan back.
+            _msgs("resolve an Ada handle"), rlog)
         handed = [kw for k, kw in rlog.events if k == "plan.submit_ungrounded" and kw.get("handed_back")]
         self.assertEqual(len(handed), 1)
-        self.assertIn("/resolve", plan.items[0].text)   # accepted as drafted, not deleted or edited
+        self.assertIsNone(plan)
+        self.assertIn("plan.rejected_exhausted", [k for k, _ in rlog.events])
+        self.assertIn("plan.retriable", [k for k, _ in rlog.events])
+        self.assertNotIn("plan.final_recovered", [k for k, _ in rlog.events])
+        self.assertNotIn("plan.submitted", [k for k, _ in rlog.events])
 
     def test_route_the_research_really_read_is_accepted_untouched(self):
         # The other half: a plan whose route the research actually saw sails through. This guard tests
@@ -728,42 +734,47 @@ class PlanCoverageTests(unittest.TestCase):
         self.assertEqual(len(handed), 2)                    # both distinct gaps challenged
         self.assertEqual(len(plan.items), 4)                # the complete draft is what landed
 
-    def test_a_stubborn_redraft_missing_only_the_same_item_is_still_adopted(self):
-        # The new-item rule is the wedge guard: a drafter that insists gets its plan.
+    def test_c5_repeated_missing_live_e2e_deliverable_is_rejected_after_handback(self):
+        # C5's coverage judge named the required live end-to-end test on both drafts. Preserve its
+        # parsed verdict and bounded prompt; do not submit the second incomplete 14-step strategy.
+        missing = "a real api.handle.me CLI end-to-end test"
         prov = _ScriptedProvider([
             _tool_resp("exec_command", {"cmd": "echo looked"}),
-            _tool_resp("submit_plan", {"steps": ["Write the script", "Add a README"]}),
-            _content_resp('{"missing": ["the unit tests"]}'),                 # hand-back #1
-            _tool_resp("submit_plan", {"steps": ["Write the script", "Add a README"]}),  # unchanged
-            _content_resp('{"missing": ["the unit tests"]}'),                 # same gap again → no wedge
-            _content_resp("NONE"),                                            # noise judge
+            _tool_resp("submit_plan", {"steps": ["Write the CLI", "Add a README"]}),
+            _content_resp(json.dumps({"missing": [missing]})),
+            _tool_resp("submit_plan", {"steps": ["Write the CLI", "Add a README"]}),
+            _content_resp(json.dumps({"missing": [missing]})),
         ])
         rlog = _Rlog()
         plan = Planner(prov, role=self._role(), search_key="", max_gather_rounds=1,
                        clock=lambda: _FIXED).plan_for(
-            _msgs("a script, unit tests, and a README"), rlog)
+            _msgs("write a CLI, add a real api.handle.me end-to-end test, and a README"), rlog)
         handed = [kw for k, kw in rlog.events if k == "plan.missing_deliverables" and kw.get("handed_back")]
-        self.assertEqual(len(handed), 1)                    # challenged once, never re-challenged
-        self.assertEqual(len(plan.items), 2)                # the stubborn plan is adopted
+        self.assertEqual(len(handed), 1)
+        self.assertIsNone(plan)
+        self.assertIn("plan.rejected_exhausted", [k for k, _ in rlog.events])
+        self.assertIn("plan.retriable", [k for k, _ in rlog.events])
+        self.assertNotIn("plan.final_recovered", [k for k, _ in rlog.events])
+        self.assertNotIn("plan.submitted", [k for k, _ in rlog.events])
 
-    def test_hand_backs_are_capped_so_a_stubborn_planner_still_gets_its_plan(self):
-        # Bounded: at most MAX_PLAN_HANDBACKS, so this can never ping-pong or wedge a session.
+    def test_hand_backs_remain_capped_when_a_known_invalid_draft_is_rejected(self):
+        # Bounded corrective prompts remain intact. Exhaustion changes only admission: no plan is
+        # handed to the coder while the final inspected draft still has the known bad URL.
         from cria.planner import MAX_PLAN_HANDBACKS
         prov = _ScriptedProvider([
             _tool_resp("exec_command", {"cmd": "echo https://api.handle.me/openapi.json paths: /handles/{handle}"}),
-            _tool_resp("submit_plan", {"steps": ["Call https://api.handle.me/resolve"]}),   # url challenge
-            _tool_resp("submit_plan", {"steps": ["Call https://api.handle.me/resolve"]}),   # insists
-            _content_resp('{"missing": ["the tests"]}'),            # coverage challenge (2nd, the cap)
-            _tool_resp("submit_plan", {"steps": ["Call https://api.handle.me/resolve"]}),   # still insists
-            _content_resp("NONE"),                                  # noise judge
+            _tool_resp("submit_plan", {"steps": ["Call https://api.handle.me/resolve"]}),
+            _tool_resp("submit_plan", {"steps": ["Call https://api.handle.me/resolve"]}),
         ])
         rlog = _Rlog()
         plan = Planner(prov, role=self._role(), search_key="", max_gather_rounds=1,
                        clock=lambda: _FIXED).plan_for(_msgs("resolve with api.handle.me"), rlog)
-        handbacks = sum(1 for k, _ in rlog.events
-                        if k in ("plan.submit_ungrounded", "plan.missing_deliverables", "plan.host_unread"))
+        handbacks = sum(1 for k, kw in rlog.events
+                        if k in ("plan.submit_ungrounded", "plan.missing_deliverables", "plan.host_unread")
+                        and kw.get("handed_back"))
         self.assertLessEqual(handbacks, MAX_PLAN_HANDBACKS)
-        self.assertIsNotNone(plan)                          # it still gets a plan
+        self.assertIsNone(plan)
+        self.assertNotIn("plan.submitted", [k for k, _ in rlog.events])
 
     def test_a_covering_plan_sails_through(self):
         prov = _ScriptedProvider([
