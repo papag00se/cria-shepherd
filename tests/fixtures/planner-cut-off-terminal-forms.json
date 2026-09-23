@@ -1,10 +1,10 @@
 {
-  "provenance": "The tool-call envelopes are preserved from C13 Cart call captures: 0364-planner.response.json (20260923T014021-01a0cd6c-4962-7431-9da3-a40f0e385150) ended at finish_reason=length with the malformed trailing submit_plan arguments below; its immediate retry, 0365-planner.response.json, supplied the complete submit_plan arguments below. Only fields irrelevant to _last_call_truncated (reasoning_content, usage, timings, and identifiers outside the terminal tool call) were omitted.",
+  "provenance": "The terminal tool-call envelopes are preserved from C13 Cart call captures. The fragment is 0364-planner.response.json (20260923T014021-01a0cd6c-4962-7431-9da3-a40f0e385150), which ended at finish_reason=length. The complete envelope is the syntactically complete terminal counterpart from that capture's 0365 retry. Both fixture forms deliberately carry the cutoff finish_reason under test; fields irrelevant to _last_call_truncated (reasoning_content, usage, timings, and identifiers outside the terminal tool call) are omitted.",
   "responses": {
-    "complete_last_call": {
+    "complete_terminal_call_at_cutoff": {
       "choices": [
         {
-          "finish_reason": "tool_calls",
+          "finish_reason": "length",
           "message": {
             "role": "assistant",
             "content": "",
@@ -22,7 +22,7 @@
         }
       ]
     },
-    "fragment_last_call": {
+    "fragment_terminal_call_at_cutoff": {
       "choices": [
         {
           "finish_reason": "length",

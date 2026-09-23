@@ -179,16 +179,17 @@ class CaptureShapeTests(unittest.TestCase):
 
     FIXTURE = Path(__file__).parent / "fixtures" / "planner-cut-off-terminal-forms.json"
 
-    def test_preserved_complete_and_fragment_terminal_calls_classify_differently(self):
-        """The original 5/8 measurement established these two semantic forms.
+    def test_cutoff_terminal_calls_classify_by_arguments_not_finish_reason(self):
+        """Both capture-shaped forms are output-cap cutoffs; valid terminal JSON survives.
 
-        The fixture preserves actual terminal tool-call envelopes from C13 CALL0364/0365; the
-        adjacent responses supply the malformed cutoff and complete retry forms respectively.
-        Keeping these bytes in-repo makes the regression independent of later capture retention.
+        Keeping the terminal envelopes in-repo makes this semantic regression independent of later
+        capture retention: ``finish_reason=length`` alone cannot say whether the final call is a
+        fragment.
         """
-        fixture = json.loads(self.FIXTURE.read_text(encoding="utf-8"))
-        cases = fixture["responses"]
-        self.assertFalse(planner._last_call_truncated(
-            cases["complete_last_call"]["choices"][0]["message"]))
-        self.assertTrue(planner._last_call_truncated(
-            cases["fragment_last_call"]["choices"][0]["message"]))
+        cases = json.loads(self.FIXTURE.read_text(encoding="utf-8"))["responses"]
+        complete = cases["complete_terminal_call_at_cutoff"]["choices"][0]
+        fragment = cases["fragment_terminal_call_at_cutoff"]["choices"][0]
+        self.assertEqual(complete["finish_reason"], "length")
+        self.assertEqual(fragment["finish_reason"], "length")
+        self.assertFalse(planner._last_call_truncated(complete["message"]))
+        self.assertTrue(planner._last_call_truncated(fragment["message"]))
