@@ -318,12 +318,9 @@ class VolatileKeyTests(unittest.TestCase):
         from cria import dedup, focustrim
         self.assertIs(focustrim._result_key, dedup.volatile_key)
 
-    def test_probegate_collapses_two_volatile_renderings_of_one_finding(self):
-        """`clean_gate_results` must key its repeat-collapse on `dedup.volatile_key`, not the raw
-        payload — mellum2 1786051505 carried the SAME finding three times, differing only by a mock
-        object's address and a run's duration. Drive it with two byte-DIFFERENT renderings that
-        share one finding and confirm the earlier one still collapses, which a byte-keyed dedup
-        (or one silently swapped for a different key function) would miss entirely."""
+    def test_probegate_preserves_two_volatile_renderings_of_one_finding(self):
+        """Unstamped checker results are ground truth even when `volatile_key` considers their
+        per-run addresses and durations equivalent."""
         from cria import probegate
 
         def _checks(text):
@@ -336,9 +333,7 @@ class VolatileKeyTests(unittest.TestCase):
                    "url = <urllib.request.Request object at 0x740a465deed0>, args = ()\n"
                    "3 failed, 1 passed in 0.28s")
         self.assertNotEqual(a["content"], b["content"])   # byte-different renderings...
-        out = probegate.clean_gate_results([a, b])
-        self.assertIn("omitted", out[0]["content"])       # ...of the same finding still collapse
-        self.assertIn("3 failed, 1 passed in 0.28s", out[1]["content"])  # last kept in full
+        self.assertEqual(probegate.clean_gate_results([a, b]), [a, b])
 
 
 class ARepeatedTestRunIsARepeatTests(unittest.TestCase):

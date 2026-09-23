@@ -477,26 +477,20 @@ class CleanGateOutputTests(unittest.TestCase):
         self.assertNotIn(probegate.TRANSPORT_PREFIX, rendered)
 
 
-class CleanGateResultsDedupTests(unittest.TestCase):
-    """Repeated identical ⟦ctx:checks⟧ results (a finding that recurs unchanged across turns) pile up
-    in the model's view and reinforce a fixation — collapse the earlier copies to a back-reference,
-    keeping the most recent full one, without dropping any message (tool/response pairing intact)."""
+class CleanGateResultsRepeatPreservationTests(unittest.TestCase):
+    """Unstamped ⟦ctx:checks⟧ results are model-visible tool ground truth, not gate provenance.
+    Every result must remain intact even if its payload repeats."""
 
     def _checks(self, text):
         return {"role": "tool", "content": probegate.CHECKS_MARKER + " " + text}
 
-    def test_identical_checks_are_collapsed_keeping_the_last(self):
+    def test_identical_checks_remain_verbatim(self):
         msgs = [self._checks("smoke_test.py:2: ImportError foo"),
                 {"role": "user", "content": "edit"},
-                self._checks("smoke_test.py:2: ImportError foo"),   # dup → back-reference
-                self._checks("smoke_test.py:2: ImportError foo")]   # LAST → full
+                self._checks("smoke_test.py:2: ImportError foo"),
+                self._checks("smoke_test.py:2: ImportError foo")]
         out = probegate.clean_gate_results(msgs)
-        tools = [m for m in out if m.get("role") == "tool"]
-        self.assertEqual(len(tools), 3)                              # nothing dropped
-        self.assertIn("omitted", tools[0]["content"])               # earlier copy collapsed
-        self.assertIn("omitted", tools[1]["content"])
-        self.assertIn("ImportError foo", tools[2]["content"])        # last kept in full
-        self.assertNotIn("omitted", tools[2]["content"])
+        self.assertEqual(out, msgs)
 
     def test_distinct_checks_are_untouched(self):
         msgs = [self._checks("finding A"), self._checks("finding B")]
@@ -870,13 +864,8 @@ class FlaggedLineFactTests(unittest.TestCase):
         self.assertNotIn("should", joined)
 
 
-class GateRepeatCollapseIgnoresPerRunNoiseTests(unittest.TestCase):
-    """A finding the coder has already read three times is not three findings.
-
-    mellum2 1786051505 carried `resolve_handle_and_test.py:92: undefined name 'pytest'` THREE times
-    in one coder prompt — on a file it had since cut to 7 lines, so it was hunting a line that no
-    longer existed. The collapse keys on the payload and never fired: the three copies differed only
-    by a `<urllib.request.Request object at 0x…>` address and `in 0.36s` vs `in 0.28s`."""
+class GateRepeatPreservationTests(unittest.TestCase):
+    """Unstamped checker results are preserved even when only volatile run details differ."""
 
     M = probegate.CHECKS_MARKER
 
@@ -887,16 +876,11 @@ class GateRepeatCollapseIgnoresPerRunNoiseTests(unittest.TestCase):
                             f"url = <urllib.request.Request object at {addr}>, args = ()\n"
                             f"3 failed, 1 passed in {secs}")}
 
-    def test_three_renderings_of_one_finding_collapse_to_one(self):
+    def test_three_renderings_of_one_finding_remain_verbatim(self):
         msgs = [self._checks("0x7cd31c34ac60", "0.36s", "a"),
                 self._checks("0x740a465deed0", "0.28s", "b"),
                 self._checks("0x7b2ed94635f0", "0.31s", "c")]
-        out = probegate.clean_gate_results(msgs, None)
-        notes = [m for m in out if probegate.CHECKS_REPEAT_NOTE[:40] in m["content"]]
-        full = [m for m in out if probegate.CHECKS_REPEAT_NOTE[:40] not in m["content"]]
-        self.assertEqual(len(notes), 2)
-        self.assertEqual(len(full), 1)
-        self.assertIs(out[-1]["content"], msgs[-1]["content"])   # the NEWEST copy is the kept one
+        self.assertEqual(probegate.clean_gate_results(msgs, None), msgs)
 
     def test_a_genuinely_different_finding_is_never_collapsed(self):
         a = self._checks("0x1111111111", "0.10s", "a")
@@ -906,6 +890,53 @@ class GateRepeatCollapseIgnoresPerRunNoiseTests(unittest.TestCase):
         self.assertEqual(sum(probegate.CHECKS_REPEAT_NOTE[:40] in m["content"] for m in out), 0)
 
 
+
+
+class C19ProxyCheckerPreservationTests(unittest.TestCase):
+    """C14 CALL0028/CALL0392 repeatedly ran the real Go checker, but the model received only
+    ``CHECKS_REPEAT_NOTE`` until its final run. Non-stamped proxy history has no provenance that
+    permits replacing any actual checker result."""
+
+    def test_c14_proxy_checker_results_remain_verbatim(self):
+        def command(call_id):
+            return {"role": "assistant", "tool_calls": [{"id": call_id, "type": "function",
+                    "function": {"name": "exec_command", "arguments":
+                        '{"cmd":"go vet -mod=readonly ./...\\ngo build -mod=readonly ./...\\ngo test -mod=readonly -count=1 -v ./..."}'}}]}
+
+        first = (probegate.CHECKS_MARKER + " the repo's own checks report these error-class problems:\n"
+                 "./cart.go:21:5: undefined: decimal\nFAIL\tcartsvc [build failed] in 0.01s")
+        second = first.replace("0.01s", "0.02s")
+        third = (probegate.CHECKS_MARKER + " the repo's own checks report these error-class problems:\n"
+                 "./cart_test.go:14:2: missing regression test\nFAIL\tcartsvc [build failed] in 0.03s")
+        messages = [command("proxy-check-0028"),
+                    {"role": "tool", "tool_call_id": "proxy-check-0028", "content": first},
+                    command("proxy-check-0392"),
+                    {"role": "tool", "tool_call_id": "proxy-check-0392", "content": second},
+                    command("proxy-check-final"),
+                    {"role": "tool", "tool_call_id": "proxy-check-final", "content": third}]
+
+        out = probegate.clean_gate_results(messages)
+
+        self.assertEqual([m["content"] for m in out if m.get("role") == "tool"],
+                         [first, second, third])
+
+    def test_stamped_gate_repeat_and_ordinary_marker_shaped_result_keep_their_boundaries(self):
+        import json
+
+        def stamped(call_id):
+            return {"role": "assistant", "tool_calls": [{"id": call_id, "type": "function",
+                    "function": {"name": "exec_command", "arguments": json.dumps({"cmd":
+                        probegate._gate_sentinel(["pytest -q"])})}}]}
+
+        gate = probegate.CHECKS_MARKER + " gate.py:4: ImportError: kept by C6"
+        ordinary = probegate.CHECKS_MARKER + " ordinary.py:7: marker-shaped tool output"
+        out = probegate.clean_gate_results([
+            stamped("gate-first"), {"role": "tool", "tool_call_id": "gate-first", "content": gate},
+            stamped("gate-last"), {"role": "tool", "tool_call_id": "gate-last", "content": gate},
+            {"role": "tool", "tool_call_id": "ordinary", "content": ordinary},
+        ], linked_only=True)
+        results = [m["content"] for m in out if m.get("role") == "tool"]
+        self.assertEqual(results, [probegate.CHECKS_REPEAT_NOTE, gate, ordinary])
 
 
 class TheNoteStatesCriasCoverageNotAVerdictTests(unittest.TestCase):

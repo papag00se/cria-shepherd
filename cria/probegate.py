@@ -1447,10 +1447,9 @@ def clean_gate_results(messages: list, plan: "GatePlan | None" = None, *,
     ``cd||exit 97`` scaffolding the coder never authored), DROPS non-signal ⟦ctx:checks⟧ turns entirely
     (with their command call, so nothing orphans — a "no usable result this turn" is pure noise), and
 
-    COLLAPSES repeats: when the same cleaned ⟦ctx:checks⟧ payload appears more than once (a gate finding
-    that recurs unchanged across turns — e.g. the identical ImportError the model kept hitting), keep only
-    the most recent full copy and shorten the earlier identical ones to a one-line back-reference. The
-    model stops re-reading the same error N times (which reinforced its fixation)."""
+    For provenance-linked gate calls only, COLLAPSES repeats: when the same cleaned ⟦ctx:checks⟧ payload
+    appears more than once, keep only the most recent full copy and shorten the earlier identical ones to
+    a one-line back-reference. Unstamped model-visible results remain verbatim."""
     out = []
     gate_ids = gate_call_ids(messages) if linked_only else set()
     drop_ids: set = set()          # tool_call ids whose result we dropped → drop the calling turn too
@@ -1594,15 +1593,17 @@ def clean_gate_results(messages: list, plan: "GatePlan | None" = None, *,
         out = [m for m in out if not (isinstance(m, dict) and m.get("role") == "assistant"
                and m.get("tool_calls") and len(m["tool_calls"]) == 1
                and (m["tool_calls"][0].get("id") in drop_ids))]
-    # Keyed on dedup.volatile_key, NOT the raw payload. Two renderings of the same finding differ by
-    # per-run noise the finding does not depend on, and keying on bytes meant the collapse never
-    # fired for them. mellum2 1786051505 carried `resolve_handle_and_test.py:92: undefined name
-    # 'pytest'` THREE times in one coder prompt — on a file the coder had since cut to 7 lines, so it
-    # was hunting a line that no longer existed — and the three copies differed only by a
-    # `<urllib.request.Request object at 0x…>` address and `in 0.36s` vs `in 0.28s`.
+    if not linked_only:
+        return out
+    # Keyed on dedup.volatile_key, NOT the raw payload. Two renderings of the same stamped gate
+    # finding differ by per-run noise the finding does not depend on, and keying on bytes meant the
+    # collapse never fired for them. mellum2 1786051505 carried
+    # `resolve_handle_and_test.py:92: undefined name 'pytest'` THREE times in one coder prompt — on
+    # a file the coder had since cut to 7 lines, so it was hunting a line that no longer existed — and
+    # the three copies differed only by a `<urllib.request.Request object at 0x…>` address and
+    # `in 0.36s` vs `in 0.28s`.
     def is_gate_check(message: dict) -> bool:
-        return (not linked_only
-                or (message.get("tool_call_id") or message.get("call_id")) in gate_ids)
+        return (message.get("tool_call_id") or message.get("call_id")) in gate_ids
 
     last_of: dict[str, int] = {}
     for i, m in enumerate(out):
