@@ -183,6 +183,11 @@ Next bounded unit: the latest Cart C13 capture is materialized losslessly at `~/
 - Archive evidence: only untracked `discounts.json` and research material were added; `cart.go`, `cart_test.go`, and `go.mod` retained seed behavior. The requested decimal integration, rounding repair/regression test, fallback consumption, and stderr logging were not delivered. `go test ./...` passed against the unchanged implementation. The C14 heartbeat `a2fab6b6` remains only until this terminal report is posted, then must be removed.
 - **Rerun authorization:** none. C13 (25%) → C14 (5%) is a changed/worsened outcome, not convergence. Select and prove a new upstream deterministic transition from a complete decisive capture before any further GPU run.
 
+### Candidate C19 — preserve unstamped checker tool voice
+
+- Complete C14 walk (82 lossless segments) rejected C16 (downstream critic provenance already suppressed) and C17 (unrecognized compaction summary cannot be faithfully repaired). C18 traced the independent earliest repeat-loop producer: `probegate.clean_gate_results` replaced C14 CALL0028/CALL0392’s non-stamped proxy checker results with synthetic repeat prose, destroying the real tool output and inducing identical rechecks.
+- `705301ac` returns non-stamped results after existing structural cleanup, preserving every real checker line; provenance-stamped C6 cleaning remains `linked_only=True`. C14-shaped fails-before/passes-after replay, stamped-gate, and ordinary marker-shaped regressions landed. Focused checks passed; full `python -m pytest` **5000 passed, 5 skipped**. Independent re-review accepted (108 focused tests), commit pushed, `cria.service` restarted and `/health` OK. One serialized C19 Cart rerun is now justified; it requires one new recurring 10-minute heartbeat.
+
 ## Rejected candidates
 
 *(Every rejected candidate with the evidence that rejected it. Rejections are load-bearing:
