@@ -16,6 +16,7 @@ reply_cut_off = Your last reply ran to the length limit and was cut short. The r
 search_spill = Search results for: {{QUERY}} — {{CHARS}} characters of titles and snippets, saved IN FULL to {{TARGET}}. The titles are below; to read a snippet in full: {{REMEDY}} Do NOT re-run this search.\n{{TITLES}}
 no_shell = [refused: there is no shell here, and no command can be run on the machine this project lives on. Use list_dir to see what exists, grep_files to find where something is, and read_file to read it. The command you tried was: {{CMD}}]
 not_yet_known = [{{PATH}} has not been read yet, so there is nothing to show. This is NOT evidence that it is absent. Try list_dir on the directory that holds it, or ask again on your next round.]
+body_undeliverable = [{{PATH}} exists and is {{SIZE}} bytes, but its body could not be delivered in one survey result. Its contents are unknown to this session.]
 # HOW TO READ A SPILLED FILE, built in code from the tools THIS seat actually holds — never typed as
 # a remedy the reader cannot take. `remedy_none` is what honesty looks like when no route exists.
 remedy_grep_read = Find the part you need with grep_files (pattern=<term>, path={{TARGET}}), then read_file {{TARGET}}.

@@ -271,11 +271,15 @@ def _read_file(args: dict, cwd: str, scratch: str | None = None) -> ToolResult:
     if raw is None:
         if view.isfile(full) is False:
             return _nothing(f"[read_file: {path} does not exist]")
-        # The view has remembered this demand for the next harness survey.  This is distinct from
-        # a completed empty/missing/error result: retry memory must leave this call runnable once
-        # that survey has delivered the bytes.
+        undeliverable = view.undeliverable_size(full)
+        if undeliverable is not None:
+            return _nothing(prompts.fill(prompts.load_map("planner_steers")["body_undeliverable"],
+                                         path=path, size=str(undeliverable)))
+        # Only a demand actually queued for the next survey is pending.  ``read_bytes`` also
+        # returns None for a known-undeliverable body; deferring that answer would emit surveys
+        # forever even though no future survey can supply its bytes at the same size.
         return ToolResult(prompts.fill(prompts.load_map("planner_steers")["not_yet_known"], path=path),
-                          False, pending=True)
+                          False, pending=view.body_pending(full))
     body = raw.decode("utf-8", errors="replace")
     if content_reduce.looks_binary(body) or content_reduce.binary_kind(raw[:16]):
         return ToolResult(content_reduce.binary_note(len(raw), content_reduce.binary_kind(raw[:16])), True)

@@ -403,6 +403,27 @@ class View:
         return [Entry(name=posixpath.basename(r), path=self.abs(r), _is_dir=False,
                       size=s, mtime=m) for r, (s, m) in sorted(self._files.items())]
 
+    def undeliverable_size(self, path) -> int | None:
+        """The known size of a body a survey could not deliver, if it is still current.
+
+        This is deliberately distinct from an ordinary ``read_bytes`` miss: that miss queued a
+        body demand for the next survey, while this one was already answered with an explicit
+        refusal.  A changed size is a new question and must be allowed to queue again.
+        """
+        rel = self.rel(path)
+        entry = self._files.get(rel) if rel is not None else None
+        size = self._undeliverable.get(rel) if rel is not None else None
+        return size if entry is not None and entry[0] == size else None
+
+    def body_pending(self, path) -> bool:
+        """Whether a body demand for ``path`` is queued for the next survey.
+
+        Callers use this after :meth:`read_bytes` returned ``None``.  Known-undeliverable
+        bodies are not pending: their survey already gave the only answer available at this size.
+        """
+        rel = self.rel(path)
+        return bool(rel and rel in _BODY_MISSES.get(self._sess, ()))
+
     @property
     def undeliverable(self) -> list[str]:
         """Files the harness was asked for and could not hand back in one result. Their existence
@@ -819,7 +840,7 @@ def _subview(v: View, sub: str) -> View:
     # being folded is the same loss by another door: "src" does not start with "src/", so the
     # marker for the directory being rerooted into never matched and its interior read as absent.
     out._complete = v._complete and sub not in v._folded
-    out._undeliverable = {p[n:] for p in v._undeliverable if p.startswith(pre)}
+    out._undeliverable = {p[n:]: size for p, size in v._undeliverable.items() if p.startswith(pre)}
     out._outside = dict(v._outside)
     return out
 

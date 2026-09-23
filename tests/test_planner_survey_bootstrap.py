@@ -11,7 +11,8 @@ from cria.planner import Planner
 
 
 class _Log:
-    def emit(self, *args, **kwargs): pass
+    def __init__(self): self.events = []
+    def emit(self, *args, **kwargs): self.events.append((args, kwargs))
 
 
 class _Planner:
@@ -117,6 +118,56 @@ class PlannerSurveyBootstrapTests(unittest.TestCase):
             self.assertEqual(len(provider.bodies), 4)
             second_results = [m["content"] for m in provider.bodies[2]["messages"] if m.get("role") == "tool"]
             self.assertTrue(any("name='surveyed'" in result for result in second_results))
+        finally:
+            wsview.unbind(token)
+
+    def test_known_undeliverable_planner_read_does_not_defer_another_survey(self):
+        """A ``!`` body record is an answered unknown, not C5's pending demand.
+
+        The second survey has already refused Cargo.toml's oversized body.  The planner conveys
+        that fact, applies normal exact-repeat refusal, and starts work rather than emitting a
+        survey carrier which could only receive the same ``!`` record forever.
+        """
+        root, key = self._root(), "sid:undeliverable-body"
+        pathlib.Path(root, "Cargo.toml").write_bytes(b"x" * (wsview.BLOB_FILE_MAX + 1))
+        view = wsview.View(root, key)
+
+        def survey():
+            raw = subprocess.run(["sh", "-c", wsview.survey_command(key)], cwd=root,
+                                 text=True, capture_output=True, check=True).stdout
+            self.assertTrue(wsview.apply_survey(view, wsview.strip_survey(raw)[1]))
+
+        survey()                         # tree knows Cargo.toml, but not its body
+        self.assertIsNone(view.read_bytes("Cargo.toml"))  # queue its one possible delivery
+        survey()                         # body section answers with `!Cargo.toml\t<size>`
+        self.assertEqual(view.undeliverable_size("Cargo.toml"), wsview.BLOB_FILE_MAX + 1)
+        self.assertFalse(view.body_pending("Cargo.toml"))
+
+        provider = _ScriptedProvider([
+            _tool_reply("read_file", {"path": "Cargo.toml"}),
+            _tool_reply("read_file", {"path": "Cargo.toml"}),
+            _tool_reply("submit_plan", {"steps": ["Update the Rust CLI."]}),
+        ])
+        loop = Loop(LoopContext(planner=Planner(provider, max_gather_rounds=2),
+                                coder_chat=lambda *a: b'{"choices":[{"message":{"content":"work"}}]}',
+                                reasoner_chat=lambda *a: b"{}", runs_dir=""), LoopStore())
+        token = wsview.bind(view)
+        try:
+            rlog = _Log()
+            started = loop.drive(_body(root), key, _TASK, rlog)
+            self.assertIsNotNone(started)
+            # The ordinary first-step gate may carry its own survey, but it has no body demand:
+            # C5 did not compose a separate planner survey carrier for this answered unknown.
+            self.assertIn("WANT = []", json.dumps(started))
+            self.assertNotIn("loop.planner_survey_deferred", [event[0][0] for event in rlog.events])
+            self.assertEqual(len(provider.bodies), 3)
+            tool_results = [m["content"] for m in provider.bodies[1]["messages"]
+                            if m.get("role") == "tool"]
+            self.assertTrue(any("exists and is" in result and "contents are unknown" in result
+                                for result in tool_results))
+            repeats = [m["content"] for m in provider.bodies[2]["messages"]
+                       if m.get("role") == "tool"]
+            self.assertTrue(any("you already ran read_file" in result for result in repeats))
         finally:
             wsview.unbind(token)
 

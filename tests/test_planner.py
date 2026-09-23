@@ -391,13 +391,13 @@ class GatherLoopTests(unittest.TestCase):
         self.assertIn("x" * 611, results)
         self.assertNotIn("you already ran read_file", "\n".join(results))
 
-    def test_an_answered_workspace_read_still_gets_the_repeat_refusal(self):
-        """Adversarial counterpart: an empty/non-learning result is not automatically pending.
+    def test_an_answered_empty_workspace_read_still_gets_the_repeat_refusal(self):
+        """Adversarial counterpart: an empty answer is not automatically pending.
         A file body already delivered by a survey remains an answered exact repeat."""
         root = tempfile.mkdtemp()
         path = f"{root}/lookup.js"
         with open(path, "w", encoding="utf-8") as fh:
-            fh.write("already answered\n")
+            fh.write("")
         session = "answered-read-repeat"
         view = wsview.View(root, session)
 
@@ -409,7 +409,7 @@ class GatherLoopTests(unittest.TestCase):
         survey()
         self.assertIsNone(view.read(path))  # request its body for the next survey
         survey()
-        self.assertEqual(view.read(path), "already answered\n")
+        self.assertEqual(view.read(path), "")
         provider = _ScriptedProvider([
             _tool_resp("read_file", {"path": path}),
             _tool_resp("read_file", {"path": path}),
