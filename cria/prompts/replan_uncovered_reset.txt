@@ -1,0 +1,4 @@
+The previous planning breakdown was rejected because it omitted these required deliverables:
+{missing}
+
+Work from the user's full task instead of that rejected breakdown. Inspect the current workspace and continue implementing and verifying the task's requirements.

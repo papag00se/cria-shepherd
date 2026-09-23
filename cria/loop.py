@@ -388,6 +388,10 @@ class PlanSession(GuardState):
     # replans kept regrowing. When the reading step clears, drive() flips the session to
     # ``synthetic`` and the raw-task single-item drive takes over exactly as before the rewiring.
     plan_off: bool = False
+    # A living re-derivation that omitted named deliverables releases its rejected cursor and
+    # resumes from the raw task.  Keep the coverage judge's exact typed findings across a restart;
+    # this is evidence, not a replacement plan or an authored action.
+    replan_uncovered: tuple[str, ...] = ()
     phase: Phase = Phase.WORK
     summary: str = ""  # running summary of completed steps (the cheap plan-structure axis)
     prior_work: str = ""  # earlier finished work (briefing re-read from history / harness-summary tail)
@@ -853,7 +857,8 @@ def _tool_names(coder_tools: str) -> list[str]:
 
 def reassess_remaining(reasoner_chat, reasoner_role, task: str, completed: str, remaining: str,
                        evidence: str, rlog, coder_tools: str = "",
-                       trigger: str = REPLAN_TRIGGER_ADVANCE, facts: str = "") -> list[str] | None:
+                       trigger: str = REPLAN_TRIGGER_ADVANCE, facts: str = "",
+                       uncovered: list[str] | None = None) -> list[str] | None:
     """Dedicated reasoner call for the LIVING plan: re-derive the REMAINING plan steps from the work
     ACTUALLY done (real tool evidence), so the plan adjusts to reality at each verification instead of
     marching a stale guess. Returns the refined remaining step-text list (may be shorter/reworded/
@@ -946,6 +951,11 @@ def reassess_remaining(reasoner_chat, reasoner_role, task: str, completed: str, 
     done_texts = [ln[2:].strip() for ln in (completed or "").splitlines() if ln.startswith("- ")]
     missing = missing_deliverables(_ask, task, done_texts + kept)
     if missing:
+        # The caller needs to distinguish this known, typed refusal from an unparseable/otherwise
+        # declined re-derivation.  Keep the public return contract: callers that only need the
+        # fail-safe ``None`` remain untouched, while the living-plan owner can release its cursor.
+        if uncovered is not None:
+            uncovered.extend(missing)
         rlog.emit("loop.replan_uncovered", level="warn", missing=", ".join(missing))
         return None
     # A re-derived step must not name a CODER TOOL as code the deliverable calls or mocks. cria's
@@ -3843,6 +3853,10 @@ class Loop:
         rlog.emit("loop.step_done", step=idx, verified=True)
         if not sess.plan_off:  # plan-off's tail IS the user's task — never re-derived into steps
             self._replan_tail(sess, body, idx, rlog)  # living plan: refine the not-done steps from real work
+        if sess.synthetic:
+            # A coverage refusal released the old living-plan cursor.  Re-enter through the existing
+            # raw-task driver immediately; `_work` would re-cage the task as a synthetic plan step.
+            return self._drive_single_item(sess, body, key, rlog)
         self._persist_plan(sess.plan, rlog)  # refresh cria's own plan mirror; advance in-memory
         return self._work(sess, key, body, rlog)
 
@@ -3888,12 +3902,29 @@ class Loop:
         # "coder_tools=_coder_tools_summary" and skipped every site that passes a variable.
         tools = _coder_tools_summary(body.get("tools"))
         judge_tools = _coder_tools_summary(body.get("tools"), params=False)
+        uncovered: list[str] = []
         steps = reassess_remaining(
             self._ctx.reasoner_chat, self._ctx.reasoner_role, sess.plan.task,
             "\n".join(f"- {it.text}" for it in done_items),
             "\n".join(f"- {it.text}" for it in rederivable), evidence, rlog, coder_tools=tools,
-            trigger=trigger, facts=session_research_facts(body.get("messages", []), sess))
-        if steps is None:  # declined / unparseable → keep the plan untouched
+            trigger=trigger, facts=session_research_facts(body.get("messages", []), sess),
+            uncovered=uncovered)
+        if steps is None:
+            if uncovered:
+                # A coverage refusal is not an undecidable replan.  Keeping its old cursor makes
+                # the rejected decomposition authoritative anyway.  The existing synthetic path is
+                # the one safe no-plan state: it frames the user's raw task, preserves all ordinary
+                # guards/gates, and cannot manufacture a replacement plan or code.
+                sess.synthetic = sess.plan_off = True
+                sess.plan.items = [PlanItem(text=sess.plan.task)]
+                sess.replan_uncovered = tuple(uncovered)
+                sess.nudge_reason = prompts.render("replan_uncovered_reset",
+                                                   missing=", ".join(uncovered))
+                sess.steer_source = "living-plan coverage refusal"
+                rlog.emit("loop.replan_reset", level="warn", step=idx, state="raw_task",
+                          missing=", ".join(uncovered))
+                return
+            # An unparseable/otherwise declined re-derivation still cannot safely replace the plan.
             rlog.emit("loop.replan_noop", step=idx, result="declined", remaining=len(rederivable))
             return
         if not steps:  # claims the re-derivable tail is done — confirm before dropping it
@@ -3957,8 +3988,11 @@ class Loop:
             self._replan_tail(sess, body, idx, rlog, trigger=REPLAN_TRIGGER_STALLED)   # grounded re-derivation; its own fail-safes apply
             after = [it.text for it in sess.plan.items if not it.done]
             if after != before:  # the reasoner un-stuck the plan from ground truth → clean restart
-                sess.verify_fails, sess.critic_fails, sess.nudge_reason = 0, 0, ""
+                sess.verify_fails, sess.critic_fails = 0, 0
                 rlog.emit("loop.stuck_replan", step=idx, before=len(before), after=len(after), trigger="verify")
+                if sess.synthetic:
+                    return self._drive_single_item(sess, body, key, rlog)
+                sess.nudge_reason = ""
                 return self._work(sess, key, body, rlog)
         return self._renudge(sess, key, body, reason, rlog)
 
@@ -3979,8 +4013,11 @@ class Loop:
         self._replan_tail(sess, body, idx, rlog, trigger=REPLAN_TRIGGER_STALLED)   # same grounded re-derivation + fail-safes
         after = [it.text for it in sess.plan.items if not it.done]
         if after != before:
-            sess.step_tool_calls, sess.verify_fails, sess.critic_fails, sess.nudge_reason = 0, 0, 0, ""
+            sess.step_tool_calls, sess.verify_fails, sess.critic_fails = 0, 0, 0
             rlog.emit("loop.stuck_replan", step=idx, before=len(before), after=len(after), trigger="thrash")
+            if sess.synthetic:
+                return self._drive_single_item(sess, body, key, rlog)
+            sess.nudge_reason = ""
             return self._work(sess, key, body, rlog)
         return None
 
@@ -4996,6 +5033,8 @@ def _session_to_dict(sess: PlanSession) -> dict:
         "completion_remediation_nonwrite_seen": sess.completion_remediation_nonwrite_seen,
         "synthetic": sess.synthetic,  # a resumed single-item session must stay single-item, not
         #                               flip to multi-step framing after a restart
+        "plan_off": sess.plan_off,
+        "replan_uncovered": list(sess.replan_uncovered),
         # Optional additions preserve old state-file compatibility. The structured stream is what
         # keeps event freshness and success supersession truthful after a service restart; the set
         # remains for readers of the earlier schema.
@@ -5028,6 +5067,8 @@ def _session_from_dict(d) -> PlanSession | None:
                                                                      (d.get("completion_remediation_nonwrite_ids") or []) if call_id),
                            completion_remediation_nonwrite_seen=bool(d.get("completion_remediation_nonwrite_seen")),
                            synthetic=bool(d.get("synthetic")),
+                           plan_off=bool(d.get("plan_off")),
+                           replan_uncovered=tuple(str(item) for item in (d.get("replan_uncovered") or []) if item),
                            refusal_events=ledger,
                            refused_names=(ledger.active_names() if ledger is not None else legacy))
     except Exception:  # noqa: BLE001

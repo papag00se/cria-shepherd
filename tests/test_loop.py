@@ -5519,6 +5519,71 @@ class ReplanTailCoverageTests(unittest.TestCase):
                                  "- old tests step\n- old readme step", "ev", _Rlog())
         self.assertEqual(out, ["Write tests", "Write README"])
 
+    def test_c7_coverage_refusal_releases_the_malformed_url_cursor_to_raw_task(self):
+        """Capture-shaped C7: a refused replacement must not leave ``https:/`` as the next frame."""
+        from cria.config import Role
+        task = "Build the Handles CLI with unit tests, a live lookup test, and a README."
+        stale = "Fetch https:/api.handle.me/handles/{handle} and wire the lookup"
+        plan = Plan(id="c7", task=task, created="c",
+                    items=[PlanItem("Inspect the existing CLI"), PlanItem(stale)])
+        coder = _Recorder([_toolcall()])
+        reasoner = _Scripted([_replan(["Implement the CLI lookup"]), _text("NONE"),
+                              self._missing(["unit tests", "live lookup test", "README"])])
+        ctx = _ctx(coder, reasoner)
+        ctx.reasoner_role = Role(name="reasoner", backend="local")
+        sess = PlanSession(plan=plan)
+        body = {"messages": [{"role": "user", "content": task}], "tools": [_SHELL], "stream": True}
+        Loop(ctx)._advance(sess, "sid:c7", body, 1, 2, _Rlog())
+
+        sent = json.dumps(coder.bodies[-1]["messages"])
+        self.assertTrue(sess.synthetic)
+        self.assertTrue(sess.plan_off)
+        self.assertEqual([item.text for item in sess.plan.items], [task])
+        self.assertEqual(sess.replan_uncovered, ("unit tests", "live lookup test", "README"))
+        from cria.loop import _session_from_dict, _session_to_dict
+        self.assertEqual(_session_from_dict(_session_to_dict(sess)).replan_uncovered, sess.replan_uncovered)
+        self.assertIn(task, sent)
+        self.assertIn("unit tests", sent)
+        self.assertNotIn(stale, sent)
+        self.assertNotIn("Do ONLY this step", sent)
+
+    def test_c9_coverage_refusal_releases_the_package_only_cursor_to_raw_task(self):
+        """Capture-shaped C9: package work cannot remain authoritative after Docker/live-E2E loss."""
+        from cria.config import Role
+        task = "Build Handles service packaging with Dockerfile, package tests, and a live end-to-end test."
+        stale = "Update package.json scripts and dependencies"
+        plan = Plan(id="c9", task=task, created="c",
+                    items=[PlanItem("Inspect the service"), PlanItem(stale)])
+        coder = _Recorder([_toolcall()])
+        reasoner = _Scripted([_replan(["Update package metadata"]), _text("NONE"),
+                              self._missing(["Dockerfile", "live end-to-end test"])])
+        ctx = _ctx(coder, reasoner)
+        ctx.reasoner_role = Role(name="reasoner", backend="local")
+        sess = PlanSession(plan=plan)
+        body = {"messages": [{"role": "user", "content": task}], "tools": [_SHELL], "stream": True}
+        Loop(ctx)._advance(sess, "sid:c9", body, 1, 2, _Rlog())
+
+        sent = json.dumps(coder.bodies[-1]["messages"])
+        self.assertTrue(sess.synthetic)
+        self.assertEqual(sess.replan_uncovered, ("Dockerfile", "live end-to-end test"))
+        self.assertIn(task, sent)
+        self.assertIn("Dockerfile", sent)
+        self.assertNotIn(stale, sent)
+        self.assertNotIn("Do ONLY this step", sent)
+
+    def test_an_unparseable_rederivation_keeps_the_living_cursor(self):
+        """Only typed coverage refusal resets; ordinary no-plan/parse failure remains fail-safe."""
+        from cria.config import Role
+        plan = Plan(id="declined", task="build it", created="c",
+                    items=[PlanItem("done", done=True), PlanItem("keep this cursor")])
+        ctx = _ctx(_Recorder([_toolcall()]), _Scripted([_text("not JSON")]))
+        ctx.reasoner_role = Role(name="reasoner", backend="local")
+        sess = PlanSession(plan=plan)
+        Loop(ctx)._replan_tail(sess, _body(), 1, _Rlog())
+        self.assertFalse(sess.synthetic)
+        self.assertFalse(sess.plan_off)
+        self.assertEqual([item.text for item in sess.plan.items], ["done", "keep this cursor"])
+
     def test_the_coverage_judge_sees_completed_steps_plus_the_new_tail(self):
         """The check judges the plan AS IT WOULD STAND — a deliverable already produced by a DONE
         step must not fail the tail, so the completed steps ride in the judged plan."""
