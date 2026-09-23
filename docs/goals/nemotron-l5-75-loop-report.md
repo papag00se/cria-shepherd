@@ -8,7 +8,7 @@ sections supersede older prose where they conflict.
 | Cell | Latest comparable run | Final usefulness | Status |
 |---|---|---:|---|
 | shipping-rates-rb | `shipping-rates-rb_nemotron-elastic_codex_pon_1790138116` | 30% | open — ≤75% |
-| cart-billing-go | `cart-billing-go_nemotron-elastic_codex_pon_1790190648` | 5% | open — ≤75% |
+| cart-billing-go | `cart-billing-go_nemotron-elastic_codex_pon_1790198063` | 50% | open — ≤75% |
 | orders-api-py | `orders-api-py_nemotron-elastic_codex_pon_1790068242` | 15% | open — ≤75% |
 | feed-pipeline-java | `feed-pipeline-java_nemotron-elastic_codex_pon_1790068525` | 20% | open — ≤75% |
 | handles-cli-node | `handles-cli-node_nemotron-elastic_codex_pon_1790148627` | 30% | open — ≤75% |
@@ -186,7 +186,13 @@ Next bounded unit: the latest Cart C13 capture is materialized losslessly at `~/
 ### Candidate C19 — preserve unstamped checker tool voice
 
 - Complete C14 walk (82 lossless segments) rejected C16 (downstream critic provenance already suppressed) and C17 (unrecognized compaction summary cannot be faithfully repaired). C18 traced the independent earliest repeat-loop producer: `probegate.clean_gate_results` replaced C14 CALL0028/CALL0392’s non-stamped proxy checker results with synthetic repeat prose, destroying the real tool output and inducing identical rechecks.
-- `705301ac` returns non-stamped results after existing structural cleanup, preserving every real checker line; provenance-stamped C6 cleaning remains `linked_only=True`. C14-shaped fails-before/passes-after replay, stamped-gate, and ordinary marker-shaped regressions landed. Focused checks passed; full `python -m pytest` **5000 passed, 5 skipped**. Independent re-review accepted (108 focused tests), commit pushed, `cria.service` restarted and `/health` OK. One serialized C19 Cart rerun is now justified; it requires one new recurring 10-minute heartbeat.
+- `705301ac` returns non-stamped results after existing structural cleanup, preserving every real checker line; provenance-stamped C6 cleaning remains `linked_only=True`. C14-shaped fails-before/passes-after replay, stamped-gate, and ordinary marker-shaped regressions landed. Focused checks passed; full `python -m pytest` **5000 passed, 5 skipped**. Independent re-review accepted (108 focused tests), commit pushed, `cria.service` restarted and `/health` OK.
+
+### C19 Cart terminal rerun — strategy reset
+
+- Comparable run `cart-billing-go_nemotron-elastic_codex_pon_1790198063` under exact note `BATTERY2 L5 nemotron-elastic 08215092 p9` ended `milestone-stalled-45min` after **494 calls**. Canonical milestones were 55% continue then 50% stalled; final packet `/home/jesse/.cria/suite/_usefulness_evidence/cart-billing-go_nemotron-elastic_codex_pon_1790198063.txt` records **50%**.
+- The archive contains a substantial decimal/JSON/test attempt, but `go test ./...` first lacked `go.sum` and then exposed incompatible shopspring decimal API/type use across `cart.go` and `cart_test.go`. The heartbeat `66810bea` was removed after the terminal report.
+- **No further generic Cart rerun is authorized.** C13 25% → C14 5% → C19 50% does not establish convergence. The next unit must walk C19’s full decisive capture to the transition where unsupported decimal API/type assumptions reached the coder, prove a new deterministic owner and capture-shaped replay, or select another unmet cell.
 
 ## Rejected candidates
 
