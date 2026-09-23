@@ -5575,6 +5575,92 @@ class ReplanTailCoverageTests(unittest.TestCase):
         self.assertNotIn(stale, sent)
         self.assertNotIn("Do ONLY this step", sent)
 
+    def test_cart_coverage_refusal_releases_the_discounts_cursor_to_raw_task(self):
+        """Capture-shaped Cart/Go: typed delivery loss cannot retain discounts.json as the cursor."""
+        from cria.config import Role
+        task = (
+            "Fix the rounding bug causing totals to be one cent low. Example: three items at `19.99` "
+            "with `SUMMER25` currently produce `48.57` instead of `48.58`. Add a regression test.\n\n"
+            "Then, move discount codes from hard-coded values to a `discounts.json` file next to the "
+            "binary. Put the current three codes in that file. If the file is missing, fall back to "
+            "those same three codes. Stop using `float64` for money arithmetic. Add a third-party Go "
+            "decimal module to `go.mod` and use it for cart calculations. Do not create a custom decimal "
+            "type. Keep the `Item` struct field types unchanged; convert values inside the cart.\n\n"
+            "Log every computed total to `stderr` on one line, including the subtotal, discount code or "
+            "`none`, and final total, so orders can be found with `grep`."
+        )
+        stale = ("Create discounts.json in workspace root containing the three discount codes and their values "
+                 "(e.g. WELCOME10 10 SUMMER25 25 NOPE 0)")
+        missing = ("rounding fix (48.57 → 48.58)", "discounts.json plus missing-file fallback",
+                   "decimal arithmetic while preserving Item", "one-line stderr total log")
+        plan = Plan(id="cart", task=task, created="c",
+                    items=[PlanItem("Add the rounding regression test"), PlanItem(stale)])
+        coder = _Recorder([_toolcall()])
+        reasoner = _Scripted([
+            _replan(["Create discounts.json", "Use decimal arithmetic"]), _text("NONE"),
+            self._missing(list(missing)),
+        ])
+        ctx = _ctx(coder, reasoner)
+        ctx.reasoner_role = Role(name="reasoner", backend="local")
+        sess = PlanSession(plan=plan)
+        replayed_cursor = ("You are completing a larger task with an ordered plan. This plan was created by another model\n"
+                           "Do ONLY this step (4 of 8):\n" + stale)
+        body = {"messages": [{"role": "user", "content": task},
+                             {"role": "user", "content": replayed_cursor}],
+                "tools": [_SHELL], "stream": True}
+        rlog = _Rlog()
+        Loop(ctx)._advance(sess, "sid:cart", body, 1, 2, rlog)
+
+        sent = coder.bodies[-1]["messages"]
+        serialized = "\n".join(message.get("content", "") for message in sent)
+        self.assertTrue(sess.synthetic)
+        self.assertTrue(sess.plan_off)
+        self.assertEqual([item.text for item in sess.plan.items], [task])
+        self.assertEqual(sess.replan_uncovered, missing)
+        self.assertIn(task, serialized)                    # reset re-serializes the complete raw task
+        for deliverable in missing:
+            self.assertIn(deliverable, serialized)         # and its typed coverage receipt
+        self.assertNotIn(stale, serialized)                 # never re-send Cart's stale cursor
+        self.assertNotIn("Do ONLY this step", serialized)
+        self.assertIn("loop.replan_uncovered", rlog.kinds())
+        self.assertIn("loop.replan_reset", rlog.kinds())
+
+    def test_c8_preservation_refusal_does_not_become_a_coverage_reset(self):
+        """Capture-shaped Shipping/Ruby: preserving a noise drop is not a C10 coverage refusal."""
+        from cria.config import Role
+        task = "Use a third-party EU-detection gem in Shipping.zone_for."
+        gem_step = "Add eu_geocoder gem to Gemfile and run bundle install."
+        preserved_requirement = "Add EU-detection gem to Gemfile and run bundle install"
+        plan = Plan(id="c8", task=task, created="c", items=[
+            PlanItem("Fix the free-shipping threshold", done=True), PlanItem(gem_step),
+            PlanItem("Implement Shipping.zone_for using the gem"),
+        ])
+        reasoner = _Scripted([
+            _replan([gem_step, "Implement Shipping.zone_for using the gem"]), _text("1"),
+            _text(json.dumps({"lost": preserved_requirement})),
+            self._missing([]),
+        ])
+        ctx = _ctx(_Recorder([_toolcall()]), reasoner)
+        ctx.reasoner_role = Role(name="reasoner", backend="local")
+        sess = PlanSession(plan=plan)
+        rlog = _Rlog()
+        Loop(ctx)._replan_tail(sess, _body(), 1, rlog)
+
+        self.assertFalse(sess.synthetic)
+        self.assertFalse(sess.plan_off)
+        self.assertEqual(sess.replan_uncovered, ())
+        self.assertEqual([item.text for item in sess.plan.items], [
+            "Fix the free-shipping threshold", gem_step,
+            "Implement Shipping.zone_for using the gem",
+        ])
+        noise_refusal = next(event for kind, event in rlog.events if kind == "loop.replan_noise_refused")
+        noise = next(event for kind, event in rlog.events if kind == "loop.replan_noise")
+        self.assertEqual(noise_refusal["lost"], preserved_requirement)
+        self.assertEqual((noise["dropped"], noise["kept"]), (0, 2))
+        self.assertIn("loop.replan_noop", rlog.kinds())
+        self.assertNotIn("loop.replan_uncovered", rlog.kinds())
+        self.assertNotIn("loop.replan_reset", rlog.kinds())
+
     def test_restored_coverage_reset_delivers_typed_evidence_once_and_keeps_cursor_suppressed(self):
         """A restart must retain the pending reset receipt, but cannot replay it forever."""
         from cria.loop import _session_from_dict, _session_to_dict
