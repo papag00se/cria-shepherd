@@ -11,6 +11,7 @@ from cria.probediscovery import (
     js_package_manager,
     project_types,
 )
+from cria.proberun import select_completion_probes
 
 
 def write(root, relpath, body):
@@ -55,6 +56,13 @@ class UpstreamPortedTests(DiscoveryCase):
         # sees a deleted passing test — is structurally silent on Go.
         # See tests/test_go_prints_a_countable_tally.py.
         self.assertIn("go test -mod=readonly -count=1 -v ./...", c)
+
+    def test_completion_selected_go_lint_floor_is_readonly(self):
+        write(self.d, "go.mod", "module x\n")
+        write(self.d, "main.go", "package main\nfunc main() {}\n")
+        selected = cmds(select_completion_probes(str(self.d)))
+        self.assertIn("go vet -mod=readonly ./...", selected)
+        self.assertNotIn("go vet ./...", selected)
 
     def test_python_probe_discovery_prefers_uv_and_config_gated(self):  # T3
         write(self.d, "pyproject.toml",

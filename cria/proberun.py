@@ -175,7 +175,7 @@ def result_collected_nothing(result: "ProbeResult") -> bool:
 
 @dataclass
 class ProbeReport:
-    """What ran and what came back; ``selected[i]`` produced ``results[i]``."""
+    """What ran and what came back; a truncated gate may omit results, so consumers join by command."""
     project_type: list[str] = field(default_factory=list)
     selected: list[ProbeCandidate] = field(default_factory=list)
     results: list[ProbeResult] = field(default_factory=list)

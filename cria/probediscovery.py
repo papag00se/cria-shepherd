@@ -1162,9 +1162,9 @@ def lint_floor_candidates(root: Path) -> list[ProbeCandidate]:
                             p.dir, 60, 82, ProbeCost.Moderate,
                             "Rust linting: clippy (zero-config)", ecosystem=Ecosystem.Rust))
         if p.has("go.mod"):
-            out.append(cand(ProbeKind.Lint, ["go", "vet", "./..."],
+            out.append(cand(ProbeKind.Lint, ["go", "vet", "-mod=readonly", "./..."],
                             p.dir, 60, 82, ProbeCost.Cheap,
-                            "Go linting: go vet (zero-config)", ecosystem=Ecosystem.Go))
+                            "Go linting: read-only go vet (zero-config)", ecosystem=Ecosystem.Go))
     return out
 
 

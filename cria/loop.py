@@ -6759,12 +6759,19 @@ def module_state_steer(gs: GuardState, outcome, body: dict, rlog, *,
     report = getattr(outcome, "report", None)
     if report is None or reasoner_chat is None or reasoner_role is None:
         return None
+    # A cut gate records every selected candidate but omits results for absent sections.  Its
+    # result list is therefore not positional: pair by the command carried on the parsed result,
+    # so a missing earlier lint/build section cannot relabel a later failed Go test as that probe.
+    results_by_command = {result.command: result for result in report.results or []}
     failed = []
-    for candidate, result in zip(report.selected or [], report.results or []):
+    for candidate in report.selected or []:
+        command = proberun.display_command(candidate.command)
+        result = results_by_command.get(command)
         if (getattr(candidate, "ecosystem", None) is probediscovery.Ecosystem.Go
                 and getattr(candidate, "kind", None) is probediscovery.ProbeKind.Test
+                and result is not None
                 and getattr(result, "exit_code", None) not in (None, 0)):
-            failed.append((proberun.display_command(candidate.command), result.exit_code))
+            failed.append((command, result.exit_code))
     if not failed:
         return None
     checks = gate_error_text(outcome)

@@ -8,8 +8,8 @@ from pathlib import Path
 
 from cria import probediscovery
 from cria.config import Role
-from cria.loop import GuardState, module_state_steer
-from cria.probegate import GateOutcome
+from cria.loop import GuardState, guard_periodic_result, module_state_steer
+from cria.probegate import GateOutcome, GatePlan, SECTION_PREFIX, SECTION_SUFFIX
 from cria.probeparse import ProbeResult
 from cria.proberun import ProbeReport
 
@@ -19,35 +19,53 @@ class _Log:
         pass
 
 
+def _candidate(kind, command, ecosystem=probediscovery.Ecosystem.Go):
+    return probediscovery.ProbeCandidate(
+        kind=kind, command=command, working_dir=Path("."), confidence=90,
+        expected_value=90, cost=probediscovery.ProbeCost.Moderate,
+        mutates_code=False, may_hang=False, may_need_services=False,
+        reason="go.mod found", ecosystem=ecosystem)
+
+
 def _outcome(ecosystem=probediscovery.Ecosystem.Go, exit_code=1):
-    candidate = probediscovery.ProbeCandidate(
-        kind=probediscovery.ProbeKind.Test,
-        command=["go", "test", "-mod=readonly", "-count=1", "-v", "./..."],
-        working_dir=Path("."), confidence=90, expected_value=90,
-        cost=probediscovery.ProbeCost.Moderate, mutates_code=False, may_hang=False,
-        may_need_services=False, reason="go.mod found", ecosystem=ecosystem)
-    result = ProbeResult("go test -mod=readonly -count=1 -v ./...", exit_code,
-                         "billing/money.go:8: missing go.sum entry")
+    command = ["go", "test", "-mod=readonly", "-count=1", "-v", "./..."]
+    candidate = _candidate(probediscovery.ProbeKind.Test, command, ecosystem)
+    result = ProbeResult(" ".join(command), exit_code, "billing/money.go:8: missing go.sum entry")
     return GateOutcome(ran=True, report=ProbeReport([], [candidate], [result]))
 
 
-def _body():
+def _body(extra=()):
     return {"messages": [
         {"role": "user", "content": "Implement the cart billing endpoint."},
         {"role": "assistant", "content": "Maybe another decimal package is needed."},
+        *extra,
     ]}
 
 
 class C10ModuleStateResetTests(unittest.TestCase):
-    def test_c10_red_readonly_go_test_is_reasoned_and_preserves_actual_checker_voice(self):
+    def test_c10_periodic_gate_matches_failed_test_by_command_after_omitted_preceding_probe(self):
+        """The actual periodic transition must not zip the test onto absent `go vet` output."""
         seen = []
 
         def reasoner(body, _rlog):
             seen.append(body)
             return json.dumps({"choices": [{"message": {"content": "REANCHOR"}}]}).encode()
 
-        steer = module_state_steer(GuardState(), _outcome(), _body(), _Log(),
-            reasoner_chat=reasoner, reasoner_role=Role(name="reasoner", backend="local"))
+        lint = _candidate(probediscovery.ProbeKind.Lint,
+                          ["go", "vet", "-mod=readonly", "./..."])
+        test = _candidate(probediscovery.ProbeKind.Test,
+                          ["go", "test", "-mod=readonly", "-count=1", "-v", "./..."])
+        state = GuardState(periodic_probe=True, probe_call_id="c10-gate")
+        state.gate_plan = GatePlan(workspace=".", candidates=[lint, test])
+        # probe-0 is deliberately absent (a cut result); probe-1 is the actual C10-shaped failure.
+        raw = (f"{SECTION_PREFIX}probe-1{SECTION_SUFFIX}\n"
+               "billing/money.go:8: missing go.sum entry\nEXIT:1\n"
+               f"{SECTION_PREFIX}git{SECTION_SUFFIX}\nabc\n")
+        steer = guard_periodic_result(
+            state, _body(({"role": "tool", "tool_call_id": "c10-gate", "content": raw},)),
+            _Log(), reasoner_chat=reasoner, reasoner_role=Role(name="reasoner", backend="local"))
+
+        self.assertFalse(state.periodic_probe)
         self.assertEqual(len(seen), 1)
         prompt = "\n".join(str(x.get("content") or "") for x in seen[0]["messages"])
         self.assertIn("go test -mod=readonly -count=1 -v ./... exited 1", prompt)
