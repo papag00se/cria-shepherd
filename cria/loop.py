@@ -392,6 +392,10 @@ class PlanSession(GuardState):
     # resumes from the raw task.  Keep the coverage judge's exact typed findings across a restart;
     # this is evidence, not a replacement plan or an authored action.
     replan_uncovered: tuple[str, ...] = ()
+    # The reset evidence must survive a restart until it has reached one raw-task coder body.
+    # The tuple remains as the typed reason the reset owns cursor suppression; this bit is only the
+    # one-shot delivery acknowledgement.
+    replan_uncovered_pending: bool = False
     phase: Phase = Phase.WORK
     summary: str = ""  # running summary of completed steps (the cheap plan-structure axis)
     prior_work: str = ""  # earlier finished work (briefing re-read from history / harness-summary tail)
@@ -3918,8 +3922,7 @@ class Loop:
                 sess.synthetic = sess.plan_off = True
                 sess.plan.items = [PlanItem(text=sess.plan.task)]
                 sess.replan_uncovered = tuple(uncovered)
-                sess.nudge_reason = prompts.render("replan_uncovered_reset",
-                                                   missing=", ".join(uncovered))
+                sess.replan_uncovered_pending = True
                 sess.steer_source = "living-plan coverage refusal"
                 rlog.emit("loop.replan_reset", level="warn", step=idx, state="raw_task",
                           missing=", ".join(uncovered))
@@ -4668,6 +4671,13 @@ class Loop:
             return intervention
         if steer is None and sess.nudge_reason:
             steer, sess.nudge_reason = sess.nudge_reason, ""
+        # The reset itself owns the first raw-task body.  Unlike a transient nudge, this is durable:
+        # a restart between the coverage refusal and the coder call must not silently drop the exact
+        # missing-deliverable evidence.  It is acknowledged only after this body reached the coder.
+        reset_delivery = bool(sess.replan_uncovered and sess.replan_uncovered_pending)
+        if reset_delivery:
+            steer = prompts.render("replan_uncovered_reset",
+                                   missing=", ".join(sess.replan_uncovered))
         # PERIODIC SATISFACTION CHECK — the off-ramp for a session that finished but cannot stop.
         # LEVEL 5 — ASSISTS_ENABLED. This check is SCHEDULED: a turn counter fires it, the model
         # asked for nothing, and cria volunteers what it thinks is missing. The trigger decides the
@@ -4694,7 +4704,8 @@ class Loop:
             prior_work=sess.prior_work, tools=body.get("tools"), synthetic=True,
             gate_plan=getattr(sess, "gate_plan", None),
             workspace_root=sess.workspace_root,
-            gate_red=bool(getattr(sess, "last_gate_red", False)))}
+            gate_red=bool(getattr(sess, "last_gate_red", False)),
+            suppress_plan_cursor=bool(sess.replan_uncovered))}
         # THE DURABLE FETCH LEDGER — the same anchor the plan-ON driver has always injected. It was
         # wired into _work_item only, so on THIS path (planner off — which is how every dense model on
         # the ladder runs, and mellum2) the coder never got it: the ⟦ctx:facts⟧ marker appears in 0 of
@@ -4732,6 +4743,9 @@ class Loop:
                 rlog.emit("context.focus_trim", reshape="focus-trim", dropped_calls=rep.dropped_calls,
                             dropped_msgs=rep.dropped_msgs)
         comp = self._coder_turn(sess, framed, body, step=1, rlog=rlog)  # SHARED coder turn (see _work)
+        if reset_delivery:
+            sess.replan_uncovered_pending = False
+            rlog.emit("loop.replan_uncovered_delivered", missing=", ".join(sess.replan_uncovered))
         if rewritten:  # no hidden guards: surface that cria re-anchored the turn
             _add_note(comp, "re-anchored after a harness compaction")
         if steer:  # no hidden guards: surface WHICH guard steered the coder
@@ -5035,6 +5049,7 @@ def _session_to_dict(sess: PlanSession) -> dict:
         #                               flip to multi-step framing after a restart
         "plan_off": sess.plan_off,
         "replan_uncovered": list(sess.replan_uncovered),
+        "replan_uncovered_pending": sess.replan_uncovered_pending,
         # Optional additions preserve old state-file compatibility. The structured stream is what
         # keeps event freshness and success supersession truthful after a service restart; the set
         # remains for readers of the earlier schema.
@@ -5055,6 +5070,7 @@ def _session_from_dict(d) -> PlanSession | None:
         ledger = (refusalledger.RefusalLedger.from_dict(d.get("refusal_events"))
                   if isinstance(d.get("refusal_events"), dict) else None)
         legacy = {str(name) for name in (d.get("refused_names") or [])}
+        uncovered = tuple(str(item) for item in (d.get("replan_uncovered") or []) if item)
         return PlanSession(plan=plan, summary=str(d.get("summary", "")),
                            prior_work=str(d.get("prior_work", "")),
                            verify_fails=int(d.get("verify_fails", 0)),
@@ -5068,7 +5084,10 @@ def _session_from_dict(d) -> PlanSession | None:
                            completion_remediation_nonwrite_seen=bool(d.get("completion_remediation_nonwrite_seen")),
                            synthetic=bool(d.get("synthetic")),
                            plan_off=bool(d.get("plan_off")),
-                           replan_uncovered=tuple(str(item) for item in (d.get("replan_uncovered") or []) if item),
+                           replan_uncovered=uncovered,
+                           # State written before this acknowledgement bit existed has evidence but no
+                           # receipt, so it must deliver once rather than silently treating it as spent.
+                           replan_uncovered_pending=bool(d.get("replan_uncovered_pending", bool(uncovered))),
                            refusal_events=ledger,
                            refused_names=(ledger.active_names() if ledger is not None else legacy))
     except Exception:  # noqa: BLE001
@@ -5673,7 +5692,7 @@ def record_coder_preframe(rlog, sess: PlanSession, item: PlanItem | None, idx: i
     rlog.emit("loop.coder_preframe", state=state)
 
 
-def _frame_for_item(messages: list[dict], item: str, summary: str, idx: int, total: int, prior_work: str = "", tools=None, synthetic: bool = False, gate_plan=None, workspace_root: str | None = None, gate_red: bool = False, remediation: bool = False) -> list[dict]:
+def _frame_for_item(messages: list[dict], item: str, summary: str, idx: int, total: int, prior_work: str = "", tools=None, synthetic: bool = False, gate_plan=None, workspace_root: str | None = None, gate_red: bool = False, remediation: bool = False, suppress_plan_cursor: bool = False) -> list[dict]:
     """Rewrite the conversation so the coder's task IS the current step, and so cria — not the
     harness — owns the system prompt:
 
@@ -5696,9 +5715,10 @@ def _frame_for_item(messages: list[dict], item: str, summary: str, idx: int, tot
       system is protected from floor-trimming and authoritative.
     """
     messages = _strip_cria_file_ops(messages)  # don't let the coder see/mimic `.cria/` writes
-    if remediation:
-        # Suspend every replayed copy of cria's cursor too.  The plan itself stays on ``sess``;
-        # this removes only the serializer artifact that would otherwise survive as user history.
+    if remediation or suppress_plan_cursor:
+        # Suspend every replayed copy of cria's cursor too.  Remediation temporarily owns an
+        # ordinary plan cursor; a typed coverage reset permanently releases a rejected one.  In
+        # either case, remove only cria's serialized frame, never a user mention of a plan.
         messages = [m for m in messages if not _is_serialized_plan_cursor(m)]
     # Responses caller instructions are not harness persona. Fold them into cria's one authoritative
     # system turn before dropping ordinary harness system messages below.

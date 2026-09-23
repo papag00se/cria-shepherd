@@ -5532,7 +5532,11 @@ class ReplanTailCoverageTests(unittest.TestCase):
         ctx = _ctx(coder, reasoner)
         ctx.reasoner_role = Role(name="reasoner", backend="local")
         sess = PlanSession(plan=plan)
-        body = {"messages": [{"role": "user", "content": task}], "tools": [_SHELL], "stream": True}
+        replayed_cursor = ("You are completing a larger task with an ordered plan. This plan was created by another model\n"
+                           "Do ONLY this step (2 of 2):\n" + stale)
+        body = {"messages": [{"role": "user", "content": task},
+                             {"role": "user", "content": replayed_cursor}],
+                "tools": [_SHELL], "stream": True}
         Loop(ctx)._advance(sess, "sid:c7", body, 1, 2, _Rlog())
 
         sent = json.dumps(coder.bodies[-1]["messages"])
@@ -5570,6 +5574,39 @@ class ReplanTailCoverageTests(unittest.TestCase):
         self.assertIn("Dockerfile", sent)
         self.assertNotIn(stale, sent)
         self.assertNotIn("Do ONLY this step", sent)
+
+    def test_restored_coverage_reset_delivers_typed_evidence_once_and_keeps_cursor_suppressed(self):
+        """A restart must retain the pending reset receipt, but cannot replay it forever."""
+        from cria.loop import _session_from_dict, _session_to_dict
+        task = "Build the Handles CLI with all requested verification."
+        stale = "Do ONLY this step (2 of 3): update package.json"
+        original = PlanSession(
+            plan=Plan(id="restored", task=task, created="c", items=[PlanItem(task)]),
+            synthetic=True, plan_off=True,
+            replan_uncovered=("Dockerfile", "live end-to-end test"),
+            replan_uncovered_pending=True)
+        sess = _session_from_dict(_session_to_dict(original))
+        self.assertTrue(sess.replan_uncovered_pending)
+        coder = _Recorder([_toolcall()])
+        loop = Loop(_ctx(coder, None))
+        rlog = _Rlog()
+        body = {"messages": [{"role": "user", "content": task},
+                             {"role": "user", "content":
+                              "You are completing a larger task. This plan was created by another model. " + stale}],
+                "tools": [_SHELL], "stream": True}
+
+        loop._drive_single_item(sess, body, "sid:restored", rlog)
+        first = json.dumps(coder.bodies[-1]["messages"])
+        self.assertIn("previous planning breakdown was rejected", first)
+        self.assertIn("Dockerfile", first)
+        self.assertNotIn(stale, first)
+        self.assertFalse(sess.replan_uncovered_pending)
+        self.assertIn("loop.replan_uncovered_delivered", rlog.kinds())
+
+        loop._drive_single_item(sess, body, "sid:restored", _Rlog())
+        second = json.dumps(coder.bodies[-1]["messages"])
+        self.assertNotIn("previous planning breakdown was rejected", second)
+        self.assertNotIn(stale, second)  # reset keeps suppressing its rejected serialized cursor
 
     def test_an_unparseable_rederivation_keeps_the_living_cursor(self):
         """Only typed coverage refusal resets; ordinary no-plan/parse failure remains fail-safe."""
