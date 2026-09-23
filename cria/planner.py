@@ -1404,7 +1404,7 @@ _ELLIPSIS_PATH = re.compile(r"(?<![\w/])(/(?:[\w.-]+/)*(?:\.\.\.|…)(?:/[\w.-]+
 _ABS_PATH_TOKEN = re.compile(r"(?<![\w])(/(?:[\w.-]+/)+[\w.-]+)")
 # A slash inside a URI route is not a filesystem path. Keep its planner-authored bytes intact:
 # path repair only owns standalone filesystem tokens.
-_URL_TOKEN = re.compile(r"[A-Za-z][A-Za-z0-9+.-]*://[^\s<>()\[\]{}\"']+")
+_URL_TOKEN = re.compile(r"[A-Za-z][A-Za-z0-9+.-]*://[^\s<>\[\]{}\"']+")
 
 
 def _workspace_match(basename: str, root: str) -> str:

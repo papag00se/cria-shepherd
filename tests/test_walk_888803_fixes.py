@@ -344,6 +344,15 @@ class APlanStepIsAnOutcomeAtAUsablePathTests(unittest.TestCase):
         step = "read the OpenAPI spec at https://api.handle.me/openapi.json to discover fields"
         self.assertEqual(self.planner.repoint_unusable_paths(step, self.d), (step, ""))
 
+    def test_parenthesized_url_route_preserves_prose_delimiters_and_scrubs_external_path(self):
+        with open(os.path.join(self.d, "tmp/reference/routes.json"), "w") as fh:
+            fh.write("{}")
+        url = "https://api.handle.me/openapi/(v1)/routes.json"
+        step = f"Read ({url}), then inspect /etc/nope/missing.yml"
+        fixed, note = self.planner.repoint_unusable_paths(step, self.d)
+        self.assertEqual(fixed, f"Read ({url}), then inspect")
+        self.assertEqual(note, "/etc/nope/missing.yml removed")
+
     def test_a_real_in_workspace_path_is_left_alone(self):
         real = os.path.join(self.d, "tmp/reference/spec.yml")
         step, note = self.planner.repoint_unusable_paths(f"Read {real} and note the fields", self.d)
