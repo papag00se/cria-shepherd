@@ -1402,6 +1402,9 @@ _TOOL_IN_STEP = re.compile(r"\b(?:" + "|".join(_CODER_TOOLS) + r")\b")
 # and it covers steers only.
 _ELLIPSIS_PATH = re.compile(r"(?<![\w/])(/(?:[\w.-]+/)*(?:\.\.\.|…)(?:/[\w.-]+)*)")
 _ABS_PATH_TOKEN = re.compile(r"(?<![\w])(/(?:[\w.-]+/)+[\w.-]+)")
+# A slash inside a URI route is not a filesystem path. Keep its planner-authored bytes intact:
+# path repair only owns standalone filesystem tokens.
+_URL_TOKEN = re.compile(r"[A-Za-z][A-Za-z0-9+.-]*://[^\s<>()\[\]{}\"']+")
 
 
 def _workspace_match(basename: str, root: str) -> str:
@@ -1436,6 +1439,8 @@ def repoint_unusable_paths(step: str, root: str) -> tuple[str, str]:
     root_prefix = (str(root).rstrip("/") + "/") if root else ""
     for pat in (_ELLIPSIS_PATH, _ABS_PATH_TOKEN):
         for m in list(pat.finditer(out)):
+            if any(url.start() <= m.start(1) < url.end() for url in _URL_TOKEN.finditer(out)):
+                continue
             tok = m.group(1)
             if tok not in out:
                 continue                       # already rewritten by an earlier match

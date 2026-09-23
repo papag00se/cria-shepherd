@@ -338,6 +338,12 @@ class APlanStepIsAnOutcomeAtAUsablePathTests(unittest.TestCase):
         self.assertNotIn("/etc/nope", step)
         self.assertIn("removed", note)
 
+    def test_c7_openapi_url_is_not_repointed_to_a_workspace_file(self):
+        with open(os.path.join(self.d, "tmp/reference/openapi.json"), "w") as fh:
+            fh.write("{}")
+        step = "read the OpenAPI spec at https://api.handle.me/openapi.json to discover fields"
+        self.assertEqual(self.planner.repoint_unusable_paths(step, self.d), (step, ""))
+
     def test_a_real_in_workspace_path_is_left_alone(self):
         real = os.path.join(self.d, "tmp/reference/spec.yml")
         step, note = self.planner.repoint_unusable_paths(f"Read {real} and note the fields", self.d)
