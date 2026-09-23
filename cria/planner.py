@@ -1216,11 +1216,21 @@ class Planner:
                 # minus fetched); ONE reasoner call decides whether the work actually depends on
                 # reading them, which is what keeps a README link or a package registry from drawing
                 # a pointless challenge without cria owning a list of what counts as incidental.
+                # Once this focused judge has already established that the work depends on an
+                # unread host, re-ask it for each final draft. Its typed answer is new evidence about
+                # the current plan and decides admission; silently skipping it would re-admit the
+                # same known-invalid host strategy when the handback budget is spent.
                 need = self._hosts_needing_read(task, steps, facts, rlog) \
-                    if may_hand_back("host") else []
+                    if (may_hand_back("host") or "host" in fired) else []
                 if need:
+                    if not may_hand_back("host"):
+                        rlog.emit("plan.host_unread", level="warn", hosts=",".join(need),
+                                  handed_back=False)
+                        rlog.emit("plan.rejected_exhausted", level="warn", check="host")
+                        self._retriable_failure = True
+                        return None
                     fired.add("host")
-                    rlog.emit("plan.host_unread", hosts=",".join(need))
+                    rlog.emit("plan.host_unread", hosts=",".join(need), handed_back=True)
                     messages = messages + [
                         {"role": "assistant", "content": msg.get("content") or None},
                         {"role": "user", "content": prompts.fill(

@@ -609,6 +609,29 @@ class UnreadHostTests(unittest.TestCase):
         self.assertTrue(any("has read" in str(m.get("content"))
                             for b in prov.bodies for m in b["messages"]))
 
+    def test_url_then_host_then_repeated_host_is_rejected(self):
+        # The first draft spends URL's correction, the second gets the typed host verdict, and the
+        # third repeats that same unread-host strategy. The host judgment must still run because it
+        # decides whether this final draft is admissible, not whether another prompt is available.
+        prov = _ScriptedProvider([
+            _tool_resp("exec_command", {"cmd": "echo https://api.handle.me/openapi.json paths: /handles/{handle}"}),
+            _tool_resp("submit_plan", {"steps": ["Call https://api.handle.me/docs/openapi.json"]}),
+            _tool_resp("submit_plan", {"steps": ["Call api.handle.me to resolve the handle"]}),
+            _content_resp("api.handle.me"),
+            _tool_resp("submit_plan", {"steps": ["Call api.handle.me to resolve the handle"]}),
+            _content_resp("api.handle.me"),
+        ])
+        rlog = _Rlog()
+        plan = Planner(prov, role=self._role(), search_key="", max_gather_rounds=1,
+                       clock=lambda: _FIXED).plan_for(
+            _msgs("resolve an Ada handle using api.handle.me"), rlog)
+        hosts = [kw for k, kw in rlog.events if k == "plan.host_unread"]
+        self.assertEqual([kw.get("handed_back") for kw in hosts], [True, False])
+        self.assertIsNone(plan)
+        self.assertIn("plan.rejected_exhausted", [k for k, _ in rlog.events])
+        self.assertIn("plan.retriable", [k for k, _ in rlog.events])
+        self.assertNotIn("plan.submitted", [k for k, _ in rlog.events])
+
     def test_reasoner_says_no_so_nothing_fires(self):
         # A README link, a package registry, a git remote — named but not depended on. No challenge,
         # and no lexical exception list needed to know that.
