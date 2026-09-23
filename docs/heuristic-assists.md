@@ -11,6 +11,7 @@ A terse index of the assists cria **actually implements** today, in five familie
 - **No-tools (LEG0) nudge** — a no-tool-call "done"/prose turn → act-first nudge (once per step), then the gate.
 - **Remediation nonwrite follow-up** — only after a typed missing-file remediation reached the coder and its own supported read/inspection tool result returned → one additive reminder that inspection is not completion; unknown or potentially mutating actions are silent, and it never selects contents, issues a write, or settles the remediation.
 - **Periodic gate** — every 15 acting coder turns → insert the repo's fresh check results as ground truth.
+- **Declared JS runner reset** — after a non-zero configured `package.json` test runner result, deterministic manifest/exit/workspace facts go to a one-shot reasoner judgment; only `RESET` pins the next turn to that declared runner and the task-confirmed no-`node_modules` contract, while preserving the checker’s own output. It does not inspect failure prose or action keywords, and Go/Ruby never enter this path.
 - **Search exact-repeat guard** — an identical/re-worded search this session → HTTP 400 before the network hit.
 - **Domain-fetch steer** — a search naming a bare domain → "fetch `https://<domain>` directly" hint.
 - **Fetch exact-repeat guard** — an identical external `web_fetch` (url + find + cursor) this session → HTTP 400; internal hosts exempt.

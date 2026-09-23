@@ -175,6 +175,10 @@ class ProbeCandidate:
     may_need_services: bool
     reason: str
     composed_by_cria: bool = False
+    # True only when the project manifest declares this exact runner interface.  This is distinct
+    # from a config-discovered direct tool: callers that must stay on the project's interface do not
+    # infer that fact from the command's words.
+    declared_interface: bool = False
     # The builder that produced this candidate.  Participation evidence must not recover this from
     # English in ``reason`` or guess it from a shared runner name downstream.  Legacy/test-created
     # candidates may leave it unset; the participation adapter has a conservative argv fallback.
@@ -742,6 +746,7 @@ def build_js(_root: Path, p: ProjectDir, out: list[ProbeCandidate]) -> None:
                      if unknown else ""))
         c = cand(kind, [pm, "run", name], d, conf, value_for(kind),
                  cost_for(kind), reason)
+        c.declared_interface = True
         c.mutates_code = vet.mutates_code
         c.may_hang = vet.may_hang
         c.may_need_services = vet.may_need_services

@@ -292,6 +292,7 @@ class GuardState:
     # alter the completion critic's cadence/state.
     deliverable_observation_last_drive: int = -1
     periodic_probe: bool = False  # a periodic check-in gate is in flight (insert its ground truth, no verdict)
+    runner_reset_signature: str = ""  # one judged JS runner reset per unchanged failing gate
     # A scheduled step critic returned done, but its approve-path brake had no surveyed workspace.
     # It is NOT an approval: acquire one bounded survey/gate round, then re-run the critic against
     # that observed view.  Keeping this separate from ``periodic_probe`` matters: that check-in
@@ -3502,7 +3503,9 @@ class Loop:
                 sess.awaiting_probe = True
                 return _completion_toolcalls(
                     [transport_tc], note=f"receiving complete check output for step {idx}/{total}")
-            truth = guard_periodic_result(sess, body, rlog)
+            truth = guard_periodic_result(
+                sess, body, rlog, reasoner_chat=self._ctx.reasoner_chat,
+                reasoner_role=self._ctx.reasoner_role, workspace_root=sess.workspace_root)
             return self._renudge(sess, key, body, truth, rlog) if truth else self._work(sess, key, body, rlog)
         probe = _read_tool_result(body.get("messages", []), sess.probe_call_id)
         if not probe.strip() and rewritten and sess.probe_reissues < MAX_PROBE_REISSUES:
@@ -4633,7 +4636,10 @@ class Loop:
                     return _completion_final(held or "Done.")
         # A PERIODIC check-in probe's result → insert the ground truth as a steer (no verdict).
         if sess.periodic_probe:
-            truth = guard_periodic_result(sess, body, rlog)
+            truth = guard_periodic_result(
+                sess, body, rlog, reasoner_chat=self._ctx.reasoner_chat,
+                reasoner_role=self._ctx.reasoner_role,
+                workspace_root=sess.workspace_root or _extract_cwd(body.get("messages", [])))
             if truth:
                 # C5: if the SAME error has persisted (the coder is STUCK, not just churning), replace the
                 # raw ground-truth insertion with a REASONED thrash-diagnosis + one concrete next step (on
@@ -6670,7 +6676,71 @@ def guard_periodic_gate(gs: GuardState, body: dict, rlog, *, workspace_root=None
     return _completion_toolcalls([probe_tc], note="periodic check-in — running the repo's checks")
 
 
-def guard_periodic_result(gs: GuardState, body: dict, rlog) -> str | None:
+def _configured_js_test_failure(outcome) -> str:
+    """The declared JavaScript test command that actually ran and failed, or ``""``.
+
+    This is deliberately configuration/result shaped, not an inference from failure text: discovery
+    records which candidates came from package.json, and the gate records their exit status.  The
+    reasoner decides whether the surrounding work is interface churn or a task-contract violation.
+    """
+    report = getattr(outcome, "report", None)
+    if report is None:
+        return ""
+    results = {result.command: result for result in (report.results or [])}
+    for candidate in report.selected or []:
+        if not (getattr(candidate, "declared_interface", False)
+                and getattr(candidate, "kind", None) is probediscovery.ProbeKind.Test
+                and getattr(candidate, "ecosystem", None) is probediscovery.Ecosystem.JsTs):
+            continue
+        command = proberun.display_command(candidate.command)
+        result = results.get(command)
+        if result is not None and result.exit_code not in (None, 0):
+            return command
+    return ""
+
+
+def runner_reset_steer(gs: GuardState, outcome, body: dict, rlog, *,
+                       reasoner_chat, reasoner_role, workspace_root: str | None) -> str | None:
+    """Judge one red declared-JS test event before pinning its runner interface.
+
+    The detector supplies only observed configuration, exit status, and workspace-directory facts.
+    It deliberately does not inspect failure prose or action wording; the reasoner judges whether
+    the session has become incompatible interface churn and whether the task carries the stated
+    no-node_modules contract.  A missing/unreadable judgment leaves the ordinary checker output
+    untouched, toward more work rather than a fabricated reset.
+    """
+    runner = _configured_js_test_failure(outcome)
+    if not runner or reasoner_chat is None or reasoner_role is None:
+        return None
+    checks = gate_error_text(outcome)
+    signature = "\n".join((runner, checks))
+    if signature == getattr(gs, "runner_reset_signature", ""):
+        return None
+    node_modules = (wsview.current(workspace_root).isdir("node_modules")
+                    if workspace_root else None)
+    node_modules_fact = {True: "node_modules is present in the surveyed workspace.",
+                         False: "node_modules is absent from the surveyed workspace.",
+                         None: "Whether node_modules is present is not known from the workspace survey."}[node_modules]
+    task, _ = _history_root(body.get("messages", []))
+    session = selfcompact.serialize(_reasoner_session(body.get("messages", [])))
+    question = prompts.render("runner_reset_judge_user", task=task or "(no task recovered)",
+                              runner=runner, node_modules=node_modules_fact, checks=checks,
+                              session=session)
+    answer = ask_closed(reasoner_chat, reasoner_role,
+                        prompts.load("runner_reset_judge") + "\n\n" + question,
+                        rlog, phase="runner-reset", max_tokens=16, retry_off=False)
+    if answer.strip().upper() != "RESET":
+        rlog.emit("loop.runner_reset", applied=False, runner=runner,
+                  verdict=answer.strip()[:40])
+        return None
+    gs.runner_reset_signature = signature
+    rlog.emit("loop.runner_reset", applied=True, runner=runner,
+              node_modules=node_modules)
+    return prompts.render("runner_reset", runner=runner, checks=checks)
+
+
+def guard_periodic_result(gs: GuardState, body: dict, rlog, *, reasoner_chat=None,
+                          reasoner_role=None, workspace_root=None) -> str | None:
     """Read the periodic check-in probe's result and return the error-class GROUND TRUTH to insert
     (file:line findings, or a check that ran and failed) — no verdict, the model keeps working. None
     when no periodic probe is pending, OR when the checks are CLEAN / couldn't run: a periodic check-in
@@ -6696,6 +6766,10 @@ def guard_periodic_result(gs: GuardState, body: dict, rlog) -> str | None:
     fresh_before = gs.gate_fresh
     record_gate_state(gs, outcome, err, rlog)
     gs.gate_fresh = fresh_before
+    if err and (reset := runner_reset_steer(
+            gs, outcome, body, rlog, reasoner_chat=reasoner_chat, reasoner_role=reasoner_role,
+            workspace_root=workspace_root)):
+        return reset
     if not err and outcome.ran and (lost := passing_test_regression(gs, outcome.report)):
         rlog.emit("loop.tests_regressed", level="warn", command=gs.last_regression[0],
                   high=gs.last_regression[1], now=gs.last_regression[2])

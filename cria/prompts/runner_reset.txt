@@ -1,0 +1,3 @@
+⟦ctx:runner-reset⟧ The configured project test runner is `{{RUNNER}}`. Keep one runner interface: repair the tests or code it runs, then run that same command again. The task's no-node_modules contract applies: do not create, commit, or rely on node_modules.
+
+{{CHECKS}}
