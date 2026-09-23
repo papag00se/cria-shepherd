@@ -94,6 +94,25 @@ class RunnerInterfaceResetTests(unittest.TestCase):
         self.assertIn("node_modules is absent", judge_prompt)
         self.assertIn("npm run test", steer)
 
+    def test_identical_on_track_judgment_is_memoized(self):
+        calls = 0
+
+        def reasoner(_body, _rlog):
+            nonlocal calls
+            calls += 1
+            return json.dumps({"choices": [{"message": {"content": "ON_TRACK"}}]}).encode()
+
+        state = GuardState()
+        outcome = self._gate_outcome(ecosystem=probediscovery.Ecosystem.JsTs)
+        role = Role(name="reasoner", backend="local")
+        self.assertIsNone(runner_reset_steer(
+            state, outcome, self._body(), _Log(), reasoner_chat=reasoner,
+            reasoner_role=role, workspace_root=str(self.root)))
+        self.assertIsNone(runner_reset_steer(
+            state, outcome, self._body(), _Log(), reasoner_chat=reasoner,
+            reasoner_role=role, workspace_root=str(self.root)))
+        self.assertEqual(calls, 1)
+
     def test_go_and_ruby_failures_do_not_call_the_judge_or_reframe(self):
         for ecosystem in (probediscovery.Ecosystem.Go, probediscovery.Ecosystem.Ruby):
             called = False

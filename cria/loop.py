@@ -292,7 +292,7 @@ class GuardState:
     # alter the completion critic's cadence/state.
     deliverable_observation_last_drive: int = -1
     periodic_probe: bool = False  # a periodic check-in gate is in flight (insert its ground truth, no verdict)
-    runner_reset_signature: str = ""  # one judged JS runner reset per unchanged failing gate
+    runner_reset_signature: str = ""  # one definitive JS runner judgment per unchanged failing gate
     # A scheduled step critic returned done, but its approve-path brake had no surveyed workspace.
     # It is NOT an approval: acquire one bounded survey/gate round, then re-run the critic against
     # that observed view.  Keeping this separate from ``periodic_probe`` matters: that check-in
@@ -6729,11 +6729,18 @@ def runner_reset_steer(gs: GuardState, outcome, body: dict, rlog, *,
     answer = ask_closed(reasoner_chat, reasoner_role,
                         prompts.load("runner_reset_judge") + "\n\n" + question,
                         rlog, phase="runner-reset", max_tokens=16, retry_off=False)
-    if answer.strip().upper() != "RESET":
+    verdict = answer.strip().upper()
+    if verdict not in ("RESET", "ON_TRACK"):
+        # Empty or malformed replies establish no judgment, so a later periodic gate may retry.
         rlog.emit("loop.runner_reset", applied=False, runner=runner,
                   verdict=answer.strip()[:40])
         return None
+    # Both exact verdicts settle this unchanged fact set.  Retrying an ON_TRACK answer merely
+    # asks the reasoner to re-guess the same session on every periodic gate.
     gs.runner_reset_signature = signature
+    if verdict == "ON_TRACK":
+        rlog.emit("loop.runner_reset", applied=False, runner=runner, verdict=verdict)
+        return None
     rlog.emit("loop.runner_reset", applied=True, runner=runner,
               node_modules=node_modules)
     return prompts.render("runner_reset", runner=runner, checks=checks)
