@@ -8,7 +8,7 @@ sections supersede older prose where they conflict.
 | Cell | Latest comparable run | Final usefulness | Status |
 |---|---|---:|---|
 | shipping-rates-rb | `shipping-rates-rb_nemotron-elastic_codex_pon_1790138116` | 30% | open — ≤75% |
-| cart-billing-go | `cart-billing-go_nemotron-elastic_codex_pon_1790152793` | 25% | open — ≤75% |
+| cart-billing-go | `cart-billing-go_nemotron-elastic_codex_pon_1790190648` | 5% | open — ≤75% |
 | orders-api-py | `orders-api-py_nemotron-elastic_codex_pon_1790068242` | 15% | open — ≤75% |
 | feed-pipeline-java | `feed-pipeline-java_nemotron-elastic_codex_pon_1790068525` | 20% | open — ≤75% |
 | handles-cli-node | `handles-cli-node_nemotron-elastic_codex_pon_1790148627` | 30% | open — ≤75% |
@@ -176,6 +176,12 @@ Next bounded unit: the latest Cart C13 capture is materialized losslessly at `~/
 - **Root cause / scope:** C14 full pytest exposed a pre-existing red in `tests/test_planner_cut_off.py::MeasurementTests.test_the_5_of_8_split_is_what_the_captures_still_say`. The test (introduced by `57f6380d`) scanned mutable `~/.cria/calls` and asserted a historical corpus split. Its behavioral cutoff invariants already lived in deterministic tests (complete trailing arguments survive, malformed trailing argument is dropped, surviving real result reaches the next planner turn).
 - **Accepted repair:** `f516387b` first replaced that census with committed capture-shaped forms. Independent review correctly rejected it because its valid envelope was a `finish_reason=tool_calls` retry, not itself a cutoff. Repair `2f199d12` makes the test boundary explicit: captured fragment and valid terminal envelopes provide the raw argument forms; the fixture applies `finish_reason="length"` to both to exercise the actual cutoff gate, with no claim that the valid retry was an observed complete cutoff. The test asserts classification comes from raw terminal arguments, not finish reason. This is test-only and does not alter product behavior or create runtime model/task logic.
 - **Evidence / review:** focused `python -m pytest tests/test_planner_cut_off.py` passed **12 passed**; canonical `python -m pytest` passed **4998 passed, 5 skipped**. The same independent Reviewer re-reviewed `2f199d12` and accepted, finding the fixture’s provenance now truthful and the gated classification invariant covered. Both commits are pushed to `main`; the unrelated report dirty state was preserved through the repair.
+
+### C14 Cart terminal rerun — strategy reset required
+
+- Comparable run `cart-billing-go_nemotron-elastic_codex_pon_1790190648` ran under exact note `BATTERY2 L5 nemotron-elastic 0dbf1441 p8`, planner on/L5, and ended `milestone-stalled-30min` after **662 calls**. The canonical 30-minute verdict was **5%, stalled**; final independent packet `/home/jesse/.cria/suite/_usefulness_evidence/cart-billing-go_nemotron-elastic_codex_pon_1790190648.txt` records the same terminal usefulness.
+- Archive evidence: only untracked `discounts.json` and research material were added; `cart.go`, `cart_test.go`, and `go.mod` retained seed behavior. The requested decimal integration, rounding repair/regression test, fallback consumption, and stderr logging were not delivered. `go test ./...` passed against the unchanged implementation. The C14 heartbeat `a2fab6b6` remains only until this terminal report is posted, then must be removed.
+- **Rerun authorization:** none. C13 (25%) → C14 (5%) is a changed/worsened outcome, not convergence. Select and prove a new upstream deterministic transition from a complete decisive capture before any further GPU run.
 
 ## Rejected candidates
 
