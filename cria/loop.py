@@ -3800,7 +3800,20 @@ class Loop:
         brake. What changed (see _verify_after_probe) is that a RED repo-wide gate is now EVIDENCE the
         critic weighs rather than a veto that skipped it — a step may advance while the checks are red
         IF the critic ruled the findings belong to another step's work. That is still a genuine pass;
-        it is not a cap, a budget, or an accept-unverified."""
+        it is not a cap, a budget, or an accept-unverified.
+
+        A per-step confirmation is not a newer whole-task satisfaction verdict.  In particular, its
+        ``consistent`` answer cannot cross a current negative satisfaction barrier: marking this item
+        done would let `_replan_tail` discard the repair the whole-task judge kept open.  Unlike the
+        final completion funnel, this edge has no bounded escape; the existing bound is only the
+        explicit whole-task completion policy."""
+        if _satisfaction_blocks_completion(sess):
+            evidence = str(getattr(sess, "latest_satisfaction_evidence", "")
+                           or prompts.load("done_no_named_gap"))
+            rlog.emit("loop.step_held_satisfaction", step=idx,
+                      reason=_clip(evidence, 160))
+            return self._renudge(sess, key, body, prompts.render(
+                "done_incomplete", reason=evidence, check_state=_check_state_words(sess)), rlog)
         item = sess.plan.current()
         item.done = True
         # A CLEAN status only — never the coder's raw output. The coder's text is unbounded prose (and

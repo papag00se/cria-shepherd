@@ -11,7 +11,7 @@ from cria.probegate import GATE_SENTINEL
 from cria.loop import (Loop, LoopContext, LoopStore, PlanSession, TASK_COMPLETE_TOOL, _add_completion_tool,
                        _frame_for_item, _has_tool_calls, _completion_text, _normalize_completion,
                        completion_to_sse, guard_rumination, guard_truncation, session_key,
-                       VerdictNudge)
+                       Confirmation, Verification, VerdictNudge, _record_satisfaction)
 from cria import prompts, webfetch
 
 from cria.plan import Plan, PlanItem
@@ -294,6 +294,75 @@ class CompletionCriticTests(unittest.TestCase):
             self.assertIsNone(loop._reopen_if_unsatisfied(sess, _body(), _Rlog()))
         self.assertTrue(sess.latest_satisfaction)
         self.assertFalse(_satisfaction_blocks_completion(sess, bounded=True))
+
+    def test_current_negative_blocks_a_confirmed_step_until_a_later_satisfaction_pass(self):
+        """C8: a critic-confirm approval has step provenance, not task-satisfaction provenance.
+
+        This is deliberately capture-shaped but language-neutral: the stored current evidence is a
+        checker-owned negative, while the step result has the exact positive confirmation shape that
+        normally authorizes `_advance`.  The negative must preserve the item and its tail; only the
+        later authoritative satisfaction pass may release it.
+        """
+        frames = []
+
+        def coder(body, _rlog):
+            frames.append(body)
+            return json.dumps(_toolcall()).encode()
+
+        driver = Loop(LoopContext(planner=None, coder_chat=coder,
+                                  reasoner_chat=lambda *_: json.dumps(_sat(True)).encode(), runs_dir=""))
+        sess = PlanSession(plan=Plan(id="boundary", task="deliver the requested behavior", created="now",
+                                     items=[PlanItem("implement the active behavior"),
+                                            PlanItem("verify the remaining behavior")]))
+        evidence = "CHECK RESULT: required behavior remains unmet"
+        _record_satisfaction(sess, False, evidence)
+        approval = Verification(True, "consistent with the inspected workspace",
+                                Confirmation(True, True, "confirmed"))
+        self.assertTrue(approval.done)
+        self.assertTrue(approval.confirmation.confirmed)
+        rlog = _Rlog()
+
+        with mock.patch.object(driver, "_verify", return_value=approval), \
+             mock.patch.object(driver, "_replan_tail") as replan:
+            out = driver._periodic_step_check(sess, "k", _body(), 1, 2, rlog, force=True)
+        self.assertTrue(_has_tool_calls(out))
+        self.assertFalse(sess.plan.items[0].done)
+        replan.assert_not_called()
+        self.assertNotIn("loop.step_done", rlog.kinds())
+        self.assertIn("loop.step_held_satisfaction", rlog.kinds())
+        self.assertIn(evidence, "\n".join(
+            str(message.get("content") or "") for message in frames[-1]["messages"]))
+
+        _record_satisfaction(sess, True, "CHECK RESULT: requested behavior now passes")
+        with mock.patch.object(driver, "_verify", return_value=approval), \
+             mock.patch.object(driver, "_replan_tail") as replan:
+            released = driver._periodic_step_check(sess, "k", _body(), 1, 2, _Rlog(), force=True)
+        self.assertTrue(_has_tool_calls(released))
+        self.assertTrue(sess.plan.items[0].done)
+        replan.assert_called_once()
+
+    def test_current_negative_blocks_completion_briefing_until_a_later_satisfaction_pass(self):
+        """C8's same state boundary covers the whole-task completion/briefing edge."""
+        driver = Loop(LoopContext(planner=None, coder_chat=lambda *_: json.dumps(_toolcall()).encode(),
+                                  reasoner_chat=lambda *_: json.dumps(_sat(True)).encode(), runs_dir=""))
+        sess = PlanSession(plan=Plan(id="finish", task="deliver the requested behavior", created="now",
+                                     items=[]), gate_fresh=True)
+        evidence = "CHECK RESULT: required behavior remains unmet"
+        _record_satisfaction(sess, False, evidence)
+        with mock.patch.object(driver, "_reopen_if_unsatisfied", return_value=None), \
+             mock.patch.object(driver, "_renudge", return_value={"kept_working": True}) as renudge, \
+             mock.patch.object(driver, "_compact_done") as compact:
+            self.assertEqual(driver._work(sess, "k", _body(), _Rlog()), {"kept_working": True})
+        self.assertIn(evidence, renudge.call_args.args[3])
+        compact.assert_not_called()
+        self.assertNotEqual(sess.phase.name, "DONE")
+
+        _record_satisfaction(sess, True, "CHECK RESULT: requested behavior now passes")
+        with mock.patch.object(driver, "_reopen_if_unsatisfied", return_value=None), \
+             mock.patch.object(driver, "_compact_done", return_value="briefing"):
+            released = driver._work(sess, "k", _body(), _Rlog())
+        self.assertEqual(sess.phase.name, "DONE")
+        self.assertIn("plan complete", released["choices"][0]["message"]["content"])
 
     def test_plan_off_green_gate_false_latch_reenters_the_coder_not_the_proxy(self):
         """A plan-off gate must consume its false latch as a steer, never return None.
