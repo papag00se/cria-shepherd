@@ -1319,6 +1319,36 @@ def gate_probes_of(cmd: str) -> list[str] | None:
     return None
 
 
+def gate_call_ids(messages: list) -> set:
+    """Tool-call IDs whose command carries a valid gate provenance sentinel.
+
+    The command author records this fact at composition time. Readers must use that fact rather
+    than infer ownership from marker-like text a user or an ordinary tool may legitimately emit.
+    """
+    ids = set()
+    for message in messages:
+        if not isinstance(message, dict) or message.get("role") != "assistant":
+            continue
+        for call in message.get("tool_calls") or []:
+            function = call.get("function") or {}
+            raw = function.get("arguments")
+            try:
+                args = jsontext.loads(raw) if isinstance(raw, str) else None
+            except (ValueError, TypeError):
+                args = None
+            if not isinstance(args, dict):
+                continue
+            for field in ("cmd", "command"):
+                value = args.get(field)
+                command = (value if isinstance(value, str) else
+                           "\n".join(str(part) for part in value) if isinstance(value, list) else "")
+                if gate_probes_of(command) is not None:
+                    if call.get("id"):
+                        ids.add(call["id"])
+                    break
+    return ids
+
+
 def _strip_gate_plumbing(cmd: str) -> str:
     """A composed gate command, reduced to the probe commands the model may see.
 
@@ -1409,7 +1439,7 @@ def _strip_command_plumbing(m: dict) -> dict:
 
 
 def clean_gate_results(messages: list, plan: "GatePlan | None" = None, *,
-                       drop_private_results: bool = False) -> list:
+                       drop_private_results: bool = False, linked_only: bool = False) -> list:
     """Rewrite raw gate-probe tool results (in the model's view) to the cleaned summary. Idempotent;
     a re-run over already-clean messages leaves them untouched. Non-gate messages pass through.
 
@@ -1422,6 +1452,7 @@ def clean_gate_results(messages: list, plan: "GatePlan | None" = None, *,
     the most recent full copy and shorten the earlier identical ones to a one-line back-reference. The
     model stops re-reading the same error N times (which reinforced its fixation)."""
     out = []
+    gate_ids = gate_call_ids(messages) if linked_only else set()
     drop_ids: set = set()          # tool_call ids whose result we dropped → drop the calling turn too
     # THE CALL WAS CRIA'S AND THE MODEL NEVER MADE IT. When the whole gate script is
     # composed-by-cria, `_strip_gate_plumbing` empties the command and the empty call used to stay
@@ -1444,7 +1475,9 @@ def clean_gate_results(messages: list, plan: "GatePlan | None" = None, *,
             continue
         is_tool = message.get("role") == "tool" or message.get("type") == "function_call_output"
         payload = message.get("content") or message.get("output")
-        match = transport_re.search(payload) if is_tool and isinstance(payload, str) else None
+        call_id = message.get("tool_call_id") or message.get("call_id")
+        match = (transport_re.search(payload) if is_tool and isinstance(payload, str)
+                 and (not linked_only or call_id in gate_ids) else None)
         if match:
             transport_id = match.group(1)
             transport_ids[i] = transport_id
@@ -1471,7 +1504,9 @@ def clean_gate_results(messages: list, plan: "GatePlan | None" = None, *,
                         if isinstance(m, dict)
                         and (m.get("role") == "tool" or m.get("type") == "function_call_output")
                         and isinstance(m.get("content") or m.get("output"), str)
-                        and SECTION_PREFIX in (m.get("content") or m.get("output"))]
+                        and SECTION_PREFIX in (m.get("content") or m.get("output"))
+                        and (not linked_only
+                             or (m.get("tool_call_id") or m.get("call_id")) in gate_ids)]
     last_gate = max([*raw_gate_indices, *retained_transport], default=-1)
     for i, m in enumerate(messages):
         if isinstance(m, dict):
@@ -1513,7 +1548,8 @@ def clean_gate_results(messages: list, plan: "GatePlan | None" = None, *,
             if drop_private_results and tid in own_ids:
                 drop_ids.add(tid)
                 continue
-            if is_tool and isinstance(c, str) and SECTION_PREFIX in c:
+            if (is_tool and isinstance(c, str) and SECTION_PREFIX in c
+                    and (not linked_only or tid in gate_ids)):
                 # ANNOTATE ONLY THE NEWEST GATE RESULT. This function re-renders every gate result
                 # in the history on EVERY prompt build, and the disk quote is read at render time —
                 # so a finding produced five calls ago gets stamped with whatever that line says

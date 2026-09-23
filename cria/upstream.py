@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Iterator
 
 from . import bodykeys
-from . import callcapture, config, contextfloor, failover, massage, rumination, tokenratio
+from . import callcapture, config, contextfloor, failover, massage, probegate, rumination, tokenratio
 
 # Sentinel for "window not yet resolved" (distinct from None = "no window / skip floor").
 _UNSET = object()
@@ -293,6 +293,11 @@ class Upstream:
         out = {**body, "stream": stream}
         msgs = body.get("messages")
         if isinstance(msgs, list):
+            # A stamped gate call is cria-authored provenance, not marker-shaped text guessed from
+            # history. Clean only those linked calls/results at the final coder-bound wire boundary;
+            # a body without one remains byte-identical.
+            if probegate.gate_call_ids(msgs):
+                msgs = probegate.clean_gate_results(msgs, linked_only=True)
             window = self._resolve_window(rlog)
             # A GUESSED WINDOW MAY NOT TRIM. `_resolve_window` returns `_FALLBACK_WINDOW` when
             # /props could not be read — an invented number, and the abort guard below already
