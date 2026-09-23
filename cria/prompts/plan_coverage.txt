@@ -6,6 +6,8 @@ Go through the request and take each thing it asks to be produced in turn. For e
 
 Judge ONLY against what the request itself asks for. Do NOT add anything it did not ask for — no error handling, no logging, no packaging, no CI, no extra tests, no best practice it never mentioned. Ordering, wording and level of detail are not your concern; only whether each requested thing is produced by some step.
 
+An end-to-end test for a CLI or tool must invoke that CLI or tool and check its output or exit status. A step that calls the tool's upstream API directly does NOT produce that requested end-to-end test; it may be an oracle alongside the invocation, but never a substitute. If that invocation is absent, report the request's end-to-end test as missing.
+
 Output ONLY this JSON, nothing else:
 {"missing": ["<the requested thing no step produces>", "..."]}
 

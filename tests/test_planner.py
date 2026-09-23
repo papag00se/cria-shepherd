@@ -780,6 +780,35 @@ class PlanCoverageTests(unittest.TestCase):
         self.assertNotIn("plan.final_recovered", [k for k, _ in rlog.events])
         self.assertNotIn("plan.submitted", [k for k, _ in rlog.events])
 
+    def test_c9_direct_api_test_is_not_accepted_as_cli_end_to_end(self):
+        """The C9 draft called the upstream API itself although the task required testing the CLI."""
+        missing = "an end-to-end test that invokes the CLI"
+        prov = _ScriptedProvider([
+            _tool_resp("exec_command", {"cmd": "echo looked"}),
+            _tool_resp("submit_plan", {"steps": [
+                "Implement the CLI",
+                "Add a real test that fetches api.handle.me directly",
+            ]}),
+            _content_resp("NONE"),                              # unread-host judge
+            _content_resp(json.dumps({"missing": [missing]})),
+            _tool_resp("submit_plan", {"steps": [
+                "Implement the CLI",
+                "Add a real end-to-end test that invokes the CLI and checks its JSON output",
+            ]}),
+            _content_resp("NONE"),                              # unread-host judge
+            _content_resp('{"missing": []}'),
+            _content_resp("NONE"),
+        ])
+        rlog = _Rlog()
+        plan = Planner(prov, role=self._role(), search_key="", max_gather_rounds=1,
+                       clock=lambda: _FIXED).plan_for(
+            _msgs("write a CLI and add a real api.handle.me end-to-end test"), rlog)
+        self.assertEqual(plan.items[-1].text,
+                         "Add a real end-to-end test that invokes the CLI and checks its JSON output")
+        handed = [kw for kind, kw in rlog.events
+                  if kind == "plan.missing_deliverables" and kw.get("handed_back")]
+        self.assertEqual(handed[0]["missing"], missing)
+
     def test_hand_backs_remain_capped_when_a_known_invalid_draft_is_rejected(self):
         # Bounded corrective prompts remain intact. Exhaustion changes only admission: no plan is
         # handed to the coder while the final inspected draft still has the known bad URL.
