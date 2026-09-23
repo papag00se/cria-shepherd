@@ -128,10 +128,10 @@ replays, exact reruns, and the evidence that closed each cell.
   retry through a restarting `cria.service` instead of dying on one refused connection (a
   single-shot `curl` race killed a whole serialized chain), and no `set -e` chain where one
   transient kill strands every downstream cell.
-- **Exactly ONE recurring 10-minute Paseo heartbeat per in-flight run** (`create_heartbeat`),
+- **NON-NEGOTIABLE! Exactly ONE recurring 10-minute Paseo heartbeat per in-flight run** (`create_heartbeat`),
   with no one-shot/max-run expiry. Its prompt is a mandatory reporting procedure: inspect the
-  live workspace and current checks; make a fresh holistic usefulness judgment for the work
-  presently on disk; then post the user report in the exact form
+  live workspace and current checks; make a fresh holistic usefulness judgment percentage for the work
+  presently on disk - this is a must and cannot be skipped FOR ANY REASON; then post the user report in the exact form
   `usefulness=<N>%` and `material changes since the previous report: <facts|none>`.
   `pending`, “no usefulness judgment happened”, the last comparable cell score, process liveness,
   or a bare “still active” are **not** substitutes for that fresh percentage; the prior comparable
@@ -152,7 +152,7 @@ Before each iteration: inspect `git status`/HEAD, the live `~/.cria/cria.toml`, 
 health, served model identity, `/props` runtime context, and the structured suite records. Read
 the complete task prompt and final workspace/evidence for every open cell; run the relevant
 frozen check yourself where the archived environment permits. Preserve exact row/run ids and
-final usefulness judgments in the report.
+final usefulness judgments in the report. Provide 10-minute reports per rules above (non-negotiable)
 
 ### 2. Walk the failing behavior exactly as `docs/walk-prompt.md` requires
 
@@ -198,7 +198,7 @@ isolation, task prompt revision, and final independent usefulness judgment. Do n
 contract or score to pass it. A rerun >75% closes that cell; do not rerun closed cells to raise
 the average. If a shared candidate regresses an already-closed cell (in this row **or the frozen
 Bonsai 2 acceptance evidence**), reopen only the affected cell and diagnose before claiming
-progress.
+progress. Provide 10-minute reports per rules above (non-negotiable)
 
 ## Definition of done
 
