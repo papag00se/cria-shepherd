@@ -1,0 +1,47 @@
+{
+  "provenance": "The tool-call envelopes are preserved from C13 Cart call captures: 0364-planner.response.json (20260923T014021-01a0cd6c-4962-7431-9da3-a40f0e385150) ended at finish_reason=length with the malformed trailing submit_plan arguments below; its immediate retry, 0365-planner.response.json, supplied the complete submit_plan arguments below. Only fields irrelevant to _last_call_truncated (reasoning_content, usage, timings, and identifiers outside the terminal tool call) were omitted.",
+  "responses": {
+    "complete_last_call": {
+      "choices": [
+        {
+          "finish_reason": "tool_calls",
+          "message": {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+              {
+                "type": "function",
+                "function": {
+                  "name": "submit_plan",
+                  "arguments": "{\"steps\":[\"Create discounts.json with the three discount codes: SUMMER25, WINTER10, EARTHDAY15\",\"Add bigdecimal as a dependency in go.mod (e.g., `bigdecimal v2.0.0` or latest version)\",\"Modify cart.go to import bigdecimal, read discounts.json (fallback to hard‑coded codes if file missing), convert Item.price to bigdecimal, compute subtotal, apply discount, round using math.RoundHalfUp, and log a single line to stderr in the format `total: <subtotal> <discount> <final>`\",\"Add a regression test in cart_test.go that checks the SUMMER25 rounding case produces 48.58\",\"Run `go test -count=1 -v` to verify the fix\"]}",
+                  "id": "3nUyL09qcBkxK5RVuS3vJhrPymDojETf"
+                }
+              }
+            ]
+          }
+        }
+      ]
+    },
+    "fragment_last_call": {
+      "choices": [
+        {
+          "finish_reason": "length",
+          "message": {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+              {
+                "type": "function",
+                "function": {
+                  "name": "submit_plan",
+                  "arguments": "{\"steps\":"
+                },
+                "id": "1yO1hZFMGdqXr4ee72z73lmCGUSMViG7"
+              }
+            ]
+          }
+        }
+      ]
+    }
+  }
+}

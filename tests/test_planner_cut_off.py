@@ -14,7 +14,7 @@ short — once, and only when calls were actually present.
 """
 import json
 import os
-import pathlib
+from pathlib import Path
 import tempfile
 import unittest
 
@@ -174,21 +174,21 @@ class SteerTextTests(unittest.TestCase):
         self.assertNotIn("cria", self.TEXT.lower())
 
 
-class MeasurementTests(unittest.TestCase):
-    def test_the_5_of_8_split_is_what_the_captures_still_say(self):
-        root = pathlib.Path.home()/".cria"/"calls"
-        if not root.is_dir():
-            self.skipTest("captures not present on this machine")
-        complete = fragment = 0
-        for r in root.glob("*/*-planner.response.json"):
-            try: ch = json.load(r.open())["choices"][0]
-            except Exception: continue
-            if ch.get("finish_reason") != "length": continue
-            if not (ch["message"].get("tool_calls") or []): continue
-            if planner._last_call_truncated(ch["message"]): fragment += 1
-            else: complete += 1
-        if complete + fragment == 0:
-            self.skipTest("no cut-off rounds with calls in these captures")
-        self.assertGreater(complete, 0,
-                           "if NO cut-off round ends on a complete call, refusing the whole round "
-                           "would have been right after all — re-derive this guard")
+class CaptureShapeTests(unittest.TestCase):
+    """Fixed terminal forms from preserved C13 responses, not a changing live-capture census."""
+
+    FIXTURE = Path(__file__).parent / "fixtures" / "planner-cut-off-terminal-forms.json"
+
+    def test_preserved_complete_and_fragment_terminal_calls_classify_differently(self):
+        """The original 5/8 measurement established these two semantic forms.
+
+        The fixture preserves actual terminal tool-call envelopes from C13 CALL0364/0365; the
+        adjacent responses supply the malformed cutoff and complete retry forms respectively.
+        Keeping these bytes in-repo makes the regression independent of later capture retention.
+        """
+        fixture = json.loads(self.FIXTURE.read_text(encoding="utf-8"))
+        cases = fixture["responses"]
+        self.assertFalse(planner._last_call_truncated(
+            cases["complete_last_call"]["choices"][0]["message"]))
+        self.assertTrue(planner._last_call_truncated(
+            cases["fragment_last_call"]["choices"][0]["message"]))
