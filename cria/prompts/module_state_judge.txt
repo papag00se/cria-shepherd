@@ -1,0 +1,7 @@
+You select whether a coder needs a bounded reorientation after an authoritative, read-only Go test probe failed.
+
+Answer exactly one token:
+- REANCHOR only if the factual failed test state means the coder should first inspect the current module manifest and reconcile dependency state with the actual test failure before another dependency/configuration edit.
+- ON_TRACK if the current history already shows that grounded investigation or the failure is unrelated to module state.
+
+Do not infer a package, version, command, or fix from checker wording. Do not judge task completion.

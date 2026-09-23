@@ -530,10 +530,12 @@ def build_rust(p: ProjectDir, out: list[ProbeCandidate]) -> None:
 def build_go(p: ProjectDir, out: list[ProbeCandidate]) -> None:
     d = p.dir
     conf = 95 if p.has("go.sum") else 90
-    out.append(cand(ProbeKind.BuildCheck, ["go", "build", "./..."], d, conf, 78,
-                    ProbeCost.Cheap, "go.mod found; build checks compilation"))
-    out.append(cand(ProbeKind.Lint, ["go", "vet", "./..."], d, conf, 80,
-                    ProbeCost.Cheap, "go vet is a fast built-in static check"))
+    # Module checks must observe the manifest graph, never repair it: without -mod=readonly a
+    # supervisory build/test can create go.sum and turn its own pre-check state into stale evidence.
+    out.append(cand(ProbeKind.BuildCheck, ["go", "build", "-mod=readonly", "./..."], d, conf, 78,
+                    ProbeCost.Cheap, "go.mod found; read-only build checks compilation"))
+    out.append(cand(ProbeKind.Lint, ["go", "vet", "-mod=readonly", "./..."], d, conf, 80,
+                    ProbeCost.Cheap, "go vet is a read-only static check"))
     # `-count=1` is required, not tidiness: `go test` REPLAYS a cached pass without executing
     # anything ("ok  example.com/x  (cached)"), so a gate that runs it can report tests as green
     # having run none of them. That is the vacuous-green shape the whole gate exists to prevent,
@@ -549,8 +551,8 @@ def build_go(p: ProjectDir, out: list[ProbeCandidate]) -> None:
     # to catch (an append written as a replace, a seeded test going out with the old text) was
     # measured on cart-billing-go. probeparse's own tally table already says "go test -v · one
     # `--- PASS:` / `--- FAIL:` per test"; the parser expected the flag and the composer never sent it.
-    out.append(cand(ProbeKind.Test, ["go", "test", "-count=1", "-v", "./..."], d, conf, 90,
-                    ProbeCost.Moderate, "go test across all packages"))
+    out.append(cand(ProbeKind.Test, ["go", "test", "-mod=readonly", "-count=1", "-v", "./..."], d, conf, 90,
+                    ProbeCost.Moderate, "read-only go test across all packages"))
     # external tools: lower confidence (may not be installed / configured)
     out.append(cand(ProbeKind.StaticAnalysis, ["golangci-lint", "run"], d, 60,
                     85, ProbeCost.Moderate, "golangci-lint if available"))

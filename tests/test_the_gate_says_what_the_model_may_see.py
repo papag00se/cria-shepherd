@@ -31,7 +31,7 @@ class TheStampSaysItTests(unittest.TestCase):
         shown = probegate.gate_probes_of(plan.script)
         self.assertEqual(shown, [" ".join(c.command) for c in plan.candidates
                                  if not c.composed_by_cria])
-        self.assertIn("go test -count=1 -v ./...", shown)
+        self.assertIn("go test -mod=readonly -count=1 -v ./...", shown)
 
     def test_it_is_the_first_line_so_a_cut_command_still_carries_it(self):
         ws = tempfile.mkdtemp()

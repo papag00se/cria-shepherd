@@ -1,0 +1,11 @@
+Task:
+{{TASK}}
+
+Authoritative read-only Go test probe:
+{{TESTS}}
+
+Exact checker output:
+{{CHECKS}}
+
+Current conversation:
+{{SESSION}}

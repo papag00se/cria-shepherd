@@ -1,0 +1,3 @@
+⟦ctx:module-state⟧ An authoritative read-only test probe is red. Preserve its exact diagnostic below. Before another dependency or module-configuration edit, inspect the current module manifest and reconcile the dependency state with this failing test; then rerun the relevant check. Do not guess a package, version, or replacement API.
+
+{{CHECKS}}

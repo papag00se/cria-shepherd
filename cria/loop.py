@@ -293,6 +293,7 @@ class GuardState:
     deliverable_observation_last_drive: int = -1
     periodic_probe: bool = False  # a periodic check-in gate is in flight (insert its ground truth, no verdict)
     runner_reset_signature: str = ""  # one definitive JS runner judgment per unchanged failing gate
+    module_state_signature: str = ""  # one definitive module-state judgment per unchanged failing Go test gate
     # A scheduled step critic returned done, but its approve-path brake had no surveyed workspace.
     # It is NOT an approval: acquire one bounded survey/gate round, then re-run the critic against
     # that observed view.  Keeping this separate from ``periodic_probe`` matters: that check-in
@@ -6746,6 +6747,48 @@ def runner_reset_steer(gs: GuardState, outcome, body: dict, rlog, *,
     return prompts.render("runner_reset", runner=runner, checks=checks)
 
 
+def module_state_steer(gs: GuardState, outcome, body: dict, rlog, *,
+                       reasoner_chat, reasoner_role) -> str | None:
+    """Ask once whether a failed Go test gate needs a manifest-state reorientation.
+
+    The trigger is the discovered Go TEST candidate and its recorded non-zero exit, not checker
+    wording or a command/action matcher.  The gate is the read-only supervisory observation: its
+    selected test command, exit status, and exact output are passed unchanged to the reasoner, which
+    alone decides whether to interrupt the next speculative dependency edit.
+    """
+    report = getattr(outcome, "report", None)
+    if report is None or reasoner_chat is None or reasoner_role is None:
+        return None
+    failed = []
+    for candidate, result in zip(report.selected or [], report.results or []):
+        if (getattr(candidate, "ecosystem", None) is probediscovery.Ecosystem.Go
+                and getattr(candidate, "kind", None) is probediscovery.ProbeKind.Test
+                and getattr(result, "exit_code", None) not in (None, 0)):
+            failed.append((proberun.display_command(candidate.command), result.exit_code))
+    if not failed:
+        return None
+    checks = gate_error_text(outcome)
+    signature = json.dumps([failed, checks], sort_keys=True)
+    if signature == gs.module_state_signature:
+        return None
+    task, _ = _history_root(body.get("messages", []))
+    session = selfcompact.serialize(_reasoner_session(body.get("messages", [])))
+    question = prompts.render("module_state_judge_user", TASK=task or "(no task recovered)",
+                              TESTS="\n".join(f"{command} exited {code}" for command, code in failed),
+                              CHECKS=checks, SESSION=session)
+    answer = ask_closed(reasoner_chat, reasoner_role,
+                        prompts.load("module_state_judge") + "\n\n" + question,
+                        rlog, phase="module-state", max_tokens=16, retry_off=False)
+    verdict = answer.strip().upper()
+    if verdict not in ("REANCHOR", "ON_TRACK"):
+        rlog.emit("loop.module_state", applied=False, verdict=answer.strip()[:40])
+        return None
+    gs.module_state_signature = signature
+    rlog.emit("loop.module_state", applied=verdict == "REANCHOR", verdict=verdict,
+              tests=[command for command, _code in failed])
+    return prompts.render("module_state_reset", CHECKS=checks) if verdict == "REANCHOR" else None
+
+
 def guard_periodic_result(gs: GuardState, body: dict, rlog, *, reasoner_chat=None,
                           reasoner_role=None, workspace_root=None) -> str | None:
     """Read the periodic check-in probe's result and return the error-class GROUND TRUTH to insert
@@ -6776,6 +6819,9 @@ def guard_periodic_result(gs: GuardState, body: dict, rlog, *, reasoner_chat=Non
     if err and (reset := runner_reset_steer(
             gs, outcome, body, rlog, reasoner_chat=reasoner_chat, reasoner_role=reasoner_role,
             workspace_root=workspace_root)):
+        return reset
+    if err and (reset := module_state_steer(
+            gs, outcome, body, rlog, reasoner_chat=reasoner_chat, reasoner_role=reasoner_role)):
         return reset
     if not err and outcome.ran and (lost := passing_test_regression(gs, outcome.report)):
         rlog.emit("loop.tests_regressed", level="warn", command=gs.last_regression[0],

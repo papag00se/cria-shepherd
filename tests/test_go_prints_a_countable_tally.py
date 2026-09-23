@@ -34,7 +34,7 @@ class TheGateAsksForACountTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as d:
             (pathlib.Path(d) / "go.mod").write_text("module x\n")
             cmds = [" ".join(c.command) for c in probediscovery.discover(pathlib.Path(d))]
-            self.assertIn("go test -count=1 -v ./...", cmds)
+            self.assertIn("go test -mod=readonly -count=1 -v ./...", cmds)
 
     def test_count_one_is_still_there(self):
         """The cache defeat is not traded away for the count: `go test` replays a cached pass
