@@ -1294,6 +1294,17 @@ def set_visible(session: Optional[str], fetch_keys, search_queries) -> None:
     _bound(_SEARCH_SEEN)
 
 
+def visible_urls(session: Optional[str]) -> set[str]:
+    """URLs with AT LEAST ONE fetch variant (any find/cursor/raw) still visible in the conversation —
+    the SAME identity :func:`set_visible` / the exact-repeat gate use, collapsed to the URL alone
+    because that's the granularity the durable fetch LEDGER (:mod:`cria.loop`) renders at. Its whole
+    point is to answer "is this URL's own result still readable in the messages I am about to send"
+    with the one state cria already tracks for the repeat gate, rather than a second, independently
+    written check that could drift from it — the gate refusing a re-fetch while the ledger denies the
+    body is there would be cria contradicting itself to the model in the same turn."""
+    return {u for (u, _find, _cursor, _raw) in _FETCH_SEEN.get(session or "", ())}
+
+
 def _bound(store: dict) -> None:
     if len(store) > _GATE_CAP:
         store.clear()
