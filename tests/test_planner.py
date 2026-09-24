@@ -6,6 +6,7 @@ import subprocess
 import tempfile
 import unittest
 from datetime import datetime, timezone
+from unittest.mock import patch
 
 from cria import prompts, wsview
 from cria.planner import PlanOutcome, Planner
@@ -911,12 +912,30 @@ class PlanCoverageTests(unittest.TestCase):
                          if body["messages"][0]["content"] == prompts.load("plan_test_execution_path")]
         self.assertTrue(judge_prompts)
 
-    def test_c20_actual_call0029_scripted_runner_bypasses_execution_path_check(self):
-        """CALL0029 had already added scripts.test; CALL0077 was a CLI require-side-effect bug."""
+    def test_c20_actual_call0028_plan_without_a_runner_is_not_admitted(self):
+        """The captured start-only manifest and test-file-only plan remain incomplete."""
+        captured_steps = [
+            'Edit package.json – delete the `"request"` entry (and any `"request"` field under '
+            "dependencies) so no external modules are needed.",
+            "Create lookup.js – use Node’s built-in fetch to GET "
+            "https://api.handle.me/handles/<handle>, parse the JSON, pull resolved_addresses.ada, "
+            "get the holder address from the same response, then GET "
+            "https://api.handle.me/holders/<holder> to obtain total_handles.",
+            "Add argument parsing – recognise --help, --json, and the required <handle> flag; on any "
+            "validation error or non-200 fetch response, process.exit(1).",
+            "Write tests/lookup.test.js – run the tool with a known handle (e.g., goose) and an explicit "
+            "--json flag, then assert that the printed JSON contains the resolved address, holder address, "
+            "and the total_handles value.",
+            "Add a Dockerfile – copy only package.json, lookup.js, the tests/ directory, and any needed "
+            "README; the container should run node lookup.js $handle [--json] without installing any "
+            "modules, so the image stays module-free.",
+            "(Optional) Update README.md – briefly document the new flags and the Docker usage.",
+        ]
         with tempfile.TemporaryDirectory() as root:
             pathlib.Path(root, "package.json").write_text(json.dumps({
-                "name": "handle-lookup", "scripts": {"test": "node test/lookup.test.js"}}),
-                encoding="utf-8")
+                "name": "handle-lookup", "version": "0.1.0", "description": "Looks up an Ada Handle",
+                "main": "lookup.js", "scripts": {"start": "node lookup.js"},
+                "dependencies": {"request": "^2.88.2"}}), encoding="utf-8")
             view = wsview.View(root, "c20-actual")
             raw = subprocess.run(["bash", "-c", wsview.survey_command("c20-actual")], cwd=root,
                                  text=True, capture_output=True, check=True).stdout
@@ -927,26 +946,36 @@ class PlanCoverageTests(unittest.TestCase):
             self.assertTrue(wsview.apply_survey(view, wsview.strip_survey(raw)[1]))
             prov = _ScriptedProvider([
                 _tool_resp("read_file", {"path": "package.json"}),
-                _tool_resp("submit_plan", {"steps": [
-                    "Implement the command-line tool",
-                    "Add test/lookup.test.js covering the live lookup",
-                ]}),
-                _content_resp('{"missing": []}'),
+                _tool_resp("submit_plan", {"steps": captured_steps}),
                 _content_resp("NONE"),
+                _content_resp('{"missing": []}'),
+                _content_resp("MISSING_TEST_EXECUTION_PATH"),
+                _tool_resp("submit_plan", {"steps": captured_steps}),
+                _content_resp("NONE"),
+                _content_resp('{"missing": []}'),
+                _content_resp("MISSING_TEST_EXECUTION_PATH"),
             ])
             token = wsview.bind(view)
             try:
                 rlog = _Rlog()
-                plan = Planner(prov, role=self._role(), search_key="", max_gather_rounds=1,
-                               clock=lambda: _FIXED).plan_for(
-                    _ws_msgs("add tests including a live end-to-end test", root), rlog)
+                # The captured planner had already gathered API-route evidence. This fixture
+                # replays its manifest/plan boundary, so isolate it from URL grounding.
+                with patch("cria.planner.urlgrounding.ungrounded_urls", return_value=[]):
+                    plan = Planner(prov, role=self._role(), search_key="", max_gather_rounds=1,
+                                   clock=lambda: _FIXED).plan_for(
+                        _ws_msgs("""Turn the Ada Handle resolver into a command-line tool:
+
+Add tests, including at least one test that makes a real request to api.handle.me and verifies the tool end to end.""", root), rlog)
             finally:
                 wsview.unbind(token)
-        self.assertIsNotNone(plan, rlog.events)
-        self.assertNotIn("plan.test_execution_path", [kind for kind, _ in rlog.events])
-        self.assertNotIn("plan.test_execution_undecidable", [kind for kind, _ in rlog.events])
-        self.assertFalse(any(body["messages"][0]["content"] == prompts.load("plan_test_execution_path")
-                             for body in prov.bodies))
+        self.assertIsNone(plan)
+        self.assertNotIn("plan.submitted", [kind for kind, _ in rlog.events])
+        self.assertIn("plan.rejected_exhausted", [kind for kind, _ in rlog.events])
+        requests = [body["messages"][-1]["content"] for body in prov.bodies
+                    if body["messages"][0]["content"] == prompts.load("plan_test_execution_path")]
+        self.assertEqual(len(requests), 2)
+        self.assertIn("tests/lookup.test.js", requests[0])
+        self.assertIn('"start": "node lookup.js"', requests[0])
 
     def test_c20_valid_direct_runner_is_ready(self):
         with tempfile.TemporaryDirectory() as root:
