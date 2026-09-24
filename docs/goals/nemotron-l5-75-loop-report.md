@@ -496,6 +496,13 @@ reconciled HEAD: `p22-feed-rerun-9ded52bc.service` (user unit, not collected), s
   judge budget, reasoning off, strict parsing unchanged, no retries. Model-agnostic; for models that answer inside
   16 tokens nothing changes except the ceiling.
 
+- **C34 accepted** (`9002f8ba`): reviewer recount 76/76 empty at 16 tokens (P25 added), 49/49 answered at 1024 (max
+  364 output tokens); read P25 `0137` and C13 `0215-module-state` in full; no tiny caps remain; parsing/retries
+  unchanged. Newly live paths to watch: self-compaction acceptance, module-state/runner-reset steers, delivered
+  negative diagnoses and E2E participation verdicts. Follow-ups: unify `ask_closed`'s 1024 default under
+  `JUDGE_MAX_TOKENS`; module-state judge context contains raw gate transport text (pre-existing).
+- **P26 Cart launched** next (C30's cell; also first live run of C34).
+
 ### Cross-cell lead — invented third-party API members (not yet a candidate)
 
 Rust P20 (`toml` `Value::parse_str`, `toml::Error::Missing`), Feed p22 live (`org.apache.commons.csv.exceptions`,
