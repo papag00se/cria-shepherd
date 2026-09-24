@@ -190,6 +190,11 @@ class ProbeCandidate:
     # Exact test-file paths declared by this runner interface.  Unlike test naming conventions,
     # this binds a source artifact to the argv selected for an eventual gate event.
     test_source_paths: tuple[str, ...] = ()
+    # Subset of ``test_source_paths`` that sits in the one operand position each chain segment of
+    # the declared body actually EXECUTES (see ``executed_test_source_paths``), never a token that
+    # could be the value of a preceding flag or an exclusion pattern.  Participation evidence keys
+    # completion truthing on this narrower set, not the full declared mapping.
+    test_source_paths_executed: tuple[str, ...] = ()
     """Did cria AUTHOR this argv, or did it read it off the project?
 
     `cargo test --no-fail-fast`, `go vet ./...`, `bundle exec rspec` come from the project's own
@@ -705,6 +710,41 @@ def declared_test_source_paths(body: str, base: Path) -> tuple[str, ...]:
     return tuple(dict.fromkeys(paths))
 
 
+def executed_test_source_paths(body: str, base: Path) -> tuple[str, ...]:
+    """Subset of ``declared_test_source_paths`` that sits in the ONE operand position a chain
+    segment's own command line actually executes: the token immediately after the segment's
+    program name, when that token is not itself an option.
+
+    ``declared_test_source_paths`` maps every non-option token that resolves to an existing test
+    file — including a token that is really the VALUE of a preceding flag (an ignore pattern after
+    ``--ignore``, a path after ``--check``) or a later positional the runner may never reach.
+    Neither ``shlex`` nor this module knows which flags consume an argument, so scanning past an
+    option looking for "the next non-option token" would silently reintroduce that exact guess.
+    The one position free of that ambiguity is the token right after the program name: if THAT
+    token is an option, the segment offers no structurally safe operand and contributes nothing —
+    a false negative (a real test file goes unproven), never a false positive.  Chain segments
+    (``&&``/``;``/``|``/``&``/newline) are read via ``probeclassify.split_chain`` so a compound
+    declared body is judged one launched command at a time, the same unit the gate event covers.
+    """
+    view = wsview.current()
+    paths = []
+    for segment in probeclassify.split_chain(body):
+        try:
+            tokens = shlex.split(segment)
+        except ValueError:
+            continue
+        if len(tokens) < 2:
+            continue
+        operand = tokens[1]
+        if operand.startswith("-"):
+            continue
+        path = Path(operand)
+        path = path if path.is_absolute() else base / path
+        if view.isfile(path) is True and looks_like_a_test_path(str(path)):
+            paths.append(str(path))
+    return tuple(dict.fromkeys(paths))
+
+
 def name_kind(name: str) -> ProbeKind:
     """Kind inferred from a script NAME alone (weaker than a vetted body).
     Deliberately distinct from probeclassify.kind_from_name — port both verbatim."""
@@ -800,6 +840,7 @@ def build_js(_root: Path, p: ProjectDir, out: list[ProbeCandidate]) -> None:
         c.declared_interface = True
         if kind is ProbeKind.Test:
             c.test_source_paths = declared_test_source_paths(body, d)
+            c.test_source_paths_executed = executed_test_source_paths(body, d)
         c.mutates_code = vet.mutates_code
         c.may_hang = vet.may_hang
         c.may_need_services = vet.may_need_services

@@ -369,6 +369,26 @@ class ParticipationAdapter:
                           participants=tuple(test_paths), participant_kind="file",
                           participants_complete=False, output_lines=lines)
 
+        if (candidate.kind is probediscovery.ProbeKind.Test
+                and getattr(candidate, "declared_interface", False)
+                and getattr(candidate, "test_source_paths", ())
+                and test.participated is None
+                and complete is True):
+            # This IS the project's declared test interface (not a cria-composed probe), and its
+            # body maps to test files that sit in an operand position the command actually
+            # executes (`probediscovery.executed_test_source_paths` — never a flag value or an
+            # exclusion pattern).  No tally and no "nothing ran" line settled participation above,
+            # so a known, non-timeout exit code from running those files IS the participation and
+            # pass/fail evidence: a plain test program that exits 0/1 with no framework tally is
+            # exactly what a hand-rolled `node test/real.test.js` looks like.  Timeout/launch
+            # failure/incomplete transport were already excluded by `complete is True`.
+            executed = tuple(getattr(candidate, "test_source_paths_executed", ()))
+            if executed:
+                lines = _lines_naming(output, executed)
+                test = _phase(test, attempted=True, participated=True, passed=(exit_code == 0),
+                              participants=executed, participant_kind="file",
+                              participants_complete=False, output_lines=lines)
+
         mapped = ()
         if candidate.kind is probediscovery.ProbeKind.Test:
             view = wsview.current()
