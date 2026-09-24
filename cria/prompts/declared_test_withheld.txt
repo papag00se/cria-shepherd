@@ -1,0 +1,1 @@
+This project declares a `{{SCRIPT}}` script in package.json, but the automatic check did not run it — its command was not recognised as safe to compose automatically here, so it has not been run by these checks. Run it directly to see its real result.

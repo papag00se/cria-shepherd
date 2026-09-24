@@ -210,6 +210,53 @@ def split_chain(cmd: str) -> list[str]:
     return [s.strip() for s in segs if s.strip()]
 
 
+def top_level_operators(cmd: str) -> set[str]:
+    """Which chain operators (``&&``, ``||``, ``;``, single ``|``, single ``&``, newline) appear
+    OUTSIDE single/double quotes. Quote-aware companion to :func:`split_chain`: it already skips a
+    quoted operator when deciding where to split, but throws away WHICH operator drove each split.
+    A caller vetting a declared script body needs that distinction to tell a quoted ``;`` (nothing to
+    see — the whole body is one command) from a real one, and a plain exit-status-preserving ``&&``
+    chain from ``;``/``||``/``|``/``&``/newline chains, any of which can mask a failing command or
+    background a service if blindly admitted.
+
+    Mirrors ``split_chain``'s quote tracking exactly (same upstream quirk: no backslash handling
+    inside double quotes) so the two can never disagree about where a quote starts or ends.
+    """
+    ops: set[str] = set()
+    in_single = in_double = False
+    i, n = 0, len(cmd)
+    while i < n:
+        ch = cmd[i]
+        if in_single:
+            if ch == "'":
+                in_single = False
+        elif in_double:
+            if ch == '"':
+                in_double = False
+        elif ch == "'":
+            in_single = True
+        elif ch == '"':
+            in_double = True
+        elif ch == "\n":
+            ops.add("\n")
+        elif ch == ";":
+            ops.add(";")
+        elif ch == "|":
+            if i + 1 < n and cmd[i + 1] == "|":
+                ops.add("||")
+                i += 1
+            else:
+                ops.add("|")
+        elif ch == "&":
+            if i + 1 < n and cmd[i + 1] == "&":
+                ops.add("&&")
+                i += 1
+            else:
+                ops.add("&")
+        i += 1
+    return ops
+
+
 def tokenize(seg: str) -> list[str]:
     """Tokenize one segment into argv honoring quotes and simple backslash escapes.
     Quote chars are STRIPPED, so ``bash -lc "pytest -q"`` yields

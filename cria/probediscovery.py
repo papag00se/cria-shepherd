@@ -104,9 +104,6 @@ RELEVANT_EXACT = (
     "Dockerfile",
 )
 
-# More than one command in a script body: a chain, a background job, a pipeline. See build_js.
-_COMPOUND_SCRIPT = re.compile(r"&&|\|\||[;&|]")
-
 # JS script names worth considering as probes, checked in this order.
 GOOD_SCRIPTS = ("typecheck", "type-check", "tsc", "lint", "check", "test",
                 "test:unit", "unit", "verify", "ci", "format:check", "fmt:check")
@@ -737,6 +734,35 @@ def map_kind(classifier_kind: probeclassify.ProbeKind, name: str) -> ProbeKind:
     }[classifier_kind]
 
 
+def _js_script_admitted(vet: "probeclassify.ProbeDetection", body: str) -> bool:
+    """True when the safety vet keeps this declared script body, False when it withholds it.
+
+    Shared by :func:`build_js` and :func:`_withheld_declared_test_script` so the two can never
+    disagree about which declared scripts reach ``out`` and which do not.
+
+    A COMPOUND SCRIPT IS WHERE THE DANGER LIVES, and on an unrecognised body cria has no vet to lean
+    on — ``vet.may_need_services`` and friends come from the classifier that just said UNKNOWN, so
+    they are absent rather than false. ``node server.js & node t.js`` is exactly the shape
+    ``has_unsafe_segment`` does not catch, and so are ``node a.js; node b.js`` / ``node a.js || true``
+    / ``node a.js | tee x`` — any of them can mask a failing command or background a service if
+    admitted blindly, so they stay rejected. The ONE compound shape that cannot hide a failure this
+    way: an exit-status-preserving ``&&`` chain. ``probeclassify.has_unsafe_segment`` already vets
+    every segment (it loops the same quote-aware ``split_chain``), and — because ``classify`` already
+    picks the BEST probe among a chain's segments — ``vet.kind`` can only be UNKNOWN here if every
+    segment individually classified UNKNOWN too, which is exactly what the single-command path below
+    already admits. Quoting is respected throughout via ``probeclassify.top_level_operators``, so a
+    ``;`` inside a quoted ``-e`` string (no real chain at all) is never mistaken for one.
+    """
+    if vet.kind is not probeclassify.ProbeKind.UNKNOWN:
+        return True
+    if probeclassify.has_unsafe_segment(body):
+        return False
+    ops = probeclassify.top_level_operators(body)
+    if not ops:
+        return True             # a single simple command — the ordinary case
+    return ops <= {"&&"}        # exit-status-preserving chain of admitted-alone segments
+
+
 def build_js(_root: Path, p: ProjectDir, out: list[ProbeCandidate]) -> None:
     """``_root`` is unused — upstream takes it too (Rust names it ``_root``);
     kept so the call shape matches the source."""
@@ -749,13 +775,8 @@ def build_js(_root: Path, p: ProjectDir, out: list[ProbeCandidate]) -> None:
             continue
         vet = probeclassify.classify_command(body)
         unknown = vet.kind is probeclassify.ProbeKind.UNKNOWN
-        # A COMPOUND SCRIPT IS WHERE THE DANGER LIVES, and on an unrecognised body cria has no vet
-        # to lean on — `vet.may_need_services` and friends come from the classifier that just said
-        # UNKNOWN, so they are absent rather than false. `node server.js & node t.js` is exactly the
-        # shape `has_unsafe_segment` does not catch. So the name-fallback below applies only to a
-        # SINGLE simple command, which is what `scripts.test` normally is.
-        if unknown and (probeclassify.has_unsafe_segment(body) or _COMPOUND_SCRIPT.search(body)):
-            continue     # unrecognised AND compound (or unsafe) — no basis to run it
+        if not _js_script_admitted(vet, body):
+            continue     # unrecognised AND unsafe, or a compound shape that can hide a failure
         # THE NAME IS THE PROJECT'S OWN DECLARATION. This used to `continue` on UNKNOWN, and node is
         # the only ecosystem whose declared test command cria throws away: `probeclassify` knows
         # `node --test` and nothing else node-shaped, so `node cli.test.js`,
@@ -1477,6 +1498,31 @@ def undiscoverable_tests(root: Path) -> list[str]:
     return out
 
 
+def _withheld_declared_test_script(root: Path) -> str | None:
+    """The name of the first package.json test-shaped script a project declares but
+    :func:`build_js`'s safety vet withheld, or None when nothing was withheld.
+
+    Calls the exact same admission test build_js applies (:func:`_js_script_admitted`) instead of
+    re-deriving a second judgment of its own, so the two can never say different things about the
+    same body — that drift is the bug this candidate exists to close (#23).
+    """
+    root = Path(root)
+    for p in inventory(root):
+        if Ecosystem.JsTs not in detect_ecosystems(p):
+            continue
+        scripts = read_scripts(Path(p.dir) / "package.json")
+        for name in GOOD_SCRIPTS:
+            body = scripts.get(name)
+            if body is None:
+                continue
+            vet = probeclassify.classify_command(body)
+            if _js_script_admitted(vet, body):
+                continue
+            if map_kind(vet.kind, name) is ProbeKind.Test:
+                return name
+    return None
+
+
 def tests_with_no_command(root: Path) -> list[str]:
     """Test files a runner WOULD discover, in a project whose gate composed no test command — a FACT
     about cria's own check, one sentence per language, [] when there is nothing to say.
@@ -1502,7 +1548,15 @@ def tests_with_no_command(root: Path) -> list[str]:
         if not paths:
             continue
         discoverable, _stranded = _audit_tests(root, paths, conv)
-        if discoverable:
+        if not discoverable:
+            continue
+        withheld = "js" in conv.exts and _withheld_declared_test_script(root)
+        if withheld:
+            # A declared script exists and was withheld by the safety vet — NOT absent. Saying "no
+            # command … was found" here is a false fact (#5b): the project's own package.json names
+            # one; the automatic check chose not to run it. C29.
+            out.append(prompts.render("declared_test_withheld", script=withheld))
+        else:
             out.append(f"Test files for {conv.runner} are present ({conv.label}), but no command to "
                        f"run them was found in this project — nothing here has run them.")
     return out
