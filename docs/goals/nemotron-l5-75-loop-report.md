@@ -188,6 +188,11 @@ Next bounded unit: the latest Cart C13 capture is materialized losslessly at `~/
 - Complete C14 walk (82 lossless segments) rejected C16 (downstream critic provenance already suppressed) and C17 (unrecognized compaction summary cannot be faithfully repaired). C18 traced the independent earliest repeat-loop producer: `probegate.clean_gate_results` replaced C14 CALL0028/CALL0392’s non-stamped proxy checker results with synthetic repeat prose, destroying the real tool output and inducing identical rechecks.
 - `705301ac` returns non-stamped results after existing structural cleanup, preserving every real checker line; provenance-stamped C6 cleaning remains `linked_only=True`. C14-shaped fails-before/passes-after replay, stamped-gate, and ordinary marker-shaped regressions landed. Focused checks passed; full `python -m pytest` **5000 passed, 5 skipped**. Independent re-review accepted (108 focused tests), commit pushed, `cria.service` restarted and `/health` OK.
 
+### C21 Handles terminal rerun — comparison required
+
+- Comparable run `handles-cli-node_nemotron-elastic_codex_pon_1790210315` under note `BATTERY2 L5 nemotron-elastic cdf0e2f2 p11` ended `milestone-stalled-30min` after **290 calls**, at **50%**. It did add a test script and test artifact, but `npm test` crashed before assertions when the test read nonexistent `execFileSync` result fields. Heartbeat `82a81a26` was removed after terminal reporting.
+- **No immediate C21 walk/candidate is authorized.** First compare C20/C21 authoritative planning captures to establish whether `cdf0e2f2` engaged, was bypassed, or engaged but was insufficient.
+
 ### C20 Handles terminal rerun — strategy reset
 
 - Comparable run `handles-cli-node_nemotron-elastic_codex_pon_1790205888` under exact note `BATTERY2 L5 nemotron-elastic 810a517e p10` ended `milestone-stalled-30min` after **200 calls**. Final packet `/home/jesse/.cria/suite/_usefulness_evidence/handles-cli-node_nemotron-elastic_codex_pon_1790205888.txt` records **50%**.
