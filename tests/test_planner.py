@@ -977,6 +977,52 @@ Add tests, including at least one test that makes a real request to api.handle.m
         self.assertIn("tests/lookup.test.js", requests[0])
         self.assertIn('"start": "node lookup.js"', requests[0])
 
+    def test_c21_spawn_inside_uninvoked_test_cannot_make_ready(self):
+        """CALL 0138's READY needs an actual runner after the plan executes."""
+        c21_steps = [
+            "Create bin/handle-resolver.js using native fetch for the CLI.",
+            "Update package.json to remove request and add the handle-resolver bin entry.",
+            "Create test/handle-resolver.test.js using child_process.spawn to invoke node "
+            "bin/handle-resolver.js and assert its JSON output.",
+            "Add a Dockerfile for the CLI.",
+        ]
+        corrected_steps = c21_steps + [
+            "Update package.json to add a scripts.test entry that runs test/handle-resolver.test.js.",
+        ]
+        with tempfile.TemporaryDirectory() as root:
+            pathlib.Path(root, "package.json").write_text(json.dumps({
+                "name": "handle-lookup", "scripts": {"start": "node lookup.js"}}), encoding="utf-8")
+            view = wsview.View(root, "c21-spawn-is-not-runner")
+            raw = subprocess.run(["bash", "-c", wsview.survey_command("c21-spawn-is-not-runner")], cwd=root,
+                                 text=True, capture_output=True, check=True).stdout
+            self.assertTrue(wsview.apply_survey(view, wsview.strip_survey(raw)[1]))
+            view.read(pathlib.Path(root, "package.json"))
+            raw = subprocess.run(["bash", "-c", wsview.survey_command("c21-spawn-is-not-runner")], cwd=root,
+                                 text=True, capture_output=True, check=True).stdout
+            self.assertTrue(wsview.apply_survey(view, wsview.strip_survey(raw)[1]))
+            prov = _ScriptedProvider([
+                _tool_resp("read_file", {"path": "package.json"}),
+                _tool_resp("submit_plan", {"steps": c21_steps}),
+                _content_resp('{"missing": []}'),
+                _content_resp("TEST_EXECUTION_PATH_READY"),  # CALL 0138's false positive
+                _tool_resp("submit_plan", {"steps": corrected_steps}),
+                _content_resp('{"missing": []}'),
+                _content_resp("TEST_EXECUTION_PATH_READY"),
+                _content_resp("NONE"),
+            ])
+            token = wsview.bind(view)
+            try:
+                rlog = _Rlog()
+                plan = Planner(prov, role=self._role(), search_key="", max_gather_rounds=1,
+                               clock=lambda: _FIXED).plan_for(
+                    _ws_msgs("add tests for the command-line tool", root), rlog)
+            finally:
+                wsview.unbind(token)
+        self.assertIsNotNone(plan, rlog.events)
+        self.assertEqual(plan.items[-1].text, corrected_steps[-1])
+        handbacks = [kw for kind, kw in rlog.events if kind == "plan.test_execution_path"]
+        self.assertEqual([kw["handed_back"] for kw in handbacks], [True])
+
     def test_c20_valid_direct_runner_is_ready(self):
         with tempfile.TemporaryDirectory() as root:
             pathlib.Path(root, "package.json").write_text(json.dumps({
