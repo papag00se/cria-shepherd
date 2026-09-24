@@ -5,6 +5,7 @@ runner.  The completion gate ran only ``node --check`` and recorded test
 participation as unknown, but CALL0043 still returned satisfied=true.
 """
 import base64
+import hashlib
 import json
 from pathlib import Path
 import unittest
@@ -38,6 +39,26 @@ def _candidate(kind, command, test_sources=()):
         ecosystem=probediscovery.Ecosystem.JsTs)
     candidate.test_source_paths = tuple(test_sources)
     return candidate
+
+
+def _transport_page(transport_id, result):
+    data = result.encode()
+    return "\n".join([
+        probegate._transport_marker(transport_id),
+        "path\t" + base64.b64encode(
+            f"/tmp/.cria-gate-{transport_id}.wire".encode()).decode(),
+        "offset\t0", f"total\t{len(data)}",
+        "sha256\t" + hashlib.sha256(data).hexdigest(),
+        "data\t" + base64.b64encode(data).decode(),
+        probegate._transport_marker(transport_id, end=True),
+    ])
+
+
+def _gate_result(plan, survey_text):
+    probes = "\n".join(
+        f"{probegate._marker(f'probe-{i}')}\nTests:       1 passed, 1 total\nEXIT:0"
+        for i, _candidate in enumerate(plan.candidates))
+    return _transport_page(plan.transport_id, probes + "\n" + wsview.SURVEY_OPEN + "\n" + survey_text)
 
 
 def _declared_test_candidate(root):
@@ -156,13 +177,12 @@ run();
         self.assertEqual(candidate.test_source_paths, (root + "/" + path,))
         self.assertIn("WANT = ['tests/lookup.test.cjs']", plan.script)
 
-        self.assertTrue(wsview.apply_survey(view, survey(
+        returned_survey = survey(
             f"F\t2\t{len(source)}\t{path}",
             blob="@" + base64.b64encode(path.encode()).decode() + "\n"
-                 + base64.b64encode(source.encode()).decode(), root=root)))
-        report = participation.report([participation.observe(
-            candidate, "Tests:       1 passed, 1 total", 0)])
-        self.assertEqual(report.executed_test_sources()[0].body, source)
+                 + base64.b64encode(source.encode()).decode(), root=root)
+        outcome = probegate.interpret_gate(plan, _gate_result(plan, returned_survey))
+        self.assertEqual(outcome.participation.executed_test_sources()[0].body, source)
 
     def test_e2e_gate_rejects_cached_test_bytes_absent_from_its_survey(self):
         root, path = "/workspace", "tests/lookup.test.cjs"
@@ -172,16 +192,16 @@ run();
         })
         token = wsview.bind(view)
         self.addCleanup(wsview.unbind, token)
-        candidate = _declared_test_candidate(root)  # declared runner requests fresh source bytes
-        self.assertTrue(wsview.apply_survey(view, survey(
+        plan = probegate.plan_gate(root, "capture")  # declared runner requests fresh source bytes
+        candidate = next(c for c in plan.candidates if c.kind is probediscovery.ProbeKind.Test)
+        outcome = probegate.interpret_gate(plan, _gate_result(plan, survey(
             f"F\t2\t{len('new CLI source')}\t{path}", root=root)))
-        report = participation.report([participation.observe(
-            candidate, "Tests:       1 passed, 1 total", 0)])
-        self.assertEqual(report.executed_test_sources()[0].body, None)
+        self.assertEqual(outcome.participation.executed_test_sources()[0].body, None)
         chat = _Chat([_satisfied(), "E2E_REQUIRED"])
 
         satisfied, _reason, _fix = loop.judge_satisfaction(
-            self.TASK, "Tests: 1 passed", chat, None, _Rlog(), sess=_session(report))
+            self.TASK, "Tests: 1 passed", chat, None, _Rlog(),
+            sess=_session(outcome.participation))
 
         self.assertFalse(satisfied)
         self.assertEqual(len(chat.bodies), 2)
