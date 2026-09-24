@@ -462,6 +462,9 @@ reconciled HEAD: `p22-feed-rerun-9ded52bc.service` (user unit, not collected), s
   path at the next gate; re-review on real Codex: lost final page recovered immediately with identical bytes —
   **C28b accepted**. Integrated suite **5131 passed, 5 skipped**. Non-blocking: last spool per workspace remains in
   `$TMPDIR` (0600) until the next gate/restart; gate tests leave spools in `/tmp` (teardown follow-up).
+- **P25 Handles launched** at `9fab19d9` (C28/C28b, C29, C30, C31, C32, C33 live): unit
+  `p25-handles-rerun-9fab19d9.service`, script/log `~/.cria/nemotron-l5-p25-handles-9fab19d9.{sh,log}`, note
+  `BATTERY2 L5 nemotron-elastic 9fab19d9 p25`; cria restarted by `run.py` at 14:29:53, `/health` ok. Heartbeat `52d268fb`.
 - Rejected lead (prevalence): a "task-quoted identifier absent from workspace" fact for completion judges — measured
   over all 33 campaign archives, only Shipping P21/C8 had a meaningful absent name (`Shipping.zone_for`); the rest
   were noise (`node_modules`, `go.mod`, files the task asks to create). Not built.
