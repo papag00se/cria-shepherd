@@ -188,6 +188,11 @@ Next bounded unit: the latest Cart C13 capture is materialized losslessly at `~/
 - Complete C14 walk (82 lossless segments) rejected C16 (downstream critic provenance already suppressed) and C17 (unrecognized compaction summary cannot be faithfully repaired). C18 traced the independent earliest repeat-loop producer: `probegate.clean_gate_results` replaced C14 CALL0028/CALL0392’s non-stamped proxy checker results with synthetic repeat prose, destroying the real tool output and inducing identical rechecks.
 - `705301ac` returns non-stamped results after existing structural cleanup, preserving every real checker line; provenance-stamped C6 cleaning remains `linked_only=True`. C14-shaped fails-before/passes-after replay, stamped-gate, and ordinary marker-shaped regressions landed. Focused checks passed; full `python -m pytest` **5000 passed, 5 skipped**. Independent re-review accepted (108 focused tests), commit pushed, `cria.service` restarted and `/health` OK.
 
+### P20 Rust terminal rerun — crate API compilation stall
+
+- Comparable run `rust-toml-cli_nemotron-elastic_codex_pon_1790252780` under `BATTERY2 L5 nemotron-elastic c435329c p20` ended `milestone-stalled-30min` after **163 calls** at **35%**. A Rust project and tests were created, but repeated nonexistent TOML crate APIs left `cargo test` uncompilable. Heartbeat `031bbea6` was retired.
+- Generic reruns are paused pending a strategy-reset assist at the capture-proven compaction boundary.
+
 ### P19 Shipping terminal rerun — dependency/API delivery stall
 
 - Comparable run `shipping-rates-rb_nemotron-elastic_codex_pon_1790246809` under `BATTERY2 L5 nemotron-elastic ef1fe654 p19` ended `milestone-stalled-60min` after **805 calls** at **30%**. It made threshold/rate-table/partial express work, but Bundler could not resolve locked gems and the delivered express API/country mapping remained unvalidated.
