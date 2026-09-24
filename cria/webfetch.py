@@ -1284,14 +1284,31 @@ def set_visible(session: Optional[str], fetch_keys, search_queries) -> None:
     history. ``fetch_keys`` = iterable of (url, find, cursor[, raw]); ``search_queries`` = queries."""
     if not session:
         return
+    # BOUND BEFORE INSERTING, not after: `_bound` used to run once the current session's fresh entry
+    # was already written, so a store over cap cleared EVERYTHING it had just been given — the exact
+    # repeat gate could refuse a call, immediately wipe the state that justified refusing it, and
+    # answer the very next identical call as if it had never seen it. Bounding first means an oversize
+    # store is cleared while this session's key is still absent from it, so the write below always
+    # lands and this call's own visibility survives itself.
+    _bound(_FETCH_SEEN)
+    _bound(_SEARCH_SEEN)
     # 4-tuple identity (…, raw): a raw-source fetch is distinct from the reduced view of the same URL,
     # so requesting the source after a reduced fetch (or vice versa) is never falsely refused as a repeat.
     # History web_fetch calls are the reduced view unless they carried raw=true.
     _FETCH_SEEN[session] = {(u, f or "", c or "", bool(rw))
                             for (u, f, c, rw) in (_pad4(k) for k in fetch_keys)}
     _SEARCH_SEEN[session] = {(q or "").strip().lower() for q in search_queries if (q or "").strip()}
-    _bound(_FETCH_SEEN)
-    _bound(_SEARCH_SEEN)
+
+
+def visible_urls(session: Optional[str]) -> set[str]:
+    """URLs with AT LEAST ONE fetch variant (any find/cursor/raw) still visible in the conversation —
+    the SAME identity :func:`set_visible` / the exact-repeat gate use, collapsed to the URL alone
+    because that's the granularity the durable fetch LEDGER (:mod:`cria.loop`) renders at. Its whole
+    point is to answer "is this URL's own result still readable in the messages I am about to send"
+    with the one state cria already tracks for the repeat gate, rather than a second, independently
+    written check that could drift from it — the gate refusing a re-fetch while the ledger denies the
+    body is there would be cria contradicting itself to the model in the same turn."""
+    return {u for (u, _find, _cursor, _raw) in _FETCH_SEEN.get(session or "", ())}
 
 
 def _bound(store: dict) -> None:

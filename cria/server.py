@@ -556,7 +556,15 @@ def _harden_compaction_reply(comp: dict, body: dict, provider, server, rlog, ses
         except Exception:  # noqa: BLE001 — best-effort: a failed retry must never break the reply
             rlog.emit("route.compaction_retry_failed", level="warn")
             text = ""
-    facts = _fetch_ground_truth(body.get("messages", []))
+    # location=False: this text is about to be FROZEN into the harness's own compaction reply, a
+    # message no later turn of cria's can revise. A location claim ("in this conversation above" /
+    # "not in this conversation") is true only of THIS turn's window and goes stale the moment the
+    # model re-fetches the url or the window moves — independent review of Candidate C31 found this
+    # exact frozen copy asserting a page was NOT in the conversation while the live per-turn facts
+    # anchor, built after a re-fetch, asserted the opposite for the same url in the same coder body
+    # (repro c31contra.py). No session is available here to check visibility anyway (`sess=None`
+    # below), so this call must never claim a location one way or the other.
+    facts = _fetch_ground_truth(body.get("messages", []), location=False)
     # WORKSPACE LEDGER — the fetch-facts pattern extended to files. g1's compaction summary carried
     # endpoint facts but no file inventory; the post-compaction coder, told to inspect before
     # creating, didn't — and wrote a DUPLICATE test suite beside the one it had already built.
