@@ -12,7 +12,7 @@ Reconciled 2026-09-24 against `suite/results/results.jsonl` and `~/.cria/suite/_
 |---|---|---|---:|---|
 | shipping-rates-rb | `shipping-rates-rb_nemotron-elastic_codex_pon_1790255585` | `a9087c45 p21` | 35% | open — ≤75% |
 | cart-billing-go | `cart-billing-go_nemotron-elastic_codex_pon_1790238295` | `ad8a8c9b p18` | 0% | open — ≤75% |
-| orders-api-py | `orders-api-py_nemotron-elastic_codex_pon_1790242392` | `ad8a8c9b p18` | 50% | open — ≤75% |
+| orders-api-py | `orders-api-py_nemotron-elastic_codex_pon_1790279578` | `3d82a022 p24` | 40% | open — ≤75% |
 | feed-pipeline-java | `feed-pipeline-java_nemotron-elastic_codex_pon_1790268418` | `9ded52bc p22` | 20% | open — ≤75% |
 | handles-cli-node | `handles-cli-node_nemotron-elastic_codex_pon_1790274745` | `c6e97a5d p23` | 65% | open — ≤75% |
 | rust-toml-cli | `rust-toml-cli_nemotron-elastic_codex_pon_1790252780` | `c435329c p20` | 30% | open — ≤75% |
@@ -441,6 +441,16 @@ reconciled HEAD: `p22-feed-rerun-9ded52bc.service` (user unit, not collected), s
   coder turn. Repair assigned to the C28 owner: running envelope carries the resolved path (narrow polls), a
   compaction during a running transport re-polls the same plan, and polls use the tool's declared yield budget.
   P24 is left to reach its canonical milestone (a valid measurement of `3d82a022`).
+
+### P24 Orders terminal result
+
+- `orders-api-py_nemotron-elastic_codex_pon_1790279578` (`BATTERY2 L5 nemotron-elastic 3d82a022 p24`) ended
+  `milestone-stalled-30min` after **70 calls**; milestone 30min 40% stalled; final **40%**; battery report refreshed;
+  heartbeat `8c72974f` retired.
+- Archive: in-place status migration + customer index, parameterized lookup, customer route (no aggregate total);
+  integration test calls `serve()` in `setUp` and hangs. From 13:02 the workspace never changed: the session sat in
+  the C28b reissue loop (15 `loop.probe_reissued`, zero coder actions). The same hang class as C26/P18; C28 now
+  sees the check running, but C28b prevents it from ever finishing.
 
 ### Cross-cell lead — invented third-party API members (not yet a candidate)
 
