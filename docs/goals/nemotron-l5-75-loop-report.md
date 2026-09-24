@@ -188,6 +188,11 @@ Next bounded unit: the latest Cart C13 capture is materialized losslessly at `~/
 - Complete C14 walk (82 lossless segments) rejected C16 (downstream critic provenance already suppressed) and C17 (unrecognized compaction summary cannot be faithfully repaired). C18 traced the independent earliest repeat-loop producer: `probegate.clean_gate_results` replaced C14 CALL0028/CALL0392’s non-stamped proxy checker results with synthetic repeat prose, destroying the real tool output and inducing identical rechecks.
 - `705301ac` returns non-stamped results after existing structural cleanup, preserving every real checker line; provenance-stamped C6 cleaning remains `linked_only=True`. C14-shaped fails-before/passes-after replay, stamped-gate, and ordinary marker-shaped regressions landed. Focused checks passed; full `python -m pytest` **5000 passed, 5 skipped**. Independent re-review accepted (108 focused tests), commit pushed, `cria.service` restarted and `/health` OK.
 
+### C27 Handles terminal rerun — strategy reset
+
+- Comparable run `handles-cli-node_nemotron-elastic_codex_pon_1790231549` under note `BATTERY2 L5 nemotron-elastic 3cf2697a p17` ended `milestone-stalled-60min` after **372 calls** at **70%**. It reached 80% with a passing CLI-invoking test, then regressed when a later real-API test imported removed `node-fetch`; `npm test` became red. Heartbeat `184e16fb` was retired.
+- **No generic Handles rerun is authorized.** Canonically walk the later node-fetch regression boundary before any candidate.
+
 ### C26 Orders terminal rerun — strategy reset
 
 - Comparable run `orders-api-py_nemotron-elastic_codex_pon_1790228055` under note `BATTERY2 L5 nemotron-elastic 0df1c4dd p16` ended `milestone-stalled-30min` after **204 calls** at **40%**. It added route/migration/integration artifacts, but the integration test hung pytest after two tests; heartbeat `2f1c4568` was retired.
