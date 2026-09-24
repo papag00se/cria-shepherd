@@ -36,6 +36,12 @@ the row: walk every sub-75%/regressed cell, reconcile across cells (classes seen
 the row justifies, run the next row. Done = one row at one HEAD with every cell >75%. A row with no new accepted fix
 is a strategy reset — work, never a stop. The per-cell reruns p22–p26 above predate this directive.
 
+**Correction (user, 2026-09-24 ~17:05):** a cell whose latest comparable result is >75% is **closed and not rerun**; each
+row runs every **open** cell (latest comparable ≤75%) at one HEAD, one note, one heartbeat. Done is unchanged: every
+cell's latest comparable final usefulness >75%. Row p27 is consistent with this: at its freeze all six cells were open
+(shipping 35, cart 25, orders 40, feed 20, handles 50, rust 30), so it runs all six. Later rows will queue only the
+cells still ≤75% after the preceding row.
+
 ## Baseline environment
 
 ### Phase 0 preflight — 2026-09-22
@@ -546,7 +552,7 @@ reconciled HEAD: `p22-feed-rerun-9ded52bc.service` (user unit, not collected), s
   Non-blocking: strip backticks before the strict compare (module-state and runner-reset).
 - Row p27 contains C28 (+ review repairs), C28b, C29, C30, C31, C32, C33, C34, C35, C36 — all independently
   reviewed and accepted; integrated full suite 5143 passed, 5 skipped. Row HEAD = the commit recording this entry.
-  Queue: all six cells, one note, one heartbeat; no behavior change may land until the queue ends.
+  Queue: every open cell (all six are open at freeze), one note, one heartbeat; no behavior change may land until the queue ends.
 
 ### Row p27 launched
 
