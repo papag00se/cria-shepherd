@@ -988,6 +988,8 @@ Add tests, including at least one test that makes a real request to api.handle.m
             lambda _system, _user: "TEST_EXECUTION_PATH_READY", "add tests", steps, "{}"), "READY")
         self.assertEqual(test_execution_readiness(
             lambda _system, _user: "MISSING_TEST_EXECUTION_PATH", "add tests", steps, "{}"), "MISSING")
+        self.assertEqual(test_execution_readiness(
+            lambda _system, _user: "NOT_APPLICABLE", "add tests", steps, "{}"), "NOT_APPLICABLE")
 
     def test_c22_ready_replay_starts_a_plan_session_and_coder_s1(self):
         """CALL0039's runner-bearing plan plus CALL0040 READY must reach the coder."""
@@ -1079,11 +1081,23 @@ Add tests, including at least one test that makes a real request to `api.handle.
                 with patch("cria.planner.urlgrounding.ungrounded_urls", return_value=[]):
                     missing = missing_loop.drive(body, "c22-missing", type("Task", (), {
                         "engagement": "task", "task_type": "coding", "cached": False})(), _Rlog())
+
+                not_applicable_coder_bodies = []
+                not_applicable_loop = Loop(LoopContext(
+                    planner=planner_for("NOT_APPLICABLE"),
+                    coder_chat=lambda body, _rlog: not_applicable_coder_bodies.append(body),
+                    reasoner_chat=lambda *_: b"", runs_dir=""))
+                with patch("cria.planner.urlgrounding.ungrounded_urls", return_value=[]):
+                    not_applicable = not_applicable_loop.drive(body, "c22-not-applicable", type("Task", (), {
+                        "engagement": "task", "task_type": "coding", "cached": False})(), _Rlog())
             finally:
                 wsview.unbind(token)
         self.assertIsNone(missing)
         self.assertFalse(missing_loop.has_session("c22-missing"))
         self.assertEqual(missing_coder_bodies, [])
+        self.assertIsNone(not_applicable)
+        self.assertFalse(not_applicable_loop.has_session("c22-not-applicable"))
+        self.assertEqual(not_applicable_coder_bodies, [])
 
     def test_c21_spawn_inside_uninvoked_test_cannot_make_ready(self):
         """CALL 0138's READY needs an actual runner after the plan executes."""

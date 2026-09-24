@@ -1332,6 +1332,10 @@ class Planner:
                     rlog.emit("plan.test_execution_undecidable", level="warn")
                     self._retriable_failure = True
                     return None
+                if manifest_without_test_script is not None and readiness == "NOT_APPLICABLE":
+                    rlog.emit("plan.test_execution_not_applicable", level="warn")
+                    self._retriable_failure = True
+                    return None
                 if readiness == "MISSING":
                     if not may_hand_back("test-execution"):
                         rlog.emit("plan.test_execution_path", level="warn", handed_back=False)
