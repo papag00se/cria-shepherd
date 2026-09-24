@@ -245,6 +245,43 @@ reconciled HEAD: `p22-feed-rerun-9ded52bc.service` (user unit, not collected), s
   `cria/prompts/` may be modified and `cria.service` must not be restarted until p22's terminal
   packet is recorded.
 
+### Candidate C29 — declared test entry point withheld by a quote-blind shape check, then reported absent
+
+- **Observed chain (C27 Handles, session `20260923T233251-01a0d21d`):** CALL0316 the coder added
+  `__tests__/real-api.test.js` requiring `node-fetch`; CALL0336 wired `package.json`
+  `"test": "node __tests__/integration.test.js && node __tests__/real-api.test.js"`; CALL0352 its
+  own `npm test` exited 1 (`Cannot find module 'node-fetch'`). CALL0364 the satisfaction judge
+  approved anyway (reasoning: the tests "exist"); the C23 participation barrier held completion
+  (CALL0365 `REQUIRED`). But the coder-bound message at CALL0366 then said: "the repo's own checks
+  that ran reported no error-class problems. The checks above cover syntax only — no test command
+  was composed … Test files for jest/vitest are present …, but no command to run them was found in
+  this project", and the steer opened "The repo's automated checks pass". Both contradict the
+  project's declared script and the coder's own red run. The coder never repaired the import;
+  CALL0372 claimed it had, CALL0373 the judge (correctly) named it, and the run stalled at 60 min
+  with `npm test` red (70%).
+- **Owner:** `probediscovery.build_js` drops a declared script when the classifier does not
+  recognise its body AND `_COMPOUND_SCRIPT` (`&&|\|\||[;&|]`, not quote-aware) matches. C27's
+  `node a && node b` is dropped as compound; C21 (`handles…_1790210315`, 50%) declared
+  `node -e "require('./test/handle-resolver.test');"` and was dropped only because of a `;` inside
+  double quotes. `probediscovery.tests_with_no_command` then renders "no command to run them was
+  found in this project" — a false fact (#5b) whenever a declared test entry was withheld rather
+  than absent.
+- **Prevalence (final archived workspaces, all models):** 56 declared allow-listed scripts; 2
+  withheld — exactly these two nemotron Handles runs.
+- **Candidate:** (a) decide "compound" from the existing quote-aware shell structure in
+  `probeclassify` (operators outside quotes), and admit an exit-status-preserving `&&` chain whose
+  every segment would be admitted alone and passes `has_unsafe_segment`; keep rejecting `;`, `||`,
+  `|`, `&`, and newline chains (they can mask a failure or background a service → false green).
+  (b) When a declared test entry exists but was withheld, never say "no command … was found"; state
+  the withheld declaration truthfully.
+- **LANG / MODEL / HARNESS:** the rule is shell semantics (quoting; exit-status propagation of
+  `&&`), not a runner, package, or error keyword; it lives in the shared shell-structure owner and
+  the one adapter that reads declared script bodies. Not a remedy or steer: the gate simply runs
+  what the project declares and reports the tool's own output.
+- **Additive / regression-only:** admits strictly more declared commands under the same safety
+  vet; a previously admitted body is unchanged. Bonsai 2 risk: a Bonsai workspace with an `&&`
+  test chain would now be exercised by the gate (none in the archive).
+
 Next bounded unit: the latest Cart C13 capture is materialized losslessly at `~/.cria/walk-findings/2026-09-23/cart-c13/` as 29 compaction-safe segments (6,281,741 bytes / 388 calls). All 29 durable findings now exist and their cited chain was reconciled against the materialized capture; no battery run is in flight, so no heartbeat is required.
 
 ### Candidate C14 — planner rewrite-frame false workspace fact (pending independent review)
