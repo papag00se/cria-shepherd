@@ -548,6 +548,14 @@ reconciled HEAD: `p22-feed-rerun-9ded52bc.service` (user unit, not collected), s
   reviewed and accepted; integrated full suite 5143 passed, 5 skipped. Row HEAD = the commit recording this entry.
   Queue: all six cells, one note, one heartbeat; no behavior change may land until the queue ends.
 
+### Row p27 launched
+
+- Row HEAD **`f6df9eea`** (full suite 5143 passed, 5 skipped; `cria.service` restarted, `/health` ok). Queue
+  `row-p27-f6df9eea.service` (user unit, not collected) runs `~/.cria/nemotron-l5-row-p27-f6df9eea.sh`: six cells in
+  order shipping → cart → orders → feed → handles → rust, each flocked on `suite-gpu.lock`, note
+  `BATTERY2 L5 nemotron-elastic f6df9eea p27`; the script aborts before a cell if HEAD moved or `cria/` is dirty.
+  Log `~/.cria/nemotron-l5-row-p27-f6df9eea.log`. Started 16:47:21. One heartbeat: `44347c64`.
+
 ### Cross-cell lead — invented third-party API members (not yet a candidate)
 
 Rust P20 (`toml` `Value::parse_str`, `toml::Error::Missing`), Feed p22 live (`org.apache.commons.csv.exceptions`,
