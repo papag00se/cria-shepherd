@@ -982,10 +982,19 @@ class TheOfflineLegOnlyRunsWhenItCanAnswerTests(unittest.TestCase):
             with open(os.path.join(t, "test_x.py"), "w") as f:
                 f.write(body)
             plan = probegate.plan_gate(t)
-            script = plan.script + "\necho FINAL_TEST_EC=$__cria_test_ec"
+            # C28: the composed body now runs DETACHED in its own script file, so a variable it sets
+            # is invisible to the outer launcher shell (which is all `plan.script` used to be). Peek
+            # at it from INSIDE that file instead — right after the real assignment — and read the
+            # echoed value back out of the transported gate stream rather than the launcher's stdout.
+            marker = f"{probegate.proberun.TEST_EC_VAR}=$__cria_ec"
+            self.assertEqual(plan.script.count(marker), 1, plan.script)
+            script = plan.script.replace(
+                marker, marker + "\necho FINAL_TEST_EC=$__cria_test_ec", 1)
             proc = subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=120)
-            m = re.search(r"FINAL_TEST_EC=(-?\d+)", proc.stdout)
-            self.assertIsNotNone(m, proc.stdout)
+            probegate.interpret_gate(plan, proc.stdout)
+            decoded = probegate.transported_result(plan)
+            m = re.search(r"FINAL_TEST_EC=(-?\d+)", decoded)
+            self.assertIsNotNone(m, (proc.stdout, decoded))
             return int(m.group(1))
 
         self.assertEqual(_test_ec("def test_ok():\n    assert True\n"), 0)

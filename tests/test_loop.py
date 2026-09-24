@@ -2257,7 +2257,7 @@ class RunFolderTests(unittest.TestCase):
         rlog = _SessRlog()
         loop.drive(_body(), "k", _Classification(), rlog)                      # plan persisted
         c2 = loop.drive(_body(), "k", _Classification(), rlog)                 # done → gate
-        loop.drive(_body_with_probe(_tc_id(c2), "PROBE_EXIT=0"), "k", _Classification(), rlog)  # critic ran
+        loop.drive(_body_with_probe(_tc_id(c2), ""), "k", _Classification(), rlog)  # critic ran
         run = os.path.join(tmp, "019fabcd-1234")
         names = sorted(os.listdir(run))
         self.assertTrue(any(n.startswith("plan-") and n.endswith(".md") for n in names), names)
@@ -2277,7 +2277,7 @@ class ResumeTests(unittest.TestCase):
             C = _Classification()
             loop1.drive(_body(), "sid:r", C, _Rlog())                    # step 1: coder acts
             c2 = loop1.drive(_body(), "sid:r", C, _Rlog())               # done → gate
-            loop1.drive(_body_with_probe(_tc_id(c2), "PROBE_EXIT=0"), "sid:r", C, _Rlog())  # step 1 done → step 2
+            loop1.drive(_body_with_probe(_tc_id(c2), ""), "sid:r", C, _Rlog())  # step 1 done → step 2
 
             # "restart": fresh store from the same file, fresh Loop with a planner that MUST not run
             class _NoPlanner:
@@ -2976,7 +2976,7 @@ class LoopDriveTests(unittest.TestCase):
         rlog = _Rlog()
         loop.drive(_body(), "k", _Classification(), rlog)                                   # 1: work (tool call forwarded)
         c2 = loop.drive(_body(), "k", _Classification(), rlog)                               # 2: done → GATE
-        c3 = loop.drive(_body_with_probe(_tc_id(c2), "PROBE_EXIT=0"), "k", _Classification(), rlog)  # 3: gate absent → critic rejects
+        c3 = loop.drive(_body_with_probe(_tc_id(c2), ""), "k", _Classification(), rlog)  # 3: gate absent → critic rejects
         self.assertTrue(c3["choices"][0]["message"].get("tool_calls"))  # coder re-driven to fix
         self.assertIn("loop.step_incomplete", rlog.kinds())
         self.assertNotIn("loop.step_done", rlog.kinds())   # NOT marked done
@@ -2993,7 +2993,7 @@ class LoopDriveTests(unittest.TestCase):
         rlog = _Rlog()
         from cria.probegate import SECTION_PREFIX
         c1 = loop.drive(_body(), "k", _Classification(), rlog)                               # prose → leg0 → prose → GATE
-        c2 = loop.drive(_body_with_probe(_tc_id(c1), "PROBE_EXIT=0"), "k", _Classification(), rlog)  # gate absent → critic rejects → re-drive → prose → GATE again
+        c2 = loop.drive(_body_with_probe(_tc_id(c1), ""), "k", _Classification(), rlog)  # gate absent → critic rejects → re-drive → prose → GATE again
         # c2 MUST carry a tool call (a fresh gate), never a bare/prose completion
         self.assertTrue(c2["choices"][0]["message"].get("tool_calls"))
         self.assertIn(GATE_SENTINEL, json.loads(c2["choices"][0]["message"]["tool_calls"][0]["function"]["arguments"])["command"][-1])
@@ -3009,7 +3009,7 @@ class LoopDriveTests(unittest.TestCase):
         rlog = _Rlog()
         loop.drive(_body(), "k", _Classification(), rlog)                                   # 1: work (tool call forwarded)
         c2 = loop.drive(_body(), "k", _Classification(), rlog)                               # 2: done → GATE
-        c3 = loop.drive(_body_with_probe(_tc_id(c2), "PROBE_EXIT=0"), "k", _Classification(), rlog)  # 3: gate absent → critic unparseable
+        c3 = loop.drive(_body_with_probe(_tc_id(c2), ""), "k", _Classification(), rlog)  # 3: gate absent → critic unparseable
         self.assertTrue(c3["choices"][0]["message"].get("tool_calls"))  # coder re-driven, NOT advanced
         self.assertIn("loop.step_incomplete", rlog.kinds())
         self.assertNotIn("loop.step_done", rlog.kinds())    # never marked done on a silent verifier
@@ -3036,7 +3036,7 @@ class LoopDriveTests(unittest.TestCase):
         loop = Loop(_ctx(coder, reasoner, _plan(1)))
         rlog = _Rlog()
         c1 = loop.drive(_body(), "sid:v", _Classification(), rlog)                           # work → done → PROBE
-        c2 = loop.drive(_body_with_probe(_tc_id(c1), "PROBE_EXIT=0"), "sid:v", _Classification(), rlog)  # probe clean → verify → FAIL CLOSED
+        c2 = loop.drive(_body_with_probe(_tc_id(c1), ""), "sid:v", _Classification(), rlog)  # probe clean → verify → FAIL CLOSED
         self.assertNotIn("plan complete", c2["choices"][0]["message"].get("content") or "")  # did NOT complete
         self.assertIn("loop.verify_failclosed", rlog.kinds())
         self.assertNotIn("loop.step_done", rlog.kinds())
@@ -3183,7 +3183,7 @@ class BannerStripTests(unittest.TestCase):
         loop = Loop(_ctx(coder, _R(), _plan(1)))
         rlog = _Rlog()
         c1 = loop.drive(_body(), "k", _Classification(), rlog)                                # work → done → PROBE
-        loop.drive(_body_with_probe(_tc_id(c1), "PROBE_EXIT=0"), "k", _Classification(), rlog)  # probe → critic
+        loop.drive(_body_with_probe(_tc_id(c1), ""), "k", _Classification(), rlog)  # probe → critic
         self.assertNotIn("⟦cria⟧", captured.get("user", ""))  # banners scrubbed from the critic's context
         self.assertIn("inspect the docs", captured.get("user", ""))  # the coder's real claim survives
 

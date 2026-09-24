@@ -45,7 +45,12 @@ class ProbeCompositionHasNoEvidenceBudgetTests(unittest.TestCase):
             with mock.patch.object(proberun, "select_completion_probes", return_value=[candidate()]):
                 plan = probegate.plan_gate(workspace)
         self.assertTrue(plan.transport_required)
-        self.assertIn("mktemp", plan.script)
+        # C28: the spool path is now a DETERMINISTIC name off cria's own transport_id (not `mktemp`'s
+        # random suffix), so the launch script can be re-sent verbatim as an idempotent retry when
+        # the harness's own exec yield cuts the whole call before a page ever comes back
+        # (probegate._gate_launch_guard). It is still a temporary file OUTSIDE the workspace.
+        self.assertIn("__cria_gate_file=", plan.script)
+        self.assertIn(".spool", plan.script)
         self.assertIn(probegate.TRANSPORT_PREFIX, plan.script)
 
     def test_the_inbound_bound_remains_gone(self):

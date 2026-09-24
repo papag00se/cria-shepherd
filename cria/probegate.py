@@ -34,6 +34,7 @@ import os
 import re
 import secrets
 import shlex
+import time
 from dataclasses import dataclass, field
 
 from . import dirguard, dedup, jsontext, wsview
@@ -73,24 +74,77 @@ TRANSPORT_SUFFIX = "___"
 TRANSPORT_END_PREFIX = "___CRIA_GATE_TRANSPORT_END_"
 _TRANSPORT_HEREDOC = "__CRIA_GATE_TRANSPORT_PY__"
 
+# C28: a harness exec's DEFAULT yield does not have to honor the 300s budget `with_time_budget`
+# asks for (Codex clamped/returned early at ~10s in the captured incident, mid-pytest, with no
+# transport opener at all — `inbound-ce7f6c3d-responses.json`, session 01a0d2c3). So the composed
+# probe block now runs DETACHED (see `_gate_launch_guard`) and this is merely how long ONE read of
+# it waits for a completion marker before answering with a typed "still running" envelope instead of
+# silently going empty-handed. Kept safely under the observed ~10s default so the reader's OWN typed
+# envelope — running or complete — has time to print before the harness's yield can cut it too.
+GATE_POLL_WAIT_S = 8.0
+
+# The cria-side deadline for the WHOLE detached block, derived from the plan's OWN composed
+# timeouts, never guessed: every selected probe (and the offline re-run leg, when present) is
+# individually bounded by `timeout -k {TIMEOUT_KILL_GRACE_S} {COMPLETION_PROBE_TIMEOUT_S}` inside
+# the block and they run SERIALLY, so the worst legitimate case is their sum. The slack absorbs the
+# git/litter/survey bookkeeping that isn't under any single probe's own timeout. Exceeding this is
+# the ONLY way a running gate becomes terminal UNKNOWN (fail closed, #13) — every other malformed/
+# cut/hash/offset check is unchanged.
+GATE_DEADLINE_SLACK_S = 60.0
+
+# Supervisor review: the plan-wide deadline (minutes) is the RIGHT bound for a check that is
+# genuinely still running \u2014 the reader answers within GATE_POLL_WAIT_S every time, so a typed
+# `running` envelope is trustworthy evidence of life. An OPENERLESS result is different: the reader
+# always answers inside GATE_POLL_WAIT_S (well under the harness's own yield), so getting NOTHING
+# recognizable back means the poll itself was cut, or the reader could not even run (no `python3`,
+# a sandbox rejection `refusal_reason` doesn't recognise). That is a channel fact, not a liveness
+# fact, and letting it ride the multi-minute deadline would silently retry a genuinely broken
+# channel for ~100 cria-only turns before ever saying so. Bounded separately and small: covers the
+# captured P18 launch shape (one openerless read) plus one cut poll, and resets the instant a real
+# envelope (running or a page) arrives.
+GATE_OPENERLESS_MAX = 2
+
 
 def _transport_marker(transport_id: str, *, end: bool = False) -> str:
     prefix = TRANSPORT_END_PREFIX if end else TRANSPORT_PREFIX
     return f"{prefix}{transport_id}{TRANSPORT_SUFFIX}"
 
 
-def _transport_reader(path_arg: str, offset: int, transport_id: str) -> str:
+def _transport_reader(path_arg: str, offset: int, transport_id: str, *,
+                      wait_s: float = GATE_POLL_WAIT_S) -> str:
     """Harness-side page reader. ``path_arg`` is a shell expression or quoted path.
 
-    The final page is read into the helper's memory before the temporary file is unlinked. If its
-    result is cut in transit, cria sees a missing close/count/hash and reports UNKNOWN; it never
-    interprets the prefix as a complete check. Normal completion leaves no harness-side artifact.
+    Waits up to ``wait_s`` for the sibling ``.done`` marker the detached probe block writes when it
+    finishes (see :func:`_gate_launch_guard`) before deciding what to answer: DONE → the existing
+    page (unchanged shape: path/offset/total/sha256/data). NOT DONE → a typed "running" envelope
+    (same opener/closer, never a data field) so the harness's OWN result always carries a real
+    envelope instead of going back empty — the exact P18 shape ("Process running … Output:", no
+    marker at all) that made `ingest_transport` terminal on a check that was still alive.
+
+    The final page is read into the helper's memory before the temporary file (and its ``.done``
+    marker) is unlinked. If its result is cut in transit, cria sees a missing close/count/hash and
+    reports UNKNOWN; it never interprets the prefix as a complete check. Normal completion leaves no
+    harness-side artifact.
     """
-    program = f'''import base64, hashlib, os, sys
+    program = f'''import base64, hashlib, os, sys, time
 path = sys.argv[1]
 offset = int(sys.argv[2])
 opening = {_transport_marker(transport_id)!r}
 closing = {_transport_marker(transport_id, end=True)!r}
+done_path = path + ".done"
+deadline = time.monotonic() + {wait_s!r}
+while not os.path.exists(done_path) and time.monotonic() < deadline:
+    time.sleep(0.2)
+if not os.path.exists(done_path):
+    try:
+        started = os.path.getctime(path)
+        elapsed = max(0.0, time.time() - started)
+    except OSError:
+        elapsed = 0.0
+    print(opening)
+    print("running\\t" + str(round(elapsed, 1)))
+    print(closing)
+    sys.exit(0)
 try:
     total = os.path.getsize(path)
     if offset < 0 or offset > total:
@@ -104,6 +158,10 @@ try:
     final = offset + len(chunk) == total
     if final:
         os.unlink(path)
+        try:
+            os.unlink(done_path)
+        except OSError:
+            pass
     print(opening)
     print("path\\t" + base64.b64encode(path.encode()).decode())
     print("offset\\t" + str(offset))
@@ -118,6 +176,56 @@ except Exception as exc:
 '''
     return (f"python3 - {path_arg} {offset} <<'{_TRANSPORT_HEREDOC}'\n"
             f"{program}{_TRANSPORT_HEREDOC}")
+
+
+def _gate_launch_guard(spool_arg: str, cmd_arg: str, parts: list[str]) -> list[str]:
+    """The lines that start the composed probe block DETACHED, idempotently.
+
+    Written to run BEFORE the offset-0 :func:`_transport_reader` call, guarded so re-sending this
+    exact block (cria's own retry when it has learned nothing yet — see
+    :func:`continue_transport_command`) never launches a second copy: if the spool or its ``.done``
+    marker already exists, the probes are already running or already finished and this leg is a
+    no-op.
+
+    DETACHED so the harness's own exec yield only bounds the READ, never the check: `setsid` (when
+    on PATH) puts the block in a new session with no controlling terminal, so it outlives the harness
+    reaping this call's process group; a plain background job is the fallback. Both the launched
+    command's own I/O and the surrounding group's are redirected to ``/dev/null``/the spool — an
+    inherited pipe end left open in a still-running detached child is exactly what would hang the
+    NEXT read of this same call (or a test's `subprocess.run(capture_output=True)`).
+
+    INTERPRETER: `bash` when it is on PATH, else `sh`. Before C28 `parts` ran inline in whatever
+    shell the HARNESS itself used to run the whole composed script — Codex's own exec tool is
+    `bash -lc`, and probe composition (`proberun.compose_probe_command`, the offline `unshare` leg,
+    `wsview.survey_command`) was never written against POSIX `sh` specifically. Detaching into a
+    bare `sh` would swap that shell out from under commands that happened to work only because bash
+    was running them — a silent behavior change with no `test_gate_script_is_read_only.py`-style
+    guard to catch it, since `sh` is frequently a bash symlink on the very machine that would hide
+    the regression. `setsid` and the interpreter choice are independent knobs (either may be absent).
+
+    No `rm`: the Codex sandbox rejects the WHOLE script when it contains one
+    (test_gate_script_is_read_only.py); cleanup is `os.unlink` — the launch script unlinks itself
+    once the block is done, exactly like the spool is unlinked by the final page read.
+    """
+    body = "\n".join(parts) if parts else ":"
+    tag = "__CRIA_GATE_BODY__"
+    return [
+        f"if [ ! -e {spool_arg} ] && [ ! -e {spool_arg}.done ]; then",
+        f": > {spool_arg} || exit 98",
+        f"cat > {cmd_arg} <<'{tag}'",
+        body,
+        tag,
+        'if command -v bash >/dev/null 2>&1; then __cria_gate_sh="bash"; '
+        'else __cria_gate_sh="sh"; fi',
+        'if command -v setsid >/dev/null 2>&1; then __cria_gate_run="setsid $__cria_gate_sh"; '
+        'else __cria_gate_run="$__cria_gate_sh"; fi',
+        f'( $__cria_gate_run {cmd_arg} </dev/null >{spool_arg} 2>&1',
+        f': > {spool_arg}.done',
+        f'python3 -c "import os, sys; os.unlink(sys.argv[1])" {cmd_arg} >/dev/null 2>&1',
+        f') </dev/null >/dev/null 2>&1 &',
+        "disown 2>/dev/null || true",
+        "fi",
+    ]
 
 
 @dataclass
@@ -151,6 +259,18 @@ class GatePlan:
     transport_data: bytearray = field(default_factory=bytearray)
     transport_complete: bool = False
     transport_error: str = ""
+    # C28: the cria-side wall-clock this plan was composed at, and the deadline (in seconds from
+    # there) past which a still-"running" transport becomes terminal UNKNOWN rather than being
+    # retried forever. `plan_gate` sets `transport_deadline_s` from the plan's own probe timeouts;
+    # left at 0.0 (e.g. a hand-built plan in a test, or historical replay in `clean_gate_results`)
+    # a running transport is retried without ever timing out on its own — those callers only care
+    # whether replay ever reached `transport_complete`, not how long it took.
+    transport_started: float = field(default_factory=time.monotonic)
+    transport_deadline_s: float = 0.0
+    # Consecutive OPENERLESS reads (no envelope at all, not even a typed `running` one) since the
+    # last real envelope. Bounded by `GATE_OPENERLESS_MAX`, independently of `transport_deadline_s`
+    # \u2014 see the constant's own comment for why the two must not share a bound.
+    transport_openerless_streak: int = 0
     # THE OFFLINE FACT THIS PLAN'S LAST CLEAN GATE PRODUCED, so a reader that is not the coder can
     # have it. `_offline_fact` is one sentence cria owns outright — the suite passed, and it passed
     # again with the network taken away — and it reached the coder in 20 prompts of L5
@@ -200,13 +320,41 @@ def fail_transport(plan: GatePlan, reason: str) -> str:
     return "unknown"
 
 
-def ingest_transport(plan: GatePlan, result_text: str) -> str:
-    """Ingest one harness-returned page: ``pending``, ``complete``, ``unknown`` or ``legacy``.
+def _gate_deadline_s(candidate_count: int) -> float:
+    """The cria-side deadline (seconds) for a detached gate block with this many timed probes."""
+    per = COMPLETION_PROBE_TIMEOUT_S + proberun.TIMEOUT_KILL_GRACE_S
+    return max(candidate_count, 1) * per + GATE_DEADLINE_SLACK_S
+
+
+def _retry_or_deadline(plan: GatePlan, now: float | None) -> str:
+    """``running`` while the plan's own cria-side deadline hasn't passed, else terminal UNKNOWN.
+
+    Shared by two shapes of "the check is still going": the reader's own typed ``running`` envelope,
+    and total silence (no opener at all — the captured P18 shape, `inbound-ce7f6c3d-responses.json`:
+    a harness exec yield that cut the WHOLE call before the reader printed a byte). Both are read-only
+    and idempotent to retry, so neither is made terminal on its own; only running out of the plan's
+    own composed timeout budget is (fail closed, #13, with an honest reason — never silently clean).
+    """
+    elapsed = (now if now is not None else time.monotonic()) - plan.transport_started
+    if plan.transport_deadline_s and elapsed > plan.transport_deadline_s:
+        return fail_transport(
+            plan, "the check exceeded its own composed timeout budget while still running")
+    return "running"
+
+
+def ingest_transport(plan: GatePlan, result_text: str, *, now: float | None = None) -> str:
+    """Ingest one harness-returned page: ``pending``, ``running``, ``complete``, ``unknown`` or
+    ``legacy``.
 
     No prefix is ever parsed as evidence. A page is accepted only when both envelope markers are
     present, all fields occur exactly once, its offset is the next byte cria needs, its path/total/
     hash agree with earlier pages, and the decoded chunk stays inside the declared total. Only the
     complete byte string is eligible for :func:`split_sections`.
+
+    ``running`` (C28) is NON-TERMINAL: the detached probe block hasn't finished yet (or the harness
+    cut this particular poll before it could say so). It is retried — see
+    :func:`cria.loop.guard_gate_transport` — until either a real page arrives or
+    :func:`_gate_deadline_s` is exceeded, at which point it becomes terminal UNKNOWN.
 
     ``legacy`` preserves old gate results already present in a conversation and hand-built parser
     fixtures. A newly composed transport never emits raw section markers outside its base64 page.
@@ -226,7 +374,27 @@ def ingest_transport(plan: GatePlan, result_text: str) -> str:
     text = result_text or ""
     start = text.find(opening)
     if start < 0:
-        return fail_transport(plan, "transport page opener did not arrive")
+        if not text.strip() or refusal_reason(text):
+            # GENUINELY ABSENT (no tool message answered this call at all — the harness declined
+            # this turn, or a caller asks before any result could exist) and an explicit REFUSAL
+            # (the harness's OWN words for why it would not even attempt the script — already
+            # vetted, generic sandbox/permission phrasing reused from `refusal_reason`, not a new
+            # runner/language keying) are the SAME fact: nothing was ever launched. That is the
+            # pre-existing fail-open contract every caller already has — terminal UNKNOWN, not a
+            # retry — and stays exactly as it was before C28.
+            return fail_transport(plan, "transport page opener did not arrive")
+        # A REAL, non-empty reply that still carries no envelope and no refusal wording is the exact
+        # P18 shape (`inbound-ce7f6c3d-responses.json`: "Wall time: 30.0008 seconds\nProcess running
+        # …") — the harness's own exec yield cut the call before the reader printed a byte. Read-only
+        # and idempotent to retry, so this is the ONE existing failure this candidate softens — but
+        # ONLY up to GATE_OPENERLESS_MAX consecutive times (see its own comment): the reader answers
+        # within GATE_POLL_WAIT_S every time, so repeated total silence means the poll itself is
+        # broken, not that the check is merely slow, and that must not ride the multi-minute deadline.
+        plan.transport_openerless_streak += 1
+        if plan.transport_openerless_streak > GATE_OPENERLESS_MAX:
+            return fail_transport(
+                plan, "transport page opener did not arrive, repeatedly — the poll itself is broken")
+        return _retry_or_deadline(plan, now)
     end = text.find(closing, start + len(opening))
     if end < 0:
         return fail_transport(plan, "transport page was cut before its closing marker")
@@ -239,6 +407,13 @@ def ingest_transport(plan: GatePlan, result_text: str) -> str:
         if not sep or key in fields:
             return fail_transport(plan, "transport page contains malformed or duplicate fields")
         fields[key] = value
+    if set(fields) == {"running"}:
+        # The reader's own typed envelope: it waited, the completion marker still wasn't there, and it
+        # said so instead of returning nothing. Never data — bounded by the plan-wide deadline, not
+        # the openerless streak: THE POLL ITSELF WORKED (it printed a real envelope), so this is
+        # genuine evidence of life, not a broken channel.
+        plan.transport_openerless_streak = 0
+        return _retry_or_deadline(plan, now)
     if "error" in fields:
         try:
             detail = base64.b64decode(fields["error"], validate=True).decode("utf-8", "replace")
@@ -247,6 +422,9 @@ def ingest_transport(plan: GatePlan, result_text: str) -> str:
         return fail_transport(plan, detail)
     if set(fields) != {"path", "offset", "total", "sha256", "data"}:
         return fail_transport(plan, "transport page is missing required fields")
+    # A REAL page envelope arrived \u2014 the poll channel works, whatever this page's own contents
+    # turn out to validate to below. Reset the openerless streak here, not only on eventual success.
+    plan.transport_openerless_streak = 0
     try:
         path = base64.b64decode(fields["path"], validate=True).decode("utf-8")
         offset, total = int(fields["offset"]), int(fields["total"])
@@ -292,10 +470,21 @@ def transported_result(plan: GatePlan) -> str:
 
 
 def continue_transport_command(plan: GatePlan) -> str:
-    """The next harness-side page request, or ``""`` when transport cannot continue."""
-    if (not plan.transport_required or plan.transport_complete or plan.transport_error
-            or not plan.transport_path):
+    """The next harness-side page request, or ``""`` when transport cannot continue.
+
+    Once a real page has taught cria the resolved spool path, this is the existing narrow
+    offset-based re-read (unchanged shape). Until then — total silence, or only the reader's own
+    typed ``running`` envelope so far — cria does not know the path (`${TMPDIR:-/tmp}` is the
+    HARNESS's own value, #23c: cria composes, the harness resolves) and cannot compose a narrower
+    request, so it re-sends the WHOLE launch script. That is exactly `plan.script`, made idempotent
+    for this (:func:`_gate_launch_guard` skips relaunching a block whose spool or ``.done`` marker
+    already exists), read-only in effect, and safe to repeat until page 0 lands or the plan's own
+    deadline gives up.
+    """
+    if not plan.transport_required or plan.transport_complete or plan.transport_error:
         return ""
+    if not plan.transport_path:
+        return plan.script
     return "\n".join([
         _gate_sentinel([]),
         _transport_reader(shlex.quote(plan.transport_path), len(plan.transport_data),
@@ -443,13 +632,20 @@ def plan_gate(workspace: str, session: str = "", rlog=None) -> GatePlan:
     # The harness owns the filesystem and the asynchronous clock. It writes the complete aggregate
     # outside the workspace, then sends only the first checked page now. Later pages are requested by
     # :func:`continue_transport_command`; cria never reaches into the remote machine itself.
-    template = f'"${{TMPDIR:-/tmp}}/.cria-gate-{plan.transport_id}.XXXXXX"'
+    #
+    # C28: the spool/launch-script paths are DETERMINISTIC off `plan.transport_id` (cria's own
+    # 96-bit-random token, not a guessed value) rather than `mktemp`'s random suffix. cria still
+    # cannot know `${TMPDIR:-/tmp}`'s resolved value (#23c — that's the HARNESS's environment), but a
+    # fixed name lets `continue_transport_command` retry this exact launch text verbatim while it has
+    # learned nothing yet, and `_gate_launch_guard` makes that retry a no-op once the block is started.
+    spool = f'"${{TMPDIR:-/tmp}}/.cria-gate-{plan.transport_id}.spool"'
+    cmd_file = f'"${{TMPDIR:-/tmp}}/.cria-gate-{plan.transport_id}-cmd.sh"'
+    plan.transport_deadline_s = _gate_deadline_s(len(plan.candidates) + (1 if offline else 0))
     plan.script = "\n".join([
         _gate_sentinel(retypable),
-        f"__cria_gate_file=$(mktemp {template}) || exit 98",
-        "{",
-        *parts,
-        '} >"$__cria_gate_file" 2>&1',
+        f"__cria_gate_file={spool}",
+        f"__cria_gate_cmd={cmd_file}",
+        *_gate_launch_guard('"$__cria_gate_file"', '"$__cria_gate_cmd"', parts),
         _transport_reader('"$__cria_gate_file"', 0, plan.transport_id),
     ])
     return plan
@@ -1736,7 +1932,10 @@ def sweep_litter(plan: GatePlan, sections: dict) -> list[str]:
 def interpret_gate(plan: GatePlan, result_text: str, rlog=None) -> GateOutcome:
     """Replay the harness's gate output through the ported interpreters."""
     state = ingest_transport(plan, result_text)
-    if state == "pending":
+    if state in ("pending", "running"):
+        # C28: `running` is exactly as non-terminal as `pending` from here — the caller (normally
+        # `loop.guard_gate_transport`, which intercepts both before `interpret_gate` is ever reached
+        # this turn) re-issues the read-only wait/read instead of treating it as evidence.
         return GateOutcome(ran=False, transport_pending=True)
     if state == "unknown":
         if rlog is not None:

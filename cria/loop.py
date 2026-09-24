@@ -6452,16 +6452,23 @@ def guard_gate_transport(gs: GuardState, body: dict, rlog, *, call_id: str = "")
     """Consume the current gate page and, when needed, ask the HARNESS for the next one.
 
     This is the asynchronous bridge shared by completion, periodic, and guard probes. It never
-    reads the harness filesystem: the next offset is composed into another ordinary shell call.
+    reads the harness filesystem: the next offset (or, while the resolved spool path is still
+    unknown, the whole idempotent launch script — see ``probegate.continue_transport_command``) is
+    composed into another ordinary shell call.
     A malformed/cut page arms ``transport_error`` and returns no continuation; the subsequent gate
     interpretation reports explicit UNKNOWN and cannot produce a clean verdict.
+
+    ``running`` (C28) is treated exactly like ``pending``: the detached probe block hasn't finished
+    yet — or the harness cut THIS poll before it could say so — and the read is read-only and
+    idempotent, so it is retried rather than made terminal. `ingest_transport` itself is what turns a
+    running gate terminal, once it exceeds the plan's own composed timeout budget.
     """
     plan = getattr(gs, "gate_plan", None)
     if plan is None or not getattr(plan, "transport_required", False):
         return None
     raw = _read_tool_result(body.get("messages", []), call_id or gs.probe_call_id)
     state = probegate.ingest_transport(plan, raw)
-    if state != "pending":
+    if state not in ("pending", "running"):
         if state == "unknown":
             rlog.emit("gate.transport_unknown", level="warn", reason=plan.transport_error,
                       received=len(plan.transport_data), total=plan.transport_total)
@@ -6480,7 +6487,11 @@ def guard_gate_transport(gs: GuardState, body: dict, rlog, *, call_id: str = "")
                      "arguments": json.dumps(shell_args(tool, command))},
     }
     gs.probe_call_id = call["id"]
-    rlog.emit("gate.transport_page", received=len(plan.transport_data), total=plan.transport_total)
+    if state == "running":
+        rlog.emit("gate.transport_running", received=len(plan.transport_data),
+                  total=plan.transport_total)
+    else:
+        rlog.emit("gate.transport_page", received=len(plan.transport_data), total=plan.transport_total)
     return call
 
 
