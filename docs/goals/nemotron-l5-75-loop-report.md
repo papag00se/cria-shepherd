@@ -282,6 +282,34 @@ reconciled HEAD: `p22-feed-rerun-9ded52bc.service` (user unit, not collected), s
   vet; a previously admitted body is unchanged. Bonsai 2 risk: a Bonsai workspace with an `&&`
   test chain would now be exercised by the gate (none in the archive).
 
+### Candidate C30 — an exhausted plan-admission guard re-plans forever and no coder ever runs
+
+- **Observed chain:** Cart P18 (`20260924T012515-01a0d284`, 814 calls, 0%): 775 planner calls, 38
+  proxy calls, **zero coder calls**, no `loop.start`. Events: `plan.host_unread hosts=discounts.json,go.mod`
+  → `plan.rejected_exhausted check=host` → `plan.retriable`, repeated six times (plus one
+  `check=url`), for 35 minutes. The host judge (CALL0016) received the task-named file
+  `discounts.json` as an "unread name" and its reasoning never applied the criteria ("That is a name
+  that remains unread … So we must output that name"). The same terminal shape — admission rejected
+  → retriable → re-gather every turn → no plan session, no coder — ended C22 (`01a0d10e`, 0%) and C25
+  (`01a0d1a4`, 0%) on Node. Three 0% runs, two languages.
+- **Owner:** `planner.Planner._gather_and_plan`: every exhausted admission guard (url, host,
+  coverage, test-execution, undecidable/not-applicable readiness) sets `_retriable_failure = True`.
+  `Loop` treats a retriable failure as "re-plan next turn" and skips its existing fallback
+  (`_synthetic_plan` → guarded single-item raw-task drive, which keeps gate/guards/steers). So a
+  guard that keeps rejecting (correctly or not) blocks all coding unboundedly — failing closed on a
+  non-completion decision, against #13 ("fail open only toward keep working") and #2 (never block
+  the first fix).
+- **Candidate:** keep C7's invariant (a draft cria rejected is never admitted as the plan cursor),
+  but an exhausted admission guard is a planning give-up, not a transport retry: the session falls to
+  the existing synthetic single-item guarded drive for that task. Transport/model errors and survey
+  deferral stay retriable.
+- **LANG / MODEL / HARNESS:** keyed on the planner's typed outcome, not on any guard's content,
+  language, or model. The fallback path already exists and is exercised for unparseable plans.
+- **Additive / regression-only:** changes nothing when a plan is admitted; converts an unbounded
+  no-work loop into guarded work on the raw task. Bonsai 2 risk: sessions whose guard exhausted and
+  whose later re-gather would have produced an admissible plan now proceed on the raw task instead.
+  Measured prevalence of that recovery must be checked in logs before landing.
+
 Next bounded unit: the latest Cart C13 capture is materialized losslessly at `~/.cria/walk-findings/2026-09-23/cart-c13/` as 29 compaction-safe segments (6,281,741 bytes / 388 calls). All 29 durable findings now exist and their cited chain was reconciled against the materialized capture; no battery run is in flight, so no heartbeat is required.
 
 ### Candidate C14 — planner rewrite-frame false workspace fact (pending independent review)
