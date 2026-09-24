@@ -188,6 +188,11 @@ Next bounded unit: the latest Cart C13 capture is materialized losslessly at `~/
 - Complete C14 walk (82 lossless segments) rejected C16 (downstream critic provenance already suppressed) and C17 (unrecognized compaction summary cannot be faithfully repaired). C18 traced the independent earliest repeat-loop producer: `probegate.clean_gate_results` replaced C14 CALL0028/CALL0392’s non-stamped proxy checker results with synthetic repeat prose, destroying the real tool output and inducing identical rechecks.
 - `705301ac` returns non-stamped results after existing structural cleanup, preserving every real checker line; provenance-stamped C6 cleaning remains `linked_only=True`. C14-shaped fails-before/passes-after replay, stamped-gate, and ordinary marker-shaped regressions landed. Focused checks passed; full `python -m pytest` **5000 passed, 5 skipped**. Independent re-review accepted (108 focused tests), commit pushed, `cria.service` restarted and `/health` OK.
 
+### C23 Handles terminal rerun — strategy reset
+
+- Comparable run `handles-cli-node_nemotron-elastic_codex_pon_1790216479` under note `BATTERY2 L5 nemotron-elastic 3206b06b p13` exited after **52 calls** at **45%**. It produced CLI/Dockerfile/test artifacts but no `npm test` script; terminal heartbeat `a1f25c47` was retired.
+- **No C24 Handles rerun is authorized.** Canonically walk C23 first to classify this stall against the C20–C22 runner-readiness family; if shared, use a different intervention class.
+
 ### C22 Handles terminal rerun — strategy reset
 
 - Comparable run `handles-cli-node_nemotron-elastic_codex_pon_1790213771` under note `BATTERY2 L5 nemotron-elastic 027e9de2 p12` exited after **91 calls** with **0%** usefulness and no workspace changes. Heartbeat `ed79d166` was retired after its terminal packet.
