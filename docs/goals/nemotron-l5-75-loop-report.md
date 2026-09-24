@@ -555,6 +555,11 @@ reconciled HEAD: `p22-feed-rerun-9ded52bc.service` (user unit, not collected), s
   order shipping → cart → orders → feed → handles → rust, each flocked on `suite-gpu.lock`, note
   `BATTERY2 L5 nemotron-elastic f6df9eea p27`; the script aborts before a cell if HEAD moved or `cria/` is dirty.
   Log `~/.cria/nemotron-l5-row-p27-f6df9eea.log`. Started 16:47:21. One heartbeat: `44347c64`.
+  Queue defect found and routed around without touching the running cell: the first script's guard compared
+  `HEAD`, which this doc-only ledger commit (`4813fec3`) moved, so it would abort after shipping. Continuation unit
+  `row-p27-f6df9eea-cont.service` (`…-cont.sh`) waits for the first unit to exit, then runs cart → rust at the same
+  note, guarding only the live-behaviour tree (`cria/`, `suite/run.py`, `suite/sampling.py` identical to `f6df9eea`,
+  `cria/` clean). The first unit's expected `ABORT before cart-billing-go` line is this handover, not a failure.
 
 ### Cross-cell lead — invented third-party API members (not yet a candidate)
 
