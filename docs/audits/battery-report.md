@@ -1,6 +1,6 @@
 # Battery — the engagement ladder
 
-**Last updated 2026-09-23 19:26** — newest row `handles-cli-node_nemotron-elastic_codex_pon_1790216479`, finished 2026-09-23 19:26.
+**Last updated 2026-09-23 20:40** — newest row `handles-cli-node_nemotron-elastic_codex_pon_1790217729`, finished 2026-09-23 20:40.
 
 Each cell is an inferred usefulness percentage 🟢≥88 🟡≥63 🟠≥38 🔴 below; `·` = not judged. `[engagement] level = 0..5`, each rung implying every rung below it. gemma4 / qwen35 / nemotron-elastic are FROZEN historical inference rows recovered into suite/historical_ladder.json; every other model reads live from results.jsonl, and a fresh live judgment supersedes a frozen cell.
 
@@ -56,7 +56,7 @@ Each cell is an inferred usefulness percentage 🟢≥88 🟡≥63 🟠≥38 �
 |---|---|---|---|---|---|---|---:|---:|---:|
 | gemma4 | 🟡 73% | 🟢 89% | 🟢 92% | 🟢 100% | 🟢 91% | 🟢 100% | 91% | 20 | 74 |
 | qwen35 | 🟢 100% | 🟡 63% | 🟡 71% | 🟢 96% | 🟢 93% | 🟢 100% | 87% | 40 | 227 |
-| nemotron-elastic | 🔴 30% | 🔴 31% | 🔴 15% | 🔴 20% | 🟡 70% | 🔴 20% | 31% | 19 | 232 |
+| nemotron-elastic | 🔴 30% | 🔴 31% | 🔴 15% | 🔴 20% | 🟡 70% | 🔴 20% | 31% | 28 | 304 |
 | ornith15 | 🟢 95% | 🟡 84% | 🟡 85% | 🟡 70% | 🟡 75% | 🟢 95% | 84% | 60 | 126 |
 | qwen38 | 🟢 100% | 🟢 100% | 🟢 100% | 🟡 85% | 🟢 98% | 🟢 100% | 97% | 24 | · |
 | ternary-bonsai-2 | 🟡 85% | 🟢 90% | 🟢 95% | 🟡 85% | 🟢 95% | 🟢 90% | 90% | 59 | 163 |
