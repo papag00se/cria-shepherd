@@ -680,6 +680,35 @@ class SpoolPermissionsTests(unittest.TestCase):
         self.assertEqual(os.stat(cmd_file).st_mode & 0o777, 0o600,
                          "the cmd file must be owner-only too")
 
+    def test_the_umask_is_restored_before_launch_so_probes_see_the_harness_umask(self):
+        """Reviewer-reported regression: a bare `umask 077` with no restore LEAKED into the
+        detached session and every probe it runs, silently narrowing the mode of every file the
+        repo's OWN checks create in the coder's workspace (a probe's own `umask` printed 0077
+        instead of the harness's 0022 on real Codex; a check asserting an output file's mode 0644
+        went from green to red). Both facts must hold TOGETHER: cria's own two files stay
+        owner-only, and the probe still runs under the harness's real umask, unchanged."""
+        tid = probegate.GatePlan(workspace="").transport_id
+        spool, cmd_file = f"/tmp/.cria-gate-{tid}.spool", f"/tmp/.cria-gate-{tid}-cmd.sh"
+        self.addCleanup(lambda: [os.path.exists(p) and os.unlink(p)
+                                 for p in (spool, cmd_file, spool + ".done")])
+        body = ["umask", "sleep 1", "echo ok"]
+        guard = probegate._gate_launch_guard(f'"{spool}"', f'"{cmd_file}"', body)
+        # The LAUNCHING shell's own umask — the harness's umask — is 0022, not cria's narrowed 0077.
+        script = "umask 022\n" + _launch_script(spool, cmd_file, body, guard, tid, wait_s=0.3)
+        subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=30)
+        # Mid-flight (the probe is still sleeping): cria's own two files are still owner-only.
+        self.assertEqual(os.stat(spool).st_mode & 0o777, 0o600,
+                         "the spool must stay owner-only even with the umask restored before launch")
+        self.assertEqual(os.stat(cmd_file).st_mode & 0o777, 0o600,
+                         "the cmd file must stay owner-only even with the umask restored before launch")
+        deadline = time.monotonic() + 8.0
+        while not os.path.exists(spool + ".done") and time.monotonic() < deadline:
+            time.sleep(0.2)
+        self.assertTrue(os.path.exists(spool + ".done"), "the probe never finished")
+        # ...and the PROBE's own umask matches the LAUNCHING (harness's) shell's 0022 — not the
+        # narrowed 0077 that leaked into the detached session before this repair.
+        self.assertIn("0022", open(spool).read())
+
 
 if __name__ == "__main__":
     unittest.main()

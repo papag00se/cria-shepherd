@@ -217,9 +217,17 @@ def _gate_launch_guard(spool_arg: str, cmd_arg: str, parts: list[str]) -> list[s
     guard to catch it, since `sh` is frequently a bash symlink on the very machine that would hide
     the regression. `setsid` and the interpreter choice are independent knobs (either may be absent).
 
-    `umask 077` before either file is created: the spool carries the coder's own check output and
-    the cmd file the composed probe commands, and `mktemp`'s own default (owner-only, 0600) is what
-    this replaced — a fixed deterministic name must not widen that.
+    `umask 077` around ONLY the file creation, then RESTORED before the detached launch: the spool
+    carries the coder's own check output and the cmd file the composed probe commands, and
+    `mktemp`'s own default (owner-only, 0600) is what this replaced — a fixed deterministic name
+    must not widen that. But a umask is PROCESS-WIDE and inherited by children: a bare `umask 077`
+    with no restore leaked into the detached session and every probe it runs, silently narrowing the
+    mode of every file the repo's OWN checks create in the coder's workspace (reviewer evidence: a
+    probe's own `umask` printed 0077 instead of the harness's 0022 on real Codex; a check asserting
+    an output file's mode 0644 went from green to red). The harness's umask is saved before the
+    narrowing and restored immediately after both files exist, so only cria's OWN two files are
+    affected and the detached session — hence every probe — inherits the harness's original umask
+    unchanged, exactly as it did before C28.
 
     No `rm`: the Codex sandbox rejects the WHOLE script when it contains one
     (test_gate_script_is_read_only.py); cleanup is `os.unlink` — the launch script unlinks itself
@@ -235,11 +243,13 @@ def _gate_launch_guard(spool_arg: str, cmd_arg: str, parts: list[str]) -> list[s
                'python3 -c "import os, sys; os.unlink(sys.argv[1])" "$1" >/dev/null 2>&1')
     return [
         f"if [ ! -e {spool_arg} ] && [ ! -e {spool_arg}.done ]; then",
+        "__cria_gate_umask=$(umask)",
         "umask 077",
         f": > {spool_arg} || exit 98",
         f"cat > {cmd_arg} <<'{tag}'",
         body,
         tag,
+        'umask "$__cria_gate_umask"',
         'if command -v bash >/dev/null 2>&1; then __cria_gate_sh="bash"; '
         'else __cria_gate_sh="sh"; fi',
         'if command -v setsid >/dev/null 2>&1; then __cria_gate_run="setsid $__cria_gate_sh"; '
