@@ -87,6 +87,16 @@ class CompleteEvidenceCrossesAsynchronousTurnsTests(unittest.TestCase):
             self.assertEqual(len(complete.encode()), plan.transport_total)
             self.assertTrue(any("middle.py" in finding.file
                                 for finding in outcome.report.results[0].findings))
+            # Reviewer 6510f2dd follow-up: the reader no longer self-deletes on the final read (a
+            # lost-and-repolled final page must be able to re-read the SAME bytes), so the spool and
+            # its .done marker persist — queued for the NEXT gate composed for this workspace to
+            # reclaim, never an `rm`, never a glob.
+            self.assertEqual(sorted(os.listdir(spooldir)),
+                             sorted([os.path.basename(plan.transport_path),
+                                     os.path.basename(plan.transport_path) + ".done"]))
+            cleanup = probegate.spool_cleanup_command(workspace)
+            self.assertTrue(cleanup)
+            run(cleanup, workspace, spooldir)
             self.assertEqual(os.listdir(spooldir), [])
 
     def test_the_loop_requests_each_next_page_through_the_harness_shell(self):

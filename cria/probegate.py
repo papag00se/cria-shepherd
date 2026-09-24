@@ -101,7 +101,7 @@ GATE_POLL_WAIT_LONG_S = 25.0
 GATE_DEADLINE_SLACK_S = 60.0
 
 # Supervisor review: the plan-wide deadline (minutes) is the RIGHT bound for a check that is
-# genuinely still running \u2014 the reader answers within GATE_POLL_WAIT_S every time, so a typed
+# genuinely still running — the reader answers within GATE_POLL_WAIT_S every time, so a typed
 # `running` envelope is trustworthy evidence of life. An OPENERLESS result is different: the reader
 # always answers inside GATE_POLL_WAIT_S (well under the harness's own yield), so getting NOTHING
 # recognizable back means the poll itself was cut, or the reader could not even run (no `python3`,
@@ -139,10 +139,26 @@ def _transport_reader(path_arg: str, offset: int, transport_id: str, *,
     abandoned the still-running gate and started a brand new one, repeating every ~100s with zero
     coder progress.
 
-    The final page is read into the helper's memory before the temporary file (and its ``.done``
-    marker) is unlinked. If its result is cut in transit, cria sees a missing close/count/hash and
-    reports UNKNOWN; it never interprets the prefix as a complete check. Normal completion leaves no
-    harness-side artifact.
+    Reviewer 6510f2dd follow-up: the FINAL read used to unlink the spool (and its ``.done`` marker)
+    the instant it delivered the completing chunk. If THAT harness response was itself lost to a
+    compaction — plausible, since the final page is usually the largest result — cria's own
+    ``transport_complete`` was never set, a re-poll of the SAME plan followed (C28b), and the reader
+    found no spool AND no ``.done``: indistinguishable from "not finished yet", so it answered
+    ``running 0.0`` forever until the multi-minute plan deadline discarded a check that had already
+    passed. The reader now NEVER deletes anything itself: the spool persists after delivering the
+    final chunk, so a lost-and-repolled final read simply re-delivers the SAME bytes/hash at the
+    SAME offset cria already asked for — no restart-from-0 or renegotiated-offset logic needed, the
+    existing offset/hash checks already accept an identical re-delivery. This is the SIMPLEST correct
+    fix: removing a premature deletion, not adding a recovery protocol. A spool that is GENUINELY
+    missing (some other cause entirely — cria never assumes which) gets its own typed ``gone``
+    envelope instead of being folded into "running", so cria fails closed immediately rather than
+    riding the deadline on a check that cannot possibly still be alive. Cleanup of a spool cria HAS
+    fully ingested is deferred to :func:`spool_cleanup_command`, queued the instant
+    :func:`ingest_transport` verifies the hash — never an `rm`, never a glob, only paths cria itself
+    already finished with.
+
+    The final page is read into the helper's memory; a cut result still shows a missing close/count/
+    hash and reports UNKNOWN, and never interprets the prefix as a complete check.
     """
     program = f'''import base64, hashlib, os, sys, time
 path = sys.argv[1]
@@ -151,8 +167,13 @@ opening = {_transport_marker(transport_id)!r}
 closing = {_transport_marker(transport_id, end=True)!r}
 done_path = path + ".done"
 deadline = time.monotonic() + {wait_s!r}
-while not os.path.exists(done_path) and time.monotonic() < deadline:
+while not os.path.exists(done_path) and os.path.exists(path) and time.monotonic() < deadline:
     time.sleep(0.2)
+if not os.path.exists(path):
+    print(opening)
+    print("gone\\t1")
+    print(closing)
+    sys.exit(0)
 if not os.path.exists(done_path):
     try:
         started = os.path.getctime(path)
@@ -174,13 +195,6 @@ try:
             digest.update(block)
         source.seek(offset)
         chunk = source.read({TRANSPORT_CHUNK_BYTES})
-    final = offset + len(chunk) == total
-    if final:
-        os.unlink(path)
-        try:
-            os.unlink(done_path)
-        except OSError:
-            pass
     print(opening)
     print("path\\t" + base64.b64encode(path.encode()).decode())
     print("offset\\t" + str(offset))
@@ -321,7 +335,7 @@ class GatePlan:
     transport_deadline_s: float = 0.0
     # Consecutive OPENERLESS reads (no envelope at all, not even a typed `running` one) since the
     # last real envelope. Bounded by `GATE_OPENERLESS_MAX`, independently of `transport_deadline_s`
-    # \u2014 see the constant's own comment for why the two must not share a bound.
+    # — see the constant's own comment for why the two must not share a bound.
     transport_openerless_streak: int = 0
     # C28b: how long ONE poll of this plan may wait for the `.done` marker, chosen once at compose
     # time (`plan_gate`'s ``poll_wait_s``) from the LAUNCHING tool's own schema (GATE_POLL_WAIT_LONG_S
@@ -464,6 +478,14 @@ def ingest_transport(plan: GatePlan, result_text: str, *, now: float | None = No
         if not sep or key in fields:
             return fail_transport(plan, "transport page contains malformed or duplicate fields")
         fields[key] = value
+    if set(fields) == {"gone"}:
+        # Reviewer 6510f2dd follow-up: the reader itself found NO spool at all — distinct from
+        # "not finished yet" (which always carries `running`+`path`). Genuinely missing can only mean
+        # the check cannot possibly still be alive to observe, so this fails CLOSED immediately
+        # (#13) instead of reading as `running 0.0` for the rest of the plan's multi-minute deadline.
+        # `_poll_running_plan_after_rewrite` already declines once `transport_error` is set, so the
+        # next compaction-triggered recovery falls through to its existing new-gate reissue.
+        return fail_transport(plan, "transport spool is gone — the check cannot still be running")
     if set(fields) == {"path", "running"}:
         # The reader's own typed envelope: it waited, the completion marker still wasn't there, and it
         # said so instead of returning nothing. Never data — bounded by the plan-wide deadline, not
@@ -497,7 +519,7 @@ def ingest_transport(plan: GatePlan, result_text: str, *, now: float | None = No
         return fail_transport(plan, detail)
     if set(fields) != {"path", "offset", "total", "sha256", "data"}:
         return fail_transport(plan, "transport page is missing required fields")
-    # A REAL page envelope arrived \u2014 the poll channel works, whatever this page's own contents
+    # A REAL page envelope arrived — the poll channel works, whatever this page's own contents
     # turn out to validate to below. Reset the openerless streak here, not only on eventual success.
     plan.transport_openerless_streak = 0
     try:
@@ -534,6 +556,12 @@ def ingest_transport(plan: GatePlan, result_text: str, *, now: float | None = No
     if hashlib.sha256(plan.transport_data).hexdigest() != digest:
         return fail_transport(plan, "transport hash did not match the delivered bytes")
     plan.transport_complete = True
+    # cria will never ask for another byte of this spool (`continue_transport_command` returns ""
+    # once complete) — queue it for the NEXT gate's launch leg to reclaim (`spool_cleanup_command`).
+    # Not unlinked HERE or by the reader itself: a spool this plan still needs might be re-read after
+    # a harness compaction (see `_transport_reader`'s own docstring), so only a plan cria has verified
+    # complete, and only from THIS hash-verified moment, is ever queued for removal.
+    _queue_spool_cleanup(plan.workspace, plan.transport_path)
     return "complete"
 
 
@@ -643,6 +671,12 @@ def plan_gate(workspace: str, session: str = "", rlog=None, *,
     # the litter is never attributed to the coder.
     if workspace and (rm := litter_removal_command(workspace)):
         parts.append(rm)
+    # Reviewer 6510f2dd follow-up: reclaim any PRIOR gate's spool (+``.done``) cria has already fully
+    # ingested — the reader no longer self-deletes on the final read (see `_transport_reader`), so
+    # this is the one remaining place cleanup happens. Same shape as the litter leg above: queued when
+    # `ingest_transport` verified the hash, removed here by the NEXT gate, never an `rm`, never a glob.
+    if workspace and (spool_cleanup := spool_cleanup_command(workspace)):
+        parts.append(spool_cleanup)
     # THE GATE MUST NOT LEAVE STATE BEHIND. It runs the repo's own tests in the LIVE workspace, and a
     # test that writes — a database file, a fixture, an output artifact — leaves that behind for the
     # next gate to trip over. cria then reports a failure it manufactured itself, under the strongest
@@ -1974,6 +2008,46 @@ def litter_removal_command(workspace: str) -> str:
             "    except OSError:\n"
             "        pass\n")
     return "{ python3 - <<'__CRIA_LITTER__'\n" + prog + "__CRIA_LITTER__\n} >/dev/null 2>&1"
+
+
+# Spool (+``.done``) paths cria has FULLY ingested (hash-verified) and no longer needs, waiting for
+# the NEXT gate composed for this workspace to remove them — same pattern as `_LITTER_QUEUE`, but
+# for cria's OWN transport files rather than the probes' litter. Reviewer 6510f2dd follow-up: the
+# reader no longer self-deletes on the final read (a lost-and-repolled final page must be able to
+# re-read the SAME bytes), so something else has to reclaim a spool once cria is truly done with it.
+# Paths here are ONLY ones `ingest_transport` itself validated and stored as `plan.transport_path`
+# (never a glob, never an unvalidated string), so removal never touches a file cria didn't name.
+_SPOOL_CLEANUP_QUEUE: dict[str, list[str]] = {}
+
+
+def _queue_spool_cleanup(workspace: str, spool_path: str) -> None:
+    if not workspace or not spool_path:
+        return
+    if len(_SPOOL_CLEANUP_QUEUE) > 256:
+        _SPOOL_CLEANUP_QUEUE.clear()
+    q = _SPOOL_CLEANUP_QUEUE.setdefault(workspace, [])
+    if spool_path not in q:
+        q.append(spool_path)
+    del q[:-64]
+
+
+def spool_cleanup_command(workspace: str) -> str:
+    """The shell leg that removes PRIOR gate spools (+ ``.done`` markers) cria has already fully
+    ingested, or "" when there is none. Same no-`rm` reasoning as :func:`litter_removal_command`:
+    the Codex sandbox rejects the whole script when it sees one. Never a glob — only the exact
+    paths cria itself learned from a hash-verified page and is therefore certain are its own.
+    """
+    paths = _SPOOL_CLEANUP_QUEUE.pop(workspace, None)
+    if not paths:
+        return ""
+    prog = ("import os\n"
+            "for p in " + repr(paths) + ":\n"
+            "    for f in (p, p + '.done'):\n"
+            "        try:\n"
+            "            os.unlink(f)\n"
+            "        except OSError:\n"
+            "            pass\n")
+    return "{ python3 - <<'__CRIA_SPOOL_CLEANUP__'\n" + prog + "__CRIA_SPOOL_CLEANUP__\n} >/dev/null 2>&1"
 
 
 def sweep_litter(plan: GatePlan, sections: dict) -> list[str]:

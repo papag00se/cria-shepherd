@@ -325,10 +325,15 @@ class RealShellDetachmentTests(unittest.TestCase):
         self.assertTrue(plan.transport_complete, "the detached probe never reported completion")
         self.assertIn("done", probegate.transported_result(plan))
 
-        # Cleanup: nothing left behind — the reader unlinks the spool and its .done marker on the
-        # final page (existing contract, C28 extends it to the sibling marker).
-        self.assertFalse(os.path.exists(plan.transport_path))
-        self.assertFalse(os.path.exists(plan.transport_path + ".done"))
+        # Reviewer 6510f2dd follow-up: the reader no longer self-deletes on the final read (a
+        # lost-and-repolled final page must be able to re-read the SAME bytes) — the spool and its
+        # `.done` marker persist until the NEXT gate's launch leg reclaims them.
+        self.assertTrue(os.path.exists(plan.transport_path))
+        self.assertTrue(os.path.exists(plan.transport_path + ".done"))
+        self.assertEqual(probegate._SPOOL_CLEANUP_QUEUE.get(self._ws), [plan.transport_path])
+        os.unlink(plan.transport_path)
+        os.unlink(plan.transport_path + ".done")
+        probegate._SPOOL_CLEANUP_QUEUE.pop(self._ws, None)
 
 
 class WireCleaningTests(unittest.TestCase):
@@ -884,6 +889,214 @@ class PollWaitFromToolSchemaTests(unittest.TestCase):
         self.assertIsNotNone(call)
         args = json.loads(call["function"]["arguments"])
         self.assertEqual(args.get("yield_time_ms"), shelltool.GATE_TIME_BUDGET_MS)
+
+
+def _old_reader_6510f2dd(path_arg: str, offset: int, transport_id: str, *,
+                        wait_s: float = probegate.GATE_POLL_WAIT_S) -> str:
+    """The EXACT 6510f2dd reader shape (reconstructed from git history): self-deletes the spool and
+    its ``.done`` marker on the completing read, and treats ANY missing ``.done`` — including a
+    spool that no longer exists at all — identically as `running`. This is the fails-before half of
+    the reviewer's lost-final-page finding."""
+    program = f'''import base64, hashlib, os, sys, time
+path = sys.argv[1]
+offset = int(sys.argv[2])
+opening = {probegate._transport_marker(transport_id)!r}
+closing = {probegate._transport_marker(transport_id, end=True)!r}
+done_path = path + ".done"
+deadline = time.monotonic() + {wait_s!r}
+while not os.path.exists(done_path) and time.monotonic() < deadline:
+    time.sleep(0.2)
+if not os.path.exists(done_path):
+    try:
+        started = os.path.getctime(path)
+        elapsed = max(0.0, time.time() - started)
+    except OSError:
+        elapsed = 0.0
+    print(opening)
+    print("path\\t" + base64.b64encode(path.encode()).decode())
+    print("running\\t" + str(round(elapsed, 1)))
+    print(closing)
+    sys.exit(0)
+try:
+    total = os.path.getsize(path)
+    if offset < 0 or offset > total:
+        raise ValueError("offset outside spool")
+    digest = hashlib.sha256()
+    with open(path, "rb") as source:
+        for block in iter(lambda: source.read(65536), b""):
+            digest.update(block)
+        source.seek(offset)
+        chunk = source.read({probegate.TRANSPORT_CHUNK_BYTES})
+    final = offset + len(chunk) == total
+    if final:
+        os.unlink(path)
+        try:
+            os.unlink(done_path)
+        except OSError:
+            pass
+    print(opening)
+    print("path\\t" + base64.b64encode(path.encode()).decode())
+    print("offset\\t" + str(offset))
+    print("total\\t" + str(total))
+    print("sha256\\t" + digest.hexdigest())
+    print("data\\t" + base64.b64encode(chunk).decode())
+    print(closing)
+except Exception as exc:
+    print(opening)
+    print("error\\t" + base64.b64encode(str(exc).encode()).decode())
+    print(closing)
+'''
+    return (f"python3 - {path_arg} {offset} <<'{probegate._TRANSPORT_HEREDOC}'\n"
+            f"{program}{probegate._TRANSPORT_HEREDOC}")
+
+
+class LostFinalPageRecoveryTests(unittest.TestCase):
+    """Reviewer follow-up to 6510f2dd: the final read used to unlink the spool AND its ``.done``
+    marker. If that harness response was itself lost to a compaction (plausible — the final page
+    is usually the largest result), a re-poll found no spool and no ``.done`` — indistinguishable
+    from "not finished yet" — and answered `running 0.0` forever until the plan's multi-minute
+    deadline discarded a check that had ALREADY passed."""
+
+    def setUp(self):
+        self.tid = probegate.GatePlan(workspace="").transport_id
+        self.spool = f"/tmp/.cria-gate-{self.tid}.spool"
+
+    def tearDown(self):
+        for p in (self.spool, self.spool + ".done"):
+            try:
+                os.unlink(p)
+            except OSError:
+                pass
+
+    def test_before_the_fix_a_lost_final_page_becomes_a_phantom_running_gate(self):
+        with open(self.spool, "wb") as f:
+            f.write(b"complete gate output")
+        open(self.spool + ".done", "w").close()
+        reader = _old_reader_6510f2dd(f'"{self.spool}"', 0, self.tid, wait_s=0.3)
+
+        first = subprocess.run(["bash", "-c", reader], capture_output=True, text=True, timeout=10)
+        self.assertIn("data\t", first.stdout)          # delivered the complete page...
+        self.assertFalse(os.path.exists(self.spool))    # ...and self-deleted it immediately
+        self.assertFalse(os.path.exists(self.spool + ".done"))
+
+        # That delivery is the one lost to a compaction: cria never ingests `first`, so its plan
+        # is still waiting for the SAME offset. A re-poll now finds nothing at all.
+        plan = _plan()
+        plan.transport_id = self.tid
+        second = subprocess.run(["bash", "-c", reader], capture_output=True, text=True, timeout=10)
+        state = probegate.ingest_transport(plan, second.stdout)
+        self.assertEqual(state, "running",
+                         "pre-fix: a FINISHED check reads as merely still running, forever")
+        self.assertFalse(plan.transport_complete)
+
+    def test_after_the_fix_a_lost_final_page_is_recovered_by_a_repoll(self):
+        with open(self.spool, "wb") as f:
+            f.write(b"complete gate output")
+        open(self.spool + ".done", "w").close()
+        reader = probegate._transport_reader(f'"{self.spool}"', 0, self.tid, wait_s=0.3)
+
+        first = subprocess.run(["bash", "-c", reader], capture_output=True, text=True, timeout=10)
+        self.assertIn("data\t", first.stdout)
+        self.assertTrue(os.path.exists(self.spool), "the fix must NOT self-delete on the final read")
+        self.assertTrue(os.path.exists(self.spool + ".done"))
+
+        # Simulate the SAME loss: cria never ingests `first`.
+        plan = _plan()
+        plan.transport_id = self.tid
+        second = subprocess.run(["bash", "-c", reader], capture_output=True, text=True, timeout=10)
+        state = probegate.ingest_transport(plan, second.stdout)
+        self.assertEqual(state, "complete", "the re-poll must recover the SAME bytes at the SAME offset")
+        self.assertEqual(bytes(plan.transport_data), b"complete gate output")
+
+
+class GoneEnvelopeTests(unittest.TestCase):
+    """(1) A genuinely missing spool must never be folded into `running` — a distinct typed `gone`
+    envelope stops the transport immediately (fail closed, #13) instead of riding the deadline."""
+
+    def test_a_gone_envelope_is_terminal_not_running(self):
+        plan = _plan()
+        gone = "\n".join([
+            probegate._transport_marker(plan.transport_id),
+            "gone\t1",
+            probegate._transport_marker(plan.transport_id, end=True),
+        ])
+        state = probegate.ingest_transport(plan, gone)
+        self.assertEqual(state, "unknown")
+        self.assertIn("gone", plan.transport_error)
+        self.assertFalse(plan.transport_complete)
+
+    def test_a_real_missing_spool_produces_the_gone_envelope(self):
+        tid = probegate.GatePlan(workspace="").transport_id
+        missing = f"/tmp/.cria-gate-{tid}-does-not-exist.spool"
+        self.assertFalse(os.path.exists(missing))
+        reader = probegate._transport_reader(f'"{missing}"', 0, tid, wait_s=0.3)
+        out = subprocess.run(["bash", "-c", reader], capture_output=True, text=True, timeout=10)
+        self.assertIn("gone\t1", out.stdout)
+        plan = _plan()
+        plan.transport_id = tid
+        self.assertEqual(probegate.ingest_transport(plan, out.stdout), "unknown")
+
+    def test_gone_lets_poll_after_rewrite_fall_through_to_a_new_gate(self):
+        """(3) Once `gone` has marked the plan terminal, the NEXT compaction-triggered recovery
+        must decline to poll it further and fall through to the existing capped new-gate reissue."""
+        gs = loop.GuardState()
+        gs.gate_plan = _plan()
+        gs.gate_plan.script = "echo placeholder-launch-script"
+        gone = "\n".join([
+            probegate._transport_marker(gs.gate_plan.transport_id),
+            "gone\t1",
+            probegate._transport_marker(gs.gate_plan.transport_id, end=True),
+        ])
+        self.assertEqual(probegate.ingest_transport(gs.gate_plan, gone), "unknown")
+        body = {"messages": [], "tools": [{"type": "function", "function": {
+            "name": "exec_command",
+            "parameters": {"type": "object", "properties": {"cmd": {"type": "string"}}}}}]}
+        self.assertIsNone(loop._poll_running_plan_after_rewrite(gs, body, mock.Mock()),
+                          "a plan the reader reported gone must never be polled again")
+
+
+class SpoolCleanupAcrossGatesTests(unittest.TestCase):
+    """(2)/(4): the spool is no longer self-deleted, so cleanup happens one gate later — the NEXT
+    plan composed for this workspace reclaims exactly the spools cria has fully ingested. No
+    accumulation across consecutive real gates, no `rm`, no glob."""
+
+    def test_no_spool_accumulation_across_consecutive_gates(self):
+        with tempfile.TemporaryDirectory() as ws:
+            with open(os.path.join(ws, "x.py"), "w") as f:
+                f.write("print(1)\n")
+            plans = []
+            for _ in range(3):
+                plan = probegate.plan_gate(ws)
+                proc = subprocess.run(["bash", "-c", plan.script], capture_output=True, text=True,
+                                      timeout=30)
+                state = probegate.ingest_transport(plan, proc.stdout)
+                self.assertEqual(state, "complete", proc.stdout)
+                plans.append(plan)
+            # Every plan except the LAST has had its spool reclaimed by the gate composed after it.
+            for p in plans[:-1]:
+                self.assertFalse(os.path.exists(p.transport_path), p.transport_path)
+                self.assertFalse(os.path.exists(p.transport_path + ".done"))
+            self.assertTrue(os.path.exists(plans[-1].transport_path))
+            os.unlink(plans[-1].transport_path)
+            os.unlink(plans[-1].transport_path + ".done")
+            probegate._SPOOL_CLEANUP_QUEUE.pop(ws, None)
+
+    def test_cleanup_command_names_only_paths_cria_itself_ingested(self):
+        """Never a glob: the composed cleanup program lists exact, cria-validated paths."""
+        with tempfile.TemporaryDirectory() as ws:
+            with open(os.path.join(ws, "x.py"), "w") as f:
+                f.write("print(1)\n")
+            plan = probegate.plan_gate(ws)
+            proc = subprocess.run(["bash", "-c", plan.script], capture_output=True, text=True,
+                                  timeout=30)
+            self.assertEqual(probegate.ingest_transport(plan, proc.stdout), "complete", proc.stdout)
+            cmd = probegate.spool_cleanup_command(ws)
+            self.assertIn(plan.transport_path, cmd)
+            self.assertNotIn("glob", cmd)
+            self.assertNotIn("*", cmd.replace("__CRIA_SPOOL_CLEANUP__", ""))
+            os.unlink(plan.transport_path)
+            os.unlink(plan.transport_path + ".done")
+            probegate._SPOOL_CLEANUP_QUEUE.pop(ws, None)
 
 
 if __name__ == "__main__":
