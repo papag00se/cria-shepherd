@@ -415,6 +415,16 @@ reconciled HEAD: `p22-feed-rerun-9ded52bc.service` (user unit, not collected), s
   the coder its required tests were unproven. Owner-local fix assigned: a completed declared test interface whose
   body maps an executed test file counts as participation with `passed = exit==0`.
 
+### C32 landed (review pending); P24 Orders launched
+
+- C32 `3d82a022`: a completed declared test interface whose body executes a mapped test file counts as test
+  participation (`passed = exit==0`); tally precedence kept; timeout/launch failure/unmapped stay unknown. 6/8
+  new tests fail before; integrated full suite **5106 passed, 5 skipped**. Independent review in progress.
+- **P24 Orders** launched at `3d82a022` (C28 gate transport, C29, C30, C31 live; C32 present but inert for this
+  cell — `declared_interface` is set only by `probediscovery.build_js`): unit `p24-orders-rerun-3d82a022.service`,
+  script/log `~/.cria/nemotron-l5-p24-orders-3d82a022.{sh,log}`, note `BATTERY2 L5 nemotron-elastic 3d82a022 p24`;
+  `run.py` restarted cria at 12:52:58, `/health` ok. One heartbeat: `8c72974f`.
+
 ### Cross-cell lead — invented third-party API members (not yet a candidate)
 
 Rust P20 (`toml` `Value::parse_str`, `toml::Error::Missing`), Feed p22 live (`org.apache.commons.csv.exceptions`,
