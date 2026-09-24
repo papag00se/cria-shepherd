@@ -7952,21 +7952,8 @@ def _nearest_route(path: str, routes: list[str]) -> str:
     return scored[0][1]
 
 
-def _format_fetches(latest: dict, header: str = "PAGES YOU HAVE ALREADY FETCHED",
-                    visible: set[str] | None = None, absent_out: list | None = None) -> str:
+def _format_fetches(latest: dict, header: str = "PAGES YOU HAVE ALREADY FETCHED") -> str:
     """The durable fetch ledger, SPLIT by whether the fetch actually returned anything.
-
-    ``visible`` is the set of URLs whose OWN fetch result is actually present in the messages this
-    render is about to be sent alongside (webfetch.visible_urls — the exact-repeat gate's own
-    identity). ``None`` means the caller did not check (kept for callers/tests that only care about
-    the failed/spilled/no-structure splits, not this fact) and preserves the old assume-present
-    behavior; a real ``set`` — possibly empty — makes the "in this conversation above" claim below
-    actually true for entries it names true of. See docs/goals/nemotron-l5-75-loop-report.md
-    Candidate C31.
-
-    ``absent_out``, when given a list, gets ``True`` appended iff at least one entry actually rendered
-    the "not in this conversation" note — so a caller (the anchor tail) can scope its own "code
-    against THOSE" sentence without re-deriving this fact.
 
     A failed fetch is not the same kind of fact as a successful one, and merging them into one list
     made the anchor's "code directly against the endpoints and response fields listed above" apply to
@@ -7978,9 +7965,7 @@ def _format_fetches(latest: dict, header: str = "PAGES YOU HAVE ALREADY FETCHED"
     if not latest:
         return ""
     labels = prompts.load_map("fetched_facts_sections")
-    visibility_labels = prompts.load_map("fetch_body_visibility")
     ok, failed = [], []
-    any_absent = False  # did any entry actually use the "not in this conversation" note?
     for url, entry in latest.items():
         status, routes, shapes, catalog = _fetch_facts(entry)
         line = f"- {url} \u2192 {status}" + (f"; endpoints: {routes}" if routes else "")
@@ -8020,13 +8005,7 @@ def _format_fetches(latest: dict, header: str = "PAGES YOU HAVE ALREADY FETCHED"
             # on disk. The coder guessed `eu_member?`, which does not exist, and that guess is the
             # `country_zone_mapping` failure. cria composed the spill, so it knows the path (#5b).
             spilled = webfetch.spill_path_for(url)
-            if spilled:
-                line += prompts.fill(labels["body_at"], path=spilled)
-            elif visible is None or url in visible:
-                line += labels["body_inline"]
-            else:
-                line += visibility_labels["body_absent"]
-                any_absent = True
+            line += prompts.fill(labels["body_at" if spilled else "body_inline"], path=spilled)
         # The REAL field names — the half the coder guesses once they scroll away. Keep only the
         # per-endpoint entry lines: the captured block opens with webfetch's OWN header, and emitting
         # that under cria's label prints the same instruction twice.
@@ -8057,8 +8036,6 @@ def _format_fetches(latest: dict, header: str = "PAGES YOU HAVE ALREADY FETCHED"
         blocks.append(prompts.fill(labels["ok"], header=header) + "\n" + "\n".join(ok))
     if failed:
         blocks.append(labels["failed"] + "\n" + "\n".join(failed))
-    if any_absent and absent_out is not None:
-        absent_out.append(True)
     return "\n\n".join(blocks)
 
 
@@ -8291,9 +8268,7 @@ def _fetched_facts_anchor(sess, messages: list[dict] | None = None) -> dict | No
     coder prompts, while the coder spent 24 calls concluding the sandbox had no network. The fix's
     own docstring says it exists because "four separate steers instead told the coder the sandbox
     blocked the network" — and it could never have prevented that from here."""
-    absent = []  # gets True appended iff some entry below actually said "not in this conversation"
-    ledger = _fetch_ground_truth(messages or [], sess, header="PAGES YOU HAVE ALREADY FETCHED",
-                                 absent_out=absent)
+    ledger = _fetch_ground_truth(messages or [], sess, header="PAGES YOU HAVE ALREADY FETCHED")
     # …AND THE HALF OF ITS RESEARCH THAT LIVES ON DISK. The fetch ledger survives compaction and the
     # reads did not, so a compacted coder kept its web history and lost every file it had opened.
     ledger = (ledger + _read_ground_truth(sess, messages or [])).strip("\n")
@@ -8304,12 +8279,6 @@ def _fetched_facts_anchor(sess, messages: list[dict] | None = None) -> dict | No
     # "code against THOSE rather than re-fetching" while its own list held nothing but local files.
     tail = (prompts.load_map("fetched_facts_sections")["anchor_tail_fetches"]
             if _fetch_ground_truth(messages or [], sess).strip() else "")
-    # SCOPE "code against THOSE" away from an entry this render marked absent (Candidate C31): that
-    # clause names entries with endpoints/response fields, never the "not in this conversation" note,
-    # but a reader skimming the whole block could still read it as covering everything above. Said
-    # only when this render actually used the note — a run with nothing absent needs no caveat.
-    if tail and absent:
-        tail += prompts.load_map("fetch_body_visibility")["anchor_tail_absent_scope"]
     return {"role": "user", "content": prompts.render("fetched_facts_anchor",
                                                       marker=selfcompact.FACTS_MARKER,
                                                       ledger=ledger, tail=tail)}
@@ -8363,23 +8332,16 @@ def _insert_after_system(msgs: list[dict], anchor: dict) -> list[dict]:
 
 
 def _fetch_ground_truth(messages: list[dict], sess=None,
-                        header: str = "PAGES YOU HAVE ALREADY FETCHED",
-                        absent_out: list | None = None) -> str:
+                        header: str = "PAGES YOU HAVE ALREADY FETCHED") -> str:
     """Deterministic FACTS about the web_fetches already made — final status per URL + any endpoint
     routes. Handed to the steer author so a weak reasoner can't echo the coder's hallucination that a
     fetch failed when it actually returned 200 (runG: the coder insisted api.handle.me/openapi.json gave
     a 400; it returned HTTP 200 with 33 endpoints incl. /handles/{handle}, and the steer PARROTED the
     400 — 40 wasted turns). Merges the session's DURABLE facts (kept past the window) with the current
     window, so the correction survives even after the result scrolls out; in-window status wins. ``header``
-    re-frames the subject for a non-coder reader (the step critic).
-
-    ``visible`` is computed from webfetch's OWN per-session visibility store — the exact-repeat gate's
-    identity — so the ledger's "body is in this conversation above" claim can never diverge from what
-    the gate itself would allow to be re-fetched (Candidate C31). ``absent_out`` is forwarded to
-    :func:`_format_fetches`."""
+    re-frames the subject for a non-coder reader (the step critic)."""
     latest = _merge_fetches(dict(getattr(sess, "fetched_pages", None) or {}), _extract_fetches(messages))
-    visible = webfetch.visible_urls(getattr(sess, "web_session", None))
-    out = _format_fetches(latest, header, visible=visible, absent_out=absent_out)
+    out = _format_fetches(latest, header)
     mismatch = _route_mismatch_fact(latest, messages,
                                     getattr(sess, "workspace_root", "") or "")
     return f"{out}\n\n{mismatch}" if mismatch else out
