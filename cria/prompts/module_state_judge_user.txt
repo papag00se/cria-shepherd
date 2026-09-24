@@ -9,3 +9,5 @@ Exact checker output:
 
 Current conversation:
 {{SESSION}}
+
+Return exactly `REANCHOR` or `ON_TRACK`.
