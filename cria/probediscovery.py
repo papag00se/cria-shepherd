@@ -703,7 +703,7 @@ def declared_test_source_paths(body: str, base: Path) -> tuple[str, ...]:
         path = Path(token)
         path = path if path.is_absolute() else base / path
         if view.isfile(path) is True and looks_like_a_test_path(str(path)):
-            view.read(path)  # request the current bytes on this gate's survey
+            view.request_current_body(path)  # require this gate's survey bytes, never a cache
             paths.append(str(path))
     return tuple(dict.fromkeys(paths))
 

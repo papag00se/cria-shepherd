@@ -373,7 +373,7 @@ class ParticipationAdapter:
         if candidate.kind is probediscovery.ProbeKind.Test:
             view = wsview.current()
             mapped = tuple(TestSourceEvidence(
-                _display_path(str(path), view), view.read(str(path)))
+                _display_path(str(path), view), view.read_current_survey(str(path)))
                            for path in getattr(candidate, "test_source_paths", ()))
         event = ProbeParticipation(self.ecosystem, tuple(candidate.command), exit_code, complete,
                                    build, source, test, self.manifests(candidate), mapped)

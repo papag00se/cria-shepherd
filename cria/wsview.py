@@ -144,9 +144,9 @@ class View:
     """The coder's workspace as cria currently knows it. Every answer is a fact somebody
     gathered — from a survey the harness ran, or from a tool call in the conversation."""
 
-    __slots__ = ("root", "_files", "_dirs", "_folded", "_bodies", "_stale",
+    __slots__ = ("root", "_files", "_dirs", "_folded", "_bodies", "_body_generation", "_stale",
                  "_progs", "_outside", "_undeliverable", "_surveyed", "_complete", "_sess",
-                 "_ran_a_mutator")
+                 "_survey_generation", "_ran_a_mutator")
 
     def __init__(self, root: str | None, sess: str = "") -> None:
         self.root: str = _posix(root or "").rstrip("/") if root else ""
@@ -154,6 +154,7 @@ class View:
         self._dirs: set[str] = set()                     # rel dirs, "" for the root
         self._folded: set[str] = set()                   # rel dirs listed only as a count
         self._bodies: dict[str, bytes] = {}              # rel -> the file's BYTES
+        self._body_generation: dict[str, int] = {}       # rel -> survey that supplied those bytes
         self._stale: set[str] = set()                    # rel whose body changed since it was known
         self._progs: dict[str, str] = {}                 # program name -> resolved name ("" = absent)
         # Paths OUTSIDE the workspace the harness was asked about by name — a dependency cache
@@ -166,6 +167,7 @@ class View:
         # measured as a survey riding on EVERY lowered call, forever, for one 36 KB file.
         self._undeliverable: dict[str, int] = {}
         self._surveyed = False
+        self._survey_generation = 0
         # A COMMAND THAT COULD HAVE CHANGED ANYTHING RAN, and no survey has landed since. The view
         # still answers about the tree it last saw, which is correct for "what did cria see" and
         # wrong for "what is there now" — and the callers that turn a False into a sentence about the
@@ -301,6 +303,20 @@ class View:
         A miss is REMEMBERED: the next survey carries a read for this path, so a reader that asks
         the same question next turn gets an answer instead of the same silence."""
         raw = self.read_bytes(path)
+        return None if raw is None else raw.decode("utf-8", "replace")
+
+    def request_current_body(self, path) -> None:
+        """Put ``path`` on the next survey even if a prior survey cached its bytes."""
+        rel = self.rel(path)
+        if rel is not None:
+            want_body(self._sess, rel)
+
+    def read_current_survey(self, path) -> str | None:
+        """Text only when this view's latest survey carried these exact bytes."""
+        rel = self.rel(path)
+        if rel is None or self._body_generation.get(rel) != self._survey_generation:
+            return None
+        raw = self._bodies.get(rel)
         return None if raw is None else raw.decode("utf-8", "replace")
 
     def read_bytes(self, path) -> bytes | None:
@@ -544,6 +560,7 @@ class View:
             entry = self._files.get(rel)
             if entry is None or entry[0] != len(self._bodies[rel]):
                 del self._bodies[rel]
+                self._body_generation.pop(rel, None)
                 self._stale.discard(rel)
 
     def _ingest_blob(self, body: str) -> None:
@@ -578,9 +595,11 @@ class View:
             raw = base64.b64decode(b64.encode(), validate=False)
         except Exception:                             # noqa: BLE001 — undecodable is simply unknown
             self._bodies.pop(rel, None)               # never leave an OLDER body standing in for it
+            self._body_generation.pop(rel, None)
             self._stale.add(rel)
             return
         self._bodies[rel] = raw
+        self._body_generation[rel] = self._survey_generation
         self._stale.discard(rel)
         self._undeliverable.pop(rel, None)
 
@@ -604,6 +623,7 @@ class View:
             return
         raw = content if isinstance(content, bytes) else content.encode("utf-8", "replace")
         self._bodies[rel] = raw
+        self._body_generation.pop(rel, None)  # a coder tool result is not this gate's survey
         self._stale.discard(rel)
         self._undeliverable.pop(rel, None)
         prev = self._files.get(rel)
@@ -831,9 +851,11 @@ def _subview(v: View, sub: str) -> View:
     out._dirs = {d[n:] for d in v._dirs if d.startswith(pre)}
     out._folded = {d[n:] for d in v._folded if d.startswith(pre)}
     out._bodies = {p[n:]: b for p, b in v._bodies.items() if p.startswith(pre)}
+    out._body_generation = {p[n:]: g for p, g in v._body_generation.items() if p.startswith(pre)}
     out._stale = {p[n:] for p in v._stale if p.startswith(pre)}
     out._progs = v._progs
     out._surveyed = v._surveyed
+    out._survey_generation = v._survey_generation
     # THE BOUND FLAG TRAVELS WITH THE SUBTREE. `_complete` defaults True on a fresh View, so a
     # subview of an INCOMPLETE view used to answer False where its parent answered None — the
     # three-valued contract this class exists for, undone by a missing field copy. `sub` itself
@@ -1185,6 +1207,7 @@ def apply_survey(view: View, survey_text: str) -> bool:
         return False
     if ran_in and not view.root:
         view.root = ran_in.rstrip("/")
+    view._survey_generation += 1
     view._ingest_tree(secs["tree"], complete=done.get("complete") != "0")
     if secs.get("blob"):
         view._ingest_blob(secs["blob"])

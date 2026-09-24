@@ -6,6 +6,7 @@ participation as unknown, but CALL0043 still returned satisfied=true.
 """
 import base64
 import json
+from pathlib import Path
 import unittest
 
 from cria import loop, participation, probediscovery, wsview
@@ -37,6 +38,12 @@ def _candidate(kind, command, test_sources=()):
         ecosystem=probediscovery.Ecosystem.JsTs)
     candidate.test_source_paths = tuple(test_sources)
     return candidate
+
+
+def _declared_test_candidate(root):
+    candidates = []
+    probediscovery.build_js(Path(root), probediscovery.ProjectDir(Path(root), {"package.json"}), candidates)
+    return next(candidate for candidate in candidates if candidate.kind is probediscovery.ProbeKind.Test)
 
 
 def _capture_view(root, files):
@@ -110,8 +117,7 @@ run();
         }))
         self.addCleanup(wsview.unbind, token)
         report = participation.report([participation.observe(
-            _candidate(probediscovery.ProbeKind.Test, "npm test", [root + "/tests/lookup.test.cjs"]),
-            "Tests:       1 passed, 1 total", 0)])
+            _declared_test_candidate(root), "Tests:       1 passed, 1 total", 0)])
         self.assertIs(report.support("test"), participation.Support.PROVEN)
         self.assertEqual(report.executed_test_sources()[0].body, source)
         chat = _Chat([_satisfied(), "E2E_REQUIRED", "UNVERIFIED"])
@@ -135,6 +141,28 @@ run();
         self.assertFalse(satisfied)
         self.assertEqual(len(chat.bodies), 2)
 
+    def test_e2e_gate_rejects_cached_test_bytes_absent_from_its_survey(self):
+        root, path = "/workspace", "tests/lookup.test.cjs"
+        view = _capture_view(root, {
+            path: "old API-only source",
+            "package.json": '{"scripts":{"test":"node tests/lookup.test.cjs"}}',
+        })
+        token = wsview.bind(view)
+        self.addCleanup(wsview.unbind, token)
+        candidate = _declared_test_candidate(root)  # declared runner requests fresh source bytes
+        self.assertTrue(wsview.apply_survey(view, survey(
+            f"F\t2\t{len('new CLI source')}\t{path}", root=root)))
+        report = participation.report([participation.observe(
+            candidate, "Tests:       1 passed, 1 total", 0)])
+        self.assertEqual(report.executed_test_sources()[0].body, None)
+        chat = _Chat([_satisfied(), "E2E_REQUIRED"])
+
+        satisfied, _reason, _fix = loop.judge_satisfaction(
+            self.TASK, "Tests: 1 passed", chat, None, _Rlog(), sess=_session(report))
+
+        self.assertFalse(satisfied)
+        self.assertEqual(len(chat.bodies), 2)
+
     def test_executed_cli_end_to_end_test_is_preserved(self):
         root = "/workspace"
         source = """const { spawnSync } = require('node:child_process');
@@ -147,8 +175,7 @@ if (result.status !== 0 || !result.stdout.includes('goose')) process.exit(1);
         }))
         self.addCleanup(wsview.unbind, token)
         report = participation.report([participation.observe(
-            _candidate(probediscovery.ProbeKind.Test, "npm test", [root + "/tests/lookup.test.cjs"]),
-            "Tests:       1 passed, 1 total", 0)])
+            _declared_test_candidate(root), "Tests:       1 passed, 1 total", 0)])
         chat = _Chat([_satisfied(), "E2E_REQUIRED", "PROVEN", {
             "tool_calls": [{"id": "read-test", "type": "function", "function": {
                 "name": "read_file", "arguments": '{"path":"tests/lookup.test.cjs"}'}}]},
