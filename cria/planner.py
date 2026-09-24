@@ -615,25 +615,36 @@ _MANIFEST_TEST_RUNNER = re.compile(
     rf"\b(?:{_MANIFEST_REF}\b.*?\b{_TEST_SCRIPT_REF}\b|"
     rf"{_TEST_SCRIPT_REF}\b.*?\b{_MANIFEST_REF}\b)", re.I)
 _MANIFEST_CHANGE = re.compile(r"\b(?:add|create|edit|modify|set|update|write)\b", re.I)
+_PLAN_EXECUTION_ACTION = re.compile(
+    r"^\s*(?:\d+[.)]\s*)?(?:[-*]\s*)?(?:\*\*)?(?:run|execute|invoke)\b", re.I)
 
 
 def _plan_establishes_test_execution_path(steps: list[str]) -> bool:
     """Whether a plan itself leaves its named test file runnable.
 
     This is a syntactic fact about the submitted steps, not a choice of runner. A manifest
-    step must name its test script, while a direct runner must put a named test file after an
-    explicit execution command. A child process *inside* that test invokes the subject under
-    test; it does not invoke the test file and therefore cannot establish this path.
+    step must name both its test script and the test file it runs; a direct runner must be a
+    plan-level execution action, not a command quoted while describing the test's own body.
+    A child process *inside* that test invokes the subject under test; it does not invoke the
+    test file and therefore cannot establish this path.
     """
+    paths = {path for step in steps for path in _TEST_FILE_PATH.findall(step)}
     for step in steps:
-        if _MANIFEST_CHANGE.search(step) and _MANIFEST_TEST_RUNNER.search(step):
-            return True
+        if not (_MANIFEST_CHANGE.search(step) and _MANIFEST_TEST_RUNNER.search(step)):
+            continue
+        for path in paths:
+            if re.search(
+                rf"{_TEST_SCRIPT_REF}.*?\b(?:runs?|executes?|invokes?)\b\s+"
+                rf"(?:the\s+)?(?:`?[\w./-]+(?:\s+--[\w=-]+)*\s+)?{re.escape(path)}\b",
+                step, re.I):
+                return True
     for step in steps:
-        for path in _TEST_FILE_PATH.findall(step):
+        if not _PLAN_EXECUTION_ACTION.search(step):
+            continue
+        for path in paths:
             quoted_command = re.search(rf"`[^`\n]*\S\s+{re.escape(path)}\b[^`\n]*`", step)
             stated_command = re.search(
-                rf"\b(?:run|execute|invoke)(?:\s+it)?\s+(?:with|using)?\s*"
-                rf"(?:[^\s`]+\s+)+{re.escape(path)}\b", step, re.I)
+                rf"\b(?:with|using)\s+(?:[^\s`]+\s+)+{re.escape(path)}\b", step, re.I)
             if quoted_command or stated_command:
                 return True
     return False

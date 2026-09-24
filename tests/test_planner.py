@@ -977,6 +977,28 @@ Add tests, including at least one test that makes a real request to api.handle.m
         self.assertIn("tests/lookup.test.js", requests[0])
         self.assertIn('"start": "node lookup.js"', requests[0])
 
+    def test_test_execution_path_requires_plan_level_runner_and_test_target(self):
+        """Quoted test-body commands and scripts for the CLI are not test runners."""
+        from cria.planner import test_execution_readiness
+
+        ready = lambda _system, _user: "TEST_EXECUTION_PATH_READY"
+        self.assertEqual(test_execution_readiness(ready, "add tests", [
+            "Create test/lookup.test.js that documents running `node test/lookup.test.js`.",
+        ], "{}"), "MISSING")
+        self.assertEqual(test_execution_readiness(ready, "add tests", [
+            "Create test/lookup.test.js.",
+            "Update package.json to add a scripts.test entry that runs node lookup.js before "
+            "test/lookup.test.js.",
+        ], "{}"), "MISSING")
+        self.assertEqual(test_execution_readiness(ready, "add tests", [
+            "Create test/lookup.test.js.",
+            "Update package.json to add a scripts.test entry that runs test/lookup.test.js.",
+        ], "{}"), "READY")
+        self.assertEqual(test_execution_readiness(ready, "add tests", [
+            "Create test/lookup.test.js.",
+            "Run it with node test/lookup.test.js.",
+        ], "{}"), "READY")
+
     def test_c21_spawn_inside_uninvoked_test_cannot_make_ready(self):
         """CALL 0138's READY needs an actual runner after the plan executes."""
         c21_steps = [
