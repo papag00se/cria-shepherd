@@ -13,7 +13,7 @@ Reconciled 2026-09-24 against `suite/results/results.jsonl` and `~/.cria/suite/_
 | shipping-rates-rb | `shipping-rates-rb_nemotron-elastic_codex_pon_1790255585` | `a9087c45 p21` | 35% | open — ≤75% |
 | cart-billing-go | `cart-billing-go_nemotron-elastic_codex_pon_1790238295` | `ad8a8c9b p18` | 0% | open — ≤75% |
 | orders-api-py | `orders-api-py_nemotron-elastic_codex_pon_1790242392` | `ad8a8c9b p18` | 50% | open — ≤75% |
-| feed-pipeline-java | `feed-pipeline-java_nemotron-elastic_codex_pon_1790068525` | `7cb10e7 p4` (Phase 0; never rerun) | 20% | open — ≤75% |
+| feed-pipeline-java | `feed-pipeline-java_nemotron-elastic_codex_pon_1790268418` | `9ded52bc p22` | 20% | open — ≤75% |
 | handles-cli-node | `handles-cli-node_nemotron-elastic_codex_pon_1790231549` | `3cf2697a p17` | 70% | open — ≤75% |
 | rust-toml-cli | `rust-toml-cli_nemotron-elastic_codex_pon_1790252780` | `c435329c p20` | 30% | open — ≤75% |
 
@@ -205,6 +205,19 @@ Feed-pipeline-java had no comparable measurement since Phase 0, so it was run fi
 reconciled HEAD: `p22-feed-rerun-9ded52bc.service` (user unit, not collected), script/log
 `~/.cria/nemotron-l5-p22-feed-9ded52bc.{sh,log}`, flocked, note `BATTERY2 L5 nemotron-elastic
 9ded52bc p22`, planner on/L5. Exactly one recurring 10-minute heartbeat: `67248cb2`.
+
+### P22 Feed terminal result
+
+- Comparable run `feed-pipeline-java_nemotron-elastic_codex_pon_1790268418` (`BATTERY2 L5 nemotron-elastic
+  9ded52bc p22`) ended `milestone-stalled-45min` after **190 calls**; milestones 30min 20% continue,
+  45min 20% stalled; final usefulness **20%** (`suite/usefulness.py`), battery report refreshed,
+  heartbeat `67248cb2` retired.
+- Archive: Commons CSV dependency, large `Importer.java` rewrite, `REVIEW.md`; `mvn -o test` fails on
+  invented Commons CSV members (`CSVParser.DEFAULT_FORMAT`, `readHeader`, `readNext`, `CsvException`) and
+  other missing symbols; rows accumulated twice; `main(String)`; no tests. The planner fetched no CSV
+  documentation; 30→45 min the coder issued ~20 consecutive `read_file`s of `Importer.java` with
+  degenerate-rumination aborts and no steer. Same class as Rust P20's second half (see C31 and the
+  invented-API lead).
 
 ### Candidate C28 — gate blind to a check that outlives the harness exec yield
 
