@@ -60,7 +60,7 @@ from .planner import (_extract_cwd, missing_deliverables, reasoned_noise_indices
 from .searchloop import first_domain_in, normalize_search
 from . import probeclassify
 from .shelltool import (_CMD_FIELDS, find_shell_tool, is_shell_tool_name, shell_args,
-                        with_time_budget, writes_something)
+                        tool_declares_time_budget, with_time_budget, writes_something)
 from .toolargs import PATH_KEYS, parse_args
 from .writeproxy import _WRITE_NAMES as writeproxy_names
 
@@ -213,6 +213,12 @@ class GuardState:
     web_session: str = ""               # the key webfetch's per-session search/fetch gates are keyed by,
     #                                     so the loop can ask about the pair those gates would act on
     probe_reissues: int = 0  # probes re-issued after a history rewrite erased their result (capped)
+    # C28b: a SEPARATE cap for polling the CURRENT plan's still-open transport after a history
+    # rewrite (_poll_running_plan_after_rewrite) — sharing `probe_reissues` with new-gate reissues
+    # would either starve a genuine new-gate need or let polling itself wedge a session whose harness
+    # compacts EVERY turn (there is no real result to ingest in that path, so the plan's own
+    # wall-clock deadline never gets a chance to fire). Bounded on its own, independently.
+    probe_poll_reissues: int = 0
     gate_plan: object = None  # probegate.GatePlan for the in-flight gate (maps result → reports)
     recent_writes: list = None  # rolling window: written path (or None) per forwarded tool call
     # …AND THE CALL IDS BEHIND THEM, so a write cria REFUSED can be taken back out. The window is
@@ -292,6 +298,11 @@ class GuardState:
     # alter the completion critic's cadence/state.
     deliverable_observation_last_drive: int = -1
     periodic_probe: bool = False  # a periodic check-in gate is in flight (insert its ground truth, no verdict)
+    # A periodic check-in whose result was survey-only gets exactly ONE follow-up replan against the
+    # now-surveyed view (guard_periodic_replan_after_survey). Set the instant that replan is issued;
+    # cleared only when a FRESH periodic check-in starts (guard_periodic_gate), so a second
+    # consecutive survey-only result — on the replanned gate itself — stays silent instead of looping.
+    periodic_replan_done: bool = False
     runner_reset_signature: str = ""  # one definitive JS runner judgment per unchanged failing gate
     module_state_signature: str = ""  # one definitive module-state judgment per unchanged failing Go test gate
     # A scheduled step critic returned done, but its approve-path brake had no surveyed workspace.
@@ -2980,13 +2991,22 @@ class Loop:
                 # LOST result, not a declined one — re-issue rather than fail open (parity with
                 # guard_probe_reissue on the other two probe readers; audited 2026-08-04).
                 if (not _read_tool_result(body.get("messages", []), sess.completion_probe_id).strip()
-                        and rewritten and sess.probe_reissues < MAX_PROBE_REISSUES):
-                    probe_tc = guard_gate_op(sess, body, rlog, workspace_root=sess.workspace_root)
-                    if probe_tc is not None:
-                        sess.probe_reissues += 1
-                        sess.completion_probe_id = sess.probe_call_id = probe_tc["id"]
-                        rlog.emit("loop.probe_reissued", plan_off=False, attempt=sess.probe_reissues)
-                        return _completion_toolcalls([probe_tc], note="re-running checks (history was compacted)")
+                        and rewritten):
+                    # C28b: poll the SAME plan first if its transport is still open, before ever
+                    # abandoning it for a new gate (_poll_running_plan_after_rewrite).
+                    poll = _poll_running_plan_after_rewrite(sess, body, rlog)
+                    if poll is not None:
+                        sess.completion_probe_id = poll["id"]
+                        return _completion_toolcalls(
+                            [poll], note="receiving complete check output (history was compacted)")
+                    if sess.probe_reissues < MAX_PROBE_REISSUES:
+                        probe_tc = guard_gate_op(sess, body, rlog, workspace_root=sess.workspace_root)
+                        if probe_tc is not None:
+                            sess.probe_reissues += 1
+                            sess.completion_probe_id = sess.probe_call_id = probe_tc["id"]
+                            rlog.emit("loop.probe_reissued", plan_off=False, attempt=sess.probe_reissues)
+                            return _completion_toolcalls(
+                                [probe_tc], note="re-running checks (history was compacted)")
                 transport_tc = guard_gate_transport(
                     sess, body, rlog, call_id=sess.completion_probe_id)
                 if transport_tc is not None:
@@ -2994,7 +3014,7 @@ class Loop:
                     return _completion_toolcalls(
                         [transport_tc], note="verifying — receiving the repo's complete check output")
                 sess.probe_call_id, sess.completion_probe_id = sess.completion_probe_id, ""
-                sess.probe_reissues = 0
+                sess.probe_reissues = sess.probe_poll_reissues = 0
                 errors = guard_gate_verdict(sess, body, rlog)
                 if sess.gate_replan_required:
                     probe_tc = guard_gate_replan_after_survey(
@@ -3566,22 +3586,36 @@ class Loop:
             truth = guard_periodic_result(
                 sess, body, rlog, reasoner_chat=self._ctx.reasoner_chat,
                 reasoner_role=self._ctx.reasoner_role, workspace_root=sess.workspace_root)
+            if not truth:
+                probe_tc = guard_periodic_replan_after_survey(sess, body, rlog, workspace_root=sess.workspace_root)
+                if probe_tc is not None:
+                    return _completion_toolcalls(
+                        [probe_tc], note=f"periodic check-in for step {idx}/{total} \u2014 running checks")
             return self._renudge(sess, key, body, truth, rlog) if truth else self._work(sess, key, body, rlog)
         probe = _read_tool_result(body.get("messages", []), sess.probe_call_id)
-        if not probe.strip() and rewritten and sess.probe_reissues < MAX_PROBE_REISSUES:
-            probe_tc = self._gate_op(body, sess, rlog)
-            if probe_tc is not None:
-                sess.awaiting_probe = True
-                sess.probe_call_id = probe_tc["id"]
-                sess.probe_reissues += 1
-                rlog.emit("loop.probe_reissued", step=idx, attempt=sess.probe_reissues)
-                return _completion_toolcalls([probe_tc], note=f"re-running checks for step {idx}/{total} (history was compacted)")
+        if not probe.strip() and rewritten:
+            # C28b: the result is lost, but the CHECK may still be running \u2014 poll the SAME plan
+            # before ever abandoning it for a new gate (_poll_running_plan_after_rewrite).
+            poll = _poll_running_plan_after_rewrite(sess, body, rlog)
+            if poll is not None:
+                return _completion_toolcalls(
+                    [poll],
+                    note=f"receiving complete check output for step {idx}/{total} (history was compacted)")
+            if sess.probe_reissues < MAX_PROBE_REISSUES:
+                probe_tc = self._gate_op(body, sess, rlog)
+                if probe_tc is not None:
+                    sess.awaiting_probe = True
+                    sess.probe_call_id = probe_tc["id"]
+                    sess.probe_reissues += 1
+                    rlog.emit("loop.probe_reissued", step=idx, attempt=sess.probe_reissues)
+                    return _completion_toolcalls(
+                        [probe_tc], note=f"re-running checks for step {idx}/{total} (history was compacted)")
         transport_tc = guard_gate_transport(sess, body, rlog)
         if transport_tc is not None:
             sess.awaiting_probe = True
             return _completion_toolcalls(
                 [transport_tc], note=f"receiving complete check output for step {idx}/{total}")
-        sess.probe_reissues = 0  # a result (or the capped fallback) resolves the streak
+        sess.probe_reissues = sess.probe_poll_reissues = 0  # a result (or the capped fallback) resolves the streak
 
         # Interpret the gate output through the ported probe modules (floor + probes + git).
         outcome = read_gate(sess.gate_plan, probe, rlog)
@@ -4700,6 +4734,12 @@ class Loop:
                 sess, body, rlog, reasoner_chat=self._ctx.reasoner_chat,
                 reasoner_role=self._ctx.reasoner_role,
                 workspace_root=sess.workspace_root or _extract_cwd(body.get("messages", [])))
+            if not truth:
+                probe_tc = guard_periodic_replan_after_survey(
+                    sess, body, rlog, workspace_root=sess.workspace_root or _extract_cwd(body.get("messages", [])))
+                if probe_tc is not None:
+                    return _completion_toolcalls(
+                        [probe_tc], note="periodic check-in \u2014 running checks")
             if truth:
                 # C5: if the SAME error has persisted (the coder is STUCK, not just churning), replace the
                 # raw ground-truth insertion with a REASONED thrash-diagnosis + one concrete next step (on
@@ -6413,7 +6453,17 @@ def guard_gate_op(gs: GuardState, body: dict, rlog, *, workspace_root=None) -> d
         # turn (a file body, a program on the coder's PATH). Without it the gate would re-ask
         # nothing and a harness with native file tools — where cria lowers no command of its own —
         # would never get an answer to any of them.
-        plan = probegate.plan_gate(root, getattr(gs, "web_session", "") or "", rlog)
+        #
+        # C28b: the poll reader's own wait per read is chosen HERE, from the tool's own schema —
+        # never a harness name — and carried on the plan so every later poll of this SAME transport
+        # reuses it. A tool whose schema declares an ms-unit time-budget field can afford a longer
+        # wait per read (reviewer measured Codex honoring ~30s for such a call), which means fewer,
+        # cheaper polls for a slow gate; a tool with no such field keeps the short default, since
+        # cria never learned it can ask the harness for more than its own unbudgeted default yield.
+        poll_wait_s = (probegate.GATE_POLL_WAIT_LONG_S if tool_declares_time_budget(tool)
+                      else probegate.GATE_POLL_WAIT_S)
+        plan = probegate.plan_gate(root, getattr(gs, "web_session", "") or "", rlog,
+                                   poll_wait_s=poll_wait_s)
     except OSError as e:  # unreadable workspace → no gate; the caller still fails open
         rlog.emit("loop.gate_error", level="warn", error=str(e))
         gs.gate_plan = None
@@ -6452,6 +6502,32 @@ def guard_gate_replan_after_survey(gs: GuardState, body: dict, rlog, *, workspac
     return probe
 
 
+def guard_periodic_replan_after_survey(gs: GuardState, body: dict, rlog, *, workspace_root=None) -> dict | None:
+    """A periodic check-in's result was survey-only (:func:`record_gate_state` left
+    ``gate_replan_required`` set): plan the real gate against the now-surveyed view via
+    :func:`guard_gate_replan_after_survey`, and re-arm it as a PERIODIC probe \u2014 its result goes back
+    through :func:`guard_periodic_result`, never completion semantics; ``gate_fresh`` is untouched
+    (the periodic path already restores it around every read).
+
+    Bounded to ONE replan per periodic check-in: ``periodic_replan_done`` is set before the attempt
+    even runs, so a replanned gate that is ITSELF survey-only (or one no shell is available for)
+    falls through to the same silence an ordinary clean/couldn't-run periodic check-in has always
+    kept, rather than looping the harness through survey after survey.
+    """
+    if not gs.gate_replan_required or gs.periodic_replan_done:
+        return None
+    gs.periodic_replan_done = True
+    probe_tc = guard_gate_replan_after_survey(gs, body, rlog, workspace_root=workspace_root)
+    if probe_tc is None:
+        rlog.emit("loop.periodic_replan_after_survey", available=False)
+        return None
+    gs.periodic_probe = True
+    gs.awaiting_probe = True
+    gs.probe_call_id = probe_tc["id"]
+    rlog.emit("loop.periodic_replan_after_survey", available=True)
+    return probe_tc
+
+
 def guard_gate_transport(gs: GuardState, body: dict, rlog, *, call_id: str = "") -> dict | None:
     """Consume the current gate page and, when needed, ask the HARNESS for the next one.
 
@@ -6487,8 +6563,12 @@ def guard_gate_transport(gs: GuardState, body: dict, rlog, *, call_id: str = "")
     call = {
         "id": "call_" + uuid.uuid4().hex[:16],
         "type": "function",
+        # C28b: the SAME schema-driven time budget the launch call got (with_time_budget) applies
+        # here too — a poll is just another shell call the harness's own exec yield can cut early,
+        # and a tool that offered a longer yield for the launch should get it for every poll of the
+        # same transport, not just the first.
         "function": {"name": tool["name"],
-                     "arguments": json.dumps(shell_args(tool, command))},
+                     "arguments": json.dumps(with_time_budget(tool, shell_args(tool, command)))},
     }
     gs.probe_call_id = call["id"]
     if state == "running":
@@ -6719,6 +6799,49 @@ def guard_intervene(gs: GuardState, body: dict, rlog, *, step=None, workspace_ro
     return None
 
 
+def _poll_running_plan_after_rewrite(gs: GuardState, body: dict, rlog) -> dict | None:
+    """A harness history rewrite lost a probe's RESULT, not the check itself: `gs.gate_plan` is
+    cria's OWN session-scoped object and is untouched by a model-facing history rewrite, so if its
+    transport is still open (neither complete nor terminally failed) the detached probe block it
+    launched is very likely still running on the harness's machine. Composing a brand new gate here
+    would abandon that still-running check and restart the whole survey/gate bootstrap from zero —
+    live P24 Orders (session 01a0d4fa): ~12 full-launch-script polls (~95s) landed, a compaction
+    dropped them all, and cria — unable to tell "the check is running" from "nothing happened" once
+    its own probe result vanished — abandoned the still-running gate for a brand new one, repeating
+    every ~100s with ZERO coder progress across the whole session.
+
+    So: POLL the SAME transport_id first — idempotent and read-only
+    (`probegate.continue_transport_command`) — and only fall through to composing a new gate when
+    there is genuinely nothing left to poll (no plan, or its transport already ended). Bounded by its
+    OWN cap (`probe_poll_reissues`, independent of `MAX_PROBE_REISSUES`): a harness that compacts
+    EVERY turn never lets a real result reach `ingest_transport`, so the plan's own wall-clock
+    deadline never gets a chance to fire on this path alone — the cap is what stops it, then the
+    caller falls through to the existing (also capped) new-gate reissue. Returns the poll's tool
+    call, or None.
+    """
+    plan = getattr(gs, "gate_plan", None)
+    if (plan is None or not getattr(plan, "transport_required", False)
+            or plan.transport_complete or plan.transport_error
+            or gs.probe_poll_reissues >= MAX_PROBE_REISSUES):
+        return None
+    command = probegate.continue_transport_command(plan)
+    tool = find_shell_tool(body.get("tools"))
+    if not command or tool is None:
+        return None
+    call = {
+        "id": "call_" + uuid.uuid4().hex[:16],
+        "type": "function",
+        "function": {"name": tool["name"],
+                     "arguments": json.dumps(with_time_budget(tool, shell_args(tool, command)))},
+    }
+    gs.probe_call_id = call["id"]
+    gs.awaiting_probe = True
+    gs.probe_poll_reissues += 1
+    rlog.emit("gate.transport_poll_after_rewrite", attempt=gs.probe_poll_reissues,
+              received=len(plan.transport_data), total=plan.transport_total)
+    return call
+
+
 def guard_probe_reissue(gs: GuardState, body: dict, rlog, *, rewritten: bool, workspace_root=None) -> dict | None:
     """A probe cria emitted last turn should have a result this turn. If the harness COMPACTED the
     history (``rewritten``), that result was LOST, not declined — re-issue the gate rather than
@@ -6726,13 +6849,23 @@ def guard_probe_reissue(gs: GuardState, body: dict, rlog, *, rewritten: bool, wo
     MAX_PROBE_REISSUES. Shared with the loop's _verify_after_probe so BOTH paths recover a
     compaction-lost probe. Returns the re-issued probe completion, or None (result present, not a
     compaction loss, cap hit, or no gate). Leaves the pending flag armed so next turn reads the new
-    result the same way."""
+    result the same way.
+
+    C28b: before spending any of that budget, prefer POLLING the current plan if its transport is
+    still open (:func:`_poll_running_plan_after_rewrite`) — that costs nothing against
+    MAX_PROBE_REISSUES, since it is not a new gate, just another read of the one already in flight.
+    """
     if not (gs.done_probe or gs.awaiting_probe):
         return None
     if _read_tool_result(body.get("messages", []), gs.probe_call_id).strip():
-        gs.probe_reissues = 0  # the result arrived — clear the streak
+        gs.probe_reissues = gs.probe_poll_reissues = 0  # the result arrived — clear the streak
         return None
-    if not rewritten or gs.probe_reissues >= MAX_PROBE_REISSUES:
+    if not rewritten:
+        return None
+    poll = _poll_running_plan_after_rewrite(gs, body, rlog)
+    if poll is not None:
+        return _completion_toolcalls([poll], note="receiving complete check output (history was compacted)")
+    if gs.probe_reissues >= MAX_PROBE_REISSUES:
         return None
     probe_tc = guard_gate_op(gs, body, rlog, workspace_root=workspace_root)
     if probe_tc is None:
@@ -6773,6 +6906,7 @@ def guard_periodic_gate(gs: GuardState, body: dict, rlog, *, workspace_root=None
         return None  # no shell tool / unknown root — can't gate; try again in another N turns
     gs.awaiting_probe = True
     gs.periodic_probe = True
+    gs.periodic_replan_done = False  # a fresh check-in gets its own one-shot survey-only replan
     gs.probe_call_id = probe_tc["id"]
     rlog.emit("loop.periodic_gate", steer="periodic-gate", plan_off=workspace_root is None)
     return _completion_toolcalls([probe_tc], note="periodic check-in — running the repo's checks")

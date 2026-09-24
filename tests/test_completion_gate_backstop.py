@@ -170,8 +170,10 @@ class CompletionGateBackstopTests(unittest.TestCase):
         probe = loop._work(sess, "k", _body(), rlog)                  # backstop emits its probe
         first_id = sess.completion_probe_id
         out = loop._work(sess, "k", _body(), rlog, rewritten=True)    # result erased by compaction
-        self.assertIn("loop.probe_reissued", rlog.kinds())
-        self.assertTrue(sess.completion_probe_id)                     # a NEW probe is in flight
+        # C28b: the plan's transport is still open (never ingested a real result), so the recovery
+        # POLLS that same plan instead of abandoning it for a brand new gate.
+        self.assertIn("gate.transport_poll_after_rewrite", rlog.kinds())
+        self.assertTrue(sess.completion_probe_id)                     # a check is still in flight
         self.assertNotEqual(sess.completion_probe_id, first_id)
         self.assertNotIn("loop.done", rlog.kinds())
 

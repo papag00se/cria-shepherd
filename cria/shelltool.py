@@ -92,6 +92,16 @@ def with_time_budget(tool: dict, args: dict, ms: int = GATE_TIME_BUDGET_MS) -> d
     return args
 
 
+def tool_declares_time_budget(tool: dict) -> bool:
+    """Does this tool's schema declare an ms-unit time-budget field — the same one
+    :func:`with_time_budget` would widen? Schema-driven, never a harness name: a caller composing
+    the completion gate's poll READER (C28b) uses this to pick how long ONE read may wait for the
+    check to finish before answering `running`, independently of whether it also widens the call's
+    OWN yield via `with_time_budget`."""
+    props = (tool.get("schema") or {}).get("properties") or {}
+    return any(f in props for f in _TIME_BUDGET_FIELDS)
+
+
 # ---------------------------------------------------------------------------
 # Does this command CHANGE something, or only report?
 

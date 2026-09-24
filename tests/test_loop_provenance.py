@@ -24,7 +24,9 @@ class _Rlog:
         self.events.append((kind, kw))
 
 
-class SurveyGateProvenanceTests(unittest.TestCase):
+class _GateFixtures:
+    """Shared fixtures for these subprocess-backed gate tests \u2014 a plain mixin, NOT a
+    ``unittest.TestCase``, so sharing it never re-runs one class's tests under another's name."""
     _SHELL = {"type": "function", "function": {"name": "shell", "parameters": {
         "type": "object", "properties": {"command": {"type": "string"}}
     }}}
@@ -60,6 +62,8 @@ class SurveyGateProvenanceTests(unittest.TestCase):
             "stream": True,
         }
 
+
+class SurveyGateProvenanceTests(_GateFixtures, unittest.TestCase):
     def test_a_survey_only_gate_requires_a_new_plan_before_it_is_fresh(self):
         with tempfile.TemporaryDirectory() as root:
             Path(root, "artifact.txt").write_text("content\n", encoding="utf-8")
@@ -207,6 +211,120 @@ class SurveyGateProvenanceTests(unittest.TestCase):
                 self.assertTrue(session.gate_plan.surveyed_before)
             finally:
                 wsview.unbind(token)
+
+
+class PeriodicSurveyOnlyReplanTests(_GateFixtures, unittest.TestCase):
+    """C33: a periodic check-in whose result was survey-only (the harness's shell had never been
+    given a real check to run yet) must not simply vanish. Before this fix, `guard_periodic_result`
+    returned None on a survey-only result and BOTH callers stopped there \u2014 unlike the completion
+    paths, which already call :func:`guard_gate_replan_after_survey`. The periodic check-in is now
+    replanned too, kept PERIODIC (no verdict, `gate_fresh` untouched), and bounded to one replan."""
+
+    def test_plan_off_periodic_check_in_replans_after_a_survey_only_bootstrap(self):
+        with tempfile.TemporaryDirectory() as root:
+            Path(root, "artifact.txt").write_text("content\n", encoding="utf-8")
+            Path(root, "x.py").write_text("def f(:\n    pass\n", encoding="utf-8")
+            view = wsview.View(root, "session")
+            token = wsview.bind(view)
+            try:
+                first_plan, result = self._bootstrap(root)
+                self.assertEqual(first_plan.candidates, [])   # nothing has been surveyed yet
+
+                session = loop.PlanSession(
+                    plan=Plan(
+                        id="plan", task="make the artifact", created="now",
+                        items=[PlanItem("make the artifact")],
+                    ),
+                    synthetic=True,
+                    workspace_root=root,
+                    gate_plan=first_plan,
+                    probe_call_id="first",
+                    periodic_probe=True,
+                    awaiting_probe=True,
+                )
+
+                out = self._driver(root)._drive_single_item(
+                    session, self._body("first", result), "session", _Rlog())
+
+                # Before the fix: guard_periodic_result reads a survey-only result → None, and the
+                # caller stopped there \u2014 the check-in vanished with nothing to show for it.
+                self.assertIsNotNone(out)
+                self.assertTrue(out["choices"][0]["message"].get("tool_calls"))
+                self.assertTrue(session.periodic_probe)          # re-armed as a PERIODIC probe...
+                self.assertFalse(session.done_probe)             # ...never a completion gate
+                self.assertTrue(session.gate_plan.surveyed_before)
+                self.assertNotEqual(session.probe_call_id, "first")
+                self.assertTrue(session.periodic_replan_done)    # bound armed for this check-in
+
+                second_call_id = session.probe_call_id
+                second_result = subprocess.run(
+                    ["sh", "-c", session.gate_plan.script],
+                    capture_output=True, text=True, check=True,
+                ).stdout
+
+                out2 = self._driver(root)._drive_single_item(
+                    session, self._body(second_call_id, second_result), "session", _Rlog())
+
+                self.assertIsNotNone(out2)
+                self.assertFalse(session.periodic_probe)         # consumed; no further replan queued
+                self.assertTrue(session.last_gate_red)            # the replanned gate found the real error
+                self.assertEqual(session.gate_stall, 1)           # one RED cycle recorded
+                self.assertIsNone(session.latest_satisfaction)    # never a verdict \u2014 periodic stays silent on that
+            finally:
+                wsview.unbind(token)
+
+    def test_plan_loop_periodic_check_in_replans_after_a_survey_only_bootstrap(self):
+        with tempfile.TemporaryDirectory() as root:
+            Path(root, "artifact.txt").write_text("content\n", encoding="utf-8")
+            Path(root, "x.py").write_text("def f(:\n    pass\n", encoding="utf-8")
+            view = wsview.View(root, "session")
+            token = wsview.bind(view)
+            try:
+                first_plan, result = self._bootstrap(root)
+                self.assertEqual(first_plan.candidates, [])
+
+                session = loop.PlanSession(
+                    plan=Plan(
+                        id="plan", task="make the artifact", created="now",
+                        items=[PlanItem("make the artifact")],
+                    ),
+                    workspace_root=root,
+                    gate_plan=first_plan,
+                    probe_call_id="first",
+                    periodic_probe=True,
+                    awaiting_probe=True,
+                )
+
+                out = self._driver(root)._verify_after_probe(
+                    session, "session", self._body("first", result), _Rlog())
+
+                self.assertTrue(out["choices"][0]["message"].get("tool_calls"))
+                self.assertTrue(session.periodic_probe)
+                self.assertTrue(session.gate_plan.surveyed_before)
+                self.assertNotEqual(session.probe_call_id, "first")
+                self.assertTrue(session.periodic_replan_done)
+            finally:
+                wsview.unbind(token)
+
+    def test_a_second_consecutive_survey_only_result_stays_silent(self):
+        """The bound: a periodic check-in gets exactly ONE replan. If replanning again were allowed
+        every turn, a workspace the harness genuinely cannot survey (no shell, e.g.) would wedge the
+        periodic check-in into an unbounded loop instead of the ordinary silence a clean/couldn't-run
+        check-in has always kept."""
+        from cria.loop import GuardState, guard_periodic_replan_after_survey
+        gs = GuardState(gate_replan_required=True, periodic_replan_done=True)
+        self.assertIsNone(
+            guard_periodic_replan_after_survey(gs, {"messages": [], "tools": []}, _Rlog(),
+                                                workspace_root="/workspace"))
+
+    def test_no_shell_available_consumes_the_bound_without_looping(self):
+        from cria.loop import GuardState, guard_periodic_replan_after_survey
+        gs = GuardState(gate_replan_required=True)
+        self.assertIsNone(
+            guard_periodic_replan_after_survey(gs, {"messages": [], "tools": []}, _Rlog(),
+                                                workspace_root="/workspace"))
+        self.assertFalse(gs.gate_replan_required)
+        self.assertTrue(gs.periodic_replan_done)
 
 
 class AcceptedActionProvenanceTests(unittest.TestCase):

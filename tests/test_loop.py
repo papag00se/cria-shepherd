@@ -1415,10 +1415,12 @@ class HistoryRewriteTests(unittest.TestCase):
         loop.drive(_body(), "sid:m", _Classification(), _Rlog())         # work → coder done → PROBE emitted
         rlog = _Rlog()
         out = loop.drive(_body_rewritten(), "sid:m", _Classification(), rlog)  # rewritten; probe result GONE
-        self.assertIn("loop.probe_reissued", rlog.kinds())
+        # C28b: the plan's transport is still open (never ingested a real result), so the recovery
+        # POLLS that same plan instead of composing a brand new gate.
+        self.assertIn("gate.transport_poll_after_rewrite", rlog.kinds())
         from cria.probegate import SECTION_PREFIX
         args = json.loads(out["choices"][0]["message"]["tool_calls"][0]["function"]["arguments"])
-        self.assertIn(GATE_SENTINEL, " ".join(args["command"]))   # a fresh ground-truth gate
+        self.assertIn(GATE_SENTINEL, " ".join(args["command"]))   # still cria's own gate provenance
         self.assertNotIn("loop.step_done", rlog.kinds())                # nothing passed silently
 
     def test_probe_absent_without_rewrite_keeps_fail_open(self):
@@ -1547,19 +1549,31 @@ class ReviewFixTests(unittest.TestCase):
 
     def test_probe_reissue_is_capped(self):
         # A harness compacting EVERY turn can't wedge the loop in endless probe re-issues.
+        #
+        # C28b: recovery is now TWO PHASES, each independently capped by MAX_PROBE_REISSUES —
+        # POLL the still-open plan first (`gate.transport_poll_after_rewrite`, cheap and read-only,
+        # does not touch the new-gate budget), then compose a brand new gate (`loop.probe_reissued`)
+        # only once polling's own cap is hit. Neither phase can starve the other, and a harness that
+        # compacts EVERY turn still falls back to judgment once BOTH caps are exhausted.
         from cria.loop import Loop, LoopStore, MAX_PROBE_REISSUES
         store = LoopStore()
         loop = Loop(_ctx(_Scripted([_done()]), _Scripted([_verdict(True), _summary("s")]), _plan(1)), store)
         loop.drive(_body(), "sid:p", _Classification(), _Rlog())         # coder done → probe emitted
-        reissues = 0
-        for i in range(MAX_PROBE_REISSUES + 2):                          # every turn arrives root-rewritten, result-less
+        polls, reissues = 0, 0
+        for i in range(2 * MAX_PROBE_REISSUES + 2):                      # every turn arrives root-rewritten, result-less
             rlog = _Rlog()
             loop.drive(_body_rewritten(f"summary v{i}"), "sid:p", _Classification(), rlog)
-            if "loop.probe_reissued" in rlog.kinds():
+            kinds = rlog.kinds()
+            if "gate.transport_poll_after_rewrite" in kinds:
+                polls += 1
+            elif "loop.probe_reissued" in kinds:
                 reissues += 1
             else:
                 break
-        self.assertEqual(reissues, MAX_PROBE_REISSUES)                   # capped, then falls back to judgment
+        self.assertEqual(polls, MAX_PROBE_REISSUES)      # polling capped on its OWN budget
+        self.assertEqual(reissues, MAX_PROBE_REISSUES)   # then new-gate reissue, capped on ITS OWN budget
+        # ...and then it stops — neither recovery path fires forever.
+        self.assertEqual(polls + reissues, 2 * MAX_PROBE_REISSUES)
 
     def test_shape_eviction_refreshes_on_reobserve(self):
         from cria.loop import LoopStore, _MAX_SHAPES

@@ -30,6 +30,7 @@ other gate transport call.
 """
 import base64
 import hashlib
+import json
 import os
 import signal
 import subprocess
@@ -38,7 +39,7 @@ import time
 import unittest
 from unittest import mock
 
-from cria import loop, probegate
+from cria import loop, probegate, shelltool
 from cria.probediscovery import ProbeCandidate, ProbeCost, ProbeKind
 
 # Verbatim from inbound-ce7f6c3d-responses.json, function_call_output for call_4b4fca253d184e38
@@ -59,9 +60,13 @@ def _plan(deadline_s: float = 600.0) -> probegate.GatePlan:
     return plan
 
 
-def _running_envelope(plan: probegate.GatePlan, elapsed: str = "12.3") -> str:
+def _running_envelope(plan: probegate.GatePlan, elapsed: str = "12.3", *, path: str = "") -> str:
+    """C28b: the reader's own typed `running` envelope now also carries the resolved spool path
+    (defaults to this plan's OWN expected spool name; pass ``path=`` to simulate a foreign one)."""
+    spool_path = path or f"/tmp/.cria-gate-{plan.transport_id}.spool"
     return "\n".join([
         probegate._transport_marker(plan.transport_id),
+        "path\t" + base64.b64encode(spool_path.encode()).decode(),
         f"running\t{elapsed}",
         probegate._transport_marker(plan.transport_id, end=True),
     ])
@@ -292,10 +297,15 @@ class RealShellDetachmentTests(unittest.TestCase):
         state = probegate.ingest_transport(plan, launch.stdout)
         self.assertEqual(state, "running", launch.stdout)
 
-        # Poll again shortly after — still not done.
+        # C28b: the real reader's own `running` envelope carries the resolved spool path, so ONE
+        # running reply is enough to switch every later poll to the narrow offset-0 re-read —
+        # never the whole multi-KB launch script again (the P24 wedge: ~12 full-script polls before
+        # a compaction dropped them all).
+        self.assertTrue(plan.transport_path, "the real running envelope must have taught cria the path")
         cmd = probegate.continue_transport_command(plan)
-        self.assertTrue(cmd, "no path was ever learned from a bare running envelope, so cria must "
-                             "be able to re-poll via the idempotent launch script")
+        self.assertTrue(cmd)
+        self.assertNotIn("__CRIA_GATE_BODY__", cmd,
+                         "a poll after the first running reply must never resend the launch script")
         again = subprocess.run(["bash", "-c", cmd], capture_output=True, text=True, timeout=30)
         # By now up to ~0.9s have elapsed since the probe started; it may or may not be done yet —
         # either state is a legitimate transport outcome, but it must not be terminal.
@@ -708,6 +718,172 @@ class SpoolPermissionsTests(unittest.TestCase):
         # ...and the PROBE's own umask matches the LAUNCHING (harness's) shell's 0022 — not the
         # narrowed 0077 that leaked into the detached session before this repair.
         self.assertIn("0022", open(spool).read())
+
+
+class RunningEnvelopeLearnsThePathTests(unittest.TestCase):
+    """C28b (a): the reader's own typed `running` envelope now also carries the resolved spool
+    path, validated exactly like a page's own — so ONE running reply is enough for cria to switch
+    every later poll to the narrow offset-0 re-read, never resending the whole multi-KB launch
+    script again. Live P24 Orders (session 01a0d4fa): ~12 full-script polls (~95s) landed because
+    the OLD running envelope carried no path at all."""
+
+    def test_total_silence_then_a_running_reply_teaches_the_path(self):
+        plan = _plan()
+        plan.script = "echo placeholder-launch-script __CRIA_GATE_BODY__"  # a real plan's own text
+        self.assertEqual(probegate.ingest_transport(plan, P18_LAUNCH_NO_OPENER), "running")
+        self.assertFalse(plan.transport_path)                     # silence taught nothing
+        self.assertIn("__CRIA_GATE_BODY__", probegate.continue_transport_command(plan))
+
+        self.assertEqual(probegate.ingest_transport(plan, _running_envelope(plan)), "running")
+        self.assertTrue(plan.transport_path)                      # LEARNED from the running envelope
+        narrow = probegate.continue_transport_command(plan)
+        self.assertNotIn("__CRIA_GATE_BODY__", narrow)             # narrow read now, never a relaunch
+        self.assertIn(plan.transport_id, narrow)
+
+    def test_a_running_envelope_with_a_foreign_path_is_terminal(self):
+        plan = _plan()
+        foreign = _running_envelope(plan, path="/tmp/.cria-gate-deadbeefdeadbeefdeadbeef.spool")
+        self.assertEqual(probegate.ingest_transport(plan, foreign), "unknown")
+        self.assertIn("unexpected spool", plan.transport_error)
+
+    def test_a_running_envelope_changing_an_already_learned_path_is_terminal(self):
+        plan = _plan()
+        self.assertEqual(probegate.ingest_transport(plan, _running_envelope(plan)), "running")
+        self.assertTrue(plan.transport_path)
+        changed = _running_envelope(plan, path=f"/tmp/.cria-gate-{plan.transport_id}.spool2")
+        self.assertEqual(probegate.ingest_transport(plan, changed), "unknown")
+        self.assertIn("spool changed", plan.transport_error)
+
+
+class CompactionDuringRunningTransportPollsNotReplansTests(unittest.TestCase):
+    """C28b (b): live P24 Orders, session 01a0d4fa. A harness compaction (probe result missing,
+    `rewritten=True`) while the CURRENT plan's transport is still open must re-issue a POLL of
+    that SAME plan — idempotent and read-only — not compose a brand new gate. The old behavior
+    (`guard_probe_reissue` → a NEW plan → `guard_gate_op` → survey-only → another new plan)
+    abandoned the still-running detached probe block every ~100s with ZERO coder progress."""
+
+    def _tool(self):
+        return {"type": "function", "function": {
+            "name": "exec_command",
+            "parameters": {"type": "object", "properties": {"cmd": {"type": "string"}}}}}
+
+    def test_compaction_after_running_polls_the_same_transport_not_a_new_gate(self):
+        with tempfile.TemporaryDirectory() as ws:
+            gs = loop.GuardState()
+            gs.gate_plan = probegate.plan_gate(ws)
+            gs.awaiting_probe = True
+            gs.probe_call_id = "call_launch"
+            original_transport_id = gs.gate_plan.transport_id
+
+            # 1) launch: total silence — the exact P18/P24 shape (harness cut the exec before the
+            #    reader printed anything).
+            self.assertEqual(probegate.ingest_transport(gs.gate_plan, P18_LAUNCH_NO_OPENER), "running")
+            # 2) a real running reply, teaching cria the resolved spool path.
+            self.assertEqual(
+                probegate.ingest_transport(gs.gate_plan, _running_envelope(gs.gate_plan)), "running")
+            self.assertTrue(gs.gate_plan.transport_path)
+
+            # 3) harness compaction: the probe's RESULT is gone (empty content), rewritten=True.
+            body = {"messages": [], "tools": [self._tool()]}
+            poll = loop._poll_running_plan_after_rewrite(gs, body, mock.Mock())
+            self.assertIsNotNone(poll, "the still-running plan must be polled, not abandoned")
+            self.assertEqual(gs.gate_plan.transport_id, original_transport_id,  # SAME plan
+                             "compaction must not abandon the still-running gate for a new one")
+            args = json.loads(poll["function"]["arguments"])
+            cmd_text = args.get("cmd") or " ".join(args.get("command") or [])
+            self.assertNotIn("__CRIA_GATE_BODY__", cmd_text)       # a narrow read, not a relaunch
+            self.assertTrue(gs.awaiting_probe)
+
+            # 4) later: the composed timeout fires, delivering the real partial pytest output —
+            #    the SAME rendering the gate already knows how to produce for a timed-out check.
+            page = _page(gs.gate_plan, _TIMED_OUT_GATE_BODY)
+            self.assertEqual(probegate.ingest_transport(gs.gate_plan, page), "complete")
+            rendered = probegate.clean_gate_output(probegate.transported_result(gs.gate_plan))
+            self.assertIn("did not finish (timed out)", rendered)
+            self.assertIn("tests/test_orders_integration.py::test_polls_forever", rendered)
+
+    def test_no_plan_or_a_terminal_plan_falls_through_to_none(self):
+        gs = loop.GuardState()
+        body = {"messages": [], "tools": [self._tool()]}
+        self.assertIsNone(loop._poll_running_plan_after_rewrite(gs, body, mock.Mock()))
+
+        gs.gate_plan = _plan()
+        probegate.fail_transport(gs.gate_plan, "terminal for this test")
+        self.assertIsNone(loop._poll_running_plan_after_rewrite(gs, body, mock.Mock()))
+
+    def test_the_poll_path_is_bounded_independently_of_max_probe_reissues(self):
+        """A harness that compacts EVERY turn must not wedge in endless polling — bounded by its
+        OWN cap (`probe_poll_reissues`), never touching `probe_reissues` (the new-gate budget)."""
+        gs = loop.GuardState()
+        gs.gate_plan = _plan()
+        gs.gate_plan.script = "echo placeholder-launch-script"  # a real plan's own non-empty text
+        body = {"messages": [], "tools": [self._tool()]}
+        seen = 0
+        for _ in range(loop.MAX_PROBE_REISSUES + 3):
+            if loop._poll_running_plan_after_rewrite(gs, body, mock.Mock()) is None:
+                break
+            seen += 1
+        self.assertEqual(seen, loop.MAX_PROBE_REISSUES)
+        self.assertEqual(gs.probe_reissues, 0, "polling must never spend the new-gate budget")
+
+
+class PollWaitFromToolSchemaTests(unittest.TestCase):
+    """C28b (c): the poll reader's wait is chosen at COMPOSE time from the tool's own schema —
+    never a harness name — the long wait (~25s, under the ~30s Codex was measured honoring) when
+    the schema declares an ms-unit time-budget field, the short default (8s, under the harness's
+    own unbudgeted default yield) otherwise."""
+
+    def _tool(self, *, with_budget: bool) -> dict:
+        props = {"cmd": {"type": "string"}}
+        if with_budget:
+            props["yield_time_ms"] = {"type": "integer"}
+        return {"type": "function", "function": {
+            "name": "exec_command", "parameters": {"type": "object", "properties": props}}}
+
+    def test_a_tool_with_yield_time_ms_gets_the_long_wait(self):
+        with tempfile.TemporaryDirectory() as ws:
+            gs = loop.GuardState()
+            body = {"messages": [], "tools": [self._tool(with_budget=True)]}
+            call = loop.guard_gate_op(gs, body, mock.Mock(), workspace_root=ws)
+        self.assertIsNotNone(call)
+        self.assertEqual(gs.gate_plan.transport_poll_wait_s, probegate.GATE_POLL_WAIT_LONG_S)
+        self.assertIn(f"time.monotonic() + {probegate.GATE_POLL_WAIT_LONG_S!r}", gs.gate_plan.script)
+
+    def test_a_tool_without_the_field_keeps_the_short_default(self):
+        with tempfile.TemporaryDirectory() as ws:
+            gs = loop.GuardState()
+            body = {"messages": [], "tools": [self._tool(with_budget=False)]}
+            call = loop.guard_gate_op(gs, body, mock.Mock(), workspace_root=ws)
+        self.assertIsNotNone(call)
+        self.assertEqual(gs.gate_plan.transport_poll_wait_s, probegate.GATE_POLL_WAIT_S)
+        self.assertIn(f"time.monotonic() + {probegate.GATE_POLL_WAIT_S!r}", gs.gate_plan.script)
+        self.assertNotIn(f"time.monotonic() + {probegate.GATE_POLL_WAIT_LONG_S!r}", gs.gate_plan.script)
+
+    def test_continuation_reads_reuse_the_wait_the_plan_learned(self):
+        with tempfile.TemporaryDirectory() as ws:
+            gs = loop.GuardState()
+            body = {"messages": [], "tools": [self._tool(with_budget=True)]}
+            loop.guard_gate_op(gs, body, mock.Mock(), workspace_root=ws)
+        plan = gs.gate_plan
+        probegate.ingest_transport(plan, _running_envelope(plan))
+        cmd = probegate.continue_transport_command(plan)
+        self.assertIn(f"time.monotonic() + {probegate.GATE_POLL_WAIT_LONG_S!r}", cmd)
+
+    def test_poll_calls_also_get_the_schema_time_budget(self):
+        """`with_time_budget` must apply to poll calls too, not only the launch."""
+        with tempfile.TemporaryDirectory() as ws:
+            gs = loop.GuardState()
+            body = {"messages": [], "tools": [self._tool(with_budget=True)]}
+            loop.guard_gate_op(gs, body, mock.Mock(), workspace_root=ws)
+        plan = gs.gate_plan
+        probegate.ingest_transport(plan, _running_envelope(plan))
+        body2 = {"messages": [{"role": "tool", "tool_call_id": gs.probe_call_id,
+                              "content": _running_envelope(plan, "5.0")}],
+                "tools": [self._tool(with_budget=True)]}
+        call = loop.guard_gate_transport(gs, body2, mock.Mock())
+        self.assertIsNotNone(call)
+        args = json.loads(call["function"]["arguments"])
+        self.assertEqual(args.get("yield_time_ms"), shelltool.GATE_TIME_BUDGET_MS)
 
 
 if __name__ == "__main__":

@@ -83,6 +83,14 @@ _TRANSPORT_HEREDOC = "__CRIA_GATE_TRANSPORT_PY__"
 # envelope — running or complete — has time to print before the harness's yield can cut it too.
 GATE_POLL_WAIT_S = 8.0
 
+# C28b: chosen at COMPOSE time (loop.guard_gate_op, from the tool's own schema — never a harness
+# name), not a runtime probe. A tool whose schema declares an ms-unit time-budget field is one
+# `with_time_budget` can actually widen (reviewer measured Codex honoring ~30s for such a call), so
+# its poll reader can afford to wait far longer per turn before answering — fewer, cheaper polls for
+# a slow gate. A tool with no such field keeps GATE_POLL_WAIT_S: cria never learned it can ask for
+# more, so it must not assume a wait longer than the harness's own unbudgeted default yield.
+GATE_POLL_WAIT_LONG_S = 25.0
+
 # The cria-side deadline for the WHOLE detached block, derived from the plan's OWN composed
 # timeouts, never guessed: every selected probe (and the offline re-run leg, when present) is
 # individually bounded by `timeout -k {TIMEOUT_KILL_GRACE_S} {COMPLETION_PROBE_TIMEOUT_S}` inside
@@ -121,6 +129,16 @@ def _transport_reader(path_arg: str, offset: int, transport_id: str, *,
     envelope instead of going back empty — the exact P18 shape ("Process running … Output:", no
     marker at all) that made `ingest_transport` terminal on a check that was still alive.
 
+    C28b: the ``running`` reply ALSO carries ``path`` — the resolved spool path, validated exactly
+    like a page's own path field — not just the elapsed hint. Without it, `continue_transport_command`
+    cannot learn the path from a running-only reply and keeps re-sending the WHOLE multi-KB launch
+    script on every poll instead of switching to a narrow offset-0 re-read the instant the check is
+    known to be alive. Live P24 Orders (session 01a0d4fa): ~12 such full-script polls (~95s) landed
+    before Codex compacted the coder's history and dropped them, and cria — unable to tell "the check
+    is running" from "nothing ever happened" once its own probe result vanished with the rewrite —
+    abandoned the still-running gate and started a brand new one, repeating every ~100s with zero
+    coder progress.
+
     The final page is read into the helper's memory before the temporary file (and its ``.done``
     marker) is unlinked. If its result is cut in transit, cria sees a missing close/count/hash and
     reports UNKNOWN; it never interprets the prefix as a complete check. Normal completion leaves no
@@ -142,6 +160,7 @@ if not os.path.exists(done_path):
     except OSError:
         elapsed = 0.0
     print(opening)
+    print("path\\t" + base64.b64encode(path.encode()).decode())
     print("running\\t" + str(round(elapsed, 1)))
     print(closing)
     sys.exit(0)
@@ -304,6 +323,11 @@ class GatePlan:
     # last real envelope. Bounded by `GATE_OPENERLESS_MAX`, independently of `transport_deadline_s`
     # \u2014 see the constant's own comment for why the two must not share a bound.
     transport_openerless_streak: int = 0
+    # C28b: how long ONE poll of this plan may wait for the `.done` marker, chosen once at compose
+    # time (`plan_gate`'s ``poll_wait_s``) from the LAUNCHING tool's own schema (GATE_POLL_WAIT_LONG_S
+    # when it declares an ms-unit time-budget field, else GATE_POLL_WAIT_S) and reused by every
+    # continuation read of this same plan so a mid-transport tool swap can never silently change it.
+    transport_poll_wait_s: float = GATE_POLL_WAIT_S
     # THE OFFLINE FACT THIS PLAN'S LAST CLEAN GATE PRODUCED, so a reader that is not the coder can
     # have it. `_offline_fact` is one sentence cria owns outright — the suite passed, and it passed
     # again with the network taken away — and it reached the coder in 20 prompts of L5
@@ -440,11 +464,29 @@ def ingest_transport(plan: GatePlan, result_text: str, *, now: float | None = No
         if not sep or key in fields:
             return fail_transport(plan, "transport page contains malformed or duplicate fields")
         fields[key] = value
-    if set(fields) == {"running"}:
+    if set(fields) == {"path", "running"}:
         # The reader's own typed envelope: it waited, the completion marker still wasn't there, and it
         # said so instead of returning nothing. Never data — bounded by the plan-wide deadline, not
         # the openerless streak: THE POLL ITSELF WORKED (it printed a real envelope), so this is
         # genuine evidence of life, not a broken channel.
+        #
+        # C28b: the ``path`` field is validated exactly like a real page's own — decoded, checked
+        # against this transport's expected spool name, and held consistent across replies — and then
+        # LEARNED, so `continue_transport_command` can switch to a narrow offset-0 re-read instead of
+        # re-sending the whole launch script on every subsequent poll (the P24 wedge: ~12 full-script
+        # polls before a harness compaction dropped them all and cria, unable to tell the check was
+        # still alive, abandoned it for a brand new gate).
+        try:
+            running_path = base64.b64decode(fields["path"], validate=True).decode("utf-8")
+        except (ValueError, UnicodeError):
+            return fail_transport(plan, "transport page contains undecodable fields")
+        if not running_path or "\x00" in running_path or "\n" in running_path or "\r" in running_path:
+            return fail_transport(plan, "transport page path or hash is invalid")
+        if not os.path.basename(running_path).startswith(f".cria-gate-{plan.transport_id}."):
+            return fail_transport(plan, "transport page named an unexpected spool")
+        if plan.transport_path and running_path != plan.transport_path:
+            return fail_transport(plan, "transport spool changed between pages")
+        plan.transport_path = running_path
         plan.transport_openerless_streak = 0
         return _retry_or_deadline(plan, now)
     if "error" in fields:
@@ -521,7 +563,7 @@ def continue_transport_command(plan: GatePlan) -> str:
     return "\n".join([
         _gate_sentinel([]),
         _transport_reader(shlex.quote(plan.transport_path), len(plan.transport_data),
-                          plan.transport_id),
+                          plan.transport_id, wait_s=plan.transport_poll_wait_s),
     ])
 
 
@@ -559,7 +601,8 @@ def _checks_ran_elsewhere(workspace: str, candidates: list) -> str:
     return "" if where.startswith("..") or os.path.isabs(where) else where
 
 
-def plan_gate(workspace: str, session: str = "", rlog=None) -> GatePlan:
+def plan_gate(workspace: str, session: str = "", rlog=None, *,
+              poll_wait_s: float = GATE_POLL_WAIT_S) -> GatePlan:
     """Inspect the workspace read-only and compose the gate script.
 
     Selection is re-run on EVERY gate (like upstream's ``discover`` per gate run):
@@ -569,11 +612,18 @@ def plan_gate(workspace: str, session: str = "", rlog=None) -> GatePlan:
     ``workspace`` empty → a MINIMAL gate (git snapshot only, no cd): cria couldn't learn
     the workspace path, so it must not discover against its OWN cwd (that once composed a
     probe over cria's repo itself). The harness's shell already runs in the workspace, so
-    the git leg still lands; the checks just abstain (digest says none ran)."""
+    the git leg still lands; the checks just abstain (digest says none ran).
+
+    ``poll_wait_s`` (C28b): how long each read of this gate's transport may wait for the `.done`
+    marker before answering `running`. The CALLER picks it from the launching tool's own schema
+    (``GATE_POLL_WAIT_LONG_S`` when it declares an ms-unit time-budget field, else the default
+    ``GATE_POLL_WAIT_S``) — this function only carries it onto the plan so every later poll of the
+    SAME transport (:func:`continue_transport_command`) reuses the same value."""
     plan = GatePlan(
         workspace=workspace,
         surveyed_before=bool(wsview.current(workspace or None).surveyed),
         transport_required=True,
+        transport_poll_wait_s=poll_wait_s,
     )
     if workspace:
         plan.candidates = proberun.select_completion_probes(workspace)
@@ -679,7 +729,8 @@ def plan_gate(workspace: str, session: str = "", rlog=None) -> GatePlan:
         f"__cria_gate_file={spool}",
         f"__cria_gate_cmd={cmd_file}",
         *_gate_launch_guard('"$__cria_gate_file"', '"$__cria_gate_cmd"', parts),
-        _transport_reader('"$__cria_gate_file"', 0, plan.transport_id),
+        _transport_reader('"$__cria_gate_file"', 0, plan.transport_id,
+                          wait_s=plan.transport_poll_wait_s),
     ])
     return plan
 
