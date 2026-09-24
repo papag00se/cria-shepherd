@@ -389,6 +389,15 @@ reconciled HEAD: `p22-feed-rerun-9ded52bc.service` (user unit, not collected), s
 - **Timing:** touches `loop.py` (C28 in progress) and requires a prompt-map key; implement after C28
   lands and after p22 terminates (existing prompt file must not change during a live run).
 
+- **C31 re-landed and accepted:** `34b70d4a` re-applies `8a53a245` with a location-free frozen compaction copy
+  (`server._harden_compaction_reply` → `location=False`) and bound-before-insert in `set_visible`; re-review found
+  the `no_spec_here` label's own "its body is in the transcript above" still contradicted the absent sentence (799
+  coder prompts carry that label, all 200 of C27). `7de23bdd` adds a location-free `no_spec_here` variant (new
+  prompt file only) whenever visibility is known or the copy is frozen; re-review with both reproductions: exactly
+  one location claim per URL across the coder body, none in the frozen copy — **accepted**. Owner full suite
+  5098 passed, 5 skipped. Goes live at the next restart after p23 (non-blocking: the now non-identical
+  frozen/live one-line entries are no longer elided, so that line appears twice without contradiction).
+
 ### Cross-cell lead — invented third-party API members (not yet a candidate)
 
 Rust P20 (`toml` `Value::parse_str`, `toml::Error::Missing`), Feed p22 live (`org.apache.commons.csv.exceptions`,
