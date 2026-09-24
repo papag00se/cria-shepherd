@@ -6958,7 +6958,8 @@ def runner_reset_steer(gs: GuardState, outcome, body: dict, rlog, *,
                          False: "node_modules is absent from the surveyed workspace.",
                          None: "Whether node_modules is present is not known from the workspace survey."}[node_modules]
     task, _ = _history_root(body.get("messages", []))
-    session = selfcompact.serialize(_reasoner_session(body.get("messages", [])))
+    session = selfcompact.serialize(_drop_harness_frame(probegate.clean_gate_results(
+        _reasoner_session(body.get("messages", [])), getattr(gs, "gate_plan", None))))
     question = prompts.render("runner_reset_judge_user", task=task or "(no task recovered)",
                               runner=runner, node_modules=node_modules_fact, checks=checks,
                               session=session)
@@ -7014,7 +7015,8 @@ def module_state_steer(gs: GuardState, outcome, body: dict, rlog, *,
     if signature == gs.module_state_signature:
         return None
     task, _ = _history_root(body.get("messages", []))
-    session = selfcompact.serialize(_reasoner_session(body.get("messages", [])))
+    session = selfcompact.serialize(_drop_harness_frame(probegate.clean_gate_results(
+        _reasoner_session(body.get("messages", [])), getattr(gs, "gate_plan", None))))
     question = prompts.render("module_state_judge_user", TASK=task or "(no task recovered)",
                               TESTS="\n".join(f"{command} exited {code}" for command, code in failed),
                               CHECKS=checks, SESSION=session)
