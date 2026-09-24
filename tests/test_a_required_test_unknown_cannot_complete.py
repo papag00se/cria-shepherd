@@ -31,6 +31,31 @@ class _Chat:
         return json.dumps({"choices": [{"message": message}]}).encode()
 
 
+class _ReasoningBeforeTerminalChat:
+    """Replay the C24/C26 shape: reasoning fills 16 tokens before the verdict reaches content."""
+    REASONING = "We need to decide if the task requires a test deliverable to be executed as"
+
+    def __init__(self, terminal):
+        self.terminal = terminal
+        self.bodies = []
+        self._satisfaction = True
+
+    def __call__(self, body, _rlog):
+        self.bodies.append(body)
+        if self._satisfaction:
+            self._satisfaction = False
+            message = {"content": _satisfied()}
+            return json.dumps({"choices": [{"message": message}]}).encode()
+        if body["max_tokens"] <= 16:
+            return json.dumps({"choices": [{
+                "finish_reason": "length",
+                "message": {"reasoning_content": self.REASONING, "content": ""},
+            }]}).encode()
+        return json.dumps({"choices": [{"message": {
+            "reasoning_content": self.REASONING, "content": self.terminal,
+        }}]}).encode()
+
+
 def _candidate(kind, command, test_sources=()):
     candidate = probediscovery.ProbeCandidate(
         kind=kind, command=command.split(), working_dir="/workspace", confidence=90,
@@ -120,6 +145,51 @@ class RequiredTestParticipationBarrierTests(unittest.TestCase):
 
         self.assertTrue(satisfied)
         self.assertEqual(len(chat.bodies), 2)
+
+    def test_participation_requirement_reaches_terminal_token_after_capture_shaped_reasoning(self):
+        report = participation.report([participation.observe(
+            _candidate(probediscovery.ProbeKind.SyntaxCheck, "node --check lookup.js"), "", 0)])
+        chat = _ReasoningBeforeTerminalChat("NOT_REQUIRED")
+
+        satisfied, _reason, _fix = loop.judge_satisfaction(
+            "Add a --json option to the CLI.", "Wrote lookup.js.", chat, None,
+            _Rlog(), sess=_session(report))
+
+        self.assertTrue(satisfied)
+        self.assertEqual(chat.bodies[1]["max_tokens"], 1024)
+
+    def test_e2e_requirement_reaches_terminal_token_after_capture_shaped_reasoning(self):
+        report = participation.report([participation.observe(
+            _candidate(probediscovery.ProbeKind.Test, "npm test"), "Tests: 1 passed", 0)])
+        chat = _ReasoningBeforeTerminalChat("NOT_REQUIRED")
+
+        satisfied, _reason, _fix = loop.judge_satisfaction(
+            self.TASK, "Tests: 1 passed", chat, None, _Rlog(), sess=_session(report))
+
+        self.assertTrue(satisfied)
+        self.assertEqual(chat.bodies[1]["max_tokens"], 1024)
+
+    def test_missing_participation_terminal_token_remains_fail_closed(self):
+        report = participation.report([participation.observe(
+            _candidate(probediscovery.ProbeKind.SyntaxCheck, "node --check lookup.js"), "", 0)])
+        chat = _Chat([_satisfied(), {"reasoning_content": _ReasoningBeforeTerminalChat.REASONING,
+                                     "content": ""}])
+
+        satisfied, _reason, _fix = loop.judge_satisfaction(
+            "Add a --json option to the CLI.", "Wrote lookup.js.", chat, None,
+            _Rlog(), sess=_session(report))
+
+        self.assertFalse(satisfied)
+
+    def test_unrelated_explicit_closed_question_cap_is_preserved(self):
+        chat = _ReasoningBeforeTerminalChat("NOT_REQUIRED")
+        chat._satisfaction = False
+
+        answer = loop.ask_closed(chat, None, "Return one token.", _Rlog(), phase="unrelated",
+                                 max_tokens=16, retry_off=False)
+
+        self.assertEqual(answer, "")
+        self.assertEqual(chat.bodies[0]["max_tokens"], 16)
 
     def test_c24_executed_direct_api_test_cannot_satisfy_cli_end_to_end_requirement(self):
         root = "/workspace"

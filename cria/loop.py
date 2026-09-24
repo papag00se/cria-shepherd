@@ -1631,7 +1631,7 @@ def _test_participation_blocks_completion(task: str, report, reasoner_chat, reas
         answer = ask_closed(
             reasoner_chat, reasoner_role,
             prompts.render("test_participation_requirement", task=task, participation=facts), rlog,
-            phase="test-participation-requirement", max_tokens=16, retry_off=False).strip().upper()
+            phase="test-participation-requirement", retry_off=False).strip().upper()
         required = answer == "REQUIRED"
         if rlog is not None:
             rlog.emit("loop.test_participation_requirement", support=support.value,
@@ -1641,7 +1641,7 @@ def _test_participation_blocks_completion(task: str, report, reasoner_chat, reas
     requirement = ask_closed(
         reasoner_chat, reasoner_role,
         prompts.render("test_e2e_requirement", task=task), rlog,
-        phase="test-e2e-requirement", max_tokens=16, retry_off=False).strip().upper()
+        phase="test-e2e-requirement", retry_off=False).strip().upper()
     if rlog is not None:
         rlog.emit("loop.test_e2e_requirement", required=(requirement == "E2E_REQUIRED")
                   if requirement else "unknown")
