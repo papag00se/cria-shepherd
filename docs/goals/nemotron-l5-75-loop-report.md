@@ -199,6 +199,52 @@ match the dated sections. `usefulness.py pending --since 1790000000` is now empt
 **Feed-pipeline-java has had no comparable rerun since Phase 0** (`1790068525`, 20%) although ~40
 accepted changes landed after it; it is the first measurement due.
 
+### P22 Feed launch — 2026-09-24
+
+Feed-pipeline-java had no comparable measurement since Phase 0, so it was run first at the
+reconciled HEAD: `p22-feed-rerun-9ded52bc.service` (user unit, not collected), script/log
+`~/.cria/nemotron-l5-p22-feed-9ded52bc.{sh,log}`, flocked, note `BATTERY2 L5 nemotron-elastic
+9ded52bc p22`, planner on/L5. Exactly one recurring 10-minute heartbeat: `67248cb2`.
+
+### Candidate C28 — gate blind to a check that outlives the harness exec yield
+
+- **Observed chain (P18 Orders, session `20260924T023334-01a0d2c3`):** the coder wrote an
+  integration test whose `setUp` polls port 0 forever. Raw inbound capture
+  `inbound-ce7f6c3d-responses.json` shows cria's composed gate `exec_command` carrying
+  `"yield_time_ms": 300000`, and Codex returning `Wall time: 30.0008 seconds / Process running
+  with session ID 51757 / Output:` (and in a later gate `441.6866 seconds / Process running`), with
+  no transport opener. `probegate.ingest_transport` → `fail_transport("transport page opener did
+  not arrive")` → the coder receives `probe_transport_unknown.txt` ("did not arrive completely …
+  UNKNOWN") — 28 of 29 gates in that session (`gate.transport_unknown` events). The composed
+  script's own `timeout -k 5 240` would have produced exit 124 plus the partial pytest output
+  (`..` then the hanging test id), which `interpret_gate` already renders as "a check did not
+  finish (timed out) … It printed this before it was stopped", but that byte stream never reached
+  cria. Meanwhile the coder's own `pytest` calls returned `Process running … Output: ..`, which its
+  reasoning read as success (CALL0092: "pytest exits with success code 0 and no output").
+  C26 Orders (`01a0d1e8`) had 4 such unknowns with the same hang; Handles C9 (`01a0ccbe`) logged 8
+  `opener did not arrive` at offset 0 (no raw inbound capture exists for it, so its shape is
+  corroboration only).
+- **Owner:** `probegate.plan_gate` script composition + `loop.guard_gate_transport` bridge. The
+  gate's correctness depends on the harness honoring a 300 s yield; Codex does not (clamps/returns
+  early), and nothing polls the still-running script.
+- **Candidate:** make the gate script's completion observable across turns without trusting the
+  harness yield: run the composed probe block detached into the existing spool, have the reader
+  wait a bounded interval for a completion marker, and return a typed *running* envelope when not
+  done; the existing transport bridge re-issues the read (read-only, idempotent) until completion
+  or a cria-side deadline derived from the probes' own timeouts, then pages as today. A hang then
+  surfaces as the existing exit-124 timeout rendering with the real partial output (tool voice
+  preserved). Deadline exhaustion stays explicit UNKNOWN (fail closed).
+- **LANG / MODEL / HARNESS:** keys on a transport state (script not finished), not on any runner,
+  language, model, or error text; uses only the shell primitive every harness has; a harness that
+  honors long yields sees the first read complete inline, so its turn count is unchanged.
+- **Additive / regression-only:** changes no verdict for a gate that already completes within the
+  yield; replaces UNKNOWN with the check's own output only when the check actually finished.
+- **Bonsai 2 risk:** shared gate transport; fast gates must stay byte-for-byte equivalent in
+  interpreted result and not gain turns. To be asserted by tests.
+- **Measurement constraint:** implemented while p22 is active, so no existing file under
+  `cria/prompts/` may be modified and `cria.service` must not be restarted until p22's terminal
+  packet is recorded.
+
 Next bounded unit: the latest Cart C13 capture is materialized losslessly at `~/.cria/walk-findings/2026-09-23/cart-c13/` as 29 compaction-safe segments (6,281,741 bytes / 388 calls). All 29 durable findings now exist and their cited chain was reconciled against the materialized capture; no battery run is in flight, so no heartbeat is required.
 
 ### Candidate C14 — planner rewrite-frame false workspace fact (pending independent review)
