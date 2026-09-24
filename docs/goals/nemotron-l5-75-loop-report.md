@@ -323,6 +323,18 @@ reconciled HEAD: `p22-feed-rerun-9ded52bc.service` (user unit, not collected), s
   whose later re-gather would have produced an admissible plan now proceed on the raw task instead.
   Measured prevalence of that recovery must be checked in logs before landing.
 
+### C28/C29/C30 cohort — integrated, reviewed
+
+- Commits `1a89220b` (C28), `42605223` (C29), `ab1e4e68` (C30); integrated `python -m pytest` **5070 passed,
+  5 skipped**; `git diff --check` clean. Not yet live (cria.service not restarted).
+- Independent review: **C29 accepted** (7/16 new tests fail on `fda145eb`, pass after; quote tracking
+  identical to `split_chain`). **C28 rejected**: reproduced on real Codex 0.156 (`codex exec --yolo` against a
+  fake Responses server) that the `.done` marker and cmd cleanup run in a wrapper subshell killed with the
+  harness process group, so a finished >8 s gate never reads as done and ends UNKNOWN at the deadline — a
+  regression against pre-C28 inline completion. **C30 rejected**: the give-up writes the process-wide
+  task-text-keyed negative cache, so a later session with the same task never plans (#23). Both repairs are
+  assigned to their original owners with the reviewer's reproductions.
+
 ### Candidate C31 — fetch ledger claims a page body is "in this conversation above" when it is not
 
 - **Observed chain (Rust P20, `20260924T052642-01a0d361`):** the planner fetched
