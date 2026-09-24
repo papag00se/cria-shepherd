@@ -40,6 +40,18 @@ _TASK_TYPES = ("coding", "reasoning", "question")
 # 2,468, p99 8,192 — and 7 answered NOTHING, every one of them at exactly 8,192. The old cap bound
 # only the top 1.4%, and each time it bound, the judgement was lost whole; twice that spent a
 # one-shot rescue. Judge INPUTS run ~6k tokens against a 49,152 window, so this reserve fits.
+#
+# Also the ONE owner for cria's one-word closed-question judges (support/diagnosis words, compaction
+# lenses, runner-reset, module-state) — loop.py used to cap those at a bespoke 16 tokens on the theory
+# that a one-word answer needs no budget. Census over every capture with `max_tokens: 16` (nemotron-
+# elastic, 2026-09-22..24, reasoning_effort "none", temperature 0): **69 of 69** returned EMPTY content
+# at `finish_reason: length` — the model still emits a short reasoning preface even with reasoning off
+# (e.g. "We need to decide if the task is supported given the evidence...") and 16 tokens cuts it before
+# the word. The identical questions sent at 1,024 answered 38/38. This is principle #6 (never cap
+# output for latency) with a second, sharper mechanism: the cap doesn't shorten the answer, it deletes
+# it, and a deleted verdict is indistinguishable from "nothing to report" — a negative diagnosis went
+# from an exact, correct answer ("resolved_address == 'goose'") to a suppressed one because the support
+# question that would have surfaced it never got to answer at all.
 JUDGE_MAX_TOKENS = 16384
 _CACHE_CAP = 256
 _ESCALATE_AFTER = 3  # consecutive classify failures before the fallback escalates to an error log

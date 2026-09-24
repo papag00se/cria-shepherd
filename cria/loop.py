@@ -48,7 +48,7 @@ from pathlib import Path
 from . import bodykeys, wsview
 from . import callcapture, dedup, denial, editrecovery, execcheck, focustrim, groundtruth, indicators, massage, participation, probediscovery, probegate, probeparse, proberun, prompts, reasoning, selfcompact, shellshape, toolmenu, urlgrounding, verifytools, webfetch
 from .upstream import CallerContextRetryNoChange, ContextRefitNoChange
-from .classify import _task_key, latest_user_text
+from .classify import JUDGE_MAX_TOKENS, _task_key, latest_user_text
 from . import jsontext, planner, refusalledger, writeproxy
 from .jsontext import extract_json_object, strip_think
 from . import research
@@ -1668,7 +1668,7 @@ def _test_participation_blocks_completion(task: str, report, reasoner_chat, reas
     verdict = _completion_text(_judge_completion(
         reasoner_chat, reasoner_role, prompts.load("test_e2e_participation"),
         prompts.render("test_e2e_participation", task=task, participation=facts), rlog,
-        phase="test-e2e-participation", workspace_root=workspace_root, max_tokens=16,
+        phase="test-e2e-participation", workspace_root=workspace_root, max_tokens=JUDGE_MAX_TOKENS,
         force_think_off=True)).strip().upper()
     if rlog is not None:
         rlog.emit("loop.test_e2e_participation", verdict=verdict or "unknown")
@@ -1821,7 +1821,7 @@ def _confirm_completion(claim: str, reason: str, workspace_root: str, reasoner_c
         # boolean remains false; only a typed, current-evidence-backed explanation may accompany it.
         semantic_ask = (lambda sysm: summarize(
             reasoner_chat, role, sysm, _ASK_USER_TURN, rlog,
-            phase=phase + "-diagnosis", max_tokens=16, retry_off=False,
+            phase=phase + "-diagnosis", max_tokens=JUDGE_MAX_TOKENS, retry_off=False,
             temperature=0.0) or "") \
             if reasoner_role is not None else None
         nudge = _negative_diagnosis_nudge(
@@ -2135,7 +2135,7 @@ def judge_satisfaction(task: str, evidence: str, reasoner_chat, reasoner_role, r
         # than sending the coder to fix work that is already right (#3, #5b).
         diagnosis_ask = ((lambda sysm: ask_closed(
             reasoner_chat, reasoner_role, sysm, rlog, phase="satisfaction-diagnosis",
-            max_tokens=16, retry_off=False))
+            max_tokens=JUDGE_MAX_TOKENS, retry_off=False))
             if reasoner_role is not None else None)
         nudge = _verdict_nudge(obj, satisfied, routes, evidence=user, task=task,
                                action_log=evidence, checks=gate_findings,
@@ -2162,7 +2162,7 @@ def judge_satisfaction(task: str, evidence: str, reasoner_chat, reasoner_role, r
         return False, "unverified — the careful check could not confirm completion; keep working", ""
     retry_ask = ((lambda sysm: ask_closed(
         reasoner_chat, reasoner_role, sysm, rlog, phase="satisfaction-retry-diagnosis",
-        max_tokens=16, retry_off=False))
+        max_tokens=JUDGE_MAX_TOKENS, retry_off=False))
         if reasoner_role is not None else None)
     nudge = _verdict_nudge(retry, False, routes, evidence=user, task=task,
                            action_log=evidence, checks=gate_findings,
@@ -4305,7 +4305,7 @@ class Loop:
                         return Verification(False, reason, confirmation)
             diagnosis_ask = ((lambda sysm: ask_closed(
                 self._ctx.reasoner_chat, self._ctx.reasoner_role, sysm, rlog,
-                phase="critic-diagnosis", max_tokens=16, retry_off=False))
+                phase="critic-diagnosis", max_tokens=JUDGE_MAX_TOKENS, retry_off=False))
                 if self._ctx.reasoner_role is not None else None)
             reason = _verdict_nudge(obj, done, routes, evidence=user, task=item,
                                     action_log=evidence, checks=red_findings,
@@ -4334,7 +4334,7 @@ class Loop:
             return Verification(False, reason)
         retry_ask = ((lambda sysm: ask_closed(
             self._ctx.reasoner_chat, self._ctx.reasoner_role, sysm, rlog,
-            phase="critic-retry-diagnosis", max_tokens=16, retry_off=False))
+            phase="critic-retry-diagnosis", max_tokens=JUDGE_MAX_TOKENS, retry_off=False))
             if self._ctx.reasoner_role is not None else None)
         reason = _verdict_nudge(retry, False, routes, evidence=user, task=item,
                                 action_log=evidence, checks=red_findings,
@@ -6964,7 +6964,7 @@ def runner_reset_steer(gs: GuardState, outcome, body: dict, rlog, *,
                               session=session)
     answer = ask_closed(reasoner_chat, reasoner_role,
                         prompts.load("runner_reset_judge") + "\n\n" + question,
-                        rlog, phase="runner-reset", max_tokens=16, retry_off=False)
+                        rlog, phase="runner-reset", max_tokens=JUDGE_MAX_TOKENS, retry_off=False)
     verdict = answer.strip().upper()
     if verdict not in ("RESET", "ON_TRACK"):
         # Empty or malformed replies establish no judgment, so a later periodic gate may retry.
@@ -7020,7 +7020,7 @@ def module_state_steer(gs: GuardState, outcome, body: dict, rlog, *,
                               CHECKS=checks, SESSION=session)
     answer = ask_closed(reasoner_chat, reasoner_role,
                         prompts.load("module_state_judge") + "\n\n" + question,
-                        rlog, phase="module-state", max_tokens=16, retry_off=False)
+                        rlog, phase="module-state", max_tokens=JUDGE_MAX_TOKENS, retry_off=False)
     verdict = answer.strip().upper()
     if verdict not in ("REANCHOR", "ON_TRACK"):
         rlog.emit("loop.module_state", applied=False, verdict=answer.strip()[:40])
@@ -7118,7 +7118,7 @@ def validate_compaction_briefing(chat_fn, role, briefing: str, *, files: str, ch
     def judge(lens: str, system_prompt: str, blocks: list[str], accepted_word: str) -> bool:
         answer = summarize(chat_fn, replace(role, reasoning="off"), system_prompt,
                            prompts.load("compaction_validate_ask"), rlog,
-                           phase=f"{phase}-{lens}", max_tokens=16, retry_off=False,
+                           phase=f"{phase}-{lens}", max_tokens=JUDGE_MAX_TOKENS, retry_off=False,
                            temperature=0.0, evidence_blocks=blocks)
         answers[lens] = answer.strip()[:40]
         return answer.strip().upper() == accepted_word
