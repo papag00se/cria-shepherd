@@ -11,7 +11,7 @@ Reconciled 2026-09-24 against `suite/results/results.jsonl` and `~/.cria/suite/_
 | Cell | Latest comparable run | Note | Final usefulness | Status |
 |---|---|---|---:|---|
 | shipping-rates-rb | `shipping-rates-rb_nemotron-elastic_codex_pon_1790255585` | `a9087c45 p21` | 35% | open — ≤75% |
-| cart-billing-go | `cart-billing-go_nemotron-elastic_codex_pon_1790238295` | `ad8a8c9b p18` | 0% | open — ≤75% |
+| cart-billing-go | `cart-billing-go_nemotron-elastic_codex_pon_1790289581` | `785d6523 p26` | 25% | open — ≤75% |
 | orders-api-py | `orders-api-py_nemotron-elastic_codex_pon_1790279578` | `3d82a022 p24` | 40% | open — ≤75% |
 | feed-pipeline-java | `feed-pipeline-java_nemotron-elastic_codex_pon_1790268418` | `9ded52bc p22` | 20% | open — ≤75% |
 | handles-cli-node | `handles-cli-node_nemotron-elastic_codex_pon_1790285393` | `9fab19d9 p25` | 50% | open — ≤75% |
@@ -526,6 +526,18 @@ reconciled HEAD: `p22-feed-rerun-9ded52bc.service` (user unit, not collected), s
   in module-state 19/19 and runner-reset 7/7 judge prompts, no other phase. Owner: both steers serialize
   `_reasoner_session(...)` without `probegate.clean_gate_results` / `_drop_harness_frame`, unlike every other reasoner
   consumer. Fix assigned (reuse the shared scrub; no prompt change).
+
+### P26 Cart terminal result; C35 accepted; C36 in progress
+
+- `cart-billing-go_nemotron-elastic_codex_pon_1790289581` (`BATTERY2 L5 nemotron-elastic 785d6523 p26`) ended
+  `milestone-stalled-45min` after **243 calls**; milestones 30min 30% continue, 45min 25% stalled; final **25%**;
+  heartbeat `78b4e05e` retired. C30 turned P18's 0-coder session into real work (discounts.json + fallback, decimal
+  Total with stderr log, 48.58 regression test) but `go.mod` pins nonexistent `shopspring/decimal v0.57.0`, no
+  `go.sum`, invalid decimal APIs, discount multiplied instead of subtracted.
+- **C35 accepted** (`0ee35ea7`): offline replay of P26 0068 — judge session 92.9K→25.0K chars, zero transport markers,
+  zero "cria", no harness frame; coder actions and checker output retained. Reviewer found the remaining prompt shape
+  (session is the last text, no trailing one-token instruction) still invites a coder-role answer → **C36** (prompt
+  restatement, now allowed since no run is live) assigned.
 
 ### Cross-cell lead — invented third-party API members (not yet a candidate)
 
