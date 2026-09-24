@@ -1407,12 +1407,15 @@ class CriaHandler(BaseHTTPRequestHandler):
         log: EventLog = self.server.log
         turn = uuid.uuid4().hex[:8]
         try:
-            rbody = self._read_json_body()
+            rbody, raw = self._read_json_body(retain_raw=True)
         except ValueError as e:
             self._send_json(400, {"error": f"invalid JSON body: {e}"})
             return
         sess = responses.session_key_of(rbody)
         rlog = log.bind(session=sess, turn=turn)
+        if self.server.cfg.logging.capture_calls:
+            callcapture.capture_inbound(raw, rlog, calls_dir=self.server.cfg.logging.capture_dir_path,
+                                        api="responses")
         try:
             body = responses.to_chat_body(rbody)
         except ValueError as e:
@@ -1593,7 +1596,7 @@ class CriaHandler(BaseHTTPRequestHandler):
 
     # ------------------------------------------------------------------ util
 
-    def _read_json_body(self) -> dict:
+    def _read_json_body(self, *, retain_raw: bool = False) -> dict | tuple[dict, bytes]:
         length = int(self.headers.get("Content-Length", 0) or 0)
         raw = self.rfile.read(length) if length else b""
         if not raw:
@@ -1601,7 +1604,7 @@ class CriaHandler(BaseHTTPRequestHandler):
         obj = json.loads(raw)
         if not isinstance(obj, dict):
             raise ValueError("body must be a JSON object")
-        return obj
+        return (obj, raw) if retain_raw else obj
 
     def _send_json(self, code: int, obj: dict) -> None:
         raw = json.dumps(obj).encode("utf-8")

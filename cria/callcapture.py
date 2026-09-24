@@ -16,6 +16,7 @@ what each role was handed.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import threading
@@ -119,6 +120,28 @@ def _stats(body: dict) -> dict:
         "tool_tokens": tool_tokens,
         "est_total": msg_tokens + tool_tokens,
     }
+
+
+def capture_inbound(raw: bytes, rlog, *, calls_dir, api: str) -> str | None:
+    """Retain an exact valid harness request before an API adapter transforms it.
+
+    Inbound receipts deliberately have no ``NNNN`` identity: they correlate by the
+    bound request turn and must never advance the model-call sequence.
+    """
+    try:
+        session = getattr(rlog, "session", None)
+        turn = getattr(rlog, "_turn", None) or getattr(rlog, "turn", None)
+        d = Path(calls_dir).expanduser() / session_dirname(session)
+        d.mkdir(parents=True, exist_ok=True)
+        label = re.sub(r"[^A-Za-z0-9._-]+", "-", str(turn or "noturn"))
+        api_label = re.sub(r"[^A-Za-z0-9._-]+", "-", api)
+        path = d / f"inbound-{label}-{api_label}.json"
+        path.write_bytes(raw)
+        rlog.emit("inbound.dump", api=api, path=str(path), bytes=len(raw),
+                  sha256=hashlib.sha256(raw).hexdigest())
+        return str(path)
+    except (OSError, TypeError, ValueError):
+        return None
 
 
 def capture(body: dict, rlog, *, calls_dir, phase: str | None = None, url: str = "",

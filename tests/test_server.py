@@ -4,6 +4,7 @@ Proves the whole request path (HTTP in → forward → SSE/JSON out → events l
 without touching the real model server on :18084 (single-slot).
 """
 
+import hashlib
 import json
 import threading
 import types
@@ -503,6 +504,75 @@ class ResilienceTests(unittest.TestCase):
         with self.assertRaises(urllib.error.HTTPError) as cm:  # coder 500 on turn 1 → clean 502, not a drop
             self._post({"model": "m", "tools": self._TOOLS, "messages": self._MSGS}, stream=False)
         self.assertEqual(cm.exception.code, 502)
+
+
+class ResponsesInboundCaptureTests(unittest.TestCase):
+    """Raw Responses evidence is retained before its lossy chat conversion."""
+
+    def setUp(self):
+        self._tmp = TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self.fake = ThreadingHTTPServer(("127.0.0.1", 0), _FakeUpstream)
+        _serve(self.fake)
+        self.addCleanup(self.fake.server_close)
+        self.addCleanup(self.fake.shutdown)
+        cfg = Config(
+            server=ServerConfig(host="127.0.0.1", port=0),
+            upstream=UpstreamConfig(base_url=f"http://127.0.0.1:{self.fake.server_address[1]}"),
+            logging=LoggingConfig(dir=self._tmp.name, capture_calls=True,
+                                  capture_dir=self._tmp.name, capture_rendered=False, console=False),
+            indicators=IndicatorsConfig(enabled=False),
+        )
+        self.log = EventLog(dir=cfg.logging.dir, console=False)
+        self.addCleanup(self.log.close)
+        self.cria = CriaServer(cfg, self.log, Upstream(
+            cfg.upstream.base_url, capture_dir=cfg.logging.capture_dir_path,
+            capture_rendered=cfg.logging.capture_rendered))
+        _serve(self.cria)
+        self.addCleanup(self.cria.server_close)
+        self.addCleanup(self.cria.shutdown)
+        self.base = f"http://127.0.0.1:{self.cria.server_address[1]}"
+
+    def _events(self) -> list[dict]:
+        assert self.log.path is not None
+        return [json.loads(line) for line in self.log.path.read_text().splitlines() if line.strip()]
+
+    def test_raw_responses_body_is_correlated_without_advancing_outbound_capture_sequence(self):
+        # Deliberate whitespace and private ids/payload prove this is the received byte stream,
+        # not a re-serialized or post-conversion approximation.
+        raw = b'''{
+  "model" : "m", "stream": false,
+  "prompt_cache_key": "p18-inbound-capture",
+  "input": [
+    {"type":"message","role":"user","content":[{"type":"input_text","text":"<<<LOCAL_COMPACT>>> retain history"}]},
+    {"type":"function_call","call_id":"private-call-42","name":"shell","arguments":"{\\"command\\":[\\"pwd\\"]}"},
+    {"type":"function_call_output","call_id":"private-call-42","output":"private result\\nwith bytes"}
+  ]
+}'''
+        req = urllib.request.Request(self.base + "/v1/responses", data=raw, method="POST",
+                                     headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=10):
+            pass
+
+        events = self._events()
+        inbound = next(event for event in events if event["kind"] == "inbound.dump")
+        received = next(event for event in events if event["kind"] == "request.recv")
+        path = Path(inbound["path"])
+        self.assertEqual(path.read_bytes(), raw)
+        self.assertEqual(path.parent.name, "p18-inbound-capture")
+        self.assertEqual(path.name, f"inbound-{inbound['turn']}-responses.json")
+        self.assertEqual(inbound["session"], received["session"])
+        self.assertEqual(inbound["turn"], received["turn"])
+        self.assertEqual(inbound["bytes"], len(raw))
+        self.assertEqual(inbound["sha256"], hashlib.sha256(raw).hexdigest())
+        self.assertIn(b"private-call-42", path.read_bytes())
+        self.assertIn(b"private result\\nwith bytes", path.read_bytes())
+
+        # The inbound observation has no outbound sequence identity: the first model request
+        # remains CALL0001 rather than being shifted to CALL0002.
+        outbound = sorted(path.parent.glob("[0-9][0-9][0-9][0-9]-*.json"))
+        self.assertTrue(outbound)
+        self.assertTrue(outbound[0].name.startswith("0001-"))
 
 
 class ResponsesApiTests(unittest.TestCase):
