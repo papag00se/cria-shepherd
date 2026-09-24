@@ -14,7 +14,7 @@ Reconciled 2026-09-24 against `suite/results/results.jsonl` and `~/.cria/suite/_
 | cart-billing-go | `cart-billing-go_nemotron-elastic_codex_pon_1790238295` | `ad8a8c9b p18` | 0% | open — ≤75% |
 | orders-api-py | `orders-api-py_nemotron-elastic_codex_pon_1790242392` | `ad8a8c9b p18` | 50% | open — ≤75% |
 | feed-pipeline-java | `feed-pipeline-java_nemotron-elastic_codex_pon_1790268418` | `9ded52bc p22` | 20% | open — ≤75% |
-| handles-cli-node | `handles-cli-node_nemotron-elastic_codex_pon_1790231549` | `3cf2697a p17` | 70% | open — ≤75% |
+| handles-cli-node | `handles-cli-node_nemotron-elastic_codex_pon_1790274745` | `c6e97a5d p23` | 65% | open — ≤75% |
 | rust-toml-cli | `rust-toml-cli_nemotron-elastic_codex_pon_1790252780` | `c435329c p20` | 30% | open — ≤75% |
 
 Strict closure criterion: every cell's latest comparable L5 final usefulness judgment is >75%.
@@ -397,6 +397,23 @@ reconciled HEAD: `p22-feed-rerun-9ded52bc.service` (user unit, not collected), s
   one location claim per URL across the coder body, none in the frozen copy — **accepted**. Owner full suite
   5098 passed, 5 skipped. Goes live at the next restart after p23 (non-blocking: the now non-identical
   frozen/live one-line entries are no longer elided, so that line appears twice without contradiction).
+
+### P23 Handles terminal result — C29 engaged; new false completion hold (C32)
+
+- Comparable run `handles-cli-node_nemotron-elastic_codex_pon_1790274745` (`BATTERY2 L5 nemotron-elastic c6e97a5d p23`)
+  ended `milestone-stalled-45min` after **327 calls**; milestones 30min 65% continue, 45min 65% stalled; final
+  **65%**; battery report refreshed; heartbeat `888cb7b7` retired.
+- Archive: dependency-free built-in-fetch `index.js` (holder endpoint, `--json`, `--help`, exit 1 on unknown
+  handle), `request` removed, Dockerfile, declared `npm test` spawning the CLI against the live API — green.
+  Gaps: handle only via `--handle`, old `lookup.js` still requires `request`, no failure-path test.
+- C29 engaged: the gate composed `npm run test` and fed its red output ("describe is not defined") to the coder,
+  which then repaired the test script. C28/C30 not exercised (no hang, plan admitted).
+- **Decisive transition (C32):** once `npm run test` was green (exit 0, `executed_test_sources` =
+  `test/real.test.js`), `participation.collect` still reported test `participated/passed = unknown` because the
+  plain test program prints no runner tally; the satisfaction judge said `satisfied:true` (0291) but the C23
+  barrier (`test_participation_requirement REQUIRED`, support unknown) held completion from 30 to 45 min, telling
+  the coder its required tests were unproven. Owner-local fix assigned: a completed declared test interface whose
+  body maps an executed test file counts as participation with `passed = exit==0`.
 
 ### Cross-cell lead — invented third-party API members (not yet a candidate)
 
