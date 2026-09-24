@@ -539,6 +539,15 @@ reconciled HEAD: `p22-feed-rerun-9ded52bc.service` (user unit, not collected), s
   (session is the last text, no trailing one-token instruction) still invites a coder-role answer → **C36** (prompt
   restatement, now allowed since no run is live) assigned.
 
+### Row p27 freeze
+
+- **C36 accepted** (`aae1d664`): replayed P26 0068 prompt now ends with "Return exactly `REANCHOR` or `ON_TRACK`.",
+  28.6K chars, zero "cria"; parser unchanged; sweep found no other closed-verdict judge ending in raw transcript.
+  Non-blocking: strip backticks before the strict compare (module-state and runner-reset).
+- Row p27 contains C28 (+ review repairs), C28b, C29, C30, C31, C32, C33, C34, C35, C36 — all independently
+  reviewed and accepted; integrated full suite 5143 passed, 5 skipped. Row HEAD = the commit recording this entry.
+  Queue: all six cells, one note, one heartbeat; no behavior change may land until the queue ends.
+
 ### Cross-cell lead — invented third-party API members (not yet a candidate)
 
 Rust P20 (`toml` `Value::parse_str`, `toml::Error::Missing`), Feed p22 live (`org.apache.commons.csv.exceptions`,
