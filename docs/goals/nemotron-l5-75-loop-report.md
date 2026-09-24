@@ -452,6 +452,20 @@ reconciled HEAD: `p22-feed-rerun-9ded52bc.service` (user unit, not collected), s
   the C28b reissue loop (15 `loop.probe_reissued`, zero coder actions). The same hang class as C26/P18; C28 now
   sees the check running, but C28b prevents it from ever finishing.
 
+### C28b + C33 accepted; live
+
+- `6510f2dd` (C28b + C33) review: P24 compaction-while-running path verified on real Codex (narrow 1.75 KB polls
+  after the first running reply, same-transport poll after compaction, timed-out rendering with partial output,
+  25 s waits honoured, fast gate 1 turn); **C33 accepted** (one replan per check-in, periodic semantics, red result
+  advances `gate_stall`). C28b rejected on a lost *final* page (reader had unlinked the spool → phantom `running`
+  until deadline). Repair `6d78545c`: reader never unlinks, typed `gone` envelope, completed spools removed by exact
+  path at the next gate; re-review on real Codex: lost final page recovered immediately with identical bytes —
+  **C28b accepted**. Integrated suite **5131 passed, 5 skipped**. Non-blocking: last spool per workspace remains in
+  `$TMPDIR` (0600) until the next gate/restart; gate tests leave spools in `/tmp` (teardown follow-up).
+- Rejected lead (prevalence): a "task-quoted identifier absent from workspace" fact for completion judges — measured
+  over all 33 campaign archives, only Shipping P21/C8 had a meaningful absent name (`Shipping.zone_for`); the rest
+  were noise (`node_modules`, `go.mod`, files the task asks to create). Not built.
+
 ### Cross-cell lead — invented third-party API members (not yet a candidate)
 
 Rust P20 (`toml` `Value::parse_str`, `toml::Error::Missing`), Feed p22 live (`org.apache.commons.csv.exceptions`,
