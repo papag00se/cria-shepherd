@@ -350,6 +350,20 @@ reconciled HEAD: `p22-feed-rerun-9ded52bc.service` (user unit, not collected), s
   default failing `test` stub (0 of 627 sessions); a script withheld as *unsafe* is still told "Run it
   directly".
 
+### Live: C28+C29+C30 (`c6e97a5d`); C31 rejected and reverted pending repair
+
+- C31 review (commit `8a53a245`): P20 shape fails-before/passes-after (6/9), visibility ordering and session
+  key verified, "not blocked" true — but **rejected**: `server._harden_compaction_reply` renders the ledger
+  with no session, freezing "Its body is NOT in this conversation" into harness compaction history; after the
+  invited re-fetch the live block says "in this conversation above" for the same URL and ledger elision no
+  longer collapses them (reviewer repro `/tmp/c28rev/c31contra.py`). Reverted on main (`c6e97a5d`) so the
+  accepted cohort could go live; repair assigned to the C31 owner (location-free frozen copy).
+- Integrated suite at `c6e97a5d`: **5079 passed, 5 skipped**. `cria.service` restarted, `/health` ok.
+- **P23 Handles launched** (cell closest to closure; C27's decisive transition is C29's): unit
+  `p23-handles-rerun-c6e97a5d.service`, script/log `~/.cria/nemotron-l5-p23-handles-c6e97a5d.{sh,log}`, note
+  `BATTERY2 L5 nemotron-elastic c6e97a5d p23`, planner on/L5; `run.py`'s own cria restart (11:32:25) preceded
+  the C31 owner's re-application (11:32:32), so the run executes clean `c6e97a5d`. One heartbeat: `888cb7b7`.
+
 ### Candidate C31 — fetch ledger claims a page body is "in this conversation above" when it is not
 
 - **Observed chain (Rust P20, `20260924T052642-01a0d361`):** the planner fetched
