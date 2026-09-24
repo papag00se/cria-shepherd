@@ -14,7 +14,7 @@ Reconciled 2026-09-24 against `suite/results/results.jsonl` and `~/.cria/suite/_
 | cart-billing-go | `cart-billing-go_nemotron-elastic_codex_pon_1790238295` | `ad8a8c9b p18` | 0% | open — ≤75% |
 | orders-api-py | `orders-api-py_nemotron-elastic_codex_pon_1790279578` | `3d82a022 p24` | 40% | open — ≤75% |
 | feed-pipeline-java | `feed-pipeline-java_nemotron-elastic_codex_pon_1790268418` | `9ded52bc p22` | 20% | open — ≤75% |
-| handles-cli-node | `handles-cli-node_nemotron-elastic_codex_pon_1790274745` | `c6e97a5d p23` | 65% | open — ≤75% |
+| handles-cli-node | `handles-cli-node_nemotron-elastic_codex_pon_1790285393` | `9fab19d9 p25` | 50% | open — ≤75% |
 | rust-toml-cli | `rust-toml-cli_nemotron-elastic_codex_pon_1790252780` | `c435329c p20` | 30% | open — ≤75% |
 
 Strict closure criterion: every cell's latest comparable L5 final usefulness judgment is >75%.
@@ -468,6 +468,18 @@ reconciled HEAD: `p22-feed-rerun-9ded52bc.service` (user unit, not collected), s
 - Rejected lead (prevalence): a "task-quoted identifier absent from workspace" fact for completion judges — measured
   over all 33 campaign archives, only Shipping P21/C8 had a meaningful absent name (`Shipping.zone_for`); the rest
   were noise (`node_modules`, `go.mod`, files the task asks to create). Not built.
+
+### P25 Handles terminal result
+
+- `handles-cli-node_nemotron-elastic_codex_pon_1790285393` (`BATTERY2 L5 nemotron-elastic 9fab19d9 p25`) ended
+  `milestone-stalled-45min` after **276 calls**; milestones 30min 35% continue (argv regression), 45min 50% stalled;
+  final **50%**; heartbeat `52d268fb` retired.
+- Archive: built-in-fetch positional CLI, `--json`/`--help`, exit 1 on unknown, Dockerfile; `handle_count` =
+  `data.length`; no `test` script; tests assert the address equals the handle.
+- C33 engaged (`loop.periodic_replan_after_survey`). The C23 barrier correctly held (no executed tests). Decisive
+  cria transition: satisfaction verdicts named real defects (0136: the test asserts `'goose'`), but every
+  negative-diagnosis support question was lost to the 16-token cap (C34), 10 suppressions, so the coder only ever
+  received "the check did not name which deliverable is unfinished".
 
 ### Candidate C34 — 16-token caps on one-word judges: 69 of 69 answers lost
 
