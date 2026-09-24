@@ -194,6 +194,20 @@ def _gate_launch_guard(spool_arg: str, cmd_arg: str, parts: list[str]) -> list[s
     inherited pipe end left open in a still-running detached child is exactly what would hang the
     NEXT read of this same call (or a test's `subprocess.run(capture_output=True)`).
 
+    EVERYTHING AFTER THE PROBE BLOCK MUST RUN INSIDE THE SAME DETACHED SESSION TOO — not just the
+    probe block itself. The first shape of this function put `setsid` in front of only the probe
+    invocation, inside a `( setsid sh cmd ; : > done ; python3 -c unlink ) &` wrapper: `setsid`
+    detaches the probe, but the surrounding `( … )` subshell that WAITS for it and then writes the
+    ``.done`` marker and unlinks the cmd file stays a member of the HARNESS's own process group. A
+    harness that reaps that process group the instant the exec call returns (reproduced on real
+    Codex 0.156 against a 14s probe: the spool filled with the probe's own real output, but
+    ``.done`` never appeared and the cmd file was never removed) kills that waiting subshell before
+    it ever writes the marker — so a gate that used to finish INLINE within the old yield now polls
+    all the way to `transport_deadline_s` and ends terminal UNKNOWN, worse than before C28. The fix
+    is to make the WHOLE sequence — run, mark done, clean up — the single command `setsid` (or the
+    plain fallback) detaches: `$__cria_gate_run -c '<run, mark, clean>' … &`, using `$0` inside that
+    inline script for the interpreter name so it is named only once.
+
     INTERPRETER: `bash` when it is on PATH, else `sh`. Before C28 `parts` ran inline in whatever
     shell the HARNESS itself used to run the whole composed script — Codex's own exec tool is
     `bash -lc`, and probe composition (`proberun.compose_probe_command`, the offline `unshare` leg,
@@ -203,14 +217,25 @@ def _gate_launch_guard(spool_arg: str, cmd_arg: str, parts: list[str]) -> list[s
     guard to catch it, since `sh` is frequently a bash symlink on the very machine that would hide
     the regression. `setsid` and the interpreter choice are independent knobs (either may be absent).
 
+    `umask 077` before either file is created: the spool carries the coder's own check output and
+    the cmd file the composed probe commands, and `mktemp`'s own default (owner-only, 0600) is what
+    this replaced — a fixed deterministic name must not widen that.
+
     No `rm`: the Codex sandbox rejects the WHOLE script when it contains one
     (test_gate_script_is_read_only.py); cleanup is `os.unlink` — the launch script unlinks itself
     once the block is done, exactly like the spool is unlinked by the final page read.
     """
     body = "\n".join(parts) if parts else ":"
     tag = "__CRIA_GATE_BODY__"
+    # Run the probe body via `$0` (the interpreter name passed as $0 below) so it is named once;
+    # then, in the SAME process/session, mark done and unlink the cmd file. All three legs are one
+    # `sh -c '…'` argument, so `setsid` (or its absence) covers every one of them, not just the
+    # first.
+    detached = ('$0 "$1" </dev/null >"$2" 2>&1; : > "$2.done"; '
+               'python3 -c "import os, sys; os.unlink(sys.argv[1])" "$1" >/dev/null 2>&1')
     return [
         f"if [ ! -e {spool_arg} ] && [ ! -e {spool_arg}.done ]; then",
+        "umask 077",
         f": > {spool_arg} || exit 98",
         f"cat > {cmd_arg} <<'{tag}'",
         body,
@@ -219,10 +244,8 @@ def _gate_launch_guard(spool_arg: str, cmd_arg: str, parts: list[str]) -> list[s
         'else __cria_gate_sh="sh"; fi',
         'if command -v setsid >/dev/null 2>&1; then __cria_gate_run="setsid $__cria_gate_sh"; '
         'else __cria_gate_run="$__cria_gate_sh"; fi',
-        f'( $__cria_gate_run {cmd_arg} </dev/null >{spool_arg} 2>&1',
-        f': > {spool_arg}.done',
-        f'python3 -c "import os, sys; os.unlink(sys.argv[1])" {cmd_arg} >/dev/null 2>&1',
-        f') </dev/null >/dev/null 2>&1 &',
+        f'$__cria_gate_run -c \'{detached}\' "$__cria_gate_sh" {cmd_arg} {spool_arg} '
+        f'</dev/null >/dev/null 2>&1 &',
         "disown 2>/dev/null || true",
         "fi",
     ]

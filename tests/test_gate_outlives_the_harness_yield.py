@@ -31,6 +31,7 @@ other gate transport call.
 import base64
 import hashlib
 import os
+import signal
 import subprocess
 import tempfile
 import time
@@ -415,7 +416,7 @@ class ConsecutiveOpenerlessBoundTests(unittest.TestCase):
         self.assertFalse(probegate.transported_result(plan))     # never a clean result
 
     def test_c_a_real_envelope_between_openerless_reads_resets_the_counter(self):
-        """(c) openerless, running, openerless, running, \u2026 never trips — each real envelope
+        """(c) openerless, running, openerless, running, … never trips — each real envelope
         (the reader's own typed `running`, or a page) proves the poll channel still works."""
         plan = _plan()
         for _ in range(5):
@@ -466,7 +467,7 @@ class NoUnexportedLauncherVariableTests(unittest.TestCase):
     """Supervisor review audit: the composed probe body now runs in a SEPARATE `bash`/`sh` PROCESS
     (the detached block), so any shell VARIABLE assigned in the outer launcher (not exported, and
     the outer launcher never exports anything) is invisible to it — only real environment
-    variables (PATH, HOME, TMPDIR, \u2026) cross that boundary. Every value the body needs (the
+    variables (PATH, HOME, TMPDIR, …) cross that boundary. Every value the body needs (the
     workspace path, the transport id's markers, per-probe exit codes) must be either a literal baked
     into the composed text or a variable the body itself assigns and reads, never a reference to
     something only the launcher defined.
@@ -496,7 +497,7 @@ class NoUnexportedLauncherVariableTests(unittest.TestCase):
         """Mechanical audit: `set -u` makes bash fail loudly on ANY variable reference that was
         never assigned. Running the extracted body standalone (no launcher context at all) under
         `set -u` proves every variable it touches is either assigned within itself or a real
-        exported/environment value (`TMPDIR`, `PATH`, \u2026) — never a launcher-only local."""
+        exported/environment value (`TMPDIR`, `PATH`, …) — never a launcher-only local."""
         with tempfile.TemporaryDirectory() as ws:
             with open(os.path.join(ws, "x.py"), "w") as f:
                 f.write("print(1)\n")
@@ -506,6 +507,178 @@ class NoUnexportedLauncherVariableTests(unittest.TestCase):
                               timeout=30)
         self.assertNotIn("unbound variable", proc.stderr,
                          f"stdout={proc.stdout!r} stderr={proc.stderr!r}")
+
+
+def _launch_script(spool: str, cmd_file: str, body_lines: list, guard_lines: list, tid: str,
+                  wait_s: float) -> str:
+    """A minimal standalone launch+read script, decoupled from real probe composition, for
+    exercising `_gate_launch_guard`'s process-survival contract in isolation."""
+    return "\n".join([
+        f'__cria_gate_file="{spool}"',
+        f'__cria_gate_cmd="{cmd_file}"',
+        *guard_lines,
+        probegate._transport_reader(f'"{spool}"', 0, tid, wait_s=wait_s),
+    ])
+
+
+def _pre_fix_launch_guard(spool_arg: str, cmd_arg: str, parts: list) -> list:
+    """The EXACT pre-repair shape of `probegate._gate_launch_guard` (reconstructed from git history,
+    commit 161169a4): `setsid` covers only the probe invocation, and the surrounding `( … ) &`
+    subshell that writes `.done` and unlinks the cmd file afterward stays in the CALLER's own process
+    group — it is what a harness reaping that group the instant the exec call returns (Codex 0.156,
+    reviewer's `/tmp/c28rev/sim.py`) kills before the marker is ever written."""
+    body = "\n".join(parts) if parts else ":"
+    tag = "__CRIA_GATE_BODY__"
+    return [
+        f"if [ ! -e {spool_arg} ] && [ ! -e {spool_arg}.done ]; then",
+        f": > {spool_arg} || exit 98",
+        f"cat > {cmd_arg} <<'{tag}'",
+        body,
+        tag,
+        'if command -v bash >/dev/null 2>&1; then __cria_gate_sh="bash"; '
+        'else __cria_gate_sh="sh"; fi',
+        'if command -v setsid >/dev/null 2>&1; then __cria_gate_run="setsid $__cria_gate_sh"; '
+        'else __cria_gate_run="$__cria_gate_sh"; fi',
+        f'( $__cria_gate_run {cmd_arg} </dev/null >{spool_arg} 2>&1',
+        f': > {spool_arg}.done',
+        f'python3 -c "import os, sys; os.unlink(sys.argv[1])" {cmd_arg} >/dev/null 2>&1',
+        f') </dev/null >/dev/null 2>&1 &',
+        "disown 2>/dev/null || true",
+        "fi",
+    ]
+
+
+class ProcessGroupKillSurvivalTests(unittest.TestCase):
+    """Supervisor-reproduced BLOCKING regression: the first shape of `_gate_launch_guard` detached
+    only the probe invocation via `setsid`; the `( … ) &` wrapper that then wrote `.done` and
+    unlinked the cmd file stayed a member of the HARNESS's own process group and was killed the
+    instant the harness reaped it after the exec call returned — reproduced live on Codex 0.156
+    (`codex exec --yolo` against a fake Responses server, reviewer's `/tmp/c28rev/sim.py` `killpg`
+    and `pty` modes): the spool filled with the probe's real output but `.done` never appeared and
+    the cmd file was never removed, so a gate that used to finish INLINE within the old harness yield
+    instead polled all the way to `transport_deadline_s` and ended terminal UNKNOWN — P18 stayed
+    UNKNOWN live. Fixed by making run+mark-done+cleanup ONE command that `setsid` (or its fallback)
+    covers in full."""
+
+    def setUp(self):
+        self.tid = probegate.GatePlan(workspace="").transport_id  # a fresh, real 24-hex token
+        self.spool = f"/tmp/.cria-gate-{self.tid}.spool"
+        self.done = self.spool + ".done"
+        self.cmd_file = f"/tmp/.cria-gate-{self.tid}-cmd.sh"
+
+    def tearDown(self):
+        for p in (self.spool, self.done, self.cmd_file):
+            try:
+                os.unlink(p)
+            except OSError:
+                pass
+
+    def _killpg_run(self, script: str, timeout: float = 30) -> str:
+        p = subprocess.Popen(["bash", "-c", script], stdout=subprocess.PIPE,
+                             stderr=subprocess.STDOUT, start_new_session=True, text=True)
+        out, _ = p.communicate(timeout=timeout)
+        try:
+            os.killpg(p.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        return out
+
+    def test_before_the_fix_killpg_right_after_launch_loses_the_done_marker(self):
+        """Fails-before: with the PRE-repair guard, killing the launcher's own process group the
+        instant it returns (simulating the harness reaping the exec call) leaves the probe's real
+        output in the spool but NO `.done` marker, ever — the exact regression reproduced live."""
+        script = _launch_script(
+            self.spool, self.cmd_file, ["sleep 2", "echo PROBEDONE"],
+            _pre_fix_launch_guard(f'"{self.spool}"', f'"{self.cmd_file}"', ["sleep 2", "echo PROBEDONE"]),
+            self.tid, wait_s=0.3)
+        self._killpg_run(script)
+        time.sleep(3.0)      # long enough for the (killed-group-orphaned or not) probe to finish
+        self.assertFalse(os.path.exists(self.done),
+                         "pre-fix: the .done marker must be lost when the wrapper subshell is killed")
+
+    def test_after_the_fix_killpg_right_after_launch_still_reaches_done(self):
+        """Passes-after: same kill, same timing, the CURRENT `_gate_launch_guard` — run, mark done,
+        and clean up the cmd file are now ONE command `setsid` covers end to end, so the marker and
+        the cleanup both survive the group kill."""
+        guard = probegate._gate_launch_guard(f'"{self.spool}"', f'"{self.cmd_file}"',
+                                             ["sleep 2", "echo PROBEDONE"])
+        script = _launch_script(self.spool, self.cmd_file, ["sleep 2", "echo PROBEDONE"], guard,
+                                self.tid, wait_s=0.3)
+        self._killpg_run(script)
+        deadline = time.monotonic() + 8.0
+        while not os.path.exists(self.done) and time.monotonic() < deadline:
+            time.sleep(0.2)
+        self.assertTrue(os.path.exists(self.done),
+                        "the .done marker must survive the launcher's process group being killed")
+        self.assertIn("PROBEDONE", open(self.spool).read())
+        # The cmd file cleans itself up (its own `os.unlink`, inside the same detached command).
+        deadline = time.monotonic() + 3.0
+        while os.path.exists(self.cmd_file) and time.monotonic() < deadline:
+            time.sleep(0.2)
+        self.assertFalse(os.path.exists(self.cmd_file), "the cmd file must clean itself up too")
+
+    def test_pty_mode_variant(self):
+        """The same survival property when the launcher is attached to a PTY that is closed the
+        instant the foreground read returns — another shape the harness's own exec plumbing can
+        take (reviewer's `sim.py` `pty` mode)."""
+        import pty
+        guard = probegate._gate_launch_guard(f'"{self.spool}"', f'"{self.cmd_file}"',
+                                             ["sleep 2", "echo PROBEDONE"])
+        script = _launch_script(self.spool, self.cmd_file, ["sleep 2", "echo PROBEDONE"], guard,
+                                self.tid, wait_s=0.3)
+        try:
+            pid, fd = pty.fork()
+        except OSError:
+            self.skipTest("pty allocation unavailable in this environment")
+        if pid == 0:
+            os.execvp("bash", ["bash", "-c", script])
+            os._exit(127)
+        try:
+            out = b""
+            while True:
+                try:
+                    chunk = os.read(fd, 4096)
+                except OSError:
+                    break
+                if not chunk:
+                    break
+                out += chunk
+            os.waitpid(pid, 0)
+        finally:
+            os.close(fd)
+        deadline = time.monotonic() + 8.0
+        while not os.path.exists(self.done) and time.monotonic() < deadline:
+            time.sleep(0.2)
+        self.assertTrue(os.path.exists(self.done),
+                        f"the .done marker must survive PTY teardown; launcher said: {out!r}")
+
+
+class SpoolPermissionsTests(unittest.TestCase):
+    """The spool is a DETERMINISTIC name now (C28), not `mktemp`'s own owner-only-by-default file —
+    `umask 077` in the launch leg restores that same owner-only guarantee for both the spool (the
+    coder's own check output) and the cmd file (the composed probe commands)."""
+
+    def test_the_launch_leg_sets_a_restrictive_umask(self):
+        with tempfile.TemporaryDirectory() as ws:
+            plan = probegate.plan_gate(ws)
+        self.assertIn("umask 077", plan.script)
+
+    def test_a_real_launch_creates_owner_only_files(self):
+        """Stat the files WHILE the probe is still running (a slow probe, a short poll wait),
+        before the final-page read can race in and unlink them."""
+        tid = probegate.GatePlan(workspace="").transport_id
+        spool, cmd_file = f"/tmp/.cria-gate-{tid}.spool", f"/tmp/.cria-gate-{tid}-cmd.sh"
+        self.addCleanup(lambda: [os.path.exists(p) and os.unlink(p)
+                                 for p in (spool, cmd_file, spool + ".done")])
+        guard = probegate._gate_launch_guard(f'"{spool}"', f'"{cmd_file}"', ["sleep 2", "echo ok"])
+        script = _launch_script(spool, cmd_file, ["sleep 2", "echo ok"], guard, tid, wait_s=0.3)
+        subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=30)
+        self.assertTrue(os.path.exists(spool), "the spool must exist while the probe is still running")
+        self.assertEqual(os.stat(spool).st_mode & 0o777, 0o600,
+                         "the spool must be owner-only, like mktemp's own default")
+        self.assertTrue(os.path.exists(cmd_file), "the cmd file must also still exist mid-flight")
+        self.assertEqual(os.stat(cmd_file).st_mode & 0o777, 0o600,
+                         "the cmd file must be owner-only too")
 
 
 if __name__ == "__main__":
