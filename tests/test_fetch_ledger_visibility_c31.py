@@ -281,5 +281,118 @@ class SetVisibleDoesNotWipeItselfTests(unittest.TestCase):
         self.assertIn(url, webfetch.visible_urls(current))
 
 
+class NoSpecHereCarriesNoHiddenLocationClaimTests(unittest.TestCase):
+    """Second-round review of Candidate C31 (repro `c31elide.py`): `fetched_facts_sections.no_spec_here`
+    -- used instead of `no_structure` when some OTHER fetch this session yielded routes -- carries its
+    OWN location claim baked into the LABEL ("its body is in the transcript above"), independent of the
+    `body_inline`/`body_absent`/`body_at` clause `_format_fetches` appends after it. Once `body_absent`
+    existed, a not-visible page under this label could render BOTH claims in the same sentence:
+    "...its body is in the transcript above...) Its body is NOT in this conversation..." -- and the
+    FROZEN `location=False` copy still carried the label's claim, since `location` only ever gated the
+    appended clause, never the label text. 799 coder prompts carry `no_spec_here`, 200/200 in Handles
+    C27.
+
+    The fix: `visibility_labels["no_spec_here_no_location"]` (new file, no existing prompt touched)
+    replaces the label whenever visibility was actually checked (``visible is not None``) or the render
+    is frozen (``location=False``); ``visible=None`` keeps the untouched legacy wording."""
+
+    A = "https://api.example.com/openapi.json"   # yields routes -- makes `any_routes` True
+    B = "https://docs.rs/toml/latest/toml/"       # no structure -- the entry under test
+
+    def setUp(self):
+        webfetch._DOC_CACHE.clear()
+        webfetch._FETCH_SEEN.clear()
+        self.addCleanup(webfetch._DOC_CACHE.clear)
+        self.addCleanup(webfetch._FETCH_SEEN.clear)
+        webfetch._DOC_CACHE[self.B] = (200, "text/html", "toml docs body", None, False)
+
+    def _latest(self):
+        res_a = ("HTTP 200 \u00b7 " + self.A + "\nContent-Type: application/json\n"
+                 "[API endpoints (2): GET /handles/{handle}, GET /holders/{address}]\nbody")
+        res_b = "HTTP 200 \u00b7 " + self.B + "\nContent-Type: text/html\ntoml docs body"
+        msgs = [{"role": "tool", "content": res_a}, {"role": "tool", "content": res_b}]
+        return loop._extract_fetches(msgs)
+
+    def test_fails_before_not_visible_would_self_contradict(self):
+        """Direct proof of the reported fault: rendering the OLD label text alongside the new
+        `body_absent` clause produces the self-contradictory pair the reviewer found. This asserts
+        against the raw labels rather than the fixed call path, so it stays red regardless of which
+        branch `_format_fetches` currently takes."""
+        old_label = prompts.load_map("fetched_facts_sections")["no_spec_here"]
+        absent_clause = prompts.load_map("fetch_body_visibility")["body_absent"]
+        combined = old_label + absent_clause
+        self.assertIn("in the transcript above", combined)
+        self.assertIn("NOT in this conversation", combined)   # both claims, same sentence
+
+    def test_a_not_visible_page_gets_no_transcript_claim_and_exactly_one_absent_sentence(self):
+        latest = self._latest()
+        out = loop._format_fetches(latest, visible=set())
+        b_line = next(ln for ln in out.splitlines() if self.B in ln)
+        self.assertNotIn("in the transcript above", b_line)
+        self.assertEqual(b_line.count("NOT in this conversation"), 1)
+        self.assertNotIn("in this conversation above", b_line)
+
+    def test_a_visible_page_gets_exactly_one_inline_location_sentence(self):
+        latest = self._latest()
+        out = loop._format_fetches(latest, visible={self.B})
+        b_line = next(ln for ln in out.splitlines() if self.B in ln)
+        self.assertNotIn("in the transcript above", b_line)
+        self.assertEqual(b_line.count("in this conversation above"), 1)
+        self.assertNotIn("NOT in this conversation", b_line)
+
+    def test_legacy_visible_none_keeps_the_old_wording_verbatim(self):
+        latest = self._latest()
+        out = loop._format_fetches(latest)   # visible=None, location=True: untouched legacy caller
+        b_line = next(ln for ln in out.splitlines() if self.B in ln)
+        self.assertIn("in the transcript above", b_line)
+
+    def test_the_frozen_copy_carries_no_location_phrase_under_either_label(self):
+        latest = self._latest()
+        # any_routes True path (no_spec_here would fire)
+        out = loop._format_fetches(latest, location=False)
+        b_line = next(ln for ln in out.splitlines() if self.B in ln)
+        self.assertNotIn("in the transcript above", b_line)
+        self.assertNotIn("in this conversation above", b_line)
+        self.assertNotIn("NOT in this conversation", b_line)
+        # any_routes False path (no_structure) -- unaffected, but confirm it stays location-free too.
+        only_b = loop._format_fetches({self.B: latest[self.B]}, location=False)
+        line2 = next(ln for ln in only_b.splitlines() if self.B in ln)
+        self.assertNotIn("in the transcript above", line2)
+        self.assertNotIn("in this conversation above", line2)
+        self.assertNotIn("NOT in this conversation", line2)
+
+    def test_end_to_end_no_refetch_then_refetch_never_contradicts(self):
+        """The reviewer's exact repro shape: a compaction-frozen copy of both A and B, then two later
+        turns -- one where B was never re-fetched, one where it was -- each checked for a SINGLE,
+        non-contradictory location claim for B across the whole outbound body."""
+        pre = self._latest()
+        sid = "c31-elide-e2e"
+        sess = SimpleNamespace(fetched_pages=pre, web_session=sid, workspace_root="")
+        frozen = loop._fetch_ground_truth(
+            [{"role": "tool", "content": "HTTP 200 \u00b7 " + self.A +
+              "\n[API endpoints (2): GET /handles/{handle}, GET /holders/{address}]"},
+             {"role": "tool", "content": "HTTP 200 \u00b7 " + self.B + "\ntoml docs body"}],
+            location=False)
+        self.assertNotIn("in the transcript above", frozen)
+        for vis in (set(), {self.B}):
+            webfetch.set_visible(sid, [(self.B, "", "", False)] if vis else [], [])
+            msgs = [{"role": "system", "content": "sys"},
+                    {"role": "user", "content": "\u27e6ctx:continuation\u27e7 s\n\n" + frozen}]
+            anchor = loop._fetched_facts_anchor(sess, msgs)
+            out = loop._elide_ledger_copies(loop._insert_after_system(msgs, anchor), sess, None)
+            claims = []
+            for m in out:
+                c = m.get("content") or ""
+                for ln in c.splitlines():
+                    if self.B in ln and ("conversation" in ln or "transcript" in ln):
+                        if "in this conversation above" in ln:
+                            claims.append("inline")
+                        if "NOT in this conversation" in ln:
+                            claims.append("absent")
+                        if "in the transcript above" in ln:
+                            claims.append("transcript")
+            self.assertEqual(len(set(claims)), 1, "contradictory claims for B: " + repr(claims))
+
+
 if __name__ == "__main__":
     unittest.main()

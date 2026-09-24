@@ -8018,7 +8018,20 @@ def _format_fetches(latest: dict, header: str = "PAGES YOU HAVE ALREADY FETCHED"
         if (_fetch_succeeded(status) and not routes and not shapes.strip() and not catalog.strip()
                 and webfetch.cached_structure(url) is False):
             any_routes = any(_fetch_facts(e)[1] for e in latest.values())
-            line += labels["no_spec_here" if any_routes else "no_structure"]
+            if any_routes:
+                # `no_spec_here` carries ITS OWN location claim ("its body is in the transcript
+                # above") baked into the label, separate from the body_inline/body_absent/body_at
+                # clause appended below. Left alone, a not-visible page could carry that claim AND
+                # "Its body is NOT in this conversation" in the same sentence — self-contradictory
+                # (re-review of Candidate C31, repro c31elide.py: 799 coder prompts, 200/200 in
+                # Handles C27). Whenever visibility was actually checked, or this render is about to
+                # be FROZEN (`location=False`), use the location-free variant so the location clause
+                # — or its deliberate absence — is the ONE place this entry says where the body is.
+                # `visible is None` (a caller that never checked) keeps the legacy wording verbatim.
+                line += (visibility_labels["no_spec_here_no_location"]
+                        if (visible is not None or not location) else labels["no_spec_here"])
+            else:
+                line += labels["no_structure"]
             # …AND SAY WHERE THE CONTENT ACTUALLY IS. The sentence above used to end "whatever it
             # returned is in the transcript", which is false for exactly the pages that most need
             # reading: an oversized doc is SPILLED to a file and the read of that file is then

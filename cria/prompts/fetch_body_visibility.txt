@@ -28,3 +28,20 @@ body_absent =  Its body is NOT in this conversation — fetching that URL again 
 # this note — but a reader skimming the whole block could still read it as covering every entry
 # above it. This one clarifying sentence scopes it without touching the existing file's wording.
 anchor_tail_absent_scope =  "code against THOSE" above means the entries that list endpoints or response fields; an entry whose body is marked not-in-this-conversation has none of those here — read it again rather than guessing what it said.
+# `fetched_facts_sections.no_spec_here` (used instead of `no_structure` when some OTHER fetch this
+# session yielded routes) carries its OWN location claim baked into the label itself — "its body is
+# in the transcript above" — independent of the `body_inline`/`body_absent`/`body_at` clause appended
+# after it. Re-review of Candidate C31 (repro c31elide.py) found two faults from that second, hidden
+# claim: (1) once `body_absent` existed, a not-visible page could render BOTH "its body is in the
+# transcript above" (from the label) AND "Its body is NOT in this conversation" (from body_absent) —
+# self-contradictory in the SAME sentence, on the same entry, for the same URL — 799 coder prompts
+# carry `no_spec_here`, 200 of 200 in the Handles C27 cell; (2) the frozen `location=False` copy
+# (server._harden_compaction_reply) still asserted this location claim, because it lives in the
+# LABEL rather than the location clause `location=False` suppresses.
+#
+# This variant says the identical narrow fact with the location half removed, so ONE clause — the
+# `body_inline`/`body_absent`/`body_at` appended after it, or nothing at all under `location=False` —
+# is ever the source of a location claim about this entry. Used whenever visibility was actually
+# checked (`visible is not None`) or the render is frozen (`location=False`); `visible=None` keeps
+# the legacy `fetched_facts_sections.no_spec_here` wording unchanged.
+no_spec_here_no_location =  (this page answered with content rather than an endpoint definition; the endpoint list below came from a different source)
