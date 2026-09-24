@@ -114,13 +114,49 @@ class AdmissionGiveUpTests(unittest.TestCase):
         self.assertEqual([k for k, _ in rlog.events].count("plan.rejected_exhausted"), ADMISSION_EXHAUSTION_GIVEUP)
         self.assertNotIn("plan.retriable", rlog.kinds())  # a give-up, not a transport retry
 
-        # Negatively cached: a second call for the SAME task costs no further reasoner calls.
+        # #23: the give-up is CALL-scoped, not a process-wide poison cache — it never wrote
+        # self._plans (that would leak this session's give-up onto every other session with the same
+        # task text). A second call for the same task on the SAME Planner instance re-investigates and
+        # bounded-gives-up again on its own; it is not silently starved.
+        self.assertEqual(planner._plans, {})
+        self.assertEqual(planner._admission_exhaustions, {})   # no session_key given \u2014 nothing persisted
         calls_before = provider.calls
         rlog2 = _Rlog()
         plan2 = planner.plan_for([{"role": "user", "content": _CART_TASK}], rlog2)
         self.assertIsNone(plan2)
-        self.assertEqual(provider.calls, calls_before)
-        self.assertEqual(rlog2.events, [])
+        self.assertGreater(provider.calls, calls_before)          # it looked again \u2014 not starved
+        self.assertIn("plan.admission_given_up", rlog2.kinds())   # and bounded again on its own
+
+    def test_a_later_session_with_the_same_task_text_is_never_silenced_by_an_earlier_giveup(self):
+        """#23, the blocking finding: two DIFFERENT sessions sharing task text must not share fate.
+        Session A's give-up must not cost session B's admitting reasoner a single call \u2014 reviewer
+        reproduced the opposite (session B got ``plan_for -> None`` with 0 reasoner calls, no event) on
+        the committed C30, because the give-up poisoned ``self._plans`` keyed on task text alone."""
+        planner = Planner(_P18HostLoopProvider(), role=_role(), search_key="", max_gather_rounds=1,
+                          clock=lambda: _FIXED)
+        rlog_a = _Rlog()
+        self.assertIsNone(planner.plan_for([{"role": "user", "content": _CART_TASK}], rlog_a))
+        self.assertIn("plan.admission_given_up", rlog_a.kinds())
+
+        # Session B: same task text, a DIFFERENT (admitting) provider swapped onto the SAME shared
+        # Planner \u2014 the real deployment shape (server.py ~701: one Planner for the whole process).
+        admitting = _ScriptedProvider([
+            _tool_resp("exec_command", {"cmd": "echo looked"}),
+            _tool_resp("submit_plan", {"steps": [
+                "Add the promo discount rule to discounts.json",
+                "Update the module requirement in go.mod",
+            ]}),
+            _content_resp("NONE"),                     # host judge: nothing needs reading this time
+            _content_resp('{"missing": []}'),           # coverage judge
+            _content_resp("NONE"),                       # noise judge
+        ])
+        planner._provider = admitting
+        rlog_b = _Rlog()
+        plan_b = planner.plan_for([{"role": "user", "content": _CART_TASK}], rlog_b)
+
+        self.assertIsNotNone(plan_b, rlog_b.events)      # NOT silenced by session A's give-up
+        self.assertGreater(admitting.calls, 0)           # the reasoner was actually asked
+        self.assertIn("plan.submitted", rlog_b.kinds())
 
     def test_p18_shaped_exhaustion_falls_to_the_synthetic_guarded_drive(self):
         """Loop-level: once the admission guard gives up, the session must start the existing
@@ -230,8 +266,11 @@ class AdmissionGiveUpTests(unittest.TestCase):
     def test_survey_deferral_between_two_exhaustions_does_not_reset_the_count(self):
         """A survey deferral occurring on the FRESH in-request retry (after the first admission
         exhaustion) must not erase that exhaustion's count — the next turn's exhaustion must still
-        reach the bound and give up, not restart at 1."""
+        reach the bound and give up, not restart at 1. This cross-call memory only exists when the
+        caller threads a real ``session_key`` through (#23) — bounded WITHIN that one session, never
+        shared with any other session or keyed on task text alone."""
         planner = Planner(object(), role=_role(), clock=lambda: _FIXED)
+        session = "sid:survey-defer-test"
         effects = iter(["exhaust", "defer", "exhaust"])
 
         def fake_gather(task, cwd, rlog, prior_work="", rewrite_summary="", outcome=None):
@@ -248,18 +287,133 @@ class AdmissionGiveUpTests(unittest.TestCase):
 
         with patch.object(planner, "_gather_and_plan", side_effect=fake_gather):
             rlog1 = _Rlog()
-            self.assertIsNone(planner.plan_for([{"role": "user", "content": "t"}], rlog1))
+            self.assertIsNone(planner.plan_for([{"role": "user", "content": "t"}], rlog1,
+                                               session_key=session))
             self.assertIn("plan.survey_deferred", rlog1.kinds())
             self.assertNotIn("plan.admission_given_up", rlog1.kinds())
-            key = next(iter(planner._admission_exhaustions))
-            self.assertEqual(planner._admission_exhaustions[key], 1)   # the deferral did not reset it
+            admission_key = next(iter(planner._admission_exhaustions))
+            self.assertEqual(admission_key[0], session)                   # #23: keyed by session, never bare task text
+            self.assertEqual(planner._admission_exhaustions[admission_key], 1)  # the deferral did not reset it
 
             rlog2 = _Rlog()
-            self.assertIsNone(planner.plan_for([{"role": "user", "content": "t"}], rlog2))
+            self.assertIsNone(planner.plan_for([{"role": "user", "content": "t"}], rlog2,
+                                               session_key=session))
             given_up = [kw for k, kw in rlog2.events if k == "plan.admission_given_up"]
             self.assertEqual(len(given_up), 1)
             self.assertEqual(given_up[0]["count"], ADMISSION_EXHAUSTION_GIVEUP)
             self.assertFalse(planner._retriable_failure)
+            self.assertEqual(planner._admission_exhaustions, {})            # cleared on give-up, not left dangling
+
+
+_SHELL = {"type": "function", "function": {"name": "shell", "parameters": {
+    "type": "object", "properties": {"command": {"type": "array"}}}}}
+
+
+def _toolcall_completion():
+    return json.dumps({"choices": [{"message": {"role": "assistant", "content": None, "tool_calls": [
+        {"id": "c1", "type": "function", "function": {"name": "shell", "arguments": "{}"}}]}}]}).encode()
+
+
+class LoopSurveyDeferralGiveUpTests(unittest.TestCase):
+    """Supervisor follow-up (#23): P18's real capture logged 325 ``plan.survey_deferred`` events. If
+    the ``Planner``'s admission-exhaustion counter is not threaded through ``Loop`` by SESSION, a
+    deferral landing between the first exhaustion and its in-request fresh retry (or on the next
+    turn) resets the call-local count to 0 every time \u2014 the session can then re-plan forever with
+    no coder, exactly the original P18 failure. ``Loop._plan_for`` now threads its real
+    ``session_key`` into ``Planner.plan_for``, so the count persists across turns of ONE session."""
+
+    def _loop_and_planner(self):
+        planner = Planner(object(), role=_role(), clock=lambda: _FIXED)
+        return Loop(LoopContext(planner=planner, coder_chat=lambda body, _rlog: _toolcall_completion(),
+                                reasoner_chat=lambda *_: b"", runs_dir="")), planner
+
+    def _body(self):
+        return {"messages": [{"role": "user", "content": _CART_TASK}], "tools": [_SHELL]}
+
+    def _classification(self):
+        return type("Task", (), {"engagement": "task", "task_type": "coding", "cached": False})()
+
+    def test_p18_every_turn_defers_after_at_most_one_exhaustion_still_gives_up_bounded(self):
+        """P18 shape: every gather ends in a survey deferral after at most one admission exhaustion
+        (alternating exhaust/defer, exactly what 325 real ``plan.survey_deferred`` events looked
+        like). The session must still reach the bound and start the synthetic guarded drive within a
+        FEW turns \u2014 not loop forever."""
+        loop, planner = self._loop_and_planner()
+        calls = {"n": 0}
+
+        def fake_gather(task, cwd, rlog, prior_work="", rewrite_summary="", outcome=None):
+            calls["n"] += 1
+            if calls["n"] % 2 == 1:            # every gather's FIRST attempt: admission-exhausts
+                planner._retriable_failure = True
+                planner._admission_exhausted_check = "host"
+                rlog.emit("plan.rejected_exhausted", level="warn", check="host")
+                return None
+            outcome.survey_pending = True        # the in-request fresh retry: defers instead of resolving
+            return None
+
+        session = "sid:p18-defer-loop"
+        started = False
+        MAX_TURNS = 6                            # bounded generously; the real fix needs far fewer
+        with patch.object(planner, "_gather_and_plan", side_effect=fake_gather):
+            for _ in range(MAX_TURNS):
+                rlog = _Rlog()
+                out = loop.drive(self._body(), session, self._classification(), rlog)
+                self.assertIsNotNone(out)        # never silently dropped to the unguarded proxy
+                starts = [kw for k, kw in rlog.events if k == "loop.start"]
+                if starts:
+                    self.assertTrue(starts[0].get("synthetic"))
+                    self.assertTrue(starts[0].get("planner_fallback"))
+                    self.assertIn("plan.admission_given_up", rlog.kinds())
+                    started = True
+                    break
+        self.assertTrue(started, "never started the synthetic guarded drive within the turn bound")
+        # The give-up cleared its own session-scoped counter \u2014 nothing left dangling.
+        self.assertEqual(planner._admission_exhaustions, {})
+
+    def test_a_second_session_with_the_same_task_text_is_unaffected_by_the_first(self):
+        """#23: session A grinds through the P18 defer/exhaust shape to its give-up; a SECOND,
+        unrelated session sharing the exact same task text must plan normally on its very first
+        turn, unaffected by session A's exhaustion count or give-up."""
+        loop, planner = self._loop_and_planner()
+        calls = {"n": 0}
+
+        def fake_gather(task, cwd, rlog, prior_work="", rewrite_summary="", outcome=None):
+            calls["n"] += 1
+            if calls["n"] % 2 == 1:
+                planner._retriable_failure = True
+                planner._admission_exhausted_check = "host"
+                rlog.emit("plan.rejected_exhausted", level="warn", check="host")
+                return None
+            outcome.survey_pending = True
+            return None
+
+        session_a = "sid:p18-defer-session-a"
+        with patch.object(planner, "_gather_and_plan", side_effect=fake_gather):
+            for _ in range(6):
+                rlog = _Rlog()
+                out = loop.drive(self._body(), session_a, self._classification(), rlog)
+                if any(k == "loop.start" for k, _ in rlog.events):
+                    break
+        self.assertTrue(any(k == "plan.admission_given_up" for k, _ in rlog.events))
+
+        # Session B: the SAME shared Planner, the SAME task text, a session that plans cleanly.
+        def admitting_gather(task, cwd, rlog, prior_work="", rewrite_summary="", outcome=None):
+            rlog.emit("plan.submitted", steps=2)
+            return ["Add the promo discount rule to discounts.json",
+                    "Update the module requirement in go.mod"]
+
+        session_b = "sid:p18-defer-session-b"
+        with patch.object(planner, "_gather_and_plan", side_effect=admitting_gather):
+            rlog_b = _Rlog()
+            out_b = loop.drive(self._body(), session_b, self._classification(), rlog_b)
+
+        self.assertIsNotNone(out_b)
+        self.assertIn("plan.submitted", rlog_b.kinds())
+        self.assertNotIn("plan.admission_given_up", rlog_b.kinds())   # never inherited session A's fate
+        starts_b = [kw for k, kw in rlog_b.events if k == "loop.start"]
+        self.assertEqual(len(starts_b), 1)
+        self.assertFalse(starts_b[0].get("synthetic", False))          # a REAL multi-item plan, not the fallback
+        self.assertTrue(loop.has_session(session_b))
 
 
 if __name__ == "__main__":

@@ -779,6 +779,12 @@ class Planner:
         # session. Plannable results are deliberately NOT cached — each session re-plans fresh, so a
         # re-run (e.g. after deleting the files) does the work rather than reusing a prior plan (a
         # cached MUTABLE Plan previously leaked all-`done` state across sessions → immediate exit).
+        #
+        # #23 NOTE (reviewer follow-up, not fixed in this unit): this dict is keyed on task TEXT alone,
+        # with no session in the key, on the ONE Planner the whole server shares — so an unparseable
+        # verdict for one session's task also silences the reasoner for any LATER session whose task
+        # happens to hash the same, exactly the cross-session leak C30's admission give-up was found to
+        # have (below) and was fixed for. Scoping this one is out of scope here.
         self._plans: dict[str, None] = {}
         self._retriable_failure = False  # set when a plan failure is a gather overrun, not unplannable
         # C30: an exhausted ADMISSION guard (url/host/coverage/test-execution rejected_exhausted, or
@@ -786,14 +792,19 @@ class Planner:
         # or a survey deferral — both of which stay `_retriable_failure` with this left None. Set to the
         # guard's check name only inside _gather_and_plan's admission branches.
         self._admission_exhausted_check: str | None = None
-        # Per-task-key exhaustion count, PERSISTED across requests (unlike _retriable_failure, which is
-        # reset every plan_for call) so repeated exhaustions across turns of the same session still
-        # count toward ADMISSION_EXHAUSTION_GIVEUP. Cleared when that key finally submits a plan.
-        self._admission_exhaustions: dict[str, int] = {}
+        # #23 fix: keyed by (session_key, task_key), NEVER task_key alone — the give-up itself never
+        # writes the process-wide `_plans` cache above (see plan_for), so this dict exists ONLY to let a
+        # survey deferral occurring BETWEEN two admission exhaustions of the SAME session still count
+        # toward ADMISSION_EXHAUSTION_GIVEUP across that gap. When the caller passes no session_key (the
+        # `plan_for` default, and every call site today), nothing is written here at all — the give-up
+        # is decided call-locally instead, so an unscoped caller can never leak one session's exhaustion
+        # count onto another's. See plan_for's ``admission_key``.
+        self._admission_exhaustions: dict[tuple[str, str], int] = {}
         self._lock = threading.Lock()
 
     def plan_for(self, messages: list[dict], rlog, prior_work: str = "",
-                 rewrite_summary: str = "", outcome: PlanOutcome | None = None) -> Plan | None:
+                 rewrite_summary: str = "", outcome: PlanOutcome | None = None,
+                 session_key: str = "") -> Plan | None:
         """Return the drafted plan for this task, drafting it the first time and
         returning the cached one thereafter. ``None`` if there's no task text or the
         reasoner produced no usable plan.
@@ -806,7 +817,13 @@ class Planner:
         the thread) frames a post-compaction CONTINUATION: plan only the remaining work, treating the
         summary as record-of-done + current intent — never as a fresh task to plan verbatim (planning
         the summary text produced placeholder plans). Mutually exclusive with ``prior_work`` on
-        purpose: stacking two summaries drowned the planner."""
+        purpose: stacking two summaries drowned the planner.
+
+        ``session_key`` (#23) is OPTIONAL, used only to scope the admission-exhaustion counter to
+        this session (see ``admission_key`` below) when a caller has one to pass — the loop's own
+        session identifier, never a task hash. Its absence never widens any cache: the admission
+        give-up never touches ``self._plans``, and with no session_key the exhaustion count is
+        decided call-locally and never written to ``self._admission_exhaustions`` at all."""
         outcome = outcome or PlanOutcome()
         outcome.survey_pending = False
         task = latest_user_text(messages)
@@ -816,6 +833,11 @@ class Planner:
         # rewrite/continuation frames for the same text (and vice versa) — the frames produce
         # different seeds, so one frame's unparseable result says nothing about another's.
         key = _task_key(task) + ("|rw" if rewrite_summary else "|cont" if prior_work else "")
+        # #23: the admission-exhaustion counter is keyed by (session_key, key) — NEVER key alone — so
+        # it can never associate one session's count with another. When no session_key is given,
+        # admission_key is None and the counter is decided purely from this call's local state (see
+        # below); nothing is ever written to self._admission_exhaustions for an unscoped caller.
+        admission_key = (session_key, key) if session_key else None
         with self._lock:
             if key in self._plans:  # negatively cached (unplannable) — don't re-call the reasoner every turn
                 return None
@@ -846,27 +868,45 @@ class Planner:
         # Transport/model errors (`_reason` returned None) and a survey deferral leave
         # `_admission_exhausted_check` unset and fall straight to the existing retriable/survey handling
         # below, unchanged and uncounted.
+        #
+        # #23 fix: the bound is normally reached WITHIN this one call (the immediate fresh retry below
+        # is the second gather), so the common case needs no cross-call memory at all — `count` starts
+        # at 0 fresh every call. `self._admission_exhaustions` is consulted only when the caller passed
+        # a `session_key`, and ONLY under that session's own key, so a give-up can never leak onto a
+        # different session (reviewer-reproduced leak: session A's give-up silenced session B's
+        # admitting reasoner because both hashed the same task text into one process-wide key).
         if not steps and self._retriable_failure and self._admission_exhausted_check is not None \
                 and not outcome.survey_pending:
             check = self._admission_exhausted_check
-            with self._lock:
-                count = self._admission_exhaustions.get(key, 0) + 1
-                self._admission_exhaustions[key] = count
+            if admission_key is not None:
+                with self._lock:
+                    count = self._admission_exhaustions.get(admission_key, 0) + 1
+                    self._admission_exhaustions[admission_key] = count
+            else:
+                count = 1
             if count < ADMISSION_EXHAUSTION_GIVEUP:
                 rlog.emit("plan.admission_retry", check=check, count=count, level="info")
                 steps = attempt_gather()
                 if not steps and self._retriable_failure and self._admission_exhausted_check is not None:
                     check = self._admission_exhausted_check
-                    with self._lock:
-                        count = self._admission_exhaustions.get(key, 0) + 1
-                        self._admission_exhaustions[key] = count
+                    if admission_key is not None:
+                        with self._lock:
+                            count = self._admission_exhaustions.get(admission_key, 0) + 1
+                            self._admission_exhaustions[admission_key] = count
+                    else:
+                        count += 1
             if not steps and count >= ADMISSION_EXHAUSTION_GIVEUP:
-                # Bound reached: stop re-gathering for this task key and negatively cache it so the
-                # caller's existing fallback (the synthetic single-item guarded drive, same mechanism
-                # an unparseable plan already falls to) runs the raw task instead of nothing.
+                # Bound reached: give up NON-retriably for THIS call only. Deliberately does NOT write
+                # self._plans[key] (the process-wide, session-less negative cache above) — poisoning
+                # that would silence the reasoner for every FUTURE session whose task hashes the same,
+                # which is exactly the #23 leak. Loop's existing synthetic single-item guarded drive
+                # fires on a non-retriable None regardless; a stable (sid:) session persists that
+                # drive and never re-enters plan_for, and an unstable one just re-attempts (and may
+                # give up again) next turn — bounded the same way, never wrong for someone else.
                 rlog.emit("plan.admission_given_up", check=check, count=count, level="warn")
-                with self._lock:
-                    self._plans[key] = None
+                if admission_key is not None:
+                    with self._lock:
+                        self._admission_exhaustions.pop(admission_key, None)
                 self._retriable_failure = False
                 self._admission_exhausted_check = None
                 return None
@@ -891,8 +931,9 @@ class Planner:
         # A plan was submitted for this key — the admission-exhaustion count is per-attempt-at-this-key
         # history, not a permanent scar; a task that eventually plans should not carry a stale count
         # into some later re-derivation of the same key.
-        with self._lock:
-            self._admission_exhaustions.pop(key, None)
+        if admission_key is not None:
+            with self._lock:
+                self._admission_exhaustions.pop(admission_key, None)
         # A FRESH plan, drafted anew each session — the plannable result is NEVER cached. Re-running
         # a task (a new session, e.g. after deleting the files) re-investigates and re-plans, so it
         # actually does the work instead of reusing a prior run's plan. Within ONE session the loop's

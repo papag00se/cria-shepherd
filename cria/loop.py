@@ -2640,16 +2640,18 @@ class Loop:
         reaches the loop's structural rewrite detection instead of being proxied blind."""
         return self._store.knows(key)
 
-    def _plan_for(self, messages: list[dict], rlog, **frame) -> tuple[Plan | None, planner.PlanOutcome]:
+    def _plan_for(self, messages: list[dict], rlog, session_key: str = "", **frame) -> tuple[Plan | None, planner.PlanOutcome]:
         """Plan with outcome owned by this drive, not the shared Planner instance.
 
         Test and third-party planner doubles retain the old two-argument contract; only cria's
-        Planner knows the optional outcome carrier.
+        Planner knows the optional outcome carrier and the session key (#23: the shared Planner's
+        admission-exhaustion counter must be scoped to THIS session, or an unrelated session whose
+        task text happens to hash the same is silenced by a give-up that was never its own — see C30).
         """
         outcome = planner.PlanOutcome()
         source = self._ctx.planner
         if isinstance(source, planner.Planner):
-            return source.plan_for(messages, rlog, outcome=outcome, **frame), outcome
+            return source.plan_for(messages, rlog, outcome=outcome, session_key=session_key, **frame), outcome
         return source.plan_for(messages, rlog, **frame), outcome
 
     def _defer_planner_survey(self, outcome: planner.PlanOutcome, messages: list[dict],
@@ -2797,7 +2799,8 @@ class Loop:
                     # over as "the summary" would ask the planner to re-plan the whole job from
                     # scratch, which is the one thing a continuation exists to avoid.
                     summary_text = _rewrite_summary_text(messages, root_text)
-                    plan, outcome = self._plan_for(messages, rlog, rewrite_summary=summary_text)
+                    plan, outcome = self._plan_for(messages, rlog, rewrite_summary=summary_text,
+                                                    session_key=session_key)
                     if plan is None:
                         deferred = self._defer_planner_survey(outcome, messages, body, session_key, rlog)
                         if deferred is not None:
@@ -2830,7 +2833,8 @@ class Loop:
                     # A follow-up on a FINISHED session starts from the completion-compaction of the
                     # prior plan (see loop.done), so the planner isn't blind to what it already built —
                     # it plans the new ask ON TOP of the done work, not from the latest sentence.
-                    plan, outcome = self._plan_for(messages, rlog, prior_work=briefing)
+                    plan, outcome = self._plan_for(messages, rlog, prior_work=briefing,
+                                                    session_key=session_key)
                     if plan is None:
                         # A planner read whose body is unknown has queued a wsview survey demand.
                         # It cannot receive that answer while this synchronous request is still
