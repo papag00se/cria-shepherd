@@ -10,8 +10,8 @@ rerun** loop until every cell in the latest comparable L5 row is **strictly abov
 result is not sufficient.
 
 **The unit of iteration is the whole row, never a single cell** (see [Row cadence](#row-cadence)):
-run all six cells at one HEAD, walk the whole row, land the fixes the row justifies, then run the
-next whole row. Cross-cell evidence from one HEAD is the signal that selects fixes; a single-cell
+run every open cell at one HEAD, walk the whole row, land the fixes the row justifies, then run
+the next row. A cell that closes (>75%) is done and is not run again. Cross-cell evidence from one HEAD is the signal that selects fixes; a single-cell
 run/walk/fix cycle chases per-cell noise and cannot tell a shared cause from a local one.
 
 This is cria's responsibility. A low score is evidence that an assist, the wire path, environment
@@ -155,10 +155,10 @@ NON-NEGOTIABLE. Every iteration is one **row**:
 
 1. **Freeze HEAD.** Land every accepted, reviewed fix, push, restart `cria.service`, confirm
    `/health`. Record the row's short HEAD.
-2. **Run the whole row.** Queue all six L5 cells in one crash-survivable, GPU-serialized queue
-   at that HEAD, note form `BATTERY2 L5 nemotron-elastic <short-HEAD> p<row#>` (the same note
-   for every cell of the row). Closed cells are included: a shared fix can regress them and the
-   row is the regression check. **No `cria.service` restart, model swap, or commit that changes
+2. **Run the whole row.** Queue every open L5 cell (latest comparable result ≤75%) in one
+   crash-survivable, GPU-serialized queue at that HEAD, note form
+   `BATTERY2 L5 nemotron-elastic <short-HEAD> p<row#>` (the same note for every cell of the
+   row). Closed cells (latest comparable result >75%) are done and are **not** rerun. **No `cria.service` restart, model swap, or commit that changes
    live behavior while the row queue is active** — a row with mixed HEADs is evidence only.
    While the row runs, exactly one recurring 10-minute heartbeat covers the queue and reports on
    the currently active cell (fresh `usefulness=<N>%` + material changes, per the rules above);
@@ -227,17 +227,17 @@ new accepted candidate are a convergence failure, not authorization for another 
 
 ### 6. Re-run the whole row and judge it honestly
 
-Re-run the whole row per [Row cadence](#row-cadence): same L5 contract, live model, comparable
-harness/suite isolation, task prompt revision, and final independent usefulness judgment for
-every cell. Do not alter the task contract or score to pass it. A cell that drops to ≤75% in a
-later row is open again; diagnose the regression before claiming progress. If a shared candidate
-regresses the **frozen Bonsai 2 acceptance evidence**, diagnose that too. Provide 10-minute
+Re-run every open cell as one row per [Row cadence](#row-cadence): same L5 contract, live model,
+comparable harness/suite isolation, task prompt revision, and final independent usefulness
+judgment for every cell. Do not alter the task contract or score to pass it. A rerun >75% closes
+that cell; closed cells are not rerun. If a shared candidate regresses the **frozen Bonsai 2
+acceptance evidence**, diagnose that before claiming progress. Provide 10-minute
 reports per rules above (non-negotiable)
 
 ## Definition of done
 
-This goal is complete only when a single comparable row (all six nemotron-elastic L5 cells at one
-HEAD) has a final usefulness judgment **strictly greater than 75%** for every cell, each with preserved workspace/capture
+This goal is complete only when all six nemotron-elastic L5 cells have a latest comparable final
+usefulness judgment **strictly greater than 75%**, each with preserved workspace/capture
 evidence, and all shared changes are committed, pushed, fully tested, live-restarted, and
 documented in the report. The final report lists final score and run id per cell; accepted and
 rejected candidates; capture replay evidence; full-suite result; service health; residual risks;
