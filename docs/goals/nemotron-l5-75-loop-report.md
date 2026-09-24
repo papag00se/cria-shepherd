@@ -193,6 +193,12 @@ Next bounded unit: the latest Cart C13 capture is materialized losslessly at `~/
 - Comparable run `handles-cli-node_nemotron-elastic_codex_pon_1790216479` under note `BATTERY2 L5 nemotron-elastic 3206b06b p13` exited after **52 calls** at **45%**. It produced CLI/Dockerfile/test artifacts but no `npm test` script; terminal heartbeat `a1f25c47` was retired.
 - **No C24 Handles rerun is authorized.** Canonically walk C23 first to classify this stall against the C20–C22 runner-readiness family; if shared, use a different intervention class.
 
+### C23 completion barrier candidate (no rerun)
+
+- Canonical C23 segments 006–007 establish a distinct terminal boundary: `test/lookup.test.js` directly fetches the API, no runner command is composed, and the gate records `test=unknown` / no tests executed, but CALL0043 returns `satisfied:true`. This is not the C20–C22 planner/readiness path; existing runner discovery already disclosed the missing command.
+- The owner-local repair is `loop.judge_satisfaction`: on a positive verdict whose authoritative `ParticipationReport` does not prove test participation, it asks one focused semantic question whether the original task requires executed tests. `REQUIRED` or an unreadable answer holds completion; `NOT_REQUIRED` preserves a non-test task; an actually proven test run takes no new branch. It reads the structured gate event, never task keywords, test paths, source text, runner names, or completion prose.
+- Capture-shaped candidate tests cover C23’s direct-HTTP artifact plus syntax-only/unknown gate, a non-test task with the same event, and a runner tally proving execution. Fails-before: C23 satisfaction accepted and the non-test path never asked the requirement question (2 failed, 1 passed). Passes-after: focused completion/participation cohort `428 passed`; full `python -m pytest` `5012 passed, 5 skipped`. No rerun was launched.
+
 ### C22 Handles terminal rerun — strategy reset
 
 - Comparable run `handles-cli-node_nemotron-elastic_codex_pon_1790213771` under note `BATTERY2 L5 nemotron-elastic 027e9de2 p12` exited after **91 calls** with **0%** usefulness and no workspace changes. Heartbeat `ed79d166` was retired after its terminal packet.

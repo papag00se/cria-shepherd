@@ -1613,6 +1613,31 @@ def _cria_measured_facts(sess) -> str:
     return "\n\n".join(part for part in (offline, observed) if part)
 
 
+def _test_participation_blocks_completion(task: str, report, reasoner_chat, reasoner_role, rlog) -> bool:
+    """Whether a task-required test remains unverified by this gate event.
+
+    The participation report is the sole deterministic authority for what the gate executed.
+    Whether the original task requires a test deliverable is semantic, so ask one focused
+    reasoner question instead of matching task words.  A missing or unreadable answer cannot
+    approve completion; an actually proven test run needs no extra judgment.
+    """
+    if report is None:
+        return False
+    support = report.support("test")
+    if support is participation.Support.PROVEN:
+        return False
+    facts = participation.render_for_judge(report)
+    answer = ask_closed(
+        reasoner_chat, reasoner_role,
+        prompts.render("test_participation_requirement", task=task, participation=facts), rlog,
+        phase="test-participation-requirement", max_tokens=16, retry_off=False).strip().upper()
+    required = answer == "REQUIRED"
+    if rlog is not None:
+        rlog.emit("loop.test_participation_requirement", support=support.value,
+                  required=required if answer else "unknown")
+    return answer != "NOT_REQUIRED"
+
+
 def _confirm_completion(claim: str, reason: str, workspace_root: str, reasoner_chat, reasoner_role,
                         rlog, *, phase: str, cria_facts: str = "") -> Confirmation:
     """The APPROVE-path brake — one narrow, reasoning-off check run ONLY on a done/satisfied verdict:
@@ -2045,6 +2070,9 @@ def judge_satisfaction(task: str, evidence: str, reasoner_chat, reasoner_role, r
         # (catching a placeholder/mocked "solution" — e.g. hardcoding the task's example handles so the
         # unit tests pass while nothing really resolves).
         satisfied = bool(obj.get("satisfied"))
+        if satisfied and _test_participation_blocks_completion(
+                task, getattr(sess, "last_gate_participation", None), reasoner_chat, reasoner_role, rlog):
+            return False, prompts.load("required_test_unverified"), ""
         if satisfied and workspace_root:
             # The approve-path brake (see _confirm_completion): "satisfied" must be consistent with
             # the FRESH on-disk listing and with its own stated reason (m6 ended a run with no README

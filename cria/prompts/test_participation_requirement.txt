@@ -1,0 +1,13 @@
+You are a JUDGE, not the coder. Decide one semantic question from the original task only: does completion require a test deliverable to be executed as part of verifying the requested work? Do not infer a requirement merely because tests would be good practice. Do not choose a runner, command, framework, file, or implementation.
+
+The authoritative completion-gate event did not prove successful test participation. If the task requires executed tests, that missing evidence prevents approval; if it does not, it is irrelevant.
+
+ORIGINAL TASK:
+{{TASK}}
+
+AUTHORITATIVE TEST PARTICIPATION FACTS:
+{{PARTICIPATION}}
+
+Reply with exactly one token:
+- `REQUIRED` when the task requires an executed test deliverable.
+- `NOT_REQUIRED` when it does not.
