@@ -977,27 +977,113 @@ Add tests, including at least one test that makes a real request to api.handle.m
         self.assertIn("tests/lookup.test.js", requests[0])
         self.assertIn('"start": "node lookup.js"', requests[0])
 
-    def test_test_execution_path_requires_plan_level_runner_and_test_target(self):
-        """Quoted test-body commands and scripts for the CLI are not test runners."""
+    def test_exact_test_execution_readiness_verdict_is_authoritative(self):
+        """The focused judge, not plan wording, owns READY versus MISSING."""
         from cria.planner import test_execution_readiness
 
-        ready = lambda _system, _user: "TEST_EXECUTION_PATH_READY"
-        self.assertEqual(test_execution_readiness(ready, "add tests", [
+        steps = [
             "Create test/lookup.test.js that documents running `node test/lookup.test.js`.",
-        ], "{}"), "MISSING")
-        self.assertEqual(test_execution_readiness(ready, "add tests", [
-            "Create test/lookup.test.js.",
-            "Update package.json to add a scripts.test entry that runs node lookup.js before "
-            "test/lookup.test.js.",
-        ], "{}"), "MISSING")
-        self.assertEqual(test_execution_readiness(ready, "add tests", [
-            "Create test/lookup.test.js.",
-            "Update package.json to add a scripts.test entry that runs test/lookup.test.js.",
-        ], "{}"), "READY")
-        self.assertEqual(test_execution_readiness(ready, "add tests", [
-            "Create test/lookup.test.js.",
-            "Run it with node test/lookup.test.js.",
-        ], "{}"), "READY")
+        ]
+        self.assertEqual(test_execution_readiness(
+            lambda _system, _user: "TEST_EXECUTION_PATH_READY", "add tests", steps, "{}"), "READY")
+        self.assertEqual(test_execution_readiness(
+            lambda _system, _user: "MISSING_TEST_EXECUTION_PATH", "add tests", steps, "{}"), "MISSING")
+
+    def test_c22_ready_replay_starts_a_plan_session_and_coder_s1(self):
+        """CALL0039's runner-bearing plan plus CALL0040 READY must reach the coder."""
+        from cria.config import Role
+        from cria.loop import Loop, LoopContext
+
+        task = """Turn the Ada Handle resolver into a command-line tool:
+
+Accept the handle as an argument. Support `--json` and `--help`, and exit non-zero when the handle cannot be resolved. Output the resolved address, the holder's address and the number of handles that holder owns.
+
+Replace the deprecated `request` package with modern Node's built-in `fetch`, and remove `request` from the dependencies. The tool must run with no `node_modules` directory present.
+
+Add tests, including at least one test that makes a real request to `api.handle.me` and verifies the tool end to end. Also, add a Dockerfile so the tool can run without Node installed on the host."""
+        steps = [
+            "1. Edit package.json to remove the 'request' dependency entry.",
+            "2. Rewrite lookup.js to use the built‑in fetch API, parse a handle argument, add '--json' and '--help' flags, exit with non‑zero if the handle cannot be resolved, and output the resolved address, holder address, and the number of handles owned by the holder.",
+            "3. Create tests/lookup.test.js that performs a real GET request to https://api.handle.me/handles/<handle> and asserts the response contains resolved_addresses.ada, the holder's address, and that the count field matches the expected number of handles owned.",
+            "4. Add a 'test' script to package.json that runs 'node ./tests/lookup.test.js'.",
+            "5. Add a Dockerfile that uses node:18-alpine, copies package.json and lookup.js, does not install dependencies, sets ENTRYPOINT ['node','lookup.js'], and respects the same CLI flags.",
+        ]
+        shell = {"type": "function", "function": {"name": "shell", "parameters": {
+            "type": "object", "properties": {"command": {"type": "array"}}}}}
+
+        def survey(root, view, session):
+            raw = subprocess.run(["bash", "-c", wsview.survey_command(session)], cwd=root,
+                                 text=True, capture_output=True, check=True).stdout
+            self.assertTrue(wsview.apply_survey(view, wsview.strip_survey(raw)[1]))
+
+        def planner_for(verdict):
+            responses = [
+                _tool_resp("read_file", {"path": "package.json"}),
+                _tool_resp("submit_plan", {"steps": steps}),
+                _content_resp("NONE"),
+                _content_resp('{"missing": []}'),
+                _content_resp(verdict),
+            ]
+            if verdict == "TEST_EXECUTION_PATH_READY":
+                responses.append(_content_resp("NONE"))
+            else:
+                responses.extend([
+                    _tool_resp("submit_plan", {"steps": steps}),
+                    _content_resp("NONE"),
+                    _content_resp('{"missing": []}'),
+                    _content_resp(verdict),
+                ])
+            return Planner(_ScriptedProvider(responses), role=Role(name="reasoner", backend="local"),
+                           search_key="", max_gather_rounds=1, clock=lambda: _FIXED)
+
+        with tempfile.TemporaryDirectory() as root:
+            pathlib.Path(root, "package.json").write_text(json.dumps({
+                "name": "handle-lookup", "version": "0.1.0", "scripts": {"start": "node lookup.js"},
+                "dependencies": {"request": "^2.88.2"}}), encoding="utf-8")
+            view = wsview.View(root, "c22-ready")
+            survey(root, view, "c22-ready")
+            view.read(pathlib.Path(root, "package.json"))
+            survey(root, view, "c22-ready")
+            body = {"messages": [
+                {"role": "user", "content": f"<environment_context><cwd>{root}</cwd></environment_context>"},
+                {"role": "user", "content": task},
+            ], "tools": [shell]}
+            coder_bodies = []
+
+            def coder(body, _rlog):
+                coder_bodies.append(body)
+                return json.dumps(_tool_resp("shell", {"command": "pwd"})).encode()
+
+            token = wsview.bind(view)
+            try:
+                rlog = _Rlog()
+                loop = Loop(LoopContext(planner=planner_for("TEST_EXECUTION_PATH_READY"),
+                                        coder_chat=coder, reasoner_chat=lambda *_: b"", runs_dir=""))
+                with patch("cria.planner.urlgrounding.ungrounded_urls", return_value=[]):
+                    completion = loop.drive(body, "c22-ready", type("Task", (), {
+                        "engagement": "task", "task_type": "coding", "cached": False})(), rlog)
+                session = loop._store.get("c22-ready")
+                self.assertIsNotNone(session, rlog.events)
+                self.assertEqual(len(session.plan.items), 5)
+                self.assertIn("remove the 'request' dependency", session.plan.items[0].text)
+                self.assertIsNotNone(completion)
+                self.assertEqual(len(coder_bodies), 1)
+                self.assertEqual(rlog.phase, "coder-s1")
+                self.assertIn(session.plan.items[0].text, json.dumps(coder_bodies[0]))
+
+                missing_coder_bodies = []
+                missing_loop = Loop(LoopContext(
+                    planner=planner_for("MISSING_TEST_EXECUTION_PATH"),
+                    coder_chat=lambda body, _rlog: missing_coder_bodies.append(body),
+                    reasoner_chat=lambda *_: b"", runs_dir=""))
+                with patch("cria.planner.urlgrounding.ungrounded_urls", return_value=[]):
+                    missing = missing_loop.drive(body, "c22-missing", type("Task", (), {
+                        "engagement": "task", "task_type": "coding", "cached": False})(), _Rlog())
+            finally:
+                wsview.unbind(token)
+        self.assertIsNone(missing)
+        self.assertFalse(missing_loop.has_session("c22-missing"))
+        self.assertEqual(missing_coder_bodies, [])
 
     def test_c21_spawn_inside_uninvoked_test_cannot_make_ready(self):
         """CALL 0138's READY needs an actual runner after the plan executes."""
@@ -1026,7 +1112,7 @@ Add tests, including at least one test that makes a real request to api.handle.m
                 _tool_resp("read_file", {"path": "package.json"}),
                 _tool_resp("submit_plan", {"steps": c21_steps}),
                 _content_resp('{"missing": []}'),
-                _content_resp("TEST_EXECUTION_PATH_READY"),  # CALL 0138's false positive
+                _content_resp("MISSING_TEST_EXECUTION_PATH"),
                 _tool_resp("submit_plan", {"steps": corrected_steps}),
                 _content_resp('{"missing": []}'),
                 _content_resp("TEST_EXECUTION_PATH_READY"),
