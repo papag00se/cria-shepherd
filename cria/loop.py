@@ -1613,29 +1613,50 @@ def _cria_measured_facts(sess) -> str:
     return "\n\n".join(part for part in (offline, observed) if part)
 
 
-def _test_participation_blocks_completion(task: str, report, reasoner_chat, reasoner_role, rlog) -> bool:
+def _test_participation_blocks_completion(task: str, report, reasoner_chat, reasoner_role, rlog,
+                                          *, workspace_root: str = "") -> bool:
     """Whether a task-required test remains unverified by this gate event.
 
     The participation report is the sole deterministic authority for what the gate executed.
-    Whether the original task requires a test deliverable is semantic, so ask one focused
-    reasoner question instead of matching task words.  A missing or unreadable answer cannot
-    approve completion; an actually proven test run needs no extra judgment.
+    Whether the original task requires a test deliverable, or specifically an end-to-end CLI/tool
+    test, is semantic.  A proven test run only clears the former: for the latter, a focused judge
+    reads the inspected test source and decides whether the executed test reaches the requested
+    executable boundary.  Missing or unreadable judgments cannot approve completion.
     """
     if report is None:
         return False
     support = report.support("test")
-    if support is participation.Support.PROVEN:
-        return False
     facts = participation.render_for_judge(report)
-    answer = ask_closed(
+    if support is not participation.Support.PROVEN:
+        answer = ask_closed(
+            reasoner_chat, reasoner_role,
+            prompts.render("test_participation_requirement", task=task, participation=facts), rlog,
+            phase="test-participation-requirement", max_tokens=16, retry_off=False).strip().upper()
+        required = answer == "REQUIRED"
+        if rlog is not None:
+            rlog.emit("loop.test_participation_requirement", support=support.value,
+                      required=required if answer else "unknown")
+        return answer != "NOT_REQUIRED"
+
+    requirement = ask_closed(
         reasoner_chat, reasoner_role,
-        prompts.render("test_participation_requirement", task=task, participation=facts), rlog,
-        phase="test-participation-requirement", max_tokens=16, retry_off=False).strip().upper()
-    required = answer == "REQUIRED"
+        prompts.render("test_e2e_requirement", task=task), rlog,
+        phase="test-e2e-requirement", max_tokens=16, retry_off=False).strip().upper()
     if rlog is not None:
-        rlog.emit("loop.test_participation_requirement", support=support.value,
-                  required=required if answer else "unknown")
-    return answer != "NOT_REQUIRED"
+        rlog.emit("loop.test_e2e_requirement", required=(requirement == "E2E_REQUIRED")
+                  if requirement else "unknown")
+    if requirement == "NOT_REQUIRED":
+        return False
+    if requirement != "E2E_REQUIRED":
+        return True
+    verdict = _completion_text(_judge_completion(
+        reasoner_chat, reasoner_role, prompts.load("test_e2e_participation"),
+        prompts.render("test_e2e_participation", task=task, participation=facts), rlog,
+        phase="test-e2e-participation", workspace_root=workspace_root, max_tokens=16,
+        force_think_off=True, seed_files=True)).strip().upper()
+    if rlog is not None:
+        rlog.emit("loop.test_e2e_participation", verdict=verdict or "unknown")
+    return verdict != "PROVEN"
 
 
 def _confirm_completion(claim: str, reason: str, workspace_root: str, reasoner_chat, reasoner_role,
@@ -2071,7 +2092,8 @@ def judge_satisfaction(task: str, evidence: str, reasoner_chat, reasoner_role, r
         # unit tests pass while nothing really resolves).
         satisfied = bool(obj.get("satisfied"))
         if satisfied and _test_participation_blocks_completion(
-                task, getattr(sess, "last_gate_participation", None), reasoner_chat, reasoner_role, rlog):
+                task, getattr(sess, "last_gate_participation", None), reasoner_chat, reasoner_role, rlog,
+                workspace_root=workspace_root):
             return False, prompts.load("required_test_unverified"), ""
         if satisfied and workspace_root:
             # The approve-path brake (see _confirm_completion): "satisfied" must be consistent with
