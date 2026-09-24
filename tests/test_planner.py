@@ -539,7 +539,10 @@ class GatherLoopTests(unittest.TestCase):
         # C6 first submitted one ungrounded docs URL, then re-submitted three raw web_search
         # strings. The URL grounder must remain the owner: its second known-invalid verdict returns
         # retriable no-plan, never a cursor that tells the coder to execute invented searches.
-        prov = _ScriptedProvider([
+        # C30: an exhausted ADMISSION guard now gets ONE fresh in-request gather attempt before
+        # cria gives up (ADMISSION_EXHAUSTION_GIVEUP=2) — two identical cycles drive this
+        # planner to that bound instead of the old single-exhaustion retriable exit.
+        one_cycle = [
             _tool_resp("exec_command", self._SPEC_ECHO),
             _tool_resp("submit_plan", {"steps": ["web_search https://api.handle.me/docs/openapi.json"]}),
             _tool_resp("submit_plan", {"steps": [
@@ -547,15 +550,18 @@ class GatherLoopTests(unittest.TestCase):
                 "web_search https://api.handle.me/docs/handlers.json",
                 "web_search https://api.handle.me/docs/handlers",
             ]}),
-        ])
+        ]
+        prov = _ScriptedProvider(one_cycle + one_cycle)
         rlog = _Rlog()
         plan = Planner(prov, search_key="", max_gather_rounds=1, clock=lambda: _FIXED).plan_for(
             _msgs("resolve an Ada handle"), rlog)
         handed = [kw for k, kw in rlog.events if k == "plan.submit_ungrounded" and kw.get("handed_back")]
-        self.assertEqual(len(handed), 1)
+        self.assertEqual(len(handed), 2)  # one hand-back per fresh-gather cycle
         self.assertIsNone(plan)
-        self.assertIn("plan.rejected_exhausted", [k for k, _ in rlog.events])
-        self.assertIn("plan.retriable", [k for k, _ in rlog.events])
+        self.assertEqual([k for k, _ in rlog.events].count("plan.rejected_exhausted"), 2)
+        self.assertIn("plan.admission_retry", [k for k, _ in rlog.events])
+        self.assertIn("plan.admission_given_up", [k for k, _ in rlog.events])
+        self.assertNotIn("plan.retriable", [k for k, _ in rlog.events])  # a give-up, not a transport retry
         self.assertNotIn("plan.final_recovered", [k for k, _ in rlog.events])
         self.assertNotIn("plan.submitted", [k for k, _ in rlog.events])
 
@@ -666,23 +672,28 @@ class UnreadHostTests(unittest.TestCase):
         # The first draft spends URL's correction, the second gets the typed host verdict, and the
         # third repeats that same unread-host strategy. The host judgment must still run because it
         # decides whether this final draft is admissible, not whether another prompt is available.
-        prov = _ScriptedProvider([
+        # C30: two full cycles (fresh in-request retry, then give-up) instead of one — see
+        # ADMISSION_EXHAUSTION_GIVEUP.
+        one_cycle = [
             _tool_resp("exec_command", {"cmd": "echo https://api.handle.me/openapi.json paths: /handles/{handle}"}),
             _tool_resp("submit_plan", {"steps": ["Call https://api.handle.me/docs/openapi.json"]}),
             _tool_resp("submit_plan", {"steps": ["Call api.handle.me to resolve the handle"]}),
             _content_resp("api.handle.me"),
             _tool_resp("submit_plan", {"steps": ["Call api.handle.me to resolve the handle"]}),
             _content_resp("api.handle.me"),
-        ])
+        ]
+        prov = _ScriptedProvider(one_cycle + one_cycle)
         rlog = _Rlog()
         plan = Planner(prov, role=self._role(), search_key="", max_gather_rounds=1,
                        clock=lambda: _FIXED).plan_for(
             _msgs("resolve an Ada handle using api.handle.me"), rlog)
         hosts = [kw for k, kw in rlog.events if k == "plan.host_unread"]
-        self.assertEqual([kw.get("handed_back") for kw in hosts], [True, False])
+        self.assertEqual([kw.get("handed_back") for kw in hosts], [True, False, True, False])
         self.assertIsNone(plan)
-        self.assertIn("plan.rejected_exhausted", [k for k, _ in rlog.events])
-        self.assertIn("plan.retriable", [k for k, _ in rlog.events])
+        self.assertEqual([k for k, _ in rlog.events].count("plan.rejected_exhausted"), 2)
+        self.assertIn("plan.admission_retry", [k for k, _ in rlog.events])
+        self.assertIn("plan.admission_given_up", [k for k, _ in rlog.events])
+        self.assertNotIn("plan.retriable", [k for k, _ in rlog.events])
         self.assertNotIn("plan.submitted", [k for k, _ in rlog.events])
 
     def test_reasoner_says_no_so_nothing_fires(self):
@@ -814,22 +825,27 @@ class PlanCoverageTests(unittest.TestCase):
         # C5's coverage judge named the required live end-to-end test on both drafts. Preserve its
         # parsed verdict and bounded prompt; do not submit the second incomplete 14-step strategy.
         missing = "a real api.handle.me CLI end-to-end test"
-        prov = _ScriptedProvider([
+        # C30: two full cycles (fresh in-request retry, then give-up) instead of one — see
+        # ADMISSION_EXHAUSTION_GIVEUP.
+        one_cycle = [
             _tool_resp("exec_command", {"cmd": "echo looked"}),
             _tool_resp("submit_plan", {"steps": ["Write the CLI", "Add a README"]}),
             _content_resp(json.dumps({"missing": [missing]})),
             _tool_resp("submit_plan", {"steps": ["Write the CLI", "Add a README"]}),
             _content_resp(json.dumps({"missing": [missing]})),
-        ])
+        ]
+        prov = _ScriptedProvider(one_cycle + one_cycle)
         rlog = _Rlog()
         plan = Planner(prov, role=self._role(), search_key="", max_gather_rounds=1,
                        clock=lambda: _FIXED).plan_for(
             _msgs("write a CLI, add a real api.handle.me end-to-end test, and a README"), rlog)
         handed = [kw for k, kw in rlog.events if k == "plan.missing_deliverables" and kw.get("handed_back")]
-        self.assertEqual(len(handed), 1)
+        self.assertEqual(len(handed), 2)
         self.assertIsNone(plan)
-        self.assertIn("plan.rejected_exhausted", [k for k, _ in rlog.events])
-        self.assertIn("plan.retriable", [k for k, _ in rlog.events])
+        self.assertEqual([k for k, _ in rlog.events].count("plan.rejected_exhausted"), 2)
+        self.assertIn("plan.admission_retry", [k for k, _ in rlog.events])
+        self.assertIn("plan.admission_given_up", [k for k, _ in rlog.events])
+        self.assertNotIn("plan.retriable", [k for k, _ in rlog.events])
         self.assertNotIn("plan.final_recovered", [k for k, _ in rlog.events])
         self.assertNotIn("plan.submitted", [k for k, _ in rlog.events])
 
@@ -1019,22 +1035,33 @@ Add tests, including at least one test that makes a real request to `api.handle.
             self.assertTrue(wsview.apply_survey(view, wsview.strip_survey(raw)[1]))
 
         def planner_for(verdict):
-            responses = [
-                _tool_resp("read_file", {"path": "package.json"}),
-                _tool_resp("submit_plan", {"steps": steps}),
-                _content_resp("NONE"),
-                _content_resp('{"missing": []}'),
-                _content_resp(verdict),
-            ]
-            if verdict == "TEST_EXECUTION_PATH_READY":
-                responses.append(_content_resp("NONE"))
-            else:
-                responses.extend([
+            def one_cycle():
+                # One full _gather_and_plan invocation: research, a draft, and the readiness
+                # verdict. MISSING gets its own ONE hand-back (may_hand_back("test-execution"))
+                # before it can exhaust; NOT_APPLICABLE has no hand-back and exhausts on the
+                # first verdict.
+                c = [
+                    _tool_resp("read_file", {"path": "package.json"}),
                     _tool_resp("submit_plan", {"steps": steps}),
                     _content_resp("NONE"),
                     _content_resp('{"missing": []}'),
                     _content_resp(verdict),
-                ])
+                ]
+                if verdict == "MISSING_TEST_EXECUTION_PATH":
+                    c.extend([
+                        _tool_resp("submit_plan", {"steps": steps}),
+                        _content_resp("NONE"),
+                        _content_resp('{"missing": []}'),
+                        _content_resp(verdict),
+                    ])
+                return c
+            if verdict == "TEST_EXECUTION_PATH_READY":
+                responses = one_cycle() + [_content_resp("NONE")]  # + the noise judge on the admitted plan
+            else:
+                # C30: an exhausted ADMISSION guard now gets ONE fresh in-request gather attempt
+                # before cria gives up (ADMISSION_EXHAUSTION_GIVEUP=2) — two full cycles drive
+                # this planner to that bound.
+                responses = one_cycle() + one_cycle()
             return Planner(_ScriptedProvider(responses), role=Role(name="reasoner", backend="local"),
                            search_key="", max_gather_rounds=1, clock=lambda: _FIXED)
 
@@ -1076,28 +1103,36 @@ Add tests, including at least one test that makes a real request to `api.handle.
                 missing_coder_bodies = []
                 missing_loop = Loop(LoopContext(
                     planner=planner_for("MISSING_TEST_EXECUTION_PATH"),
-                    coder_chat=lambda body, _rlog: missing_coder_bodies.append(body),
+                    coder_chat=lambda body, _rlog: (missing_coder_bodies.append(body),
+                                                    json.dumps(_tool_resp("shell", {"command": "pwd"})).encode())[1],
                     reasoner_chat=lambda *_: b"", runs_dir=""))
+                missing_rlog = _Rlog()
                 with patch("cria.planner.urlgrounding.ungrounded_urls", return_value=[]):
                     missing = missing_loop.drive(body, "c22-missing", type("Task", (), {
-                        "engagement": "task", "task_type": "coding", "cached": False})(), _Rlog())
+                        "engagement": "task", "task_type": "coding", "cached": False})(), missing_rlog)
 
                 not_applicable_coder_bodies = []
                 not_applicable_loop = Loop(LoopContext(
                     planner=planner_for("NOT_APPLICABLE"),
-                    coder_chat=lambda body, _rlog: not_applicable_coder_bodies.append(body),
+                    coder_chat=lambda body, _rlog: (not_applicable_coder_bodies.append(body),
+                                                    json.dumps(_tool_resp("shell", {"command": "pwd"})).encode())[1],
                     reasoner_chat=lambda *_: b"", runs_dir=""))
+                not_applicable_rlog = _Rlog()
                 with patch("cria.planner.urlgrounding.ungrounded_urls", return_value=[]):
                     not_applicable = not_applicable_loop.drive(body, "c22-not-applicable", type("Task", (), {
-                        "engagement": "task", "task_type": "coding", "cached": False})(), _Rlog())
+                        "engagement": "task", "task_type": "coding", "cached": False})(), not_applicable_rlog)
             finally:
                 wsview.unbind(token)
-        self.assertIsNone(missing)
-        self.assertFalse(missing_loop.has_session("c22-missing"))
-        self.assertEqual(missing_coder_bodies, [])
-        self.assertIsNone(not_applicable)
-        self.assertFalse(not_applicable_loop.has_session("c22-not-applicable"))
-        self.assertEqual(not_applicable_coder_bodies, [])
+        # C30: a READINESS guard that stays exhausted for two full cycles is a planning GIVE-UP, not
+        # an unbounded retriable loop — the session falls to the existing synthetic single-item
+        # guarded drive (same fallback an unparseable plan already used) instead of returning None to
+        # the unguarded proxy. The rejected draft itself is still never admitted as the plan cursor.
+        self.assertIn("plan.admission_given_up", [k for k, _ in missing_rlog.events])
+        self.assertIsNotNone(missing)
+        self.assertEqual(len(missing_coder_bodies), 1)
+        self.assertIn("plan.admission_given_up", [k for k, _ in not_applicable_rlog.events])
+        self.assertIsNotNone(not_applicable)
+        self.assertEqual(len(not_applicable_coder_bodies), 1)
 
     def test_c21_spawn_inside_uninvoked_test_cannot_make_ready(self):
         """CALL 0138's READY needs an actual runner after the plan executes."""

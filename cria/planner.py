@@ -260,6 +260,18 @@ _STEP_KEYS = ("steps", "plan", "items")
 # so a re-draft usually lands; the drive's synthetic-plan fallback catches the case where it never does).
 PLAN_RETRIES = 2
 
+# C30: how many times an ADMISSION guard (url/host/coverage/test-execution rejected_exhausted, or
+# test-execution undecidable/not-applicable) may exhaust for the SAME task key before cria gives up
+# NON-retriably and lets the loop's existing synthetic single-item guarded drive take the task, rather
+# than re-gathering forever. Evidence: Cart P18 session 01a0d284 hit `plan.rejected_exhausted check=host`
+# six times over 35 minutes (775 planner calls, 38 proxy, 0 coder, no loop.start); C22 (01a0d10e, 4
+# exhaustions) and C25 (01a0d1a4, 5 exhaustions) never planned either -- 0% each. Across the
+# 2026-09-22..24 logs, 8 of 12 exhausted sessions eventually got `plan.submitted` after 1, 1, 2, 4, 6,
+# 6, 7, or 15 exhaustions; the other 4 never did. A low bound (2) trades the rare later recovery (the
+# report's Bonsai 2 risk) for turning the common unbounded no-work loop into guarded work -- the
+# rejected draft is still never admitted (C7).
+ADMISSION_EXHAUSTION_GIVEUP = 2
+
 # A ``"steps"|"plan"|"items": [`` array opener, and a single JSON string element on its own line. The
 # item pattern is GREEDY to the last quote so an element with UNESCAPED inner quotes — ``like `"goose"```
 # — is still captured whole; that malformed inner quote is exactly what makes ``json.loads`` reject the
@@ -769,6 +781,15 @@ class Planner:
         # cached MUTABLE Plan previously leaked all-`done` state across sessions → immediate exit).
         self._plans: dict[str, None] = {}
         self._retriable_failure = False  # set when a plan failure is a gather overrun, not unplannable
+        # C30: an exhausted ADMISSION guard (url/host/coverage/test-execution rejected_exhausted, or
+        # test-execution undecidable/not-applicable) is a distinct outcome from a transport/model error
+        # or a survey deferral — both of which stay `_retriable_failure` with this left None. Set to the
+        # guard's check name only inside _gather_and_plan's admission branches.
+        self._admission_exhausted_check: str | None = None
+        # Per-task-key exhaustion count, PERSISTED across requests (unlike _retriable_failure, which is
+        # reset every plan_for call) so repeated exhaustions across turns of the same session still
+        # count toward ADMISSION_EXHAUSTION_GIVEUP. Cleared when that key finally submits a plan.
+        self._admission_exhaustions: dict[str, int] = {}
         self._lock = threading.Lock()
 
     def plan_for(self, messages: list[dict], rlog, prior_work: str = "",
@@ -799,10 +820,15 @@ class Planner:
             if key in self._plans:  # negatively cached (unplannable) — don't re-call the reasoner every turn
                 return None
         cwd = _extract_cwd(messages)
-        self._retriable_failure = False
-        self._gather_facts = {}   # reset per draft: last run's findings are not this run's evidence
-        steps = self._gather_and_plan(task, cwd, rlog, prior_work=prior_work,
-                                      rewrite_summary=rewrite_summary, outcome=outcome)
+
+        def attempt_gather() -> list[str] | None:
+            self._retriable_failure = False
+            self._admission_exhausted_check = None
+            self._gather_facts = {}   # reset per draft: last run's findings are not this run's evidence
+            return self._gather_and_plan(task, cwd, rlog, prior_work=prior_work,
+                                         rewrite_summary=rewrite_summary, outcome=outcome)
+
+        steps = attempt_gather()
         # A weak model sometimes drafts an EMPTY / unparseable plan (observed: the reasoner returned just
         # "\n" → no plan → the whole coding session fell to the UNGUARDED proxy and stopped silently). It's
         # non-deterministic, so re-draft a couple times before giving up — one bad draft shouldn't cost the
@@ -812,9 +838,38 @@ class Planner:
         while not steps and not self._retriable_failure and not outcome.survey_pending and attempts < PLAN_RETRIES:
             attempts += 1
             rlog.emit("plan.retry", attempt=attempts, level="info")
-            self._retriable_failure = False
-            steps = self._gather_and_plan(task, cwd, rlog, prior_work=prior_work,
-                                          rewrite_summary=rewrite_summary, outcome=outcome)
+            steps = attempt_gather()
+        # C30: an exhausted ADMISSION guard (url/host/coverage/test-execution rejected_exhausted, or
+        # test-execution undecidable/not-applicable) is a planning GIVE-UP, not a transport retry — the
+        # rejected draft is never admitted (C7), but re-gathering from scratch inside THIS request
+        # (rather than falling to the caller and re-planning next turn forever) is the fix C7 intended.
+        # Transport/model errors (`_reason` returned None) and a survey deferral leave
+        # `_admission_exhausted_check` unset and fall straight to the existing retriable/survey handling
+        # below, unchanged and uncounted.
+        if not steps and self._retriable_failure and self._admission_exhausted_check is not None \
+                and not outcome.survey_pending:
+            check = self._admission_exhausted_check
+            with self._lock:
+                count = self._admission_exhaustions.get(key, 0) + 1
+                self._admission_exhaustions[key] = count
+            if count < ADMISSION_EXHAUSTION_GIVEUP:
+                rlog.emit("plan.admission_retry", check=check, count=count, level="info")
+                steps = attempt_gather()
+                if not steps and self._retriable_failure and self._admission_exhausted_check is not None:
+                    check = self._admission_exhausted_check
+                    with self._lock:
+                        count = self._admission_exhaustions.get(key, 0) + 1
+                        self._admission_exhaustions[key] = count
+            if not steps and count >= ADMISSION_EXHAUSTION_GIVEUP:
+                # Bound reached: stop re-gathering for this task key and negatively cache it so the
+                # caller's existing fallback (the synthetic single-item guarded drive, same mechanism
+                # an unparseable plan already falls to) runs the raw task instead of nothing.
+                rlog.emit("plan.admission_given_up", check=check, count=count, level="warn")
+                with self._lock:
+                    self._plans[key] = None
+                self._retriable_failure = False
+                self._admission_exhausted_check = None
+                return None
         if not steps:
             if outcome.survey_pending:
                 # The caller must return to the harness so its survey can answer the requested
@@ -833,6 +888,11 @@ class Planner:
             with self._lock:
                 self._plans[key] = None
             return None
+        # A plan was submitted for this key — the admission-exhaustion count is per-attempt-at-this-key
+        # history, not a permanent scar; a task that eventually plans should not carry a stale count
+        # into some later re-derivation of the same key.
+        with self._lock:
+            self._admission_exhaustions.pop(key, None)
         # A FRESH plan, drafted anew each session — the plannable result is NEVER cached. Re-running
         # a task (a new session, e.g. after deleting the files) re-investigates and re-plans, so it
         # actually does the work instead of reusing a prior run's plan. Within ONE session the loop's
@@ -1254,6 +1314,7 @@ class Planner:
                                   handed_back=False)
                         rlog.emit("plan.rejected_exhausted", level="warn", check="url")
                         self._retriable_failure = True
+                        self._admission_exhausted_check = "url"
                         return None
                     fired.add("url")
                     rlog.emit("plan.submit_ungrounded", urls=",".join(bad), handed_back=True)
@@ -1280,6 +1341,7 @@ class Planner:
                                   handed_back=False)
                         rlog.emit("plan.rejected_exhausted", level="warn", check="host")
                         self._retriable_failure = True
+                        self._admission_exhausted_check = "host"
                         return None
                     fired.add("host")
                     rlog.emit("plan.host_unread", hosts=",".join(need), handed_back=True)
@@ -1308,6 +1370,7 @@ class Planner:
                         rlog.emit("plan.missing_deliverables", missing=", ".join(missing), handed_back=False)
                         rlog.emit("plan.rejected_exhausted", level="warn", check="coverage")
                         self._retriable_failure = True
+                        self._admission_exhausted_check = "coverage"
                         return None
                     fired.add("coverage")
                     challenged_missing.update(missing)
@@ -1331,16 +1394,19 @@ class Planner:
                     # Do not turn that unknown into a false corrective claim; reject this draft.
                     rlog.emit("plan.test_execution_undecidable", level="warn")
                     self._retriable_failure = True
+                    self._admission_exhausted_check = "test-execution-undecidable"
                     return None
                 if manifest_without_test_script is not None and readiness == "NOT_APPLICABLE":
                     rlog.emit("plan.test_execution_not_applicable", level="warn")
                     self._retriable_failure = True
+                    self._admission_exhausted_check = "test-execution-not-applicable"
                     return None
                 if readiness == "MISSING":
                     if not may_hand_back("test-execution"):
                         rlog.emit("plan.test_execution_path", level="warn", handed_back=False)
                         rlog.emit("plan.rejected_exhausted", level="warn", check="test-execution")
                         self._retriable_failure = True
+                        self._admission_exhausted_check = "test-execution"
                         return None
                     fired.add("test-execution")
                     rlog.emit("plan.test_execution_path", level="warn", handed_back=True)
