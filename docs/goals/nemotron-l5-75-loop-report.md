@@ -5,18 +5,21 @@ sections supersede older prose where they conflict.
 
 ## Acceptance ledger
 
-| Cell | Latest comparable run | Final usefulness | Status |
-|---|---|---:|---|
-| shipping-rates-rb | `shipping-rates-rb_nemotron-elastic_codex_pon_1790138116` | 30% | open — ≤75% |
-| cart-billing-go | `cart-billing-go_nemotron-elastic_codex_pon_1790198063` | 50% | open — ≤75% |
-| orders-api-py | `orders-api-py_nemotron-elastic_codex_pon_1790068242` | 15% | open — ≤75% |
-| feed-pipeline-java | `feed-pipeline-java_nemotron-elastic_codex_pon_1790068525` | 20% | open — ≤75% |
-| handles-cli-node | `handles-cli-node_nemotron-elastic_codex_pon_1790205888` | 50% | open — ≤75% |
-| rust-toml-cli | `rust-toml-cli_nemotron-elastic_codex_pon_1790069056` | 20% | open — ≤75% |
+Reconciled 2026-09-24 against `suite/results/results.jsonl` and `~/.cria/suite/_usefulness/` (see
+"Ledger reconciliation — 2026-09-24" below).
+
+| Cell | Latest comparable run | Note | Final usefulness | Status |
+|---|---|---|---:|---|
+| shipping-rates-rb | `shipping-rates-rb_nemotron-elastic_codex_pon_1790255585` | `a9087c45 p21` | 35% | open — ≤75% |
+| cart-billing-go | `cart-billing-go_nemotron-elastic_codex_pon_1790238295` | `ad8a8c9b p18` | 0% | open — ≤75% |
+| orders-api-py | `orders-api-py_nemotron-elastic_codex_pon_1790242392` | `ad8a8c9b p18` | 50% | open — ≤75% |
+| feed-pipeline-java | `feed-pipeline-java_nemotron-elastic_codex_pon_1790068525` | `7cb10e7 p4` (Phase 0; never rerun) | 20% | open — ≤75% |
+| handles-cli-node | `handles-cli-node_nemotron-elastic_codex_pon_1790231549` | `3cf2697a p17` | 70% | open — ≤75% |
+| rust-toml-cli | `rust-toml-cli_nemotron-elastic_codex_pon_1790252780` | `c435329c p20` | 30% | open — ≤75% |
 
 Strict closure criterion: every cell's latest comparable L5 final usefulness judgment is >75%.
 Comparable means: launched by this campaign at a recorded HEAD with note form
-`BATTERY2 L5 nemotron-elastic <short-HEAD> p4`, planner on, completing through canonical
+`BATTERY2 L5 nemotron-elastic <short-HEAD> p<N>` (p4 at Phase 0, then p5…p21 and continuing), planner on, completing through canonical
 milestone/final judgment. The FROZEN historical ladder row (L5 total 57%: ruby 59, go 31,
 python 76, java 20, node 70, rust 84 — `suite/historical_ladder.json`) and all pre-pause
 (2026-09-05) results rows are prior-knowledge and walk evidence only, never comparable cells.
@@ -162,6 +165,39 @@ The only highest-frequency owner-local candidate that passed capture tests was t
 ## Campaign resumption — 2026-09-23
 
 The prior `Campaign conclusion` section is superseded as an orchestration failure, not campaign closure: all six strict cells remain open and the root criterion is unmet. Reconciled live state at resumption: `main` is `da471763`; no repository dirty paths, active battery queue, or active run heartbeat; `cria.service` and `llama-nemotron-elastic.service` are healthy, serving `nemotron_elastic_12b_a2b_q4km` with `n_ctx=49152`. The latest Cart comparable row is C13 (`cart-billing-go_nemotron-elastic_codex_pon_1790152793`, 25%), correcting the stale table entry above. Preserved evidence remains under `~/.cria/suite/`, `~/.cria/calls/`, and `~/.cria/walk-findings/`.
+
+## Ledger reconciliation — 2026-09-24
+
+Resumed from `a54cce45` (clean `main`, no suite unit/heartbeat active, `cria.service` active). The
+acceptance table was stale (it still listed Phase-0 / C8 / C19 / C20 rows). Reconciliation against
+`suite/results/results.jsonl` and `~/.cria/suite/_usefulness/` found a **measurement-record defect**:
+the fourteen terminal rows p8–p21 except p19 (`1790190648` … `1790255585`) had frozen
+`_usefulness_evidence` packets but **no recorded `suite/usefulness.py` verdict** and no
+`usefulness_percent` on their rows (`usefulness.py pending` listed all fourteen). The dated sections'
+"final packet records N%" wording referred to evidence packets, not recorded judgments. Each was
+judged now by the Supervisor from the archived workspace with the real checks rerun, and recorded:
+
+| Run | Note | Recorded | Deciding check |
+|---|---|---:|---|
+| `cart…_1790190648` | `0dbf1441 p8` | 5% | only `discounts.json` added; seed `go test` passes |
+| `cart…_1790198063` | `08215092 p9` | 50% | `go test`: undefined `decimal.ROUND_HALF_UP`, `ToFloat64` |
+| `handles…_1790205888` | `810a517e p10` | 50% | working fetch CLI; `npm test` missing script |
+| `handles…_1790210315` | `cdf0e2f2 p11` | 50% | `npm test` → `lookup.js` still requires `request` |
+| `handles…_1790213771` | `027e9de2 p12` | 0% | unchanged seed |
+| `handles…_1790216479` | `3206b06b p13` | 45% | working CLI; no test script |
+| `handles…_1790217729` | `69d8e894 p14` | 70% | `npm test` green but API-only test |
+| `handles…_1790223605` | `bf8fe41d p15` | 0% | unchanged seed |
+| `orders…_1790228055` | `0df1c4dd p16` | 40% | pytest hangs after two seed tests |
+| `handles…_1790231549` | `3cf2697a p17` | 70% | live CLI correct (holder endpoint, exit 1 on 404), spawned-CLI test passes; `npm test` red: `real-api.test.js` requires removed `node-fetch` |
+| `cart…_1790238295` | `ad8a8c9b p18` | 0% | `git status` clean |
+| `orders…_1790242392` | `ad8a8c9b p18` | 50% | route/migration/index/parameterized query present; integration `setUp` binds port 0 then polls port 0 forever |
+| `rust…_1790252780` | `c435329c p20` | 30% | `cargo test`: unresolved `toml::Error`; also `env::argc`, `Value::parse_str`; integers print a placeholder |
+| `shipping…_1790255585` | `a9087c45 p21` | 35% | `require 'countries'` unloadable; no `Shipping.zone_for` (duplicated `zone_for_code` using `Country.new(code).in_eu?` as a `when` value); express test outside the rake glob; seed tests pass with the require removed |
+
+Rust p20 is recorded at 30%, not the 35% milestone figure quoted in its dated section; all others
+match the dated sections. `usefulness.py pending --since 1790000000` is now empty.
+**Feed-pipeline-java has had no comparable rerun since Phase 0** (`1790068525`, 20%) although ~40
+accepted changes landed after it; it is the first measurement due.
 
 Next bounded unit: the latest Cart C13 capture is materialized losslessly at `~/.cria/walk-findings/2026-09-23/cart-c13/` as 29 compaction-safe segments (6,281,741 bytes / 388 calls). All 29 durable findings now exist and their cited chain was reconciled against the materialized capture; no battery run is in flight, so no heartbeat is required.
 
