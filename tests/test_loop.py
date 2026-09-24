@@ -3672,7 +3672,7 @@ class CompactionReframeTests(unittest.TestCase):
         self.assertTrue(hit)
         new = out[1]["content"]
         self.assertNotIn("Another language model", new)          # misattribution gone
-        self.assertIn("YOUR OWN prior work", new)                # reattributed to the model
+        self.assertIn("ungrounded account", new)                 # reattributed without granting authority
         self.assertIn("Built handler.py + tests", new)           # the real summary survives
         self.assertIs(out[0], msgs[0])                           # unrelated messages untouched
 
@@ -3718,7 +3718,7 @@ class CompactionReframeTests(unittest.TestCase):
         self.assertTrue(hit)
         new = out[1]["content"]
         self.assertIn("EMPTY", new)                              # the workspace-empty framing
-        self.assertIn("Start the work FRESH", new)
+        self.assertIn("Start fresh in this workspace", new)
         self.assertIn(empty, new)                                # names the cwd to recreate in
         self.assertNotIn("YOUR OWN prior work", new)             # NOT the "build on existing files" claim
         self.assertNotIn("do NOT recreate", new.lower())         # the harmful instruction is gone
@@ -3736,7 +3736,7 @@ class CompactionReframeTests(unittest.TestCase):
                     {"role": "user", "content": self._MARKER}]
             out, hit = reframe_compaction(msgs)
         self.assertTrue(hit)
-        self.assertIn("YOUR OWN prior work", out[1]["content"])  # normal reframe
+        self.assertIn("ungrounded account", out[1]["content"])  # normal reframe preserves no handoff authority
 
 
 class FreshDiskFactsTests(unittest.TestCase):

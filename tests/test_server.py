@@ -607,7 +607,17 @@ class ResponsesInboundCaptureTests(unittest.TestCase):
         self.assertEqual(sum(continuation in str(message.get("content", "")) for message in messages), 1)
         self.assertNotIn("⟦cria⟧", json.dumps(prepared, ensure_ascii=False))
 
+        # Regression: this exact handoff asserts a stale README state and an unproven gem API.
+        # It must be explicitly untrusted, while retained call/result coordinates are surfaced from
+        # structure rather than inferred from that prose. Before the P19 boundary repair, the
+        # continuation called it "YOUR OWN prior work" and supplied neither provenance nor priority.
+        reframe = next(str(message.get("content", "")) for message in messages
+                       if continuation in str(message.get("content", "")))
+        self.assertIn("ungrounded account", reframe)
+        self.assertIn("If a handoff assertion conflicts with a retained tool result, the tool result wins.", reframe)
+
         call_id = "Bq2LzwjFawzxO2DH6b0lYvRdlZaj5OmD"
+        self.assertIn(f"paired tool result (call id: {call_id})", reframe)
         source_output = next(item["output"] for item in producer["input"]
                              if item.get("type") == "function_call_output" and item.get("call_id") == call_id)
         tool_call = next(message for message in messages if any(

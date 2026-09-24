@@ -5551,6 +5551,35 @@ def _workspace_is_empty(cwd: str) -> bool:
     return False
 
 
+def _paired_tool_provenance(messages: list[dict]) -> str:
+    """The exact call coordinates whose result messages survived a harness compaction.
+
+    A compaction handoff is model-authored prose, whereas a ``tool`` message paired to an
+    assistant call is an observed harness result.  Keep both, but make that distinction
+    explicit at the point the handoff is reattributed.  This is deliberately structural:
+    call ids come from wire pairing, not result text or task vocabulary.  Do not name a
+    tool here: later inbound representation can re-present a lowered call under its
+    model-visible tool name, while its id remains the stable provenance coordinate.
+    """
+    calls: set[str] = set()
+    for message in messages:
+        if not isinstance(message, dict):
+            continue
+        for call in message.get("tool_calls") or []:
+            if isinstance(call, dict) and isinstance(call.get("id"), str):
+                calls.add(call["id"])
+    retained: list[str] = []
+    seen: set[str] = set()
+    for message in messages:
+        if not isinstance(message, dict) or message.get("role") != "tool":
+            continue
+        call_id = message.get("tool_call_id")
+        if isinstance(call_id, str) and call_id in calls and call_id not in seen:
+            retained.append(f"- paired tool result (call id: {call_id})")
+            seen.add(call_id)
+    return "\n".join(retained)
+
+
 def reframe_compaction(messages: list[dict]) -> tuple[list[dict], bool]:
     """Reattribute the harness's 'another language model' compaction turn to the model itself and
     re-anchor it, keeping the summary. Returns (messages, reframed?) — the SAME list (no copy) when
@@ -5578,7 +5607,9 @@ def reframe_compaction(messages: list[dict]) -> tuple[list[dict], bool]:
                 summary = text[nl + 1:].lstrip("\n") if nl != -1 else ""
             # Tag with a ⟦ctx:⟧ marker so classify.latest_user_text skips it — this reframe is cria
             # scaffolding, not the user's task; classifying it flips a coding session onto the reasoner.
-            out.append({**m, "content": f"{CONTINUATION_MARKER} {prompts.render(template, summary=summary, cwd=cwd)}"})
+            reframe = prompts.render(template, summary=summary, cwd=cwd,
+                                     tool_results=_paired_tool_provenance(messages) or "(none)")
+            out.append({**m, "content": f"{CONTINUATION_MARKER} {reframe}"})
             reframed = True
         else:
             out.append(m)

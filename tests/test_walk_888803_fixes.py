@@ -390,11 +390,11 @@ class GuardsThatCouldOnlyFailOneWayTests(unittest.TestCase):
         self.assertFalse(loop._is_argument_blob(
             "The step requires a README at README.md; write one describing installation."))
 
-    def test_the_summary_hedge_doubts_both_directions(self):
+    def test_the_handoff_hedge_doubts_both_directions(self):
         t = prompts.load("compaction_reframe")
-        self.assertIn("EITHER", t)
-        self.assertIn("still failing", t)
-        self.assertIn("do NOT redo work", t)
+        self.assertIn("not a fact source", t)
+        self.assertIn("something is missing, or something still fails", t)
+        self.assertIn("Do not treat the task as done, redo work", t)
 
     def test_the_checks_rule_allows_a_test_whose_premise_is_false(self):
         """The exception is still here, and it is still needed: 888803's test asserted
