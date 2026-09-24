@@ -11,7 +11,7 @@ sections supersede older prose where they conflict.
 | cart-billing-go | `cart-billing-go_nemotron-elastic_codex_pon_1790198063` | 50% | open — ≤75% |
 | orders-api-py | `orders-api-py_nemotron-elastic_codex_pon_1790068242` | 15% | open — ≤75% |
 | feed-pipeline-java | `feed-pipeline-java_nemotron-elastic_codex_pon_1790068525` | 20% | open — ≤75% |
-| handles-cli-node | `handles-cli-node_nemotron-elastic_codex_pon_1790148627` | 30% | open — ≤75% |
+| handles-cli-node | `handles-cli-node_nemotron-elastic_codex_pon_1790205888` | 50% | open — ≤75% |
 | rust-toml-cli | `rust-toml-cli_nemotron-elastic_codex_pon_1790069056` | 20% | open — ≤75% |
 
 Strict closure criterion: every cell's latest comparable L5 final usefulness judgment is >75%.
@@ -187,6 +187,12 @@ Next bounded unit: the latest Cart C13 capture is materialized losslessly at `~/
 
 - Complete C14 walk (82 lossless segments) rejected C16 (downstream critic provenance already suppressed) and C17 (unrecognized compaction summary cannot be faithfully repaired). C18 traced the independent earliest repeat-loop producer: `probegate.clean_gate_results` replaced C14 CALL0028/CALL0392’s non-stamped proxy checker results with synthetic repeat prose, destroying the real tool output and inducing identical rechecks.
 - `705301ac` returns non-stamped results after existing structural cleanup, preserving every real checker line; provenance-stamped C6 cleaning remains `linked_only=True`. C14-shaped fails-before/passes-after replay, stamped-gate, and ordinary marker-shaped regressions landed. Focused checks passed; full `python -m pytest` **5000 passed, 5 skipped**. Independent re-review accepted (108 focused tests), commit pushed, `cria.service` restarted and `/health` OK.
+
+### C20 Handles terminal rerun — strategy reset
+
+- Comparable run `handles-cli-node_nemotron-elastic_codex_pon_1790205888` under exact note `BATTERY2 L5 nemotron-elastic 810a517e p10` ended `milestone-stalled-30min` after **200 calls**. Final packet `/home/jesse/.cria/suite/_usefulness_evidence/handles-cli-node_nemotron-elastic_codex_pon_1790205888.txt` records **50%**.
+- C20 left no `package.json` test script: `npm test` fails, and its attempted test artifact was renamed to `test_old`. Heartbeat `2fc1a34c` was removed after terminal reporting.
+- **No further generic Handles rerun is authorized.** Canonically walk C20 to its pre-stall absent-test-runner transition before selecting another candidate.
 
 ### C19 Cart terminal rerun — strategy reset
 
