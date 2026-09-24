@@ -335,6 +335,21 @@ reconciled HEAD: `p22-feed-rerun-9ded52bc.service` (user unit, not collected), s
   task-text-keyed negative cache, so a later session with the same task never plans (#23). Both repairs are
   assigned to their original owners with the reviewer's reproductions.
 
+- **Repairs and re-review (accepted):** C28 `b7be2ef9` moves the `.done` write and cmd cleanup inside the
+  detached `setsid` session (fails-before killpg test reconstructs the pre-repair guard); re-review on real
+  Codex: 14 s probe → running ×3 then complete, fast probe 1 turn as before, no leftovers — but found the new
+  `umask 077` leaked into probes (probe `umask` 0077, a 0o644-asserting check turned red). `57fed0f6` scopes
+  the umask to cria's two files only; re-review: probes `0022`, workspace file `0o644`, spool/cmd `0600` —
+  **C28 accepted**. C30 `64155d4d` removes the process-wide negative cache and keys the exhaustion count by
+  (session, task), threaded from `Loop._plan_for`; re-review: session B with the same text now plans (6
+  reasoner calls, `plan.submitted`; 0 before), P18 shape with a deferral every turn still gives up
+  boundedly through the real Loop; 5/9 new tests fail on `ab1e4e68` — **C30 accepted**. Non-blocking
+  follow-ups recorded by the reviewer: unstable `task:` session keys re-plan each turn (Codex uses stable
+  `sid:`); counter entries not pruned; the pre-existing unparseable-plan negative cache keeps its
+  cross-session property; one C28 permissions test leaves an empty `.done` in `/tmp`; C29 now admits npm's
+  default failing `test` stub (0 of 627 sessions); a script withheld as *unsafe* is still told "Run it
+  directly".
+
 ### Candidate C31 — fetch ledger claims a page body is "in this conversation above" when it is not
 
 - **Observed chain (Rust P20, `20260924T052642-01a0d361`):** the planner fetched
