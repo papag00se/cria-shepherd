@@ -1649,11 +1649,16 @@ def _test_participation_blocks_completion(task: str, report, reasoner_chat, reas
         return False
     if requirement != "E2E_REQUIRED":
         return True
+    sources = report.executed_test_sources()
+    if not sources or any(item.body is None for item in sources):
+        if rlog is not None:
+            rlog.emit("loop.test_e2e_participation", verdict="unverified-source")
+        return True
     verdict = _completion_text(_judge_completion(
         reasoner_chat, reasoner_role, prompts.load("test_e2e_participation"),
         prompts.render("test_e2e_participation", task=task, participation=facts), rlog,
         phase="test-e2e-participation", workspace_root=workspace_root, max_tokens=16,
-        force_think_off=True, seed_files=True)).strip().upper()
+        force_think_off=True)).strip().upper()
     if rlog is not None:
         rlog.emit("loop.test_e2e_participation", verdict=verdict or "unknown")
     return verdict != "PROVEN"

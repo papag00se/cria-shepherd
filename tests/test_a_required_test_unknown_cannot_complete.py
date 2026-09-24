@@ -4,12 +4,12 @@ The captured Handles task wrote a direct-HTTP ``test/lookup.test.js`` without an
 runner.  The completion gate ran only ``node --check`` and recorded test
 participation as unknown, but CALL0043 still returned satisfied=true.
 """
+import base64
 import json
-from pathlib import Path
-import tempfile
 import unittest
 
 from cria import loop, participation, probediscovery, wsview
+from tests.wsfixture import survey
 
 
 class _Rlog:
@@ -29,12 +29,25 @@ class _Chat:
         return json.dumps({"choices": [{"message": message}]}).encode()
 
 
-def _candidate(kind, command):
-    return probediscovery.ProbeCandidate(
+def _candidate(kind, command, test_sources=()):
+    candidate = probediscovery.ProbeCandidate(
         kind=kind, command=command.split(), working_dir="/workspace", confidence=90,
         expected_value=90, cost=probediscovery.ProbeCost.Cheap, mutates_code=False,
         may_hang=False, may_need_services=False, reason="fixture",
         ecosystem=probediscovery.Ecosystem.JsTs)
+    candidate.test_source_paths = tuple(test_sources)
+    return candidate
+
+
+def _capture_view(root, files):
+    tree, blobs = [], []
+    for rel, body in files.items():
+        raw = body.encode()
+        tree.append(f"F\t1\t{len(raw)}\t{rel}")
+        blobs += ["@" + base64.b64encode(rel.encode()).decode(), base64.b64encode(raw).decode()]
+    view = wsview.View(root, "capture")
+    assert wsview.apply_survey(view, survey("\n".join(tree), blob="\n".join(blobs), root=root))
+    return view
 
 
 def _session(report):
@@ -81,13 +94,8 @@ class RequiredTestParticipationBarrierTests(unittest.TestCase):
         self.assertEqual(len(chat.bodies), 2)
 
     def test_c24_executed_direct_api_test_cannot_satisfy_cli_end_to_end_requirement(self):
-        report = participation.report([participation.observe(
-            _candidate(probediscovery.ProbeKind.Test, "npm test"), "Tests:       1 passed, 1 total", 0)])
-        self.assertIs(report.support("test"), participation.Support.PROVEN)
-        with tempfile.TemporaryDirectory() as root:
-            test = Path(root, "tests", "lookup.test.cjs")
-            test.parent.mkdir()
-            test.write_text("""const fetch = global.fetch;
+        root = "/workspace"
+        source = """const fetch = global.fetch;
 async function run() {
   const handle = await fetch('https://api.handle.me/handles/goose');
   const holder = await fetch('https://api.handle.me/holders/example');
@@ -95,43 +103,60 @@ async function run() {
   process.exit(0);
 }
 run();
-""")
-            Path(root, "package.json").write_text(
-                '{"scripts":{"test":"node tests/lookup.test.cjs"}}')
-            token = wsview.bind(wsview.DirectView(root))
-            self.addCleanup(wsview.unbind, token)
-            chat = _Chat([_satisfied(), "E2E_REQUIRED", "UNVERIFIED"])
+"""
+        token = wsview.bind(_capture_view(root, {
+            "tests/lookup.test.cjs": source,
+            "package.json": '{"scripts":{"test":"node tests/lookup.test.cjs"}}',
+        }))
+        self.addCleanup(wsview.unbind, token)
+        report = participation.report([participation.observe(
+            _candidate(probediscovery.ProbeKind.Test, "npm test", [root + "/tests/lookup.test.cjs"]),
+            "Tests:       1 passed, 1 total", 0)])
+        self.assertIs(report.support("test"), participation.Support.PROVEN)
+        self.assertEqual(report.executed_test_sources()[0].body, source)
+        chat = _Chat([_satisfied(), "E2E_REQUIRED", "UNVERIFIED"])
 
-            satisfied, _reason, _fix = loop.judge_satisfaction(
-                self.TASK, "Tests: 1 passed", chat, None, _Rlog(),
-                workspace_root=root, sess=_session(report))
+        satisfied, _reason, _fix = loop.judge_satisfaction(
+            self.TASK, "Tests: 1 passed", chat, None, _Rlog(),
+            workspace_root=root, sess=_session(report))
 
         self.assertFalse(satisfied)
         self.assertEqual(len(chat.bodies), 3)
         self.assertIn("lookup.test.cjs", str(chat.bodies[-1]["messages"]))
 
-    def test_executed_cli_end_to_end_test_is_preserved(self):
+    def test_e2e_requirement_with_no_bound_current_test_source_is_unverified(self):
         report = participation.report([participation.observe(
             _candidate(probediscovery.ProbeKind.Test, "npm test"), "Tests:       1 passed, 1 total", 0)])
-        with tempfile.TemporaryDirectory() as root:
-            test = Path(root, "tests", "lookup.test.cjs")
-            test.parent.mkdir()
-            test.write_text("""const { spawnSync } = require('node:child_process');
+        chat = _Chat([_satisfied(), "E2E_REQUIRED"])
+
+        satisfied, _reason, _fix = loop.judge_satisfaction(
+            self.TASK, "Tests: 1 passed", chat, None, _Rlog(), sess=_session(report))
+
+        self.assertFalse(satisfied)
+        self.assertEqual(len(chat.bodies), 2)
+
+    def test_executed_cli_end_to_end_test_is_preserved(self):
+        root = "/workspace"
+        source = """const { spawnSync } = require('node:child_process');
 const result = spawnSync('node', ['lookup.js', '--json', 'goose']);
 if (result.status !== 0 || !result.stdout.includes('goose')) process.exit(1);
-""")
-            Path(root, "package.json").write_text(
-                '{"scripts":{"test":"node tests/lookup.test.cjs"}}')
-            token = wsview.bind(wsview.DirectView(root))
-            self.addCleanup(wsview.unbind, token)
-            chat = _Chat([_satisfied(), "E2E_REQUIRED", "PROVEN", {
-                "tool_calls": [{"id": "read-test", "type": "function", "function": {
-                    "name": "read_file", "arguments": '{"path":"tests/lookup.test.cjs"}'}}]},
-                "CONSISTENT"])
+"""
+        token = wsview.bind(_capture_view(root, {
+            "tests/lookup.test.cjs": source,
+            "package.json": '{"scripts":{"test":"node tests/lookup.test.cjs"}}',
+        }))
+        self.addCleanup(wsview.unbind, token)
+        report = participation.report([participation.observe(
+            _candidate(probediscovery.ProbeKind.Test, "npm test", [root + "/tests/lookup.test.cjs"]),
+            "Tests:       1 passed, 1 total", 0)])
+        chat = _Chat([_satisfied(), "E2E_REQUIRED", "PROVEN", {
+            "tool_calls": [{"id": "read-test", "type": "function", "function": {
+                "name": "read_file", "arguments": '{"path":"tests/lookup.test.cjs"}'}}]},
+            "CONSISTENT"])
 
-            satisfied, _reason, _fix = loop.judge_satisfaction(
-                self.TASK, "Tests: 1 passed", chat, None, _Rlog(),
-                workspace_root=root, sess=_session(report))
+        satisfied, _reason, _fix = loop.judge_satisfaction(
+            self.TASK, "Tests: 1 passed", chat, None, _Rlog(),
+            workspace_root=root, sess=_session(report))
 
         self.assertTrue(satisfied)
         self.assertEqual(len(chat.bodies), 5)

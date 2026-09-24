@@ -116,6 +116,17 @@ class PhaseParticipation:
 
 
 @dataclass(frozen=True)
+class TestSourceEvidence:
+    """Current bytes of a test source bound to the selected runner interface."""
+
+    path: str
+    body: str | None
+
+    def as_dict(self) -> dict:
+        return {"path": self.path, "current_source_bytes": _known(self.body)}
+
+
+@dataclass(frozen=True)
 class ProbeParticipation:
     ecosystem: probediscovery.Ecosystem | None
     command: tuple[str, ...]
@@ -125,6 +136,7 @@ class ProbeParticipation:
     source: PhaseParticipation = field(default_factory=PhaseParticipation)
     test: PhaseParticipation = field(default_factory=PhaseParticipation)
     manifests: tuple[ManifestEvidence, ...] = ()
+    test_sources: tuple[TestSourceEvidence, ...] = ()
 
     def as_dict(self) -> dict:
         return {
@@ -138,6 +150,7 @@ class ProbeParticipation:
             # but are deliberately non-approving.
             "source": self.source.as_dict(named_files_required=True),
             "test": self.test.as_dict(),
+            "executed_test_sources": [item.as_dict() for item in self.test_sources],
         }
 
 
@@ -161,6 +174,13 @@ class ParticipationReport:
 
     def supports_source_file(self, path: str) -> bool:
         return any(event.source.supports_file(path) for event in self.events)
+
+    def executed_test_sources(self) -> tuple[TestSourceEvidence, ...]:
+        """Sources authoritatively bound to a test event that proved execution."""
+        for event in self.events:
+            if event.test.support() is Support.PROVEN and event.test_sources:
+                return event.test_sources
+        return ()
 
     def as_dict(self, *, fresh: bool | None = None) -> dict:
         manifests: list[dict] = []
@@ -349,8 +369,14 @@ class ParticipationAdapter:
                           participants=tuple(test_paths), participant_kind="file",
                           participants_complete=False, output_lines=lines)
 
+        mapped = ()
+        if candidate.kind is probediscovery.ProbeKind.Test:
+            view = wsview.current()
+            mapped = tuple(TestSourceEvidence(
+                _display_path(str(path), view), view.read(str(path)))
+                           for path in getattr(candidate, "test_source_paths", ()))
         event = ProbeParticipation(self.ecosystem, tuple(candidate.command), exit_code, complete,
-                                   build, source, test, self.manifests(candidate))
+                                   build, source, test, self.manifests(candidate), mapped)
         event = self.refine(event, candidate, output, runner=runner)
         if self.compiled_test_runner and candidate.kind is probediscovery.ProbeKind.Test \
                 and event.test.attempted is True:

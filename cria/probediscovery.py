@@ -51,6 +51,7 @@ from __future__ import annotations
 import enum
 import fnmatch
 import json
+import shlex
 import os
 import re
 from dataclasses import dataclass
@@ -189,6 +190,9 @@ class ProbeCandidate:
     # from the view after execution would be a false event history.
     participation_inputs: tuple[str, ...] | None = None
     participation_inputs_complete: bool | None = None
+    # Exact test-file paths declared by this runner interface.  Unlike test naming conventions,
+    # this binds a source artifact to the argv selected for an eventual gate event.
+    test_source_paths: tuple[str, ...] = ()
     """Did cria AUTHOR this argv, or did it read it off the project?
 
     `cargo test --no-fail-fast`, `go vet ./...`, `bundle exec rspec` come from the project's own
@@ -680,6 +684,30 @@ def read_scripts(pkg_path: Path) -> dict[str, str]:
     return {k: v for k, v in scripts.items() if isinstance(v, str)}
 
 
+def declared_test_source_paths(body: str, base: Path) -> tuple[str, ...]:
+    """Exact existing test files named by one declared script body, or no mapping.
+
+    This is provenance gathering, not an E2E judgment: a token binds only when the project's
+    declared runner names an existing file that the established test conventions own.  Compound,
+    indirect, and unreadable scripts deliberately retain no mapping.
+    """
+    try:
+        tokens = shlex.split(body)
+    except ValueError:
+        return ()
+    view = wsview.current()
+    paths = []
+    for token in tokens:
+        if token.startswith("-"):
+            continue
+        path = Path(token)
+        path = path if path.is_absolute() else base / path
+        if view.isfile(path) is True and looks_like_a_test_path(str(path)):
+            view.read(path)  # request the current bytes on this gate's survey
+            paths.append(str(path))
+    return tuple(dict.fromkeys(paths))
+
+
 def name_kind(name: str) -> ProbeKind:
     """Kind inferred from a script NAME alone (weaker than a vetted body).
     Deliberately distinct from probeclassify.kind_from_name — port both verbatim."""
@@ -749,6 +777,8 @@ def build_js(_root: Path, p: ProjectDir, out: list[ProbeCandidate]) -> None:
         c = cand(kind, [pm, "run", name], d, conf, value_for(kind),
                  cost_for(kind), reason)
         c.declared_interface = True
+        if kind is ProbeKind.Test:
+            c.test_source_paths = declared_test_source_paths(body, d)
         c.mutates_code = vet.mutates_code
         c.may_hang = vet.may_hang
         c.may_need_services = vet.may_need_services
