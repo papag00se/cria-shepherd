@@ -503,6 +503,18 @@ reconciled HEAD: `p22-feed-rerun-9ded52bc.service` (user unit, not collected), s
   `JUDGE_MAX_TOKENS`; module-state judge context contains raw gate transport text (pre-existing).
 - **P26 Cart launched** next (C30's cell; also first live run of C34).
 
+### P26 Cart live observations; Candidate C35
+
+- P26 (`785d6523`) Cart: **C30 fired exactly on the P18 shape** — `plan.rejected_exhausted check=host` ×2 →
+  `plan.admission_given_up` → `loop.start synthetic=True planner_fallback=True` within 35 s; the coder was working
+  (192 coder calls by 10 min vs **0** in P18).
+- **C35:** with C34 live the module-state judge now answers, but as the coder ("**Files that were changed / added**",
+  reasoning "We need to respond with final answer…"): its prompt is one 100 KB system message containing the serialized
+  session with raw gate transport base64 and the harness frame. Census: raw `___CRIA_GATE_TRANSPORT_`/`___CRIA_SURVEY_`
+  in module-state 19/19 and runner-reset 7/7 judge prompts, no other phase. Owner: both steers serialize
+  `_reasoner_session(...)` without `probegate.clean_gate_results` / `_drop_harness_frame`, unlike every other reasoner
+  consumer. Fix assigned (reuse the shared scrub; no prompt change).
+
 ### Cross-cell lead — invented third-party API members (not yet a candidate)
 
 Rust P20 (`toml` `Value::parse_str`, `toml::Error::Missing`), Feed p22 live (`org.apache.commons.csv.exceptions`,
