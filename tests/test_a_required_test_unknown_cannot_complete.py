@@ -9,7 +9,7 @@ import json
 from pathlib import Path
 import unittest
 
-from cria import loop, participation, probediscovery, wsview
+from cria import loop, participation, probediscovery, probegate, wsview
 from tests.wsfixture import survey
 
 
@@ -46,13 +46,13 @@ def _declared_test_candidate(root):
     return next(candidate for candidate in candidates if candidate.kind is probediscovery.ProbeKind.Test)
 
 
-def _capture_view(root, files):
+def _capture_view(root, files, session="capture"):
     tree, blobs = [], []
     for rel, body in files.items():
         raw = body.encode()
         tree.append(f"F\t1\t{len(raw)}\t{rel}")
         blobs += ["@" + base64.b64encode(rel.encode()).decode(), base64.b64encode(raw).decode()]
-    view = wsview.View(root, "capture")
+    view = wsview.View(root, session)
     assert wsview.apply_survey(view, survey("\n".join(tree), blob="\n".join(blobs), root=root))
     return view
 
@@ -140,6 +140,29 @@ run();
 
         self.assertFalse(satisfied)
         self.assertEqual(len(chat.bodies), 2)
+
+    def test_declared_runner_forces_its_mapped_source_into_the_gate_survey(self):
+        root, path = "/workspace", "tests/lookup.test.cjs"
+        source = "const result = runCli(); assert.equal(result.status, 0);"
+        view = _capture_view(root, {
+            path: source,
+            "package.json": '{"scripts":{"test":"node tests/lookup.test.cjs"}}',
+        }, session="gate")
+        token = wsview.bind(view)
+        self.addCleanup(wsview.unbind, token)
+
+        plan = probegate.plan_gate(root, "gate")
+        candidate = next(c for c in plan.candidates if c.kind is probediscovery.ProbeKind.Test)
+        self.assertEqual(candidate.test_source_paths, (root + "/" + path,))
+        self.assertIn("WANT = ['tests/lookup.test.cjs']", plan.script)
+
+        self.assertTrue(wsview.apply_survey(view, survey(
+            f"F\t2\t{len(source)}\t{path}",
+            blob="@" + base64.b64encode(path.encode()).decode() + "\n"
+                 + base64.b64encode(source.encode()).decode(), root=root)))
+        report = participation.report([participation.observe(
+            candidate, "Tests:       1 passed, 1 total", 0)])
+        self.assertEqual(report.executed_test_sources()[0].body, source)
 
     def test_e2e_gate_rejects_cached_test_bytes_absent_from_its_survey(self):
         root, path = "/workspace", "tests/lookup.test.cjs"
