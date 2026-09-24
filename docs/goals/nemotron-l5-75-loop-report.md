@@ -425,6 +425,23 @@ reconciled HEAD: `p22-feed-rerun-9ded52bc.service` (user unit, not collected), s
   script/log `~/.cria/nemotron-l5-p24-orders-3d82a022.{sh,log}`, note `BATTERY2 L5 nemotron-elastic 3d82a022 p24`;
   `run.py` restarted cria at 12:52:58, `/health` ok. One heartbeat: `8c72974f`.
 
+### C32 accepted; C33 candidate; C28b live defect in P24
+
+- **C32 accepted** after repair `993c315b` (failing `&&` chain → participants unknown; E2E judge receives only
+  executed sources; inference limited to bare or `&&`-only bodies). Re-review: P23 shape PROVEN, exit 1 FAILED,
+  tally precedence, timeout/wrappers unknown; 28 C29/C32 tests pass; owner full suite 5110 passed, 5 skipped.
+- **C33 (in progress):** 47 of 181 periodic check-ins (26%) in 2026-09-22..24 logs were survey-only
+  (`periodic_gate_result ran=False` + `loop.gate_survey_only`) and said nothing — the completion path replans after
+  a survey-only result but `guard_periodic_result` does not. Feed P22 had 5 of 7, covering its entire 30→45 min
+  stall (so `gate_stall` never advanced and the thrash steer could not fire); Handles P23 5 of 8.
+- **C28b (live defect, P24 Orders, session `01a0d4fa`):** C28 engaged (`gate.transport_running`) on the hanging
+  integration test, but each running poll resends the ~7 KB launch script; after ~12 polls Codex compacts its
+  history, `guard_probe_reissue` composes a NEW gate (survey-only → replan → new detached gate), abandoning the
+  running one before its 240 s timeout; this repeats every ~100 s (20:02:07, 20:03:49, 20:05:32, 20:07:14 …) with no
+  coder turn. Repair assigned to the C28 owner: running envelope carries the resolved path (narrow polls), a
+  compaction during a running transport re-polls the same plan, and polls use the tool's declared yield budget.
+  P24 is left to reach its canonical milestone (a valid measurement of `3d82a022`).
+
 ### Cross-cell lead — invented third-party API members (not yet a candidate)
 
 Rust P20 (`toml` `Value::parse_str`, `toml::Error::Missing`), Feed p22 live (`org.apache.commons.csv.exceptions`,
