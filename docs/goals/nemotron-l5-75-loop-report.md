@@ -310,6 +310,39 @@ reconciled HEAD: `p22-feed-rerun-9ded52bc.service` (user unit, not collected), s
   whose later re-gather would have produced an admissible plan now proceed on the raw task instead.
   Measured prevalence of that recovery must be checked in logs before landing.
 
+### Candidate C31 — fetch ledger claims a page body is "in this conversation above" when it is not
+
+- **Observed chain (Rust P20, `20260924T052642-01a0d361`):** the planner fetched
+  `https://docs.rs/toml/latest/toml/`, `https://crates.io/crates/toml` and
+  `https://docs.rs/crate/toml/latest/source/`; the coder never fetched anything. Every later coder
+  body carries `⟦ctx:facts⟧ PAGES YOU HAVE ALREADY FETCHED — these SUCCEEDED … Its body is in this
+  conversation above`, closing "code against THOSE rather than re-fetching". After compaction the
+  coder body at CALL0120 has five messages and no page body. Coder reasoning repeatedly says "Let's
+  verify by reading the crate's documentation" (CALL0099, 0141, 0149, 0150) and then recalls the API
+  from memory (`get_map`, `Value::parse_str`, `toml::Error::Missing` — none exist); the run stalled
+  uncompilable (30%). The exact-repeat fetch gate is visibility-aware, so a re-fetch would have been
+  allowed; only cria's false location statement discouraged it.
+- **Prevalence (campaign coder prompts 2026-09-22..24):** 1,821 `body_inline` claims, 1,045 with no
+  fetch of that URL anywhere in the body the coder received (Rust P20 336/336, Shipping P21 128/128,
+  Handles C27 155/200, Cart/Orders/Handles others 2–84).
+- **Owner:** `loop._format_fetches` renders `fetched_facts_sections.body_inline` for every
+  no-structure 2xx page that was not spilled, without checking the messages being sent.
+- **Candidate:** render `body_inline` only when that URL's result is actually visible in the outgoing
+  messages (same visibility owner the exact-repeat gate uses); otherwise state truthfully that the body
+  is not in this conversation. No new advice, no re-fetch instruction beyond the true fact.
+- **LANG / MODEL / HARNESS:** pure provenance of cria's own ledger; applies to any page, any
+  language. **Bonsai 2 risk:** wording change only where the old sentence was false.
+- **Timing:** touches `loop.py` (C28 in progress) and requires a prompt-map key; implement after C28
+  lands and after p22 terminates (existing prompt file must not change during a live run).
+
+### Cross-cell lead — invented third-party API members (not yet a candidate)
+
+Rust P20 (`toml` `Value::parse_str`, `toml::Error::Missing`), Feed p22 live (`org.apache.commons.csv.exceptions`,
+`CSVParser(BufferedReader)`, `readHeader`), Cart C19 (`decimal.ROUND_HALF_UP`, `ToFloat64`) and Shipping P21
+(`Country.new(code).in_eu?`) all fail on members the dependency does not provide, while the dependency itself
+resolves. C31 removes one cria-authored reason not to read the real documentation; whether a further
+language-neutral grounding step is needed is to be decided from post-C31 evidence, not assumed.
+
 Next bounded unit: the latest Cart C13 capture is materialized losslessly at `~/.cria/walk-findings/2026-09-23/cart-c13/` as 29 compaction-safe segments (6,281,741 bytes / 388 calls). All 29 durable findings now exist and their cited chain was reconciled against the materialized capture; no battery run is in flight, so no heartbeat is required.
 
 ### Candidate C14 — planner rewrite-frame false workspace fact (pending independent review)
