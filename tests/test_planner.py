@@ -840,15 +840,32 @@ class PlanCoverageTests(unittest.TestCase):
             raw = subprocess.run(["bash", "-c", wsview.survey_command("c20-no-package")], cwd=root,
                                  text=True, capture_output=True, check=True).stdout
             self.assertTrue(wsview.apply_survey(view, wsview.strip_survey(raw)[1]))
+            view.read(pathlib.Path(root, "test_widget.py"))
+            raw = subprocess.run(["bash", "-c", wsview.survey_command("c20-no-package")], cwd=root,
+                                 text=True, capture_output=True, check=True).stdout
+            self.assertTrue(wsview.apply_survey(view, wsview.strip_survey(raw)[1]))
             token = wsview.bind(view)
             try:
                 from cria.planner import package_manifest_without_test_script
                 self.assertIsNone(package_manifest_without_test_script(root))
+                prov = _ScriptedProvider([
+                    _tool_resp("read_file", {"path": "test_widget.py"}),
+                    _tool_resp("submit_plan", {"steps": ["Add test_widget.py"]}),
+                    _content_resp('{"missing": []}'),
+                    _content_resp("NONE"),
+                ])
+                rlog = _Rlog()
+                plan = Planner(prov, role=self._role(), search_key="", max_gather_rounds=1,
+                               clock=lambda: _FIXED).plan_for(_ws_msgs("add a Python test", root), rlog)
             finally:
                 wsview.unbind(token)
+        self.assertIsNotNone(plan, rlog.events)
+        self.assertNotIn("plan.test_execution_path", [kind for kind, _ in rlog.events])
+        self.assertFalse(any(body["messages"][0]["content"] == prompts.load("plan_test_execution_path")
+                             for body in prov.bodies))
 
-    def test_c20_package_without_test_script_requires_a_planned_execution_path(self):
-        """C20 replay: `scripts.start` plus a test file was coverage-clean but unrunnable."""
+    def test_package_without_test_script_requires_a_planned_execution_path(self):
+        """A coverage-clean test-file plan must also name how that file will run."""
         with tempfile.TemporaryDirectory() as root:
             pathlib.Path(root, "package.json").write_text(json.dumps({
                 "name": "handle-lookup", "scripts": {"start": "node lookup.js"}}), encoding="utf-8")
@@ -893,6 +910,112 @@ class PlanCoverageTests(unittest.TestCase):
         judge_prompts = [body["messages"][0]["content"] for body in prov.bodies
                          if body["messages"][0]["content"] == prompts.load("plan_test_execution_path")]
         self.assertTrue(judge_prompts)
+
+    def test_c20_actual_call0029_scripted_runner_bypasses_execution_path_check(self):
+        """CALL0029 had already added scripts.test; CALL0077 was a CLI require-side-effect bug."""
+        with tempfile.TemporaryDirectory() as root:
+            pathlib.Path(root, "package.json").write_text(json.dumps({
+                "name": "handle-lookup", "scripts": {"test": "node test/lookup.test.js"}}),
+                encoding="utf-8")
+            view = wsview.View(root, "c20-actual")
+            raw = subprocess.run(["bash", "-c", wsview.survey_command("c20-actual")], cwd=root,
+                                 text=True, capture_output=True, check=True).stdout
+            self.assertTrue(wsview.apply_survey(view, wsview.strip_survey(raw)[1]))
+            view.read(pathlib.Path(root, "package.json"))
+            raw = subprocess.run(["bash", "-c", wsview.survey_command("c20-actual")], cwd=root,
+                                 text=True, capture_output=True, check=True).stdout
+            self.assertTrue(wsview.apply_survey(view, wsview.strip_survey(raw)[1]))
+            prov = _ScriptedProvider([
+                _tool_resp("read_file", {"path": "package.json"}),
+                _tool_resp("submit_plan", {"steps": [
+                    "Implement the command-line tool",
+                    "Add test/lookup.test.js covering the live lookup",
+                ]}),
+                _content_resp('{"missing": []}'),
+                _content_resp("NONE"),
+            ])
+            token = wsview.bind(view)
+            try:
+                rlog = _Rlog()
+                plan = Planner(prov, role=self._role(), search_key="", max_gather_rounds=1,
+                               clock=lambda: _FIXED).plan_for(
+                    _ws_msgs("add tests including a live end-to-end test", root), rlog)
+            finally:
+                wsview.unbind(token)
+        self.assertIsNotNone(plan, rlog.events)
+        self.assertNotIn("plan.test_execution_path", [kind for kind, _ in rlog.events])
+        self.assertNotIn("plan.test_execution_undecidable", [kind for kind, _ in rlog.events])
+        self.assertFalse(any(body["messages"][0]["content"] == prompts.load("plan_test_execution_path")
+                             for body in prov.bodies))
+
+    def test_c20_valid_direct_runner_is_ready(self):
+        with tempfile.TemporaryDirectory() as root:
+            pathlib.Path(root, "package.json").write_text(json.dumps({
+                "name": "handle-lookup", "scripts": {"start": "node lookup.js"}}), encoding="utf-8")
+            view = wsview.View(root, "c20-direct-runner")
+            raw = subprocess.run(["bash", "-c", wsview.survey_command("c20-direct-runner")], cwd=root,
+                                 text=True, capture_output=True, check=True).stdout
+            self.assertTrue(wsview.apply_survey(view, wsview.strip_survey(raw)[1]))
+            view.read(pathlib.Path(root, "package.json"))
+            raw = subprocess.run(["bash", "-c", wsview.survey_command("c20-direct-runner")], cwd=root,
+                                 text=True, capture_output=True, check=True).stdout
+            self.assertTrue(wsview.apply_survey(view, wsview.strip_survey(raw)[1]))
+            prov = _ScriptedProvider([
+                _tool_resp("read_file", {"path": "package.json"}),
+                _tool_resp("submit_plan", {"steps": [
+                    "Add test/lookup.test.js",
+                    "Run it with node test/lookup.test.js",
+                ]}),
+                _content_resp('{"missing": []}'),
+                _content_resp("TEST_EXECUTION_PATH_READY"),
+                _content_resp("NONE"),
+            ])
+            token = wsview.bind(view)
+            try:
+                rlog = _Rlog()
+                plan = Planner(prov, role=self._role(), search_key="", max_gather_rounds=1,
+                               clock=lambda: _FIXED).plan_for(_ws_msgs("add a live test", root), rlog)
+            finally:
+                wsview.unbind(token)
+        self.assertIsNotNone(plan, rlog.events)
+        self.assertNotIn("plan.test_execution_path", [kind for kind, _ in rlog.events])
+        requests = [body["messages"][-1]["content"] for body in prov.bodies
+                    if body["messages"][0]["content"] == prompts.load("plan_test_execution_path")]
+        self.assertEqual(len(requests), 1)
+        self.assertIn("Run it with node test/lookup.test.js", requests[0])
+
+    def test_c20_malformed_test_execution_verdict_rejects_the_draft(self):
+        with tempfile.TemporaryDirectory() as root:
+            pathlib.Path(root, "package.json").write_text(json.dumps({
+                "name": "handle-lookup", "scripts": {"start": "node lookup.js"}}), encoding="utf-8")
+            view = wsview.View(root, "c20-undecidable")
+            raw = subprocess.run(["bash", "-c", wsview.survey_command("c20-undecidable")], cwd=root,
+                                 text=True, capture_output=True, check=True).stdout
+            self.assertTrue(wsview.apply_survey(view, wsview.strip_survey(raw)[1]))
+            view.read(pathlib.Path(root, "package.json"))
+            raw = subprocess.run(["bash", "-c", wsview.survey_command("c20-undecidable")], cwd=root,
+                                 text=True, capture_output=True, check=True).stdout
+            self.assertTrue(wsview.apply_survey(view, wsview.strip_survey(raw)[1]))
+            prov = _ScriptedProvider([
+                _tool_resp("read_file", {"path": "package.json"}),
+                _tool_resp("submit_plan", {"steps": ["Add test/lookup.test.js"]}),
+                _content_resp('{"missing": []}'),
+                _content_resp("not a verdict"),
+            ])
+            token = wsview.bind(view)
+            try:
+                rlog = _Rlog()
+                plan = Planner(prov, role=self._role(), search_key="", max_gather_rounds=1,
+                               clock=lambda: _FIXED).plan_for(_ws_msgs("add tests", root), rlog)
+            finally:
+                wsview.unbind(token)
+        self.assertIsNone(plan)
+        self.assertIn("plan.test_execution_undecidable", [kind for kind, _ in rlog.events])
+        self.assertNotIn("plan.submitted", [kind for kind, _ in rlog.events])
+        from cria.planner import test_execution_readiness
+        self.assertEqual(test_execution_readiness(
+            lambda _system, _user: "", "add tests", ["Add test/lookup.test.js"], "{}"),
+            "UNDECIDABLE")
 
     def test_c9_direct_api_test_is_not_accepted_as_cli_end_to_end(self):
         """The C9 draft called the upstream API itself although the task required testing the CLI."""
