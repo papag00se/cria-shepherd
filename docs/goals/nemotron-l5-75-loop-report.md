@@ -24,6 +24,18 @@ milestone/final judgment. The FROZEN historical ladder row (L5 total 57%: ruby 5
 python 76, java 20, node 70, rust 84 — `suite/historical_ladder.json`) and all pre-pause
 (2026-09-05) results rows are prior-knowledge and walk evidence only, never comparable cells.
 
+## Cadence change — whole-row iteration (user directive, 2026-09-24 ~16:20)
+
+Binding from now (goal doc "Row cadence", `e2296f6e`): the unit of iteration is the **whole row**. The
+in-flight p26 Cart run finishes normally (heartbeat `78b4e05e`, terminal packet). After p26 **no single-cell
+reruns**: land every accepted, reviewed unit (C35 when accepted), push, restart `cria.service`, confirm `/health`
+— that commit is the **row HEAD**. All six cells, closed ones included, run in one crash-survivable, GPU-serialized
+queue at that HEAD with one note `BATTERY2 L5 nemotron-elastic <short-HEAD> p<row#>` (first row: **p27**). Nothing
+that changes live behavior lands while the queue is active; one recurring 10-minute heartbeat covers the queue. After
+the row: walk every sub-75%/regressed cell, reconcile across cells (classes seen in ≥2 cells first), land the fixes
+the row justifies, run the next row. Done = one row at one HEAD with every cell >75%. A row with no new accepted fix
+is a strategy reset — work, never a stop. The per-cell reruns p22–p26 above predate this directive.
+
 ## Baseline environment
 
 ### Phase 0 preflight — 2026-09-22
