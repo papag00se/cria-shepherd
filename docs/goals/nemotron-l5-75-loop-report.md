@@ -469,6 +469,21 @@ reconciled HEAD: `p22-feed-rerun-9ded52bc.service` (user unit, not collected), s
   over all 33 campaign archives, only Shipping P21/C8 had a meaningful absent name (`Shipping.zone_for`); the rest
   were noise (`node_modules`, `go.mod`, files the task asks to create). Not built.
 
+### Candidate C34 — 16-token caps on one-word judges: 69 of 69 answers lost
+
+- Census over every nemotron campaign capture (2026-09-22..24): each call with `max_tokens: 16` (reasoning
+  `none`, temperature 0) returned empty content, `finish_reason: length` — **69/69**: compaction-validate 18,
+  module-state 10, satisfaction-diagnosis 9, critic-diagnosis 9, critic-confirm-diagnosis 5, runner-reset 5,
+  test-participation-requirement (capped variant) 15, test-e2e-requirement 2, retries 2. The model emits a short
+  reasoning preface even with reasoning off; the cap cuts it before the word. The same questions at 1024 tokens
+  answered 38/38. Consequences: every self-compaction candidate rejected; C10 Go module-state and declared JS
+  runner-reset assists never able to fire; correct negative diagnoses suppressed — e.g. live P25 `0136`
+  satisfaction named the real defect (test asserts `resolved_address == 'goose'`), `0137` support answer lost →
+  `negative_diagnosis_suppressed`, coder got "the check did not name which deliverable".
+- Owner: `cria/loop.py` `max_tokens=16` at the judge call sites (principle #6 violation). Fix assigned: shared
+  judge budget, reasoning off, strict parsing unchanged, no retries. Model-agnostic; for models that answer inside
+  16 tokens nothing changes except the ceiling.
+
 ### Cross-cell lead — invented third-party API members (not yet a candidate)
 
 Rust P20 (`toml` `Value::parse_str`, `toml::Error::Missing`), Feed p22 live (`org.apache.commons.csv.exceptions`,
