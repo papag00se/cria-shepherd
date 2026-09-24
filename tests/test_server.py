@@ -128,6 +128,8 @@ class _FakeUpstream(BaseHTTPRequestHandler):
     def do_POST(self):
         length = int(self.headers.get("Content-Length", 0) or 0)
         body = json.loads(self.rfile.read(length)) if length else {}
+        if (request_bodies := getattr(self.server, "request_bodies", None)) is not None:
+            request_bodies.append(body)
         if _has_system(body, "REQUEST CLASSIFIER"):  # the classifier call
             self._json(_CLASSIFY_JSON)
         elif _has_system(body, "planner for a SMALL local coding model"):  # the planner call
@@ -513,6 +515,7 @@ class ResponsesInboundCaptureTests(unittest.TestCase):
         self._tmp = TemporaryDirectory()
         self.addCleanup(self._tmp.cleanup)
         self.fake = ThreadingHTTPServer(("127.0.0.1", 0), _FakeUpstream)
+        self.fake.request_bodies = []
         _serve(self.fake)
         self.addCleanup(self.fake.server_close)
         self.addCleanup(self.fake.shutdown)
@@ -573,6 +576,50 @@ class ResponsesInboundCaptureTests(unittest.TestCase):
         outbound = sorted(path.parent.glob("[0-9][0-9][0-9][0-9]-*.json"))
         self.assertTrue(outbound)
         self.assertTrue(outbound[0].name.startswith("0001-"))
+
+    def test_p19_producer_replay_reframes_compaction_and_preserves_read_file_output(self):
+        fixture = Path(__file__).with_name("fixtures") / "inbound-b09a1490-responses.json"
+        raw = fixture.read_bytes()
+        self.assertEqual(len(raw), 963_712)
+        self.assertEqual(hashlib.sha256(raw).hexdigest(),
+                         "94f782fbe912201034f82337fc9530123e5fe48e313b38f907db3cabd91a82eb")
+        producer = json.loads(raw)
+
+        req = urllib.request.Request(self.base + "/v1/responses", data=raw, method="POST",
+                                     headers={"Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=10) as response:
+            response.read()
+
+        events = self._events()
+        inbound = next(event for event in events if event["kind"] == "inbound.dump")
+        received = next(event for event in events if event["kind"] == "request.recv")
+        self.assertEqual(inbound["session"], producer["prompt_cache_key"])
+        self.assertEqual(inbound["session"], received["session"])
+        self.assertEqual(inbound["turn"], received["turn"])
+        self.assertEqual(inbound["bytes"], len(raw))
+        self.assertEqual(inbound["sha256"], hashlib.sha256(raw).hexdigest())
+        self.assertEqual(Path(inbound["path"]).read_bytes(), raw)
+
+        self.assertEqual(len(self.fake.request_bodies), 1)
+        prepared = self.fake.request_bodies[0]
+        messages = prepared["messages"]
+        continuation = "⟦ctx:continuation⟧"
+        self.assertEqual(sum(continuation in str(message.get("content", "")) for message in messages), 1)
+        self.assertNotIn("⟦cria⟧", json.dumps(prepared, ensure_ascii=False))
+
+        call_id = "Bq2LzwjFawzxO2DH6b0lYvRdlZaj5OmD"
+        source_output = next(item["output"] for item in producer["input"]
+                             if item.get("type") == "function_call_output" and item.get("call_id") == call_id)
+        tool_call = next(message for message in messages if any(
+            call.get("id") == call_id and call.get("function", {}).get("name") == "read_file"
+            for call in message.get("tool_calls", [])))
+        tool_output = next(message for message in messages
+                           if message.get("role") == "tool" and message.get("tool_call_id") == call_id)
+        self.assertIsNotNone(tool_call)
+        # This source call was lowered to exec_command, whose envelope is deliberately removed when
+        # it is re-presented as read_file. Its actual file bytes must remain exact.
+        read_result = source_output.split("Output:\n", 1)[1].encode()
+        self.assertEqual(tool_output["content"].encode(), read_result)
 
 
 class ResponsesApiTests(unittest.TestCase):
