@@ -193,8 +193,17 @@ class ProbeCandidate:
     # Subset of ``test_source_paths`` that sits in the one operand position each chain segment of
     # the declared body actually EXECUTES (see ``executed_test_source_paths``), never a token that
     # could be the value of a preceding flag or an exclusion pattern.  Participation evidence keys
-    # completion truthing on this narrower set, not the full declared mapping.
+    # completion truthing on this narrower set, not the full declared mapping.  Populated only when
+    # the whole body is a single command or an exit-status-preserving ``&&`` chain (C32 review
+    # repair) -- ``||``/``;``/``|``/``&``/newline can mask which segment actually ran, so this
+    # stays empty for any of them and the completion inference never fires.
     test_source_paths_executed: tuple[str, ...] = ()
+    # True when the declared body (already restricted to a bare command or an ``&&`` chain, see
+    # above) splits into MORE than one shell segment.  A non-zero exit from such a chain proves
+    # only that some segment failed, never that every earlier segment's mapped file ran to
+    # completion -- the participation inference reads this to withhold ``participants`` rather than
+    # naming files the chain may never have reached.
+    test_source_paths_multi_segment: bool = False
     """Did cria AUTHOR this argv, or did it read it off the project?
 
     `cargo test --no-fail-fast`, `go vet ./...`, `bundle exec rspec` come from the project's own
@@ -722,9 +731,21 @@ def executed_test_source_paths(body: str, base: Path) -> tuple[str, ...]:
     option looking for "the next non-option token" would silently reintroduce that exact guess.
     The one position free of that ambiguity is the token right after the program name: if THAT
     token is an option, the segment offers no structurally safe operand and contributes nothing —
-    a false negative (a real test file goes unproven), never a false positive.  Chain segments
-    (``&&``/``;``/``|``/``&``/newline) are read via ``probeclassify.split_chain`` so a compound
-    declared body is judged one launched command at a time, the same unit the gate event covers.
+    a false negative (a real test file goes unproven), never a false positive.  Chain segments are
+    read via ``probeclassify.split_chain`` so a compound declared body is judged one launched
+    command at a time, the same unit the gate event covers.
+
+    HONEST BOUND (C32 review repair): this position is still only an ASSUMPTION that the program
+    at the head of the segment actually runs its first operand as a test — ``cat test/a.test.js``
+    or ``echo test/a.test.js`` match the same shape as ``node test/a.test.js`` and this function
+    cannot and does not tell them apart.  Distinguishing them would mean a program-name allow/deny
+    list, which is exactly the keyword-list pattern this repo's doctrine forbids (`AGENTS.md`,
+    principles #5b/#12) — it would need retuning every time a new read-only viewer showed up, and
+    it is not what the C32 review findings asked for.  The caller (``build_js``) closes the ONE gap
+    that IS structural: it calls this only for a body that is a single command or an
+    exit-status-preserving ``&&`` chain (``probeclassify.top_level_operators(body) <= {"&&"}``), so
+    a ``||``/``;``/``|``/``&``/newline body — where a later segment can be skipped, backgrounded,
+    or piped past the exit code that decided pass/fail — never reaches this function at all.
     """
     view = wsview.current()
     paths = []
@@ -840,7 +861,12 @@ def build_js(_root: Path, p: ProjectDir, out: list[ProbeCandidate]) -> None:
         c.declared_interface = True
         if kind is ProbeKind.Test:
             c.test_source_paths = declared_test_source_paths(body, d)
-            c.test_source_paths_executed = executed_test_source_paths(body, d)
+            # Exit-status-preserving chains only: a ``||``/``;``/``|``/``&``/newline body can skip,
+            # background, or pipe past the segment that would have proven or run a mapped file, so
+            # the completion inference must never see paths derived from one (C32 review repair).
+            if probeclassify.top_level_operators(body) <= {"&&"}:
+                c.test_source_paths_executed = executed_test_source_paths(body, d)
+                c.test_source_paths_multi_segment = len(probeclassify.split_chain(body)) > 1
         c.mutates_code = vet.mutates_code
         c.may_hang = vet.may_hang
         c.may_need_services = vet.may_need_services

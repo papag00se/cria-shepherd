@@ -199,5 +199,104 @@ class DeclaredDirectTestCommandParticipatesTests(unittest.TestCase):
         self.assertIs(report.support("test"), participation.Support.FAILED)
 
 
+class C32ReviewRepairTests(unittest.TestCase):
+    """BLOCKING 1/2 from the rejected C32 review (commit 3d82a022), plus the required `||` guard.
+
+    1. A failing `&&` chain of more than one segment must not name a later segment's file as a
+       participant: `&&` stops at the first failure, so a non-zero exit proves nothing about
+       whether a later mapped file ever ran.
+    2. A PROVEN event built from this inference must hand the E2E judge only the EXECUTED subset
+       of mapped test sources, never a token that was really a flag's value (`--fixture x`) --
+       otherwise the judge can approve against bytes from a file that never ran (#13 fail-open).
+    3. The inference must never fire for a body containing `||`/`;`/`|`/`&`/newline: C29 still
+       recommends `mocha a.test.js || true` as a probe, but a later segment there can mask the
+       real exit code, so C32's completion inference stays silent and support stays unknown.
+    """
+
+    def _bind(self, script, files):
+        root = "/workspace"
+        payload = {"package.json": json.dumps({"scripts": {"test": script}})}
+        payload.update(files)
+        token = wsview.bind(_capture_view(root, payload))
+        self.addCleanup(wsview.unbind, token)
+        return root
+
+    def test_failing_and_chain_withholds_participants_but_keeps_failed(self):
+        root = self._bind(
+            "node __tests__/integration.test.js && node __tests__/real-api.test.js",
+            {"__tests__/integration.test.js": "require('assert').ok(true);\n",
+             "__tests__/real-api.test.js": "require('assert').ok(true);\n"})
+        candidate = _declared_test_candidate(root)
+        self.assertTrue(candidate.test_source_paths_multi_segment)
+        self.assertEqual(set(candidate.test_source_paths_executed),
+                         {root + "/__tests__/integration.test.js",
+                          root + "/__tests__/real-api.test.js"})
+
+        event = participation.observe(candidate, "Error: boom", 1)
+
+        self.assertIs(event.test.participated, True)
+        self.assertIs(event.test.passed, False)
+        self.assertIsNone(event.test.participants)
+        self.assertIsNone(event.test.participant_kind)
+        report = participation.report([event])
+        self.assertIs(report.support("test"), participation.Support.FAILED)
+        self.assertEqual(report.executed_test_sources(), ())
+
+    def test_passing_and_chain_keeps_all_segments_as_participants(self):
+        root = self._bind(
+            "node __tests__/integration.test.js && node __tests__/real-api.test.js",
+            {"__tests__/integration.test.js": "require('assert').ok(true);\n",
+             "__tests__/real-api.test.js": "require('assert').ok(true);\n"})
+        candidate = _declared_test_candidate(root)
+
+        event = participation.observe(candidate, "", 0)
+
+        self.assertIs(event.test.participated, True)
+        self.assertIs(event.test.passed, True)
+        self.assertEqual(set(event.test.participants),
+                         {root + "/__tests__/integration.test.js",
+                          root + "/__tests__/real-api.test.js"})
+        report = participation.report([event])
+        self.assertIs(report.support("test"), participation.Support.PROVEN)
+
+    def test_flag_value_fixture_excludes_the_unexecuted_file_from_e2e_sources(self):
+        root = self._bind(
+            "node test/unit.test.js --fixture test/real.test.js",
+            {"test/unit.test.js": "require('assert').ok(true);\n",
+             "test/real.test.js": "require('assert').ok(true);\n"})
+        candidate = _declared_test_candidate(root)
+        # Declared mapping (broad provenance) still sees both tokens...
+        self.assertEqual(set(candidate.test_source_paths),
+                         {root + "/test/unit.test.js", root + "/test/real.test.js"})
+        # ...but only the first operand is structurally executed.
+        self.assertEqual(candidate.test_source_paths_executed, (root + "/test/unit.test.js",))
+
+        event = participation.observe(candidate, "", 0)
+
+        self.assertEqual(event.test.participants, (root + "/test/unit.test.js",))
+        report = participation.report([event])
+        self.assertIs(report.support("test"), participation.Support.PROVEN)
+        bound = [s.path for s in report.executed_test_sources()]
+        self.assertEqual(bound, ["test/unit.test.js"])
+        self.assertNotIn("test/real.test.js", bound)
+
+    def test_known_probe_with_double_pipe_fallback_stays_unknown(self):
+        """``mocha test/a.test.js || true`` classifies as a recognised TEST probe (C29 admits it
+        despite the `||`), but C32's completion inference must not: `||` can mask a real failure
+        behind the trailing `true`, and no operand position downstream of that is trustworthy."""
+        root = self._bind("mocha test/a.test.js || true",
+                          {"test/a.test.js": "require('assert').ok(true);\n"})
+        candidate = _declared_test_candidate(root)
+        self.assertTrue(candidate.declared_interface)
+        self.assertEqual(candidate.test_source_paths, (root + "/test/a.test.js",))
+        self.assertEqual(candidate.test_source_paths_executed, ())
+
+        event = participation.observe(candidate, "", 0)
+
+        self.assertIsNone(event.test.participated)
+        report = participation.report([event])
+        self.assertIs(report.support("test"), participation.Support.UNKNOWN)
+
+
 if __name__ == "__main__":
     unittest.main()

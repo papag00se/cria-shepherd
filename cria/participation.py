@@ -369,6 +369,7 @@ class ParticipationAdapter:
                           participants=tuple(test_paths), participant_kind="file",
                           participants_complete=False, output_lines=lines)
 
+        mapped_test_paths = getattr(candidate, "test_source_paths", ())
         if (candidate.kind is probediscovery.ProbeKind.Test
                 and getattr(candidate, "declared_interface", False)
                 and getattr(candidate, "test_source_paths", ())
@@ -377,24 +378,39 @@ class ParticipationAdapter:
             # This IS the project's declared test interface (not a cria-composed probe), and its
             # body maps to test files that sit in an operand position the command actually
             # executes (`probediscovery.executed_test_source_paths` — never a flag value or an
-            # exclusion pattern).  No tally and no "nothing ran" line settled participation above,
-            # so a known, non-timeout exit code from running those files IS the participation and
-            # pass/fail evidence: a plain test program that exits 0/1 with no framework tally is
-            # exactly what a hand-rolled `node test/real.test.js` looks like.  Timeout/launch
-            # failure/incomplete transport were already excluded by `complete is True`.
+            # exclusion pattern, and already restricted at discovery to a bare command or an
+            # exit-status-preserving `&&` chain).  No tally and no "nothing ran" line settled
+            # participation above, so a known, non-timeout exit code from running those files IS
+            # the participation and pass/fail evidence: a plain test program that exits 0/1 with no
+            # framework tally is exactly what a hand-rolled `node test/real.test.js` looks like.
+            # Timeout/launch failure/incomplete transport were already excluded by `complete is True`.
             executed = tuple(getattr(candidate, "test_source_paths_executed", ()))
             if executed:
+                ran_clean = exit_code == 0
+                multi_segment = bool(getattr(candidate, "test_source_paths_multi_segment", False))
+                # A `&&` chain of more than one segment only proves every EARLIER segment's mapped
+                # file ran when the WHOLE chain exits zero.  A non-zero exit says only that SOME
+                # segment failed, never which one -- a later segment (and the file it maps) may
+                # never have started.  `participated`/`passed` still hold (something in the chain
+                # launched and the chain failed); only WHICH named files ran becomes unknown.  A
+                # single segment has no such ambiguity: it IS the whole command.
+                known_participants = ran_clean or not multi_segment
                 lines = _lines_naming(output, executed)
-                test = _phase(test, attempted=True, participated=True, passed=(exit_code == 0),
-                              participants=executed, participant_kind="file",
+                test = _phase(test, attempted=True, participated=True, passed=ran_clean,
+                              participants=(executed if known_participants else None),
+                              participant_kind=("file" if known_participants else None),
                               participants_complete=False, output_lines=lines)
+                # The E2E judge must never be handed a mapped-but-unexecuted file's bytes as if it
+                # ran (`--fixture test/real.test.js` naming a file this segment never reaches) --
+                # restrict what downstream binds to CURRENT test source bytes to the executed set.
+                mapped_test_paths = executed
 
         mapped = ()
         if candidate.kind is probediscovery.ProbeKind.Test:
             view = wsview.current()
             mapped = tuple(TestSourceEvidence(
                 _display_path(str(path), view), view.read_current_survey(str(path)))
-                           for path in getattr(candidate, "test_source_paths", ()))
+                           for path in mapped_test_paths)
         event = ProbeParticipation(self.ecosystem, tuple(candidate.command), exit_code, complete,
                                    build, source, test, self.manifests(candidate), mapped)
         event = self.refine(event, candidate, output, runner=runner)
