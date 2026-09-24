@@ -188,6 +188,11 @@ Next bounded unit: the latest Cart C13 capture is materialized losslessly at `~/
 - Complete C14 walk (82 lossless segments) rejected C16 (downstream critic provenance already suppressed) and C17 (unrecognized compaction summary cannot be faithfully repaired). C18 traced the independent earliest repeat-loop producer: `probegate.clean_gate_results` replaced C14 CALL0028/CALL0392’s non-stamped proxy checker results with synthetic repeat prose, destroying the real tool output and inducing identical rechecks.
 - `705301ac` returns non-stamped results after existing structural cleanup, preserving every real checker line; provenance-stamped C6 cleaning remains `linked_only=True`. C14-shaped fails-before/passes-after replay, stamped-gate, and ordinary marker-shaped regressions landed. Focused checks passed; full `python -m pytest` **5000 passed, 5 skipped**. Independent re-review accepted (108 focused tests), commit pushed, `cria.service` restarted and `/health` OK.
 
+### C25 Handles terminal rerun — strategy reset
+
+- Comparable run `handles-cli-node_nemotron-elastic_codex_pon_1790223605` under note `BATTERY2 L5 nemotron-elastic bf8fe41d p15` exited after **64 calls** with **0%** and no workspace changes; terminal heartbeat `1984a886` was retired.
+- **No Handles rerun is authorized.** C25 repeats C22’s no-coder shape. Canonically walk the capture to establish whether recent plan READY admission/E2E source binding suppressed plan admission before selecting a correction.
+
 ### C24 Handles terminal rerun — strategy reset
 
 - Comparable run `handles-cli-node_nemotron-elastic_codex_pon_1790217729` under note `BATTERY2 L5 nemotron-elastic 69d8e894 p14` ended `milestone-stalled-45min` after **490 calls** at **70%**. Its CLI, Dockerfile, dependency removal, and runner exist, but the passing test directly calls the API rather than invoking `lookup.js`; heartbeat `b9c1e5f7` was retired after terminal reporting.
