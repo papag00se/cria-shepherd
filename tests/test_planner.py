@@ -7,7 +7,7 @@ import tempfile
 import unittest
 from datetime import datetime, timezone
 
-from cria import wsview
+from cria import prompts, wsview
 from cria.planner import PlanOutcome, Planner
 
 
@@ -831,6 +831,68 @@ class PlanCoverageTests(unittest.TestCase):
         self.assertIn("plan.retriable", [k for k, _ in rlog.events])
         self.assertNotIn("plan.final_recovered", [k for k, _ in rlog.events])
         self.assertNotIn("plan.submitted", [k for k, _ in rlog.events])
+
+    def test_c20_without_a_package_manifest_does_not_enter_the_transition(self):
+        """Python/Ruby and other non-package work has no Node absence fact to adjudicate."""
+        with tempfile.TemporaryDirectory() as root:
+            pathlib.Path(root, "test_widget.py").write_text("def test_widget(): pass\n", encoding="utf-8")
+            view = wsview.View(root, "c20-no-package")
+            raw = subprocess.run(["bash", "-c", wsview.survey_command("c20-no-package")], cwd=root,
+                                 text=True, capture_output=True, check=True).stdout
+            self.assertTrue(wsview.apply_survey(view, wsview.strip_survey(raw)[1]))
+            token = wsview.bind(view)
+            try:
+                from cria.planner import package_manifest_without_test_script
+                self.assertIsNone(package_manifest_without_test_script(root))
+            finally:
+                wsview.unbind(token)
+
+    def test_c20_package_without_test_script_requires_a_planned_execution_path(self):
+        """C20 replay: `scripts.start` plus a test file was coverage-clean but unrunnable."""
+        with tempfile.TemporaryDirectory() as root:
+            pathlib.Path(root, "package.json").write_text(json.dumps({
+                "name": "handle-lookup", "scripts": {"start": "node lookup.js"}}), encoding="utf-8")
+            view = wsview.View(root, "c20")
+            raw = subprocess.run(["bash", "-c", wsview.survey_command("c20")], cwd=root,
+                                 text=True, capture_output=True, check=True).stdout
+            self.assertTrue(wsview.apply_survey(view, wsview.strip_survey(raw)[1]))
+            view.read(pathlib.Path(root, "package.json"))
+            raw = subprocess.run(["bash", "-c", wsview.survey_command("c20")], cwd=root,
+                                 text=True, capture_output=True, check=True).stdout
+            self.assertTrue(wsview.apply_survey(view, wsview.strip_survey(raw)[1]))
+            prov = _ScriptedProvider([
+                _tool_resp("read_file", {"path": "package.json"}),
+                _tool_resp("submit_plan", {"steps": [
+                    "Implement the command-line tool",
+                    "Add test/lookup.test.js covering the live lookup",
+                ]}),
+                _content_resp('{"missing": []}'),
+                _content_resp("MISSING_TEST_EXECUTION_PATH"),
+                _tool_resp("submit_plan", {"steps": [
+                    "Implement the command-line tool",
+                    "Add test/lookup.test.js covering the live lookup",
+                    "Add package.json scripts.test that runs test/lookup.test.js",
+                ]}),
+                _content_resp('{"missing": []}'),
+                _content_resp("TEST_EXECUTION_PATH_READY"),
+                _content_resp("NONE"),
+            ])
+            token = wsview.bind(view)
+            try:
+                rlog = _Rlog()
+                plan = Planner(prov, role=self._role(), search_key="", max_gather_rounds=1,
+                               clock=lambda: _FIXED).plan_for(
+                    _ws_msgs("add tests including a live end-to-end test", root), rlog)
+            finally:
+                wsview.unbind(token)
+        self.assertIsNotNone(plan, rlog.events)
+        self.assertEqual([item.text for item in plan.items][-1],
+                         "Add package.json scripts.test that runs test/lookup.test.js")
+        handbacks = [kw for kind, kw in rlog.events if kind == "plan.test_execution_path"]
+        self.assertEqual([kw["handed_back"] for kw in handbacks], [True])
+        judge_prompts = [body["messages"][0]["content"] for body in prov.bodies
+                         if body["messages"][0]["content"] == prompts.load("plan_test_execution_path")]
+        self.assertTrue(judge_prompts)
 
     def test_c9_direct_api_test_is_not_accepted_as_cli_end_to_end(self):
         """The C9 draft called the upstream API itself although the task required testing the CLI."""

@@ -583,6 +583,44 @@ def missing_deliverables(ask, task: str, steps: list[str]) -> list[str]:
     return _parse_missing_verdict(ans)
 
 
+def package_manifest_without_test_script(root: str) -> str | None:
+    """The current package manifest when it definitively declares no runnable test script.
+
+    This is a manifest fact, not an inference from a plan's prose. ``None`` deliberately
+    covers no package manifest, an unread body, and malformed JSON: those are not evidence
+    that a Node project lacks a test execution path.
+    """
+    if not root:
+        return None
+    path = os.path.join(root, "package.json")
+    body = wsview.current(root).read(path)
+    if body is None:
+        return None
+    try:
+        manifest = json.loads(body)
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(manifest, dict):
+        return None
+    scripts = manifest.get("scripts")
+    test = scripts.get("test") if isinstance(scripts, dict) else None
+    return body if not isinstance(test, str) or not test.strip() else None
+
+
+def missing_test_execution_path(ask, task: str, steps: list[str], manifest: str) -> bool:
+    """Whether a requested test deliverable lacks an execution path in this plan.
+
+    The manifest's absent ``scripts.test`` is deterministic. Whether the request actually
+    requires tests, and whether a plan's stated runner is a real path rather than merely a
+    named test file, are semantic judgments kept in one focused reasoner question.
+    """
+    ans = ask(prompts.load("plan_test_execution_path"),
+              prompts.render("plan_test_execution_path_user", task=task,
+                             plan="\n".join(f"{i + 1}. {s}" for i, s in enumerate(steps)),
+                             manifest=manifest))
+    return strip_think(ans or "").strip() == "MISSING_TEST_EXECUTION_PATH"
+
+
 def deliverable_lost_by_drop(ask, task: str, dropped: str, remaining: list[str]) -> str:
     """The thing the REQUEST asks for that only ``dropped`` produces — "" when deleting it loses
     nothing. One focused question per deleted step, and the last word on whether it goes.
@@ -939,6 +977,12 @@ class Planner:
             return []
         return missing_deliverables(lambda sysp, usr: self._ask(sysp, usr, rlog), task, steps)
 
+    def _missing_test_execution_path(self, task: str, steps: list[str], manifest: str, rlog) -> bool:
+        if self._role is None:
+            return False
+        return missing_test_execution_path(
+            lambda sysp, usr: self._ask(sysp, usr, rlog), task, steps, manifest)
+
     def _reasoned_noise_indices(self, task: str, steps: list[str], rlog) -> set:
         """Indices of NOISE steps to DROP, JUDGED by the reasoner (see ``reasoned_noise_indices``). No
         reasoner configured → drop NOTHING (the plan is used as drafted); cria doesn't classify steps
@@ -1127,11 +1171,11 @@ class Planner:
                 rlog.emit("plan.gather_cap", rounds=self._max_rounds)  # investigated to the cap
             # ---- PHASE B: DRAFT, from what the research actually found.
             self._gather_facts = dict(facts)
-            return self._draft_plan(messages, task, facts, rlog)
+            return self._draft_plan(messages, task, facts, rlog, cwd)
         finally:
             shutil.rmtree(scratch, ignore_errors=True)
 
-    def _draft_plan(self, messages: list[dict], task: str, facts: dict, rlog) -> list[str] | None:
+    def _draft_plan(self, messages: list[dict], task: str, facts: dict, rlog, cwd: str) -> list[str] | None:
         """PHASE B — draft the plan from what the research found. Offer ONLY submit_plan (the gather
         tools are gone), so its one move is to hand over the plan.
 
@@ -1160,6 +1204,7 @@ class Planner:
         # coverage check flags that plan 4 times out of 4; it simply never got to look.
         fired: set[str] = set()
         challenged_missing: set[str] = set()  # deliverables coverage has already handed back for
+        manifest_without_test_script = package_manifest_without_test_script(cwd)
 
         def may_hand_back(which: str) -> bool:
             return which not in fired and len(fired) < MAX_PLAN_HANDBACKS
@@ -1265,6 +1310,25 @@ class Planner:
                         {"role": "user", "content": prompts.fill(
                             prompts.load_map("planner_steers")["missing_deliverables"],
                             missing="; ".join(missing))}]
+                    continue
+                # The manifest fact is narrow: only a readable package.json that has no usable
+                # scripts.test enters. The focused judge, rather than a runner-name or filename
+                # matcher, decides whether this task requests tests and whether the plan supplies
+                # their execution path.
+                missing_test_path = self._missing_test_execution_path(
+                    task, steps, manifest_without_test_script, rlog) \
+                    if manifest_without_test_script is not None else False
+                if missing_test_path:
+                    if not may_hand_back("test-execution"):
+                        rlog.emit("plan.test_execution_path", level="warn", handed_back=False)
+                        rlog.emit("plan.rejected_exhausted", level="warn", check="test-execution")
+                        self._retriable_failure = True
+                        return None
+                    fired.add("test-execution")
+                    rlog.emit("plan.test_execution_path", level="warn", handed_back=True)
+                    messages = messages + [
+                        {"role": "assistant", "content": msg.get("content") or None},
+                        {"role": "user", "content": prompts.load_map("planner_steers")["missing_test_execution_path"]}]
                     continue
                 if attempt:
                     rlog.emit("plan.final_recovered", attempt=attempt + 1)
