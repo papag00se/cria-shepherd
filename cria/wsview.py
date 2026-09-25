@@ -146,7 +146,7 @@ class View:
 
     __slots__ = ("root", "_files", "_dirs", "_folded", "_bodies", "_body_generation", "_stale",
                  "_progs", "_outside", "_undeliverable", "_surveyed", "_complete", "_sess",
-                 "_survey_generation", "_ran_a_mutator")
+                 "_survey_generation", "_ran_a_mutator", "_cache_candidates")
 
     def __init__(self, root: str | None, sess: str = "") -> None:
         self.root: str = _posix(root or "").rstrip("/") if root else ""
@@ -190,10 +190,25 @@ class View:
         # `note_written`, and invalidated the moment an edit lands (`note_changed`) or a fresh survey's
         # tree disagrees on size (`_drop_stale_bodies`, which runs over `self._bodies` regardless of
         # where an entry came from).
-        if sess:
-            cached = _BODY_CACHE.get(sess)
+        #
+        # KEYED BY (session, ROOT), NOT SESSION ALONE (review B2). `reroot` builds an empty
+        # `View(want, self._sess)` for a directory nobody surveyed, and a cache keyed by session
+        # only handed that empty view another workspace's bytes — `current("/elsewhere").read(...)`
+        # answered from `/w`'s Rakefile. A path is only ever cached under the root it was DELIVERED
+        # for, so a view of a different root finds nothing.
+        #
+        # NOT MERGED STRAIGHT INTO `_bodies` (review B1). A cache entry is this SESSION's own past
+        # delivery, not something any fact THIS request has corroborated — unlike a body this
+        # request's own survey just delivered (`_set_body`) or the conversation replay just proved
+        # (`note_written`/`note_read`). It sits in `_cache_candidates` until `_ingest_tree` (this
+        # request's own fresh listing) confirms the size still matches; only then does it become a
+        # trusted `_bodies` entry. Until confirmed, `read_bytes` answers exactly as it would for a
+        # path nobody has ever mentioned: unknown, and re-asked.
+        self._cache_candidates: dict[str, bytes] = {}
+        if sess and self.root:
+            cached = _BODY_CACHE.get((sess, self.root))
             if cached:
-                self._bodies.update(cached)
+                self._cache_candidates.update(cached)
 
     # -- identity ----------------------------------------------------------
 
@@ -571,13 +586,43 @@ class View:
         listing that just arrived is newer than all of them, and it carries each file's real size —
         so a length that disagrees is proof the file has moved on, and a path the listing does not
         name at all is proof it is gone. Holding either would be quoting a file back to a judge as
-        it was, under a heading saying what it IS (#5b). What is dropped is simply re-asked."""
+        it was, under a heading saying what it IS (#5b). What is dropped is simply re-asked.
+
+        ALSO FORGETS THE SESSION CACHE (review B1). Without this, a body dropped HERE — the coder's
+        own shell edit landing, or a blob that arrived cut in transit — stayed in `_BODY_CACHE`
+        untouched, and the very next request's `View` reloaded the STALE bytes right back into
+        `_bodies`, never re-asking. Dropping and forgetting in the same place closes that gap for
+        every caller of this method, not just the one that happened to notice."""
         for rel in list(self._bodies):
             entry = self._files.get(rel)
             if entry is None or entry[0] != len(self._bodies[rel]):
                 del self._bodies[rel]
                 self._body_generation.pop(rel, None)
                 self._stale.discard(rel)
+                _forget_body(self._sess, self.root, rel)
+        self._reconcile_cache_candidates()
+
+    def _reconcile_cache_candidates(self) -> None:
+        """Promote or drop a session-cached body (loaded at `__init__`, not yet trusted) against the
+        fresh tree this request's own survey just ingested.
+
+        A body loaded from `_BODY_CACHE` is a PRIOR request's delivery — real, but corroborated by
+        nothing that happened this round, unlike a body this request's own survey just delivered
+        (`_set_body`) or the conversation replay just proved (`note_written`/`note_read`). It is held
+        apart in `_cache_candidates` until a tree THIS request ingests confirms the size still
+        matches (the same test `_drop_stale_bodies` applies to a body already trusted); only then does
+        it become one. A size that disagrees, or a path the fresh listing no longer names, drops and
+        forgets it exactly like an already-trusted body would (review B1)."""
+        if not self._cache_candidates:
+            return
+        for rel, raw in list(self._cache_candidates.items()):
+            entry = self._files.get(rel)
+            if entry is not None and entry[0] == len(raw) and rel not in self._bodies:
+                self._bodies[rel] = raw
+                self._body_generation.pop(rel, None)  # a prior request's delivery, not this survey's
+            else:
+                _forget_body(self._sess, self.root, rel)
+            del self._cache_candidates[rel]
 
     def _ingest_blob(self, body: str) -> None:
         cur_rel: str | None = None
@@ -613,7 +658,7 @@ class View:
             self._bodies.pop(rel, None)               # never leave an OLDER body standing in for it
             self._body_generation.pop(rel, None)
             self._stale.add(rel)
-            _forget_body(self._sess, rel)
+            _forget_body(self._sess, self.root, rel)
             return
         self._bodies[rel] = raw
         self._body_generation[rel] = self._survey_generation
@@ -621,8 +666,12 @@ class View:
         self._undeliverable.pop(rel, None)
         # THE DELIVERY OUTLIVES THIS REQUEST (C38). This survey answered a body a builder wanted; the
         # `View` that holds it dies with this HTTP request, so the fact of having been told must be
-        # kept somewhere that does not.
-        _remember_body(self._sess, rel, raw)
+        # kept somewhere that does not. If this survey also carried a fresh TREE and the blob turns
+        # out to be cut in transit, `_drop_stale_bodies` (called right after blob ingestion by
+        # `apply_survey`) forgets this cache entry again before this function's caller ever sees
+        # `apply_survey` return — a body never leaves this module's control still standing as cached
+        # once its own size check has failed (review B1).
+        _remember_body(self._sess, self.root, rel, raw)
 
     def _ingest_outside(self, body: str) -> None:
         for line in body.splitlines():
@@ -647,7 +696,7 @@ class View:
         self._body_generation.pop(rel, None)  # a coder tool result is not this gate's survey
         self._stale.discard(rel)
         self._undeliverable.pop(rel, None)
-        _remember_body(self._sess, rel, raw)  # this replaces a session-cached body if there was one
+        _remember_body(self._sess, self.root, rel, raw)  # replaces any session-cached body there was
         prev = self._files.get(rel)
         # A FILE CRIA JUST WATCHED BEING WRITTEN IS THE NEWEST FILE IN THE WORKSPACE. A brand-new
         # path has no previous mtime, and epoch is not "unknown" here — it sorts LAST in every
@@ -685,11 +734,12 @@ class View:
         if rel is None:
             return
         self._stale.add(rel)
+        self._cache_candidates.pop(rel, None)  # not yet trusted this request — an edit ends it now
         # A CACHED BODY FROM A PRIOR REQUEST MUST NOT SURVIVE AN EDIT (C38). `_BODY_CACHE` keeps a
         # delivered body alive past this request; without this, a manifest edited between two gates
         # would have the NEXT `View` seed itself from the pre-edit bytes, straight past the very
         # mechanism (`_stale`) that exists to stop a changed file from being read as its old self.
-        _forget_body(self._sess, rel)
+        _forget_body(self._sess, self.root, rel)
         # UNKNOWN SIZE IS NOT ZERO BYTES. The docstring above is exactly right about the BODY and was
         # silently wrong about the SIZE: an edit to a path the last survey did not name — created by
         # the coder's own shell, by `cargo new`, or living inside a folded directory — was recorded
@@ -880,6 +930,13 @@ def _subview(v: View, sub: str) -> View:
     out._bodies = {p[n:]: b for p, b in v._bodies.items() if p.startswith(pre)}
     out._body_generation = {p[n:]: g for p, g in v._body_generation.items() if p.startswith(pre)}
     out._stale = {p[n:] for p in v._stale if p.startswith(pre)}
+    # `out`'s own `__init__` already looked the session cache up under ITS root (empty unless a
+    # prior request happened to cache something directly under this subdirectory); carry over any
+    # not-yet-confirmed candidate the PARENT view held for a path under this subtree too, so a
+    # cache hit made against the parent root is not thrown away just because this call re-roots one
+    # level down.
+    out._cache_candidates.update(
+        {p[n:]: b for p, b in v._cache_candidates.items() if p.startswith(pre)})
     out._progs = v._progs
     out._surveyed = v._surveyed
     out._survey_generation = v._survey_generation
@@ -908,22 +965,33 @@ _MISS_MAX = 64
 # `View` is a fresh, empty object per request (`server.py:_bind_workspace_view`) — by design for
 # the tree, which is cheap to re-ask, but a manifest body is asked for on a miss and delivered once,
 # and had no session-scoped home to survive into the NEXT request's `View`. Bounded the same way
-# every other per-session store in this module is: a cap per session, and the whole store cleared if
-# too many sessions accumulate (a stuck session is the failure mode, not a slow memory leak).
-_BODY_CACHE: dict[str, dict[str, bytes]] = {}
-_BODY_CACHE_MAX_FILES = 64            # per session — mirrors BLOB_FILES_MAX × a few surveys' worth
-_BODY_CACHE_MAX_BYTES = 2_000_000     # per session — generous for manifests, still bounded
+# every other per-session store in this module is: a cap per session+root, and the whole store
+# cleared if too many accumulate (a stuck session is the failure mode, not a slow memory leak).
+#
+# KEYED BY (session, root), NOT SESSION ALONE (review B2). A body belongs to the workspace it was
+# surveyed from; keying by session let it leak into a `reroot`ed view of a DIFFERENT directory,
+# which `View.reroot`'s own docstring promises stays empty ("answering a question about a directory
+# nobody looked at ... would be a false fact, not a convenience").
+_BODY_CACHE: dict[tuple[str, str], dict[str, bytes]] = {}
+_BODY_CACHE_MAX_FILES = 64            # per (session, root) — a few surveys' worth of manifests
+_BODY_CACHE_MAX_BYTES = 2_000_000     # per (session, root) — generous for manifests, still bounded
 
 
-def _remember_body(sess: str, rel: str, raw: bytes) -> None:
+def _remember_body(sess: str, root: str, rel: str, raw: bytes) -> None:
     """A body the harness just handed over — via a survey blob or a lowered write/read cria watched
     land — outlives this one request. Overwrites any earlier bytes for the same path: the newest
-    delivery is always the truth, whichever door it came through."""
-    if not sess or not rel:
+    delivery is always the truth, whichever door it came through.
+
+    CALLERS MUST HAVE ALREADY SIZE-CHECKED ``raw`` against this request's own tree (review B1): a
+    blob that arrives cut in transit is caught by `_drop_stale_bodies`, which now forgets the cache
+    entry it invalidates in the SAME call — so a body that does not survive that check never leaves
+    this function's caller with a stale entry standing."""
+    if not sess or not root or not rel:
         return
+    key = (sess, root)
     if len(_BODY_CACHE) > 512:
         _BODY_CACHE.clear()
-    bucket = _BODY_CACHE.setdefault(sess, {})
+    bucket = _BODY_CACHE.setdefault(key, {})
     bucket.pop(rel, None)          # re-insert at the end — dicts evict oldest-first below
     bucket[rel] = raw
     while len(bucket) > _BODY_CACHE_MAX_FILES:
@@ -933,12 +1001,13 @@ def _remember_body(sess: str, rel: str, raw: bytes) -> None:
         total -= len(bucket.pop(next(iter(bucket))))
 
 
-def _forget_body(sess: str, rel: str) -> None:
-    """An edit landed, or a survey could not decode this path's bytes: whatever cria cached for it
-    is no longer known to be current, and must not outlive the change into a later request."""
-    if not sess or not rel:
+def _forget_body(sess: str, root: str, rel: str) -> None:
+    """An edit landed, a survey could not decode this path's bytes, or a fresh tree's size disagreed
+    with what was cached: whatever cria held for it is no longer known to be current, and must not
+    outlive the change into a later request."""
+    if not sess or not root or not rel:
         return
-    bucket = _BODY_CACHE.get(sess)
+    bucket = _BODY_CACHE.get((sess, root))
     if bucket:
         bucket.pop(rel, None)
 

@@ -1630,7 +1630,13 @@ def tests_with_no_command(root: Path) -> list[str]:
                                if wsview.current().exists(root / cfg) is True
                                and wsview.current().read(root / cfg) is None), None)
         if unread_config:
-            out.append(prompts.render("declared_test_unknown", config=unread_config))
+            # UNDELIVERABLE IS A DIFFERENT FACT FROM "NOT YET". A body too large for one survey
+            # result is refused with its size recorded (`View.undeliverable_size`) rather than
+            # re-queued forever — telling the coder it "will be checked again" over that path would
+            # be a promise cria cannot keep, the same false-hope shape #11b exists to prevent.
+            stuck = wsview.current().undeliverable_size(root / unread_config) is not None
+            recheck = "" if stuck else prompts.load("declared_test_recheck")
+            out.append(prompts.render("declared_test_unknown", config=unread_config, recheck=recheck))
             continue
         withheld = "js" in conv.exts and _withheld_declared_test_script(root)
         if withheld:
