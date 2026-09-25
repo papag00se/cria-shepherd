@@ -1,0 +1,2 @@
+It printed this before it was stopped:
+{{PRINTED}}
