@@ -13,7 +13,7 @@ Reconciled 2026-09-24 against `suite/results/results.jsonl` and `~/.cria/suite/_
 | shipping-rates-rb | `shipping-rates-rb_nemotron-elastic_codex_pon_1790293641` | `f6df9eea p27` | 15% | open — ≤75% |
 | cart-billing-go | `cart-billing-go_nemotron-elastic_codex_pon_1790298041` | `f6df9eea p27` | 30% | open — ≤75% |
 | orders-api-py | `orders-api-py_nemotron-elastic_codex_pon_1790308843` | `f6df9eea p27` | 35% | open — ≤75% |
-| feed-pipeline-java | `feed-pipeline-java_nemotron-elastic_codex_pon_1790268418` | `9ded52bc p22` | 20% | open — ≤75% |
+| feed-pipeline-java | `feed-pipeline-java_nemotron-elastic_codex_pon_1790312004` | `f6df9eea p27` | 20% | open — ≤75% |
 | handles-cli-node | `handles-cli-node_nemotron-elastic_codex_pon_1790285393` | `9fab19d9 p25` | 50% | open — ≤75% |
 | rust-toml-cli | `rust-toml-cli_nemotron-elastic_codex_pon_1790252780` | `c435329c p20` | 30% | open — ≤75% |
 
@@ -594,6 +594,10 @@ reconciled HEAD: `p22-feed-rerun-9ded52bc.service` (user unit, not collected), s
 - **orders-api-py** `…_1790308843`: `milestone-stalled-45min`, 170 calls; milestones 35/continue, 35/stalled; final
   **35%**. Migration + index + parameterized lookup + customer route, but the route raises on `sqlite3.Row` attribute
   access and the integration test calls `serve_forever` inline (hang) — the Orders hang class for the fourth run.
+
+- **feed-pipeline-java** `…_1790312004`: `milestone-stalled-45min`, 174 calls; milestones 20/continue, 20/stalled;
+  final **20%**. Commons CSV + large rewrite that never compiles (illegal regex escapes; invented `CSVParser(Reader)`,
+  `readNext()`); no REVIEW.md or tests.
 
 ### Candidate C37 (row p27 cross-cell class) — harness compaction is never recognized, so its hardening never runs
 
