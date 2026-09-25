@@ -599,6 +599,14 @@ reconciled HEAD: `p22-feed-rerun-9ded52bc.service` (user unit, not collected), s
   final **20%**. Commons CSV + large rewrite that never compiles (illegal regex escapes; invented `CSVParser(Reader)`,
   `readNext()`); no REVIEW.md or tests.
 
+- **Supervisor takeover 2026-09-24 23:38 PDT** (previous Supervisor stalled; not contacted). Old heartbeat gone;
+  single new heartbeat `a5c06791` (*/10). No milestone pending at takeover. handles-cli-node live report 23:40:
+  usefulness=35% (post-milestone change: Dockerfile only, still broken — `npm ci` with no lockfile; `--json` still
+  parsed as the handle, count still `data.length`). Cart walk seg-71..80: ten fresh readers launched. Feed capture
+  `20260924T215334-01a0d6e9` materialized → 49 segments (`~/.cria/walk-findings/2026-09-24/p27-feed/`), waves follow.
+  C37/C38/C39 implementation started in isolated worktrees `../cria-shepherd-c3{7,8,9}` (branches `cand-c3x`);
+  nothing lands until the row ends and each unit is reviewed.
+
 ### Candidate C37 (row p27 cross-cell class) — harness compaction is never recognized, so its hardening never runs
 
 - **Walk evidence (p27 shipping seg-03, verified by the Supervisor):** CALL0046 (23:49:26 UTC) is Codex's compaction
