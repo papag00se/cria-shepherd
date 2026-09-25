@@ -1117,6 +1117,9 @@ class CompactionFirstPassFramingTests(unittest.TestCase):
     def test_transcript_drops_harness_boilerplate_keeps_work(self):
         # g7: the flat transcript LED with Codex's plugin ads (119,361 chars) — the briefing model
         # read plugin blurbs before any work. Same cleaning every other reasoner path uses.
+        # `_compaction_messages` excludes the harness's ask BY POSITION (the latest user turn, C37
+        # B1) — so this fixture ends on a trailing ask turn, exactly how a real compaction call is
+        # shaped, and asserts the WORK before it (not the ask) survives.
         from cria.server import _compaction_transcript
         t = _compaction_transcript([
             {"role": "system", "content": "<recommended_plugins> Atlassian Rovo, Figma ..."},
@@ -1124,6 +1127,7 @@ class CompactionFirstPassFramingTests(unittest.TestCase):
             {"role": "assistant", "tool_calls": [{"id": "a", "type": "function", "function": {
                 "name": "write_file", "arguments": json.dumps({"path": "r.py"})}}]},
             {"role": "tool", "tool_call_id": "a", "content": "Wrote r.py"},
+            {"role": "user", "content": "<<<LOCAL_COMPACT>>> Summarize the thread."},
         ])
         self.assertNotIn("recommended_plugins", t)
         self.assertIn("write a resolver", t)

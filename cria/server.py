@@ -41,6 +41,7 @@ from .loop import (
     LoopStore,
     _fetch_ground_truth,
     _history_root,
+    ask_closed,
     completion_to_sse,
     gate_age,
     reframe_compaction,
@@ -171,15 +172,100 @@ _COMPACT_KIDS_MAX = None
 LOCAL_COMPACT_MARKER = "<<<LOCAL_COMPACT>>>"
 
 
-def _is_compaction_request(messages: list) -> bool:
-    """True when the latest user turn is the harness's compaction/summarize request (see marker)."""
+def _latest_user_text(messages: list) -> str:
+    """The latest user turn's text, or "" — the ONE walk both `_is_compaction_request` (the marker
+    check) and `_recognize_compaction` (the unmarked-compaction judge) read a turn's text through,
+    so neither can drift from what the other considers "the latest user turn"."""
     for m in reversed(messages or []):
         if isinstance(m, dict) and m.get("role") == "user":
-            c = m.get("content")
-            if isinstance(c, list):
-                c = " ".join(p.get("text", "") for p in c if isinstance(p, dict))
-            return isinstance(c, str) and LOCAL_COMPACT_MARKER in c
-    return False
+            return _text_of_msg(m)
+    return ""
+
+
+def _is_compaction_request(messages: list) -> bool:
+    """True when the latest user turn is the harness's compaction/summarize request (see marker)."""
+    return LOCAL_COMPACT_MARKER in _latest_user_text(messages)
+
+
+def _recognize_compaction(body: dict, server, rlog) -> bool:
+    """Harness-agnostic recognition of a compaction/summarize turn the operator has NOT wired the
+    `<<<LOCAL_COMPACT>>>` marker onto (see `_is_compaction_request`) — Codex's own default
+    `compact_prompt` is exactly this case, and with no `compact_prompt` set in the harness config it
+    is what EVERY harness compaction sends. Layered, per principle #8/#18: no Codex metadata sniff,
+    no keyword/verb list standing in for judgment — deterministic structure narrows the field, and
+    only a genuinely ambiguous remainder ever reaches a reasoner.
+
+    1) DETERMINISTIC TRIGGERS, all free (no model call):
+       - the request's tool menu is empty/absent. An ordinary coding turn always advertises its
+         tool menu; a summarize turn structurally has nothing for the model to call. Alone this
+         already excludes every ordinary task, so a request with tools present costs nothing extra
+         here — same call count as before this function existed.
+       - `[routing] context_fixes` (LEVEL 3+) is on. Nothing downstream of recognition (the
+         hardening in `_compaction_body`/`_harden_compaction_reply`) is reachable below level 3, so
+         asking below it would spend a call whose answer cannot change what ships.
+       - the transcript has a PRIOR assistant/tool turn. A checkpoint/handoff summary always has
+         prior work to fold — by construction it cannot be a session's first turn. This is
+         structural (a role check), not a reading of what the turn says, and for free excludes the
+         ordinary "no tools, first message" chat/title call that would otherwise cost a reasoner
+         call on every such turn campaign-wide.
+    2) ONE FOCUSED CLOSED QUESTION — only once every trigger above fires and the marker is absent:
+       "is the latest user turn a request to summarize this conversation for continuation?" (#8's
+       corollary: a single focused question beats a keyword list that must be retuned every time a
+       harness phrases its prompt differently).
+
+    FAIL-SAFE DIRECTION: no reasoner CONFIGURED (`server.reasoner_role is None`, checked explicitly
+    below — `reasoner_upstream` alone is not proof of a reasoner: it falls back to the shared/coder
+    endpoint unconditionally), an empty/unreadable turn, or a NO/undecidable verdict all mean
+    "not recognized" — the turn proxies exactly as it did before this function existed (today's
+    status quo, the bug this candidate targets). The opposite failure — misrouting an ordinary
+    no-tool turn (a plain question) through the compaction hardening machinery: the compactor's
+    tuned sampling, fetch/inventory/check appendices built for a session's transcript, the
+    empty-briefing retry — would inject compaction-shaped assists into a reply that isn't one and
+    risks answering the wrong question entirely (assists are footguns, #1). An unrecognized
+    compaction is a known, bounded, PRE-EXISTING gap; a wrongly hardened ordinary reply would be a
+    NEW one. So this recognizer only ever WIDENS what counts as compaction from the marker-only
+    baseline, never narrows it, and any doubt resolves toward that baseline.
+    """
+    if _is_compaction_request(body.get("messages", [])):
+        return True
+    if body.get("tools"):
+        return False  # tools present → an ordinary task by construction; no call, byte-identical
+    if not server.cfg.routing.context_fixes:
+        # Nothing downstream of recognition (the hardening in _compaction_body /
+        # _harden_compaction_reply) is even reachable below LEVEL 3 — asking would spend a call
+        # whose answer cannot change what ships; the harness keeps its own compaction below level
+        # three (see _compaction_body's "LEVEL 3" doc).
+        return False
+    messages = body.get("messages", [])
+    if not any(isinstance(m, dict) and m.get("role") in ("assistant", "tool") for m in messages):
+        # STRUCTURAL, not textual: a checkpoint/handoff summary always has PRIOR work to fold — by
+        # construction it cannot be the first turn of a session. A fresh conversation (no
+        # assistant/tool turn yet) is never a compaction however its lone user turn is worded, so
+        # this excludes it for free — the ordinary "no tools, first message" chat/title call that
+        # would otherwise cost a reasoner call on every such turn campaign-wide.
+        return False
+    turn = _latest_user_text(messages).strip()
+    if not turn:
+        return False
+    if server.reasoner_role is None:
+        # NO REASONER CONFIGURED. `server.reasoner_upstream` still resolves (it falls back to the
+        # SHARED upstream — the coder — unconditionally, the same wiring `LoopContext.reasoner_
+        # chat` uses; see `CriaServer.__init__`), so calling through it here would silently ask the
+        # CODER model a judgment question with none of the reasoner's sampling, and under the "no
+        # reasoner AND no shell" doctrine this is the acknowledged fail-OPEN exit's sibling: nothing
+        # can judge, so this recognizer must not pretend something did. Every other caller of the
+        # reasoner in this codebase gates on `reasoner_role is not None` at its own call site (see
+        # `LoopContext`'s wiring comment) — this is that same gate, here.
+        return False
+    answer = ask_closed(
+        server.reasoner_upstream.chat, server.reasoner_role,
+        prompts.render("recognize_compaction_request", turn=turn), rlog,
+        phase="compaction-recognize", retry_off=False,
+    ).strip().upper()
+    recognized = answer == "YES"
+    rlog.emit("classify.compaction_recognized", by="judge", answer=answer or "(none)",
+              recognized=recognized)
+    return recognized
 
 
 # Last-known harness cwd per session. A harness advertises its workspace (Codex's <cwd>) in the
@@ -306,10 +392,29 @@ def _session_gate_plan(server, sess_key: str):
 
 
 def _compaction_messages(messages: list) -> list[dict]:
-    """The model-authored history eligible to become compaction evidence."""
-    convo = [m for m in messages
-             if m.get("role") not in ("system", "developer")
-             and LOCAL_COMPACT_MARKER not in _text_of_msg(m)
+    """The model-authored history eligible to become compaction evidence — everything except the
+    harness's own compaction/summarize ASK, excluded BY POSITION (the latest user turn, the same
+    walk `_is_compaction_request`/`_latest_user_text` do), not by matching `LOCAL_COMPACT_MARKER`
+    text.
+
+    Matching the marker text left the UNMARKED case (Codex's own default `compact_prompt`,
+    recognized via `_recognize_compaction`) with nothing to match: its ask — "...What remains to
+    be done (clear next steps)..." — stayed in the evidence as the LAST transcript line, reading
+    as an instruction still to follow rather than a request to fold (replayed live against p27
+    CALL0046: it survived into the writer's evidence, the empty-briefing retry, and the validator's
+    transcript — exactly the g8 0187/0188 failure `_compaction_transcript`'s own "ask goes last"
+    comment exists to prevent, and `tests/test_server.py::...ask_is_last_and_the_summarize_turn_is_
+    not_evidence` already asserts for the marked case). A compaction ask is ALWAYS the harness's
+    latest user turn, whatever it says — so drop that one turn by position, unconditionally."""
+    ask_idx = None
+    for i in range(len(messages) - 1, -1, -1):
+        m = messages[i]
+        if isinstance(m, dict) and m.get("role") == "user":
+            ask_idx = i
+            break
+    convo = [m for i, m in enumerate(messages)
+             if i != ask_idx
+             and m.get("role") not in ("system", "developer")
              and not selfcompact.has_anchor(m)]
     return _drop_harness_frame(convo)
 
@@ -903,22 +1008,26 @@ class CriaHandler(BaseHTTPRequestHandler):
         else:
             self._respond_buffered(body, rlog)
 
-    def _classify(self, body: dict, rlog):
+    def _classify(self, body: dict, rlog, compaction: bool = False):
         """Classify the turn — unless cria ALREADY KNOWS what it is.
 
-        A compaction turn is self-identifying (the `<<<LOCAL_COMPACT>>>` handshake) and `_route`
-        dispatches it to the compactor without ever reading the verdict. Classifying it anyway spent
-        a whole model call to answer a question nobody asks, and the question is unanswerable: the
-        classifier must pick coding|reasoning|question for the text "Summarize the thread for
-        continuation", which is none of them. Measured over the 08-11..08-13 suite: 39 classifier
-        calls ran away to the 16,384-token ceiling and returned NOTHING — no content, no reasoning,
-        no tool call, `finish_reason: length` — for 131 minutes of wall clock, the single largest
-        block of dead time in the campaign. Deciding earlier is the fix; capping the runaway would
-        only have made the wasted call cheaper (A, not B)."""
+        A compaction turn is self-identifying (the `<<<LOCAL_COMPACT>>>` handshake, or the
+        unmarked-but-recognized case `_recognize_compaction` resolves once per request — see its
+        caller) and `_route` dispatches it to the compactor without ever reading the verdict.
+        Classifying it anyway spent a whole model call to answer a question nobody asks, and the
+        question is unanswerable: the classifier must pick coding|reasoning|question for the text
+        "Summarize the thread for continuation", which is none of them. Measured over the
+        08-11..08-13 suite: 39 classifier calls ran away to the 16,384-token ceiling and returned
+        NOTHING — no content, no reasoning, no tool call, `finish_reason: length` — for 131 minutes
+        of wall clock, the single largest block of dead time in the campaign. Deciding earlier is
+        the fix; capping the runaway would only have made the wasted call cheaper (A, not B)."""
         server: CriaServer = self.server
         if server.classifier is None:
             return None
-        if _is_compaction_request(body.get("messages", [])):
+        # `compaction` is the caller's precomputed answer (marker OR judged); the cheap marker check
+        # is repeated here too so a caller that only knows the marker (no `_recognize_compaction`
+        # pass yet run) still gets the free, zero-cost recognition it always had.
+        if compaction or _is_compaction_request(body.get("messages", [])):
             rlog.emit("classify.skipped", why="compaction")
             return None
         return server.classifier.classify(body.get("messages", []), rlog)
@@ -1132,7 +1241,7 @@ class CriaHandler(BaseHTTPRequestHandler):
                   dropped_msgs=rep.dropped_msgs)
         return {**framed, "messages": trimmed}, True
 
-    def _route(self, body: dict, classification, rlog) -> tuple[object, Indicator]:
+    def _route(self, body: dict, classification, rlog, compaction: bool = False) -> tuple[object, Indicator]:
         """Resolve the provider/model for this classification and build the
         indicator. Falls back to the local upstream (passthrough) when routing isn't
         configured or nothing resolves. Mutates ``body["model"]``."""
@@ -1156,11 +1265,14 @@ class CriaHandler(BaseHTTPRequestHandler):
                                               model=banner_model(server.upstream, str(body.get("model") or "?")),
                                               role=None, route=ic.route, assists=ic.assists)
 
-        # A harness COMPACTION request (the `<<<LOCAL_COMPACT>>>` handshake) is a SUMMARIZE — route it
+        # A harness COMPACTION request (the `<<<LOCAL_COMPACT>>>` handshake, or one `_recognize_
+        # compaction` resolved for a harness that never sends the marker) is a SUMMARIZE — route it
         # to the compactor role's tuned sampling on the compactor endpoint, not the classifier's guess
         # (its text reads as a plain 'question' → the reasoner). The compactor endpoint falls back to the
         # reasoner/shared upstream when no [roles.compactor] is set, so this is safe unconfigured too.
-        if _is_compaction_request(body.get("messages", [])):
+        # `compaction` is the caller's precomputed answer; the cheap marker check is repeated here
+        # too so a caller that only knows the marker still gets the free recognition it always had.
+        if compaction or _is_compaction_request(body.get("messages", [])):
             role_name = "compactor" if "compactor" in server.cfg.routing.roles else "reasoner"
             rlog.emit("route.compaction", role=role_name)
             return server.compactor_upstream, Indicator(
@@ -1301,7 +1413,11 @@ class CriaHandler(BaseHTTPRequestHandler):
         becomes a clean in-stream error, never a dead handler thread."""
         server: CriaServer = self.server
         try:
-            classification = self._classify(body, rlog)
+            # Recognized ONCE per request — the marker (free) or, when tools are empty/absent and
+            # the marker is absent, the one focused judge call (see _recognize_compaction). Every
+            # downstream compaction check in this request reuses this single answer.
+            compaction = _recognize_compaction(body, server, rlog)
+            classification = self._classify(body, rlog, compaction)
             sk = session_key(self.headers, body.get("messages", []))
             # ONE coder driver: engage the loop when it should (a known session, or a fresh turn the
             # loop would start — see _engages_loop). It drives a real multi-item plan OR the synthetic
@@ -1311,10 +1427,10 @@ class CriaHandler(BaseHTTPRequestHandler):
                 if completion is not None:
                     yield from completion_to_sse(self._finalize(self._translate_out(completion, sk, rlog), sk, rlog))
                     return
-            provider, indic = self._route(body, classification, rlog)
+            provider, indic = self._route(body, classification, rlog, compaction)
             rlog.phase = "proxy"
             sbody = _proxy_body(body)
-            if self.server.cfg.routing.context_fixes and _is_compaction_request(body.get("messages", [])):
+            if self.server.cfg.routing.context_fixes and compaction:
                 sbody = _compaction_body(sbody, _session_cwd(sk, body.get("messages", []), rlog),
                                          _session_gate_plan(server, sk),
                                          _last_gate_flag(server, sk), _gate_age(server, sk))
@@ -1339,7 +1455,9 @@ class CriaHandler(BaseHTTPRequestHandler):
         ``UpstreamError`` on a model failure (callers turn that into a clean error).
         Shared by the buffered chat path and the Responses adapter."""
         server: CriaServer = self.server
-        classification = self._classify(body, rlog)
+        # Recognized ONCE per request — see _produce_stream's twin call for the same reasoning.
+        compaction = _recognize_compaction(body, server, rlog)
+        classification = self._classify(body, rlog, compaction)
         # ONE coder driver: engage the loop (a real multi-item plan OR the synthetic 1-item plan-off
         # path) whenever it should; otherwise proxy. See _engages_loop — a known session ALWAYS
         # continues (a mid-plan tool result / continuation classifies as non-task, and gating on that
@@ -1350,10 +1468,10 @@ class CriaHandler(BaseHTTPRequestHandler):
                 out = self._finalize(self._translate_out(completion, sess_key, rlog), sess_key, rlog)
                 _report_context_usage(out, getattr(self, "_ctx_tokens", 0), rlog)
                 return out, None  # loop path carries no indicator
-        provider, indic = self._route(body, classification, rlog)
+        provider, indic = self._route(body, classification, rlog, compaction)
         rlog.phase = "proxy"
         pbody = _proxy_body(body)
-        if self.server.cfg.routing.context_fixes and _is_compaction_request(body.get("messages", [])):
+        if self.server.cfg.routing.context_fixes and compaction:
             pbody = _compaction_body(pbody, _session_cwd(sess_key, body.get("messages", []), rlog),
                                      _session_gate_plan(server, sess_key),
                                      _last_gate_flag(server, sess_key), _gate_age(server, sess_key))
@@ -1372,7 +1490,7 @@ class CriaHandler(BaseHTTPRequestHandler):
             # (native or a recovered dialect leak) is spurious. Coerce it back to text so an empty
             # or dialect-only "answer" recovers the summary from the model's reasoning.
             comp = massage.coerce_text_answer(comp, rlog)
-            if _is_compaction_request(body.get("messages", [])):
+            if compaction:
                 comp = _harden_compaction_reply(comp, body, provider, server, rlog, sess_key)
         if massage.is_truncated(comp):
             indic.note = "⚠ output truncated at the token limit"

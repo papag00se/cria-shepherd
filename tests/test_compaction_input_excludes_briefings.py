@@ -22,8 +22,13 @@ class HarnessCompactionInputTests(unittest.TestCase):
     REAL = "I ran pytest and got 3 failed, 1 passed."
 
     def _transcript(self, *contents):
+        # `_compaction_messages` now excludes the harness's ask BY POSITION (the latest user turn),
+        # not by matching marker text (C37 B1) — so every fixture here appends a trailing ask turn,
+        # exactly how a real compaction call is shaped, and asserts against the EVIDENCE turns before
+        # it rather than treating the last supplied content as evidence itself.
         return server._compaction_transcript(
-            [{"role": "user", "content": c} for c in contents])
+            [{"role": "user", "content": c} for c in contents]
+            + [{"role": "user", "content": "<<<LOCAL_COMPACT>>> Summarize the thread."}])
 
     def test_a_prior_rollup_is_not_fed_back_to_the_compactor(self):
         # Assert against the rollup's OWN text. A first version of this test checked for a phrase
