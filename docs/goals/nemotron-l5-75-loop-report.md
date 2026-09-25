@@ -11,7 +11,7 @@ Reconciled 2026-09-24 against `suite/results/results.jsonl` and `~/.cria/suite/_
 | Cell | Latest comparable run | Note | Final usefulness | Status |
 |---|---|---|---:|---|
 | shipping-rates-rb | `shipping-rates-rb_nemotron-elastic_codex_pon_1790293641` | `f6df9eea p27` | 15% | open — ≤75% |
-| cart-billing-go | `cart-billing-go_nemotron-elastic_codex_pon_1790289581` | `785d6523 p26` | 25% | open — ≤75% |
+| cart-billing-go | `cart-billing-go_nemotron-elastic_codex_pon_1790298041` | `f6df9eea p27` | 30% | open — ≤75% |
 | orders-api-py | `orders-api-py_nemotron-elastic_codex_pon_1790279578` | `3d82a022 p24` | 40% | open — ≤75% |
 | feed-pipeline-java | `feed-pipeline-java_nemotron-elastic_codex_pon_1790268418` | `9ded52bc p22` | 20% | open — ≤75% |
 | handles-cli-node | `handles-cli-node_nemotron-elastic_codex_pon_1790285393` | `9fab19d9 p25` | 50% | open — ≤75% |
@@ -579,6 +579,11 @@ reconciled HEAD: `p22-feed-rerun-9ded52bc.service` (user unit, not collected), s
   18:30 and its judgment was only recorded at 20:20 — heartbeat firings in between were not processed. `run.py`
   measures active minutes, so the cell's measurement is unaffected, but the queue lost ~110 min. Rule applied from
   here: every heartbeat first clears `suite/milestones.py pending` for the row's run ids before anything else.
+
+- **cart-billing-go** `…_1790298041`: `milestone-stalled-60min`, 290 calls; milestones 20/continue, 30/continue,
+  30/stalled; final **30%**. Real `shopspring/decimal v1.4.0` + go.sum resolved (an improvement over p26's invented
+  version), discounts.json + fallback, decimal path, stderr log, 48.58 test — but compile fails from 45→60 min on
+  `NewFromString` single-value use and nonexistent `Quantize`/`RoundingModeCeiling` (invented API class again).
 
 ### Cross-cell lead — invented third-party API members (not yet a candidate)
 
