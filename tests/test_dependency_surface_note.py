@@ -1,13 +1,11 @@
 """writeproxy._note_dependency_surface — Candidate C40's delivery half.
 
-Covers the 2026-09-25b independent-review fixes:
-  B1 — real session-scoped delivered-state (requires `sess_key`; a genuine second REQUEST replaying
-       the harness's OWN unmodified turn-1 history, not a self-serving re-feed of cria's own output).
-  B2 — direct dependencies only + a bounded note count per request + delivered-state checked before
-       any disk read.
-  B3 — completeness wording only when the read is provably complete.
-  B4 — path escape / option injection (covered directly in tests/test_depsurface.py; this file only
-       checks the end-to-end behaviour stays refused through the full represent_inbound path).
+2026-09-25c (independent review round 2): the 2026-09-25b one-shot delivered-state fix was itself
+wrong — it made a real fact visible for exactly ONE request, then silently absent for the rest of a
+30+ minute session. This file now covers the DURABLE, RE-RENDERED ANCHOR design: the SAME text
+re-attached to the SAME message on every later request while that message survives, re-anchored once
+(same text) if a compaction folds the original anchor out of history, and TIMELESS wording ("the
+version declared in <manifest>", never "JUST RESOLVED").
 
 Hermetic: the module cache and the workspace are both throwaway temp dirs; wsview reads the workspace
 body through the autouse DirectView (tests/conftest.py).
@@ -21,6 +19,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from cria import depsurface, writeproxy
+
+ANCHOR_TEXT = "THE VERSION OF"   # the timeless template's own opening words
 
 
 def tool(content, call_id="c1"):
@@ -40,8 +40,8 @@ class _WorkspaceCase(unittest.TestCase):
         self.addCleanup(self._home_tmp.cleanup)
         self.addCleanup(self._ws_tmp.cleanup)
         self.addCleanup(setattr, os.path, "expanduser", self._real_expanduser)
-        depsurface._DELIVERED.clear()
-        self.addCleanup(depsurface._DELIVERED.clear)
+        depsurface._ANCHOR.clear()
+        self.addCleanup(depsurface._ANCHOR.clear)
         self.sess = "test-session-1"
 
     def represent(self, messages, workspace_root=None, sess_key=None, tools_present=True):
@@ -69,7 +69,7 @@ class FailsBeforeTests(_WorkspaceCase):
         self._write_go_mod()
         out = self.represent([tool("some build output")])
         self.assertEqual(out[0]["content"], "some build output")
-        self.assertNotIn("THE PACKAGE MANAGER JUST RESOLVED", out[0]["content"])
+        self.assertNotIn(ANCHOR_TEXT, out[0]["content"])
 
     def test_no_manifest_at_all_yields_no_note_even_with_a_populated_cache(self):
         self._write_module_cache()
@@ -90,9 +90,16 @@ class PassesAfterTests(_WorkspaceCase):
         out = self.represent([tool("go build ./... succeeded")])
         content = out[0]["content"]
         self.assertIn("go build ./... succeeded", content)
-        self.assertIn("THE PACKAGE MANAGER JUST RESOLVED example.invalid/nonexistent v1.4.0", content)
+        self.assertIn("THE VERSION OF example.invalid/nonexistent v1.4.0 DECLARED IN go.mod", content)
         self.assertIn("func NewFromString(value string) (Decimal, error) {", content)
         self.assertIn("func (d Decimal) Round(places int32) Decimal {", content)
+
+    def test_wording_is_timeless_never_says_just_resolved(self):
+        self._write_go_mod(module="example.invalid/nonexistent")
+        self._write_module_cache(module="example.invalid/nonexistent")
+        out = self.represent([tool("build output")])
+        self.assertNotIn("JUST RESOLVED", out[0]["content"])
+        self.assertNotIn("just resolved", out[0]["content"].lower())
 
     def test_no_paraphrase_every_added_line_is_a_real_source_line(self):
         body = ("package decimal\n\nfunc NewFromString(value string) (Decimal, error) {\n"
@@ -122,9 +129,7 @@ class PassesAfterTests(_WorkspaceCase):
                      "<version>1.10.0</version>\n"
                      "</dependency></dependencies></project>")
         out = self.represent([tool("mvn output")])
-        # No real .m2 jar in this fixture (the javap fixture lives in test_depsurface.py::JvmTests) --
-        # proves the ABSTAIN half: a declared pom.xml coordinate with no matching local jar injects
-        # nothing, same as any other ecosystem's cache-miss path.
+        # No real .m2 jar in this fixture -- proves the ABSTAIN half.
         self.assertEqual(out[0]["content"], "mvn output")
 
 
@@ -145,53 +150,112 @@ class AbstainTests(_WorkspaceCase):
         self.assertEqual(out[0]["content"], "npm output")
 
     def test_compaction_turn_no_tools_menu_is_skipped(self):
-        # B1/cheap item: a compaction/summarize turn (empty tool menu) must never spend a real
-        # disk/subprocess probe -- even with a fully satisfiable manifest+cache, tools_present=False
-        # short-circuits before depsurface is ever consulted.
         self._write_go_mod(module="example.invalid/nonexistent")
         self._write_module_cache(module="example.invalid/nonexistent")
         out = self.represent([tool("build output")], tools_present=False)
         self.assertEqual(out[0]["content"], "build output")
 
 
-class IdempotencyTests(_WorkspaceCase):
-    def test_a_genuine_second_request_with_the_harnesss_own_unmodified_history_does_not_re_fire(self):
-        """B1's actual bug: the harness replays ITS OWN unmodified history, never cria's rewrite.
-        Turn 2 here is exactly that -- the SAME raw turn-1 message (never touched by
-        represent_inbound's output) plus one new, unrelated tool result. A self-serving test that
-        fed cria's own annotated text back in would prove nothing about production; this does not."""
+class MultiRequestReplayTests(_WorkspaceCase):
+    """The exact shape independent review asked for: a genuine multi-request replay where requests 2
+    and 3 are the harness's OWN unmodified history (never cria's rewrite -- the harness does not
+    store it) plus a new tool result each turn. The note must be present on the ANCHOR message in all
+    three requests, byte-identical, and present exactly once per request."""
+
+    def test_the_note_persists_byte_identical_across_three_requests_on_the_same_anchor(self):
         self._write_go_mod(module="example.invalid/nonexistent")
         self._write_module_cache(module="example.invalid/nonexistent")
-        # `represent_inbound` may alias/mutate a passthrough message dict in place (writeproxy.py's
-        # own documented behaviour for a message it does not otherwise need to copy) -- a REAL harness
-        # never sees that mutation, it keeps its OWN independently-held copy. Turn 1's message is
-        # therefore rebuilt fresh for turn 2 rather than reusing the (possibly now-mutated) object, so
-        # this test cannot accidentally pass by aliasing instead of by real session-state recall.
-        first = self.represent([tool("build output", call_id="c1")])
-        self.assertIn("THE PACKAGE MANAGER JUST RESOLVED", first[0]["content"])
 
-        # Turn 2: the harness's OWN record of turn 1 (raw, unmodified -- it never saw cria's rewrite)
-        # plus a new tool result for whatever the coder did next.
-        second = self.represent([tool("build output", call_id="c1"),
-                                 tool("go vet ./... clean", call_id="c2")])
-        self.assertEqual(second[0]["content"], "build output")   # NOT re-annotated: already delivered
-        self.assertEqual(second[1]["content"], "go vet ./... clean")   # note does NOT move here either
-        combined_text = second[0]["content"] + second[1]["content"]
-        self.assertEqual(combined_text.count("THE PACKAGE MANAGER JUST RESOLVED"), 0)
+        # Request 1: the coder's first build result.
+        req1 = [tool("go build ./... succeeded", call_id="c1")]
+        out1 = self.represent(req1)
+        anchor_text = out1[0]["content"]
+        self.assertIn(ANCHOR_TEXT, anchor_text)
+        self.assertEqual(anchor_text.count(ANCHOR_TEXT), 1)
 
-    def test_state_persists_even_though_history_never_shows_the_note(self):
+        # Request 2: the HARNESS's own unmodified history -- the RAW turn-1 message (never touched by
+        # cria's rewrite, since the harness keeps its own transcript), plus a new, unrelated result.
+        req2 = [tool("go build ./... succeeded", call_id="c1"),
+               tool("go vet ./... clean", call_id="c2")]
+        out2 = self.represent(req2)
+        self.assertEqual(out2[0]["content"], anchor_text)          # byte-identical re-render
+        self.assertEqual(out2[0]["content"].count(ANCHOR_TEXT), 1)  # exactly once
+        self.assertEqual(out2[1]["content"], "go vet ./... clean")  # not duplicated elsewhere
+
+        # Request 3: again the harness's own unmodified history (both raw turns) plus one more result.
+        req3 = [tool("go build ./... succeeded", call_id="c1"),
+               tool("go vet ./... clean", call_id="c2"),
+               tool("go test ./... ok", call_id="c3")]
+        out3 = self.represent(req3)
+        self.assertEqual(out3[0]["content"], anchor_text)           # still byte-identical, same anchor
+        self.assertEqual(out3[0]["content"].count(ANCHOR_TEXT), 1)
+        self.assertEqual(out3[1]["content"], "go vet ./... clean")
+        self.assertEqual(out3[2]["content"], "go test ./... ok")
+        full_text = "".join(m["content"] for m in out3)
+        self.assertEqual(full_text.count(ANCHOR_TEXT), 1)   # present exactly once across the request
+
+    def test_gather_runs_exactly_once_across_the_three_requests(self):
+        self._write_go_mod(module="example.invalid/nonexistent")
+        self._write_module_cache(module="example.invalid/nonexistent")
+        calls = {"n": 0}
+        real_gather = depsurface.gather
+
+        def counting_gather(*a, **kw):
+            calls["n"] += 1
+            return real_gather(*a, **kw)
+
+        depsurface.gather = counting_gather
+        try:
+            self.represent([tool("t1", call_id="c1")])
+            self.represent([tool("t1", call_id="c1"), tool("t2", call_id="c2")])
+            self.represent([tool("t1", call_id="c1"), tool("t2", call_id="c2"),
+                            tool("t3", call_id="c3")])
+        finally:
+            depsurface.gather = real_gather
+        self.assertEqual(calls["n"], 1)
+
+
+class AnchorLossTests(_WorkspaceCase):
+    """Anchor loss (a harness compaction folds the anchor message out of history): re-anchor once on
+    the newest qualifying tool result, replaying the SAME cached text."""
+
+    def test_anchor_loss_re_anchors_on_the_newest_tool_result_with_identical_text(self):
+        self._write_go_mod(module="example.invalid/nonexistent")
+        self._write_module_cache(module="example.invalid/nonexistent")
+        out1 = self.represent([tool("build output", call_id="c1")])
+        original_text = out1[0]["content"]
+        added = original_text[len("build output"):]
+
+        # A compaction happened: call_id "c1" is gone from history entirely, replaced by a rollup
+        # message plus a fresh tool result the coder produced after resuming.
+        out2 = self.represent([
+            {"role": "user", "content": "⟦ctx:rollup⟧ (retrospective summary, no tool_call_id)"},
+            tool("go build ./... succeeded", call_id="c9"),
+        ])
+        self.assertIn(added.strip(), out2[1]["content"])   # SAME cached text, re-anchored
+        self.assertEqual(out2[1]["content"].count(ANCHOR_TEXT), 1)
+
+    def test_re_anchor_text_stays_byte_identical_to_the_original(self):
+        self._write_go_mod(module="example.invalid/nonexistent")
+        self._write_module_cache(module="example.invalid/nonexistent")
+        out1 = self.represent([tool("build output", call_id="c1")])
+        original_added = out1[0]["content"][len("build output"):]
+        out2 = self.represent([tool("go test ./... ok", call_id="c9")])   # c1 vanished
+        new_added = out2[0]["content"][len("go test ./... ok"):]
+        self.assertEqual(original_added, new_added)   # not re-gathered, not re-worded -- identical
+
+    def test_re_anchor_does_not_re_run_gather(self):
         self._write_go_mod(module="example.invalid/nonexistent")
         self._write_module_cache(module="example.invalid/nonexistent")
         self.represent([tool("build output", call_id="c1")])
-        self.assertTrue(depsurface.already_delivered(
-            self.sess, ("go", "example.invalid/nonexistent", "v1.4.0")))
-
-    def test_a_different_session_is_delivered_independently(self):
-        self._write_go_mod(module="example.invalid/nonexistent")
-        self._write_module_cache(module="example.invalid/nonexistent")
-        self.represent([tool("build output")], sess_key="session-A")
-        out = self.represent([tool("build output")], sess_key="session-B")
-        self.assertIn("THE PACKAGE MANAGER JUST RESOLVED", out[0]["content"])
+        real_gather = depsurface.gather
+        depsurface.gather = lambda *a, **kw: (_ for _ in ()).throw(
+            AssertionError("gather() must not run on anchor-loss re-anchor"))
+        try:
+            out2 = self.represent([tool("go test ./... ok", call_id="c9")])
+        finally:
+            depsurface.gather = real_gather
+        self.assertIn(ANCHOR_TEXT, out2[0]["content"])
 
 
 class BoundedNotesTests(_WorkspaceCase):
@@ -207,24 +271,20 @@ class BoundedNotesTests(_WorkspaceCase):
         with open(os.path.join(self.ws, "go.mod"), "w") as fh:
             fh.write("".join(lines))
         out = self.represent([tool("build output")])
-        rendered = out[0]["content"].count("THE PACKAGE MANAGER JUST RESOLVED")
+        rendered = out[0]["content"].count(ANCHOR_TEXT)
         self.assertGreater(rendered, 0)
         self.assertLessEqual(rendered, writeproxy._MAX_NOTES_PER_REQUEST)
 
     def test_delivered_state_is_checked_before_gather_no_repeated_disk_cost(self):
-        """B2: once delivered, a later request for the SAME coordinate must not re-run gather() at
-        all -- proven by making gather() itself raise if called a second time for the delivered
-        coordinate, then confirming a second (fresh, unmodified-history) request does not error and
-        does not re-render."""
         self._write_go_mod(module="example.invalid/nonexistent")
         self._write_module_cache(module="example.invalid/nonexistent")
         first = self.represent([tool("build output", call_id="c1")])
-        self.assertIn("THE PACKAGE MANAGER JUST RESOLVED", first[0]["content"])
+        self.assertIn(ANCHOR_TEXT, first[0]["content"])
 
         real_gather = depsurface.gather
 
         def _boom(*a, **kw):
-            raise AssertionError("gather() must not run for an already-delivered coordinate")
+            raise AssertionError("gather() must not run for an already-anchored coordinate")
 
         depsurface.gather = _boom
         try:
@@ -244,38 +304,34 @@ class CompletenessTests(_WorkspaceCase):
         self._write_module_cache(module="example.invalid/nonexistent")
         out = self.represent([tool("build output")])
         content = out[0]["content"]
-        self.assertNotIn("does not exist in this exact resolved version", content)
+        self.assertNotIn("does not exist in this exact declared version", content)
         self.assertIn("PARTIAL", content)
 
     def test_jvm_never_uses_the_complete_template(self):
-        # No real .m2 jar in this fixture -- assembled directly against depsurface to check the
-        # wording contract without needing a real jar/javap here (covered live in
-        # tests/test_depsurface.py::JvmTests).
         surface = depsurface.DependencySurface(
             "jvm", "org.apache.commons:commons-csv:1.10.0", "/fake.jar", ("A",),
             ("public final class A {", "  public A();", "}"), read_hint="javap ...", complete=False)
-        note = writeproxy._render_dependency_surface(surface)
-        self.assertNotIn("does not exist in this exact resolved version", note)
+        note = writeproxy._render_dependency_surface(surface, "jvm")
+        self.assertNotIn("does not exist in this exact declared version", note)
         self.assertIn("PARTIAL", note)
+        self.assertIn("pom.xml", note)
 
     def test_a_complete_surface_that_fits_uses_the_complete_template(self):
         surface = depsurface.DependencySurface(
             "go", "example.com/x v1.0.0", "/fake", ("go doc -all example.com/x@v1.0.0",),
             ("func Foo() int",), read_hint="run go doc yourself", complete=True)
-        note = writeproxy._render_dependency_surface(surface)
+        note = writeproxy._render_dependency_surface(surface, "go")
         self.assertIn("COMPLETE", note)
-        self.assertIn("does not exist in this exact resolved version", note)
+        self.assertIn("does not exist in this exact declared version", note)
+        self.assertIn("go.mod", note)
 
     def test_a_complete_surface_that_overflows_the_budget_still_uses_partial_wording(self):
         many_lines = tuple(f"func Member{i}() int" for i in range(2000))
         surface = depsurface.DependencySurface(
             "go", "example.com/big v1.0.0", "/fake", ("go doc -all example.com/big@v1.0.0",),
             many_lines, read_hint="run go doc yourself", complete=True)
-        note = writeproxy._render_dependency_surface(surface)
-        # Even a COMPLETE read that does not fit the inline budget must not claim "you've seen it
-        # all" for the truncated INLINE text -- completeness is a property of what was GATHERED, not
-        # of what fits on screen.
-        self.assertNotIn("does not exist in this exact resolved version", note)
+        note = writeproxy._render_dependency_surface(surface, "go")
+        self.assertNotIn("does not exist in this exact declared version", note)
         self.assertIn("PARTIAL", note)
 
 

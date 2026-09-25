@@ -32,6 +32,17 @@ REDESIGN HISTORY:
   under the ecosystem's cache root) on every path this module builds, a grammar check on every
   coordinate before it is used in a path at all, and a strict allowlist regex on every class name
   handed to ``javap``.
+* 2026-09-25c (independent review round 2: the B1 fix above was STILL wrong). Marking a coordinate
+  "delivered" once and never touching it again means the real fact is visible for exactly ONE
+  request, then silently absent for the rest of a session that can run 30+ minutes — precisely the
+  repair phase that needs it most. Replaced one-shot delivered-state with a durable, RE-RENDERED
+  ANCHOR (:data:`_ANCHOR`, :func:`anchor_state`/:func:`set_anchor_state`): the exact rendered text is
+  remembered against the tool_call_id it was first attached to, and every later request re-appends
+  the SAME text to the SAME message (cheap — no re-``gather()``) as long as that message is still in
+  the harness's history; on anchor loss (a compaction folded it away) the caller re-anchors once on
+  the newest tool result, replaying the identical cached text. The model-facing wording also changed
+  from "JUST RESOLVED" (true once, false on every later re-render) to a TIMELESS framing — "the
+  version declared in <manifest>" — that stays true no matter how many times it is repeated.
 
 WHAT THIS MODULE DOES. Table-driven per-ecosystem dispatch (sibling of
 :mod:`cria.probediscovery`'s ``build_go``/``build_rust``/... tables): given a coordinate a manifest
@@ -450,6 +461,16 @@ MANIFEST_NAMES = {
     "jvm": ("pom.xml",),
 }
 
+# The single most meaningful file name per ecosystem for TIMELESS model-facing wording ("the version
+# declared in <this file>") -- Rust reads two files, but Cargo.lock is the one that pins the EXACT
+# version, so it is the label a coder would actually go re-check.
+MANIFEST_LABEL = {
+    "go": "go.mod",
+    "rust": "Cargo.lock",
+    "ruby": "Gemfile.lock",
+    "jvm": "pom.xml",
+}
+
 
 def _parse_go_mod(text: str) -> list[tuple[str, str]]:
     """(module, version) for every DIRECT ``require`` line -- the single-line form and the
@@ -611,42 +632,52 @@ def declared_coordinates(workspace_root: str | None) -> list[tuple[str, str, str
     return out
 
 
-# ---------------------------------------------------------------------- session-scoped delivered state
+# ---------------------------------------------------------------------- session-scoped anchor state
 
-# Which (ecosystem, package, version) coordinates have already earned a note THIS SESSION.
+# Which (ecosystem, package, version) coordinates have earned a note THIS SESSION, and WHERE --
+# (anchor tool_call_id, exact rendered note text) -- so the SAME text can be re-rendered onto the SAME
+# message every later request (independent review round 2, "B1 still wrong").
 #
-# WHY THIS EXISTS AT ALL (independent review B1): the first shape of this candidate assumed the
-# harness echoes cria's own prior annotation back on the next request, the same way a message cria
-# never touched is replayed verbatim. It does not: the harness keeps its OWN transcript of what it
-# and the model did, and `represent_inbound`'s rewrite is visible only to the model generating THIS
-# turn's reply, never stored anywhere cria can re-read on a later request. A "marker already in
-# history" check therefore never once matched in production, and re-scanning the newest tool result
-# every turn both re-ran gather() (disk reads, up to MAX_FILES javap subprocesses) needlessly AND
-# kept moving which message carried the note, changing the prompt PREFIX every turn and defeating the
-# harness's own prompt cache.
+# WHY A ONE-SHOT DELIVERY (the first B1 fix) WAS STILL WRONG. The harness resends its OWN unmodified
+# transcript every request; `represent_inbound`'s rewrite is visible only to the model generating THIS
+# turn's reply and is never stored anywhere cria can re-read later. Marking a coordinate "delivered"
+# and never touching it again therefore means the real ground truth is visible for exactly ONE
+# request and then silently absent for the rest of a session that can run 30+ minutes -- the repair
+# phase, which is exactly when a contradicting real signature matters most, never sees it again.
 #
-# The fix is real, session-scoped memory, in the same shape as `wsview._BODY_CACHE`: a bounded
-# module-level dict keyed by the session id the server layer already threads through
-# (`_setup_translation`'s `sess_key`), checked and updated ATOMICALLY around the one place a note is
-# actually rendered (`cria.writeproxy._note_dependency_surface`) -- once delivered, a coordinate is
-# marked BEFORE anything is appended, so this module is also the single source of truth B2 needs to
-# check ahead of any disk read.
-_DELIVERED: dict[str, set[tuple[str, str, str]]] = {}
-_DELIVERED_MAX_SESSIONS = 512
-_DELIVERED_MAX_PER_SESSION = 256
+# THE FIX IS A DURABLE, RE-RENDERED ANCHOR, not a one-shot flag. `anchor_state` remembers both WHERE
+# the note was first attached (a tool_call_id, the harness's own stable per-call identity) and the
+# EXACT text that was rendered there. Every later request re-appends that byte-identical text to the
+# SAME message, if it is still present -- same text, same position, so the harness's prompt-cache
+# prefix stays stable (the property the original one-shot fix also aimed for, now achieved without
+# giving up durability). The expensive half (`gather()` -- disk reads, up to MAX_FILES real `javap`
+# subprocesses) still runs AT MOST ONCE per coordinate per session: a re-render only ever replays
+# cached text, never re-probes disk.
+#
+# ANCHOR LOSS (a harness compaction folds the anchor message out of history): the caller re-anchors
+# ONCE on the newest qualifying tool result, replaying the SAME cached text (see
+# `cria.writeproxy._note_dependency_surface`'s own docstring for the full policy and the C37/compaction
+# rationale) rather than either re-probing disk or letting the fact disappear for good.
+_ANCHOR: dict[str, dict[tuple[str, str, str], tuple[str, str]]] = {}
+_ANCHOR_MAX_SESSIONS = 512
+_ANCHOR_MAX_PER_SESSION = 256
 
 
-def already_delivered(sess_key: str, coordinate: tuple[str, str, str]) -> bool:
+def anchor_state(sess_key: str, coordinate: tuple[str, str, str]) -> tuple[str, str] | None:
+    """``(anchor_call_id, exact_note_text)`` already recorded for this coordinate this session, or
+    ``None`` if it has never been anchored (a genuinely new coordinate for this session)."""
     if not sess_key:
-        return False   # no session identity to remember against -- never claim delivered
-    return coordinate in _DELIVERED.get(sess_key, ())
+        return None
+    return _ANCHOR.get(sess_key, {}).get(coordinate)
 
 
-def mark_delivered(sess_key: str, coordinate: tuple[str, str, str]) -> None:
-    if not sess_key:
+def set_anchor_state(sess_key: str, coordinate: tuple[str, str, str], call_id: str, note_text: str) -> None:
+    """Record (or MOVE, on anchor loss) where a coordinate's note lives and its exact rendered text.
+    Idempotent to call again with the SAME ``call_id``/``note_text`` (the common re-render case)."""
+    if not sess_key or not call_id:
         return
-    if len(_DELIVERED) > _DELIVERED_MAX_SESSIONS:
-        _DELIVERED.clear()   # a stuck/leaked session count is the failure mode, not a slow leak
-    bucket = _DELIVERED.setdefault(sess_key, set())
-    if len(bucket) < _DELIVERED_MAX_PER_SESSION:
-        bucket.add(coordinate)
+    if len(_ANCHOR) > _ANCHOR_MAX_SESSIONS:
+        _ANCHOR.clear()   # a stuck/leaked session count is the failure mode, not a slow leak
+    bucket = _ANCHOR.setdefault(sess_key, {})
+    if len(bucket) < _ANCHOR_MAX_PER_SESSION or coordinate in bucket:
+        bucket[coordinate] = (call_id, note_text)

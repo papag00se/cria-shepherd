@@ -435,30 +435,41 @@ class DeclaredCoordinatesTests(unittest.TestCase):
         self.assertIn(("rust", "toml", "0.8.23"), got)
 
 
-class DeliveredStateTests(unittest.TestCase):
-    """B1: real session-scoped delivered-state, checked/updated by `writeproxy._note_dependency_surface`
-    but owned here so it can be unit-tested directly."""
+class AnchorStateTests(unittest.TestCase):
+    """B1 round 2: real session-scoped ANCHOR state (tool_call_id + exact rendered text), checked/
+    updated by `writeproxy._note_dependency_surface` but owned here so it can be unit-tested directly."""
 
     def setUp(self):
-        depsurface._DELIVERED.clear()
-        self.addCleanup(depsurface._DELIVERED.clear)
+        depsurface._ANCHOR.clear()
+        self.addCleanup(depsurface._ANCHOR.clear)
 
-    def test_undelivered_coordinate_is_not_delivered(self):
-        self.assertFalse(depsurface.already_delivered("sess-1", ("go", "x", "v1.0.0")))
+    def test_unanchored_coordinate_has_no_state(self):
+        self.assertIsNone(depsurface.anchor_state("sess-1", ("go", "x", "v1.0.0")))
 
-    def test_marked_coordinate_is_delivered_for_that_session_only(self):
-        depsurface.mark_delivered("sess-1", ("go", "x", "v1.0.0"))
-        self.assertTrue(depsurface.already_delivered("sess-1", ("go", "x", "v1.0.0")))
-        self.assertFalse(depsurface.already_delivered("sess-2", ("go", "x", "v1.0.0")))
+    def test_anchored_coordinate_remembers_call_id_and_text_for_that_session_only(self):
+        depsurface.set_anchor_state("sess-1", ("go", "x", "v1.0.0"), "call-abc", "the real note")
+        self.assertEqual(depsurface.anchor_state("sess-1", ("go", "x", "v1.0.0")),
+                         ("call-abc", "the real note"))
+        self.assertIsNone(depsurface.anchor_state("sess-2", ("go", "x", "v1.0.0")))
 
-    def test_no_session_key_never_claims_delivered_and_never_records(self):
-        depsurface.mark_delivered("", ("go", "x", "v1.0.0"))
-        self.assertFalse(depsurface.already_delivered("", ("go", "x", "v1.0.0")))
+    def test_no_session_key_never_records_and_never_recalls(self):
+        depsurface.set_anchor_state("", ("go", "x", "v1.0.0"), "call-abc", "text")
+        self.assertIsNone(depsurface.anchor_state("", ("go", "x", "v1.0.0")))
+
+    def test_no_call_id_never_records(self):
+        depsurface.set_anchor_state("sess-1", ("go", "x", "v1.0.0"), "", "text")
+        self.assertIsNone(depsurface.anchor_state("sess-1", ("go", "x", "v1.0.0")))
+
+    def test_re_anchoring_moves_the_call_id_keeps_the_text(self):
+        coord = ("go", "x", "v1.0.0")
+        depsurface.set_anchor_state("sess-1", coord, "call-old", "the real note")
+        depsurface.set_anchor_state("sess-1", coord, "call-new", "the real note")
+        self.assertEqual(depsurface.anchor_state("sess-1", coord), ("call-new", "the real note"))
 
     def test_bounded_per_session(self):
-        for i in range(depsurface._DELIVERED_MAX_PER_SESSION + 10):
-            depsurface.mark_delivered("sess-1", ("go", f"pkg{i}", "v1.0.0"))
-        self.assertLessEqual(len(depsurface._DELIVERED["sess-1"]), depsurface._DELIVERED_MAX_PER_SESSION)
+        for i in range(depsurface._ANCHOR_MAX_PER_SESSION + 10):
+            depsurface.set_anchor_state("sess-1", ("go", f"pkg{i}", "v1.0.0"), f"call-{i}", "text")
+        self.assertLessEqual(len(depsurface._ANCHOR["sess-1"]), depsurface._ANCHOR_MAX_PER_SESSION)
 
 
 if __name__ == "__main__":

@@ -2128,91 +2128,129 @@ def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | Non
 # case, and a large budget would let one bloated package push everything else in the same tool
 # result out of the window it rides in.
 _SURFACE_INLINE_BUDGET = 2400
-# How many DIRECT coordinates one request will ever gather()/render (independent review B2): even
-# restricted to direct dependencies, a manifest can name several in one project, and each gather()
-# may be a real disk walk or (JVM) up to MAX_FILES real `javap` subprocesses. Bounding the COUNT per
-# request bounds the worst case regardless of how many direct dependencies a project declares.
+# How many NEW coordinates one request will ever gather() for the first time (independent review B2):
+# even restricted to direct dependencies, a manifest can name several in one project, and each
+# first-time gather() may be a real disk walk or (JVM) up to MAX_FILES real `javap` subprocesses.
+# Re-RENDERING an already-anchored coordinate (replaying cached text) does not count against this --
+# it costs one dict lookup, never a disk read -- but is separately bounded by
+# `_MAX_ANCHOR_RENDERS_PER_REQUEST` so a project with many direct dependencies cannot still turn one
+# request into an unbounded wall of text.
 _MAX_NOTES_PER_REQUEST = 3
+_MAX_ANCHOR_RENDERS_PER_REQUEST = 12
 
 
 def _note_dependency_surface(messages: list[dict], workspace_root, sess_key: str, rlog) -> None:
-    """Candidate C40. See cria/depsurface.py's module docstring for the full redesign history
-    (2026-09-25a: manifest+cache trigger replacing a textual ledger-success trigger measured to cover
-    0 of 5 real sessions; 2026-09-25b: this function's own delivery bugs, independent review B1/B2).
+    """Candidate C40. See cria/depsurface.py's module docstring for the full redesign history.
+    This round (2026-09-25c, independent review round 2): the previous ONE-SHOT delivered-state fix
+    (2026-09-25b, B1) was still wrong -- it made the real fact visible for exactly ONE request, then
+    silently absent for the rest of a session that runs 30+ minutes, which is precisely when the
+    repair phase needs a contradicting real signature most.
 
-    SESSION-SCOPED DELIVERED STATE (B1). The previous shape of this function assumed the harness
-    echoes cria's own prior annotation back on a later request (the same durability
-    `_note_missing_dependency` relies on for its OWN "most recent occurrence" wording) -- it does
-    not: the harness replays ITS OWN unmodified history, so a "marker already present" check never
-    once matched in production. `depsurface.already_delivered`/`mark_delivered` are real,
-    session-scoped memory (keyed by `sess_key`, the same identity `_setup_translation` already binds
-    the workspace view under), checked BEFORE any disk read and updated the instant a note is
-    rendered -- so a coordinate is delivered AT MOST ONCE per session, full stop, and every later
-    request for that coordinate is a same-cost no-op (one dict/set membership check) rather than a
-    repeated disk walk. Without a `sess_key` (a caller that never supplies one, e.g. most of this
-    module's own unit tests) this abstains entirely: there is no identity to remember delivery
-    against, and guessing one would either over-share across sessions or re-deliver forever.
+    A DURABLE, RE-RENDERED ANCHOR (not one-shot, not a moving target). `depsurface.anchor_state`
+    remembers, per coordinate, the exact tool_call_id a note was first attached to AND the exact
+    rendered text. Every later request:
 
-    NO LONGER A MOVING TARGET. Because delivery is now genuinely one-shot, there is nothing to
-    re-attach on a later turn, so nothing keeps moving position and defeating the harness's own
-    prompt-cache prefix the way repeatedly re-annotating "the newest tool result" did.
+    1. For a coordinate ALREADY anchored this session: if the anchor's tool_call_id is still present
+       among THIS request's messages, the SAME cached text is re-appended to that SAME message --
+       byte-identical, same position, so the harness's prompt-cache prefix stays stable (the property
+       the one-shot fix also wanted, now kept without losing durability). No disk read, no `gather()`
+       call -- `gather()` runs AT MOST ONCE per coordinate per session, ever.
+    2. If the anchor's tool_call_id is no longer present (a harness compaction folded it out of
+       history), the coordinate is RE-ANCHORED once on the newest qualifying tool result in this
+       batch, replaying the SAME cached text and recording the new tool_call_id as the anchor going
+       forward. This is a deliberate choice over staying silent: C37's own compaction handling already
+       hardens DETECTION of a compaction turn, but nothing in that path guarantees the compactor's
+       retrospective preserves any one specific fact from the folded window, and staying silent would
+       mean a session that compacts even once permanently loses this candidate's grounding for
+       whatever remains of a 30+ minute repair. Re-anchoring is cheap (cached text, no re-probe) and
+       bounded (`_MAX_ANCHOR_RENDERS_PER_REQUEST`), so the cost of "wrong" here is small next to the
+       cost of "silently gone forever". Deeper integration -- e.g. handing the note directly to the
+       compaction writer as evidence so it can be preserved IN the rollup rather than re-attached
+       after -- is a reasonable future enhancement and is out of scope for this candidate (the same
+       disclosed-not-fixed treatment as the C38 interaction below).
+    3. For a coordinate NEVER anchored this session: the normal gather()-bounded-by-
+       `_MAX_NOTES_PER_REQUEST` flow runs, and success records a brand-new anchor.
 
-    DIRECT DEPENDENCIES ONLY, BOUNDED COUNT (B2). `depsurface.declared_coordinates` itself already
-    filters a lockfile's transitive entries down to what the coder's manifest directly names;
-    `_MAX_NOTES_PER_REQUEST` additionally bounds how many of THOSE this one request will gather/render,
-    so a project with many direct dependencies cannot turn one request into a wall of notes or a
-    string of real disk/subprocess probes.
+    TIMELESS WORDING. The old "JUST RESOLVED" framing was true on first delivery and FALSE on every
+    later re-render (nothing "just" happened on turn 50) -- `cria/prompts/dependency_surface_*.txt`
+    now says "THE VERSION ... DECLARED IN <manifest>", a fact that stays true no matter how many times
+    it is repeated verbatim.
 
-    DELIVERY TARGET. There is no single tool result that "reported the success" to attach beside --
-    the manifest body may arrive through cria's own invisible survey plumbing, never through a tool
-    result the model sees at all. So a delivered note rides beside the LAST tool result in THIS batch
-    (the coder's most recent action) -- additive, never blocking, never substituting for that tool's
-    own output, and (now that delivery is one-shot) never repeated."""
+    Without a `sess_key` (no identity to remember anchors against) this abstains entirely, same as
+    the one-shot version did."""
     if not workspace_root or not sess_key:
         return
-    target = None
+    by_call_id: dict[str, dict] = {}
+    newest_tool = None
     for m in messages:
         if m.get("role") == "tool" and isinstance(m.get("content"), str) and m["content"]:
-            target = m   # keep walking -- the LAST qualifying tool result in this batch wins
-    if target is None:
+            newest_tool = m   # keep walking -- the LAST qualifying tool result in this batch wins
+            cid = m.get("tool_call_id")
+            if cid:
+                by_call_id[cid] = m
+    if newest_tool is None:
         return
-    rendered = 0
+    new_gathers = 0
+    anchor_renders = 0
     for eco, package, version in depsurface.declared_coordinates(workspace_root):
-        if rendered >= _MAX_NOTES_PER_REQUEST:
+        if anchor_renders >= _MAX_ANCHOR_RENDERS_PER_REQUEST:
             break
         coordinate_key = (eco, package, version)
-        if depsurface.already_delivered(sess_key, coordinate_key):
-            continue   # checked BEFORE any disk read (B2) -- a durably-delivered coordinate costs
-                       # one set lookup, never a repeated gather()
+        state = depsurface.anchor_state(sess_key, coordinate_key)
+        if state is not None:
+            anchor_id, note_text = state
+            anchor_msg = by_call_id.get(anchor_id)
+            if anchor_msg is not None:
+                anchor_msg["content"] = anchor_msg["content"] + "\n\n" + note_text
+                anchor_renders += 1
+                continue
+            # Anchor lost (compaction) -- re-anchor once on the newest tool result, same cached text.
+            new_cid = newest_tool.get("tool_call_id")
+            if new_cid:
+                newest_tool["content"] = newest_tool["content"] + "\n\n" + note_text
+                depsurface.set_anchor_state(sess_key, coordinate_key, new_cid, note_text)
+                anchor_renders += 1
+                if rlog is not None:
+                    rlog.emit("writeproxy.dependency_surface_reanchored", level="info", ecosystem=eco,
+                              coordinate=coordinate_key)
+            continue
+        if new_gathers >= _MAX_NOTES_PER_REQUEST:
+            continue
+        cid = newest_tool.get("tool_call_id")
+        if not cid:
+            continue   # no stable id to anchor to -- skip rather than anchor to nothing
         surface = depsurface.gather(eco, package, version, workspace_root)
         if surface is None:
             continue   # abstain silently -- manifest declares it, but the local cache does not
-        note = _render_dependency_surface(surface)
+        note = _render_dependency_surface(surface, eco)
         if not note:
             continue
-        target["content"] = target["content"] + "\n\n" + note
-        depsurface.mark_delivered(sess_key, coordinate_key)   # delivered AT MOST ONCE, ever
-        rendered += 1
+        newest_tool["content"] = newest_tool["content"] + "\n\n" + note
+        depsurface.set_anchor_state(sess_key, coordinate_key, cid, note)
+        new_gathers += 1
+        anchor_renders += 1
         if rlog is not None:
             rlog.emit("writeproxy.dependency_surface", level="info", ecosystem=eco,
                       coordinate=surface.coordinate, members=len(surface.lines),
                       complete=surface.complete)
 
 
-def _render_dependency_surface(surface) -> str:
+def _render_dependency_surface(surface, ecosystem: str) -> str:
     """The model-facing note for one real DependencySurface -- every line in it is byte-identical to a
     line :func:`cria.depsurface.gather` read from disk (#5b: never a cria paraphrase of what a real
     tool said). Uses the COMPLETE template ONLY when ``surface.complete`` is True (a real,
     authoritative tool enumerated the package's whole exported surface, e.g. ``go doc -all``) AND the
     complete selection fits the inline budget -- otherwise ALWAYS the partial template, which never
-    claims a missing member does not exist (independent review B3: a bounded file scan is never
-    complete, and the old inline template's "a member you don't see here does not exist" was false
-    for exactly that case)."""
+    claims a missing member does not exist (independent review B3). ``ecosystem`` selects the
+    TIMELESS manifest label ("the version declared in go.mod") -- this text is re-rendered verbatim on
+    every later turn, so it must never say anything that is only true at the moment of first
+    delivery."""
+    manifest = depsurface.MANIFEST_LABEL.get(ecosystem, "the project's dependency manifest")
     joined = "\n".join(surface.lines)
     fits = len(joined.encode("utf-8", "replace")) <= _SURFACE_INLINE_BUDGET
     if surface.complete and fits:
         return prompts.render("dependency_surface_complete", coordinate=surface.coordinate,
-                              root=surface.root, lines=joined)
+                              manifest=manifest, root=surface.root, lines=joined)
     shown: list[str] = list(surface.lines) if fits else []
     if not fits:
         budget = _SURFACE_INLINE_BUDGET
@@ -2225,8 +2263,8 @@ def _render_dependency_surface(surface) -> str:
         if not shown:
             shown = list(surface.lines[:1])
     return prompts.render("dependency_surface_partial", coordinate=surface.coordinate,
-                          root=surface.root, total=str(len(surface.lines)), shown=str(len(shown)),
-                          lines="\n".join(shown), read_hint=surface.read_hint)
+                          manifest=manifest, root=surface.root, total=str(len(surface.lines)),
+                          shown=str(len(shown)), lines="\n".join(shown), read_hint=surface.read_hint)
 
 
 def _note_missing_dependency(messages: list[dict], workspace_root, rlog) -> None:
