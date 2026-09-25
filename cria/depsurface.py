@@ -276,21 +276,83 @@ def _select(root: str, ext: str, matches, *, exclude_suffixes: tuple[str, ...] =
     return tuple(dict.fromkeys(lines))[:MAX_TOTAL_LINES], tuple(sources)
 
 
-def _go_doc_all(package: str, tagged_version: str) -> list[str] | None:
-    """Real, COMPLETE, exported-only output from the real ``go doc -all`` tool, restricted to this
-    box's OWN already-downloaded module cache -- ``GOPROXY`` points ONLY at the local file-based cache
-    directory (no ``,direct`' fallback: a cache miss fails in milliseconds instead of risking a
-    network call) and ``GOSUMDB=off`` skips the checksum-database lookup, which would otherwise also
-    reach the network. ``None`` (never raises) when ``go`` is absent, the module is not in the local
-    cache, or the call fails/times out; the caller falls back to the bounded file scan, which is
-    never labelled complete."""
+_GO_DOC_DECL_RE = re.compile(r'^(func|type|const|var)\b')
+_GO_DOC_HEADER_RE = re.compile(r'^[A-Z][A-Z ]*$')
+
+
+def _select_go_doc_blocks(stdout: str) -> tuple[list[str], bool]:
+    """Real declaration BLOCKS from ``go doc -all`` output -- the opening ``func``/``type``/``const``/
+    ``var`` line AND every indented line that belongs to it (a grouped ``const ( ... )`` block's
+    members, a struct's fields), tracked by brace/paren depth, not just the column-0 line.
+
+    WHY THIS EXISTS (independent review round 3, R2): keeping only column-0 lines is what the FIRST
+    version of this function did, and it silently dropped every member of a grouped const/var block
+    and every struct field -- go doc's own format indents them. Reproduced locally (a fixture module
+    shaped like ``robfig/cron`` v3's ``Second``/``Minute``/``Hour``/``Dom``/``Month``/``Dow`` constants
+    and its ``Entry`` struct fields): the old filter kept only the bare ``const (`` / ``type Entry
+    struct {`` opening lines and the members were gone, while the note still said "Only these are
+    real" -- exactly the false-completeness shape B3 already named for the OLD file-scan path, now
+    shown to also apply to the tool meant to fix it.
+
+    Returns ``(lines, well_formed)``. ``well_formed`` is False if bracket-depth tracking ever fails to
+    return to zero by end of output for a block it started collecting (a real ``go doc`` anomaly this
+    parser does not recognize) -- the caller must not claim ``complete=True`` over an admittedly
+    uncertain parse."""
+    lines = stdout.splitlines()
+    out: list[str] = []
+    well_formed = True
+    i, n = 0, len(lines)
+    while i < n:
+        line = lines[i].rstrip()
+        if not line or line[0].isspace():
+            i += 1
+            continue
+        is_header = bool(_GO_DOC_HEADER_RE.match(line)) and not _GO_DOC_DECL_RE.match(line)
+        is_decl = bool(_GO_DOC_DECL_RE.match(line))
+        if not (is_header or is_decl):
+            i += 1
+            continue
+        out.append(line)
+        i += 1
+        if is_header:
+            continue   # a bare section header (CONSTANTS/FUNCTIONS/...), never a multi-line block
+        depth = line.count("{") + line.count("(") - line.count("}") - line.count(")")
+        while depth > 0 and i < n:
+            body = lines[i].rstrip()
+            out.append(body)
+            depth += body.count("{") + body.count("(") - body.count("}") - body.count(")")
+            i += 1
+        if depth != 0:
+            well_formed = False   # ran off the end still "open" -- an unrecognized real shape
+    return out, well_formed
+
+
+def _go_doc_all(package: str, tagged_version: str) -> tuple[list[str], bool] | None:
+    """Real, exported-only output from the real ``go doc -all`` tool, restricted to this box's OWN
+    already-downloaded module cache -- ``GOPROXY`` points ONLY at the local file-based cache directory
+    (no ``,direct`' fallback: a cache miss fails in milliseconds instead of risking a network call),
+    ``GOSUMDB=off`` skips the checksum-database lookup (also network), and ``GOPRIVATE``/``GONOPROXY``/
+    ``GONOSUMDB`` are blanked so neither can route this exact module around the local-only proxy
+    (independent review round 3, R4 -- reproduced: a GOPRIVATE pattern matching the module bypasses
+    ``GOPROXY`` entirely when the module's ``.info`` is not yet cached, regardless of what ``GOPROXY``
+    says). ``GOFLAGS=-mod=mod`` only; ``GOTOOLCHAIN=local`` refuses a toolchain-switch download, and
+    ``GOVCS=*:off`` refuses every direct VCS fallback path `go doc`/`go mod` can otherwise take.
+    ``GOPROXY=off`` is deliberately NOT used -- Go treats ``off`` as "resolve nothing", which also
+    rejects the LOCAL file-based cache this function depends on; a real, reachable ``file://`` proxy
+    with no further fallback is what actually stays local AND still answers.
+
+    Returns ``(lines, complete)`` -- ``complete`` is True only when the REAL tool succeeded AND
+    :func:`_select_go_doc_blocks` parsed every kept block to a clean bracket close. ``None`` (never
+    raises) when ``go`` is absent, the module is not in the local cache, or the call fails/times out;
+    the caller falls back to the bounded file scan, which is never labelled complete."""
     go_bin = shutil.which("go")
     if not go_bin:
         return None
     gopath_root = os.path.expanduser("~/go")
     proxy = "file://" + os.path.join(gopath_root, "pkg", "mod", "cache", "download")
     env = dict(os.environ)
-    env.update(GOFLAGS="-mod=mod", GOPROXY=proxy, GOSUMDB="off", GOPATH=gopath_root)
+    env.update(GOFLAGS="-mod=mod", GOPROXY=proxy, GOSUMDB="off", GOPATH=gopath_root,
+              GOPRIVATE="", GONOPROXY="", GONOSUMDB="", GOTOOLCHAIN="local", GOVCS="*:off")
     try:
         proc = subprocess.run([go_bin, "doc", "-all", f"{package}@{tagged_version}"],
                               capture_output=True, text=True, timeout=GO_DOC_TIMEOUT_S, env=env)
@@ -298,18 +360,11 @@ def _go_doc_all(package: str, tagged_version: str) -> list[str] | None:
         return None
     if proc.returncode != 0 or not proc.stdout.strip():
         return None
-    # Column-0 DECLARATION lines: `go doc -all`'s own format also puts unindented DOC PROSE at column
-    # 0 (an intro paragraph, a package comment) alongside real `func`/`type`/`const`/`var` signatures
-    # and all-caps section headers (VARIABLES/FUNCTIONS/TYPES/...). Keeping prose too is not FALSE --
-    # it is still the tool's own real output -- but it is denser noise than signal, and on a real
-    # package with real doc comments it crowded exactly the signatures a coder needs out of the
-    # inline budget (measured against the real shopspring/decimal cache). Selecting only the
-    # declaration/header shapes keeps every kept line exactly as real, at a much higher
-    # signatures-per-byte density.
-    kept = [ln.rstrip() for ln in proc.stdout.splitlines()
-           if ln and not ln[0].isspace()
-           and (re.match(r'^(func|type|const|var)\b', ln) or re.match(r'^[A-Z][A-Z ]*$', ln))]
-    return kept or [ln.rstrip() for ln in proc.stdout.splitlines() if ln and not ln[0].isspace()]
+    kept, well_formed = _select_go_doc_blocks(proc.stdout)
+    if not kept:
+        kept = [ln.rstrip() for ln in proc.stdout.splitlines() if ln and not ln[0].isspace()]
+        well_formed = False   # the structured parse found nothing recognizable -- do not claim it
+    return kept, well_formed
 
 
 def _gather_go(package: str, version: str, _workspace_root: str | None) -> DependencySurface | None:
@@ -317,12 +372,13 @@ def _gather_go(package: str, version: str, _workspace_root: str | None) -> Depen
     if not root:
         return None
     tagged = version if version.lower().startswith("v") else f"v{version}"
-    doc_lines = _go_doc_all(package, tagged)
-    if doc_lines:
+    doc_result = _go_doc_all(package, tagged)
+    if doc_result and doc_result[0]:
+        doc_lines, well_formed = doc_result
         return DependencySurface(
             "go", f"{package} {tagged}", root, (f"go doc -all {package}@{tagged}",), tuple(doc_lines),
             read_hint=f"run `go doc -all {package}@{tagged}` yourself, or read_file/grep {root} directly",
-            complete=True)
+            complete=well_formed)
     lines, sources = _select(root, ".go", _go_exported_line, exclude_suffixes=("_test.go",))
     if not lines:
         return None
@@ -414,13 +470,19 @@ def _gather_jvm(coordinate: str, version: str, _workspace_root: str | None) -> D
             break
     if not lines:
         return None   # javap unavailable, or every real class failed to decode -- abstain
-    from . import prompts
-    remaining = prompts.named_list(classes[len(sources):]) or "(no further classes)"
+    # A TRUTHFUL POINTER, never an enumeration (independent review round 3, R3). Naming every
+    # remaining class was real text, but its SIZE was unbounded by the jar's own contents: a jar with
+    # hundreds of real classes (measured: surefire-shared-utils, 995 classes) turned this one field
+    # into a 70KB note, re-rendered on every later request once anchored. `jar tf <jar>` is the real
+    # tool that lists every entry -- naming the COMMAND, not running it and inlining its output, is
+    # both truthful (it really does list all N classes) and bounded (independent of N).
+    remaining_count = len(classes) - len(sources)
+    remaining = (f"{remaining_count} further real classes -- run `jar tf {jar}` yourself to list them"
+                if remaining_count else "no further classes")
     return DependencySurface(
         "jvm", f"{coordinate}:{version}", jar, tuple(sources), tuple(lines),
         read_hint=(f"run javap -public -classpath {jar} <FullyQualifiedClassName> yourself -- "
-                  f"{jar} is a compiled jar, not readable text; further real classes include "
-                  f"{remaining}"),
+                  f"{jar} is a compiled jar, not readable text; {remaining}"),
         complete=False)
 
 
@@ -681,3 +743,46 @@ def set_anchor_state(sess_key: str, coordinate: tuple[str, str, str], call_id: s
     bucket = _ANCHOR.setdefault(sess_key, {})
     if len(bucket) < _ANCHOR_MAX_PER_SESSION or coordinate in bucket:
         bucket[coordinate] = (call_id, note_text)
+
+
+# A coordinate `gather()` could not resolve this session (cache absent, `go doc`/`javap` timed out or
+# failed) -- remembered so an unanchored coordinate is not re-probed EVERY request for the rest of the
+# session (independent review round 3, cheap item ii). NOT permanent: the exact reason `gather()`
+# might fail today (the local cache does not hold this version YET) is exactly the condition this
+# candidate exists to catch the moment it changes, so a hard-forever block would defeat its own
+# purpose. Instead each abstain earns a bounded number of skipped requests before the next one tries
+# again for real -- cheap for the common case (a coordinate that will never resolve locally, e.g. a
+# private/vendored dependency), bounded in the worst case for the one that eventually does.
+_ABSTAINED: dict[str, dict[tuple[str, str, str], int]] = {}
+_ABSTAIN_MAX_SESSIONS = 512
+_ABSTAIN_RETRY_EVERY = 20   # requests skipped between real retries, per coordinate
+
+
+def should_retry_gather(sess_key: str, coordinate: tuple[str, str, str]) -> bool:
+    """False if this coordinate abstained recently and its retry interval has not elapsed yet.
+    Calling this DECREMENTS the countdown as a side effect -- it is meant to be called exactly once
+    per coordinate per request, immediately before deciding whether to call :func:`gather`."""
+    if not sess_key:
+        return True
+    counters = _ABSTAINED.get(sess_key)
+    if not counters or coordinate not in counters:
+        return True
+    counters[coordinate] -= 1
+    return counters[coordinate] <= 0
+
+
+def record_abstain(sess_key: str, coordinate: tuple[str, str, str]) -> None:
+    """``gather()`` just returned ``None`` (or timed out) for ``coordinate`` -- skip it for
+    :data:`_ABSTAIN_RETRY_EVERY` more requests before trying again for real."""
+    if not sess_key:
+        return
+    if len(_ABSTAINED) > _ABSTAIN_MAX_SESSIONS:
+        _ABSTAINED.clear()
+    _ABSTAINED.setdefault(sess_key, {})[coordinate] = _ABSTAIN_RETRY_EVERY
+
+
+def clear_abstain(sess_key: str, coordinate: tuple[str, str, str]) -> None:
+    """``gather()`` just succeeded for ``coordinate`` -- forget any earlier abstain (idempotent)."""
+    if not sess_key:
+        return
+    _ABSTAINED.get(sess_key, {}).pop(coordinate, None)

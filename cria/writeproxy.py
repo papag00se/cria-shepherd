@@ -2137,6 +2137,14 @@ _SURFACE_INLINE_BUDGET = 2400
 # request into an unbounded wall of text.
 _MAX_NOTES_PER_REQUEST = 3
 _MAX_ANCHOR_RENDERS_PER_REQUEST = 12
+# A hard ceiling on the TOTAL bytes this candidate appends in one request, across every coordinate
+# combined (independent review round 3, R3). `_SURFACE_INLINE_BUDGET` already bounds one note; this
+# bounds the SUM, because a session that has anchored several real direct dependencies would otherwise
+# re-render all of them, every request, forever -- individually bounded, collectively not. A
+# coordinate skipped for THIS reason is not withdrawn (its anchor state is untouched) and is retried
+# on the next request; if anything was withheld this pass, ONE labelled sentence says so -- never a
+# silent cut (#5).
+_MAX_TOTAL_NOTE_BYTES_PER_REQUEST = 12_000
 
 
 def _note_dependency_surface(messages: list[dict], workspace_root, sess_key: str, rlog) -> None:
@@ -2176,6 +2184,14 @@ def _note_dependency_surface(messages: list[dict], workspace_root, sess_key: str
     now says "THE VERSION ... DECLARED IN <manifest>", a fact that stays true no matter how many times
     it is repeated verbatim.
 
+    TOTAL BYTE BUDGET (independent review round 3, R3). `_MAX_TOTAL_NOTE_BYTES_PER_REQUEST` bounds the
+    SUM of everything this function appends in one request, across every coordinate -- individually
+    bounded is not collectively bounded once several real coordinates are anchored. A coordinate that
+    would exceed the remaining budget is simply skipped THIS request (its state, anchored or not, is
+    untouched, so it is retried next request) and counted; if anything was withheld, one honest,
+    labelled sentence says so -- the withheld COUNT is real and computed, never a guess at what it
+    would have said.
+
     Without a `sess_key` (no identity to remember anchors against) this abstains entirely, same as
     the one-shot version did."""
     if not workspace_root or not sess_key:
@@ -2192,6 +2208,8 @@ def _note_dependency_surface(messages: list[dict], workspace_root, sess_key: str
         return
     new_gathers = 0
     anchor_renders = 0
+    total_bytes = 0
+    withheld = 0
     for eco, package, version in depsurface.declared_coordinates(workspace_root):
         if anchor_renders >= _MAX_ANCHOR_RENDERS_PER_REQUEST:
             break
@@ -2199,9 +2217,14 @@ def _note_dependency_surface(messages: list[dict], workspace_root, sess_key: str
         state = depsurface.anchor_state(sess_key, coordinate_key)
         if state is not None:
             anchor_id, note_text = state
+            note_bytes = len(note_text.encode("utf-8", "replace"))
+            if total_bytes + note_bytes > _MAX_TOTAL_NOTE_BYTES_PER_REQUEST:
+                withheld += 1
+                continue   # over budget THIS request only -- anchor state untouched, retried next turn
             anchor_msg = by_call_id.get(anchor_id)
             if anchor_msg is not None:
                 anchor_msg["content"] = anchor_msg["content"] + "\n\n" + note_text
+                total_bytes += note_bytes
                 anchor_renders += 1
                 continue
             # Anchor lost (compaction) -- re-anchor once on the newest tool result, same cached text.
@@ -2209,6 +2232,7 @@ def _note_dependency_surface(messages: list[dict], workspace_root, sess_key: str
             if new_cid:
                 newest_tool["content"] = newest_tool["content"] + "\n\n" + note_text
                 depsurface.set_anchor_state(sess_key, coordinate_key, new_cid, note_text)
+                total_bytes += note_bytes
                 anchor_renders += 1
                 if rlog is not None:
                     rlog.emit("writeproxy.dependency_surface_reanchored", level="info", ecosystem=eco,
@@ -2216,23 +2240,38 @@ def _note_dependency_surface(messages: list[dict], workspace_root, sess_key: str
             continue
         if new_gathers >= _MAX_NOTES_PER_REQUEST:
             continue
+        if not depsurface.should_retry_gather(sess_key, coordinate_key):
+            continue   # abstained recently (cache absent / go doc/javap failed) -- not retried yet
         cid = newest_tool.get("tool_call_id")
         if not cid:
             continue   # no stable id to anchor to -- skip rather than anchor to nothing
         surface = depsurface.gather(eco, package, version, workspace_root)
         if surface is None:
+            depsurface.record_abstain(sess_key, coordinate_key)
             continue   # abstain silently -- manifest declares it, but the local cache does not
         note = _render_dependency_surface(surface, eco)
         if not note:
+            depsurface.record_abstain(sess_key, coordinate_key)
             continue
+        note_bytes = len(note.encode("utf-8", "replace"))
+        if total_bytes + note_bytes > _MAX_TOTAL_NOTE_BYTES_PER_REQUEST:
+            withheld += 1
+            continue   # over budget THIS request -- not anchored yet, tried again next request
         newest_tool["content"] = newest_tool["content"] + "\n\n" + note
         depsurface.set_anchor_state(sess_key, coordinate_key, cid, note)
+        depsurface.clear_abstain(sess_key, coordinate_key)
+        total_bytes += note_bytes
         new_gathers += 1
         anchor_renders += 1
         if rlog is not None:
             rlog.emit("writeproxy.dependency_surface", level="info", ecosystem=eco,
                       coordinate=surface.coordinate, members=len(surface.lines),
                       complete=surface.complete)
+    if withheld:
+        newest_tool["content"] = newest_tool["content"] + "\n\n" + prompts.render(
+            "dependency_surface_withheld", count=str(withheld))
+        if rlog is not None:
+            rlog.emit("writeproxy.dependency_surface_withheld", level="info", count=withheld)
 
 
 def _render_dependency_surface(surface, ecosystem: str) -> str:

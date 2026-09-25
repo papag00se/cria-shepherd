@@ -115,6 +115,213 @@ class GoTests(_HomeCase):
         self.assertIn("func NewFromString(value string) (Decimal, error)", joined)
 
 
+# Real, captured `go doc -all` output (run locally against a throwaway module shaped like
+# robfig/cron v3: a grouped `const ( ... )` block and a struct with fields) -- not synthesized.
+_REAL_GO_DOC_GROUPED_CONST_AND_STRUCT = \
+"""package cronish // import "example.com/cronish"
+
+Package pkg is a stand-in for robfig/cron's shape: grouped consts and a struct
+with fields.
+
+CONSTANTS
+
+const (
+	Second = 1 << iota
+	Minute
+	Hour
+	Dom
+	Month
+	Dow
+)
+    Predefined schedules.
+
+
+TYPES
+
+type Entry struct {
+	ID   int
+	Next int64
+	Prev int64
+}
+    Entry describes a scheduled job.
+
+func New() *Entry
+"""
+
+
+class GoDocBlockSelectionTests(unittest.TestCase):
+    """Independent review round 3, R2: `_select_go_doc_blocks` must keep a grouped const/var block's
+    members and a struct's fields, not just the column-0 opening line -- reproduced against REAL
+    captured `go doc -all` output shaped like robfig/cron v3 (Second/Minute/Hour/Dom/Month/Dow,
+    Entry's ID/Next/Prev fields), which the OLD column-0-only filter silently dropped while the note
+    still claimed completeness."""
+
+    def test_grouped_const_block_members_are_kept(self):
+        lines, well_formed = depsurface._select_go_doc_blocks(_REAL_GO_DOC_GROUPED_CONST_AND_STRUCT)
+        joined = "\n".join(lines)
+        self.assertTrue(well_formed)
+        for member in ("Second", "Minute", "Hour", "Dom", "Month", "Dow"):
+            self.assertIn(member, joined)
+        self.assertIn("const (", lines)
+        self.assertIn(")", lines)
+
+    def test_struct_fields_are_kept(self):
+        lines, well_formed = depsurface._select_go_doc_blocks(_REAL_GO_DOC_GROUPED_CONST_AND_STRUCT)
+        joined = "\n".join(lines)
+        self.assertTrue(well_formed)
+        self.assertIn("ID   int", joined)
+        self.assertIn("Next int64", joined)
+        self.assertIn("Prev int64", joined)
+        self.assertIn("type Entry struct {", lines)
+        self.assertIn("}", lines)
+
+    def test_section_headers_and_free_functions_still_kept(self):
+        lines, _ = depsurface._select_go_doc_blocks(_REAL_GO_DOC_GROUPED_CONST_AND_STRUCT)
+        self.assertIn("CONSTANTS", lines)
+        self.assertIn("TYPES", lines)
+        self.assertIn("func New() *Entry", lines)
+
+    def test_doc_prose_is_still_dropped(self):
+        lines, _ = depsurface._select_go_doc_blocks(_REAL_GO_DOC_GROUPED_CONST_AND_STRUCT)
+        joined = "\n".join(lines)
+        self.assertNotIn("stand-in for robfig/cron", joined)
+        self.assertNotIn("Predefined schedules", joined)
+
+    def test_unbalanced_block_is_reported_not_well_formed(self):
+        broken = "const (\n\tSecond = 1\n"  # never closes -- an unrecognized real shape
+        lines, well_formed = depsurface._select_go_doc_blocks(broken)
+        self.assertFalse(well_formed)
+
+    def test_gather_go_never_claims_complete_on_an_ill_formed_parse(self):
+        """End-to-end: if `_go_doc_all` ever returns an ill-formed parse, `_gather_go` must not label
+        the resulting DependencySurface complete, regardless of how much real text it carries."""
+        real_go_doc_all = depsurface._go_doc_all
+        depsurface._go_doc_all = lambda package, tagged: (["const (", "\tX = 1"], False)
+        real_module_dir = depsurface._go_module_dir
+        depsurface._go_module_dir = lambda package, version: "/fake/does/not/need/to/exist"
+        try:
+            surface = depsurface._gather_go("example.com/x", "v1.0.0", None)
+        finally:
+            depsurface._go_doc_all = real_go_doc_all
+            depsurface._go_module_dir = real_module_dir
+        self.assertIsNotNone(surface)
+        self.assertFalse(surface.complete)
+
+
+class GoDocEnvironmentTests(unittest.TestCase):
+    """Independent review round 3, R4: `go doc` must never be able to reach the network for this
+    exact call -- reproduced: a GOPRIVATE/GONOPROXY pattern matching the module bypasses GOPROXY
+    entirely when its `.info` is not yet locally cached, regardless of what GOPROXY itself says.
+    Asserts the actual subprocess environment `_go_doc_all` composes, not just its behaviour, since a
+    behavioural test cannot distinguish "correctly local" from "got lucky, cache already warm"."""
+
+    def test_the_composed_env_blanks_every_network_bypass_and_never_sets_goproxy_off(self):
+        captured = {}
+        real_run = depsurface.subprocess.run
+
+        def spy_run(argv, **kwargs):
+            captured["env"] = kwargs.get("env")
+            raise depsurface.subprocess.TimeoutExpired(argv, 1)  # short-circuit -- env is all we need
+
+        depsurface.subprocess.run = spy_run
+        real_which = depsurface.shutil.which
+        depsurface.shutil.which = lambda name: "/usr/bin/go" if name == "go" else real_which(name)
+        try:
+            depsurface._go_doc_all("example.com/x", "v1.0.0")
+        finally:
+            depsurface.subprocess.run = real_run
+            depsurface.shutil.which = real_which
+        env = captured["env"]
+        self.assertIsNotNone(env)
+        self.assertEqual(env.get("GOPRIVATE"), "")
+        self.assertEqual(env.get("GONOPROXY"), "")
+        self.assertEqual(env.get("GONOSUMDB"), "")
+        self.assertEqual(env.get("GOTOOLCHAIN"), "local")
+        self.assertEqual(env.get("GOVCS"), "*:off")
+        self.assertNotEqual(env.get("GOPROXY"), "off")
+        self.assertTrue(env.get("GOPROXY", "").startswith("file://"))
+
+
+class GoDocRealSubprocessTests(_HomeCase):
+    """A REAL end-to-end run of `go doc -all` through `_gather_go`, against a throwaway module built
+    and served from a hand-built local Go module proxy directory -- no network, no dependency on
+    anything already cached on this box. Proves R2's fix through the ACTUAL subprocess path, not just
+    the pure-function parser above. Skips cleanly when `go` is not on PATH."""
+
+    MODULE = "example.com/cronish"
+    VERSION = "v0.0.1"
+
+    def setUp(self):
+        super().setUp()
+        if not shutil.which("go"):
+            self.skipTest("go not on PATH on this machine")
+        self._proxy_dir = tempfile.mkdtemp()
+        self.addCleanup(self._rm_proxy)
+        self._build_proxy()
+
+    def _rm_proxy(self):
+        for root, dirs, files in os.walk(self._proxy_dir):
+            for name in dirs + files:
+                try:
+                    os.chmod(os.path.join(root, name), 0o700)
+                except OSError:
+                    pass
+        shutil.rmtree(self._proxy_dir, ignore_errors=True)
+
+    def _build_proxy(self):
+        import zipfile
+        av = os.path.join(self._proxy_dir, self.MODULE, "@v")
+        os.makedirs(av, exist_ok=True)
+        mod_text = f"module {self.MODULE}\n\ngo 1.21\n"
+        with open(os.path.join(av, f"{self.VERSION}.info"), "w") as fh:
+            fh.write('{"Version":"' + self.VERSION + '","Time":"2024-01-01T00:00:00Z"}')
+        with open(os.path.join(av, f"{self.VERSION}.mod"), "w") as fh:
+            fh.write(mod_text)
+        src_root = tempfile.mkdtemp()
+        pkg_dir = os.path.join(src_root, f"{self.MODULE}@{self.VERSION}")
+        os.makedirs(pkg_dir, exist_ok=True)
+        with open(os.path.join(pkg_dir, "go.mod"), "w") as fh:
+            fh.write(mod_text)
+        with open(os.path.join(pkg_dir, "cron.go"), "w") as fh:
+            fh.write(
+                "// Package cronish is a stand-in for robfig/cron's shape.\n"
+                "package cronish\n\n"
+                "// Predefined schedules.\n"
+                "const (\n\tSecond = 1 << iota\n\tMinute\n\tHour\n\tDom\n\tMonth\n\tDow\n)\n\n"
+                "// Entry describes a scheduled job.\n"
+                "type Entry struct {\n\tID   int\n\tNext int64\n\tPrev int64\n}\n\n"
+                "func New() *Entry {\n\treturn &Entry{}\n}\n")
+        zip_path = os.path.join(av, f"{self.VERSION}.zip")
+        with zipfile.ZipFile(zip_path, "w") as zf:
+            for root, _dirs, files in os.walk(pkg_dir):
+                for name in files:
+                    full = os.path.join(root, name)
+                    arc = os.path.relpath(full, src_root)
+                    zf.write(full, arc)
+        # Populate THIS test's own throwaway GOPATH's proxy-cache download dir by actually running
+        # `go mod download` against the hand-built proxy -- the same real tool, real protocol,
+        # `_go_doc_all` itself later reads from (file://.../pkg/mod/cache/download).
+        gopath = os.path.join(self.home, "go")
+        env = dict(os.environ)
+        env.update(GOPATH=gopath, GOPROXY="file://" + self._proxy_dir, GOSUMDB="off",
+                  GOFLAGS="-mod=mod")
+        proc = depsurface.subprocess.run(
+            ["go", "mod", "download", f"{self.MODULE}@{self.VERSION}"],
+            capture_output=True, text=True, env=env, timeout=30)
+        if proc.returncode != 0:
+            self.skipTest(f"could not seed the local go module proxy cache: {proc.stderr}")
+
+    def test_grouped_const_and_struct_fields_delivered_complete_through_the_real_subprocess(self):
+        surface = depsurface.gather("go", self.MODULE, self.VERSION)
+        self.assertIsNotNone(surface)
+        self.assertTrue(surface.complete)
+        joined = "\n".join(surface.lines)
+        for member in ("Second", "Minute", "Hour", "Dom", "Month", "Dow"):
+            self.assertIn(member, joined)
+        self.assertIn("ID   int", joined)
+        self.assertIn("Next int64", joined)
+        self.assertIn("Prev int64", joined)
+
 class RustTests(_HomeCase):
     def _write_crate(self, name="toml", version="0.8.23", body=None):
         d = os.path.join(self.home, ".cargo", "registry", "src", "index.crates.io-deadbeef",
@@ -210,6 +417,43 @@ class JvmTests(_HomeCase):
             zf.writestr("-version.class", b"")
             zf.writestr("ok/Real.class", b"")   # one entry that WOULD pass the allowlist
         return jar_path
+
+    def _write_many_class_jar(self, group="org.example", artifact="surefire-shared-utils",
+                              version="1.0.0", n=995):
+        """A jar shaped like the measured incident (independent review round 3, R3): hundreds of
+        real class ENTRIES, only a handful of which `_gather_jvm` ever decodes (MAX_FILES). The
+        `read_hint` must name the real command to list ALL of them, never enumerate them itself."""
+        import zipfile
+        d = os.path.join(self.home, ".m2", "repository", *group.split("."), artifact, version)
+        os.makedirs(d, exist_ok=True)
+        jar_path = os.path.join(d, f"{artifact}-{version}.jar")
+        with zipfile.ZipFile(jar_path, "w") as zf:
+            for i in range(n):
+                zf.writestr(f"org/example/util/Util{i}.class", b"")
+        return jar_path
+
+    def test_read_hint_stays_bounded_regardless_of_how_many_real_classes_the_jar_holds(self):
+        self._write_many_class_jar(n=995)
+        jar = os.path.join(self.home, ".m2", "repository", "org", "example",
+                           "surefire-shared-utils", "1.0.0", "surefire-shared-utils-1.0.0.jar")
+        classes = depsurface._jar_classes(jar)
+        self.assertEqual(len(classes), 995)
+        # Drive `_gather_jvm` for real, with `_javap_lines` faked to succeed (the fixture's .class
+        # entries are zero-byte, so a real javap would fail to decode them; this isolates the
+        # read_hint-composition logic under test from that unrelated fact -- javap's own real-decode
+        # path is covered by test_passes_after_real_javap_signature_no_invented_constructor above).
+        real_javap_lines = depsurface._javap_lines
+        depsurface._javap_lines = lambda jar_path, fqcn: [f"public final class {fqcn} {{", "}"]
+        try:
+            surface = depsurface._gather_jvm("org.example:surefire-shared-utils", "1.0.0", None)
+        finally:
+            depsurface._javap_lines = real_javap_lines
+        self.assertIsNotNone(surface)
+        self.assertLess(len(surface.read_hint.encode()), 500)
+        self.assertIn("jar tf", surface.read_hint)
+        remaining_count = 995 - depsurface.MAX_FILES
+        self.assertIn(str(remaining_count), surface.read_hint)
+        self.assertNotIn("Util500", surface.read_hint)   # no per-class enumeration anywhere in the hint
 
     def test_fails_before_no_jar_abstains(self):
         self.assertIsNone(depsurface.gather("jvm", "org.apache.commons:commons-csv", "1.10.0"))

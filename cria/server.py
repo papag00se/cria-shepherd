@@ -1174,10 +1174,17 @@ class CriaHandler(BaseHTTPRequestHandler):
         # edit_file/read_file calls; without this the model summarizes ~28 raw `python3 - <<HEREDOC`
         # blobs instead of its own tool calls, and that degraded summary becomes the next ⟦ctx:
         # continuation⟧. No-op when no sentinel is present, so a plain passthrough is unaffected.
+        # C40's own probe (represent_inbound's tools_present arg) skips a compaction/summarize turn
+        # on EITHER signal reachable at this seam: an empty tool menu (the shape this survey's own
+        # comment above already relies on) OR the server's own compaction recognition
+        # (`_is_compaction_request`, C37's hardened detection -- a reasoner-driven check, not only the
+        # `<<<LOCAL_COMPACT>>>` marker), so a compaction turn whose harness still sends a full tool
+        # menu is not missed either.
+        _c40_active = bool(body.get("tools")) and not _is_compaction_request(body.get("messages", []))
         body["messages"] = redact_secrets(
             represent_inbound(body.get("messages", []), rlog,
                               workspace_root=getattr(self, "_workspace_root", None),
-                              sess_key=sess_key, tools_present=bool(body.get("tools"))),
+                              sess_key=sess_key, tools_present=_c40_active),
             [self._brave_key])
         # THE SURVEY KNOWS WHERE IT RAN, and cria was throwing that away. `wsview.apply_survey`
         # adopts the reported root when the view has none — "which is how a session whose harness

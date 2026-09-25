@@ -295,6 +295,86 @@ class BoundedNotesTests(_WorkspaceCase):
         self.assertEqual(second[1]["content"], "go vet ./... clean")
 
 
+class TotalByteBudgetTests(_WorkspaceCase):
+    """Independent review round 3, R3: individually-bounded notes are not collectively bounded once
+    several real direct dependencies are anchored -- `_MAX_TOTAL_NOTE_BYTES_PER_REQUEST` caps the SUM,
+    and a coordinate skipped for THIS reason is labelled, not silently dropped."""
+
+    def test_many_anchored_coordinates_are_capped_by_total_bytes_not_just_by_count(self):
+        lines = ["module example.com/many\n\ngo 1.21\n"]
+        for i in range(6):
+            module = f"example.invalid/pkg{i}"
+            lines.append(f"require {module} v1.0.0\n")
+            d = os.path.join(self.home, "go", "pkg", "mod", f"{module}@v1.0.0")
+            os.makedirs(d, exist_ok=True)
+            # A body large enough that its OWN inline-budget-fitting note is a meaningful fraction of
+            # the total budget -- makes the total-byte cap the binding constraint, not the count cap.
+            body_lines = "\n\n".join(f"func Member{i}_{j}(x int) int {{\n\treturn x\n}}"
+                                     for j in range(60))
+            with open(os.path.join(d, "x.go"), "w") as fh:
+                fh.write(f"package pkg{i}\n\n{body_lines}\n")
+        with open(os.path.join(self.ws, "go.mod"), "w") as fh:
+            fh.write("".join(lines))
+
+        real_cap = writeproxy._MAX_TOTAL_NOTE_BYTES_PER_REQUEST
+        writeproxy._MAX_TOTAL_NOTE_BYTES_PER_REQUEST = 4000   # force the budget to bind in this test
+        try:
+            out = self.represent([tool("build output")])
+        finally:
+            writeproxy._MAX_TOTAL_NOTE_BYTES_PER_REQUEST = real_cap
+        content = out[0]["content"]
+        total_note_bytes = len(content.encode()) - len("build output".encode())
+        self.assertLessEqual(total_note_bytes, 4000 + 1000)   # budget plus one withheld-label sentence
+        self.assertIn("withheld", content)
+
+    def test_no_withheld_label_when_nothing_was_withheld(self):
+        self._write_go_mod(module="example.invalid/nonexistent")
+        self._write_module_cache(module="example.invalid/nonexistent")
+        out = self.represent([tool("build output")])
+        self.assertNotIn("withheld", out[0]["content"])
+
+
+class AbstainMemoizationTests(_WorkspaceCase):
+    """Cheap item (ii): a coordinate `gather()` could not resolve is not re-probed every request for
+    the rest of the session -- but is not blocked FOREVER either, since the local cache becoming
+    populated mid-session is exactly the moment this candidate exists to catch."""
+
+    def test_a_cache_miss_is_not_re_probed_every_request(self):
+        self._write_go_mod(module="example.invalid/nonexistent")
+        # No module cache written -- gather() abstains every time it is actually called.
+        calls = {"n": 0}
+        real_gather = depsurface.gather
+
+        def counting_gather(*a, **kw):
+            calls["n"] += 1
+            return real_gather(*a, **kw)
+
+        depsurface.gather = counting_gather
+        try:
+            self.represent([tool("t1", call_id="c1")])
+            self.represent([tool("t1", call_id="c1"), tool("t2", call_id="c2")])
+            self.represent([tool("t1", call_id="c1"), tool("t2", call_id="c2"),
+                            tool("t3", call_id="c3")])
+        finally:
+            depsurface.gather = real_gather
+        self.assertEqual(calls["n"], 1, "a cache miss must not re-run gather() every request")
+
+    def test_a_later_successful_gather_is_not_permanently_blocked(self):
+        self._write_go_mod(module="example.invalid/nonexistent")
+        out1 = self.represent([tool("t1", call_id="c1")])
+        self.assertNotIn(ANCHOR_TEXT, out1[0]["content"])   # cache absent -- abstained
+
+        # The coordinate's local cache appears mid-session (the coder's own `go get` finally
+        # resolved it) -- forcing the retry countdown to zero simulates enough elapsed requests for
+        # the bounded retry window to reopen.
+        self._write_module_cache(module="example.invalid/nonexistent")
+        coordinate = ("go", "example.invalid/nonexistent", "v1.4.0")
+        depsurface._ABSTAINED.get(self.sess, {})[coordinate] = 1
+        out2 = self.represent([tool("t1", call_id="c1"), tool("t2", call_id="c2")])
+        combined = "".join(m["content"] for m in out2)
+        self.assertIn(ANCHOR_TEXT, combined)
+
+
 class CompletenessTests(_WorkspaceCase):
     """B3: the inline template's totality claim ("a member you don't see here does not exist") may
     only be used when the surface is provably complete."""
