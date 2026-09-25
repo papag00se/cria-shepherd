@@ -433,39 +433,28 @@ class CleanGateOutputTests(unittest.TestCase):
         self.assertIn("killed mid-run", out)                    # ...but what it printed survives
 
     def test_timeout_with_no_output_stays_a_bare_no_signal(self):
+        # RECONCILED, C39b: this base assertion ( "no usable result" for an EMPTY 124 section) is
+        # SUPERSEDED by the invariant below -- a timeout is now always named "did not finish (timed
+        # out)", whether or not it printed anything, because an empty timeout and a genuinely absent
+        # tool are different facts (this command RAN and was stopped; that one never started) and
+        # collapsing them into one "no signal either way" sentence is exactly the false neutrality
+        # C39b exists to remove (the p27 Orders hang: a real, still-running pytest read identically
+        # to cria's own missing pyflakes). What this test's own comment always guaranteed --
+        # "never presented as something to fix" -- still holds and is kept as its own assertion.
         raw = self._raw("EXIT:124")
         out = probegate.clean_gate_output(raw)
-        self.assertIn("no usable result", out.lower())
         self.assertNotIn("fix", out.lower())
 
-    @unittest.skip(
-        "C39 SCOPE NARROWING (re-review of a776842f): naming a 124 section that printed nothing, and "
-        "keeping a clean sibling's verdict visible alongside an unrelated timeout, was the transport "
-        "self-description mechanism (compose_probe_cmd_echo/peel_probe_cmd_echo) -- reverted in full "
-        "because it roughly doubled the gate script and broke a large repo's ARG_MAX budget, and "
-        "because inserting it into compose_probe_command broke the cd-failure short-circuit (a probe "
-        "could run in the wrong directory and report a false pass). clean_gate_output is now "
-        "byte-identical to base again, and base's own test_timeout_with_no_output_stays_a_bare_no_"
-        "signal (restored above, verbatim) is what actually runs and passes. This method records the "
-        "SPLIT-OUT follow-up (matrix items (b)/(f) in tests/test_c39_gate_history_invariants.py) --"
-        " it does NOT replace the base test above, and it predates C39 (base never named a timeout's "
-        "command either). A separate follow-up unit will design a way to name a timeout that does not "
-        "touch compose_probe_command's control flow or the script's size budget.")
     def test_timeout_with_no_output_still_names_the_timeout_not_no_usable_result(self):
-        # C39 repair: naming the timeout is required EVEN when it printed nothing (reviewer
-        # directive) — and since `_raw`'s probe-0 genuinely ran clean, the message must say so
-        # too rather than collapsing to the generic (and here false) "no usable result".
+        # C39b: naming the timeout is required EVEN when it printed nothing — and since `_raw`'s
+        # probe-0 genuinely ran clean, the message must say so too rather than collapsing to the
+        # generic (and here false) "no usable result".
         raw = self._raw("EXIT:124")
         out = probegate.clean_gate_output(raw)
         self.assertIn("no verdict either way", out.lower())
         self.assertNotIn("no usable result", out.lower())
         self.assertNotIn("fix", out.lower())
 
-    @unittest.skip(
-        "C39 SCOPE NARROWING: see test_timeout_with_no_output_still_names_the_timeout_not_no_usable_"
-        "result above -- the solo case of the same reverted, split-out follow-up. It does NOT replace "
-        "base's test_timeout_with_no_output_stays_a_bare_no_signal, which is restored above and is "
-        "what actually runs.")
     def test_solo_timeout_with_no_output_is_still_named_not_generic_no_usable_result(self):
         # The TRUE solo case (nothing else in the gate at all): still named, per the reviewer's
         # directive that a 124 section is ALWAYS stated as a timeout, even printing nothing.

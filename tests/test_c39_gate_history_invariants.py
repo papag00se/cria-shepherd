@@ -124,15 +124,6 @@ class GateHistoryMatrix(unittest.TestCase):
                 c = m.get("content") or ""
                 self.assertNotIn("report these error-class problems", c)
 
-    @unittest.skip(
-        "(b) is a KNOWN PRE-EXISTING GAP, not a C39 regression: base never named a timed-out "
-        "probe's command either (clean_gate_output's could_not_run branch is a generic 'a check did "
-        "not finish' sentence with no plan/transport lookup at all). The transport self-description "
-        "mechanism that WOULD have fixed this was reverted in full (re-review of a776842f: it "
-        "roughly doubled the composed gate script, exceeding ARG_MAX on a large repo, and its "
-        "insertion point broke compose_probe_command's cd-failure short-circuit). Supervisor scope "
-        "decision: this moves to a separate follow-up unit; C39's acceptance boundary is the false "
-        "pyflakes-absence red only. Kept here (skipped, not deleted) as the record of the gap.")
     def test_b_empty_timeout_is_named_live_and_after_supersede(self):
         alone, superseded = self._render([COMPILEALL, (["sleep", "5"], TEST, False)], timeout_s=1.0)
         alone_text = " ".join(m.get("content") or "" for m in alone)
@@ -176,11 +167,6 @@ class GateHistoryMatrix(unittest.TestCase):
         self.assertIn("undefined name bogus",
                       " ".join(m.get("content") or "" for m in gate1_in_superseded))
 
-    @unittest.skip(
-        "(f) is the same KNOWN PRE-EXISTING GAP as (b) (see test_b_... above), one level further: "
-        "base's finding-branch never appended a sibling timeout's name either -- clean_gate_output's "
-        "priority order returns the findings message outright once findings is non-empty, same as "
-        "base. Follow-up unit, not C39.")
     def test_f_a_real_finding_plus_a_timeout_names_both(self):
         alone, superseded = self._render(
             [(["python3", "-c",

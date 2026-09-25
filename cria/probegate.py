@@ -35,6 +35,7 @@ import re
 import secrets
 import shlex
 import time
+from collections import OrderedDict
 from dataclasses import dataclass, field
 
 from . import dirguard, dedup, jsontext, wsview
@@ -430,6 +431,12 @@ def ingest_transport(plan: GatePlan, result_text: str, *, now: float | None = No
     ``legacy`` preserves old gate results already present in a conversation and hand-built parser
     fixtures. A newly composed transport never emits raw section markers outside its base64 page.
     """
+    # C39b: register THIS transport's per-section facts as soon as this plan is known to own it —
+    # `plan.candidates` and `plan.transport_id` are both set at compose time, independent of how far
+    # the transport itself has progressed, so this need not wait for completion. A no-op once
+    # already registered (see `_register_transport_facts`) and harmless for a plan with no
+    # candidates (a git-only gate, `transport_required=False` fixtures).
+    _register_transport_facts(plan.transport_id, plan.candidates)
     if not plan.transport_required:
         return "legacy"
     if plan.transport_complete:
@@ -1093,6 +1100,94 @@ def _line_on_disk(finding: str, workspace: str) -> "str | None":
     return _source_line(*location, workspace)
 
 
+@dataclass(frozen=True)
+class _SectionFact:
+    """The three facts a rendered gate section needs about the CANDIDATE that produced it, once the
+    real ``ProbeCandidate`` (and the plan that held it) is gone. Shaped like the slice of
+    ``ProbeCandidate`` both :func:`_is_hard_failure` and :func:`_command_for_sid` actually read
+    (``kind``, ``command``) plus ``composed_by_cria`` for parity with the design's own three named
+    facts -- nothing else is needed to render a section honestly, and nothing else is kept."""
+    kind: object
+    composed_by_cria: bool
+    command: tuple
+
+
+# C39b: A SECTION'S OWN COMMAND MUST SURVIVE ITS GATE BECOMING AN OLDER, SUPERSEDED TRANSPORT.
+# `clean_gate_results` replaces `sess.gate_plan` every turn (loop.py ~6471); the newest gate's
+# transport renders through that live plan (real `ProbeCandidate`s, real `.command`), but an OLDER
+# transport is rebuilt from its own wire bytes alone (`historical = GatePlan(workspace="", ...)`,
+# no candidates attached) -- so a timeout's command name, known at PLAN time, was gone by the time
+# the same bytes render a second time under a newer plan.
+#
+# Reviewer's option A: persist the per-transport facts needed to render (kind, composed_by_cria, the
+# plain command label) keyed by the transport_id that already uniquely names this gate, and hand them
+# to the rebuilt historical plan. Keyed on `transport_id` (``secrets.token_hex(12)``, 96 bits) rather
+# than threaded through `GuardState` as a new mutable field: a transport_id is never reused (a fresh
+# one is minted per `GatePlan`, never mutated once a plan carries it), so there is nothing here to
+# keep in SYNC with `sess.gate_plan` replacement the way a live field would need to be -- each entry
+# is written once, by the plan that owns that transport, and never touched again. Bounded FIFO so a
+# long-lived process does not grow this without limit; a fact that ages out simply means an ancient
+# gate's timeout renders with the same generic "a check" label base already used for any transport
+# whose facts were never known (unchanged fallback, see `_command_for_sid`).
+_TRANSPORT_FACTS_MAX = 500
+_transport_facts: "OrderedDict[str, list[_SectionFact]]" = OrderedDict()
+
+
+def _register_transport_facts(transport_id: str, candidates: list) -> None:
+    """Record THIS transport's per-section facts, once. Called from :func:`ingest_transport` (the
+    one place every transport -- live or historical replay -- is fed its bytes) so both `plan_gate`
+    callers and hand-built test plans (which assign `.candidates` directly, never calling
+    `plan_gate`) register identically. A no-op once a transport_id is already known: facts are a
+    property of the PLAN that composed the script, immutable for that transport's whole life, so a
+    later caller re-ingesting the same id (e.g. `clean_gate_results` replaying an older page) must
+    never overwrite the original with an empty/partial view."""
+    if not transport_id or not candidates or transport_id in _transport_facts:
+        return
+    _transport_facts[transport_id] = [
+        _SectionFact(kind=c.kind, composed_by_cria=bool(getattr(c, "composed_by_cria", False)),
+                    command=tuple(getattr(c, "command", None) or ()))
+        for c in candidates
+    ]
+    _transport_facts.move_to_end(transport_id)
+    while len(_transport_facts) > _TRANSPORT_FACTS_MAX:
+        _transport_facts.popitem(last=False)
+
+
+def _facts_for_transport(transport_id: str) -> list:
+    """This transport's persisted per-section facts, or ``[]`` when none were ever registered (a
+    transport that predates this mechanism, or aged out of the bound)."""
+    return list(_transport_facts.get(transport_id) or [])
+
+
+def _command_for_sid(plan, sid: str) -> str:
+    """The plain, model-facing command string for section ``sid`` (``probe-N`` -> candidate N,
+    section order), or ``""`` when the plan/index/command is unavailable. Works identically whether
+    ``plan.candidates`` holds real ``ProbeCandidate``s (the live gate) or persisted ``_SectionFact``s
+    (a rebuilt historical plan, see :func:`_facts_for_transport`) -- both expose the same `.command`
+    shape. Naming only -- never used for parsing/classification, which stays on the EXIT code."""
+    try:
+        idx = int(sid.split("-", 1)[1])
+        c = plan.candidates[idx]
+    except (AttributeError, IndexError, ValueError, TypeError):
+        return ""
+    command = getattr(c, "command", None)
+    return proberun.display_command(list(command)) if command else ""
+
+
+def _timeout_note(plan, sid: str, printed: str) -> str:
+    """One sentence naming a TIMED-OUT section (EXIT 124): the command when the plan/facts know it,
+    else the same generic "a check" base always used -- and what it printed, when it printed
+    anything, appended verbatim as CONTEXT. Named EVEN WHEN it printed nothing (reviewer directive,
+    C39b): the check ran and was stopped, which is never the same fact as "no usable result at
+    all" (the bare could-not-launch case a missing/absent tool still produces)."""
+    label = _command_for_sid(plan, sid)
+    command = f"`{label}`" if label else "a check"
+    note = f"{command} did not finish (timed out) — no verdict either way."
+    if printed:
+        note += " It printed this before it was stopped:\n" + printed
+    return note
+
+
 def _is_hard_failure(plan, sid: str) -> bool:
     """Is section ``sid`` a probe whose non-zero exit is a REAL failure regardless of how its output
     looks? Test / typecheck / build — `plan.candidates` is in section order, so probe-N is candidate N.
@@ -1153,6 +1248,7 @@ def clean_gate_output(raw: str, plan: "GatePlan | None" = None, *, annotate: boo
     failed_no_detail = False
     saw_probe = False
     timed_out_output: list[str] = []
+    timeout_notes: list[str] = []   # one per genuinely-timed-out (EXIT 124) section, ALWAYS populated
     _sections = split_sections(raw)
     for sid, body in _sections.items():
         # `git` is no longer EMITTED (see plan_gate), but a gate result already in a session's
@@ -1193,9 +1289,14 @@ def clean_gate_output(raw: str, plan: "GatePlan | None" = None, *, annotate: boo
             # error before it stalled. The state stays "couldn't run" (never a pass, and its lines must
             # NOT be scraped as error-class findings — post-timeout output is mostly noise, the false-red
             # class), but what it DID print is kept as CONTEXT rather than discarded.
+            #
+            # C39b: NAMED, not folded into a bare "no usable result" — even when it printed nothing.
+            # An empty timeout and a genuine launch failure (the absent-tool/couldn't-launch case
+            # above) are different facts: this command RAN and was stopped; that one never started.
+            # Collapsing them told the coder "no signal either way" about a suite that was, in fact,
+            # still hanging (the p27 Orders shape this candidate exists for).
             could_not_run = True
-            if text.strip():
-                timed_out_output.append(text.strip())
+            timeout_notes.append(_timeout_note(plan, sid, text.strip()))
             continue
         # pytest exit 5 = no tests collected (a fresh/testless project). The runner ran fine and had
         # nothing to assess — a benign non-signal. Skip the section so its "no tests ran" line isn't
@@ -1361,16 +1462,39 @@ def clean_gate_output(raw: str, plan: "GatePlan | None" = None, *, annotate: boo
             # and the file ledger saw nothing, so this note never rendered and the block asserted
             # `missing go.sum entry` as present-tense ground truth for eleven more coder calls.
             stale = prompts.load("checks_are_stale_command")
-        return prompts.render("checks_error_class",
-                              seeded_test_rule=prompts.load("seeded_test_rule").strip(),
-                              stale=stale.rstrip("\n"),
-                              findings="\n".join(findings + _advisory_note(dropped_advisories)))
+        msg = prompts.render("checks_error_class",
+                             seeded_test_rule=prompts.load("seeded_test_rule").strip(),
+                             stale=stale.rstrip("\n"),
+                             findings="\n".join(findings + _advisory_note(dropped_advisories)))
+        # C39b (f): A REAL FINDING MUST NOT BURY A SIBLING TIMEOUT. `findings` wins the priority
+        # order (a concrete diagnostic is the most actionable fact this function can hand back), but
+        # returning outright here used to make an unrelated hung check invisible next to it — the
+        # coder "fixed" the reported lint error and believed the gate was answered while the real
+        # pytest hang (the p27 Orders shape) never surfaced at all. Appended, never merged into
+        # `findings` itself (never speak over a tool: the timeout note is cria's OWN sentence, not a
+        # checker's line, so it must not ride inside the block `checks_error_class` renders as the
+        # checker's verbatim output).
+        if timeout_notes:
+            msg += "\n" + "\n".join(timeout_notes)
+        return msg
     if failed_no_detail:            # ran, exited non-zero, no usable output → a failure with no location
-        return ("⟦ctx:checks⟧ one of the repo's own checks FAILED but printed no parseable location — "
-                "run it yourself and read the actual error before continuing. Not done.")
+        msg = ("⟦ctx:checks⟧ one of the repo's own checks FAILED but printed no parseable location — "
+              "run it yourself and read the actual error before continuing. Not done.")
+        if timeout_notes:
+            msg += "\n" + "\n".join(timeout_notes)
+        return msg
+    if could_not_run and timeout_notes:
+        # C39b: named, with its command when the plan/facts know it — even when it printed nothing.
+        # This supersedes the older "could_not_run and timed_out_output" branch below for every
+        # TIMEOUT (EXIT 124) section: that branch used to require non-empty output to be named at
+        # all, so an empty timed-out pytest read exactly like a genuinely absent tool ("no usable
+        # result — no signal either way") — the false neutrality this candidate exists to remove.
+        return CHECKS_MARKER + " " + "\n".join(timeout_notes)
     if could_not_run and timed_out_output:
-        # It ran, stalled, and printed something first — hand that over verbatim, labelled for what it
-        # is, instead of only "no signal either way".
+        # The remaining case this branch still owns: a section whose EXIT sentinel never arrived at
+        # all (harness cut the stream mid-run, `code is None`) — not a confirmed `timeout(1)` kill,
+        # so it is not fed through :func:`_timeout_note`'s "did not finish (timed out)" wording, but
+        # what it printed is still kept as CONTEXT rather than discarded.
         return (CHECKS_MARKER + " a check did not finish (timed out) — no verdict either way. It printed "
                 "this before it was stopped:\n" + "\n".join(timed_out_output))
     if could_not_run:               # couldn't launch/timed out → cria's own setup gap; stay neutral
@@ -1805,6 +1929,13 @@ def clean_gate_results(messages: list, plan: "GatePlan | None" = None, *,
             continue
         historical = GatePlan(workspace="", transport_required=True,
                               transport_id=transport_id)
+        # C39b: hand this rebuilt plan its OWN transport's persisted facts (kind, composed_by_cria,
+        # command — see `_register_transport_facts`), so a section that timed out on THIS now-older
+        # transport still names its command exactly as it did while this was the newest gate. A
+        # transport this mechanism never saw (predates it, or aged out of the bound) renders with
+        # `historical.candidates` empty, same as base — the fallback in `_command_for_sid` is
+        # unaffected either way.
+        historical.candidates = _facts_for_transport(transport_id)
         for page in pages:
             if historical.transport_complete:
                 fail_transport(historical, "transport history continued after its final page")
@@ -1836,8 +1967,15 @@ def clean_gate_results(messages: list, plan: "GatePlan | None" = None, *,
                 current = plan is not None and plan.transport_id == transport_id
                 transport_state = transport_states[transport_id]
                 if transport_state.transport_complete:
+                    # C39b: a HISTORICAL transport_state is no longer plan-free — it is `historical`,
+                    # built above with this transport's own persisted facts attached
+                    # (`historical.candidates = _facts_for_transport(...)`), so its timed-out sections
+                    # still name their command once this gate is no longer the newest. `current` still
+                    # decides annotate/changed_paths/etc below (those stay newest-gate-only), but the
+                    # PLAN object handed to clean_gate_output is always the one that actually knows
+                    # this transport's facts.
                     c = clean_gate_output(
-                        transported_result(transport_state), plan if current else None,
+                        transported_result(transport_state), transport_state,
                         annotate=(i == last_gate),
                         changed_paths=_paths_written_after(messages, i) if i == last_gate else frozenset(),
                         a_command_ran_since=(i == last_gate
