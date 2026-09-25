@@ -204,6 +204,14 @@ class ProbeCandidate:
     # completion -- the participation inference reads this to withhold ``participants`` rather than
     # naming files the chain may never have reached.
     test_source_paths_multi_segment: bool = False
+    # The command AS THE CODER WOULD TYPE IT, for every model-facing rendering that is not the
+    # literal executable argv (completion_probe_digest's "$ ..." line, a coder-rerun match) "" means
+    # "the joined argv already reads that way" (every ordinary candidate). Set ONLY when `command`
+    # itself had to become an interpreter-launch-check wrapper (a multi-line `python3 -c ...` script)
+    # so the check could abstain on an absent third-party module instead of misreporting its own
+    # "No module named X" as a repo defect (C39) \u2014 the model still reads the plain command it
+    # could have typed, never cria's launch-guard plumbing.
+    display_label: str = ""
     """Did cria AUTHOR this argv, or did it read it off the project?
 
     `cargo test --no-fail-fast`, `go vet ./...`, `bundle exec rspec` come from the project's own
@@ -467,7 +475,8 @@ def cand(kind: ProbeKind, command: list[str], working_dir: Path, confidence: int
          composed_by_cria: bool = False,
          ecosystem: Ecosystem | None = None,
          participation_inputs: tuple[str, ...] | None = None,
-         participation_inputs_complete: bool | None = None) -> ProbeCandidate:
+         participation_inputs_complete: bool | None = None,
+         display_label: str = "") -> ProbeCandidate:
     return ProbeCandidate(
         kind=kind,
         command=list(command),  # fresh list — callers may reuse prefixes
@@ -486,6 +495,7 @@ def cand(kind: ProbeKind, command: list[str], working_dir: Path, confidence: int
         ecosystem=ecosystem,
         participation_inputs=participation_inputs,
         participation_inputs_complete=participation_inputs_complete,
+        display_label=display_label,
     )
 
 
@@ -1270,11 +1280,20 @@ def lint_floor_candidates(root: Path) -> list[ProbeCandidate]:
     root = Path(root)
     py = linterprobe.collect_files(str(root), ["py"])
     if py:
+        py_files = py[:MAX_FLOOR_FILES_PER_LANG]
         out.append(cand(ProbeKind.Lint,
-                        ["python3", "-c", _PYFLAKES_LAUNCH_CHECK, *py[:MAX_FLOOR_FILES_PER_LANG]],
+                        ["python3", "-c", _PYFLAKES_LAUNCH_CHECK, *py_files],
                         root, 60, 80, ProbeCost.Cheap, composed_by_cria=True,
                         ecosystem=Ecosystem.Python,
-                        reason="Python linting: pyflakes (undefined names, unused imports; zero-config)"))
+                        reason="Python linting: pyflakes (undefined names, unused imports; zero-config)",
+                        # THE MODEL NEVER SEES THE LAUNCH-CHECK WRAPPER. `command` had to become a
+                        # multi-line `python3 -c` script so an absent pyflakes abstains instead of
+                        # misreporting its own "No module named pyflakes" as a repo defect (C39). Every
+                        # OTHER rendering the model reads \u2014 the completion digest's "$ ..." line, a
+                        # coder-rerun match \u2014 must still read the plain command a coder could have
+                        # typed, or the digest starts showing cria's own plumbing and a coder who
+                        # re-runs `python3 -m pyflakes` themselves stops being recognised as a re-run.
+                        display_label=shlex.join(["python3", "-m", "pyflakes", *py_files])))
     # JAVASCRIPT'S SECOND RUNG. Python's floor is two rungs — parse it, then catch the undefined
     # names a parser cannot see — and JavaScript's was one. `node --check` is a parser; an assignment
     # to an undeclared name is legal syntax and fails only when the module runs. Walked on

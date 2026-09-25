@@ -23,6 +23,7 @@ from cria.proberun import (
     completion_block_nudge,
     completion_probe_digest,
     compose_probe_command,
+    display_command,
     failed_unparsed_probes,
     family_of,
     interpret_probe_output,
@@ -444,6 +445,22 @@ class TestDigestExtras(unittest.TestCase):
         digest = completion_probe_digest(report, LinterReport())
         self.assertIn("no tests collected", digest)
         self.assertNotIn("exit 5", digest)
+
+    def test_display_label_names_the_plain_command_not_the_launch_wrapper(self):
+        # C39 repair: the digest's "$ ..." line must show the command a coder could have typed
+        # (`display_label`), never the multi-line interpreter launch-check wrapper the REAL argv had
+        # to become so an absent module abstains instead of misreporting itself as a repo defect.
+        wrapper = ["python3", "-c", "import sys\ntry:\n    import pyflakes\nexcept ImportError:\n"
+                                     "    sys.exit(127)\n", "x.py"]
+        c = synth(wrapper, kind=ProbeKind.Lint)
+        c.display_label = "python3 -m pyflakes x.py"
+        joined = display_command(wrapper)
+        report = ProbeReport(["python"], [c], [ProbeResult(joined, 127,
+                             "failed to launch (x) — tool not installed?", [])])
+        digest = completion_probe_digest(report, LinterReport())
+        self.assertIn("$ python3 -m pyflakes x.py ", digest)
+        self.assertNotIn("import pyflakes", digest)      # the raw wrapper script text never ships
+        self.assertNotIn(joined, digest)                  # nor the quoted wrapper argv itself
 
 
 # ---------------------------------------------------------------------------

@@ -9,6 +9,7 @@ from cria.probediscovery import (
     discover,
     discover_all,
     js_package_manager,
+    lint_floor_candidates,
     project_types,
 )
 from cria.proberun import select_completion_probes
@@ -29,6 +30,31 @@ class DiscoveryCase(unittest.TestCase):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         self.d = Path(tmp.name)
+
+
+class PyflakesLaunchCheckLabelTests(DiscoveryCase):
+    """C39 repair: the pyflakes probe's real argv had to become an interpreter launch-check wrapper
+    (a multi-line `python3 -c` script) so an absent pyflakes abstains instead of misreporting its own
+    "No module named pyflakes" as a repo defect. `display_label` must still carry the PLAIN command a
+    coder could have typed, so every model-facing rendering keyed off it (the completion digest, a
+    coder-rerun match) never shows cria's own launch-guard plumbing."""
+
+    def test_command_is_the_wrapper_but_label_is_the_plain_pyflakes_invocation(self):
+        write(self.d, "x.py", "import os\nx = 1\n")
+        [c] = lint_floor_candidates(self.d)
+        self.assertIn("\n", " ".join(c.command))            # the REAL argv is the launch-check script
+        self.assertNotIn("\n", c.display_label)
+        self.assertTrue(c.display_label.startswith("python3 -m pyflakes "))
+        self.assertIn(str(self.d / "x.py"), c.display_label)
+
+    def test_every_other_candidate_has_no_display_label_override(self):
+        # `display_label` is opt-in: every OTHER composed probe's plain argv already reads the way a
+        # coder would type it, so this must stay "" (falls back to the real argv) for them.
+        write(self.d, "y.js", "const x = 1;\n")
+        cands = lint_floor_candidates(self.d)
+        non_pyflakes = [c for c in cands if "pyflakes" not in " ".join(c.command)]
+        self.assertTrue(non_pyflakes)
+        self.assertTrue(all(c.display_label == "" for c in non_pyflakes))
 
 
 class UpstreamPortedTests(DiscoveryCase):

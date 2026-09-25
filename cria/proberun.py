@@ -393,6 +393,16 @@ def _kind_by_command(report: ProbeReport) -> dict:
     return {display_command(c.command): c.kind for c in report.selected}
 
 
+def _label_by_command(report: ProbeReport) -> dict:
+    """joined-command (the ACTUAL argv run, and the key ``ProbeResult.command`` carries) -> the
+    MODEL-FACING label for it. Equal to the key for every ordinary candidate; only a candidate whose
+    real argv had to become an interpreter launch-check wrapper (C39: an absent-module abstain) sets
+    ``display_label`` to the plain command a coder could have typed, so the digest names the check
+    the way the coder would recognise it — never cria's own launch-guard plumbing."""
+    return {display_command(c.command): (c.display_label or display_command(c.command))
+            for c in report.selected}
+
+
 def syntax_floor_clean(report: ProbeReport):
     """True/False for the tier-0 checks that RAN; None when none did (nothing to judge).
     The truth-capture event's floor_clean field."""
@@ -534,21 +544,23 @@ def block_findings(report: ProbeReport, floor: LinterReport | None = None) -> Op
         # BLOCK_NUDGE_PREAMBLE, so there is nothing to strip and completion_block_nudge must not add one.
         return floor.nudge_text()
     kinds = _kind_by_command(report)
+    labels = _label_by_command(report)
     lines: list[str] = []
     syntax_lines: list[str] = []
     for r in report.results:
         is_syntax = kinds.get(r.command) is probediscovery.ProbeKind.SyntaxCheck
+        label = labels.get(r.command, r.command)
         if not r.findings:
             # A LAUNCH failure (absent tool) never blocks. EXCEPT: a syntax check that ran red, OR a
             # hard-failure-kind probe that TIMED OUT (ran and did not verify — M3) — both are real
             # not-clean signals with no file:line, so they block coarsely (command + summary).
             if is_syntax and r.exit_code not in (0, None):
-                syntax_lines.append(f"$ {r.command} — {r.summary}")
+                syntax_lines.append(f"$ {label} — {r.summary}")
             elif r.timed_out and kinds.get(r.command) in _HARD_FAILURE_KINDS:
-                lines.append(f"$ {r.command} — {r.summary or 'timed out and did not verify'}")
+                lines.append(f"$ {label} — {r.summary or 'timed out and did not verify'}")
             continue
         bucket = syntax_lines if is_syntax else lines
-        bucket.append(f"$ {r.command} — {r.summary}")
+        bucket.append(f"$ {label} — {r.summary}")
         # EVERY finding, not a .take(5) slice: a probe with 12 real errors once showed only 5, so the
         # model fixed those, re-ran, and hit the 6th it never saw. The window-aware context floor is the
         # one place a truncation may happen — never a blind per-probe cap here.
@@ -716,6 +728,7 @@ def completion_probe_digest(report: ProbeReport, floor: LinterReport | None = No
     if not report.results:
         lines.append(DIGEST_NO_PROBES)
     else:
+        labels = _label_by_command(report)
         for r in report.results:
             if r.exit_code == 0:
                 exit_txt = DIGEST_EXIT_CLEAN
@@ -733,7 +746,7 @@ def completion_probe_digest(report: ProbeReport, floor: LinterReport | None = No
                 # print EXIT:127). Observed live: a 10s exec yield cut the gate mid-pytest and this
                 # read "did NOT launch (tool missing?)" — a false fact handed to the critic.
                 exit_txt = DIGEST_EXIT_UNFINISHED
-            lines.append(f"$ {r.command} — {exit_txt} — {r.summary} — "
+            lines.append(f"$ {labels.get(r.command, r.command)} — {exit_txt} — {r.summary} — "
                          f"{len(r.findings)} structured finding(s)")
     return "\n".join(lines)
 

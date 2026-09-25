@@ -146,65 +146,169 @@ class InterpretTests(unittest.TestCase):
         self.assertIn("did NOT launch", completion_probe_digest(out.report))
 
 
+def _pyflakes_absent_env(base_env=None):
+    """A PYTHONPATH stub package named ``pyflakes`` that raises ImportError the instant it is
+    imported \u2014 shadowing any REAL pyflakes the host may or may not have installed, so the test is
+    deterministic across machines instead of depending on this sandbox happening to lack the package.
+    It sits on the SAME ``python3`` the composed gate command actually runs (passed via ``env=`` into
+    the real subprocess, not mocked at the Python-import level), so this still exercises the genuine
+    ``ImportError`` -> ``sys.exit(127)`` path in the composed script, byte for byte."""
+    stub_root = tempfile.mkdtemp()
+    pkg = Path(stub_root) / "pyflakes"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text("raise ImportError(\"No module named 'pyflakes'\")\n")
+    env = dict(base_env or os.environ)
+    env["PYTHONPATH"] = stub_root + os.pathsep + env.get("PYTHONPATH", "")
+    return env
+
+
+def _pyflakes_present_and_failing_env(base_env=None):
+    """A PYTHONPATH stub standing in for a REAL, installed, failing pyflakes: shadows any real
+    package the same way :func:`_pyflakes_absent_env` does, so this too is deterministic regardless
+    of the host."""
+    fake_root = tempfile.mkdtemp()
+    pkg = Path(fake_root) / "pyflakes"
+    pkg.mkdir()
+    (pkg / "__init__.py").write_text("")
+    (pkg / "__main__.py").write_text(
+        "import sys\n"
+        "for f in sys.argv[1:]:\n"
+        "    print(f\"{f}:1:1: undefined name 'bogus'\")\n"
+        "sys.exit(1)\n")
+    env = dict(base_env or os.environ)
+    env["PYTHONPATH"] = fake_root + os.pathsep + env.get("PYTHONPATH", "")
+    return env
+
+
 class AbsentPyflakesTests(unittest.TestCase):
     """C39: an absent `pyflakes` module must abstain through the same launch-failure path a missing
     binary already uses (`command not found` -> EXIT:127) instead of surfacing python3's OWN "No
-    module named pyflakes" exit-1 as though the REPO'S checks found an error. This environment has no
-    pyflakes installed, so the real composed gate script exercises the exact absence the p27 Orders
-    capture hit \u2014 no mocking of "module missing" required."""
+    module named pyflakes" exit-1 as though the REPO'S checks found an error. Deterministic: a
+    PYTHONPATH stub forces ImportError on the actual `python3` the composed command runs, regardless
+    of whether THIS machine happens to have pyflakes installed."""
 
-    def test_absent_pyflakes_abstains_instead_of_reporting_a_false_error(self):
-        self.assertIsNone(__import__("importlib").util.find_spec("pyflakes"),
-                          "this test requires an environment with NO pyflakes installed")
-        t = _ws(with_pytest=False, py_body="import os\nx = 1\n")  # unused import: a REAL pyflakes finding
+    def test_real_composed_command_real_bash_via_clean_gate_output(self):
+        """The exact live coder-facing path (`clean_gate_output`, the one that built the false-red
+        p27 Orders prompts) \u2014 real bash, a real deterministic absent pyflakes, parsed through the
+        SAME scraper the coder actually reads from. `checks` must never be None here: this workspace
+        always produces a gate result, so a None here is itself a test bug, not a benign skip."""
+        t = _ws(with_pytest=False, py_body="import os\nx = 1\n")
         plan = plan_gate(t)
-        proc = subprocess.run(["bash", "-c", plan.script], capture_output=True, text=True, timeout=120)
+        env = _pyflakes_absent_env()
+        proc = subprocess.run(["bash", "-c", plan.script], capture_output=True, text=True, timeout=120, env=env)
         out = interpret_gate(plan, proc.stdout)
         self.assertTrue(out.ran)
-        digest = completion_probe_digest(out.report)
-        self.assertIn("did NOT launch", digest)          # abstain, via the existing launch-failure path
-        self.assertNotIn("No module named pyflakes", digest)  # the tool's own absence text never surfaces
-        nudge = completion_block_nudge(out.report)
-        self.assertIsNone(nudge)                          # never reported as the repo's own error
+        raw = probegate.transported_result(plan) or proc.stdout
+        checks = probegate.clean_gate_output(raw, plan=plan)
+        self.assertIsNotNone(checks)
+        self.assertNotIn("No module named pyflakes", checks)     # the tool's own absence text never ships
+        self.assertNotIn("report these error-class problems", checks)  # never framed as the repo's defect
+        # compileall genuinely parses `import os\nx = 1\n` clean, and pyflakes' own absence must not
+        # erase that real verdict (the C39 BLOCKING repair) \u2014 the checks block stays a real green.
+        self.assertIn("no error-class problems", checks.lower())
 
     def test_present_and_failing_pyflakes_is_still_reported(self):
         # A fake `pyflakes` module on PYTHONPATH stands in for a REAL, installed-and-failing pyflakes:
         # the wrapper's `os.execvp` must hand control to the exact `python3 -m pyflakes` invocation, so
-        # a genuine finding is untouched \u2014 same argv, same output, same exit code as always.
+        # a genuine finding is untouched \u2014 same argv, same output, same exit code as always. Kept
+        # as a REGRESSION guard even though it passes on both sides of this fix (the fix only changes
+        # the ABSENT-module case): it is what proves `os.execvp` genuinely hands off rather than
+        # silently swallowing a real finding.
         t = _ws(with_pytest=False, py_body="import os\nx = 1\n")
-        fake_root = tempfile.mkdtemp()
-        pkg = Path(fake_root) / "pyflakes"
-        pkg.mkdir()
-        (pkg / "__init__.py").write_text("")
-        (pkg / "__main__.py").write_text(
-            "import sys\n"
-            "for f in sys.argv[1:]:\n"
-            "    print(f\"{f}:1:1: undefined name 'bogus'\")\n"
-            "sys.exit(1)\n")
         plan = plan_gate(t)
-        env = dict(os.environ, PYTHONPATH=fake_root + os.pathsep + os.environ.get("PYTHONPATH", ""))
+        env = _pyflakes_present_and_failing_env()
         proc = subprocess.run(["bash", "-c", plan.script], capture_output=True, text=True, timeout=120, env=env)
         out = interpret_gate(plan, proc.stdout)
         nudge = completion_block_nudge(out.report)
         self.assertIsNotNone(nudge)
         self.assertIn("undefined name", nudge)
-
-    def test_real_composed_command_real_bash_via_clean_gate_output(self):
-        """The exact live path (`clean_gate_output`, not `completion_block_nudge`) that built the
-        false-red p27 Orders coder prompts \u2014 real bash, this environment's real absent pyflakes,
-        parsed through the SAME scraper the coder actually read from."""
-        self.assertIsNone(__import__("importlib").util.find_spec("pyflakes"),
-                          "this test requires an environment with NO pyflakes installed")
-        t = _ws(with_pytest=False, py_body="import os\nx = 1\n")
-        plan = plan_gate(t)
-        proc = subprocess.run(["bash", "-c", plan.script], capture_output=True, text=True, timeout=120)
-        out = interpret_gate(plan, proc.stdout)
-        self.assertTrue(out.ran)
         raw = probegate.transported_result(plan) or proc.stdout
         checks = probegate.clean_gate_output(raw, plan=plan)
-        if checks is not None:
-            self.assertNotIn("No module named pyflakes", checks)
-            self.assertNotIn("error-class problems", checks)
+        self.assertIsNotNone(checks)
+        self.assertIn("undefined name", checks)
+        self.assertIn("report these error-class problems", checks)
+
+
+class ProbeRerunLabelTests(unittest.TestCase):
+    """C39 repair: `_probe_reran_after_last_change` matches a coder's own retyped command against
+    each candidate's PLAIN label (`display_label` when set, else the real argv) \u2014 not cria's own
+    interpreter launch-check wrapper, which no coder would ever type."""
+
+    def test_rerun_of_the_plain_pyflakes_command_is_recognised(self):
+        from cria.probediscovery import ProbeCandidate, ProbeCost
+        candidate = ProbeCandidate(
+            kind=ProbeKind.Lint,
+            command=["python3", "-c", "import sys\ntry:\n    import pyflakes\n"
+                                        "except ImportError:\n    sys.exit(127)\n", "x.py"],
+            working_dir=".", confidence=60, expected_value=80, cost=ProbeCost.Cheap,
+            mutates_code=False, may_hang=False, may_need_services=False, reason="test",
+            composed_by_cria=True, display_label="python3 -m pyflakes x.py")
+        plan = GatePlan(workspace=".", script="", candidates=[candidate])
+        messages = [
+            {"role": "assistant", "tool_calls": [{"function": {
+                "name": "write_file", "arguments": "{}"}}]},
+            {"role": "assistant", "tool_calls": [{"function": {
+                "name": "exec_command",
+                "arguments": '{"cmd": "python3 -m pyflakes x.py"}'}}]},
+        ]
+        self.assertTrue(probegate._probe_reran_after_last_change(messages, -1, plan))
+
+
+class P27OrdersReplayShapeTests(unittest.TestCase):
+    """The exact section shapes independent review replayed from the p27 Orders workspace through
+    plan_gate -> bash -> ingest_transport -> clean_gate_output: [compileall EXIT 0, pyflakes EXIT 127,
+    pytest EXIT 124 empty] and the seed [compileall EXIT 0, pyflakes EXIT 127, pytest EXIT 0]. Built
+    from a REAL plan (three real candidates, in real section order) so `_command_for_sid` names the
+    real composed commands \u2014 not a hand-typed guess at what they'd be."""
+
+    def _plan(self):
+        t = tempfile.mkdtemp()
+        open(os.path.join(t, "x.py"), "w").write("import os\nx = 1\n")
+        os.makedirs(os.path.join(t, "tests"))
+        open(os.path.join(t, "tests", "test_x.py"), "w").write("def test_ok():\n    assert True\n")
+        plan = plan_gate(t)
+        # Pin down the shape this test relies on: compileall, pyflakes, pytest, in that order, and
+        # nothing else \u2014 so a future discovery change fails LOUD here instead of silently testing
+        # the wrong sections.
+        cmds = [" ".join(c.command[:3]) for c in plan.candidates]
+        assert len(plan.candidates) == 3, cmds
+        assert cmds[0].startswith("python3 -m compileall"), cmds
+        assert "pyflakes" in cmds[1], cmds
+        assert cmds[2] == "python3 -m pytest", cmds
+        return plan
+
+    def test_0_127_124_empty_names_the_timeout_not_no_signal_either_way(self):
+        plan = self._plan()
+        raw = (_sec(0, "EXIT:0") + _sec(1, "/usr/bin/python3: No module named pyflakes\nEXIT:127")
+               + _sec(2, "EXIT:124") + _git("feed99"))
+        out = probegate.clean_gate_output(raw, plan)
+        self.assertIsNotNone(out)
+        self.assertIn("pytest", out)                       # the timed-out command is NAMED
+        self.assertIn("timed out", out.lower())
+        self.assertNotIn("no signal either way", out.lower())   # the blocking regression: never hidden
+        self.assertNotIn("No module named pyflakes", out)  # pyflakes' own absence still stays silent
+
+    def test_0_127_0_keeps_the_green_verdict(self):
+        # The reviewer's seed state: a real PASSING pytest run must not be neutralised by pyflakes'
+        # own absence sitting in the same gate.
+        plan = self._plan()
+        raw = (_sec(0, "EXIT:0") + _sec(1, "/usr/bin/python3: No module named pyflakes\nEXIT:127")
+               + _sec(2, "1 passed in 0.01s\nEXIT:0") + _git("feed99"))
+        out = probegate.clean_gate_output(raw, plan)
+        self.assertIsNotNone(out)
+        self.assertIn("no error-class problems", out.lower())
+        self.assertNotIn("no signal either way", out.lower())
+        self.assertNotIn("no usable result", out.lower())
+        self.assertNotIn("No module named pyflakes", out)
+
+    def test_0_127_124_with_printed_output_still_names_the_command(self):
+        plan = self._plan()
+        raw = (_sec(0, "EXIT:0") + _sec(1, "/usr/bin/python3: No module named pyflakes\nEXIT:127")
+               + _sec(2, "tests/test_x.py::test_ok\n(killed mid-run)\nEXIT:124") + _git("feed99"))
+        out = probegate.clean_gate_output(raw, plan)
+        self.assertIn("pytest", out)
+        self.assertIn("killed mid-run", out)                # printed output still survives, verbatim
+        self.assertNotIn("no signal either way", out.lower())
 
 
 class BashRoundtripTests(unittest.TestCase):
@@ -256,6 +360,18 @@ class CleanGateOutputTests(unittest.TestCase):
             + "Process exited with code 1\n"
         )
 
+    def _raw_solo(self, probe0_body):
+        # The SAME wrapper, but with only ONE probe section \u2014 no sibling clean check exists to
+        # carry a real verdict. Used to test "nothing in this gate ever produced a verdict", which
+        # must stay distinct from "one probe abstained/timed out while a SIBLING check ran clean"
+        # (C39 repair: those two used to collapse to the same "no usable result" answer).
+        return (
+            "Chunk ID: 7f3\n"
+            + _sec(0, probe0_body)
+            + _git("deadbeef")
+            + "Process exited with code 1\n"
+        )
+
     def test_strips_plumbing_and_advisory_keeps_error(self):
         raw = self._raw("x.py:1:1 'os' imported but unused\nx.py:5:4 undefined name 'foo'\nEXIT:1")
         out = probegate.clean_gate_output(raw)
@@ -287,16 +403,29 @@ class CleanGateOutputTests(unittest.TestCase):
         self.assertIn("no error-class", out.lower())
         self.assertNotIn("E501", out)
 
-    def test_launch_failure_is_neutral_not_an_error_to_fix_nor_a_pass(self):
-        # THE regression: a probe that couldn't launch (`python` absent) is cria's OWN setup gap. The
-        # model sees a neutral non-actionable note — never an error to "fix", never a pass/clean claim.
-        raw = self._raw("timeout: failed to run command 'python': No such file or directory\nEXIT:127")
+    def test_solo_launch_failure_is_neutral_not_an_error_to_fix_nor_a_pass(self):
+        # A probe that couldn't launch (`python` absent) with NOTHING else in the gate is cria's OWN
+        # setup gap and there is no other check's verdict to fall back on. The model sees a neutral
+        # non-actionable note — never an error to "fix", never a pass/clean claim.
+        raw = self._raw_solo("timeout: failed to run command 'python': No such file or directory\nEXIT:127")
         out = probegate.clean_gate_output(raw)
         self.assertIn("no usable result", out.lower())
         self.assertNotIn("fix", out.lower())            # not framed as a fixable code error
         self.assertNotIn("pass", out.lower())           # not a pass/clean claim
         self.assertNotIn("no error-class problems. that", out.lower())  # not the clean message either
         self.assertNotIn("python", out.lower())         # doesn't leak the raw launch-failure line
+
+    def test_launch_failure_alongside_a_real_clean_check_keeps_the_green_verdict(self):
+        # C39 BLOCKING repair: a probe that couldn't launch must abstain for ITSELF only — it must
+        # NOT erase the verdict of a SIBLING check that actually ran clean in the same gate. Before
+        # the repair, ANY 125/126/127 section flipped the WHOLE gate to "no usable result", silently
+        # discarding a real green (#4, never speak over a tool: the clean probe-0 IS a tool's own
+        # verdict, and staying silent about it is cria speaking instead of relaying it).
+        raw = self._raw("timeout: failed to run command 'eslint': No such file or directory\nEXIT:127")
+        out = probegate.clean_gate_output(raw)
+        self.assertIn("no error-class problems", out.lower())  # the real green survives
+        self.assertNotIn("no usable result", out.lower())
+        self.assertNotIn("eslint", out.lower())                 # the launch failure itself stays silent
 
     def test_c39_absent_pyflakes_module_abstains_not_reported_as_repo_error(self):
         # C39 (row p27 Orders, chunk107): a box with no `pyflakes` installed made `python3 -m
@@ -307,11 +436,22 @@ class CleanGateOutputTests(unittest.TestCase):
         # among them, so this raw text was scraped and shipped verbatim as "the repo's own checks
         # report these error-class problems". After the fix, the composed command pre-checks the
         # module itself and exits 127 on absence, landing in the SAME existing launch-failure branch.
-        raw = self._raw("/usr/bin/python3: No module named pyflakes\nEXIT:127")
+        # A SOLO pyflakes section (nothing else ran) still abstains into "no usable result".
+        raw = self._raw_solo("/usr/bin/python3: No module named pyflakes\nEXIT:127")
         out = probegate.clean_gate_output(raw)
         self.assertIn("no usable result", out.lower())         # abstain: neutral, not an error to fix
         self.assertNotIn("No module named pyflakes", out)      # the tool's own absence text never ships
-        self.assertNotIn("error-class problems", out)          # never framed as the repo's own defect
+        self.assertNotIn("report these error-class problems", out)  # never framed as the repo's own defect
+
+    def test_c39_absent_pyflakes_alongside_a_real_clean_check_keeps_the_green_verdict(self):
+        # The reviewer's exact seed shape [compileall EXIT 0, pyflakes EXIT 127]: cria's own absent
+        # lint tool must not neutralise the real `compileall` pass sitting right beside it.
+        raw = self._raw("/usr/bin/python3: No module named pyflakes\nEXIT:127")
+        out = probegate.clean_gate_output(raw)
+        self.assertIn("no error-class problems", out.lower())
+        self.assertNotIn("no usable result", out.lower())
+        self.assertNotIn("No module named pyflakes", out)
+        self.assertNotIn("report these error-class problems", out)
 
     def test_c39_present_and_failing_pyflakes_still_reported(self):
         # The other half of C39: a REAL pyflakes finding (present, installed, and failing) must still
@@ -353,10 +493,22 @@ class CleanGateOutputTests(unittest.TestCase):
         self.assertNotIn("checker's own message", out.lower())  # NOT reported as error-class findings
         self.assertIn("killed mid-run", out)                    # ...but what it printed survives
 
-    def test_timeout_with_no_output_stays_a_bare_no_signal(self):
+    def test_timeout_with_no_output_still_names_the_timeout_not_no_usable_result(self):
+        # C39 repair: naming the timeout is required EVEN when it printed nothing (reviewer
+        # directive) \u2014 and since `_raw`'s probe-0 genuinely ran clean, the message must say so
+        # too rather than collapsing to the generic (and here false) "no usable result".
         raw = self._raw("EXIT:124")
         out = probegate.clean_gate_output(raw)
-        self.assertIn("no usable result", out.lower())
+        self.assertIn("no verdict either way", out.lower())
+        self.assertNotIn("no usable result", out.lower())
+        self.assertNotIn("fix", out.lower())
+
+    def test_solo_timeout_with_no_output_is_still_named_not_generic_no_usable_result(self):
+        # The TRUE solo case (nothing else in the gate at all): still named, per the reviewer's
+        # directive that a 124 section is ALWAYS stated as a timeout, even printing nothing.
+        raw = self._raw_solo("EXIT:124")
+        out = probegate.clean_gate_output(raw)
+        self.assertIn("no verdict either way", out.lower())
         self.assertNotIn("fix", out.lower())
 
     def test_nonzero_exit_empty_output_is_a_failure(self):
