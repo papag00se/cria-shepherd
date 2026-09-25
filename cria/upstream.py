@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Iterator
 
 from . import bodykeys
-from . import (callcapture, config, contextfloor, failover, massage, probegate, reasoning,
+from . import (callcapture, config, contextfloor, dedup, failover, massage, probegate, reasoning,
                rumination, tokenratio)
 
 # Sentinel for "window not yet resolved" (distinct from None = "no window / skip floor").
@@ -443,6 +443,15 @@ class Upstream:
         if isinstance(out.get("messages"), list):
             out["messages"] = [{k: v for k, v in m.items() if k != bodykeys.CALLER_INSTRUCTIONS}
                                if isinstance(m, dict) else m for m in out["messages"]]
+            # THE DEDUP POINTER INVARIANT, re-checked against the body about to be serialized \u2014
+            # the last point a stage between the fold (loop._elide_ledger_copies) and here could
+            # have mutated or dropped the kept copy a pointer promises is "shown IN FULL further
+            # down". Restores the original text when the promise no longer holds; always strips the
+            # internal hint either way, so it never reaches the model (principle 5, 5b, 24).
+            out["messages"], restored = dedup.verify_pointers(out["messages"])
+            if restored:
+                rlog.emit("context.dedup_pointer_restored", level="warn", reshape="dedup-restore",
+                          count=restored)
         sent_estimate = contextfloor.est_total(out.get("messages"), out.get("tools"))
         # The pre-frame observer never rides in ``out``.  It is correlated here, after every wire
         # transform and internal-key strip, with the exact bytes about to be POSTed.  A non-coder

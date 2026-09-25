@@ -412,6 +412,54 @@ class LoadedModelTests(unittest.TestCase):
         self.assertEqual(body["model"], "explicit-alias")  # a set alias wins; no override
 
 
+class DedupPointerWireInvariantTests(unittest.TestCase):
+    """C42: `dedup.fold_repeated_messages` promises a pointer's full copy rides later in the SAME
+    body. A stage between the fold (loop._elide_ledger_copies, mid-pipeline) and the wire can mutate
+    or drop that kept copy without the pointer knowing \u2014 `_prep`, the last point before
+    serialization, is where the promise is re-checked against the body that is ACTUALLY about to be
+    sent, and repaired if it broke (principle 5, 24)."""
+
+    def test_an_intact_pointer_ships_as_is_and_the_hint_is_stripped(self):
+        from cria import bodykeys
+        up = Upstream("http://x", context_window=8192)
+        original = "the real grep output" * 20
+        body = {"model": "m", "messages": [
+            {"role": "tool", "tool_call_id": "a", "content": "POINTER", bodykeys.DEDUP_POINTER: original},
+            {"role": "tool", "tool_call_id": "b", "content": original},
+        ]}
+        data, _, _ = up._prep(body, False, _Rlog())
+        sent = json.loads(data)
+        self.assertEqual(sent["messages"][0]["content"], "POINTER")
+        self.assertNotIn(bodykeys.DEDUP_POINTER, sent["messages"][0])
+
+    def test_a_broken_promise_is_restored_not_shipped_as_a_lie(self):
+        """The kept copy a later stage would have mutated/dropped is simulated directly: no later
+        message matches the pointer's original content, so the pointer's own body is restored."""
+        from cria import bodykeys
+        up = Upstream("http://x", context_window=8192)
+        original = "the real grep output for type Cart" * 20
+        body = {"model": "m", "messages": [
+            {"role": "tool", "tool_call_id": "a", "content": "POINTER", bodykeys.DEDUP_POINTER: original},
+            {"role": "tool", "tool_call_id": "b", "content": "a DIFFERENT tool result entirely"},
+        ]}
+        rlog = _Rlog()
+        data, _, _ = up._prep(body, False, rlog)
+        sent = json.loads(data)
+        self.assertEqual(sent["messages"][0]["content"], original,
+                         "a false pointer must never reach the wire — restore the real content")
+        self.assertNotIn(bodykeys.DEDUP_POINTER, sent["messages"][0])
+        self.assertTrue(any(k == "context.dedup_pointer_restored" for k, _ in rlog.events))
+
+    def test_the_hint_never_reaches_the_wire_either_way(self):
+        from cria import bodykeys
+        up = Upstream("http://x", context_window=8192)
+        body = {"model": "m", "messages": [
+            {"role": "tool", "tool_call_id": "a", "content": "POINTER", bodykeys.DEDUP_POINTER: "x" * 200},
+        ]}
+        data, _, _ = up._prep(body, False, _Rlog())
+        self.assertNotIn(bodykeys.DEDUP_POINTER.encode(), data)
+
+
 class ReconcileReasoningConventionTests(unittest.TestCase):
     """C41: row p28 — [backends.local] reasoning_style = "openai" (written for ternary-bonsai-2)
     stayed configured after the box swapped to Nemotron-Elastic-12B. Every OFF-reasoning role wrote
