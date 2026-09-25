@@ -204,7 +204,7 @@ class View:
         # request's own fresh listing) confirms the size still matches; only then does it become a
         # trusted `_bodies` entry. Until confirmed, `read_bytes` answers exactly as it would for a
         # path nobody has ever mentioned: unknown, and re-asked.
-        self._cache_candidates: dict[str, bytes] = {}
+        self._cache_candidates: dict[str, tuple[bytes, tuple]] = {}
         if sess and self.root:
             cached = _BODY_CACHE.get((sess, self.root))
             if cached:
@@ -609,15 +609,30 @@ class View:
         A body loaded from `_BODY_CACHE` is a PRIOR request's delivery — real, but corroborated by
         nothing that happened this round, unlike a body this request's own survey just delivered
         (`_set_body`) or the conversation replay just proved (`note_written`/`note_read`). It is held
-        apart in `_cache_candidates` until a tree THIS request ingests confirms the size still
-        matches (the same test `_drop_stale_bodies` applies to a body already trusted); only then does
-        it become one. A size that disagrees, or a path the fresh listing no longer names, drops and
-        forgets it exactly like an already-trusted body would (review B1)."""
+        apart in `_cache_candidates` until a tree THIS request ingests confirms it still matches;
+        only then does it become a trusted `_bodies` entry.
+
+        SIZE ALONE IS NOT ENOUGH (C38b, independent review #5b). A shell edit cria never observed —
+        `go get pkg@v1.5.0` rewriting `go.mod`'s "v1.4.0" to "v1.5.0", `cargo update` bumping a
+        pinned version of the same width, a same-length Rakefile edit — changes the file's CONTENT
+        without changing its LENGTH. `note_changed` catches an edit cria's own tools watched land;
+        this is the other case, an edit cria never saw at all, and a size-only check would wave the
+        stale body straight through into the very builder (C40) that reads a manifest for an exact
+        version's API surface. `_remember_body` was given the (size, mtime) pair the survey confirmed
+        AT THE MOMENT this body was recorded; a candidate is promoted only when the FRESH listing's
+        entry matches both — same size, same mtime — not just the same size.
+
+        UNKNOWN MTIME IS NEVER TRUSTED. `None` (no confirming survey ever ran — a write cria itself
+        lowered, see `note_written`) and `0.0` (the tree line failed to parse a timestamp, `_ingest_tree`'s
+        own fallback) both mean cria does not actually know when the file last changed, and a
+        cache hit that cannot rule out an unobserved edit is exactly the false fact this guard
+        exists to prevent. Either value on either side of the comparison ends the candidate."""
         if not self._cache_candidates:
             return
-        for rel, raw in list(self._cache_candidates.items()):
+        for rel, (raw, confirmed) in list(self._cache_candidates.items()):
             entry = self._files.get(rel)
-            if entry is not None and entry[0] == len(raw) and rel not in self._bodies:
+            if entry is not None and entry[0] == len(raw) and rel not in self._bodies \
+                    and _mtimes_agree(entry[1], confirmed[1] if confirmed else None):
                 self._bodies[rel] = raw
                 self._body_generation.pop(rel, None)  # a prior request's delivery, not this survey's
             else:
@@ -671,7 +686,12 @@ class View:
         # `apply_survey`) forgets this cache entry again before this function's caller ever sees
         # `apply_survey` return — a body never leaves this module's control still standing as cached
         # once its own size check has failed (review B1).
-        _remember_body(self._sess, self.root, rel, raw)
+        #
+        # CONFIRMED AGAINST THIS SURVEY'S OWN LISTING (C38b). `_ingest_tree` ran before this blob
+        # was ingested, so `self._files[rel]` already holds the (size, mtime) THIS survey's tree
+        # declared for `rel` — the pair a later request's cache reconciliation must match on both
+        # axes, not size alone, to promote this body back to trusted (`_reconcile_cache_candidates`).
+        _remember_body(self._sess, self.root, rel, raw, self._files.get(rel))
 
     def _ingest_outside(self, body: str) -> None:
         for line in body.splitlines():
@@ -696,7 +716,14 @@ class View:
         self._body_generation.pop(rel, None)  # a coder tool result is not this gate's survey
         self._stale.discard(rel)
         self._undeliverable.pop(rel, None)
-        _remember_body(self._sess, self.root, rel, raw)  # replaces any session-cached body there was
+        # NO SURVEY HAS CONFIRMED A MTIME FOR THIS WRITE (C38b). The bytes are ground truth THIS
+        # request — cria watched them land — so they go straight into `self._bodies`, no reconcile
+        # needed. But the (size, mtime) recorded alongside the SESSION-CACHE copy is what a LATER
+        # request's fresh survey must match to trust it again, and the only mtime available here is
+        # cria's own clock, not the harness's disk — a value no future survey's real timestamp is
+        # expected to equal. Recording it as unconfirmed (`None`) says plainly what is true: nobody
+        # has told cria when the file changed, so a later cache hit must not depend on guessing right.
+        _remember_body(self._sess, self.root, rel, raw, None)  # replaces any session-cached body
         prev = self._files.get(rel)
         # A FILE CRIA JUST WATCHED BEING WRITTEN IS THE NEWEST FILE IN THE WORKSPACE. A brand-new
         # path has no previous mtime, and epoch is not "unknown" here — it sorts LAST in every
@@ -972,15 +999,38 @@ _MISS_MAX = 64
 # surveyed from; keying by session let it leak into a `reroot`ed view of a DIFFERENT directory,
 # which `View.reroot`'s own docstring promises stays empty ("answering a question about a directory
 # nobody looked at ... would be a false fact, not a convenience").
-_BODY_CACHE: dict[tuple[str, str], dict[str, bytes]] = {}
+# Each bucket entry is ``(raw, confirmed)`` where ``confirmed`` is the ``(size, mtime)`` pair THIS
+# survey's own listing declared for the path at the moment the body was recorded — never a value
+# guessed by cria's own clock (`note_written` passes ``None``: see its docstring). A candidate is
+# promoted back to trusted only when a LATER request's fresh listing matches both fields, not size
+# alone (C38b) — the whole point being that a same-length, unobserved edit (`go get pkg@v1.5.0`
+# rewriting one version string of the same width, `cargo update`, a same-length Rakefile edit)
+# changes mtime even when it does not change size.
+_BODY_CACHE: dict[tuple[str, str], dict[str, tuple[bytes, tuple]]] = {}
 _BODY_CACHE_MAX_FILES = 64            # per (session, root) — a few surveys' worth of manifests
 _BODY_CACHE_MAX_BYTES = 2_000_000     # per (session, root) — generous for manifests, still bounded
 
 
-def _remember_body(sess: str, root: str, rel: str, raw: bytes) -> None:
+def _mtimes_agree(a, b) -> bool:
+    """Whether two mtimes from ``self._files``-shaped entries are the SAME confirmed moment.
+
+    ``None`` (nothing ever confirmed it — a write cria itself lowered, or a path the last survey
+    never named) and ``0.0`` (``_ingest_tree``'s own fallback when a tree line's timestamp failed to
+    parse) both mean cria does not actually know when the file last changed. Either value on either
+    side ends the comparison in disagreement — an unobserved edit is exactly what an unknown mtime
+    cannot rule out, and trusting it anyway is the false fact this check exists to prevent (C38b)."""
+    return a is not None and b is not None and a != 0.0 and b != 0.0 and a == b
+
+
+def _remember_body(sess: str, root: str, rel: str, raw: bytes, confirmed) -> None:
     """A body the harness just handed over — via a survey blob or a lowered write/read cria watched
     land — outlives this one request. Overwrites any earlier bytes for the same path: the newest
     delivery is always the truth, whichever door it came through.
+
+    ``confirmed`` is the ``(size, mtime)`` pair that vouches for ``raw`` — this survey's own listing
+    entry for a blob-delivered body, or ``None`` when nothing survey-confirmed it (`note_written`).
+    It rides along so a LATER request's cache reconciliation (`View._reconcile_cache_candidates`)
+    can require the fresh listing to match on mtime too, not just size (C38b).
 
     CALLERS MUST HAVE ALREADY SIZE-CHECKED ``raw`` against this request's own tree (review B1): a
     blob that arrives cut in transit is caught by `_drop_stale_bodies`, which now forgets the cache
@@ -993,12 +1043,12 @@ def _remember_body(sess: str, root: str, rel: str, raw: bytes) -> None:
         _BODY_CACHE.clear()
     bucket = _BODY_CACHE.setdefault(key, {})
     bucket.pop(rel, None)          # re-insert at the end — dicts evict oldest-first below
-    bucket[rel] = raw
+    bucket[rel] = (raw, confirmed)
     while len(bucket) > _BODY_CACHE_MAX_FILES:
         bucket.pop(next(iter(bucket)))
-    total = sum(len(b) for b in bucket.values())
+    total = sum(len(b[0]) for b in bucket.values())
     while total > _BODY_CACHE_MAX_BYTES and len(bucket) > 1:
-        total -= len(bucket.pop(next(iter(bucket))))
+        total -= len(bucket.pop(next(iter(bucket)))[0])
 
 
 def _forget_body(sess: str, root: str, rel: str) -> None:
