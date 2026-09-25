@@ -45,7 +45,6 @@ fires and cria sees a harness-level failure instead of exit 124.
 """
 from __future__ import annotations
 
-import base64
 import re
 import os
 import shlex
@@ -768,7 +767,6 @@ def compose_probe_command(c: ProbeCandidate, timeout_s: float) -> str:
     argv = " ".join(shlex.quote(t) for t in c.command)
     return (
         f"cd {shlex.quote(str(c.working_dir))} && "
-        f"{compose_probe_cmd_echo(c.command)}; "
         f"timeout -k {TIMEOUT_KILL_GRACE_S} {timeout_s:g} {argv} </dev/null 2>&1; "
         f"__cria_ec=$?; printf '\\n{PROBE_EXIT_SENTINEL}%d\\n' \"$__cria_ec\""
     )
@@ -922,41 +920,6 @@ def scrape_exit(raw: str) -> tuple[str, Optional[int]]:
                 continue
             return "\n".join(lines[:i] + lines[i + 1:]), code
     return raw, None
-
-
-# A section's OWN raw bytes are the only fact that survives a gate becoming an OLDER, superseded
-# transport: `clean_gate_results` rebuilds every earlier gate as a bare plan with no candidates
-# attached (loop.py's `sess.gate_plan` is replaced by the newest gate every turn), so a NAME for a
-# timed-out or cut-short section that lives only on `plan.candidates[idx]` is gone the moment a
-# newer gate exists (C39 re-review: an older empty pytest timeout lost its command name once
-# superseded). Self-describing the section instead \u2014 one line, printed BEFORE the probe itself
-# runs, so it is baked into the transport's own immutable bytes \u2014 needs no plan, no session state,
-# and survives supersession for free. Base64, not the plain command: a cria-composed probe's argv can
-# itself be a multi-line inline program (the TOML/JSON/XML parse floors), and a literal embedded
-# newline would break the "first line only" contract below.
-PROBE_CMD_MARKER = "___CRIA_PROBE_CMD___"
-
-
-def compose_probe_cmd_echo(command: list[str]) -> str:
-    """The shell fragment that self-describes a probe's own section, emitted once before the probe
-    itself runs (see :func:`compose_probe_command`). ``peel_probe_cmd_echo`` is the exact inverse."""
-    label = display_command(command)
-    b64 = base64.b64encode(label.encode("utf-8")).decode("ascii")
-    return f"printf '{PROBE_CMD_MARKER}%s\\n' {b64}"
-
-
-def peel_probe_cmd_echo(text: str) -> tuple[str, str]:
-    """(label, text with the echo line removed). ``label`` is ``""`` when no echo line is present \u2014
-    an older transport captured before this existed, or a section with no output at all \u2014 which
-    callers treat exactly like today's "cria can't say which command this was" case."""
-    lines = text.splitlines()
-    if lines and lines[0].startswith(PROBE_CMD_MARKER):
-        try:
-            label = base64.b64decode(lines[0][len(PROBE_CMD_MARKER):]).decode("utf-8", "replace")
-        except (ValueError, UnicodeDecodeError):
-            label = ""
-        return label, "\n".join(lines[1:])
-    return "", text
 
 
 def interpret_probe_output(c: ProbeCandidate, joined: str, raw_output: str,

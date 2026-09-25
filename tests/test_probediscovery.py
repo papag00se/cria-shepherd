@@ -1,4 +1,5 @@
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -46,6 +47,43 @@ class PyflakesBareBinaryTests(DiscoveryCase):
         self.assertNotIn("\n", " ".join(c.command))
         self.assertIn(str(self.d / "x.py"), c.command)
         self.assertTrue(c.composed_by_cria)
+
+    def test_debian_pyflakes3_only_path_composes_the_resolved_name(self):
+        # Re-review finding (C): Debian/Ubuntu ship pyflakes as `pyflakes3`, never a bare `pyflakes`.
+        # `program_is_installed` correctly sees it as installed (toolpath.resolved's own
+        # versioned-variant sweep finds it), but composing the LITERAL string "pyflakes" regardless
+        # meant the composed command still tried to launch a name that isn't there -- exit 127 on
+        # every single gate, neutralising every green run. The composed argv must use the RESOLVED
+        # name.
+        write(self.d, "x.py", "import os\nx = 1\n")
+        bin_dir = tempfile.mkdtemp()
+        exe = Path(bin_dir) / "pyflakes3"
+        exe.write_text("#!/usr/bin/env python3\nimport sys\nsys.exit(0)\n")
+        exe.chmod(0o755)
+        old_path = os.environ.get("PATH", "")
+        os.environ["PATH"] = bin_dir + os.pathsep + old_path
+        try:
+            self.assertIsNone(__import__("shutil").which("pyflakes"))   # only the suffixed variant exists
+            [c] = lint_floor_candidates(self.d)
+            self.assertEqual(c.command[0], "pyflakes3")
+        finally:
+            os.environ["PATH"] = old_path
+
+    def test_absent_pyflakes_yields_no_candidate_and_no_false_red(self):
+        # The upstream half of the C39 fix: an absent pyflakes never even reaches the gate as a
+        # section, so clean_gate_output has nothing to misclassify -- proven at the composition
+        # layer directly (program_is_installed's own filtering), not by hand-building a launch-
+        # failure section.
+        from cria import proberun
+        write(self.d, "x.py", "import os\nx = 1\n")
+        bin_dir = tempfile.mkdtemp()   # empty: no pyflakes, no pyflakes3, nothing
+        old_path = os.environ.get("PATH", "")
+        os.environ["PATH"] = bin_dir
+        try:
+            candidates = proberun.select_completion_probes(str(self.d))
+            self.assertFalse(any("pyflakes" in " ".join(c.command) for c in candidates))
+        finally:
+            os.environ["PATH"] = old_path
 
 
 class UpstreamPortedTests(DiscoveryCase):

@@ -1119,22 +1119,6 @@ def _is_hard_failure(plan, sid: str) -> bool:
     return kind in proberun._HARD_FAILURE_KINDS
 
 
-def _render_uncertain_notes(uncertain):
-    """Every timed-out / cut-short section, named from the TRANSPORT's own self-description
-    (proberun.peel_probe_cmd_echo -- no plan lookup, so this survives a gate becoming an older,
-    superseded transport with no candidates attached) -- the text this check NEVER lets a sibling's
-    clean or red verdict paper over (#4, never speak over a tool). No CHECKS_MARKER prefix: callers
-    append this to whichever branch already opens with one (a red finding, a no-location failure)
-    or supply their own when it stands alone. ``uncertain`` is a list of (label, printed) pairs."""
-    notes = []
-    for label, printed in uncertain:
-        command = f"`{label}`" if label else "a check"
-        note = prompts.fill(prompts.load("checks_timeout"), command=command)
-        if printed:
-            note += " It printed this before it was stopped:\n" + printed
-        notes.append(note)
-    return "\n".join(notes)
-
 def clean_gate_output(raw: str, plan: "GatePlan | None" = None, *, annotate: bool = True,
                       changed_paths: "frozenset[str]" = frozenset(),
                       a_command_ran_since: bool = False,
@@ -1165,93 +1149,59 @@ def clean_gate_output(raw: str, plan: "GatePlan | None" = None, *, annotate: boo
     findings: list[str] = []
     dropped_advisories = 0
     seen: set[str] = set()
-    # `ran_clean` is a per-GATE fact: at least one section actually completed with a definite,
-    # non-adverse verdict (exit 0, or a benign no-tests-collected). `could_not_run` mirrors base's
-    # ORIGINAL, pre-C39 semantics exactly: ANY launch failure (125/126/127) sets it, uniformly,
-    # regardless of which tool or probe kind -- and it reads PLAIN EXIT CODES ONLY, never
-    # `plan.candidates`. That plan-independence is deliberate (C39 re-review reset): three earlier
-    # attempts to make an absent `pyflakes` abstain "for itself alone" while a hard-kind (Test/
-    # Typecheck/Build) launch failure still surfaced, each one classified by `plan.candidates[idx]`
-    # (kind, composed_by_cria) -- and `clean_gate_results` rebuilds every OLDER, superseded gate
-    # transport as a bare plan with NO candidates attached (loop.py replaces `sess.gate_plan` with
-    # the newest gate every turn). Every one of those attempts either dropped a clean sibling's
-    # verdict once the gate aged out, or dropped the WHOLE historical turn base had always kept, or
-    # both. The actual fix for the false pyflakes-absence red is upstream of this function entirely:
-    # `probediscovery.lint_floor_candidates` now composes pyflakes as the bare `pyflakes` binary (a
-    # real console-script, like eslint/clippy/go-vet below), so `proberun.program_is_installed`
-    # drops the candidate BEFORE it is ever composed the moment the coder's PATH is confirmed to
-    # lack it -- mirroring the SAME mechanism that already protects every other zero-config tool.
-    # There is therefore nothing left for a launch-failure section to misclassify by kind here: this
-    # function goes back to being a pure function of exit codes and text, matching base byte for
-    # byte for ANY combination -- which is what makes "no gate turn base kept is dropped" true by
-    # construction, not by a new special case.
-    #
-    # `uncertain` is a DIFFERENT kind of gap: a section that RAN (or partially ran) and produced NO
-    # verdict either way -- a timeout or a cut-short stream. #4 (never speak over a tool) forbids
-    # answering "no problem" from a check whose sibling never finished, so unlike a launch failure
-    # this MUST always surface, named -- and its label comes from the TRANSPORT's own bytes
-    # (`proberun.peel_probe_cmd_echo`, a marker line `compose_probe_command` prints before the probe
-    # itself runs), never from `plan.candidates`, so the name survives a gate becoming historical too.
-    ran_clean = False
     could_not_run = False
     failed_no_detail = False
-    uncertain: list[tuple[str, str]] = []   # (command label, printed text or "") -- timeout / cut-short
+    saw_probe = False
+    timed_out_output: list[str] = []
     _sections = split_sections(raw)
     for sid, body in _sections.items():
         # `git` is no longer EMITTED (see plan_gate), but a gate result already in a session's
         # history still carries that section, and it must never read as a probe's output.
-        if sid in ("git", LITTER_SECTION):  # cria's own bookkeeping \u2014 signal for cria, noise for the model
+        if sid in ("git", LITTER_SECTION):  # cria's own bookkeeping — signal for cria, noise for the model
             continue
         # The offline re-run is an INSTRUMENT READING, not a check. It is the same suite with the
-        # network taken away, so on a genuinely live suite it is SUPPOSED to fail \u2014 and this loop
+        # network taken away, so on a genuinely live suite it is SUPPOSED to fail — and this loop
         # would have scraped that failure into the findings and told the coder to go fix passing
         # tests (the false-red class, from the very leg built to expose a false green). Its exit
         # code reaches exactly one reader: _offline_fact. Skipping it also keeps a namespace-less
-        # box honest \u2014 an empty section can no longer wedge the whole gate.
+        # box honest — an empty section can no longer set could_not_run and wedge the whole gate.
         if sid == "offline":
             continue
-        label, body = proberun.peel_probe_cmd_echo(body)
+        saw_probe = True
         text, code = proberun.scrape_exit(body)
         # The EXIT sentinel is the reliable signal (the composed probe always prints it). A launch
-        # failure (125/126/127) or timeout (124) means the check did NOT complete \u2014 never a code error
+        # failure (125/126/127) or timeout (124) means the check did NOT complete — never a code error
         # to "fix", never a pass. Sniffing text for "no such file" would misread a real error that just
         # mentions it (a FileNotFoundError, a missing #include) as couldn't-run.
         if code in proberun.LAUNCH_FAILURE_EXIT_CODES:
-            could_not_run = True    # never launched \u2014 there is nothing it could have printed
+            could_not_run = True    # never launched → there is nothing it could have printed
             continue
         if code is None:
             # The section header arrived but its EXIT sentinel never did: the HARNESS returned (its
-            # yield window / output cap) while the check was still running \u2014 observed live: a 10s
-            # exec yield cut the composed gate mid-pytest ("Process running with session ID \u2026"), and
+            # yield window / output cap) while the check was still running — observed live: a 10s
+            # exec yield cut the composed gate mid-pytest ("Process running with session ID …"), and
             # this section previously contributed NOTHING, so a lint-green gate read CLEAN while the
             # tests never finished (the vacuous-green shape). A missing sentinel can ONLY mean a cut
-            # stream \u2014 the script echoes EXIT:$? unconditionally, so even a missing tool prints 127.
-            # Same treatment as a timeout: never a pass, and it must always be named \u2014 see `uncertain`.
-            uncertain.append((label, text.strip()))
+            # stream — the script echoes EXIT:$? unconditionally, so even a missing tool prints 127.
+            # Same treatment as a timeout: never a pass, partial output kept as context not findings.
+            could_not_run = True
+            if text.strip():
+                timed_out_output.append(text.strip())
             continue
         if code == proberun.TIMEOUT_EXIT_CODE:
             # A timeout is NOT a launch failure: the command RAN and may already have printed the real
-            # error before it stalled. It is never a pass, and its lines must NOT be scraped as
-            # error-class findings (post-timeout output is mostly noise, the false-red class) \u2014 but it
-            # is ALSO never allowed to go silent just because some OTHER check in the same gate came
-            # back clean (#4, never speak over a tool: the coder must be told THIS check never gave a
-            # verdict, by name, not handed a blanket "no problems" that quietly excludes it).
-            uncertain.append((label, text.strip()))
+            # error before it stalled. The state stays "couldn't run" (never a pass, and its lines must
+            # NOT be scraped as error-class findings — post-timeout output is mostly noise, the false-red
+            # class), but what it DID print is kept as CONTEXT rather than discarded.
+            could_not_run = True
+            if text.strip():
+                timed_out_output.append(text.strip())
             continue
-
-        # Every section past this point RAN TO COMPLETION and produced a real verdict \u2014 a pass, an
-        # advisory-only red (style only, no error-class line survives the filter below), or a genuine
-        # error-class finding. `findings`/`failed_no_detail` still win the final branch when either is
-        # set; `ran_clean` is what lets the bottom "clean" fact be reported at ALL once nothing higher
-        # up claimed the gate, restoring the pre-C39 default (a section that ran and said nothing
-        # blocking reads clean) without letting an ABSTAINED section (the `continue`s above) manufacture
-        # that same default out of nothing having run at all.
-        ran_clean = True
         # pytest exit 5 = no tests collected (a fresh/testless project). The runner ran fine and had
         # nothing to assess — a benign non-signal. Skip the section so its "no tests ran" line isn't
         # scraped as an error-class finding AND it doesn't set failed_no_detail; the OTHER probes that
-        # ran decide the gate's verdict, so a pytest-only gate reads clean-ish ("checks that ran
-        # reported no problems"), never "one of the checks FAILED".
+        # ran decide the gate's verdict. saw_probe stays True, so a pytest-only gate reads clean-ish
+        # ("checks that ran reported no problems"), never "one of the checks FAILED".
         #
         # UNLESS the disk says otherwise. Measured on maple run 2 (1785973706): a 19KB pytest suite
         # named `pytest_da_resolvers.py` — a name pytest's pattern cannot collect — so "no tests ran"
@@ -1360,6 +1310,8 @@ def clean_gate_output(raw: str, plan: "GatePlan | None" = None, *, annotate: boo
         # the grounded distinction, and it is in the plan cria already holds.
         elif code not in (0, None) and not section_findings and _is_hard_failure(plan, sid):
             failed_no_detail = True
+    if not saw_probe:               # git-only gate (empty/no-code repo) → NO check ran → not a pass
+        could_not_run = True
     findings = _with_delimiter_facts(findings, plan, annotate, changed_paths)
     if findings:                    # a check RAN and found a real error-class problem — foreground it
         # Show EVERY error-class finding — a 40-line clip once hid findings 41+, so the model "fixed"
@@ -1409,42 +1361,21 @@ def clean_gate_output(raw: str, plan: "GatePlan | None" = None, *, annotate: boo
             # and the file ledger saw nothing, so this note never rendered and the block asserted
             # `missing go.sum entry` as present-tense ground truth for eleven more coder calls.
             stale = prompts.load("checks_are_stale_command")
-        body = prompts.render("checks_error_class",
+        return prompts.render("checks_error_class",
                               seeded_test_rule=prompts.load("seeded_test_rule").strip(),
                               stale=stale.rstrip("\n"),
                               findings="\n".join(findings + _advisory_note(dropped_advisories)))
-        if uncertain:
-            # #4, never speak over a tool, the OTHER direction: a real finding must not bury a
-            # SIBLING check that never gave a verdict — a real `pyflakes` finding returning first must
-            # not make a `pytest` that timed out empty vanish from the block entirely.
-            body += "\n" + _render_uncertain_notes(uncertain)
-        return body
     if failed_no_detail:            # ran, exited non-zero, no usable output → a failure with no location
-        body = ("⟦ctx:checks⟧ one of the repo's own checks FAILED but printed no parseable location — "
+        return ("⟦ctx:checks⟧ one of the repo's own checks FAILED but printed no parseable location — "
                 "run it yourself and read the actual error before continuing. Not done.")
-        if uncertain:
-            body += "\n" + _render_uncertain_notes(uncertain)
-        return body
-    if uncertain:
-        # #4, never speak over a tool: a check that timed out, was cut short mid-run, or (a
-        # Test/Typecheck/BuildCheck probe) never launched at all gave NO verdict either way, and that
-        # fact must reach the model even when some OTHER check in the same gate came back clean — a
-        # real green from `compileall` must never stand in for a `pytest` that never finished or
-        # never ran. Named per-command (falls back to "a check" only when the plan can't say which
-        # one), never text-sniffed from what it printed.
-        msg = CHECKS_MARKER + " " + _render_uncertain_notes(uncertain)
-        if ran_clean:
-            # Other sections in THIS SAME gate did reach a real verdict — say so, but never let it
-            # read as "done": the entry above is still unresolved.
-            msg += "\n" + prompts.load("checks_timeout_partial_clean")
-        return msg
-    if could_not_run or not ran_clean:
-        # `could_not_run`: at least one launch failure occurred (base's original, uniform, plan-free
-        # semantics — see the comment where it is set, above). `not ran_clean`: nothing in this gate
-        # ever produced a verdict at all — cria's own setup gap (every probe either never launched or
-        # never ran at all), never the workspace's. NOT a pass (never claim clean), NOT a fix request
-        # (the model can't fix cria's absent tool), NOT a specific confession — just a non-actionable
-        # placeholder so the model relies on itself.
+    if could_not_run and timed_out_output:
+        # It ran, stalled, and printed something first — hand that over verbatim, labelled for what it
+        # is, instead of only "no signal either way".
+        return (CHECKS_MARKER + " a check did not finish (timed out) — no verdict either way. It printed "
+                "this before it was stopped:\n" + "\n".join(timed_out_output))
+    if could_not_run:               # couldn't launch/timed out → cria's own setup gap; stay neutral
+        # NOT a pass (never claim clean), NOT a fix request (the model can't fix cria's absent tool),
+        # NOT a specific confession — just a non-actionable placeholder so the model relies on itself.
         return "⟦ctx:checks⟧ the automatic checks produced no usable result — no signal either way."
     # Report the clean result as a FACT — no "but this doesn't mean it's correct / doesn't mean done"
     # hedge. That caveat is unactionable doubt (it names nothing to fix) and a weak model latches onto
@@ -1599,7 +1530,6 @@ def _offline_fact(sections: dict, plan: "GatePlan | None" = None) -> str:
     online = sections.get(f"probe-{idx}")
     if not online:
         return ""
-    _label, online = proberun.peel_probe_cmd_echo(online)   # cria's own self-describing marker line
     online_text, online_code = proberun.scrape_exit(online)
     offline_text, offline_code = proberun.scrape_exit(off)
     if online_code != 0 or offline_code != 0:
@@ -2220,7 +2150,6 @@ def interpret_gate(plan: GatePlan, result_text: str, rlog=None) -> GateOutcome:
             out.unran.append(proberun.display_command(c.command))
             participation_events.append(participation.observe(c, "", None, event_missing=True))
             continue
-        _label, body = proberun.peel_probe_cmd_echo(body)   # cria's own self-describing marker line
         raw, code = proberun.scrape_exit(body)
         result = proberun.interpret_probe_output(
             c, proberun.display_command(c.command), raw, code, COMPLETION_PROBE_TIMEOUT_S)
