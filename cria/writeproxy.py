@@ -28,11 +28,12 @@ import re
 from pathlib import Path
 from shlex import quote as _qbash  # one bash-quoting rule (was a hand-rolled _qbash)
 
-from . import brave, denial, editrecovery, prompts, webfetch, wsview
+from . import brave, denial, depsurface, editrecovery, prompts, webfetch, wsview
 from .probegate import GATE_SENTINEL
 from . import content_reduce as content_reduce_mod
 from . import probeparse
 from . import proberun
+from . import refusalledger
 from . import dirguard
 from .config import CRIA_HOME
 from .shelltool import _CMD_FIELDS, is_shell_tool_name, shell_args
@@ -2112,7 +2113,91 @@ def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | Non
         rlog.emit("writeproxy.represented", calls=swapped)
     _note_missing_dependency(out, workspace_root, rlog)
     _note_dependency_search(out, own_cmds, workspace_root, rlog)
+    _note_dependency_surface(out, workspace_root, rlog)
     return out
+
+
+# Bytes of REAL selected lines allowed inline before this switches to the overflow wording (#5:
+# never truncate silently — the switch STATES the real total and the real path, it never drops
+# lines without saying so). Deliberately small: a handful of real signatures is the common case, and
+# a large budget would let one bloated package push everything else in the same tool result out of
+# the window it rides in.
+_SURFACE_INLINE_BUDGET = 2400
+
+
+def _note_dependency_surface(messages: list[dict], workspace_root, rlog) -> None:
+    """Candidate C40 — beside the tool result that FIRST reports a dependency resolved this session,
+    append its real exported surface (:mod:`cria.depsurface`), read from the local package-manager
+    cache, never from memory. See depsurface.py's module docstring for the trigger (the ledger's own
+    existing SUCCEEDED event, not lexical error-text matching — P19's objection does not apply) and
+    the JVM scope-out.
+
+    STATELESS AND IDEMPOTENT, the same shape as :func:`_note_missing_dependency`: ``messages`` is the
+    WHOLE history every request, so the coordinate that already earned a note carries that note's own
+    marker text forward in the harness's own replay of history, and the ``marker in text`` check below
+    short-circuits before gather() ever touches disk again. No session object is threaded through this
+    module; durability comes from the harness echoing back what cria already wrote, exactly like the
+    missing-dependency note's ``if note in last["content"]: return``.
+
+    FIRST OCCURRENCE ONLY, per (ecosystem, package, version) — scanned oldest-to-newest so a later,
+    unrelated success for a DIFFERENT coordinate never re-opens an already-annotated one. A probe that
+    abstains (:func:`cria.depsurface.gather` returns ``None``) leaves the result exactly as it arrived
+    (#3, #11b): tool/cache absent or an ecosystem this candidate does not cover (jvm) inject nothing."""
+    seen: set[tuple[str, str, str]] = set()
+    for m in messages:
+        if m.get("role") != "tool":
+            continue
+        text = m.get("content")
+        if not isinstance(text, str) or not text:
+            continue
+        for event in refusalledger.success_events(text):
+            key = (event.ecosystem, event.package, event.version)
+            if key in seen or not event.package:
+                continue
+            seen.add(key)
+            marker = _surface_marker(event.coordinate)
+            if marker in text:
+                continue   # already delivered on a prior turn; the harness replayed it verbatim
+            surface = depsurface.gather(event.ecosystem, event.package, event.version, workspace_root)
+            if surface is None:
+                continue   # abstain silently — no cache, no match, or an uncovered ecosystem
+            note = _render_dependency_surface(surface)
+            if not note:
+                continue
+            m["content"] = text + "\n\n" + note
+            if rlog is not None:
+                rlog.emit("writeproxy.dependency_surface", level="info", ecosystem=event.ecosystem,
+                          coordinate=event.coordinate, members=len(surface.lines))
+
+
+def _surface_marker(coordinate: str) -> str:
+    """The stable substring both templates open with — present in ANY rendering (inline or overflow)
+    for this exact coordinate, so re-scanning an already-annotated tool result is a no-op."""
+    return f"THE PACKAGE MANAGER JUST RESOLVED {coordinate}"
+
+
+def _render_dependency_surface(surface) -> str:
+    """The model-facing note for one real DependencySurface — every line in it is byte-identical to a
+    line :func:`cria.depsurface.gather` read from disk (#5b: never a cria paraphrase of what a real
+    tool said). Switches to the overflow template, never a silent cut, when the real selection does
+    not fit the inline budget."""
+    joined = "\n".join(surface.lines)
+    if len(joined.encode("utf-8", "replace")) <= _SURFACE_INLINE_BUDGET:
+        return prompts.render("dependency_surface", coordinate=surface.coordinate,
+                              root=surface.root, lines=joined)
+    shown: list[str] = []
+    budget = _SURFACE_INLINE_BUDGET
+    for line in surface.lines:
+        cost = len(line.encode("utf-8", "replace")) + 1
+        if cost > budget:
+            break
+        shown.append(line)
+        budget -= cost
+    if not shown:
+        shown = surface.lines[:1]
+    return prompts.render("dependency_surface_overflow", coordinate=surface.coordinate,
+                          root=surface.root, total=str(len(surface.lines)), shown=str(len(shown)),
+                          lines="\n".join(shown))
 
 
 def _note_missing_dependency(messages: list[dict], workspace_root, rlog) -> None:

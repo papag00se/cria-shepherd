@@ -1,0 +1,3 @@
+⟦ctx:facts⟧ THE PACKAGE MANAGER JUST RESOLVED {{COORDINATE}} — its real exported members, read directly from {{ROOT}} just now (not from memory, not from a doc page):
+{{LINES}}
+Only these are real. A member you don't see here does not exist in this exact resolved version.
