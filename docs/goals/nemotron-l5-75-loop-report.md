@@ -605,6 +605,12 @@ reconciled HEAD: `p22-feed-rerun-9ded52bc.service` (user unit, not collected), s
   23:42\u219260 min), count is `data.length` (5, holder total 15), the only test is mocha on `resolve()` (no CLI e2e),
   `node_modules` + mocha lockfile present. rust-toml-cli started 00:07:21.
 
+- **rust-toml-cli** `\u2026_1790320041`: `milestone-stalled-45min`; milestones 20/continue, 15/stalled; final **15%**.
+  Cargo on `toml 0.8`, dotted walk via `Value::get`, stderr+exit paths, README (YAML example) \u2014 never compiles:
+  invented `toml::Value::parse_str` (same member as P20), then `Value::try_from(&content)` (serializes, not parses),
+  then `use toml::Value` dropped. **Row p27 queue finished 00:56:02**; heartbeat `a5c06791` deleted after the
+  terminal packet. Row p27: shipping 15, cart 30, orders 35, feed 20, handles 40, rust 15 \u2014 all six still open.
+
 - **Supervisor takeover 2026-09-24 23:38 PDT** (previous Supervisor stalled; not contacted). Old heartbeat gone;
   single new heartbeat `a5c06791` (*/10). No milestone pending at takeover. handles-cli-node live report 23:40:
   usefulness=35% (post-milestone change: Dockerfile only, still broken — `npm ci` with no lockfile; `--json` still
