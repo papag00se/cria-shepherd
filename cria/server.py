@@ -47,6 +47,7 @@ from .loop import (
     reframe_compaction,
     validate_compaction_briefing,
     session_key,
+    SUMMARIZE_MAX_TOKENS,
 )
 from .planner import Planner, _extract_cwd
 from .routing import Router
@@ -639,11 +640,24 @@ def _harden_compaction_reply(comp: dict, body: dict, provider, server, rlog, ses
                 _session_gate_plan(server, sk),
                 _last_gate_flag(server, sk)),
         ]}
+        # BOUNDED, not None (C41). `pb` still carries whatever `max_tokens` the harness's ORIGINAL
+        # request had — often None ("uncapped"), which is a reasonable thing for a harness to ask of
+        # its own summarize call but not for this one: this body's messages are cria's own
+        # (`selfcompact_summary` + the grounding facts above), not the harness's, so it is an
+        # INTERNAL prose-writing call exactly like every other briefing `summarize()` writes, and
+        # those all carry `SUMMARIZE_MAX_TOKENS`. Without a cap this is the runaway measured live in
+        # row p28: 0080-proxy (this exact retry) generated the full 37,719-token window and zero
+        # content in ~228s — a SECOND full-window cost on top of the first pass's own, for one
+        # compaction. A length-cut reply is not silently accepted either way: `massage.is_truncated`
+        # below still fails the retry to the deterministic-appendices-only path, unchanged.
+        if not isinstance(pb.get("max_tokens"), int):
+            pb["max_tokens"] = SUMMARIZE_MAX_TOKENS
         if role is not None:
             replace(role, reasoning="off").apply(pb)
         else:
             pb.setdefault("chat_template_kwargs", {})["enable_thinking"] = False
-        rlog.emit("route.compaction_retry", level="info", had_leak=bool(text), truncated=truncated)
+        rlog.emit("route.compaction_retry", level="info", had_leak=bool(text), truncated=truncated,
+                  max_tokens=pb["max_tokens"])
         try:
             comp2 = massage.coerce_text_answer(
                 massage.apply(json.loads(provider.chat(pb, rlog)), None, rlog), rlog)

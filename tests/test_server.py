@@ -1028,6 +1028,51 @@ class HardenCompactionReplyTests(unittest.TestCase):
         self.assertTrue(text.startswith("Recovered briefing."))
         self.assertIn("/handles/{handle}", text)                    # appendix rides the retry too
 
+    def test_retry_body_is_bounded_even_when_the_harness_request_was_uncapped(self):
+        # C41 / row p28: the harness's own compaction request carried `max_tokens: None` (Codex
+        # never sets one), and the retry inherited that straight through — an internal, cria-
+        # composed briefing prompt with no output ceiling, which burned the entire context window
+        # for zero content (0080-proxy, 37,719 tokens, ~228s). The retry is cria's own call
+        # (selfcompact_summary + grounding facts), not a passthrough of the harness's wishes, so it
+        # carries the same bound every other internal briefing/summarize() call does.
+        from cria.server import _harden_compaction_reply
+        from cria.loop import SUMMARIZE_MAX_TOKENS
+
+        calls = []
+
+        class _Provider:
+            @staticmethod
+            def chat(pb, rlog):
+                calls.append(pb)
+                text = (_compaction_validation_verdict(pb["messages"][0]["content"])
+                        or "Recovered briefing.")
+                return json.dumps({"choices": [{"message": {
+                    "role": "assistant", "content": text}}]})
+
+        body = {"messages": self._history(), "max_tokens": None}
+        _harden_compaction_reply(self._comp(""), body, provider=_Provider, server=self._Srv,
+                                 rlog=self._Rlog())
+        self.assertEqual(calls[0]["max_tokens"], SUMMARIZE_MAX_TOKENS)
+
+    def test_retry_body_keeps_a_smaller_explicit_harness_cap(self):
+        from cria.server import _harden_compaction_reply
+
+        calls = []
+
+        class _Provider:
+            @staticmethod
+            def chat(pb, rlog):
+                calls.append(pb)
+                text = (_compaction_validation_verdict(pb["messages"][0]["content"])
+                        or "Recovered briefing.")
+                return json.dumps({"choices": [{"message": {
+                    "role": "assistant", "content": text}}]})
+
+        body = {"messages": self._history(), "max_tokens": 256}
+        _harden_compaction_reply(self._comp(""), body, provider=_Provider, server=self._Srv,
+                                 rlog=self._Rlog())
+        self.assertEqual(calls[0]["max_tokens"], 256)                # not raised, not silently dropped
+
     def test_a_truncated_summary_is_retried_like_the_loop_path_does(self):
         # loop.summarize() has retried on finish_reason=length since the truncation guard landed;
         # this sibling never got it, and its own docstring called the two "the same" hardening.

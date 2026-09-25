@@ -868,7 +868,7 @@ def _tool_names(coder_tools: str) -> list[str]:
     lines = re.findall(r"(?m)^\s*-\s*([a-z_][a-z0-9_]{2,})\b", coder_tools or "")
     if lines:
         return lines
-    return re.findall(r"\b([a-z_][a-z0-9_]{2,})\b(?=\s*[(:\u2014-]|\s*$)", coder_tools or "", re.M) \
+    return re.findall(r"\b([a-z_][a-z0-9_]{2,})\b(?=\s*[(:—-]|\s*$)", coder_tools or "", re.M) \
         or re.findall(r"\b([a-z_][a-z0-9_]{2,})\b", coder_tools or "")
 
 
@@ -3590,11 +3590,11 @@ class Loop:
                 probe_tc = guard_periodic_replan_after_survey(sess, body, rlog, workspace_root=sess.workspace_root)
                 if probe_tc is not None:
                     return _completion_toolcalls(
-                        [probe_tc], note=f"periodic check-in for step {idx}/{total} \u2014 running checks")
+                        [probe_tc], note=f"periodic check-in for step {idx}/{total} — running checks")
             return self._renudge(sess, key, body, truth, rlog) if truth else self._work(sess, key, body, rlog)
         probe = _read_tool_result(body.get("messages", []), sess.probe_call_id)
         if not probe.strip() and rewritten:
-            # C28b: the result is lost, but the CHECK may still be running \u2014 poll the SAME plan
+            # C28b: the result is lost, but the CHECK may still be running — poll the SAME plan
             # before ever abandoning it for a new gate (_poll_running_plan_after_rewrite).
             poll = _poll_running_plan_after_rewrite(sess, body, rlog)
             if poll is not None:
@@ -4739,7 +4739,7 @@ class Loop:
                     sess, body, rlog, workspace_root=sess.workspace_root or _extract_cwd(body.get("messages", [])))
                 if probe_tc is not None:
                     return _completion_toolcalls(
-                        [probe_tc], note="periodic check-in \u2014 running checks")
+                        [probe_tc], note="periodic check-in — running checks")
             if truth:
                 # C5: if the SAME error has persisted (the coder is STUCK, not just churning), replace the
                 # raw ground-truth insertion with a REASONED thrash-diagnosis + one concrete next step (on
@@ -6505,7 +6505,7 @@ def guard_gate_replan_after_survey(gs: GuardState, body: dict, rlog, *, workspac
 def guard_periodic_replan_after_survey(gs: GuardState, body: dict, rlog, *, workspace_root=None) -> dict | None:
     """A periodic check-in's result was survey-only (:func:`record_gate_state` left
     ``gate_replan_required`` set): plan the real gate against the now-surveyed view via
-    :func:`guard_gate_replan_after_survey`, and re-arm it as a PERIODIC probe \u2014 its result goes back
+    :func:`guard_gate_replan_after_survey`, and re-arm it as a PERIODIC probe — its result goes back
     through :func:`guard_periodic_result`, never completion semantics; ``gate_fresh`` is untouched
     (the periodic path already restores it around every read).
 
@@ -7149,8 +7149,16 @@ def validate_compaction_briefing(chat_fn, role, briefing: str, *, files: str, ch
     return accepted
 
 
+# The compactor/briefing output bound every internal prose-writing call on this primitive uses
+# (the JUDGE-verdict siblings carry their own, larger `JUDGE_MAX_TOKENS` — a one-word verdict vs a
+# multi-paragraph briefing warrant different budgets, but both are BOUNDED; neither is ever None).
+# Named so a second caller that needs the same bound (server._harden_compaction_reply, C41) reads
+# the one number rather than copying the literal.
+SUMMARIZE_MAX_TOKENS = 8192
+
+
 def summarize(chat_fn, role, system: str, user: str, rlog, *, phase: str = "compactor",
-              max_tokens: int = 8192, retry_off: bool = True, coder_tools: str = "",
+              max_tokens: int = SUMMARIZE_MAX_TOKENS, retry_off: bool = True, coder_tools: str = "",
               capture: list | None = None, temperature: float | None = None,
               evidence_blocks: list[str] | None = None) -> str:
     """The ONE reasoner text-generation primitive — call the model with (system, user) and return the
