@@ -585,6 +585,12 @@ reconciled HEAD: `p22-feed-rerun-9ded52bc.service` (user unit, not collected), s
   version), discounts.json + fallback, decimal path, stderr log, 48.58 test — but compile fails from 45→60 min on
   `NewFromString` single-value use and nonexistent `Quantize`/`RoundingModeCeiling` (invented API class again).
 
+- **Row walks started while the row runs (read-only):** p27 shipping capture `20260924T164732-01a0d5d1` → 95 segments
+  (`~/.cria/walk-findings/2026-09-24/p27-shipping/`), p27 cart `20260924T180052-01a0d614` → 80 segments
+  (`…/p27-cart/`). Wave 1: shipping seg-01..10, ten fresh read-only walkers; later waves follow after each wave's
+  finding files are verified. Row p28 will be frozen at a NEW HEAD containing the fixes this row justifies (not
+  `f6df9eea`) and will queue only cells still ≤75%.
+
 ### Cross-cell lead — invented third-party API members (not yet a candidate)
 
 Rust P20 (`toml` `Value::parse_str`, `toml::Error::Missing`), Feed p22 live (`org.apache.commons.csv.exceptions`,
