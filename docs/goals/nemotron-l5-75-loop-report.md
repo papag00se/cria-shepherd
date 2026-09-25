@@ -575,6 +575,11 @@ reconciled HEAD: `p22-feed-rerun-9ded52bc.service` (user unit, not collected), s
   `Shipping::Country`, surcharge dropped on free shipping, no express tests. Queue handover worked
   (first unit ABORT line, continuation START cart 18:00:41).
 
+- **cart-billing-go** (active): 30-min milestone recorded 20%/continue. **Process defect:** the checkpoint froze at
+  18:30 and its judgment was only recorded at 20:20 — heartbeat firings in between were not processed. `run.py`
+  measures active minutes, so the cell's measurement is unaffected, but the queue lost ~110 min. Rule applied from
+  here: every heartbeat first clears `suite/milestones.py pending` for the row's run ids before anything else.
+
 ### Cross-cell lead — invented third-party API members (not yet a candidate)
 
 Rust P20 (`toml` `Value::parse_str`, `toml::Error::Missing`), Feed p22 live (`org.apache.commons.csv.exceptions`,
