@@ -146,7 +146,7 @@ class View:
 
     __slots__ = ("root", "_files", "_dirs", "_folded", "_bodies", "_body_generation", "_stale",
                  "_progs", "_outside", "_undeliverable", "_surveyed", "_complete", "_sess",
-                 "_survey_generation", "_ran_a_mutator", "_cache_candidates")
+                 "_survey_generation", "_ran_a_mutator", "_cache_candidates", "_body_confirmed")
 
     def __init__(self, root: str | None, sess: str = "") -> None:
         self.root: str = _posix(root or "").rstrip("/") if root else ""
@@ -155,6 +155,24 @@ class View:
         self._folded: set[str] = set()                   # rel dirs listed only as a count
         self._bodies: dict[str, bytes] = {}              # rel -> the file's BYTES
         self._body_generation: dict[str, int] = {}       # rel -> survey that supplied those bytes
+        # THE (size, mtime) A TREE ACTUALLY CONFIRMED for a `_bodies` entry, PLUS the survey
+        # generation that confirmed it — present ONLY for a body a SURVEY vouched for (a blob
+        # delivery via `_set_body`, or a session-cache candidate promoted by
+        # `_reconcile_cache_candidates`), absent for one only `note_written`/`note_read` ever saw
+        # (C38b review B1). `_drop_stale_bodies` re-checks every entry here against EVERY tree that
+        # lands afterward — not just the one that first confirmed it — because a single HTTP request
+        # replays MANY surveys in order (`writeproxy.represent_inbound` folds in every historical
+        # survey before the gate's own), and a body promoted against the FIRST of them must not go on
+        # being trusted once a LATER one in the same request disagrees.
+        #
+        # THE GENERATION GUARDS THE SAME-TREE SELF-CHECK. The tree that just confirmed a body is
+        # checked against ITSELF a moment later (`_ingest_blob`'s post-blob `_drop_stale_bodies`
+        # call, right after `_set_body`) — that is a cut-in-transit check, not a later observation,
+        # and must not fail merely because the tree's own mtime happens to be `0` (a real value a
+        # test fixture or a genuinely epoch-mtime file can report, not just `_ingest_tree`'s parse
+        # fallback). Comparing mtimes is skipped when the confirming generation IS the current one;
+        # it only runs once a DIFFERENT (later) tree has actually landed.
+        self._body_confirmed: dict[str, tuple[tuple, int]] = {}
         self._stale: set[str] = set()                    # rel whose body changed since it was known
         self._progs: dict[str, str] = {}                 # program name -> resolved name ("" = absent)
         # Paths OUTSIDE the workspace the harness was asked about by name — a dependency cache
@@ -592,14 +610,41 @@ class View:
         own shell edit landing, or a blob that arrived cut in transit — stayed in `_BODY_CACHE`
         untouched, and the very next request's `View` reloaded the STALE bytes right back into
         `_bodies`, never re-asking. Dropping and forgetting in the same place closes that gap for
-        every caller of this method, not just the one that happened to notice."""
+        every caller of this method, not just the one that happened to notice.
+
+        A SURVEY-CONFIRMED BODY IS RE-CHECKED AGAINST *EVERY LATER* TREE, NOT JUST ITS FIRST ONE
+        (C38b, independent review B1). This runs once per `_ingest_tree` call, and ONE HTTP request
+        can call it many times: `writeproxy.represent_inbound` folds in every historical survey in
+        the conversation, in order, before the current turn's own gate survey. The first landing
+        confirms a body's (size, mtime, generation) — via `_set_body` for a blob delivered this
+        request, or via `_reconcile_cache_candidates` for one promoted from the session cache — but a
+        size-only check on every SUBSEQUENT tree let a later, same-size, different-mtime listing walk
+        straight past it: exactly the shape of a `go get pkg@v1.5.0` that a stale cache candidate was
+        promoted against BEFORE, in the same request's own replay, then never re-verified. The mtime
+        comparison is skipped only when the confirming generation IS `self._survey_generation` right
+        now — the tree that just confirmed this body checked against ITSELF, not a later one; see
+        `self._body_confirmed`'s own comment for why that self-check must not fail on a `0` mtime.
+        `self._body_confirmed` holds a rel's pair only when a tree actually vouched for it (never for
+        `note_written`/`note_read`, which have no survey-confirmed mtime at all); a rel absent from it
+        keeps today's size-only check, exactly as before."""
         for rel in list(self._bodies):
             entry = self._files.get(rel)
-            if entry is None or entry[0] != len(self._bodies[rel]):
+            confirmed = self._body_confirmed.get(rel)
+            mtime_ok = True
+            if confirmed is not None:
+                conf_entry, conf_gen = confirmed
+                if conf_gen != self._survey_generation:
+                    mtime_ok = entry is not None and _mtimes_agree(
+                        entry[1], conf_entry[1] if conf_entry else None)
+            stale = entry is None or entry[0] != len(self._bodies[rel]) or not mtime_ok
+            if stale:
                 del self._bodies[rel]
                 self._body_generation.pop(rel, None)
+                self._body_confirmed.pop(rel, None)
                 self._stale.discard(rel)
                 _forget_body(self._sess, self.root, rel)
+            elif confirmed is not None:
+                self._body_confirmed[rel] = (entry, self._survey_generation)  # re-confirmed, now
         self._reconcile_cache_candidates()
 
     def _reconcile_cache_candidates(self) -> None:
@@ -635,6 +680,13 @@ class View:
                     and _mtimes_agree(entry[1], confirmed[1] if confirmed else None):
                 self._bodies[rel] = raw
                 self._body_generation.pop(rel, None)  # a prior request's delivery, not this survey's
+                # SURVEY-CONFIRMED, GOING FORWARD (C38b). Promotion is not the end of the check —
+                # `_drop_stale_bodies` re-verifies this pair against every tree that lands AFTER this
+                # one, in this request or a later one, so a candidate promoted against an early,
+                # already-stale historical survey does not coast on that one match forever. Tagged
+                # with THIS generation so the very next `_drop_stale_bodies` call (still the same
+                # tree) does not re-run the mtime check against itself.
+                self._body_confirmed[rel] = (entry, self._survey_generation)
             else:
                 _forget_body(self._sess, self.root, rel)
             del self._cache_candidates[rel]
@@ -672,11 +724,19 @@ class View:
         except Exception:                             # noqa: BLE001 — undecodable is simply unknown
             self._bodies.pop(rel, None)               # never leave an OLDER body standing in for it
             self._body_generation.pop(rel, None)
+            self._body_confirmed.pop(rel, None)
             self._stale.add(rel)
             _forget_body(self._sess, self.root, rel)
             return
         self._bodies[rel] = raw
         self._body_generation[rel] = self._survey_generation
+        # CONFIRMED BY THIS SURVEY'S OWN LISTING (C38b). `_ingest_tree` ran before this blob was
+        # ingested, so `self._files[rel]` already holds the (size, mtime) THIS survey's tree just
+        # declared — the pair every LATER tree in this request or a future one must keep agreeing
+        # with (`_drop_stale_bodies`) before this body goes on being trusted. Tagged with THIS
+        # generation so the immediate post-blob `_drop_stale_bodies` call (same tree, a
+        # cut-in-transit check, not a later observation) does not itself trip the mtime check.
+        self._body_confirmed[rel] = (self._files.get(rel), self._survey_generation)
         self._stale.discard(rel)
         self._undeliverable.pop(rel, None)
         # THE DELIVERY OUTLIVES THIS REQUEST (C38). This survey answered a body a builder wanted; the
@@ -685,13 +745,11 @@ class View:
         # out to be cut in transit, `_drop_stale_bodies` (called right after blob ingestion by
         # `apply_survey`) forgets this cache entry again before this function's caller ever sees
         # `apply_survey` return — a body never leaves this module's control still standing as cached
-        # once its own size check has failed (review B1).
-        #
-        # CONFIRMED AGAINST THIS SURVEY'S OWN LISTING (C38b). `_ingest_tree` ran before this blob
-        # was ingested, so `self._files[rel]` already holds the (size, mtime) THIS survey's tree
-        # declared for `rel` — the pair a later request's cache reconciliation must match on both
-        # axes, not size alone, to promote this body back to trusted (`_reconcile_cache_candidates`).
-        _remember_body(self._sess, self.root, rel, raw, self._files.get(rel))
+        # once its own size check has failed (review B1). It carries the same (size, mtime) pair just
+        # recorded above (generation numbers are local to THIS View and mean nothing to a future
+        # request's brand-new one, so only the pair rides into `_BODY_CACHE`), which is exactly what
+        # a LATER request's cache reconciliation must match on before trusting this body again.
+        _remember_body(self._sess, self.root, rel, raw, self._body_confirmed[rel][0])
 
     def _ingest_outside(self, body: str) -> None:
         for line in body.splitlines():
@@ -714,6 +772,11 @@ class View:
         raw = content if isinstance(content, bytes) else content.encode("utf-8", "replace")
         self._bodies[rel] = raw
         self._body_generation.pop(rel, None)  # a coder tool result is not this gate's survey
+        # NOT SURVEY-CONFIRMED (C38b). A prior blob delivery for this same path may have left an
+        # entry in `_body_confirmed`; this write replaces the bytes and the confirmation both, since
+        # this body's mtime is about to be recorded as cria's own guess, never a tree's. Its absence
+        # here is what keeps `_drop_stale_bodies` on today's size-only check for it (see below).
+        self._body_confirmed.pop(rel, None)
         self._stale.discard(rel)
         self._undeliverable.pop(rel, None)
         # NO SURVEY HAS CONFIRMED A MTIME FOR THIS WRITE (C38b). The bytes are ground truth THIS
@@ -761,6 +824,7 @@ class View:
         if rel is None:
             return
         self._stale.add(rel)
+        self._body_confirmed.pop(rel, None)
         self._cache_candidates.pop(rel, None)  # not yet trusted this request — an edit ends it now
         # A CACHED BODY FROM A PRIOR REQUEST MUST NOT SURVIVE AN EDIT (C38). `_BODY_CACHE` keeps a
         # delivered body alive past this request; without this, a manifest edited between two gates
@@ -956,6 +1020,7 @@ def _subview(v: View, sub: str) -> View:
     out._folded = {d[n:] for d in v._folded if d.startswith(pre)}
     out._bodies = {p[n:]: b for p, b in v._bodies.items() if p.startswith(pre)}
     out._body_generation = {p[n:]: g for p, g in v._body_generation.items() if p.startswith(pre)}
+    out._body_confirmed = {p[n:]: c for p, c in v._body_confirmed.items() if p.startswith(pre)}
     out._stale = {p[n:] for p in v._stale if p.startswith(pre)}
     # `out`'s own `__init__` already looked the session cache up under ITS root (empty unless a
     # prior request happened to cache something directly under this subdirectory); carry over any
@@ -1018,7 +1083,14 @@ def _mtimes_agree(a, b) -> bool:
     never named) and ``0.0`` (``_ingest_tree``'s own fallback when a tree line's timestamp failed to
     parse) both mean cria does not actually know when the file last changed. Either value on either
     side ends the comparison in disagreement — an unobserved edit is exactly what an unknown mtime
-    cannot rule out, and trusting it anyway is the false fact this check exists to prevent (C38b)."""
+    cannot rule out, and trusting it anyway is the false fact this check exists to prevent (C38b).
+
+    A KNOWN LIMITATION, NOT A GAP THIS FUNCTION CAN CLOSE: most filesystems (ext4, APFS's common
+    1-second reporting path, the survey's own timestamp formatting) only report mtime to 1-second
+    resolution. Two same-size edits inside the same wall-clock second are indistinguishable from no
+    edit at all by mtime alone — this check narrows the same-size blind spot from "forever" to
+    "within one second", it does not eliminate it. Closing that residue needs a stronger signal (a
+    content hash) that this survey format does not carry today."""
     return a is not None and b is not None and a != 0.0 and b != 0.0 and a == b
 
 
