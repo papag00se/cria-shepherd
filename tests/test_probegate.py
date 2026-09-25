@@ -463,6 +463,17 @@ class CleanGateOutputTests(unittest.TestCase):
         self.assertIn("no verdict either way", out.lower())
         self.assertNotIn("fix", out.lower())
 
+    def test_named_timeout_does_not_drop_a_sibling_cut_sections_output(self):
+        # Regression (independent review of f1566336): a CONFIRMED timeout (EXIT 124) in one
+        # section must not make a SIBLING section whose EXIT sentinel never arrived (`code is None`,
+        # a cut stream) silently lose what it printed. The first version of the combined
+        # `could_not_run and timeout_notes` branch returned the named timeout note alone the moment
+        # any section was a confirmed timeout, dropping the cut section's real content entirely.
+        raw = (_sec(0, "EXIT:124") + _sec(1, "E AssertionError: boom") + _git())
+        out = probegate.clean_gate_output(raw)
+        self.assertIn("no verdict either way", out.lower())   # the named timeout note survives
+        self.assertIn("E AssertionError: boom", out)           # ...and so does the cut section's output
+
     def test_nonzero_exit_empty_output_is_a_failure(self):
         raw = self._raw("EXIT:1")   # exited non-zero, printed nothing usable
         out = probegate.clean_gate_output(raw)

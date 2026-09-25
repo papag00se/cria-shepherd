@@ -179,6 +179,26 @@ class GateHistoryMatrix(unittest.TestCase):
             self.assertIn("sleep 5", text, label)
             self.assertIn("timed out", text.lower(), label)
 
+    def test_g_evicted_facts_still_keep_the_turn_with_a_generic_label(self):
+        # OPTIONAL invariant: `_transport_facts` is a BOUNDED store (a long-lived process, or one
+        # that restarted), so a transport whose facts aged out (or never existed -- a process
+        # restart between gate1 and gate2) must still render its timeout, just without a command
+        # name -- the same generic "a check" fallback `_command_for_sid` already returns for any
+        # unresolvable plan/index, and the turn must never be silently dropped either way.
+        plan1, msgs1 = _build_gate([COMPILEALL, (["sleep", "5"], TEST, False)], timeout_s=1.0)
+        plan2, msgs2 = _build_gate([COMPILEALL], timeout_s=1.0)
+        alone = probegate.clean_gate_results(msgs1, plan1)
+        del probegate._transport_facts[plan1.transport_id]   # simulate eviction / a restart
+        superseded = probegate.clean_gate_results(msgs1 + msgs2, plan2)
+        gate1_in_superseded = superseded[:len(alone)]
+        contents = [m.get("content") for m in gate1_in_superseded if m.get("content")]
+        self.assertTrue(contents, "the turn must be kept, not dropped, once its facts are gone")
+        text = " ".join(contents)
+        self.assertIn("did not finish (timed out)", text)
+        self.assertIn("no verdict either way", text)
+        self.assertIn("a check", text)          # the generic fallback label, not `sleep 5`
+        self.assertNotIn("sleep 5", text)        # the evicted command name must not be invented
+
 
 if __name__ == "__main__":
     unittest.main()

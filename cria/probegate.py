@@ -1179,12 +1179,17 @@ def _timeout_note(plan, sid: str, printed: str) -> str:
     else the same generic "a check" base always used -- and what it printed, when it printed
     anything, appended verbatim as CONTEXT. Named EVEN WHEN it printed nothing (reviewer directive,
     C39b): the check ran and was stopped, which is never the same fact as "no usable result at
-    all" (the bare could-not-launch case a missing/absent tool still produces)."""
+    all" (the bare could-not-launch case a missing/absent tool still produces).
+
+    Model-facing text lives in ``cria/prompts/*.txt`` (AGENTS.md), never an inline f-string --
+    ``checks_timeout``/``checks_timeout_printed`` are the one owner of this wording, reused by the
+    legacy could_not_run branch below for its own (unnamed) sections so the phrase is never typed
+    twice."""
     label = _command_for_sid(plan, sid)
     command = f"`{label}`" if label else "a check"
-    note = f"{command} did not finish (timed out) — no verdict either way."
+    note = prompts.render("checks_timeout", command=command)
     if printed:
-        note += " It printed this before it was stopped:\n" + printed
+        note += " " + prompts.render("checks_timeout_printed", printed=printed)
     return note
 
 
@@ -1478,29 +1483,34 @@ def clean_gate_output(raw: str, plan: "GatePlan | None" = None, *, annotate: boo
             msg += "\n" + "\n".join(timeout_notes)
         return msg
     if failed_no_detail:            # ran, exited non-zero, no usable output → a failure with no location
-        msg = ("⟦ctx:checks⟧ one of the repo's own checks FAILED but printed no parseable location — "
-              "run it yourself and read the actual error before continuing. Not done.")
+        msg = CHECKS_MARKER + " " + prompts.load("checks_failed_no_detail")
         if timeout_notes:
             msg += "\n" + "\n".join(timeout_notes)
         return msg
-    if could_not_run and timeout_notes:
+    if could_not_run and (timeout_notes or timed_out_output):
         # C39b: named, with its command when the plan/facts know it — even when it printed nothing.
-        # This supersedes the older "could_not_run and timed_out_output" branch below for every
-        # TIMEOUT (EXIT 124) section: that branch used to require non-empty output to be named at
-        # all, so an empty timed-out pytest read exactly like a genuinely absent tool ("no usable
-        # result — no signal either way") — the false neutrality this candidate exists to remove.
-        return CHECKS_MARKER + " " + "\n".join(timeout_notes)
-    if could_not_run and timed_out_output:
-        # The remaining case this branch still owns: a section whose EXIT sentinel never arrived at
-        # all (harness cut the stream mid-run, `code is None`) — not a confirmed `timeout(1)` kill,
-        # so it is not fed through :func:`_timeout_note`'s "did not finish (timed out)" wording, but
-        # what it printed is still kept as CONTEXT rather than discarded.
-        return (CHECKS_MARKER + " a check did not finish (timed out) — no verdict either way. It printed "
-                "this before it was stopped:\n" + "\n".join(timed_out_output))
+        # This supersedes the older uniform "could_not_run and timed_out_output" wording for every
+        # TIMEOUT (EXIT 124) section: naming used to require non-empty output, so an empty timed-out
+        # pytest read exactly like a genuinely absent tool ("no usable result — no signal either
+        # way") — the false neutrality this candidate exists to remove.
+        parts = list(timeout_notes)
+        if timed_out_output:
+            # Regression fix (independent review of f1566336): a SIBLING section whose EXIT
+            # sentinel never arrived (`code is None`, a cut stream — not a confirmed `timeout(1)`
+            # kill, so it is never named via `_timeout_note`) printed real content, e.g. `E
+            # AssertionError: boom`. The first version of this branch returned `timeout_notes`
+            # alone the moment ANY section was a confirmed timeout, silently dropping that other
+            # section's output — never speak over a tool (#5). Appended with the SAME generic
+            # wording the old uniform branch always used for an unnamed section, so nothing here
+            # claims a command it does not know.
+            parts.append(prompts.render("checks_timeout", command="a check") + " "
+                         + prompts.render("checks_timeout_printed",
+                                          printed="\n".join(timed_out_output)))
+        return CHECKS_MARKER + " " + "\n".join(parts)
     if could_not_run:               # couldn't launch/timed out → cria's own setup gap; stay neutral
         # NOT a pass (never claim clean), NOT a fix request (the model can't fix cria's absent tool),
         # NOT a specific confession — just a non-actionable placeholder so the model relies on itself.
-        return "⟦ctx:checks⟧ the automatic checks produced no usable result — no signal either way."
+        return CHECKS_MARKER + " " + prompts.load("checks_no_usable_result")
     # Report the clean result as a FACT — no "but this doesn't mean it's correct / doesn't mean done"
     # hedge. That caveat is unactionable doubt (it names nothing to fix) and a weak model latches onto
     # it and spirals; completion is guarded by the actual gate + satisfaction check, not by nagging the
