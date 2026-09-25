@@ -816,6 +816,27 @@ reconciled HEAD: `p22-feed-rerun-9ded52bc.service` (user unit, not collected), s
     wrong express expectations; no README table.
   - The last interval was spent on gem searches.
 
+- **cart-billing-go** `…_1790354407`: `milestone-stalled-75min` (budget 5 intervals); milestones 20/continue,
+  25/continue, 30/continue, 30/stalled; final **30%** (p27: 30%).
+  - C40 fired live: "THE VERSION OF github.com/shopspring/decimal v1.2.0 DECLARED IN go.mod", a COMPLETE root-package
+    surface from call 0125 on, listing Round/RoundBank/RoundCash (v1.2.0 has no RoundCeil).
+  - The coder converged to `Round(2)` and `.Float64()`, then rewrote back to the invented
+    `Quantize(2, decimal.ROUND_UP)`. The note was present and the coder still invented the member: the delivery works,
+    but uptake is the next gap to walk.
+- **Process defect (Supervisor):** the 75-minute cart milestone froze at 11:07 and was recorded only at 13:50, so the
+  queue lost 2 h 43 min. The heartbeat firings in between were queued but not processed.
+
+### Row p28 BLOCKED after cart — the served model was swapped by a separate user session
+
+- At 13:50 the queue aborted before orders: `ABORT before orders-api-py: live-behaviour tree differs from 51e82781`.
+- Cause: a separate user session (paseo agent `0289cfe4`, "setup this model", started 13:05 PDT) is setting up
+  Defiant-Fable. `:18084` now serves `Qwen3.5-9B-The-Defiant-Fable…MTP-Q5_K_S.gguf`, and `suite/sampling.py` has an
+  uncommitted `defiant-fable` entry (plus a `docs/walk-prompt.md` edit).
+- Both p28 results (shipping, cart) predate the swap and are valid.
+- The Supervisor did NOT swap the model back, and did NOT touch the user's uncommitted files.
+- Remaining p28 cells (orders, feed, handles, rust) wait on the user's decision about the GPU/model.
+- p28 walks continue meanwhile; they use no GPU.
+
 ### Candidate C37 (row p27 cross-cell class) — harness compaction is never recognized, so its hardening never runs
 
 - **Walk evidence (p27 shipping seg-03, verified by the Supervisor):** CALL0046 (23:49:26 UTC) is Codex's compaction
