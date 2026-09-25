@@ -782,6 +782,13 @@ reconciled HEAD: `p22-feed-rerun-9ded52bc.service` (user unit, not collected), s
 - Integrated: 5307 passed, 5 skipped; pushed; `cria.service` restarted; `/health` ok.
 - p28 carries C37, C38, C38b, C39, C39b, C40, C41. Row HEAD = the commit recording this entry.
 
+### Row p28 launched (re-frozen)
+
+- Row HEAD **`51e82781`** (live code = `257d49b0`). Unit `row-p28-51e82781.service` runs
+  `~/.cria/nemotron-l5-row-p28-51e82781.sh`, with the log in `~/.cria/nemotron-l5-row-p28-51e82781.log`.
+- Six cells, with note `BATTERY2 L5 nemotron-elastic 51e82781 p28`. Started 08:26:49. One heartbeat (*/10).
+- The aborted `8e362162` attempt is void.
+
 ### Candidate C37 (row p27 cross-cell class) — harness compaction is never recognized, so its hardening never runs
 
 - **Walk evidence (p27 shipping seg-03, verified by the Supervisor):** CALL0046 (23:49:26 UTC) is Codex's compaction
