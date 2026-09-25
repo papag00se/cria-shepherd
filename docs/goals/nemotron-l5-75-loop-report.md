@@ -641,6 +641,26 @@ reconciled HEAD: `p22-feed-rerun-9ded52bc.service` (user unit, not collected), s
   fail-safe is not implemented. C38: a size-dropped body sticks in the session cache, and the cache leaks across
   roots; the replay was not recorded. C39: the false red becomes "no signal either way", so the timeout is still
   hidden (`clean_gate_output` must abstain per section and state a 124 timeout).
+- **Repair re-reviews:** **C37 ACCEPTED** (`54fcf014`: the ask is dropped by position on both paths, verified
+  identical to the marker filter across 118 real compaction inbound captures; the no-reasoner guard is implemented;
+  5156 passed). **C38 ACCEPTED** (`bbf00bb1`: the cache is keyed by (session, root); a cached body is trusted only
+  after this request's tree confirms its size; forget-on-drop; the replay is recorded in
+  `walk-findings/2026-09-24/c38-replay/`; the 5 faithful replan rows go 0/5 \u2192 5/5; 5154 passed). **C39** was
+  rejected twice more: the per-section abstain made a hard-kind launch failure read as clean, and then the no-plan
+  fallback dropped superseded green gates from history (older transports render without a plan). Each repair
+  created a new failure class, so a **strategy reset** was ordered: an invariant matrix (a)\u2013(f) through
+  `clean_gate_results` across 2+ gates, then the simplest design (persist per-transport candidate facts, or drop
+  absent modules at plan time like `program_is_installed`).
+- **Walk misreading rejected (Supervisor-verified from raw bodies):** cart "Class E" (0279\u21920280) and rust
+  "Class C" (0142\u21920143) claimed that tool-confirmed writes were lost across calls. They were not. Each call's
+  prompt re-renders the whole history, so a `read_file`/`cargo` result placed BEFORE the newest `write_file` is
+  older than the write. In cart, 0280's msg 44 is exactly 0279's response write (same id `hOf15eG\u2026`, same
+  md5); in rust, 0143 carries 0142's write at msg 13\u201314 and the newer lib.rs read after it. There is no state
+  loss, and this is not a candidate. Walker prompts now warn about history order.
+- **C40 first cut** (`e43d6a57`, trigger = RefusalLedger SUCCEEDED): its own replay shows it never fires on cart
+  (the capture has no `go: added` line, only `go: downloading \u2026 v0.5.0/v0.6.0`); rust has `Adding toml v0.8.23`.
+  Returned to the owner for a coverage table across all 4 cells plus P20, and a structural lockfile/manifest+cache
+  trigger if coverage is under 3/4.
 
 ### Candidate C37 (row p27 cross-cell class) — harness compaction is never recognized, so its hardening never runs
 
