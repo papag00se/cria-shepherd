@@ -789,6 +789,24 @@ reconciled HEAD: `p22-feed-rerun-9ded52bc.service` (user unit, not collected), s
 - Six cells, with note `BATTERY2 L5 nemotron-elastic 51e82781 p28`. Started 08:26:49. One heartbeat (*/10).
 - The aborted `8e362162` attempt is void.
 
+### Row p28 live observations
+
+- **C41/C37 are healthy live.** Shipping session `20260925T082715-01a0d92d`:
+  - Compactions `0080`/`0137` were recognized (YES).
+  - Writer `0081` returned an 826-token briefing with `finish=stop`, versus 37,719 empty tokens before C41.
+  - The validator lens answered.
+- **C40 gap (Ruby, suite-specific but real):** Gemfile.lock declares countries 0.9.3, but no note was delivered.
+  - `_ruby_gem_dir` looks only in `<ws>/vendor/bundle` and `~/.gem`.
+  - The suite's cell env puts gems in `~/.cria/suite-installs/<cell>/gem` (GEM_HOME), and in this run the gem was
+    not installed there at all.
+  - Go (`~/go/pkg/mod`), cargo and Maven caches are shared, so they are unaffected.
+  - Candidate direction for after p28: resolve a dependency's location through the HARNESS environment. The
+    harness already runs cria's survey script, so a `Gem::Specification`/`go list -m`/`cargo metadata` line in that
+    script would report the real path. Reading cria-host guesses is the weaker option.
+- **Shipping milestones:** 20/continue at 30 min (the invented `Countries::Country.find_by_alpha2`, gem not
+  installed, zone names routed through `zone_for`); 25/continue at 45 min (routing fixed, 11 tests, two wrong
+  express expectations, no README table).
+
 ### Candidate C37 (row p27 cross-cell class) — harness compaction is never recognized, so its hardening never runs
 
 - **Walk evidence (p27 shipping seg-03, verified by the Supervisor):** CALL0046 (23:49:26 UTC) is Codex's compaction
