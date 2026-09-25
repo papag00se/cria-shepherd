@@ -1,3 +1,3 @@
-⟦ctx:facts⟧ THE VERSION OF {{COORDINATE}} DECLARED IN {{MANIFEST}} — its COMPLETE real exported surface, from {{ROOT}}, read directly (not from memory, not from a doc page):
+⟦ctx:facts⟧ THE VERSION OF {{COORDINATE}} DECLARED IN {{MANIFEST}} — its COMPLETE real exported surface for its ROOT PACKAGE, from {{ROOT}}, read directly (not from memory, not from a doc page):
 {{LINES}}
-Only these are real. A member you don't see here does not exist in this exact declared version.
+Only these are real. A member you don't see here does not exist in this exact declared version's root package.

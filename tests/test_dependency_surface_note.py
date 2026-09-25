@@ -455,6 +455,54 @@ class TotalByteBudgetTests(_WorkspaceCase):
             writeproxy._MAX_TOTAL_NOTE_BYTES_PER_REQUEST = real_cap
             writeproxy._MAX_NOTES_PER_REQUEST = real_max_notes
 
+    def test_a_version_bump_or_removal_of_a_withheld_coordinate_stops_naming_it(self):
+        """Independent review round 5: `withheld_pointers` must filter against the CURRENT
+        `declared_coordinates`, the same set the anchor phases filter against -- otherwise a version
+        bump leaves BOTH the old and new version listed, and a removed dependency is still named every
+        turn: false present-tense facts about the project's current state."""
+        self._many_dependencies(n=5, module_prefix="example.invalid/five", members=70)
+        real_cap = writeproxy._MAX_TOTAL_NOTE_BYTES_PER_REQUEST
+        real_max_notes = writeproxy._MAX_NOTES_PER_REQUEST
+        writeproxy._MAX_TOTAL_NOTE_BYTES_PER_REQUEST = 5000
+        writeproxy._MAX_NOTES_PER_REQUEST = 10
+        try:
+            out1 = self.represent([tool("t1", call_id="c1")])
+            combined1 = "".join(m["content"] for m in out1)
+            self.assertIn("example.invalid/five1 v1.0.0", combined1)
+            self.assertIn("example.invalid/five2 v1.0.0", combined1)
+            withheld_before = set(depsurface._WITHHELD.get(self.sess, {}).keys())
+            self.assertIn(("go", "example.invalid/five1", "v1.0.0"), withheld_before)
+            self.assertIn(("go", "example.invalid/five2", "v1.0.0"), withheld_before)
+
+            # Bump five1 to v1.1.0 (same oversized body, so it is withheld again under the NEW
+            # coordinate) and drop five2 from go.mod entirely.
+            body_lines = "\n\n".join(f"func Member1_{j}(x int) int {{\n\treturn x\n}}" for j in range(70))
+            d = os.path.join(self.home, "go", "pkg", "mod", "example.invalid/five1@v1.1.0")
+            os.makedirs(d, exist_ok=True)
+            with open(os.path.join(d, "x.go"), "w") as fh:
+                fh.write(f"package pkg1\n\n{body_lines}\n")
+            manifest_lines = ["module example.com/many\n\ngo 1.21\n",
+                              "require example.invalid/five0 v1.0.0\n",
+                              "require example.invalid/five1 v1.1.0\n",   # bumped
+                              # five2 removed entirely
+                              "require example.invalid/five3 v1.0.0\n",
+                              "require example.invalid/five4 v1.0.0\n"]
+            with open(os.path.join(self.ws, "go.mod"), "w") as fh:
+                fh.write("".join(manifest_lines))
+
+            out2 = self.represent([tool("t1", call_id="c1"), tool("t2", call_id="c2")])
+            combined2 = "".join(m["content"] for m in out2)
+            # The superseded version must not still be named as a present fact.
+            self.assertNotIn("example.invalid/five1 v1.0.0", combined2)
+            # The removed dependency must not still be named either.
+            self.assertNotIn("example.invalid/five2", combined2)
+            # The bumped coordinate's NEW version is real, was gathered fresh, and (still oversized)
+            # is correctly withheld under ITS OWN key -- named as the current fact.
+            self.assertIn("example.invalid/five1 v1.1.0", combined2)
+        finally:
+            writeproxy._MAX_TOTAL_NOTE_BYTES_PER_REQUEST = real_cap
+            writeproxy._MAX_NOTES_PER_REQUEST = real_max_notes
+
 
 class AbstainMemoizationTests(_WorkspaceCase):
     """Cheap item (ii): a coordinate `gather()` could not resolve is not re-probed every request for

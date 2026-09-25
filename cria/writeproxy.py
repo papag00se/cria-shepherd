@@ -2202,6 +2202,7 @@ def _note_dependency_surface(messages: list[dict], workspace_root, sess_key: str
     if newest_tool is None:
         return
     declared = depsurface.declared_coordinates(workspace_root)
+    declared_keys = {(eco, package, version) for eco, package, version in declared}
 
     total_bytes = 0
     anchor_renders = 0
@@ -2279,11 +2280,32 @@ def _note_dependency_surface(messages: list[dict], workspace_root, sess_key: str
                       coordinate=surface.coordinate, members=len(surface.lines),
                       complete=surface.complete)
 
-    pointers = depsurface.withheld_pointers(sess_key)
+    # Independent review round 5: `withheld_pointers` is filtered against `declared_keys` -- the SAME
+    # filter the anchor phases use -- so a superseded version (a bump replaced p6 v1.0.0 with p6
+    # v1.1.0) or a removed dependency (p5 dropped from go.mod) stops being named the moment it leaves
+    # the manifest, instead of being listed forever as a false present-tense fact about the project.
+    pointers = depsurface.withheld_pointers(sess_key, declared_keys)
     if pointers:
-        lines = [f"- {label}: {read_hint}" for label, _root, read_hint in pointers]
-        newest_tool["content"] = newest_tool["content"] + "\n\n" + prompts.render(
-            "dependency_surface_withheld", count=str(len(pointers)), pointers="\n".join(lines))
+        all_lines = [f"- {label}: {read_hint}" for label, _root, read_hint in pointers]
+        # The pointer BLOCK itself counts against the same total-byte budget as every other note
+        # (independent review round 5) -- bounded, never a silent unbounded addition once several
+        # coordinates are withheld. A pointer line that does not fit is simply not shown; the COUNT
+        # in the label is always the real total, so an incomplete pointer list never claims to be
+        # the whole one.
+        shown_lines: list[str] = []
+        budget_left = _MAX_TOTAL_NOTE_BYTES_PER_REQUEST - total_bytes
+        used = 0
+        for line in all_lines:
+            cost = len(line.encode("utf-8", "replace")) + 1
+            if used + cost > max(budget_left, 0):
+                break
+            shown_lines.append(line)
+            used += cost
+        if shown_lines:
+            block = prompts.render("dependency_surface_withheld", count=str(len(pointers)),
+                                   pointers="\n".join(shown_lines))
+            newest_tool["content"] = newest_tool["content"] + "\n\n" + block
+            total_bytes += len(block.encode("utf-8", "replace"))
 
 
 def _render_dependency_surface(surface, ecosystem: str) -> str:

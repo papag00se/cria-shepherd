@@ -808,13 +808,25 @@ def is_withheld(sess_key: str, coordinate: tuple[str, str, str]) -> bool:
     return coordinate in _WITHHELD.get(sess_key, {})
 
 
-def withheld_pointers(sess_key: str) -> list[tuple[str, str, str]]:
-    """Every ``(coordinate_label, root, read_hint)`` withheld this session, for the one combined
-    withheld-facts note -- stable across requests (nothing here changes once recorded, per the
-    permanent-withhold policy above), so the SAME pointer list renders every time it applies."""
+def withheld_pointers(sess_key: str, declared_keys) -> list[tuple[str, str, str]]:
+    """``(coordinate_label, root, read_hint)`` for every coordinate withheld this session AND still
+    present in ``declared_keys`` -- the SAME set the anchor-rendering phases filter against.
+
+    ``_WITHHELD`` is permanent by design (a withheld coordinate is never re-``gather()``ed), but the
+    MANIFEST is not: a version bump replaces one declared coordinate with another (independent review
+    round 5), and a removed dependency stops being declared at all. Rendering every coordinate this
+    session ever withheld, unfiltered, would keep naming a superseded version or a dependency the
+    manifest no longer lists as though it were still a fact about the project's PRESENT state -- the
+    same false-present-tense problem the durable anchor's own withdrawal logic already avoids for the
+    main notes. Filtering here is what makes the withheld list agree with that: a stale entry simply
+    stops being surfaced the moment its coordinate leaves ``declared_keys``, with no special-cased
+    withdrawal step (nothing is ever deleted from ``_WITHHELD`` either -- filtering at read time is
+    the only source of truth this needs, exactly like `anchor_state` never asserts anything for a
+    coordinate `declared_coordinates` did not return)."""
     if not sess_key:
         return []
-    return list(_WITHHELD.get(sess_key, {}).values())
+    bucket = _WITHHELD.get(sess_key, {})
+    return [pointer for coordinate, pointer in bucket.items() if coordinate in declared_keys]
 
 
 def record_withheld(sess_key: str, coordinate: tuple[str, str, str], label: str, root: str,
