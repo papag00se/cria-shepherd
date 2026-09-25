@@ -591,6 +591,26 @@ reconciled HEAD: `p22-feed-rerun-9ded52bc.service` (user unit, not collected), s
   finding files are verified. Row p28 will be frozen at a NEW HEAD containing the fixes this row justifies (not
   `f6df9eea`) and will queue only cells still ≤75%.
 
+### Candidate C37 (row p27 cross-cell class) — harness compaction is never recognized, so its hardening never runs
+
+- **Walk evidence (p27 shipping seg-03, verified by the Supervisor):** CALL0046 (23:49:26 UTC) is Codex's compaction
+  request ("You are performing a CONTEXT CHECKPOINT COMPACTION. Create a handoff summary…"). cria classified it as an
+  ordinary coding task (`decision engagement=task reason='create handoff summary'`) and proxied it to the coder model;
+  the reply invented the `ruby_eu` gem, a `RubyEU::EU.member?` API and a fake GitHub citation, as a forward plan.
+  Codex stored it as the session's memory and CALL0048's `⟦ctx:continuation⟧` carried "Chose the `ruby_eu` gem for EU
+  detection" — the origin of the p27 shipping `ruby_eu` / two-argument `require` / `RubyEU` chain.
+- **Owner:** `server._is_compaction_request` recognizes a harness compaction only by the operator-wired
+  `<<<LOCAL_COMPACT>>>` marker. `~/.cria/codex-home/config.toml` sets no `compact_prompt`, so **every** harness
+  compaction in the campaign (206 proxy + 36 classifier calls across 29 sessions, 2026-09-22..25, all six cells) used
+  Codex's default prompt and bypassed `_harden_compaction_reply` entirely: no validator (C34 made it able to answer),
+  no fetch/inventory/check appendices, no empty-briefing retry, no compactor sampling.
+- **Candidate direction (principles #8/#18):** detect harness-agnostically, not by Codex metadata or prompt wording.
+  Deterministic trigger: the request's tool menu is empty (Codex compaction sends `tools: []`) → one focused closed
+  judgment ("is the latest user turn a request to summarize this conversation for continuation?") → route through
+  the existing `_harden_compaction_reply`; the marker path stays. No keyword list.
+- **Constraint:** implementation must not touch the live worktree while row p27 runs (the queue aborts if `cria/` is
+  dirty) — needs an isolated checkout or waits for the row to end.
+
 ### Cross-cell lead — invented third-party API members (not yet a candidate)
 
 Rust P20 (`toml` `Value::parse_str`, `toml::Error::Missing`), Feed p22 live (`org.apache.commons.csv.exceptions`,
