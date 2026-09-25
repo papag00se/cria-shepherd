@@ -631,6 +631,20 @@ reconciled HEAD: `p22-feed-rerun-9ded52bc.service` (user unit, not collected), s
   or a plan that missed a wanted body must replan when it arrives. Additionally (#11b) the absence sentence must not
   render when a declared manifest's body is unknown for this plan.
 
+### Candidate C39 (row p27, Orders walk) — cria's own absent lint probe is reported as the repo's error
+
+- **Evidence (Supervisor-verified, p27 orders chunk107):** the gate call (represented to the coder as
+  `python3 -m pytest -q`, yield 300000) returns `⟦ctx:checks⟧ the repo's own checks report these error-class problems
+  … /usr/bin/python3: No module named pyflakes` — the ONLY finding — while the real pytest hang (312 s, still running)
+  appears outside the checks block. `lint_floor_candidates` composes `python3 -m pyflakes` (`composed_by_cria=True`)
+  and documents "an absent tool abstains ('failed to launch'), never blocks", but the gate interpreter treats a
+  missing Python module (exit 1) as a failed check; only `linterprobe.escalate_pyflakes` honors absence.
+- **Prevalence:** coder prompts carrying that false red: 01a0c862 2, 01a0d1e8 84 (C26 Orders), 01a0d2c3 69 (P18
+  Orders), 01a0d4fa 16 (P24 Orders), 01a0d6b9 80 (p27 Orders) — every Orders run with the integration-test hang.
+- **Candidate direction:** make cria's own composed probes report tool absence through the existing launch-failure
+  path (e.g. the composed command pre-checks the module and exits 127 when absent), no output keyword parsing; the
+  hang's real timed-out output then stands alone in the checks block. Language-agnostic for any cria-composed probe.
+
 ### Cross-cell lead — invented third-party API members (not yet a candidate)
 
 Rust P20 (`toml` `Value::parse_str`, `toml::Error::Missing`), Feed p22 live (`org.apache.commons.csv.exceptions`,
