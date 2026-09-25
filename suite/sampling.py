@@ -112,6 +112,19 @@ MODEL_SAMPLING = {
         "classifier": {"temperature": 0.0},
         "compactor":  {"temperature": 0.0},
     },
+    # The-Defiant-Fable (DavidAU Qwen3.5-9B heretic finetune, Q5_K_S MTP). CARRIED OVER from qwen35
+    # above, byte-identical, on purpose: this is a Qwen3.5-9B (same 9B size, same qwen35 arch, same
+    # embedded thinking template as the base) so holding sampling constant keeps the WEIGHTS the
+    # only moving part vs the base row — the exact rationale that row exists for. The card's own
+    # thinking-mode coding numbers (temp 0.6 / top_p 0.95 / top_k 20 / min_p 0 / presence 0 /
+    # repeat 1.0) coincide with these, and its MTP note ("keep repeat penalty at 1") is already
+    # satisfied since we leave repeat_penalty unset (=1.0). docs/model-settings.md.
+    "defiant-fable": {
+        "coder":      {"temperature": 0.6, "top_p": 0.95, "top_k": 20},
+        "reasoner":   {"temperature": 0.6, "top_p": 0.95, "top_k": 20},
+        "classifier": {"temperature": 0.0},
+        "compactor":  {"temperature": 0.0},
+    },
     # Qwen3.8-27B (W4A16 + MTP) on the vLLM/3090 endpoint, not the llama.cpp fleet. Qwen's card:
     # thinking mode temp 0.6 / top_p 0.95 / top_k 20; cria drives coder+reasoner with thinking on and
     # the deterministic roles with it off, so the thinking numbers map onto the four roles here too.
