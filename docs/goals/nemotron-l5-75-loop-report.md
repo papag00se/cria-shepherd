@@ -611,6 +611,22 @@ reconciled HEAD: `p22-feed-rerun-9ded52bc.service` (user unit, not collected), s
 - **Constraint:** implementation must not touch the live worktree while row p27 runs (the queue aborts if `cria/` is
   dirty) — needs an isolated checkout or waits for the row to end.
 
+### Candidate C38 (row p27) — surveyed manifest bodies are lost between requests, so declared test tasks flap out of the gate
+
+- **Evidence** (diagnosis `~/.cria/walk-findings/2026-09-24/c38-rake-test-diagnosis.md`, read-only, decoded wire bytes;
+  walk seg-21/25/27): in p27 shipping the gate script's survey `WANT` list asked for `Rakefile`, and the harness
+  returned its exact bytes (decoded from transport spool `.cria-gate-b4d52e71…`), yet `build_ruby` saw no body:
+  `server._bind_workspace_view` builds a fresh empty `wsview.View` per request (`server.py:1000`), and
+  `replan_after_survey` (`probegate.py:2137`) fires only when the tree had never been surveyed. `rake test` was
+  composed on ~2 of ~12 gates; the rest ran `ruby -c` only and told the coder "no command to run them was found in
+  this project" (false: the Rakefile declares `Rake::TestTask`). Ruby sessions in window: 01a0d306 2/6 gates,
+  01a0d38c 0/4, 01a0d5d1 ~2/12. Every builder that reads a manifest body via `read_text` is structurally exposed
+  (JS/JVM/Python/Go/Rust by code reading; capture confirmation still needed).
+- **Candidate direction:** the owner is the per-session body knowledge in `wsview`/`probegate`: a body the harness
+  delivered must reach the next plan (session-scoped, generation-checked so an edited manifest is never read stale),
+  or a plan that missed a wanted body must replan when it arrives. Additionally (#11b) the absence sentence must not
+  render when a declared manifest's body is unknown for this plan.
+
 ### Cross-cell lead — invented third-party API members (not yet a candidate)
 
 Rust P20 (`toml` `Value::parse_str`, `toml::Error::Missing`), Feed p22 live (`org.apache.commons.csv.exceptions`,
