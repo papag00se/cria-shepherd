@@ -807,6 +807,15 @@ reconciled HEAD: `p22-feed-rerun-9ded52bc.service` (user unit, not collected), s
   installed, zone names routed through `zone_for`); 25/continue at 45 min (routing fixed, 11 tests, two wrong
   express expectations, no README table).
 
+### Row p28 — cell results
+
+- **shipping-rates-rb** `…_1790350009`: `milestone-stalled-60min`, 234 calls; milestones 20/continue, 25/continue,
+  25/stalled; final **25%** (p27: 15%).
+  - Done: the `>=` fix, express rates, name/code routing, 11 tests.
+  - Missing or wrong: the invented `Countries::Country.find_by_alpha2`; the gem was never installed in the cell; two
+    wrong express expectations; no README table.
+  - The last interval was spent on gem searches.
+
 ### Candidate C37 (row p27 cross-cell class) — harness compaction is never recognized, so its hardening never runs
 
 - **Walk evidence (p27 shipping seg-03, verified by the Supervisor):** CALL0046 (23:49:26 UTC) is Codex's compaction
