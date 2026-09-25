@@ -33,7 +33,6 @@ from .probegate import GATE_SENTINEL
 from . import content_reduce as content_reduce_mod
 from . import probeparse
 from . import proberun
-from . import refusalledger
 from . import dirguard
 from .config import CRIA_HOME
 from .shelltool import _CMD_FIELDS, is_shell_tool_name, shell_args
@@ -2126,48 +2125,69 @@ _SURFACE_INLINE_BUDGET = 2400
 
 
 def _note_dependency_surface(messages: list[dict], workspace_root, rlog) -> None:
-    """Candidate C40 — beside the tool result that FIRST reports a dependency resolved this session,
-    append its real exported surface (:mod:`cria.depsurface`), read from the local package-manager
-    cache, never from memory. See depsurface.py's module docstring for the trigger (the ledger's own
-    existing SUCCEEDED event, not lexical error-text matching — P19's objection does not apply) and
-    the JVM scope-out.
+    """Candidate C40, redesigned 2026-09-25 on supervisor follow-up. The FIRST landing (`e43d6a57`)
+    triggered on the dependency ledger's SUCCEEDED event (real, but textual: one resolver
+    subcommand's stdout, matched by `refusalledger._SUCCESSES`). Measured coverage, driven through
+    the real ledger over the real p27 captures
+    (`~/.cria/walk-findings/2026-09-24/c40-replay/measure_coverage.py` +
+    `coverage_ledger_events.txt`): ZERO of the five measured sessions ever produced a SUCCEEDED
+    event for their target coordinate, including sessions whose dependency plainly resolved (cart's
+    own final go.mod/go.sum; rust p27's capture prints cargo's real "Adding toml v0.8.23 (available:
+    ...)" 37 times, a wording `_SUCCESSES` never matched). A textual pattern is fragile exactly
+    because different subcommands/versions print different words for the same real event.
 
-    STATELESS AND IDEMPOTENT, the same shape as :func:`_note_missing_dependency`: ``messages`` is the
-    WHOLE history every request, so the coordinate that already earned a note carries that note's own
-    marker text forward in the harness's own replay of history, and the ``marker in text`` check below
-    short-circuits before gather() ever touches disk again. No session object is threaded through this
-    module; durability comes from the harness echoing back what cria already wrote, exactly like the
-    missing-dependency note's ``if note in last["content"]: return``.
+    THE NEW TRIGGER is the resolver's own DURABLE RECORD on disk: a manifest/lockfile it wrote
+    (go.mod, Cargo.lock, Gemfile.lock, pom.xml -- `cria.depsurface.MANIFEST_NAMES`), read through
+    wsview's body-knowledge seam (`cria.depsurface.declared_coordinates`), cross-checked against the
+    SAME local-cache presence test as before (`cria.depsurface.gather`). Both halves are structural
+    DATA the resolver/package-manager itself composed -- never a scan of stdout prose, so P19's
+    objection (a lexical trigger on error text) still does not apply, and this also closes the JVM
+    gap the first landing left explicitly open (pom.xml + a real ~/.m2 jar needs no lexical Maven
+    success line at all).
 
-    FIRST OCCURRENCE ONLY, per (ecosystem, package, version) — scanned oldest-to-newest so a later,
-    unrelated success for a DIFFERENT coordinate never re-opens an already-annotated one. A probe that
-    abstains (:func:`cria.depsurface.gather` returns ``None``) leaves the result exactly as it arrived
-    (#3, #11b): tool/cache absent or an ecosystem this candidate does not cover (jvm) inject nothing."""
-    seen: set[tuple[str, str, str]] = set()
+    DELIVERY TARGET. There is no longer one specific tool result that "reported the success" to
+    attach beside -- the manifest body may arrive through cria's own invisible survey plumbing, never
+    through a tool result the model sees at all. So the note rides beside the LAST tool result in
+    THIS batch instead (the coder's most recent action, the same "most recent occurrence" precedent
+    `_note_missing_dependency` already uses) -- additive, never blocking, never substituting for that
+    tool's own output.
+
+    STATELESS AND IDEMPOTENT, the same shape as `_note_missing_dependency`: `messages` is the WHOLE
+    history every request, so a coordinate that already earned a note carries that note's own marker
+    text forward in the harness's own replay of history, and the marker scan below short-circuits
+    before gather() (or a fresh manifest parse) ever runs again for it.
+
+    OPPORTUNISTIC, NEVER FORCED: `cria.depsurface.declared_coordinates` returns nothing until wsview
+    happens to know the manifest body, and never forces an extra read/turn to get there (see its own
+    docstring). A probe that then abstains (`cria.depsurface.gather` returns None) leaves the result
+    exactly as it arrived (#3, #11b): a manifest may declare a coordinate the local cache does not
+    (yet) hold, and that is silently not enough to fire."""
+    if not workspace_root:
+        return
+    target = None
     for m in messages:
-        if m.get("role") != "tool":
+        if m.get("role") == "tool" and isinstance(m.get("content"), str) and m["content"]:
+            target = m   # keep walking -- the LAST qualifying tool result in this batch wins
+    if target is None:
+        return
+    history = "\n".join(m.get("content") for m in messages
+                         if isinstance(m.get("content"), str))
+    rendered_this_pass: set[str] = set()
+    for eco, package, version in depsurface.declared_coordinates(workspace_root):
+        surface = depsurface.gather(eco, package, version, workspace_root)
+        if surface is None:
+            continue   # abstain silently -- manifest declares it, but the local cache does not
+        marker = _surface_marker(surface.coordinate)
+        if marker in history or marker in rendered_this_pass:
+            continue   # already delivered on a prior turn, or by an earlier coordinate this pass
+        note = _render_dependency_surface(surface)
+        if not note:
             continue
-        text = m.get("content")
-        if not isinstance(text, str) or not text:
-            continue
-        for event in refusalledger.success_events(text):
-            key = (event.ecosystem, event.package, event.version)
-            if key in seen or not event.package:
-                continue
-            seen.add(key)
-            marker = _surface_marker(event.coordinate)
-            if marker in text:
-                continue   # already delivered on a prior turn; the harness replayed it verbatim
-            surface = depsurface.gather(event.ecosystem, event.package, event.version, workspace_root)
-            if surface is None:
-                continue   # abstain silently — no cache, no match, or an uncovered ecosystem
-            note = _render_dependency_surface(surface)
-            if not note:
-                continue
-            m["content"] = text + "\n\n" + note
-            if rlog is not None:
-                rlog.emit("writeproxy.dependency_surface", level="info", ecosystem=event.ecosystem,
-                          coordinate=event.coordinate, members=len(surface.lines))
+        target["content"] = target["content"] + "\n\n" + note
+        rendered_this_pass.add(marker)
+        if rlog is not None:
+            rlog.emit("writeproxy.dependency_surface", level="info", ecosystem=eco,
+                      coordinate=surface.coordinate, members=len(surface.lines))
 
 
 def _surface_marker(coordinate: str) -> str:
@@ -2197,7 +2217,7 @@ def _render_dependency_surface(surface) -> str:
         shown = surface.lines[:1]
     return prompts.render("dependency_surface_overflow", coordinate=surface.coordinate,
                           root=surface.root, total=str(len(surface.lines)), shown=str(len(shown)),
-                          lines="\n".join(shown))
+                          lines="\n".join(shown), read_hint=surface.read_hint)
 
 
 def _note_missing_dependency(messages: list[dict], workspace_root, rlog) -> None:
