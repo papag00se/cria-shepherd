@@ -1,0 +1,1 @@
+{{COMMAND}} could not be launched — no verdict from it.

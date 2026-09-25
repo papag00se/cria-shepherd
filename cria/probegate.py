@@ -1123,6 +1123,24 @@ def _is_hard_failure(plan, sid: str) -> bool:
     return kind in proberun._HARD_FAILURE_KINDS
 
 
+def _may_abstain_on_launch_failure(plan, sid: str) -> bool:
+    """True ONLY when section ``sid`` is KNOWN to be an optional check cria composed itself \u2014 its
+    own zero-config lint/syntax floor (e.g. pyflakes) \u2014 the one shape the C39 evidence showed is
+    safe to abstain on for itself alone. Fails CLOSED toward "this must surface, never silently
+    abstain" in every other case: no plan (``clean_gate_output`` is frequently called with none),
+    an unparseable section id, a Test/Typecheck/BuildCheck probe (:data:`proberun._HARD_FAILURE_KINDS`
+    \u2014 the toolpath.py / probediscovery.build_python incident: a test probe that could not launch
+    once read as "checks pass", exactly the contract :func:`proberun.unran_probes` exists to forbid),
+    or a probe the COMPILER/repo declared rather than cria composing (the coder's own ranked tool,
+    never assumed safe to go quiet about just because cria cannot name its kind)."""
+    try:
+        idx = int(sid.split("-", 1)[1])
+        c = plan.candidates[idx]
+    except (AttributeError, IndexError, ValueError, TypeError):
+        return False
+    return bool(getattr(c, "composed_by_cria", False)) and c.kind not in proberun._HARD_FAILURE_KINDS
+
+
 def _command_for_sid(plan, sid: str) -> str:
     """The plain command string for section ``sid`` (``probe-N`` -> ``plan.candidates[N].command``,
     displayed the same way the model would type it), or ``""`` when the plan/index is unavailable.
@@ -1135,6 +1153,21 @@ def _command_for_sid(plan, sid: str) -> str:
         return c.display_label or proberun.display_command(c.command)
     except (AttributeError, IndexError, ValueError, TypeError):
         return ""
+
+
+def _render_uncertain_notes(uncertain: "list[tuple[str, str, str]]") -> str:
+    """Every timed-out / cut-short / hard-failure-launch-failure section, named — the text this
+    check NEVER let a sibling's clean or red verdict paper over (#4, never speak over a tool). No
+    ``CHECKS_MARKER`` prefix: callers append this to whichever branch already opens with one (a red
+    finding, a no-location failure) or supply their own when it stands alone."""
+    notes = []
+    for label, printed, template in uncertain:
+        command = f"`{label}`" if label else "a check"
+        note = prompts.fill(prompts.load(template), command=command)
+        if printed:
+            note += " It printed this before it was stopped:\n" + printed
+        notes.append(note)
+    return "\n".join(notes)
 
 
 def clean_gate_output(raw: str, plan: "GatePlan | None" = None, *, annotate: bool = True,
@@ -1181,7 +1214,16 @@ def clean_gate_output(raw: str, plan: "GatePlan | None" = None, *, annotate: boo
     # problem" from a check whose sibling never finished.
     ran_clean = False
     failed_no_detail = False
-    uncertain: list[tuple[str, str]] = []   # (command label, printed text or "") — timeout / cut-short
+    # A launch failure whose KIND cria could not positively confirm was safe to abstain on (no plan,
+    # or a probe that is neither cria's own optional composed check nor a known Test/Typecheck/Build
+    # hard-failure kind). Fails CLOSED like the pre-C39 default: the whole gate stays UNVERIFIED
+    # ("no usable result") rather than risk a bare clean claim riding alongside an unidentifiable
+    # check. See :func:`_may_abstain_on_launch_failure`.
+    unknown_could_not_run = False
+    # (command label, printed text or "", prompt template name) — timeout / cut-short / a KNOWN
+    # hard-failure-kind launch failure. NEVER a lint/syntax/optional launch failure — those abstain
+    # silently below; see the LAUNCH_FAILURE_EXIT_CODES branch.
+    uncertain: list[tuple[str, str, str]] = []
     _sections = split_sections(raw)
     for sid, body in _sections.items():
         # `git` is no longer EMITTED (see plan_gate), but a gate result already in a session's
@@ -1202,11 +1244,28 @@ def clean_gate_output(raw: str, plan: "GatePlan | None" = None, *, annotate: boo
         # to "fix", never a pass. Sniffing text for "no such file" would misread a real error that just
         # mentions it (a FileNotFoundError, a missing #include) as couldn't-run.
         if code in proberun.LAUNCH_FAILURE_EXIT_CODES:
-            # ABSTAIN FOR ITSELF ONLY. This probe never launched — there is nothing it could have
-            # printed and nothing it could have verified — so it contributes NEITHER a finding nor a
-            # verdict, and it must NOT erase whatever verdict the OTHER sections in this same gate
-            # reached. An absent zero-config tool (cria's own composed probe, e.g. pyflakes) is
-            # cria's setup gap, not the workspace's; the checks that DID run still get to speak.
+            if _may_abstain_on_launch_failure(plan, sid):
+                # ABSTAIN FOR ITSELF ONLY — a CONFIRMED optional check (lint/syntax/etc., cria's own
+                # composed probe). This probe never launched — there is nothing it could have printed
+                # and nothing it could have verified — so it contributes NEITHER a finding nor a
+                # verdict, and it must NOT erase whatever verdict the OTHER sections in this same gate
+                # reached. An absent zero-config tool (cria's own composed probe, e.g. pyflakes) is
+                # cria's setup gap, not the workspace's; the checks that DID run still get to speak.
+                continue
+            if _is_hard_failure(plan, sid):
+                # A CONFIRMED Test/Typecheck/BuildCheck probe that never launched is NOT a silent
+                # abstention — this is exactly the toolpath.py / probediscovery.build_python incident
+                # (a test probe that could not launch read as "checks pass") and exactly what
+                # unran_probes' contract forbids ("absence-of-findings is never shown as checks
+                # pass"). It must surface, named, and it must NEVER let a sibling's clean verdict
+                # stand in for it.
+                uncertain.append((_command_for_sid(plan, sid), "", "checks_could_not_launch"))
+                continue
+            # UNKNOWN kind (no plan — clean_gate_output is frequently called with none — or an
+            # unparseable section id): cria cannot prove this was safe to abstain on, so the whole
+            # gate stays unverified rather than risk a bare "no error-class problems" claim riding
+            # alongside a check cria could not even identify.
+            unknown_could_not_run = True
             continue
         if code is None:
             # The section header arrived but its EXIT sentinel never did: the HARNESS returned (its
@@ -1216,7 +1275,7 @@ def clean_gate_output(raw: str, plan: "GatePlan | None" = None, *, annotate: boo
             # tests never finished (the vacuous-green shape). A missing sentinel can ONLY mean a cut
             # stream — the script echoes EXIT:$? unconditionally, so even a missing tool prints 127.
             # Same treatment as a timeout: never a pass, and it must always be named — see `uncertain`.
-            uncertain.append((_command_for_sid(plan, sid), text.strip()))
+            uncertain.append((_command_for_sid(plan, sid), text.strip(), "checks_timeout"))
             continue
         if code == proberun.TIMEOUT_EXIT_CODE:
             # A timeout is NOT a launch failure: the command RAN and may already have printed the real
@@ -1225,7 +1284,7 @@ def clean_gate_output(raw: str, plan: "GatePlan | None" = None, *, annotate: boo
             # is ALSO never allowed to go silent just because some OTHER check in the same gate came
             # back clean (#4, never speak over a tool: the coder must be told THIS check never gave a
             # verdict, by name, not handed a blanket "no problems" that quietly excludes it).
-            uncertain.append((_command_for_sid(plan, sid), text.strip()))
+            uncertain.append((_command_for_sid(plan, sid), text.strip(), "checks_timeout"))
             continue
         # Every section past this point RAN TO COMPLETION and produced a real verdict \u2014 a pass, an
         # advisory-only red (style only, no error-class line survives the filter below), or a genuine
@@ -1397,33 +1456,40 @@ def clean_gate_output(raw: str, plan: "GatePlan | None" = None, *, annotate: boo
             # and the file ledger saw nothing, so this note never rendered and the block asserted
             # `missing go.sum entry` as present-tense ground truth for eleven more coder calls.
             stale = prompts.load("checks_are_stale_command")
-        return prompts.render("checks_error_class",
+        body = prompts.render("checks_error_class",
                               seeded_test_rule=prompts.load("seeded_test_rule").strip(),
                               stale=stale.rstrip("\n"),
                               findings="\n".join(findings + _advisory_note(dropped_advisories)))
+        if uncertain:
+            # #4, never speak over a tool, the OTHER direction: a real finding must not bury a
+            # SIBLING check that never gave a verdict — a real `pyflakes` finding returning first must
+            # not make a `pytest` that timed out empty vanish from the block entirely.
+            body += "\n" + _render_uncertain_notes(uncertain)
+        return body
     if failed_no_detail:            # ran, exited non-zero, no usable output → a failure with no location
-        return ("⟦ctx:checks⟧ one of the repo's own checks FAILED but printed no parseable location — "
+        body = ("⟦ctx:checks⟧ one of the repo's own checks FAILED but printed no parseable location — "
                 "run it yourself and read the actual error before continuing. Not done.")
+        if uncertain:
+            body += "\n" + _render_uncertain_notes(uncertain)
+        return body
     if uncertain:
-        # #4, never speak over a tool: a check that timed out or was cut short mid-run gave NO verdict
-        # either way, and that fact must reach the model even when some OTHER check in the same gate
-        # came back clean — a real green from `compileall` must never stand in for a `pytest` that
-        # never finished. Named per-command (falls back to "a check" only when the plan can't say
-        # which one), never text-sniffed from what it printed.
-        notes = []
-        for label, printed in uncertain:
-            command = f"`{label}`" if label else "a check"
-            note = prompts.fill(prompts.load("checks_timeout"), command=command)
-            if printed:
-                note += " It printed this before it was stopped:\n" + printed
-            notes.append(note)
-        msg = CHECKS_MARKER + " " + "\n".join(notes)
+        # #4, never speak over a tool: a check that timed out, was cut short mid-run, or (a
+        # Test/Typecheck/BuildCheck probe) never launched at all gave NO verdict either way, and that
+        # fact must reach the model even when some OTHER check in the same gate came back clean — a
+        # real green from `compileall` must never stand in for a `pytest` that never finished or
+        # never ran. Named per-command (falls back to "a check" only when the plan can't say which
+        # one), never text-sniffed from what it printed.
+        msg = CHECKS_MARKER + " " + _render_uncertain_notes(uncertain)
         if ran_clean:
             # Other sections in THIS SAME gate did reach a real verdict — say so, but never let it
-            # read as "done": the timeout above is still unresolved.
+            # read as "done": the entry above is still unresolved.
             msg += "\n" + prompts.load("checks_timeout_partial_clean")
         return msg
-    if not ran_clean:                # nothing in this gate ever produced a verdict — cria's own setup
+    if unknown_could_not_run or not ran_clean:
+        # `unknown_could_not_run`: a launch failure cria could not positively confirm was safe to
+        # abstain on — fails CLOSED (see `_may_abstain_on_launch_failure`) rather than let an
+        # unidentifiable check's silence ride alongside a sibling's clean verdict.
+        # `not ran_clean`: nothing in this gate ever produced a verdict at all — cria's own setup
         # gap (every probe either never launched or never ran at all), never the workspace's. NOT a
         # pass (never claim clean), NOT a fix request (the model can't fix cria's absent tool), NOT a
         # specific confession — just a non-actionable placeholder so the model relies on itself.

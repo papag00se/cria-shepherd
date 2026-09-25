@@ -311,6 +311,80 @@ class P27OrdersReplayShapeTests(unittest.TestCase):
         self.assertNotIn("no signal either way", out.lower())
 
 
+class HardFailureLaunchFailureTests(unittest.TestCase):
+    """Re-review of 8bf62f13, blocking finding #1: a launch failure of a Test/Typecheck/BuildCheck
+    probe (a KNOWN hard-failure kind, per `proberun._HARD_FAILURE_KINDS`) must never read as a bare
+    clean just because it sits next to green checks \u2014 that reopens the toolpath.py /
+    probediscovery.build_python incident (a test probe that could not launch read as "checks pass")
+    and breaks `proberun.unran_probes`' contract ("absence-of-findings is never shown as checks
+    pass"). Only a CONFIRMED optional check cria composed itself (the lint floor, e.g. pyflakes) may
+    abstain for its own section alone."""
+
+    def _plan(self):
+        # compileall (SyntaxCheck), the TOML config floor (SyntaxCheck), pyflakes (Lint,
+        # composed_by_cria), pytest (Test) \u2014 the reviewer's exact four-probe example.
+        t = tempfile.mkdtemp()
+        open(os.path.join(t, "x.py"), "w").write("import os\nx = 1\n")
+        open(os.path.join(t, "pyproject.toml"), "w").write("[tool.pytest.ini_options]\n")
+        os.makedirs(os.path.join(t, "tests"))
+        open(os.path.join(t, "tests", "test_x.py"), "w").write("def test_ok():\n    assert True\n")
+        plan = plan_gate(t)
+        cmds = [" ".join(c.command[:3]) for c in plan.candidates]
+        assert len(plan.candidates) == 4, cmds
+        assert cmds[0].startswith("python3 -m compileall"), cmds
+        assert "tomllib" in " ".join(plan.candidates[1].command), cmds
+        assert "pyflakes" in cmds[2], cmds
+        assert cmds[3] == "python3 -m pytest", cmds
+        return plan
+
+    def test_0_0_127_lint_127_test_must_not_say_clean(self):
+        # [compileall 0, TOML 0, pyflakes 127, pytest 127]: the reviewer's exact regression shape.
+        # pyflakes' own launch failure abstains (confirmed optional, Lint, composed_by_cria); pytest's
+        # does NOT \u2014 it is a confirmed Test-kind probe, and its silence must never read as a pass.
+        plan = self._plan()
+        raw = (_sec(0, "EXIT:0") + _sec(1, "EXIT:0")
+               + _sec(2, "/usr/bin/python3: No module named pyflakes\nEXIT:127")
+               + _sec(3, "timeout: failed to run command 'python3': No such file or directory\nEXIT:127")
+               + _git("feed99"))
+        out = probegate.clean_gate_output(raw, plan)
+        self.assertIsNotNone(out)
+        # NEVER the bare bruised message alone (this WAS the regression: 8bf62f13 returned exactly
+        # this sentence, with nothing naming pytest's own unverified launch failure at all).
+        self.assertNotEqual(out, "\u27e6ctx:checks\u27e7 the repo's own checks that ran reported no error-class problems.")
+        self.assertIn("pytest", out)                        # the unverified hard-kind check is NAMED
+        self.assertIn("could not be launched", out.lower())
+        self.assertNotIn("No module named pyflakes", out)   # pyflakes' own absence still stays silent
+
+    def test_0_127_lint_0_test_stays_clean(self):
+        # [compileall 0, pyflakes 127, pytest 0]: pyflakes' CONFIRMED-optional abstain must still let
+        # a real passing pytest run report clean \u2014 the fix for #1 must not regress the original
+        # C39 fix.
+        plan = self._plan()
+        raw = (_sec(0, "EXIT:0") + _sec(1, "EXIT:0")
+               + _sec(2, "/usr/bin/python3: No module named pyflakes\nEXIT:127")
+               + _sec(3, "1 passed in 0.01s\nEXIT:0")
+               + _git("feed99"))
+        out = probegate.clean_gate_output(raw, plan)
+        self.assertIn("no error-class problems", out.lower())
+        self.assertNotIn("no usable result", out.lower())
+        self.assertNotIn("No module named pyflakes", out)
+
+    def test_lint_finding_plus_timed_out_test_names_both(self):
+        # Re-review blocking finding #2: a real pyflakes finding must not bury a SIBLING check that
+        # never gave a verdict \u2014 [compileall 0, pyflakes finding EXIT:1, pytest 124 empty].
+        plan = self._plan()
+        raw = (_sec(0, "EXIT:0") + _sec(1, "EXIT:0")
+               + _sec(2, "x.py:1:1: undefined name 'bogus'\nEXIT:1")
+               + _sec(3, "EXIT:124")
+               + _git("feed99"))
+        out = probegate.clean_gate_output(raw, plan)
+        self.assertIsNotNone(out)
+        self.assertIn("undefined name 'bogus'", out)         # the real finding still leads
+        self.assertIn("pytest", out)                          # the timed-out sibling is STILL named
+        self.assertIn("timed out", out.lower())
+        self.assertNotIn("no signal either way", out.lower())
+
+
 class BashRoundtripTests(unittest.TestCase):
     def test_real_bash_execution_roundtrips(self):
         t = _ws(with_pytest=False)
@@ -415,17 +489,47 @@ class CleanGateOutputTests(unittest.TestCase):
         self.assertNotIn("no error-class problems. that", out.lower())  # not the clean message either
         self.assertNotIn("python", out.lower())         # doesn't leak the raw launch-failure line
 
-    def test_launch_failure_alongside_a_real_clean_check_keeps_the_green_verdict(self):
-        # C39 BLOCKING repair: a probe that couldn't launch must abstain for ITSELF only — it must
-        # NOT erase the verdict of a SIBLING check that actually ran clean in the same gate. Before
-        # the repair, ANY 125/126/127 section flipped the WHOLE gate to "no usable result", silently
-        # discarding a real green (#4, never speak over a tool: the clean probe-0 IS a tool's own
-        # verdict, and staying silent about it is cria speaking instead of relaying it).
-        raw = self._raw("timeout: failed to run command 'eslint': No such file or directory\nEXIT:127")
+    def test_launch_failure_is_neutral_not_an_error_to_fix_nor_a_pass(self):
+        # Restored, UNCHANGED shape (re-review of 8bf62f13): a probe that couldn't launch, next to a
+        # clean sibling, with NO PLAN (`clean_gate_output(raw)` — no `plan=`). Without a plan cria
+        # cannot positively confirm this was cria's own OPTIONAL composed check (see
+        # `_may_abstain_on_launch_failure`), so it fails CLOSED exactly like the pre-C39 default: the
+        # whole gate stays unverified, never a bare pass built on a check cria could not even name.
+        raw = self._raw("timeout: failed to run command 'python': No such file or directory\nEXIT:127")
         out = probegate.clean_gate_output(raw)
+        self.assertIn("no usable result", out.lower())
+        self.assertNotIn("fix", out.lower())            # not framed as a fixable code error
+        self.assertNotIn("pass", out.lower())           # not a pass/clean claim
+        self.assertNotIn("no error-class problems. that", out.lower())  # not the clean message either
+        self.assertNotIn("python", out.lower())         # doesn't leak the raw launch-failure line
+
+    def _python_plan_no_tests(self):
+        """A REAL plan_gate() plan with exactly two candidates: compileall (SyntaxCheck) and pyflakes
+        (Lint, composed_by_cria) — no pytest, no manifest, nothing else. This is what lets
+        `_may_abstain_on_launch_failure` positively CONFIRM pyflakes is cria's own optional composed
+        check, the one shape that may abstain alongside a clean sibling."""
+        t = tempfile.mkdtemp()
+        Path(t, "x.py").write_text("import os\nx = 1\n")
+        plan = plan_gate(t)
+        cmds = [" ".join(c.command[:3]) for c in plan.candidates]
+        assert len(plan.candidates) == 2, cmds
+        assert cmds[0].startswith("python3 -m compileall"), cmds
+        assert "pyflakes" in cmds[1], cmds
+        return plan
+
+    def test_launch_failure_alongside_a_real_clean_check_keeps_the_green_verdict(self):
+        # C39 BLOCKING repair, with the missing piece the re-review added: a probe that couldn't
+        # launch must abstain for ITSELF only when it is a CONFIRMED optional check (a real plan
+        # proving it is cria's own composed pyflakes probe) — it must NOT erase the verdict of a
+        # SIBLING check that actually ran clean in the same gate. #4, never speak over a tool: the
+        # clean probe-0 IS a tool's own verdict, and staying silent about it is cria speaking instead
+        # of relaying it.
+        plan = self._python_plan_no_tests()
+        raw = _sec(0, "EXIT:0") + _sec(1, "/usr/bin/python3: No module named pyflakes\nEXIT:127") + _git()
+        out = probegate.clean_gate_output(raw, plan)
         self.assertIn("no error-class problems", out.lower())  # the real green survives
         self.assertNotIn("no usable result", out.lower())
-        self.assertNotIn("eslint", out.lower())                 # the launch failure itself stays silent
+        self.assertNotIn("No module named pyflakes", out)      # the launch failure itself stays silent
 
     def test_c39_absent_pyflakes_module_abstains_not_reported_as_repo_error(self):
         # C39 (row p27 Orders, chunk107): a box with no `pyflakes` installed made `python3 -m
@@ -444,10 +548,12 @@ class CleanGateOutputTests(unittest.TestCase):
         self.assertNotIn("report these error-class problems", out)  # never framed as the repo's own defect
 
     def test_c39_absent_pyflakes_alongside_a_real_clean_check_keeps_the_green_verdict(self):
-        # The reviewer's exact seed shape [compileall EXIT 0, pyflakes EXIT 127]: cria's own absent
-        # lint tool must not neutralise the real `compileall` pass sitting right beside it.
-        raw = self._raw("/usr/bin/python3: No module named pyflakes\nEXIT:127")
-        out = probegate.clean_gate_output(raw)
+        # The reviewer's exact seed shape [compileall EXIT 0, pyflakes EXIT 127] — with a REAL plan
+        # confirming pyflakes' kind, so cria's own absent lint tool does not neutralise the real
+        # `compileall` pass sitting right beside it.
+        plan = self._python_plan_no_tests()
+        raw = _sec(0, "EXIT:0") + _sec(1, "/usr/bin/python3: No module named pyflakes\nEXIT:127") + _git()
+        out = probegate.clean_gate_output(raw, plan)
         self.assertIn("no error-class problems", out.lower())
         self.assertNotIn("no usable result", out.lower())
         self.assertNotIn("No module named pyflakes", out)
