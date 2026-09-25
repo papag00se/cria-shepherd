@@ -601,15 +601,15 @@ reconciled HEAD: `p22-feed-rerun-9ded52bc.service` (user unit, not collected), s
 
 - **handles-cli-node** `…_1790315045`: `milestone-stalled-60min` (budget 4 intervals); milestones 40/continue,
   35/continue, 40/stalled; final **40%**. Built-in fetch, `request` removed, plain lookup, `--help`, non-zero exit,
-  correct Node-free Dockerfile (ENTRYPOINT) \u2014 but `--json` crashes (`const jsonOutput` reassigned, lookup.js untouched
-  23:42\u219260 min), count is `data.length` (5, holder total 15), the only test is mocha on `resolve()` (no CLI e2e),
+  correct Node-free Dockerfile (ENTRYPOINT) — but `--json` crashes (`const jsonOutput` reassigned, lookup.js untouched
+  23:42→60 min), count is `data.length` (5, holder total 15), the only test is mocha on `resolve()` (no CLI e2e),
   `node_modules` + mocha lockfile present. rust-toml-cli started 00:07:21.
 
-- **rust-toml-cli** `\u2026_1790320041`: `milestone-stalled-45min`; milestones 20/continue, 15/stalled; final **15%**.
-  Cargo on `toml 0.8`, dotted walk via `Value::get`, stderr+exit paths, README (YAML example) \u2014 never compiles:
+- **rust-toml-cli** `…_1790320041`: `milestone-stalled-45min`; milestones 20/continue, 15/stalled; final **15%**.
+  Cargo on `toml 0.8`, dotted walk via `Value::get`, stderr+exit paths, README (YAML example) — never compiles:
   invented `toml::Value::parse_str` (same member as P20), then `Value::try_from(&content)` (serializes, not parses),
   then `use toml::Value` dropped. **Row p27 queue finished 00:56:02**; heartbeat `a5c06791` deleted after the
-  terminal packet. Row p27: shipping 15, cart 30, orders 35, feed 20, handles 40, rust 15 \u2014 all six still open.
+  terminal packet. Row p27: shipping 15, cart 30, orders 35, feed 20, handles 40, rust 15 — all six still open.
 
 - **Supervisor takeover 2026-09-24 23:38 PDT** (previous Supervisor stalled; not contacted). Old heartbeat gone;
   single new heartbeat `a5c06791` (*/10). No milestone pending at takeover. handles-cli-node live report 23:40:
@@ -622,20 +622,20 @@ reconciled HEAD: `p22-feed-rerun-9ded52bc.service` (user unit, not collected), s
 ### Row p27 post-row: walks, reconciliation, candidates (2026-09-25)
 
 - **Walks:** cart 80/80 verified (syntheses `p27-cart/synthesis-{1-27,28-54,55-80}.md`); feed 40/49 verified, 41-49 in
-  flight; rust capture `20260925T000732-01a0d764` \u2192 56 segments; handles `20260924T224416-01a0d717` \u2192 81 segments.
+  flight; rust capture `20260925T000732-01a0d764` → 56 segments; handles `20260924T224416-01a0d717` → 81 segments.
 - **Partial cross-cell reconciliation** (`~/.cria/walk-findings/2026-09-24/p27-cross-cell-partial.md`, shipping/cart/orders):
   C37 confirmed in 3/3 (shipping CALL0045/46 origin, cart CALL0280, orders CALL0051); invented third-party API 2/3
-  (orders is stdlib-only); C39 orders-only. Regression lead (UNVERIFIED, no prior-HEAD walk): C34\u2013C36 turned
+  (orders is stdlib-only); C39 orders-only. Regression lead (UNVERIFIED, no prior-HEAD walk): C34–C36 turned
   previously-empty one-word judges into answering ones; cart CALL0122 steer-code answers `SUPPORTED` for `go mod tidy`
-  while go.mod pins the REFUSED `v0.5.0` \u2014 Supervisor opened it: the action names no version, so this is a
+  while go.mod pins the REFUSED `v0.5.0` — Supervisor opened it: the action names no version, so this is a
   rubric gap (the action implicitly relies on the refused pin), not a clean contradiction. Not yet a candidate.
-  Compactor length-with-empty-content: measured on authoritative responses \u2014 1\u20134 per session, 0 in orders/feed;
+  Compactor length-with-empty-content: measured on authoritative responses — 1–4 per session, 0 in orders/feed;
   the `*-noreason` retry repeats identical parameters (`reasoning_effort=none` does not stop nemotron reasoning). Low
   prevalence; recorded, not selected.
 - **Invented-API origin** (`~/.cria/walk-findings/2026-09-24/invented-api-cross-cell.md`): 4 cells (cart, shipping,
-  feed, rust \u2014 rust repeats P20's `Value::parse_str` exactly). Origin: no cria-side probe of the resolved
+  feed, rust — rust repeats P20's `Value::parse_str` exactly). Origin: no cria-side probe of the resolved
   dependency's real surface, although it sits in the local cache for every cell. **C40** (trigger: RefusalLedger's own
-  SUCCEEDED event, not error text \u2014 answers P19) is in implementation on `cand-c40`.
+  SUCCEEDED event, not error text — answers P19) is in implementation on `cand-c40`.
 - **Reviews:** C37, C38, C39 each REJECTED by independent review; repairs are with the same owners. C37: Codex's
   compaction ask stays in the writer/validator evidence (drop it by position, not by marker), and the no-reasoner
   fail-safe is not implemented. C38: a size-dropped body sticks in the session cache, and the cache leaks across
@@ -645,22 +645,58 @@ reconciled HEAD: `p22-feed-rerun-9ded52bc.service` (user unit, not collected), s
   identical to the marker filter across 118 real compaction inbound captures; the no-reasoner guard is implemented;
   5156 passed). **C38 ACCEPTED** (`bbf00bb1`: the cache is keyed by (session, root); a cached body is trusted only
   after this request's tree confirms its size; forget-on-drop; the replay is recorded in
-  `walk-findings/2026-09-24/c38-replay/`; the 5 faithful replan rows go 0/5 \u2192 5/5; 5154 passed). **C39** was
+  `walk-findings/2026-09-24/c38-replay/`; the 5 faithful replan rows go 0/5 → 5/5; 5154 passed). **C39** was
   rejected twice more: the per-section abstain made a hard-kind launch failure read as clean, and then the no-plan
   fallback dropped superseded green gates from history (older transports render without a plan). Each repair
-  created a new failure class, so a **strategy reset** was ordered: an invariant matrix (a)\u2013(f) through
+  created a new failure class, so a **strategy reset** was ordered: an invariant matrix (a)–(f) through
   `clean_gate_results` across 2+ gates, then the simplest design (persist per-transport candidate facts, or drop
   absent modules at plan time like `program_is_installed`).
-- **Walk misreading rejected (Supervisor-verified from raw bodies):** cart "Class E" (0279\u21920280) and rust
-  "Class C" (0142\u21920143) claimed that tool-confirmed writes were lost across calls. They were not. Each call's
+- **Walk misreading rejected (Supervisor-verified from raw bodies):** cart "Class E" (0279→0280) and rust
+  "Class C" (0142→0143) claimed that tool-confirmed writes were lost across calls. They were not. Each call's
   prompt re-renders the whole history, so a `read_file`/`cargo` result placed BEFORE the newest `write_file` is
-  older than the write. In cart, 0280's msg 44 is exactly 0279's response write (same id `hOf15eG\u2026`, same
-  md5); in rust, 0143 carries 0142's write at msg 13\u201314 and the newer lib.rs read after it. There is no state
+  older than the write. In cart, 0280's msg 44 is exactly 0279's response write (same id `hOf15eG…`, same
+  md5); in rust, 0143 carries 0142's write at msg 13–14 and the newer lib.rs read after it. There is no state
   loss, and this is not a candidate. Walker prompts now warn about history order.
 - **C40 first cut** (`e43d6a57`, trigger = RefusalLedger SUCCEEDED): its own replay shows it never fires on cart
-  (the capture has no `go: added` line, only `go: downloading \u2026 v0.5.0/v0.6.0`); rust has `Adding toml v0.8.23`.
+  (the capture has no `go: added` line, only `go: downloading … v0.5.0/v0.6.0`); rust has `Adding toml v0.8.23`.
   Returned to the owner for a coverage table across all 4 cells plus P20, and a structural lockfile/manifest+cache
   trigger if coverage is under 3/4.
+- **C40 redesign** (`a2e69556`): measured with cria's own ledger over all 5 sessions, the SUCCEEDED trigger fired
+  **0/5**. It was replaced by a structural trigger: a coordinate declared in go.mod, Cargo.lock, Gemfile.lock or
+  pom.xml (read through the wsview body seam) AND exactly that version present in the local cache. JVM is covered
+  via a zipfile listing plus `javap -public`. Replays now fire for cart, rust and JVM. Disclosed limit: in cart,
+  shipping and feed the invented member was written BEFORE the manifest settled, so the note helps the repair phase
+  (30+ minutes in each cell), not the first write. Integrated over main: 5207 passed. Under independent review.
+- **C39 narrowed** (`44d7d403`, after the strategy reset and one more reject): the acceptance boundary is ONLY "cria's
+  own absent lint probe is never the repo's error". The lint floor composes the pyflakes console script under
+  `toolpath.resolved`'s name, so an absent tool is dropped at composition. probegate, proberun and prompts are
+  byte-identical to base. Naming an empty timeout is a pre-existing base gap; it is split out as a follow-up unit,
+  with its matrix tests kept as labelled skips. Under final re-review.
+- **Walks complete for all six cells** (shipping 95, cart 80, orders 40, feed 49, handles 81, rust 56 segments; all
+  with syntheses). Final reconciliation: `~/.cria/walk-findings/2026-09-24/p27-cross-cell-final.md`.
+  - C37's class is confirmed in **6/6** cells (the classifier answered Codex's compaction request as a task).
+  - Invented API: 4/6 (orders is stdlib-only; handles misused REST fields instead).
+  - Judges certifying against their own quoted evidence: 4/6 (cart 0122, rust 0114 steer-code `SUPPORTED`;
+    handles 0103/0104 satisfaction; shipping on-target).
+  - Diagnosed-but-not-executed: 5/6. In 6 of 8 clean instances the call ended normally with a different tool call
+    and no guard cut (`diagnosed-not-executed.md`). Held: its proposal re-injects the coder's own reasoning, so the
+    bar is high and prevalence must be measured first.
+  - **Supervisor measurement (authoritative prompt text, all six p27 sessions):** judge `⟦ctx:files⟧` blocks carrying
+    "NAMED, NOT SHOWN" (task files whose bytes never reached the judge):
+
+    | cell | blocks with NAMED, NOT SHOWN | blocks with 0 bodies |
+    |---|---|---|
+    | shipping | 14/15 | — |
+    | cart | 3/8 | — |
+    | orders | 13/17 | — |
+    | feed | 6/6 | — |
+    | handles | 76/80 | 12 |
+    | rust | 11/12 | — |
+
+    Judges mostly decide without the code; this is C38's family (bodies not persisted across requests). Row p28
+    (C38 live) will measure whether it drops; if not, it is the next candidate.
+  - Regression hypothesis: REFINED, not confirmed. Judges answering wrongly occurs in cells that held too, so
+    C34–C36 is a real cross-cell mechanism but does not by itself predict which cells regressed.
 
 ### Candidate C37 (row p27 cross-cell class) — harness compaction is never recognized, so its hardening never runs
 
