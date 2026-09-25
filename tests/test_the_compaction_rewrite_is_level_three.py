@@ -34,8 +34,12 @@ class TheRequestRewriteIsGatedTests(unittest.TestCase):
         for ln in sites:
             i = src.index(ln)
             window = src[max(0, i - 400):i]
-            self.assertIn("context_fixes", window.split("if _is_compaction_request")[-1] + window,
+            # `compaction` is the once-per-request recognition (marker OR the unmarked-but-judged
+            # case — see `_recognize_compaction`); both call sites gate the SAME variable on the
+            # SAME level-3 flag, so a rung honoured at one site and skipped at the other still fails.
+            self.assertIn("context_fixes", window.split("if self.server.cfg.routing.context_fixes")[-1] + window,
                           f"ungated call site: {ln.strip()}")
+            self.assertIn("and compaction", window, f"ungated call site: {ln.strip()}")
 
     def test_the_guard_is_on_the_same_flag_as_its_sibling(self):
         """`reframe_compaction` rewrites the reply; this rewrites the request. One mechanism, one
@@ -67,7 +71,7 @@ class WhatALowerRungGetsInsteadTests(unittest.TestCase):
         own briefing prompt offers to provide is empty at exactly these rungs (#11b)."""
         import inspect as _i
         src = _i.getsource(server.CriaHandler) if hasattr(server, "CriaHandler") else _i.getsource(server)
-        self.assertIn("context_fixes and _is_compaction_request", src)
+        self.assertIn("context_fixes and compaction", src)
 
 
 if __name__ == "__main__":
