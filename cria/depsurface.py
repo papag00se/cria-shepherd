@@ -786,3 +786,47 @@ def clear_abstain(sess_key: str, coordinate: tuple[str, str, str]) -> None:
     if not sess_key:
         return
     _ABSTAINED.get(sess_key, {}).pop(coordinate, None)
+
+
+# A coordinate whose SURFACE WAS REAL (gather() succeeded) but whose rendered note did not fit this
+# session's remaining byte budget on the request it was first gathered (independent review round 4,
+# the R3 regression). Remembered PERMANENTLY for the session -- not retried, not re-gathered -- so a
+# withheld coordinate never re-runs `gather()` (a real disk walk, or for JVM up to MAX_FILES real
+# `javap` subprocesses) on any later request just to discover, again, that it still does not fit. The
+# small pointer fields (never the full surface) are all that is kept: `coordinate` (the human label),
+# `root` (the real local path), and `read_hint` (the real command to read the rest) -- exactly what a
+# withheld line needs to tell the coder the real way to read it themselves, with no promise of a later
+# automatic delivery this module cannot keep (independent review round 4, R3-1).
+_WITHHELD: dict[str, dict[tuple[str, str, str], tuple[str, str, str]]] = {}
+_WITHHELD_MAX_SESSIONS = 512
+_WITHHELD_MAX_PER_SESSION = 256
+
+
+def is_withheld(sess_key: str, coordinate: tuple[str, str, str]) -> bool:
+    if not sess_key:
+        return False
+    return coordinate in _WITHHELD.get(sess_key, {})
+
+
+def withheld_pointers(sess_key: str) -> list[tuple[str, str, str]]:
+    """Every ``(coordinate_label, root, read_hint)`` withheld this session, for the one combined
+    withheld-facts note -- stable across requests (nothing here changes once recorded, per the
+    permanent-withhold policy above), so the SAME pointer list renders every time it applies."""
+    if not sess_key:
+        return []
+    return list(_WITHHELD.get(sess_key, {}).values())
+
+
+def record_withheld(sess_key: str, coordinate: tuple[str, str, str], label: str, root: str,
+                    read_hint: str) -> None:
+    """``gather()`` succeeded for ``coordinate`` (it is real) but its rendered note did not fit this
+    request's remaining byte budget -- remember the pointer fields only, permanently for the session,
+    so this coordinate is never gathered again and never silently promised a delivery this module
+    cannot guarantee."""
+    if not sess_key:
+        return
+    if len(_WITHHELD) > _WITHHELD_MAX_SESSIONS:
+        _WITHHELD.clear()
+    bucket = _WITHHELD.setdefault(sess_key, {})
+    if len(bucket) < _WITHHELD_MAX_PER_SESSION or coordinate in bucket:
+        bucket[coordinate] = (label, root, read_hint)

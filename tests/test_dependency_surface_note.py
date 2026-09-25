@@ -41,7 +41,11 @@ class _WorkspaceCase(unittest.TestCase):
         self.addCleanup(self._ws_tmp.cleanup)
         self.addCleanup(setattr, os.path, "expanduser", self._real_expanduser)
         depsurface._ANCHOR.clear()
+        depsurface._WITHHELD.clear()
+        depsurface._ABSTAINED.clear()
         self.addCleanup(depsurface._ANCHOR.clear)
+        self.addCleanup(depsurface._WITHHELD.clear)
+        self.addCleanup(depsurface._ABSTAINED.clear)
         self.sess = "test-session-1"
 
     def represent(self, messages, workspace_root=None, sess_key=None, tools_present=True):
@@ -296,42 +300,160 @@ class BoundedNotesTests(_WorkspaceCase):
 
 
 class TotalByteBudgetTests(_WorkspaceCase):
-    """Independent review round 3, R3: individually-bounded notes are not collectively bounded once
-    several real direct dependencies are anchored -- `_MAX_TOTAL_NOTE_BYTES_PER_REQUEST` caps the SUM,
-    and a coordinate skipped for THIS reason is labelled, not silently dropped."""
+    """Independent review round 3, R3, THEN round 4's regression fixes on top of it:
+    individually-bounded notes are not collectively bounded once several real direct dependencies are
+    anchored -- `_MAX_TOTAL_NOTE_BYTES_PER_REQUEST` caps the SUM. Round 4 fixed three problems in the
+    round-3 shape: (1) budget was spent in manifest order, so a brand-new dependency could displace an
+    already-anchored note; (2) a withheld coordinate was re-`gather()`ed every request; (3) the
+    withheld wording promised a future delivery ('they will appear on a later turn') this design can
+    never actually make happen."""
 
-    def test_many_anchored_coordinates_are_capped_by_total_bytes_not_just_by_count(self):
+    def _many_dependencies(self, n=6, module_prefix="example.invalid/pkg", members=60):
         lines = ["module example.com/many\n\ngo 1.21\n"]
-        for i in range(6):
-            module = f"example.invalid/pkg{i}"
+        for i in range(n):
+            module = f"{module_prefix}{i}"
             lines.append(f"require {module} v1.0.0\n")
             d = os.path.join(self.home, "go", "pkg", "mod", f"{module}@v1.0.0")
             os.makedirs(d, exist_ok=True)
             # A body large enough that its OWN inline-budget-fitting note is a meaningful fraction of
             # the total budget -- makes the total-byte cap the binding constraint, not the count cap.
             body_lines = "\n\n".join(f"func Member{i}_{j}(x int) int {{\n\treturn x\n}}"
-                                     for j in range(60))
+                                     for j in range(members))
             with open(os.path.join(d, "x.go"), "w") as fh:
                 fh.write(f"package pkg{i}\n\n{body_lines}\n")
         with open(os.path.join(self.ws, "go.mod"), "w") as fh:
             fh.write("".join(lines))
 
+    def test_many_anchored_coordinates_are_capped_by_total_bytes_and_labelled(self):
+        self._many_dependencies(n=6)
         real_cap = writeproxy._MAX_TOTAL_NOTE_BYTES_PER_REQUEST
+        real_max_notes = writeproxy._MAX_NOTES_PER_REQUEST
         writeproxy._MAX_TOTAL_NOTE_BYTES_PER_REQUEST = 4000   # force the budget to bind in this test
+        writeproxy._MAX_NOTES_PER_REQUEST = 10                # let every dependency be attempted at once
         try:
             out = self.represent([tool("build output")])
         finally:
             writeproxy._MAX_TOTAL_NOTE_BYTES_PER_REQUEST = real_cap
+            writeproxy._MAX_NOTES_PER_REQUEST = real_max_notes
         content = out[0]["content"]
         total_note_bytes = len(content.encode()) - len("build output".encode())
-        self.assertLessEqual(total_note_bytes, 4000 + 1000)   # budget plus one withheld-label sentence
-        self.assertIn("withheld", content)
+        self.assertLessEqual(total_note_bytes, 4000 + 1500)   # budget plus one pointer-list sentence
+        # R3-3: the reworded line must not promise a delivery this design cannot make, and must name
+        # a REAL way to read the withheld facts (the read_hint text, e.g. read_file/grep <path>).
+        self.assertIn("will NOT appear automatically", content)
+        self.assertNotIn("will appear on a later turn", content)
+        self.assertIn("read_file or grep", content)
 
     def test_no_withheld_label_when_nothing_was_withheld(self):
         self._write_go_mod(module="example.invalid/nonexistent")
         self._write_module_cache(module="example.invalid/nonexistent")
         out = self.represent([tool("build output")])
-        self.assertNotIn("withheld", out[0]["content"])
+        self.assertNotIn("will NOT appear automatically", out[0]["content"])
+
+    def test_anchored_notes_are_rendered_before_any_new_gather_R3_fix_1(self):
+        """A coordinate anchored on an earlier request must not be displaced by a coordinate that is
+        merely EARLIER in manifest order but has never been anchored yet."""
+        self._write_go_mod(module="example.invalid/nonexistent")   # will be listed FIRST in go.mod
+        self._write_module_cache(module="example.invalid/nonexistent")
+        first = self.represent([tool("t1", call_id="c1")])
+        self.assertIn(ANCHOR_TEXT, first[0]["content"])
+        anchored_text = first[0]["content"]
+
+        # Now a SECOND, brand-new dependency is declared -- inserted FIRST in go.mod, ahead of the
+        # already-anchored one, with a large enough real surface that a manifest-order (not
+        # anchored-first) pass would have let it consume the budget the anchored note needs.
+        big_body = "\n\n".join(f"func Big{i}(x int) int {{\n\treturn x\n}}" for i in range(80))
+        d = os.path.join(self.home, "go", "pkg", "mod", "example.invalid/newcomer@v1.0.0")
+        os.makedirs(d, exist_ok=True)
+        with open(os.path.join(d, "x.go"), "w") as fh:
+            fh.write(f"package newcomer\n\n{big_body}\n")
+        with open(os.path.join(self.ws, "go.mod"), "w") as fh:
+            fh.write("module example.com/cart\n\ngo 1.21\n\n"
+                     "require example.invalid/newcomer v1.0.0\n"          # listed FIRST
+                     "require example.invalid/nonexistent v1.4.0\n")      # already-anchored, listed SECOND
+
+        real_cap = writeproxy._MAX_TOTAL_NOTE_BYTES_PER_REQUEST
+        writeproxy._MAX_TOTAL_NOTE_BYTES_PER_REQUEST = len(anchored_text.encode()) + 200
+        try:
+            second = self.represent([tool("t1", call_id="c1"), tool("t2", call_id="c2")])
+        finally:
+            writeproxy._MAX_TOTAL_NOTE_BYTES_PER_REQUEST = real_cap
+        # The already-anchored coordinate's text is untouched -- priority honoured.
+        self.assertEqual(second[0]["content"], anchored_text)
+        combined = "".join(m["content"] for m in second)
+        self.assertIn("THE VERSION OF example.invalid/nonexistent", combined)
+        # The newcomer, listed FIRST in the manifest, does not get to displace it -- it is either
+        # withheld (budget exhausted by the priority pass) or simply not yet attempted this request.
+        self.assertNotIn("THE VERSION OF example.invalid/newcomer", combined)
+
+    def test_a_withheld_coordinate_is_never_gathered_again_R3_fix_2(self):
+        self._many_dependencies(n=6)
+        real_cap = writeproxy._MAX_TOTAL_NOTE_BYTES_PER_REQUEST
+        real_max_notes = writeproxy._MAX_NOTES_PER_REQUEST
+        writeproxy._MAX_TOTAL_NOTE_BYTES_PER_REQUEST = 4000
+        writeproxy._MAX_NOTES_PER_REQUEST = 10
+        calls = {"n": 0}
+        real_gather = depsurface.gather
+
+        def counting_gather(*a, **kw):
+            calls["n"] += 1
+            return real_gather(*a, **kw)
+
+        depsurface.gather = counting_gather
+        try:
+            self.represent([tool("t1", call_id="c1")])
+            after_first = calls["n"]
+            self.assertGreater(after_first, 0)
+            self.represent([tool("t1", call_id="c1"), tool("t2", call_id="c2")])
+            self.represent([tool("t1", call_id="c1"), tool("t2", call_id="c2"),
+                            tool("t3", call_id="c3")])
+        finally:
+            depsurface.gather = real_gather
+            writeproxy._MAX_TOTAL_NOTE_BYTES_PER_REQUEST = real_cap
+            writeproxy._MAX_NOTES_PER_REQUEST = real_max_notes
+        # Every coordinate was already attempted (anchored or withheld) on the first request (the cap
+        # override lets all 6 be tried at once) -- later requests must not call gather() again at all.
+        self.assertEqual(calls["n"], after_first,
+                         "a withheld coordinate must never be re-gathered on a later request")
+
+    def test_five_or_more_notes_the_withheld_set_and_gather_count_stay_fixed_across_requests(self):
+        """Independent review round 4, item (4): 5+ real, anchored-size dependencies; across several
+        requests the WITHHELD SET and the total `gather()` COUNT must both stay fixed once every
+        coordinate has been attempted once."""
+        self._many_dependencies(n=5, module_prefix="example.invalid/five", members=70)
+        real_cap = writeproxy._MAX_TOTAL_NOTE_BYTES_PER_REQUEST
+        real_max_notes = writeproxy._MAX_NOTES_PER_REQUEST
+        writeproxy._MAX_TOTAL_NOTE_BYTES_PER_REQUEST = 5000   # binds well before all 5 fit
+        writeproxy._MAX_NOTES_PER_REQUEST = 10                # let all 5 be attempted on request 1
+        calls = {"n": 0}
+        real_gather = depsurface.gather
+
+        def counting_gather(*a, **kw):
+            calls["n"] += 1
+            return real_gather(*a, **kw)
+
+        depsurface.gather = counting_gather
+        try:
+            reqs = [[tool("t1", call_id="c1")]]
+            for i in range(2, 6):
+                reqs.append(reqs[-1] + [tool(f"t{i}", call_id=f"c{i}")])
+
+            outs = [self.represent(reqs[0])]
+            withheld_after_1 = set(depsurface._WITHHELD.get(self.sess, {}).keys())
+            gather_count_after_1 = calls["n"]
+            self.assertTrue(withheld_after_1, "the fixture must actually force some withholding")
+
+            for req in reqs[1:]:
+                outs.append(self.represent(req))
+                withheld_now = set(depsurface._WITHHELD.get(self.sess, {}).keys())
+                self.assertEqual(withheld_now, withheld_after_1,
+                                 "the withheld SET must stay fixed once every coordinate is attempted")
+                self.assertEqual(calls["n"], gather_count_after_1,
+                                 "the total gather() COUNT must stay fixed -- no re-gathering")
+        finally:
+            depsurface.gather = real_gather
+            writeproxy._MAX_TOTAL_NOTE_BYTES_PER_REQUEST = real_cap
+            writeproxy._MAX_NOTES_PER_REQUEST = real_max_notes
 
 
 class AbstainMemoizationTests(_WorkspaceCase):

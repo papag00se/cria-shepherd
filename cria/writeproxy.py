@@ -2127,7 +2127,15 @@ def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | Non
 # drops lines without saying so). Deliberately small: a handful of real signatures is the common
 # case, and a large budget would let one bloated package push everything else in the same tool
 # result out of the window it rides in.
-_SURFACE_INLINE_BUDGET = 2400
+# Independent review round 4 (usefulness finding): measured against the REAL shopspring/decimal
+# cache, the declaration-only (no doc-prose) surface is 4,645 real bytes -- comfortably real-world
+# sized once prose is gone, but still bigger than the old 2,400-byte budget, which truncated the
+# alphabetically-sorted member list before reaching `Round`/`RoundCeil`/`RoundBank` -- the exact real
+# members that contradict the invented `Quantize`/`RoundingModeCeiling` this candidate exists to catch.
+# Measured: decimal 4,645B, toml 0.8.23 3,152B, a robfig/cron-shaped fixture 150B all now fit whole;
+# commons-csv (8 real classes' worth of javap output, 7,007B) does not and stays partial-with-pointer,
+# which is the explicitly allowed outcome for a genuinely large single dependency.
+_SURFACE_INLINE_BUDGET = 6000
 # How many NEW coordinates one request will ever gather() for the first time (independent review B2):
 # even restricted to direct dependencies, a manifest can name several in one project, and each
 # first-time gather() may be a real disk walk or (JVM) up to MAX_FILES real `javap` subprocesses.
@@ -2144,56 +2152,43 @@ _MAX_ANCHOR_RENDERS_PER_REQUEST = 12
 # coordinate skipped for THIS reason is not withdrawn (its anchor state is untouched) and is retried
 # on the next request; if anything was withheld this pass, ONE labelled sentence says so -- never a
 # silent cut (#5).
-_MAX_TOTAL_NOTE_BYTES_PER_REQUEST = 12_000
+_MAX_TOTAL_NOTE_BYTES_PER_REQUEST = 24_000
 
 
 def _note_dependency_surface(messages: list[dict], workspace_root, sess_key: str, rlog) -> None:
     """Candidate C40. See cria/depsurface.py's module docstring for the full redesign history.
-    This round (2026-09-25c, independent review round 2): the previous ONE-SHOT delivered-state fix
-    (2026-09-25b, B1) was still wrong -- it made the real fact visible for exactly ONE request, then
-    silently absent for the rest of a session that runs 30+ minutes, which is precisely when the
-    repair phase needs a contradicting real signature most.
 
-    A DURABLE, RE-RENDERED ANCHOR (not one-shot, not a moving target). `depsurface.anchor_state`
-    remembers, per coordinate, the exact tool_call_id a note was first attached to AND the exact
-    rendered text. Every later request:
+    TWO PHASES, ANCHORED FIRST (independent review round 4, R3 regression fix #1). The round-3 shape
+    processed every declared coordinate in ONE pass, in manifest order -- so a coordinate that had
+    never been anchored yet, but happened to be listed before an already-anchored one, could consume
+    budget a stable, already-delivered note needed, displacing it for that request (breaking the very
+    stability the durable-anchor design exists for). This function now runs two full passes: PHASE 1
+    re-renders every ALREADY-ANCHORED coordinate first (bounded by `_MAX_ANCHOR_RENDERS_PER_REQUEST`
+    and the byte budget) -- no disk read, no `gather()` call, `gather()` still runs AT MOST ONCE per
+    coordinate per session. Only once phase 1 is done does PHASE 2 consider coordinates never anchored
+    this session, bounded by `_MAX_NOTES_PER_REQUEST` new `gather()` calls.
 
-    1. For a coordinate ALREADY anchored this session: if the anchor's tool_call_id is still present
-       among THIS request's messages, the SAME cached text is re-appended to that SAME message --
-       byte-identical, same position, so the harness's prompt-cache prefix stays stable (the property
-       the one-shot fix also wanted, now kept without losing durability). No disk read, no `gather()`
-       call -- `gather()` runs AT MOST ONCE per coordinate per session, ever.
-    2. If the anchor's tool_call_id is no longer present (a harness compaction folded it out of
-       history), the coordinate is RE-ANCHORED once on the newest qualifying tool result in this
-       batch, replaying the SAME cached text and recording the new tool_call_id as the anchor going
-       forward. This is a deliberate choice over staying silent: C37's own compaction handling already
-       hardens DETECTION of a compaction turn, but nothing in that path guarantees the compactor's
-       retrospective preserves any one specific fact from the folded window, and staying silent would
-       mean a session that compacts even once permanently loses this candidate's grounding for
-       whatever remains of a 30+ minute repair. Re-anchoring is cheap (cached text, no re-probe) and
-       bounded (`_MAX_ANCHOR_RENDERS_PER_REQUEST`), so the cost of "wrong" here is small next to the
-       cost of "silently gone forever". Deeper integration -- e.g. handing the note directly to the
-       compaction writer as evidence so it can be preserved IN the rollup rather than re-attached
-       after -- is a reasonable future enhancement and is out of scope for this candidate (the same
-       disclosed-not-fixed treatment as the C38 interaction below).
-    3. For a coordinate NEVER anchored this session: the normal gather()-bounded-by-
-       `_MAX_NOTES_PER_REQUEST` flow runs, and success records a brand-new anchor.
+    ANCHOR LOSS (a harness compaction folds the anchor's message out of history): re-anchored once on
+    the newest qualifying tool result within phase 1, replaying the SAME cached text -- see the
+    C37/compaction rationale in this module's git history for why re-anchoring is preferred over
+    staying silent.
 
-    TIMELESS WORDING. The old "JUST RESOLVED" framing was true on first delivery and FALSE on every
-    later re-render (nothing "just" happened on turn 50) -- `cria/prompts/dependency_surface_*.txt`
-    now says "THE VERSION ... DECLARED IN <manifest>", a fact that stays true no matter how many times
-    it is repeated verbatim.
+    TIMELESS WORDING. `cria/prompts/dependency_surface_*.txt` says "THE VERSION ... DECLARED IN
+    <manifest>", never "JUST RESOLVED" -- true no matter how many times the identical text repeats.
 
-    TOTAL BYTE BUDGET (independent review round 3, R3). `_MAX_TOTAL_NOTE_BYTES_PER_REQUEST` bounds the
-    SUM of everything this function appends in one request, across every coordinate -- individually
-    bounded is not collectively bounded once several real coordinates are anchored. A coordinate that
-    would exceed the remaining budget is simply skipped THIS request (its state, anchored or not, is
-    untouched, so it is retried next request) and counted; if anything was withheld, one honest,
-    labelled sentence says so -- the withheld COUNT is real and computed, never a guess at what it
-    would have said.
+    PERMANENT WITHHOLDING, NEVER RE-GATHERED, NO FALSE PROMISE (independent review round 4, R3
+    regression fixes #2 and #3). A coordinate whose real surface does not fit the remaining byte
+    budget the FIRST time it is gathered is recorded in `depsurface._WITHHELD` -- permanently for the
+    session, so it is NEVER handed to `gather()` again (round 3's bug: a withheld coordinate was
+    silently re-gathered on every later request, which for JVM meant a fresh `javap` subprocess every
+    single turn). Only three small pointer fields are kept (the coordinate label, its real local path,
+    and the real command to read it), never the full surface. The combined withheld note names every
+    withheld coordinate's real read command directly (`go doc -all <coord>` / `jar tf <jar>` / a real
+    grep-able path) and explicitly says it will NOT appear automatically -- round 3's wording promised
+    "they will appear on a later turn," which was false (#5b): nothing in this design ever revisits a
+    withheld coordinate, so nothing could have made that promise true.
 
-    Without a `sess_key` (no identity to remember anchors against) this abstains entirely, same as
-    the one-shot version did."""
+    Without a `sess_key` (no identity to remember anchors/withholds against) this abstains entirely."""
     if not workspace_root or not sess_key:
         return
     by_call_id: dict[str, dict] = {}
@@ -2206,38 +2201,49 @@ def _note_dependency_surface(messages: list[dict], workspace_root, sess_key: str
                 by_call_id[cid] = m
     if newest_tool is None:
         return
-    new_gathers = 0
-    anchor_renders = 0
+    declared = depsurface.declared_coordinates(workspace_root)
+
     total_bytes = 0
-    withheld = 0
-    for eco, package, version in depsurface.declared_coordinates(workspace_root):
+    anchor_renders = 0
+
+    # PHASE 1 -- every already-anchored coordinate, priority, before anything new is even considered.
+    for eco, package, version in declared:
         if anchor_renders >= _MAX_ANCHOR_RENDERS_PER_REQUEST:
             break
         coordinate_key = (eco, package, version)
         state = depsurface.anchor_state(sess_key, coordinate_key)
-        if state is not None:
-            anchor_id, note_text = state
-            note_bytes = len(note_text.encode("utf-8", "replace"))
-            if total_bytes + note_bytes > _MAX_TOTAL_NOTE_BYTES_PER_REQUEST:
-                withheld += 1
-                continue   # over budget THIS request only -- anchor state untouched, retried next turn
-            anchor_msg = by_call_id.get(anchor_id)
-            if anchor_msg is not None:
-                anchor_msg["content"] = anchor_msg["content"] + "\n\n" + note_text
-                total_bytes += note_bytes
-                anchor_renders += 1
-                continue
-            # Anchor lost (compaction) -- re-anchor once on the newest tool result, same cached text.
-            new_cid = newest_tool.get("tool_call_id")
-            if new_cid:
-                newest_tool["content"] = newest_tool["content"] + "\n\n" + note_text
-                depsurface.set_anchor_state(sess_key, coordinate_key, new_cid, note_text)
-                total_bytes += note_bytes
-                anchor_renders += 1
-                if rlog is not None:
-                    rlog.emit("writeproxy.dependency_surface_reanchored", level="info", ecosystem=eco,
-                              coordinate=coordinate_key)
+        if state is None:
+            continue   # never anchored -- phase 2's job
+        anchor_id, note_text = state
+        note_bytes = len(note_text.encode("utf-8", "replace"))
+        if total_bytes + note_bytes > _MAX_TOTAL_NOTE_BYTES_PER_REQUEST:
+            break   # anchored notes have priority; if even one cannot fit, stop -- phase 2 won't fit either
+        anchor_msg = by_call_id.get(anchor_id)
+        if anchor_msg is not None:
+            anchor_msg["content"] = anchor_msg["content"] + "\n\n" + note_text
+            total_bytes += note_bytes
+            anchor_renders += 1
             continue
+        # Anchor lost (compaction) -- re-anchor once on the newest tool result, same cached text.
+        new_cid = newest_tool.get("tool_call_id")
+        if new_cid:
+            newest_tool["content"] = newest_tool["content"] + "\n\n" + note_text
+            depsurface.set_anchor_state(sess_key, coordinate_key, new_cid, note_text)
+            total_bytes += note_bytes
+            anchor_renders += 1
+            if rlog is not None:
+                rlog.emit("writeproxy.dependency_surface_reanchored", level="info", ecosystem=eco,
+                          coordinate=coordinate_key)
+
+    # PHASE 2 -- coordinates never anchored: a bounded new gather(), or (if already withheld) nothing
+    # at all -- the combined pointer note below is the only thing a withheld coordinate ever costs.
+    new_gathers = 0
+    for eco, package, version in declared:
+        coordinate_key = (eco, package, version)
+        if depsurface.anchor_state(sess_key, coordinate_key) is not None:
+            continue   # phase 1 already handled it
+        if depsurface.is_withheld(sess_key, coordinate_key):
+            continue   # permanently withheld -- NEVER gathered again
         if new_gathers >= _MAX_NOTES_PER_REQUEST:
             continue
         if not depsurface.should_retry_gather(sess_key, coordinate_key):
@@ -2246,6 +2252,7 @@ def _note_dependency_surface(messages: list[dict], workspace_root, sess_key: str
         if not cid:
             continue   # no stable id to anchor to -- skip rather than anchor to nothing
         surface = depsurface.gather(eco, package, version, workspace_root)
+        new_gathers += 1   # gather() ran -- counts here whether or not it fit the budget below
         if surface is None:
             depsurface.record_abstain(sess_key, coordinate_key)
             continue   # abstain silently -- manifest declares it, but the local cache does not
@@ -2255,23 +2262,28 @@ def _note_dependency_surface(messages: list[dict], workspace_root, sess_key: str
             continue
         note_bytes = len(note.encode("utf-8", "replace"))
         if total_bytes + note_bytes > _MAX_TOTAL_NOTE_BYTES_PER_REQUEST:
-            withheld += 1
-            continue   # over budget THIS request -- not anchored yet, tried again next request
+            # A REAL surface that simply does not fit -- withheld PERMANENTLY, never gathered again.
+            depsurface.record_withheld(sess_key, coordinate_key, surface.coordinate, surface.root,
+                                       surface.read_hint)
+            if rlog is not None:
+                rlog.emit("writeproxy.dependency_surface_withheld_new", level="info", ecosystem=eco,
+                          coordinate=coordinate_key)
+            continue
         newest_tool["content"] = newest_tool["content"] + "\n\n" + note
         depsurface.set_anchor_state(sess_key, coordinate_key, cid, note)
         depsurface.clear_abstain(sess_key, coordinate_key)
         total_bytes += note_bytes
-        new_gathers += 1
         anchor_renders += 1
         if rlog is not None:
             rlog.emit("writeproxy.dependency_surface", level="info", ecosystem=eco,
                       coordinate=surface.coordinate, members=len(surface.lines),
                       complete=surface.complete)
-    if withheld:
+
+    pointers = depsurface.withheld_pointers(sess_key)
+    if pointers:
+        lines = [f"- {label}: {read_hint}" for label, _root, read_hint in pointers]
         newest_tool["content"] = newest_tool["content"] + "\n\n" + prompts.render(
-            "dependency_surface_withheld", count=str(withheld))
-        if rlog is not None:
-            rlog.emit("writeproxy.dependency_surface_withheld", level="info", count=withheld)
+            "dependency_surface_withheld", count=str(len(pointers)), pointers="\n".join(lines))
 
 
 def _render_dependency_surface(surface, ecosystem: str) -> str:
