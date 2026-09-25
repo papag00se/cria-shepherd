@@ -57,7 +57,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
-from . import ignore, prompts, wsview, probeclassify
+from . import ignore, prompts, toolpath, wsview, probeclassify
 
 # Walk depth bound: entries of root are checked with depth=0; children of a dir
 # at nesting root/a/b/c are checked with depth=3 and thus never recursed.
@@ -1245,8 +1245,36 @@ def lint_floor_candidates(root: Path) -> list[ProbeCandidate]:
     root = Path(root)
     py = linterprobe.collect_files(str(root), ["py"])
     if py:
+        py_files = py[:MAX_FLOOR_FILES_PER_LANG]
+        # BARE BINARY, like eslint/clippy/go-vet below \u2014 not `python3 -m pyflakes`. pyflakes ships
+        # a `pyflakes` console-script entry point (the normal way it is invoked from a shell), so
+        # composing it this way lets `program_is_installed` (proberun.py) drop this candidate BEFORE
+        # it is ever composed into a gate script the moment the coder's own PATH is confirmed to lack
+        # it \u2014 the SAME mechanism that already protects every other zero-config tool here. C39
+        # (row p27 Orders, chunk107): the earlier `python3 -m pyflakes` invocation let python3 launch
+        # fine while the MODULE import failed inside it, so an absent pyflakes surfaced as python3's
+        # own exit 1 ("No module named pyflakes") \u2014 indistinguishable, by exit code, from a REAL
+        # repo defect \u2014 and every fix attempted at the gate-INTERPRETATION layer (a launch-check
+        # wrapper, plan-keyed kind lookups) broke the moment a gate's plan went out of scope for an
+        # older, superseded transport (`clean_gate_results` re-renders every earlier gate with no
+        # plan attached). Composed this way, an absent pyflakes never reaches the gate as a section
+        # at all \u2014 there is nothing left for `clean_gate_output` to misclassify, in any transport,
+        # new or old.
+        #
+        # THE RESOLVED NAME, NOT THE BARE ONE. Debian/Ubuntu ship pyflakes as `pyflakes3`, never
+        # `pyflakes` \u2014 `toolpath.resolved` already finds that (the survey's own versioned-variant
+        # sweep), but composing the literal string "pyflakes" regardless of what was resolved meant
+        # `program_is_installed` correctly kept the candidate (it saw pyflakes3 and answered
+        # "installed") while the composed command still tried to launch the name that ISN'T there \u2014
+        # exit 127 on every single gate, silently neutralising every green run on exactly the
+        # distribution pyflakes is most commonly installed from. `resolved` is None only in the
+        # one-gate "unsure" warmup window (nobody has asked yet); "pyflakes" is the reasonable
+        # default for that case, same as always, and `program_is_installed` still decides whether to
+        # keep the candidate once an answer exists.
+        resolved = toolpath.resolved("pyflakes")
+        program = resolved if resolved else "pyflakes"
         out.append(cand(ProbeKind.Lint,
-                        ["python3", "-m", "pyflakes", *py[:MAX_FLOOR_FILES_PER_LANG]],
+                        [program, *py_files],
                         root, 60, 80, ProbeCost.Cheap, composed_by_cria=True,
                         ecosystem=Ecosystem.Python,
                         reason="Python linting: pyflakes (undefined names, unused imports; zero-config)"))

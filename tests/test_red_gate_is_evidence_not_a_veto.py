@@ -41,6 +41,30 @@ def _ws():
     return t
 
 
+# Every gate result in this file hand-builds sections assuming the real candidate order
+# [compileall, TOML floor, pyflakes, pytest] (`proberun.program_is_installed` drops a genuinely-
+# absent `pyflakes` from `plan.candidates` entirely, so a fake executable on PATH makes that
+# assumption true regardless of whether THIS machine has pyflakes).
+_pyflakes_bin_dir = None
+_pyflakes_old_path = None
+
+
+def setUpModule():
+    global _pyflakes_bin_dir, _pyflakes_old_path
+    _pyflakes_bin_dir = tempfile.mkdtemp()
+    exe = os.path.join(_pyflakes_bin_dir, "pyflakes")
+    with open(exe, "w") as f:
+        f.write("#!/usr/bin/env python3\nimport sys\nsys.exit(0)\n")
+    os.chmod(exe, 0o755)
+    _pyflakes_old_path = os.environ.get("PATH", "")
+    os.environ["PATH"] = _pyflakes_bin_dir + os.pathsep + _pyflakes_old_path
+
+
+def tearDownModule():
+    if _pyflakes_old_path is not None:
+        os.environ["PATH"] = _pyflakes_old_path
+
+
 RED_TESTS = "FAILED tests/test_x.py::t - AssertionError: boom\n1 failed\nEXIT:1"
 
 

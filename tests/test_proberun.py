@@ -23,6 +23,7 @@ from cria.proberun import (
     completion_block_nudge,
     completion_probe_digest,
     compose_probe_command,
+    display_command,
     failed_unparsed_probes,
     family_of,
     interpret_probe_output,
