@@ -27,6 +27,7 @@ _ALLOWED = {
     ("probeparse.py", "toks[2:]"): "parsing: argv tail",
     ("proberun.py", "lines[:i]"): "splits a record at a marker; both halves are used",
     ("proberun.py", "lines[i + 1:]"): "splits a record at a marker; both halves are used",
+    ("proberun.py", "lines[1:]"): "peel_probe_cmd_echo: strips cria's own self-describing marker line, the remainder is returned whole",
     ("responses.py", "uuid.uuid4().hex[:24]"): "an id",
     ("webfetch.py", "d[:DESCRIPTION_CHARS - 1]"): "the branch appends the ellipsis itself",
     ("webfetch.py", "s[:keep]"): "head…tail form: the marker is in the f-string",

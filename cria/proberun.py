@@ -45,6 +45,7 @@ fires and cria sees a harness-level failure instead of exit 124.
 """
 from __future__ import annotations
 
+import base64
 import re
 import os
 import shlex
@@ -393,16 +394,6 @@ def _kind_by_command(report: ProbeReport) -> dict:
     return {display_command(c.command): c.kind for c in report.selected}
 
 
-def _label_by_command(report: ProbeReport) -> dict:
-    """joined-command (the ACTUAL argv run, and the key ``ProbeResult.command`` carries) -> the
-    MODEL-FACING label for it. Equal to the key for every ordinary candidate; only a candidate whose
-    real argv had to become an interpreter launch-check wrapper (C39: an absent-module abstain) sets
-    ``display_label`` to the plain command a coder could have typed, so the digest names the check
-    the way the coder would recognise it — never cria's own launch-guard plumbing."""
-    return {display_command(c.command): (c.display_label or display_command(c.command))
-            for c in report.selected}
-
-
 def syntax_floor_clean(report: ProbeReport):
     """True/False for the tier-0 checks that RAN; None when none did (nothing to judge).
     The truth-capture event's floor_clean field."""
@@ -544,23 +535,21 @@ def block_findings(report: ProbeReport, floor: LinterReport | None = None) -> Op
         # BLOCK_NUDGE_PREAMBLE, so there is nothing to strip and completion_block_nudge must not add one.
         return floor.nudge_text()
     kinds = _kind_by_command(report)
-    labels = _label_by_command(report)
     lines: list[str] = []
     syntax_lines: list[str] = []
     for r in report.results:
         is_syntax = kinds.get(r.command) is probediscovery.ProbeKind.SyntaxCheck
-        label = labels.get(r.command, r.command)
         if not r.findings:
             # A LAUNCH failure (absent tool) never blocks. EXCEPT: a syntax check that ran red, OR a
             # hard-failure-kind probe that TIMED OUT (ran and did not verify — M3) — both are real
             # not-clean signals with no file:line, so they block coarsely (command + summary).
             if is_syntax and r.exit_code not in (0, None):
-                syntax_lines.append(f"$ {label} — {r.summary}")
+                syntax_lines.append(f"$ {r.command} — {r.summary}")
             elif r.timed_out and kinds.get(r.command) in _HARD_FAILURE_KINDS:
-                lines.append(f"$ {label} — {r.summary or 'timed out and did not verify'}")
+                lines.append(f"$ {r.command} — {r.summary or 'timed out and did not verify'}")
             continue
         bucket = syntax_lines if is_syntax else lines
-        bucket.append(f"$ {label} — {r.summary}")
+        bucket.append(f"$ {r.command} — {r.summary}")
         # EVERY finding, not a .take(5) slice: a probe with 12 real errors once showed only 5, so the
         # model fixed those, re-ran, and hit the 6th it never saw. The window-aware context floor is the
         # one place a truncation may happen — never a blind per-probe cap here.
@@ -728,7 +717,6 @@ def completion_probe_digest(report: ProbeReport, floor: LinterReport | None = No
     if not report.results:
         lines.append(DIGEST_NO_PROBES)
     else:
-        labels = _label_by_command(report)
         for r in report.results:
             if r.exit_code == 0:
                 exit_txt = DIGEST_EXIT_CLEAN
@@ -746,7 +734,7 @@ def completion_probe_digest(report: ProbeReport, floor: LinterReport | None = No
                 # print EXIT:127). Observed live: a 10s exec yield cut the gate mid-pytest and this
                 # read "did NOT launch (tool missing?)" — a false fact handed to the critic.
                 exit_txt = DIGEST_EXIT_UNFINISHED
-            lines.append(f"$ {labels.get(r.command, r.command)} — {exit_txt} — {r.summary} — "
+            lines.append(f"$ {r.command} — {exit_txt} — {r.summary} — "
                          f"{len(r.findings)} structured finding(s)")
     return "\n".join(lines)
 
@@ -780,6 +768,7 @@ def compose_probe_command(c: ProbeCandidate, timeout_s: float) -> str:
     argv = " ".join(shlex.quote(t) for t in c.command)
     return (
         f"cd {shlex.quote(str(c.working_dir))} && "
+        f"{compose_probe_cmd_echo(c.command)}; "
         f"timeout -k {TIMEOUT_KILL_GRACE_S} {timeout_s:g} {argv} </dev/null 2>&1; "
         f"__cria_ec=$?; printf '\\n{PROBE_EXIT_SENTINEL}%d\\n' \"$__cria_ec\""
     )
@@ -933,6 +922,41 @@ def scrape_exit(raw: str) -> tuple[str, Optional[int]]:
                 continue
             return "\n".join(lines[:i] + lines[i + 1:]), code
     return raw, None
+
+
+# A section's OWN raw bytes are the only fact that survives a gate becoming an OLDER, superseded
+# transport: `clean_gate_results` rebuilds every earlier gate as a bare plan with no candidates
+# attached (loop.py's `sess.gate_plan` is replaced by the newest gate every turn), so a NAME for a
+# timed-out or cut-short section that lives only on `plan.candidates[idx]` is gone the moment a
+# newer gate exists (C39 re-review: an older empty pytest timeout lost its command name once
+# superseded). Self-describing the section instead \u2014 one line, printed BEFORE the probe itself
+# runs, so it is baked into the transport's own immutable bytes \u2014 needs no plan, no session state,
+# and survives supersession for free. Base64, not the plain command: a cria-composed probe's argv can
+# itself be a multi-line inline program (the TOML/JSON/XML parse floors), and a literal embedded
+# newline would break the "first line only" contract below.
+PROBE_CMD_MARKER = "___CRIA_PROBE_CMD___"
+
+
+def compose_probe_cmd_echo(command: list[str]) -> str:
+    """The shell fragment that self-describes a probe's own section, emitted once before the probe
+    itself runs (see :func:`compose_probe_command`). ``peel_probe_cmd_echo`` is the exact inverse."""
+    label = display_command(command)
+    b64 = base64.b64encode(label.encode("utf-8")).decode("ascii")
+    return f"printf '{PROBE_CMD_MARKER}%s\\n' {b64}"
+
+
+def peel_probe_cmd_echo(text: str) -> tuple[str, str]:
+    """(label, text with the echo line removed). ``label`` is ``""`` when no echo line is present \u2014
+    an older transport captured before this existed, or a section with no output at all \u2014 which
+    callers treat exactly like today's "cria can't say which command this was" case."""
+    lines = text.splitlines()
+    if lines and lines[0].startswith(PROBE_CMD_MARKER):
+        try:
+            label = base64.b64decode(lines[0][len(PROBE_CMD_MARKER):]).decode("utf-8", "replace")
+        except (ValueError, UnicodeDecodeError):
+            label = ""
+        return label, "\n".join(lines[1:])
+    return "", text
 
 
 def interpret_probe_output(c: ProbeCandidate, joined: str, raw_output: str,

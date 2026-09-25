@@ -204,14 +204,6 @@ class ProbeCandidate:
     # completion -- the participation inference reads this to withhold ``participants`` rather than
     # naming files the chain may never have reached.
     test_source_paths_multi_segment: bool = False
-    # The command AS THE CODER WOULD TYPE IT, for every model-facing rendering that is not the
-    # literal executable argv (completion_probe_digest's "$ ..." line, a coder-rerun match) "" means
-    # "the joined argv already reads that way" (every ordinary candidate). Set ONLY when `command`
-    # itself had to become an interpreter-launch-check wrapper (a multi-line `python3 -c ...` script)
-    # so the check could abstain on an absent third-party module instead of misreporting its own
-    # "No module named X" as a repo defect (C39) \u2014 the model still reads the plain command it
-    # could have typed, never cria's launch-guard plumbing.
-    display_label: str = ""
     """Did cria AUTHOR this argv, or did it read it off the project?
 
     `cargo test --no-fail-fast`, `go vet ./...`, `bundle exec rspec` come from the project's own
@@ -475,8 +467,7 @@ def cand(kind: ProbeKind, command: list[str], working_dir: Path, confidence: int
          composed_by_cria: bool = False,
          ecosystem: Ecosystem | None = None,
          participation_inputs: tuple[str, ...] | None = None,
-         participation_inputs_complete: bool | None = None,
-         display_label: str = "") -> ProbeCandidate:
+         participation_inputs_complete: bool | None = None) -> ProbeCandidate:
     return ProbeCandidate(
         kind=kind,
         command=list(command),  # fresh list — callers may reuse prefixes
@@ -495,7 +486,6 @@ def cand(kind: ProbeKind, command: list[str], working_dir: Path, confidence: int
         ecosystem=ecosystem,
         participation_inputs=participation_inputs,
         participation_inputs_complete=participation_inputs_complete,
-        display_label=display_label,
     )
 
 
@@ -1164,31 +1154,6 @@ _JSON_CHECK = (
 # library: a build file. Measured on the six-language battery — cria's own write path corrupted a
 # pom.xml and nothing in the gate read XML, so the damage surfaced only as `mvn` failing much later,
 # with no finding naming the file.
-# A cria-composed probe that reaches its checker via `python3 -m <module>` cannot tell "module
-# absent" from "module ran and found problems" by exit code alone — python3 itself always launches,
-# so a missing third-party module surfaces as ITS OWN exit 1 ("No module named pyflakes"), which the
-# gate interpreter — like every other check — reads as a real failure (see NOT_FOUND_EXIT_CODE in
-# proberun.py). Walked live (p27 Orders, chunk107): the box had no pyflakes installed, and the ONLY
-# finding the gate handed the coder was cria's own absent tool, dressed as "the repo's own checks
-# report these error-class problems" — while the real timed-out pytest hang sat outside the checks
-# block, unremarked. `linterprobe.escalate_pyflakes` already abstains on this exact message (for its
-# own, non-gate-composed calling path); this is the SAME abstention for the gate's composed command
-# instead of a second copy of that keyword match. The launch-failure path
-# (NOT_FOUND_EXIT_CODE / LAUNCH_FAILURE_MARKER) already exists precisely for "the check did not run";
-# this makes an absent pyflakes module arrive through it as a real launch failure — no new keyword
-# parsing of a tool's OUTPUT, only an `import` probe of the interpreter that is about to run it. If
-# the module IS present, `os.execvp` replaces this process with the exact `python3 -m pyflakes`
-# invocation, so a present-and-failing pyflakes is byte-identical to before (same argv, same output,
-# same exit code) — nothing about a real finding changes.
-_PYFLAKES_LAUNCH_CHECK = (
-    "import sys, os\n"
-    "try:\n"
-    "    import pyflakes  # noqa: F401\n"
-    "except ImportError:\n"
-    "    sys.exit(127)\n"
-    "os.execvp(sys.executable, [sys.executable, '-m', 'pyflakes', *sys.argv[1:]])\n"
-)
-
 _XML_CHECK = (
     "import sys\n"
     "from xml.etree import ElementTree as ET\n"
@@ -1281,19 +1246,25 @@ def lint_floor_candidates(root: Path) -> list[ProbeCandidate]:
     py = linterprobe.collect_files(str(root), ["py"])
     if py:
         py_files = py[:MAX_FLOOR_FILES_PER_LANG]
+        # BARE BINARY, like eslint/clippy/go-vet below \u2014 not `python3 -m pyflakes`. pyflakes ships
+        # a `pyflakes` console-script entry point (the normal way it is invoked from a shell), so
+        # composing it this way lets `program_is_installed` (proberun.py) drop this candidate BEFORE
+        # it is ever composed into a gate script the moment the coder's own PATH is confirmed to lack
+        # it \u2014 the SAME mechanism that already protects every other zero-config tool here. C39
+        # (row p27 Orders, chunk107): the earlier `python3 -m pyflakes` invocation let python3 launch
+        # fine while the MODULE import failed inside it, so an absent pyflakes surfaced as python3's
+        # own exit 1 ("No module named pyflakes") \u2014 indistinguishable, by exit code, from a REAL
+        # repo defect \u2014 and every fix attempted at the gate-INTERPRETATION layer (a launch-check
+        # wrapper, plan-keyed kind lookups) broke the moment a gate's plan went out of scope for an
+        # older, superseded transport (`clean_gate_results` re-renders every earlier gate with no
+        # plan attached). Composed this way, an absent pyflakes never reaches the gate as a section
+        # at all \u2014 there is nothing left for `clean_gate_output` to misclassify, in any transport,
+        # new or old.
         out.append(cand(ProbeKind.Lint,
-                        ["python3", "-c", _PYFLAKES_LAUNCH_CHECK, *py_files],
+                        ["pyflakes", *py_files],
                         root, 60, 80, ProbeCost.Cheap, composed_by_cria=True,
                         ecosystem=Ecosystem.Python,
-                        reason="Python linting: pyflakes (undefined names, unused imports; zero-config)",
-                        # THE MODEL NEVER SEES THE LAUNCH-CHECK WRAPPER. `command` had to become a
-                        # multi-line `python3 -c` script so an absent pyflakes abstains instead of
-                        # misreporting its own "No module named pyflakes" as a repo defect (C39). Every
-                        # OTHER rendering the model reads \u2014 the completion digest's "$ ..." line, a
-                        # coder-rerun match \u2014 must still read the plain command a coder could have
-                        # typed, or the digest starts showing cria's own plumbing and a coder who
-                        # re-runs `python3 -m pyflakes` themselves stops being recognised as a re-run.
-                        display_label=shlex.join(["python3", "-m", "pyflakes", *py_files])))
+                        reason="Python linting: pyflakes (undefined names, unused imports; zero-config)"))
     # JAVASCRIPT'S SECOND RUNG. Python's floor is two rungs — parse it, then catch the undefined
     # names a parser cannot see — and JavaScript's was one. `node --check` is a parser; an assignment
     # to an undeclared name is legal syntax and fails only when the module runs. Walked on

@@ -1600,9 +1600,36 @@ class ReviewFixTests(unittest.TestCase):
                 self.assertFalse(s.knows("k"))
 
 
+def _fake_pyflakes_on_path():
+    """A fake `pyflakes` EXECUTABLE prepended to PATH \u2014 several fixtures below hand-build a gate
+    result assuming the real candidate order [compileall, TOML floor, pyflakes, pytest]
+    (`proberun.program_is_installed` drops a genuinely-absent `pyflakes` from `plan.candidates`
+    entirely, so this makes the assumption true regardless of whether THIS machine has pyflakes)."""
+    import contextlib
+
+    @contextlib.contextmanager
+    def _cm():
+        bin_dir = tempfile.mkdtemp()
+        exe = Path(bin_dir) / "pyflakes"
+        exe.write_text("#!/usr/bin/env python3\nimport sys\nsys.exit(0)\n")
+        exe.chmod(0o755)
+        old_path = os.environ.get("PATH", "")
+        os.environ["PATH"] = bin_dir + os.pathsep + old_path
+        try:
+            yield bin_dir
+        finally:
+            os.environ["PATH"] = old_path
+    return _cm()
+
+
 class GateFlowTests(unittest.TestCase):
     """The ported completion gate driven THROUGH the loop: floor/probe failures re-drive the coder
     with the exact errors; a clean gate hands the critic the digest."""
+
+    def setUp(self):
+        self._pyflakes_cm = _fake_pyflakes_on_path()
+        self._pyflakes_cm.__enter__()
+        self.addCleanup(self._pyflakes_cm.__exit__, None, None, None)
 
     def _ws(self):
         import tempfile, os

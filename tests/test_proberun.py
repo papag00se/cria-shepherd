@@ -446,22 +446,6 @@ class TestDigestExtras(unittest.TestCase):
         self.assertIn("no tests collected", digest)
         self.assertNotIn("exit 5", digest)
 
-    def test_display_label_names_the_plain_command_not_the_launch_wrapper(self):
-        # C39 repair: the digest's "$ ..." line must show the command a coder could have typed
-        # (`display_label`), never the multi-line interpreter launch-check wrapper the REAL argv had
-        # to become so an absent module abstains instead of misreporting itself as a repo defect.
-        wrapper = ["python3", "-c", "import sys\ntry:\n    import pyflakes\nexcept ImportError:\n"
-                                     "    sys.exit(127)\n", "x.py"]
-        c = synth(wrapper, kind=ProbeKind.Lint)
-        c.display_label = "python3 -m pyflakes x.py"
-        joined = display_command(wrapper)
-        report = ProbeReport(["python"], [c], [ProbeResult(joined, 127,
-                             "failed to launch (x) — tool not installed?", [])])
-        digest = completion_probe_digest(report, LinterReport())
-        self.assertIn("$ python3 -m pyflakes x.py ", digest)
-        self.assertNotIn("import pyflakes", digest)      # the raw wrapper script text never ships
-        self.assertNotIn(joined, digest)                  # nor the quoted wrapper argv itself
-
 
 # ---------------------------------------------------------------------------
 # Proxy path: compose / scrape / interpret (pure).
@@ -488,6 +472,57 @@ class TestComposeProbeCommand(unittest.TestCase):
     def test_empty_command_raises(self):
         with self.assertRaises(ValueError):
             compose_probe_command(synth([]), 10.0)
+
+
+class ProbeCmdEchoTests(unittest.TestCase):
+    """C39 re-review reset: a section's own command name must survive its gate becoming an OLDER,
+    superseded transport with no plan/candidates attached \u2014 so `compose_probe_command` prints a
+    self-describing line into the probe's OWN output, before the probe runs, and
+    `peel_probe_cmd_echo` is its exact inverse. Base64 because a cria-composed probe's argv can
+    itself be a multi-line inline program (the TOML/JSON/XML parse floors), and a literal embedded
+    newline would break the "first line only" contract."""
+
+    def test_compose_then_peel_roundtrips_the_plain_label(self):
+        from cria.proberun import compose_probe_cmd_echo, peel_probe_cmd_echo
+        command = ["python3", "-m", "pytest", "-q"]
+        echoed = compose_probe_cmd_echo(command) + "; echo hello"
+        import subprocess
+        proc = subprocess.run(["bash", "-c", echoed], capture_output=True, text=True, timeout=10)
+        label, rest = peel_probe_cmd_echo(proc.stdout)
+        self.assertEqual(label, "python3 -m pytest -q")
+        self.assertEqual(rest, "hello")
+
+    def test_multiline_command_survives_as_a_single_marker_line(self):
+        # The exact shape that would break a naive (non-base64) marker: a cria-composed multi-line
+        # `python3 -c` script as the argv.
+        from cria.proberun import compose_probe_cmd_echo, peel_probe_cmd_echo
+        command = ["python3", "-c", "import sys\nprint('x')\nsys.exit(0)"]
+        echoed = compose_probe_cmd_echo(command)
+        import subprocess
+        proc = subprocess.run(["bash", "-c", echoed], capture_output=True, text=True, timeout=10)
+        self.assertEqual(proc.stdout.count("\n"), 1)          # ONE line, whatever the argv contains
+        label, rest = peel_probe_cmd_echo(proc.stdout)
+        self.assertIn("import sys", label)                    # the label carries the newline losslessly
+        self.assertEqual(rest, "")
+
+    def test_no_marker_present_is_the_empty_label_not_an_error(self):
+        # An older transport captured before this existed, or plain text with no echo at all.
+        from cria.proberun import peel_probe_cmd_echo
+        label, rest = peel_probe_cmd_echo("ordinary output\nEXIT:0")
+        self.assertEqual(label, "")
+        self.assertEqual(rest, "ordinary output\nEXIT:0")
+
+    def test_compose_probe_command_embeds_the_echo_before_the_probe_runs(self):
+        c = synth(["echo", "hi"])
+        script = compose_probe_command(c, 5.0)
+        import subprocess
+        from cria.proberun import peel_probe_cmd_echo, scrape_exit
+        proc = subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=10)
+        label, rest = peel_probe_cmd_echo(proc.stdout)
+        self.assertEqual(label, "echo hi")
+        text, code = scrape_exit(rest)
+        self.assertEqual(code, 0)
+        self.assertEqual(text.strip(), "hi")
 
 
 class TestDisplayCommand(unittest.TestCase):

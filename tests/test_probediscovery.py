@@ -32,29 +32,20 @@ class DiscoveryCase(unittest.TestCase):
         self.d = Path(tmp.name)
 
 
-class PyflakesLaunchCheckLabelTests(DiscoveryCase):
-    """C39 repair: the pyflakes probe's real argv had to become an interpreter launch-check wrapper
-    (a multi-line `python3 -c` script) so an absent pyflakes abstains instead of misreporting its own
-    "No module named pyflakes" as a repo defect. `display_label` must still carry the PLAIN command a
-    coder could have typed, so every model-facing rendering keyed off it (the completion digest, a
-    coder-rerun match) never shows cria's own launch-guard plumbing."""
+class PyflakesBareBinaryTests(DiscoveryCase):
+    """C39 re-review reset: pyflakes is composed as the bare `pyflakes` console-script binary \u2014
+    like eslint/clippy/go-vet below \u2014 never `python3 -m pyflakes`. That is what lets
+    `proberun.program_is_installed` drop the candidate the moment the coder's own PATH is confirmed
+    to lack it, the SAME mechanism that already protects every other zero-config tool here, instead
+    of composing an interpreter-launch-check wrapper clean_gate_output then has to reason about."""
 
-    def test_command_is_the_wrapper_but_label_is_the_plain_pyflakes_invocation(self):
+    def test_command_is_the_plain_bare_binary_invocation(self):
         write(self.d, "x.py", "import os\nx = 1\n")
         [c] = lint_floor_candidates(self.d)
-        self.assertIn("\n", " ".join(c.command))            # the REAL argv is the launch-check script
-        self.assertNotIn("\n", c.display_label)
-        self.assertTrue(c.display_label.startswith("python3 -m pyflakes "))
-        self.assertIn(str(self.d / "x.py"), c.display_label)
-
-    def test_every_other_candidate_has_no_display_label_override(self):
-        # `display_label` is opt-in: every OTHER composed probe's plain argv already reads the way a
-        # coder would type it, so this must stay "" (falls back to the real argv) for them.
-        write(self.d, "y.js", "const x = 1;\n")
-        cands = lint_floor_candidates(self.d)
-        non_pyflakes = [c for c in cands if "pyflakes" not in " ".join(c.command)]
-        self.assertTrue(non_pyflakes)
-        self.assertTrue(all(c.display_label == "" for c in non_pyflakes))
+        self.assertEqual(c.command[0], "pyflakes")
+        self.assertNotIn("\n", " ".join(c.command))
+        self.assertIn(str(self.d / "x.py"), c.command)
+        self.assertTrue(c.composed_by_cria)
 
 
 class UpstreamPortedTests(DiscoveryCase):
