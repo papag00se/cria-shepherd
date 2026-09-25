@@ -10,7 +10,7 @@ Reconciled 2026-09-24 against `suite/results/results.jsonl` and `~/.cria/suite/_
 
 | Cell | Latest comparable run | Note | Final usefulness | Status |
 |---|---|---|---:|---|
-| shipping-rates-rb | `shipping-rates-rb_nemotron-elastic_codex_pon_1790255585` | `a9087c45 p21` | 35% | open — ≤75% |
+| shipping-rates-rb | `shipping-rates-rb_nemotron-elastic_codex_pon_1790293641` | `f6df9eea p27` | 15% | open — ≤75% |
 | cart-billing-go | `cart-billing-go_nemotron-elastic_codex_pon_1790289581` | `785d6523 p26` | 25% | open — ≤75% |
 | orders-api-py | `orders-api-py_nemotron-elastic_codex_pon_1790279578` | `3d82a022 p24` | 40% | open — ≤75% |
 | feed-pipeline-java | `feed-pipeline-java_nemotron-elastic_codex_pon_1790268418` | `9ded52bc p22` | 20% | open — ≤75% |
@@ -566,6 +566,14 @@ reconciled HEAD: `p22-feed-rerun-9ded52bc.service` (user unit, not collected), s
   `row-p27-f6df9eea-cont.service` (`…-cont.sh`) waits for the first unit to exit, then runs cart → rust at the same
   note, guarding only the live-behaviour tree (`cria/`, `suite/run.py`, `suite/sampling.py` identical to `f6df9eea`,
   `cria/` clean). The first unit's expected `ABORT before cart-billing-go` line is this handover, not a failure.
+
+### Row p27 — cell results as they finish
+
+- **shipping-rates-rb** `…_1790293641`: `milestone-stalled-60min`, 289 calls; milestones 15/continue, 20/continue,
+  15/stalled; final **15%** (regressed from 35%). Archive: README rate table, countries gem, express/zone_for
+  scaffolding, but `case … when ZONE_BASE.key?(x)` breaks every zone (5/7 seed tests error), undefined
+  `Shipping::Country`, surcharge dropped on free shipping, no express tests. Queue handover worked
+  (first unit ABORT line, continuation START cart 18:00:41).
 
 ### Cross-cell lead — invented third-party API members (not yet a candidate)
 
