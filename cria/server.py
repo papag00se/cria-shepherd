@@ -172,24 +172,19 @@ _COMPACT_KIDS_MAX = None
 LOCAL_COMPACT_MARKER = "<<<LOCAL_COMPACT>>>"
 
 
-def _is_compaction_request(messages: list) -> bool:
-    """True when the latest user turn is the harness's compaction/summarize request (see marker)."""
-    for m in reversed(messages or []):
-        if isinstance(m, dict) and m.get("role") == "user":
-            c = m.get("content")
-            if isinstance(c, list):
-                c = " ".join(p.get("text", "") for p in c if isinstance(p, dict))
-            return isinstance(c, str) and LOCAL_COMPACT_MARKER in c
-    return False
-
-
 def _latest_user_text(messages: list) -> str:
-    """The latest user turn's text, or "" — the same walk `_is_compaction_request` does, shared so
-    the unmarked-compaction judge below reads exactly the turn the marker check would have read."""
+    """The latest user turn's text, or "" — the ONE walk both `_is_compaction_request` (the marker
+    check) and `_recognize_compaction` (the unmarked-compaction judge) read a turn's text through,
+    so neither can drift from what the other considers "the latest user turn"."""
     for m in reversed(messages or []):
         if isinstance(m, dict) and m.get("role") == "user":
             return _text_of_msg(m)
     return ""
+
+
+def _is_compaction_request(messages: list) -> bool:
+    """True when the latest user turn is the harness's compaction/summarize request (see marker)."""
+    return LOCAL_COMPACT_MARKER in _latest_user_text(messages)
 
 
 def _recognize_compaction(body: dict, server, rlog) -> bool:
@@ -218,7 +213,9 @@ def _recognize_compaction(body: dict, server, rlog) -> bool:
        corollary: a single focused question beats a keyword list that must be retuned every time a
        harness phrases its prompt differently).
 
-    FAIL-SAFE DIRECTION: no reasoner, an empty/unreadable turn, or a NO/undecidable verdict all mean
+    FAIL-SAFE DIRECTION: no reasoner CONFIGURED (`server.reasoner_role is None`, checked explicitly
+    below — `reasoner_upstream` alone is not proof of a reasoner: it falls back to the shared/coder
+    endpoint unconditionally), an empty/unreadable turn, or a NO/undecidable verdict all mean
     "not recognized" — the turn proxies exactly as it did before this function existed (today's
     status quo, the bug this candidate targets). The opposite failure — misrouting an ordinary
     no-tool turn (a plain question) through the compaction hardening machinery: the compactor's
@@ -249,6 +246,16 @@ def _recognize_compaction(body: dict, server, rlog) -> bool:
         return False
     turn = _latest_user_text(messages).strip()
     if not turn:
+        return False
+    if server.reasoner_role is None:
+        # NO REASONER CONFIGURED. `server.reasoner_upstream` still resolves (it falls back to the
+        # SHARED upstream — the coder — unconditionally, the same wiring `LoopContext.reasoner_
+        # chat` uses; see `CriaServer.__init__`), so calling through it here would silently ask the
+        # CODER model a judgment question with none of the reasoner's sampling, and under the "no
+        # reasoner AND no shell" doctrine this is the acknowledged fail-OPEN exit's sibling: nothing
+        # can judge, so this recognizer must not pretend something did. Every other caller of the
+        # reasoner in this codebase gates on `reasoner_role is not None` at its own call site (see
+        # `LoopContext`'s wiring comment) — this is that same gate, here.
         return False
     answer = ask_closed(
         server.reasoner_upstream.chat, server.reasoner_role,
@@ -385,10 +392,29 @@ def _session_gate_plan(server, sess_key: str):
 
 
 def _compaction_messages(messages: list) -> list[dict]:
-    """The model-authored history eligible to become compaction evidence."""
-    convo = [m for m in messages
-             if m.get("role") not in ("system", "developer")
-             and LOCAL_COMPACT_MARKER not in _text_of_msg(m)
+    """The model-authored history eligible to become compaction evidence — everything except the
+    harness's own compaction/summarize ASK, excluded BY POSITION (the latest user turn, the same
+    walk `_is_compaction_request`/`_latest_user_text` do), not by matching `LOCAL_COMPACT_MARKER`
+    text.
+
+    Matching the marker text left the UNMARKED case (Codex's own default `compact_prompt`,
+    recognized via `_recognize_compaction`) with nothing to match: its ask — "...What remains to
+    be done (clear next steps)..." — stayed in the evidence as the LAST transcript line, reading
+    as an instruction still to follow rather than a request to fold (replayed live against p27
+    CALL0046: it survived into the writer's evidence, the empty-briefing retry, and the validator's
+    transcript — exactly the g8 0187/0188 failure `_compaction_transcript`'s own "ask goes last"
+    comment exists to prevent, and `tests/test_server.py::...ask_is_last_and_the_summarize_turn_is_
+    not_evidence` already asserts for the marked case). A compaction ask is ALWAYS the harness's
+    latest user turn, whatever it says — so drop that one turn by position, unconditionally."""
+    ask_idx = None
+    for i in range(len(messages) - 1, -1, -1):
+        m = messages[i]
+        if isinstance(m, dict) and m.get("role") == "user":
+            ask_idx = i
+            break
+    convo = [m for i, m in enumerate(messages)
+             if i != ask_idx
+             and m.get("role") not in ("system", "developer")
              and not selfcompact.has_anchor(m)]
     return _drop_harness_frame(convo)
 
