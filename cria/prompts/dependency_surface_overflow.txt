@@ -1,3 +1,0 @@
-⟦ctx:facts⟧ THE PACKAGE MANAGER JUST RESOLVED {{COORDINATE}} — its real exported surface at {{ROOT}} is larger than fits here ({{TOTAL}} members found). The first {{SHOWN}}, read directly just now (not from memory, not from a doc page):
-{{LINES}}
-The rest are real too — {{READ_HINT}} before guessing at any other member; nothing outside that defines this package's real API.

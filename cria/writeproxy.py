@@ -1938,7 +1938,8 @@ def note_harness_cuts(messages: list, rlog=None) -> int:
     return n
 
 
-def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | None = None) -> list[dict]:
+def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | None = None,
+                      sess_key: str = "", tools_present: bool = True) -> list[dict]:
     """Swap cria's shell translations back to the tool the model actually called — read STATELESSLY
     from the sentinel in each stored command, so it survives a restart. Every SYNTHETIC tool is lowered
     to a shell exec, so its result comes back wrapped in the harness exec envelope (Chunk ID / Process
@@ -1946,7 +1947,11 @@ def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | Non
     web_fetch, web_search) and from write/edit FAILURES so the tool reads as its own abstraction, not a
     disk-caching shell command. A write/edit SUCCESS is reframed as a clean confirmation (never over a
     real error). A harness ``local_web_search`` is re-presented as ``web_search``. The model's OWN
-    exec_command calls keep their envelope — there the shell framing is the truth."""
+    exec_command calls keep their envelope — there the shell framing is the truth.
+
+    ``sess_key`` is the session identity Candidate C40's delivered-state remembers against; without
+    it that mechanism never fires (no identity to remember delivery against). ``tools_present=False``
+    marks a harness compaction/summarize turn (empty tool menu) -- C40 skips those entirely."""
     note_harness_cuts(messages, rlog)   # observe only: did the harness cut anything before cria saw it?
     out: list[dict] = []
     rejected_notes_by_id: dict[str, str] = {}
@@ -2112,57 +2117,58 @@ def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | Non
         rlog.emit("writeproxy.represented", calls=swapped)
     _note_missing_dependency(out, workspace_root, rlog)
     _note_dependency_search(out, own_cmds, workspace_root, rlog)
-    _note_dependency_surface(out, workspace_root, rlog)
+    if tools_present:   # a compaction/summarize turn (empty tool menu) never gets a C40 probe
+        _note_dependency_surface(out, workspace_root, sess_key, rlog)
     return out
 
 
-# Bytes of REAL selected lines allowed inline before this switches to the overflow wording (#5:
-# never truncate silently — the switch STATES the real total and the real path, it never drops
-# lines without saying so). Deliberately small: a handful of real signatures is the common case, and
-# a large budget would let one bloated package push everything else in the same tool result out of
-# the window it rides in.
+# Bytes of REAL selected lines allowed inline before this switches to the partial/overflow wording
+# (#5: never truncate silently -- the switch STATES the real total and the real read_hint, it never
+# drops lines without saying so). Deliberately small: a handful of real signatures is the common
+# case, and a large budget would let one bloated package push everything else in the same tool
+# result out of the window it rides in.
 _SURFACE_INLINE_BUDGET = 2400
+# How many DIRECT coordinates one request will ever gather()/render (independent review B2): even
+# restricted to direct dependencies, a manifest can name several in one project, and each gather()
+# may be a real disk walk or (JVM) up to MAX_FILES real `javap` subprocesses. Bounding the COUNT per
+# request bounds the worst case regardless of how many direct dependencies a project declares.
+_MAX_NOTES_PER_REQUEST = 3
 
 
-def _note_dependency_surface(messages: list[dict], workspace_root, rlog) -> None:
-    """Candidate C40, redesigned 2026-09-25 on supervisor follow-up. The FIRST landing (`e43d6a57`)
-    triggered on the dependency ledger's SUCCEEDED event (real, but textual: one resolver
-    subcommand's stdout, matched by `refusalledger._SUCCESSES`). Measured coverage, driven through
-    the real ledger over the real p27 captures
-    (`~/.cria/walk-findings/2026-09-24/c40-replay/measure_coverage.py` +
-    `coverage_ledger_events.txt`): ZERO of the five measured sessions ever produced a SUCCEEDED
-    event for their target coordinate, including sessions whose dependency plainly resolved (cart's
-    own final go.mod/go.sum; rust p27's capture prints cargo's real "Adding toml v0.8.23 (available:
-    ...)" 37 times, a wording `_SUCCESSES` never matched). A textual pattern is fragile exactly
-    because different subcommands/versions print different words for the same real event.
+def _note_dependency_surface(messages: list[dict], workspace_root, sess_key: str, rlog) -> None:
+    """Candidate C40. See cria/depsurface.py's module docstring for the full redesign history
+    (2026-09-25a: manifest+cache trigger replacing a textual ledger-success trigger measured to cover
+    0 of 5 real sessions; 2026-09-25b: this function's own delivery bugs, independent review B1/B2).
 
-    THE NEW TRIGGER is the resolver's own DURABLE RECORD on disk: a manifest/lockfile it wrote
-    (go.mod, Cargo.lock, Gemfile.lock, pom.xml -- `cria.depsurface.MANIFEST_NAMES`), read through
-    wsview's body-knowledge seam (`cria.depsurface.declared_coordinates`), cross-checked against the
-    SAME local-cache presence test as before (`cria.depsurface.gather`). Both halves are structural
-    DATA the resolver/package-manager itself composed -- never a scan of stdout prose, so P19's
-    objection (a lexical trigger on error text) still does not apply, and this also closes the JVM
-    gap the first landing left explicitly open (pom.xml + a real ~/.m2 jar needs no lexical Maven
-    success line at all).
+    SESSION-SCOPED DELIVERED STATE (B1). The previous shape of this function assumed the harness
+    echoes cria's own prior annotation back on a later request (the same durability
+    `_note_missing_dependency` relies on for its OWN "most recent occurrence" wording) -- it does
+    not: the harness replays ITS OWN unmodified history, so a "marker already present" check never
+    once matched in production. `depsurface.already_delivered`/`mark_delivered` are real,
+    session-scoped memory (keyed by `sess_key`, the same identity `_setup_translation` already binds
+    the workspace view under), checked BEFORE any disk read and updated the instant a note is
+    rendered -- so a coordinate is delivered AT MOST ONCE per session, full stop, and every later
+    request for that coordinate is a same-cost no-op (one dict/set membership check) rather than a
+    repeated disk walk. Without a `sess_key` (a caller that never supplies one, e.g. most of this
+    module's own unit tests) this abstains entirely: there is no identity to remember delivery
+    against, and guessing one would either over-share across sessions or re-deliver forever.
 
-    DELIVERY TARGET. There is no longer one specific tool result that "reported the success" to
-    attach beside -- the manifest body may arrive through cria's own invisible survey plumbing, never
-    through a tool result the model sees at all. So the note rides beside the LAST tool result in
-    THIS batch instead (the coder's most recent action, the same "most recent occurrence" precedent
-    `_note_missing_dependency` already uses) -- additive, never blocking, never substituting for that
-    tool's own output.
+    NO LONGER A MOVING TARGET. Because delivery is now genuinely one-shot, there is nothing to
+    re-attach on a later turn, so nothing keeps moving position and defeating the harness's own
+    prompt-cache prefix the way repeatedly re-annotating "the newest tool result" did.
 
-    STATELESS AND IDEMPOTENT, the same shape as `_note_missing_dependency`: `messages` is the WHOLE
-    history every request, so a coordinate that already earned a note carries that note's own marker
-    text forward in the harness's own replay of history, and the marker scan below short-circuits
-    before gather() (or a fresh manifest parse) ever runs again for it.
+    DIRECT DEPENDENCIES ONLY, BOUNDED COUNT (B2). `depsurface.declared_coordinates` itself already
+    filters a lockfile's transitive entries down to what the coder's manifest directly names;
+    `_MAX_NOTES_PER_REQUEST` additionally bounds how many of THOSE this one request will gather/render,
+    so a project with many direct dependencies cannot turn one request into a wall of notes or a
+    string of real disk/subprocess probes.
 
-    OPPORTUNISTIC, NEVER FORCED: `cria.depsurface.declared_coordinates` returns nothing until wsview
-    happens to know the manifest body, and never forces an extra read/turn to get there (see its own
-    docstring). A probe that then abstains (`cria.depsurface.gather` returns None) leaves the result
-    exactly as it arrived (#3, #11b): a manifest may declare a coordinate the local cache does not
-    (yet) hold, and that is silently not enough to fire."""
-    if not workspace_root:
+    DELIVERY TARGET. There is no single tool result that "reported the success" to attach beside --
+    the manifest body may arrive through cria's own invisible survey plumbing, never through a tool
+    result the model sees at all. So a delivered note rides beside the LAST tool result in THIS batch
+    (the coder's most recent action) -- additive, never blocking, never substituting for that tool's
+    own output, and (now that delivery is one-shot) never repeated."""
+    if not workspace_root or not sess_key:
         return
     target = None
     for m in messages:
@@ -2170,52 +2176,55 @@ def _note_dependency_surface(messages: list[dict], workspace_root, rlog) -> None
             target = m   # keep walking -- the LAST qualifying tool result in this batch wins
     if target is None:
         return
-    history = "\n".join(m.get("content") for m in messages
-                         if isinstance(m.get("content"), str))
-    rendered_this_pass: set[str] = set()
+    rendered = 0
     for eco, package, version in depsurface.declared_coordinates(workspace_root):
+        if rendered >= _MAX_NOTES_PER_REQUEST:
+            break
+        coordinate_key = (eco, package, version)
+        if depsurface.already_delivered(sess_key, coordinate_key):
+            continue   # checked BEFORE any disk read (B2) -- a durably-delivered coordinate costs
+                       # one set lookup, never a repeated gather()
         surface = depsurface.gather(eco, package, version, workspace_root)
         if surface is None:
             continue   # abstain silently -- manifest declares it, but the local cache does not
-        marker = _surface_marker(surface.coordinate)
-        if marker in history or marker in rendered_this_pass:
-            continue   # already delivered on a prior turn, or by an earlier coordinate this pass
         note = _render_dependency_surface(surface)
         if not note:
             continue
         target["content"] = target["content"] + "\n\n" + note
-        rendered_this_pass.add(marker)
+        depsurface.mark_delivered(sess_key, coordinate_key)   # delivered AT MOST ONCE, ever
+        rendered += 1
         if rlog is not None:
             rlog.emit("writeproxy.dependency_surface", level="info", ecosystem=eco,
-                      coordinate=surface.coordinate, members=len(surface.lines))
-
-
-def _surface_marker(coordinate: str) -> str:
-    """The stable substring both templates open with — present in ANY rendering (inline or overflow)
-    for this exact coordinate, so re-scanning an already-annotated tool result is a no-op."""
-    return f"THE PACKAGE MANAGER JUST RESOLVED {coordinate}"
+                      coordinate=surface.coordinate, members=len(surface.lines),
+                      complete=surface.complete)
 
 
 def _render_dependency_surface(surface) -> str:
-    """The model-facing note for one real DependencySurface — every line in it is byte-identical to a
+    """The model-facing note for one real DependencySurface -- every line in it is byte-identical to a
     line :func:`cria.depsurface.gather` read from disk (#5b: never a cria paraphrase of what a real
-    tool said). Switches to the overflow template, never a silent cut, when the real selection does
-    not fit the inline budget."""
+    tool said). Uses the COMPLETE template ONLY when ``surface.complete`` is True (a real,
+    authoritative tool enumerated the package's whole exported surface, e.g. ``go doc -all``) AND the
+    complete selection fits the inline budget -- otherwise ALWAYS the partial template, which never
+    claims a missing member does not exist (independent review B3: a bounded file scan is never
+    complete, and the old inline template's "a member you don't see here does not exist" was false
+    for exactly that case)."""
     joined = "\n".join(surface.lines)
-    if len(joined.encode("utf-8", "replace")) <= _SURFACE_INLINE_BUDGET:
-        return prompts.render("dependency_surface", coordinate=surface.coordinate,
+    fits = len(joined.encode("utf-8", "replace")) <= _SURFACE_INLINE_BUDGET
+    if surface.complete and fits:
+        return prompts.render("dependency_surface_complete", coordinate=surface.coordinate,
                               root=surface.root, lines=joined)
-    shown: list[str] = []
-    budget = _SURFACE_INLINE_BUDGET
-    for line in surface.lines:
-        cost = len(line.encode("utf-8", "replace")) + 1
-        if cost > budget:
-            break
-        shown.append(line)
-        budget -= cost
-    if not shown:
-        shown = surface.lines[:1]
-    return prompts.render("dependency_surface_overflow", coordinate=surface.coordinate,
+    shown: list[str] = list(surface.lines) if fits else []
+    if not fits:
+        budget = _SURFACE_INLINE_BUDGET
+        for line in surface.lines:
+            cost = len(line.encode("utf-8", "replace")) + 1
+            if cost > budget:
+                break
+            shown.append(line)
+            budget -= cost
+        if not shown:
+            shown = list(surface.lines[:1])
+    return prompts.render("dependency_surface_partial", coordinate=surface.coordinate,
                           root=surface.root, total=str(len(surface.lines)), shown=str(len(shown)),
                           lines="\n".join(shown), read_hint=surface.read_hint)
 

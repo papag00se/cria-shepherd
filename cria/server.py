@@ -1067,7 +1067,8 @@ class CriaHandler(BaseHTTPRequestHandler):
         # continuation⟧. No-op when no sentinel is present, so a plain passthrough is unaffected.
         body["messages"] = redact_secrets(
             represent_inbound(body.get("messages", []), rlog,
-                              workspace_root=getattr(self, "_workspace_root", None)),
+                              workspace_root=getattr(self, "_workspace_root", None),
+                              sess_key=sess_key, tools_present=bool(body.get("tools"))),
             [self._brave_key])
         # THE SURVEY KNOWS WHERE IT RAN, and cria was throwing that away. `wsview.apply_survey`
         # adopts the reported root when the view has none — "which is how a session whose harness
