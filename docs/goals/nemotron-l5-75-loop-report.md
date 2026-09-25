@@ -697,6 +697,19 @@ reconciled HEAD: `p22-feed-rerun-9ded52bc.service` (user unit, not collected), s
     (C38 live) will measure whether it drops; if not, it is the next candidate.
   - Regression hypothesis: REFINED, not confirmed. Judges answering wrongly occurs in cells that held too, so
     C34–C36 is a real cross-cell mechanism but does not by itself predict which cells regressed.
+- **Landed between rows** (each with full suite, push, `cria.service` restart, `/health` ok):
+  - C37+C38 at `cf98f830` (5167 passed).
+  - **C39** at `371d0139` (5182 passed, 9 skipped). The final re-review accepted the product fix; its one blocker was
+    a deleted base test. The Supervisor verified `test_timeout_with_no_output_stays_a_bare_no_signal` was restored
+    verbatim (function-body diff against `d5294fe9`).
+- **C38b** (`1772eab6`): the cross-request body cache is now confirmed by size AND mtime, so a same-length
+  unobserved edit (`go get` v1.4.0→v1.5.0) is no longer trusted stale. Under independent review.
+- **C40 round 3:** B1 (durable anchor) and B4 (path/option injection) are fixed. Remaining findings:
+  - R1: after a same-length version bump the note keeps claiming the old version (needs C38b).
+  - R2: the `go doc` filter drops grouped consts and struct fields but is labelled COMPLETE.
+  - R3: a JVM read hint up to 70 KB is re-rendered every request.
+  - R4: `go doc` can reach the network via GOPRIVATE.
+  These are back with the owner.
 
 ### Candidate C37 (row p27 cross-cell class) — harness compaction is never recognized, so its hardening never runs
 
