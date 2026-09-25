@@ -178,6 +178,22 @@ class View:
         # every predicate downgrades accordingly.
         self._complete = True
         self._sess = sess
+        # A BODY THE HARNESS ALREADY DELIVERED, CARRIED IN FROM A PRIOR REQUEST. `_bind_workspace_view`
+        # builds a brand-new, empty `View` on every incoming request (server.py) — that is correct for
+        # the TREE, which the harness re-surveys cheaply and often, but a manifest BODY is asked for,
+        # delivered once, and then had nowhere to live: the request that received it answers, and the
+        # next `View` starts from `_bodies = {}` again. `build_ruby` (and every other ranked-discovery
+        # builder reading a manifest body — package.json, pyproject.toml, pom.xml, ...) re-asks,
+        # re-misses, and the coder is told "no command to run them was found" for a project whose own
+        # Rakefile the harness handed over, byte for byte, minutes earlier (C38). `_BODY_CACHE` is the
+        # session-scoped memory of that delivery — seeded here, kept current by `_set_body` and
+        # `note_written`, and invalidated the moment an edit lands (`note_changed`) or a fresh survey's
+        # tree disagrees on size (`_drop_stale_bodies`, which runs over `self._bodies` regardless of
+        # where an entry came from).
+        if sess:
+            cached = _BODY_CACHE.get(sess)
+            if cached:
+                self._bodies.update(cached)
 
     # -- identity ----------------------------------------------------------
 
@@ -597,11 +613,16 @@ class View:
             self._bodies.pop(rel, None)               # never leave an OLDER body standing in for it
             self._body_generation.pop(rel, None)
             self._stale.add(rel)
+            _forget_body(self._sess, rel)
             return
         self._bodies[rel] = raw
         self._body_generation[rel] = self._survey_generation
         self._stale.discard(rel)
         self._undeliverable.pop(rel, None)
+        # THE DELIVERY OUTLIVES THIS REQUEST (C38). This survey answered a body a builder wanted; the
+        # `View` that holds it dies with this HTTP request, so the fact of having been told must be
+        # kept somewhere that does not.
+        _remember_body(self._sess, rel, raw)
 
     def _ingest_outside(self, body: str) -> None:
         for line in body.splitlines():
@@ -626,6 +647,7 @@ class View:
         self._body_generation.pop(rel, None)  # a coder tool result is not this gate's survey
         self._stale.discard(rel)
         self._undeliverable.pop(rel, None)
+        _remember_body(self._sess, rel, raw)  # this replaces a session-cached body if there was one
         prev = self._files.get(rel)
         # A FILE CRIA JUST WATCHED BEING WRITTEN IS THE NEWEST FILE IN THE WORKSPACE. A brand-new
         # path has no previous mtime, and epoch is not "unknown" here — it sorts LAST in every
@@ -663,6 +685,11 @@ class View:
         if rel is None:
             return
         self._stale.add(rel)
+        # A CACHED BODY FROM A PRIOR REQUEST MUST NOT SURVIVE AN EDIT (C38). `_BODY_CACHE` keeps a
+        # delivered body alive past this request; without this, a manifest edited between two gates
+        # would have the NEXT `View` seed itself from the pre-edit bytes, straight past the very
+        # mechanism (`_stale`) that exists to stop a changed file from being read as its old self.
+        _forget_body(self._sess, rel)
         # UNKNOWN SIZE IS NOT ZERO BYTES. The docstring above is exactly right about the BODY and was
         # silently wrong about the SIZE: an edit to a path the last survey did not name — created by
         # the coder's own shell, by `cargo new`, or living inside a folded directory — was recorded
@@ -876,6 +903,44 @@ _BODY_MISSES: dict[str, list[str]] = {}
 _PROG_MISSES: dict[str, list[str]] = {}
 _OUTSIDE_MISSES: dict[str, list[str]] = {}
 _MISS_MAX = 64
+
+# A body the harness ALREADY DELIVERED, kept past the one request that received it (C38). Every
+# `View` is a fresh, empty object per request (`server.py:_bind_workspace_view`) — by design for
+# the tree, which is cheap to re-ask, but a manifest body is asked for on a miss and delivered once,
+# and had no session-scoped home to survive into the NEXT request's `View`. Bounded the same way
+# every other per-session store in this module is: a cap per session, and the whole store cleared if
+# too many sessions accumulate (a stuck session is the failure mode, not a slow memory leak).
+_BODY_CACHE: dict[str, dict[str, bytes]] = {}
+_BODY_CACHE_MAX_FILES = 64            # per session — mirrors BLOB_FILES_MAX × a few surveys' worth
+_BODY_CACHE_MAX_BYTES = 2_000_000     # per session — generous for manifests, still bounded
+
+
+def _remember_body(sess: str, rel: str, raw: bytes) -> None:
+    """A body the harness just handed over — via a survey blob or a lowered write/read cria watched
+    land — outlives this one request. Overwrites any earlier bytes for the same path: the newest
+    delivery is always the truth, whichever door it came through."""
+    if not sess or not rel:
+        return
+    if len(_BODY_CACHE) > 512:
+        _BODY_CACHE.clear()
+    bucket = _BODY_CACHE.setdefault(sess, {})
+    bucket.pop(rel, None)          # re-insert at the end — dicts evict oldest-first below
+    bucket[rel] = raw
+    while len(bucket) > _BODY_CACHE_MAX_FILES:
+        bucket.pop(next(iter(bucket)))
+    total = sum(len(b) for b in bucket.values())
+    while total > _BODY_CACHE_MAX_BYTES and len(bucket) > 1:
+        total -= len(bucket.pop(next(iter(bucket))))
+
+
+def _forget_body(sess: str, rel: str) -> None:
+    """An edit landed, or a survey could not decode this path's bytes: whatever cria cached for it
+    is no longer known to be current, and must not outlive the change into a later request."""
+    if not sess or not rel:
+        return
+    bucket = _BODY_CACHE.get(sess)
+    if bucket:
+        bucket.pop(rel, None)
 
 
 def _remember(store: dict[str, list[str]], sess: str, item: str) -> None:

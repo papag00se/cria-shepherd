@@ -1,0 +1,3 @@
+This project declares a `{{CONFIG}}`, which may name the command that runs its tests, but its
+contents have not been read yet — this check has not decided whether one runs them, and has not run
+anything itself either. It will be checked again once the file's contents are available.
