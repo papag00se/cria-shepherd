@@ -711,6 +711,27 @@ reconciled HEAD: `p22-feed-rerun-9ded52bc.service` (user unit, not collected), s
   - R4: `go doc` can reach the network via GOPRIVATE.
   These are back with the owner.
 
+### Row p28 freeze (2026-09-25)
+
+- New accepted units since p27, each with fails-before/passes-after tests, independent review, full suite:
+  - **C37** harness compaction recognized, then hardened;
+  - **C38** delivered bodies persist per (session, root);
+  - **C38b** that cache is re-verified by size AND mtime against every later survey, replayed writes included;
+  - **C39** the absent pyflakes probe is dropped at composition via `toolpath.resolved`;
+  - **C40** a declared direct dependency's real exported surface is read from the local cache (go doc -all /
+    registry source / gem lib / javap) and anchored durably on a fixed message. Trigger = manifest/lockfile
+    coordinate + exact cached version. Bounded at 6 KB per note and 24 KB per request. Path/option-injection safe.
+    Went through six review rounds.
+- Integrated `e634d866`: 5288 passed, 9 skipped. `cria.service` restarted, `/health` ok.
+- Row HEAD = the commit recording this entry. All six cells are open (p27 max 40%). One queue, one note, one
+  heartbeat.
+- What p28 must measure (from p27 evidence):
+  - does C37 remove the raw handoff re-seeding (6/6 cells)?
+  - do the judge `NAMED, NOT SHOWN` rates (p27: 14/15, 3/8, 13/17, 6/6, 76/80, 11/12) drop with C38/C38b?
+  - does a C40 note reach cart/rust/feed/shipping, and is it acted on?
+- Split-out follow-ups (not in p28): naming an empty timeout (C39b); the judge rubric certifying against its own
+  quoted evidence (4 cells); diagnosed-but-not-executed (held, prevalence first).
+
 ### Candidate C37 (row p27 cross-cell class) — harness compaction is never recognized, so its hardening never runs
 
 - **Walk evidence (p27 shipping seg-03, verified by the Supervisor):** CALL0046 (23:49:26 UTC) is Codex's compaction
