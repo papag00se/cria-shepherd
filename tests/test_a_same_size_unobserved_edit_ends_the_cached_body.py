@@ -98,12 +98,13 @@ class ASameSizeUnobservedEditEndsTheCachedBodyTests(unittest.TestCase):
         self.assertTrue(wsview.apply_survey(fresh, survey(_tree(0, len(GO_MOD_OLD)), root=ROOT)))
         self.assertIsNone(fresh.read("go.mod"), "an unparseable mtime must never be treated as known")
 
-    def test_a_write_cria_lowered_is_not_cross_request_trusted_without_a_confirming_survey(self):
-        """`note_written`'s mtime is cria's own clock, never survey-confirmed; the cache candidate it
-        leaves behind must not auto-promote in a later request just because the size still matches."""
+    def test_an_uncorroborated_write_is_not_cross_request_trusted(self):
+        """A write to a path NO tree has ever mentioned has nothing to corroborate its mtime with
+        (see `note_written`'s own comment) — cria's own clock guess, never survey-confirmed — and the
+        cache candidate it leaves behind must not auto-promote in a later request."""
         view = wsview.View(ROOT, SESSION)
         tok = wsview.bind(view)
-        self.assertTrue(wsview.apply_survey(view, survey(_tree(1000, len(GO_MOD_OLD)), root=ROOT)))
+        self.assertTrue(wsview.apply_survey(view, survey("F\t1\t10\tmain.go", root=ROOT)))  # no go.mod yet
         view.note_written("go.mod", GO_MOD_OLD)
         self.assertEqual(view.read("go.mod"), GO_MOD_OLD)  # trusted THIS request — cria watched it land
         wsview.unbind(tok)
@@ -114,6 +115,24 @@ class ASameSizeUnobservedEditEndsTheCachedBodyTests(unittest.TestCase):
         self.assertTrue(wsview.apply_survey(fresh, survey(_tree(1000, len(GO_MOD_OLD)), root=ROOT)))
         self.assertIsNone(fresh.read("go.mod"),
                           "a write's local-clock mtime must not be trusted as a real survey confirmation")
+
+    def test_a_write_corroborated_by_a_same_turn_survey_is_cross_request_trusted(self):
+        """C38b follow-up: when a write's OWN turn also carries a survey reporting the same size for
+        the path (the harness runs the write and the survey in the same shell script), that survey
+        really has vouched for these exact bytes — no different from a blob delivery — and the write
+        is legitimately promotable in a later request, PROVIDED that survey's mtime still agrees."""
+        view = wsview.View(ROOT, SESSION)
+        tok = wsview.bind(view)
+        self.assertTrue(wsview.apply_survey(view, survey(_tree(1000, len(GO_MOD_OLD)), root=ROOT)))
+        view.note_written("go.mod", GO_MOD_OLD)
+        wsview.unbind(tok)
+
+        fresh = wsview.View(ROOT, SESSION)
+        tok2 = wsview.bind(fresh)
+        self.addCleanup(wsview.unbind, tok2)
+        self.assertTrue(wsview.apply_survey(fresh, survey(_tree(1000, len(GO_MOD_OLD)), root=ROOT)))
+        self.assertEqual(fresh.read("go.mod"), GO_MOD_OLD,
+                         "a write real survey evidence backs must still be reused, unchanged")
 
 
 if __name__ == "__main__":
