@@ -743,6 +743,25 @@ reconciled HEAD: `p22-feed-rerun-9ded52bc.service` (user unit, not collected), s
   defect), so ledger commits are safe.
 - One heartbeat: `8bd45449` (*/10).
 
+### Row p28 ABORTED at 27 min — C37 exposed a campaign-wide reasoning-off defect (C41)
+
+- In shipping `…_1790345162` (session `20260925T070628-01a0d8e3`), C37 recognized Codex's compaction (`0078` YES) and
+  routed it to the hardened writer.
+  - The writer `0079` and its retry `0080` each produced 37,719 completion tokens (the full 49,152 window) with
+    **zero content**, 228 s each.
+  - Log: `route.compaction_retry` then `route.compaction_no_briefing`. 7.5 active minutes lost, and no briefing.
+- **Root cause (Supervisor-verified):** `[backends.local] reasoning_style = "openai"` was written for Bonsai 2.
+  - The served Nemotron template (`/props`) consumes `enable_thinking` (4 refs) and never `reasoning_effort`.
+  - So every `reasoning = "off"` role and every `*-noreason` retry has been a no-op for the whole campaign. This is
+    the p27 "noreason retries repeat identical parameters" and compactor-empty-at-length finding, now hit on every
+    compaction because C37 routes them there.
+- Queue stopped (`systemctl --user stop row-p28-8e362162`); heartbeat `8bd45449` deleted. Shipping p28 is **invalid
+  (aborted)** and is not a result.
+- **C41** is in implementation: resolve the backend's think protocol from the served template, and bound the
+  writer. A live replay of `0079` is allowed while no row runs. p28 will be re-frozen at a new HEAD once C41 is
+  reviewed.
+- C39b (naming an empty timeout) is in progress in a separate worktree.
+
 ### Candidate C37 (row p27 cross-cell class) — harness compaction is never recognized, so its hardening never runs
 
 - **Walk evidence (p27 shipping seg-03, verified by the Supervisor):** CALL0046 (23:49:26 UTC) is Codex's compaction
