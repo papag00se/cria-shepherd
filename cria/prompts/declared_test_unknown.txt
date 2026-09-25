@@ -1,0 +1,3 @@
+This project declares a `{{CONFIG}}`, which may name the command that runs its tests, but its
+contents have not reached this check yet, so it has not decided whether one runs them. The checks
+above cover only what they were able to compose without it.{{RECHECK}}

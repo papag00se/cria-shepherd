@@ -1607,7 +1607,16 @@ def tests_with_no_command(root: Path) -> list[str]:
     cannot run jest/vitest/mocha suites and would falsely FAIL them; guessing a runner is the
     false-red class. What cria can say without guessing is what it found and what it did not compose,
     and #11b requires exactly that — a mechanism that could not reach the thing it was asked about
-    must say so rather than answer "nothing found"."""
+    must say so rather than answer "nothing found".
+
+    ABSENT AND UNKNOWN ARE NOT THE SAME SENTENCE (C38). A config in `conv.configs` (`Rakefile`,
+    `package.json`, ...) re-points discovery to whatever it declares, and the builder that reads it
+    (`build_ruby`, `build_js`, ...) is the one that composes the real command. When that config
+    EXISTS but its BODY has not been delivered yet — `wsview.current().read` answers `None` while
+    `exists` answers `True` — the builder correctly composed nothing THIS round, but "no command ...
+    was found in this project" is a false fact: cria does not know that yet, it knows only that it
+    has not been told. Saying so is a declared-but-unread project runner is not a project with no
+    runner (#11b, #5b)."""
     root = Path(root)
     out: list[str] = []
     for conv in TEST_CONVENTIONS:
@@ -1616,6 +1625,18 @@ def tests_with_no_command(root: Path) -> list[str]:
             continue
         discoverable, _stranded = _audit_tests(root, paths, conv)
         if not discoverable:
+            continue
+        unread_config = next((cfg for cfg in conv.configs
+                               if wsview.current().exists(root / cfg) is True
+                               and wsview.current().read(root / cfg) is None), None)
+        if unread_config:
+            # UNDELIVERABLE IS A DIFFERENT FACT FROM "NOT YET". A body too large for one survey
+            # result is refused with its size recorded (`View.undeliverable_size`) rather than
+            # re-queued forever — telling the coder it "will be checked again" over that path would
+            # be a promise cria cannot keep, the same false-hope shape #11b exists to prevent.
+            stuck = wsview.current().undeliverable_size(root / unread_config) is not None
+            recheck = "" if stuck else prompts.load("declared_test_recheck")
+            out.append(prompts.render("declared_test_unknown", config=unread_config, recheck=recheck))
             continue
         withheld = "js" in conv.exts and _withheld_declared_test_script(root)
         if withheld:
