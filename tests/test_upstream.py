@@ -412,6 +412,115 @@ class LoadedModelTests(unittest.TestCase):
         self.assertEqual(body["model"], "explicit-alias")  # a set alias wins; no override
 
 
+class ReconcileReasoningConventionTests(unittest.TestCase):
+    """C41: row p28 — [backends.local] reasoning_style = "openai" (written for ternary-bonsai-2)
+    stayed configured after the box swapped to Nemotron-Elastic-12B. Every OFF-reasoning role wrote
+    `reasoning_effort`, which that model's template never reads (it reads
+    `chat_template_kwargs.enable_thinking`), so reasoning never actually turned off: 0079/0080-proxy
+    each burned the full 37,719-token window for zero content. `_prep` is the wire's last point
+    before serialization and the one place that has read the SERVED template — it must correct a
+    knob that template demonstrably ignores, not ship it as configured."""
+
+    _NEMOTRON_PROPS = {"chat_template": (
+        "{% if enable_thinking is defined and enable_thinking %}detailed thinking on{% endif %}"
+        "{% if not enable_thinking %}detailed thinking off{% endif %}{{ enable_thinking }}")}
+    _BONSAI2_PROPS = {"chat_template": (
+        "{% if reasoning_effort == 'xhigh' %}...{% endif %}{{ reasoning_effort }}")}
+
+    def test_openai_style_body_is_corrected_for_a_chat_template_served_model(self):
+        up = Upstream("http://x", context_window=8192)
+        up._loaded_model = "nemotron"
+        resp = _PropsResp(self._NEMOTRON_PROPS)
+        body = {"reasoning_effort": "none", "messages": [{"role": "user", "content": "hi"}]}
+        rlog = _Rlog()
+        with mock.patch("cria.upstream.urllib.request.urlopen", return_value=resp):
+            up._prep(body, False, rlog)
+        # the ignored knob is gone; the one this template reads is set, correctly, to OFF
+        self.assertNotIn("reasoning_effort", body)
+        self.assertEqual(body["chat_template_kwargs"], {"enable_thinking": False})
+        self.assertEqual([k for k, _ in rlog.events], ["reasoning.convention_autocorrect"])
+        kind, kw = rlog.events[0]
+        self.assertEqual(kw["from_style"], "openai")
+        self.assertEqual(kw["to_style"], "chat_template")
+
+    def test_reasoning_on_effort_token_maps_to_enable_thinking_true(self):
+        up = Upstream("http://x", context_window=8192)
+        up._loaded_model = "nemotron"
+        resp = _PropsResp(self._NEMOTRON_PROPS)
+        body = {"reasoning_effort": "medium", "messages": [{"role": "user", "content": "hi"}]}
+        with mock.patch("cria.upstream.urllib.request.urlopen", return_value=resp):
+            up._prep(body, False, _Rlog())
+        self.assertEqual(body["chat_template_kwargs"], {"enable_thinking": True})
+
+    def test_chat_template_kwargs_body_is_corrected_for_an_effort_served_model(self):
+        up = Upstream("http://x", context_window=8192)
+        up._loaded_model = "bonsai2"
+        resp = _PropsResp(self._BONSAI2_PROPS)
+        body = {"chat_template_kwargs": {"enable_thinking": False},
+                "messages": [{"role": "user", "content": "hi"}]}
+        rlog = _Rlog()
+        with mock.patch("cria.upstream.urllib.request.urlopen", return_value=resp):
+            up._prep(body, False, rlog)
+        self.assertNotIn("chat_template_kwargs", body)
+        self.assertEqual(body["reasoning_effort"], "none")
+        self.assertEqual(rlog.events[0][0], "reasoning.convention_autocorrect")
+
+    def test_matching_convention_is_left_alone_and_no_warning_fires(self):
+        up = Upstream("http://x", context_window=8192)
+        up._loaded_model = "nemotron"
+        resp = _PropsResp(self._NEMOTRON_PROPS)
+        body = {"chat_template_kwargs": {"enable_thinking": False},
+                "messages": [{"role": "user", "content": "hi"}]}
+        rlog = _Rlog()
+        with mock.patch("cria.upstream.urllib.request.urlopen", return_value=resp):
+            up._prep(body, False, rlog)
+        self.assertEqual(body["chat_template_kwargs"], {"enable_thinking": False})
+        self.assertNotIn("reasoning_effort", body)
+        self.assertEqual(rlog.events, [])
+
+    def test_ambiguous_template_leaves_an_explicit_style_untouched(self):
+        # 61f08e9's own case: a served (keyless) endpoint fronting a remote gateway. Its /props
+        # exposes no chat_template that names either convention — the explicit config choice
+        # keeps winning, exactly as the operator asked.
+        up = Upstream("http://x", context_window=8192)
+        up._loaded_model = "gateway"
+        resp = _PropsResp({"chat_template": "{{ messages }}"})
+        body = {"reasoning_effort": "none", "messages": [{"role": "user", "content": "hi"}]}
+        rlog = _Rlog()
+        with mock.patch("cria.upstream.urllib.request.urlopen", return_value=resp):
+            up._prep(body, False, rlog)
+        self.assertEqual(body["reasoning_effort"], "none")
+        self.assertNotIn("chat_template_kwargs", body)
+        self.assertEqual(rlog.events, [])
+
+    def test_cloud_endpoint_is_never_reconciled(self):
+        up = Upstream("http://x", api_key="sk-test")
+        body = {"reasoning_effort": "none", "messages": [{"role": "user", "content": "hi"}]}
+        with mock.patch("cria.upstream.urllib.request.urlopen",
+                        side_effect=AssertionError("must not probe a keyed endpoint")):
+            up._prep(body, False, _Rlog())
+        self.assertEqual(body["reasoning_effort"], "none")
+
+    def test_reresolved_when_props_changes_after_a_model_swap(self):
+        # props() caches after one success (same posture as loaded_model — a swap needs a
+        # restart), so a FRESH Upstream re-reads the currently-served template rather than
+        # inheriting a stale detection from a previous process.
+        up1 = Upstream("http://x", context_window=8192)
+        up1._loaded_model = "bonsai2"
+        body1 = {"chat_template_kwargs": {"enable_thinking": False},
+                "messages": [{"role": "user", "content": "hi"}]}
+        with mock.patch("cria.upstream.urllib.request.urlopen", return_value=_PropsResp(self._BONSAI2_PROPS)):
+            up1._prep(body1, False, _Rlog())
+        self.assertEqual(body1["reasoning_effort"], "none")
+
+        up2 = Upstream("http://x", context_window=8192)  # the process after the fleet swap
+        up2._loaded_model = "nemotron"
+        body2 = {"reasoning_effort": "none", "messages": [{"role": "user", "content": "hi"}]}
+        with mock.patch("cria.upstream.urllib.request.urlopen", return_value=_PropsResp(self._NEMOTRON_PROPS)):
+            up2._prep(body2, False, _Rlog())
+        self.assertEqual(body2["chat_template_kwargs"], {"enable_thinking": False})
+
+
 class _BufResp:
     """A urlopen result for a buffered (non-stream) call: read() once, then close()."""
 

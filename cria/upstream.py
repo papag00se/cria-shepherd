@@ -22,7 +22,8 @@ from pathlib import Path
 from typing import Iterator
 
 from . import bodykeys
-from . import callcapture, config, contextfloor, failover, massage, probegate, rumination, tokenratio
+from . import (callcapture, config, contextfloor, failover, massage, probegate, reasoning,
+               rumination, tokenratio)
 
 # Sentinel for "window not yet resolved" (distinct from None = "no window / skip floor").
 _UNSET = object()
@@ -272,6 +273,68 @@ class Upstream:
     def _context_fixes(self) -> bool:
         return self._engagement_level >= config.CONTEXT_FIXES
 
+    def _reconcile_reasoning_convention(self, body: dict, rlog) -> None:
+        """THE WIRE INVARIANT (C41): a reasoning knob this body carries must be one the SERVED
+        template actually reads, and this is the one place that knows what that template is — the
+        last point before serialization, same as every other wire invariant `_prep` enforces.
+
+        `Role.apply` (config.py) writes the reasoning knob in the convention `_think_protocol`
+        resolved at CONFIG-LOAD time — a static per-backend guess (`[backends.*].reasoning_style`,
+        or the served/keyed default) that goes stale the instant the served model swaps out from
+        under it without a matching config edit. Measured live, row p28: `[backends.local]
+        reasoning_style = "openai"` was written for ternary-bonsai-2 (61f08e9, whose template takes
+        `reasoning_effort` and defaults to xhigh without it); the box then served
+        Nemotron-Elastic-12B, whose template's `/props` mentions `enable_thinking` four times and
+        `reasoning_effort` zero. Every OFF-reasoning call — the compactor role, every `-noreason`
+        retry — sent `reasoning_effort` into a template that ignores it, so reasoning never turned
+        off: 0079/0080-proxy each generated the full 37,719-token window and zero content, ~228s
+        apiece, for one compaction.
+
+        RESOLUTION, not silent override: `reasoning.detect_served_style` reads the actual
+        `chat_template` text this endpoint just served (cached by `props()`, one probe per process
+        — a model swap needs a cria restart to refresh, the same posture `loaded_model` already
+        documents). A template that gives no clean signal (mentions both conventions, or neither —
+        e.g. a served endpoint fronting a remote gateway, 61f08e9's own justification for letting an
+        operator name a style on a keyless backend) leaves the body untouched: an explicit config
+        choice keeps winning wherever the template does not demonstrably contradict it. Only a
+        DEMONSTRATED mismatch — the body carries one convention's key and the template's markers
+        say only the other — is corrected, and it is never silent: a structured warning names the
+        configured style, the detected one, and what was rewritten, so the stale `cria.toml` line is
+        visible in the logs rather than a permanent, undiagnosable no-op.
+
+        A cloud (keyed) endpoint has no local template to read — `props()` returns None for it
+        unconditionally — so this is a no-op there, exactly like every other served-only wire fix."""
+        if self._api_key:
+            return
+        ctk = body.get("chat_template_kwargs")
+        has_thinking = isinstance(ctk, dict) and "enable_thinking" in ctk
+        has_effort = "reasoning_effort" in body
+        if not has_thinking and not has_effort:
+            # Nothing to reconcile — the common case for a body `Role.apply` never touched
+            # (reasoning "auto"/unset, or no role at all). Skip the /props probe entirely rather
+            # than pay a network round trip a body with no reasoning knob has no use for.
+            return
+        props = self.props(rlog)
+        tmpl = props.get("chat_template") if isinstance(props, dict) else None
+        if not isinstance(tmpl, str) or not tmpl:
+            return
+        detected = reasoning.detect_served_style(tmpl)
+        if detected is None:
+            return
+        if detected == "chat_template" and has_effort and not has_thinking:
+            effort = body.pop("reasoning_effort")
+            enable = effort not in ("none", "minimal", None)
+            body.setdefault("chat_template_kwargs", {})["enable_thinking"] = enable
+            rlog.emit("reasoning.convention_autocorrect", level="warn", from_style="openai",
+                      to_style="chat_template", effort=effort, enable_thinking=enable)
+        elif detected == "openai" and has_thinking and not has_effort:
+            enable = body["chat_template_kwargs"].pop("enable_thinking")
+            if not body["chat_template_kwargs"]:
+                body.pop("chat_template_kwargs")
+            body["reasoning_effort"] = "none" if not enable else "medium"
+            rlog.emit("reasoning.convention_autocorrect", level="warn", from_style="chat_template",
+                      to_style="openai", enable_thinking=enable, reasoning_effort=body["reasoning_effort"])
+
     def _prep(self, body: dict, stream: bool, rlog, safety_override: float | None = None) -> tuple[bytes, int, str | None]:
         """Serialize the request and return ``(bytes, sent_estimate)``: apply the CONTEXT FLOOR
         (guarantee it fits the window, budgeting with the model's LEARNED density ratio), force the
@@ -290,6 +353,7 @@ class Upstream:
             loaded = self.loaded_model(rlog)
             if loaded:
                 body["model"] = loaded
+        self._reconcile_reasoning_convention(body, rlog)
         out = {**body, "stream": stream}
         msgs = body.get("messages")
         if isinstance(msgs, list):

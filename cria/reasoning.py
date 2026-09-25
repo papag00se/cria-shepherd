@@ -38,6 +38,33 @@ _ON_EFFORT = "medium"
 _OFF_EFFORT = "none"
 
 
+def detect_served_style(chat_template: str) -> str | None:
+    """Which reasoning convention a SERVED jinja chat template actually consumes, read straight
+    from the template text llama.cpp's ``/props`` already hands back (the same signal
+    ``compat.probe``/``Upstream._resolve_window`` trust for their own checks).
+
+    WHY THIS EXISTS (C41). ``[backends.*].reasoning_style`` is a static config line an operator
+    writes for whatever model happens to be loaded that day. cria's local endpoint serves
+    WHATEVER the fleet swap loaded — ternary-bonsai-2 one day (a template that takes
+    ``reasoning_effort``, hence ``reasoning_style = "openai"`` in cria.toml, landed in 61f08e9),
+    Nemotron-Elastic-12B the next (a template that takes ``chat_template_kwargs.enable_thinking``
+    and has never heard of ``reasoning_effort``). The config line does not know the model swapped;
+    nothing re-derives it. Every OFF-reasoning role/retry then sent a knob the new template
+    silently ignores — reasoning stayed on, thought until the window was gone, and produced no
+    content: 0079/0080-proxy in row p28, 37,719 tokens and ~228s each, twice, for one compaction.
+
+    ``enable_thinking`` in the template text → ``"chat_template"``; ``reasoning_effort`` →
+    ``"openai"``; both or neither → ``None`` (ambiguous — the template gives no clean signal, so
+    the caller keeps whatever it already had rather than guess a THIRD way to be wrong)."""
+    has_thinking = "enable_thinking" in chat_template
+    has_effort = "reasoning_effort" in chat_template
+    if has_thinking and not has_effort:
+        return "chat_template"
+    if has_effort and not has_thinking:
+        return "openai"
+    return None
+
+
 def infer_style(base_url: str | None) -> str:
     """The reasoning convention to assume for an endpoint when the provider didn't set one
     explicitly. openrouter.ai has its own object shape; every other OpenAI-compatible host

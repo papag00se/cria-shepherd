@@ -844,7 +844,22 @@ def _think_protocol(b: Backend) -> str:
     backend, which is the part that was right: it is what a jinja-templated local model wants.
     Naming a style is an operator saying otherwise about their own server, and there is no reason
     for cria to overrule that — a served endpoint can front anything, including a gateway that
-    speaks effort."""
+    speaks effort.
+
+    THIS IS CONFIG-LOAD TIME, before any model has answered a single /props probe — it is a
+    STATED INTENT, not a measurement, and it goes stale the moment a fleet swap changes what is
+    actually loaded behind the backend without a matching edit here (C41: `reasoning_style =
+    "openai"` was written for ternary-bonsai-2's template and silently misfired, twice, once the
+    box served Nemotron-Elastic-12B instead — the compactor's `reasoning="off"` sent a
+    `reasoning_effort` the new template does not read, so reasoning never turned off and two
+    compactions each burned the full context window for zero content). The value returned here is
+    therefore honored WHERE A SERVED TEMPLATE GIVES NO CONTRADICTING EVIDENCE. The one place that
+    has actually read the served template — `Upstream._reconcile_reasoning_convention`, at the
+    wire, per request — corrects this value when the template DEMONSTRABLY consumes the other
+    convention, and logs a `reasoning.convention_autocorrect` warning naming both when it does. So
+    an explicit style still wins by default (the 61f08e9 case: a served endpoint fronting a remote
+    gateway, whose /props reveals no local template at all), but it can no longer misfire against
+    the model that is actually answering without cria saying so out loud."""
     if b.transport == "cli":
         return "none"
     if b.api_key_env:

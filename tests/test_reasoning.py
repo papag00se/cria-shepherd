@@ -1,6 +1,6 @@
 import unittest
 
-from cria.reasoning import apply_reasoning, apply_sampling, infer_style
+from cria.reasoning import apply_reasoning, apply_sampling, detect_served_style, infer_style
 
 
 class ApplySamplingTests(unittest.TestCase):
@@ -60,6 +60,29 @@ class InferStyleTests(unittest.TestCase):
 
     def test_none_base_url_defaults_to_openai(self):
         self.assertEqual(infer_style(None), "openai")
+
+
+class DetectServedStyleTests(unittest.TestCase):
+    """C41: what a served jinja template actually consumes, read from its own text — the signal
+    Upstream._reconcile_reasoning_convention uses to catch a stale `reasoning_style` config line."""
+
+    def test_nemotron_shaped_template_detects_chat_template(self):
+        # The real signature from row p28's live /props: enable_thinking referenced repeatedly,
+        # reasoning_effort never.
+        tmpl = ("{% if enable_thinking is defined and enable_thinking %}detailed thinking on"
+                "{% endif %}{% if not enable_thinking %}detailed thinking off{% endif %}"
+                "{{ enable_thinking }}{{ enable_thinking }}")
+        self.assertEqual(detect_served_style(tmpl), "chat_template")
+
+    def test_bonsai2_shaped_template_detects_openai(self):
+        tmpl = "{% if reasoning_effort == 'xhigh' %}...{% endif %}{{ reasoning_effort }}"
+        self.assertEqual(detect_served_style(tmpl), "openai")
+
+    def test_neither_marker_is_ambiguous(self):
+        self.assertIsNone(detect_served_style("{{ messages }}{% for m in messages %}{{ m }}{% endfor %}"))
+
+    def test_both_markers_is_ambiguous(self):
+        self.assertIsNone(detect_served_style("{{ enable_thinking }}{{ reasoning_effort }}"))
 
 
 class ApplyReasoningTests(unittest.TestCase):
