@@ -599,6 +599,12 @@ reconciled HEAD: `p22-feed-rerun-9ded52bc.service` (user unit, not collected), s
   final **20%**. Commons CSV + large rewrite that never compiles (illegal regex escapes; invented `CSVParser(Reader)`,
   `readNext()`); no REVIEW.md or tests.
 
+- **handles-cli-node** `…_1790315045`: `milestone-stalled-60min` (budget 4 intervals); milestones 40/continue,
+  35/continue, 40/stalled; final **40%**. Built-in fetch, `request` removed, plain lookup, `--help`, non-zero exit,
+  correct Node-free Dockerfile (ENTRYPOINT) \u2014 but `--json` crashes (`const jsonOutput` reassigned, lookup.js untouched
+  23:42\u219260 min), count is `data.length` (5, holder total 15), the only test is mocha on `resolve()` (no CLI e2e),
+  `node_modules` + mocha lockfile present. rust-toml-cli started 00:07:21.
+
 - **Supervisor takeover 2026-09-24 23:38 PDT** (previous Supervisor stalled; not contacted). Old heartbeat gone;
   single new heartbeat `a5c06791` (*/10). No milestone pending at takeover. handles-cli-node live report 23:40:
   usefulness=35% (post-milestone change: Dockerfile only, still broken — `npm ci` with no lockfile; `--json` still
