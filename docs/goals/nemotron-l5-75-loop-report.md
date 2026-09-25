@@ -732,6 +732,17 @@ reconciled HEAD: `p22-feed-rerun-9ded52bc.service` (user unit, not collected), s
 - Split-out follow-ups (not in p28): naming an empty timeout (C39b); the judge rubric certifying against its own
   quoted evidence (4 cells); diagnosed-but-not-executed (held, prevalence first).
 
+### Row p28 launched
+
+- Row HEAD **`8e362162`**. The service code is identical to `e634d866` for cria/ and suite/; `cria.service` was
+  restarted and `/health` is ok.
+- Unit `row-p28-8e362162.service` runs `~/.cria/nemotron-l5-row-p28-8e362162.sh`, with the log in
+  `~/.cria/nemotron-l5-row-p28-8e362162.log`. The six cells run in order shipping, cart, orders, feed, handles, rust,
+  flocked on `suite-gpu.lock`, with note `BATTERY2 L5 nemotron-elastic 8e362162 p28`. Started 07:06:02.
+- The guard checks only cria/, suite/run.py and suite/sampling.py against the row HEAD (fixing the p27 first-unit
+  defect), so ledger commits are safe.
+- One heartbeat: `8bd45449` (*/10).
+
 ### Candidate C37 (row p27 cross-cell class) — harness compaction is never recognized, so its hardening never runs
 
 - **Walk evidence (p27 shipping seg-03, verified by the Supervisor):** CALL0046 (23:49:26 UTC) is Codex's compaction
