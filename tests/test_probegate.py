@@ -146,6 +146,67 @@ class InterpretTests(unittest.TestCase):
         self.assertIn("did NOT launch", completion_probe_digest(out.report))
 
 
+class AbsentPyflakesTests(unittest.TestCase):
+    """C39: an absent `pyflakes` module must abstain through the same launch-failure path a missing
+    binary already uses (`command not found` -> EXIT:127) instead of surfacing python3's OWN "No
+    module named pyflakes" exit-1 as though the REPO'S checks found an error. This environment has no
+    pyflakes installed, so the real composed gate script exercises the exact absence the p27 Orders
+    capture hit \u2014 no mocking of "module missing" required."""
+
+    def test_absent_pyflakes_abstains_instead_of_reporting_a_false_error(self):
+        self.assertIsNone(__import__("importlib").util.find_spec("pyflakes"),
+                          "this test requires an environment with NO pyflakes installed")
+        t = _ws(with_pytest=False, py_body="import os\nx = 1\n")  # unused import: a REAL pyflakes finding
+        plan = plan_gate(t)
+        proc = subprocess.run(["bash", "-c", plan.script], capture_output=True, text=True, timeout=120)
+        out = interpret_gate(plan, proc.stdout)
+        self.assertTrue(out.ran)
+        digest = completion_probe_digest(out.report)
+        self.assertIn("did NOT launch", digest)          # abstain, via the existing launch-failure path
+        self.assertNotIn("No module named pyflakes", digest)  # the tool's own absence text never surfaces
+        nudge = completion_block_nudge(out.report)
+        self.assertIsNone(nudge)                          # never reported as the repo's own error
+
+    def test_present_and_failing_pyflakes_is_still_reported(self):
+        # A fake `pyflakes` module on PYTHONPATH stands in for a REAL, installed-and-failing pyflakes:
+        # the wrapper's `os.execvp` must hand control to the exact `python3 -m pyflakes` invocation, so
+        # a genuine finding is untouched \u2014 same argv, same output, same exit code as always.
+        t = _ws(with_pytest=False, py_body="import os\nx = 1\n")
+        fake_root = tempfile.mkdtemp()
+        pkg = Path(fake_root) / "pyflakes"
+        pkg.mkdir()
+        (pkg / "__init__.py").write_text("")
+        (pkg / "__main__.py").write_text(
+            "import sys\n"
+            "for f in sys.argv[1:]:\n"
+            "    print(f\"{f}:1:1: undefined name 'bogus'\")\n"
+            "sys.exit(1)\n")
+        plan = plan_gate(t)
+        env = dict(os.environ, PYTHONPATH=fake_root + os.pathsep + os.environ.get("PYTHONPATH", ""))
+        proc = subprocess.run(["bash", "-c", plan.script], capture_output=True, text=True, timeout=120, env=env)
+        out = interpret_gate(plan, proc.stdout)
+        nudge = completion_block_nudge(out.report)
+        self.assertIsNotNone(nudge)
+        self.assertIn("undefined name", nudge)
+
+    def test_real_composed_command_real_bash_via_clean_gate_output(self):
+        """The exact live path (`clean_gate_output`, not `completion_block_nudge`) that built the
+        false-red p27 Orders coder prompts \u2014 real bash, this environment's real absent pyflakes,
+        parsed through the SAME scraper the coder actually read from."""
+        self.assertIsNone(__import__("importlib").util.find_spec("pyflakes"),
+                          "this test requires an environment with NO pyflakes installed")
+        t = _ws(with_pytest=False, py_body="import os\nx = 1\n")
+        plan = plan_gate(t)
+        proc = subprocess.run(["bash", "-c", plan.script], capture_output=True, text=True, timeout=120)
+        out = interpret_gate(plan, proc.stdout)
+        self.assertTrue(out.ran)
+        raw = probegate.transported_result(plan) or proc.stdout
+        checks = probegate.clean_gate_output(raw, plan=plan)
+        if checks is not None:
+            self.assertNotIn("No module named pyflakes", checks)
+            self.assertNotIn("error-class problems", checks)
+
+
 class BashRoundtripTests(unittest.TestCase):
     def test_real_bash_execution_roundtrips(self):
         t = _ws(with_pytest=False)
@@ -236,6 +297,30 @@ class CleanGateOutputTests(unittest.TestCase):
         self.assertNotIn("pass", out.lower())           # not a pass/clean claim
         self.assertNotIn("no error-class problems. that", out.lower())  # not the clean message either
         self.assertNotIn("python", out.lower())         # doesn't leak the raw launch-failure line
+
+    def test_c39_absent_pyflakes_module_abstains_not_reported_as_repo_error(self):
+        # C39 (row p27 Orders, chunk107): a box with no `pyflakes` installed made `python3 -m
+        # pyflakes ...` exit 1 with "No module named pyflakes" on stderr — cria's OWN absent tool,
+        # not a real defect in the repo's code. `clean_gate_output` is the exact path that built the
+        # false-red coder prompts (see p27 orders capture 0027-coder-s1.prompt.txt): only
+        # NOT_FOUND_EXIT_CODE / LAUNCH_FAILURE_EXIT_CODES makes a section abstain, and exit 1 was not
+        # among them, so this raw text was scraped and shipped verbatim as "the repo's own checks
+        # report these error-class problems". After the fix, the composed command pre-checks the
+        # module itself and exits 127 on absence, landing in the SAME existing launch-failure branch.
+        raw = self._raw("/usr/bin/python3: No module named pyflakes\nEXIT:127")
+        out = probegate.clean_gate_output(raw)
+        self.assertIn("no usable result", out.lower())         # abstain: neutral, not an error to fix
+        self.assertNotIn("No module named pyflakes", out)      # the tool's own absence text never ships
+        self.assertNotIn("error-class problems", out)          # never framed as the repo's own defect
+
+    def test_c39_present_and_failing_pyflakes_still_reported(self):
+        # The other half of C39: a REAL pyflakes finding (present, installed, and failing) must still
+        # surface exactly as before — the fix only changes what happens when the module is ABSENT.
+        raw = self._raw("orders/app.py:12:1: undefined name 'db'\nEXIT:1")
+        out = probegate.clean_gate_output(raw)
+        self.assertIsNotNone(out)
+        self.assertIn("orders/app.py:12:1: undefined name 'db'", out)
+        self.assertIn("error-class problems", out)
 
     def test_real_error_wins_over_launch_failure(self):
         # If something both failed to launch AND a real error was reported, surface the real error.

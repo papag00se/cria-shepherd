@@ -1154,6 +1154,31 @@ _JSON_CHECK = (
 # library: a build file. Measured on the six-language battery — cria's own write path corrupted a
 # pom.xml and nothing in the gate read XML, so the damage surfaced only as `mvn` failing much later,
 # with no finding naming the file.
+# A cria-composed probe that reaches its checker via `python3 -m <module>` cannot tell "module
+# absent" from "module ran and found problems" by exit code alone — python3 itself always launches,
+# so a missing third-party module surfaces as ITS OWN exit 1 ("No module named pyflakes"), which the
+# gate interpreter — like every other check — reads as a real failure (see NOT_FOUND_EXIT_CODE in
+# proberun.py). Walked live (p27 Orders, chunk107): the box had no pyflakes installed, and the ONLY
+# finding the gate handed the coder was cria's own absent tool, dressed as "the repo's own checks
+# report these error-class problems" — while the real timed-out pytest hang sat outside the checks
+# block, unremarked. `linterprobe.escalate_pyflakes` already abstains on this exact message (for its
+# own, non-gate-composed calling path); this is the SAME abstention for the gate's composed command
+# instead of a second copy of that keyword match. The launch-failure path
+# (NOT_FOUND_EXIT_CODE / LAUNCH_FAILURE_MARKER) already exists precisely for "the check did not run";
+# this makes an absent pyflakes module arrive through it as a real launch failure — no new keyword
+# parsing of a tool's OUTPUT, only an `import` probe of the interpreter that is about to run it. If
+# the module IS present, `os.execvp` replaces this process with the exact `python3 -m pyflakes`
+# invocation, so a present-and-failing pyflakes is byte-identical to before (same argv, same output,
+# same exit code) — nothing about a real finding changes.
+_PYFLAKES_LAUNCH_CHECK = (
+    "import sys, os\n"
+    "try:\n"
+    "    import pyflakes  # noqa: F401\n"
+    "except ImportError:\n"
+    "    sys.exit(127)\n"
+    "os.execvp(sys.executable, [sys.executable, '-m', 'pyflakes', *sys.argv[1:]])\n"
+)
+
 _XML_CHECK = (
     "import sys\n"
     "from xml.etree import ElementTree as ET\n"
@@ -1246,7 +1271,7 @@ def lint_floor_candidates(root: Path) -> list[ProbeCandidate]:
     py = linterprobe.collect_files(str(root), ["py"])
     if py:
         out.append(cand(ProbeKind.Lint,
-                        ["python3", "-m", "pyflakes", *py[:MAX_FLOOR_FILES_PER_LANG]],
+                        ["python3", "-c", _PYFLAKES_LAUNCH_CHECK, *py[:MAX_FLOOR_FILES_PER_LANG]],
                         root, 60, 80, ProbeCost.Cheap, composed_by_cria=True,
                         ecosystem=Ecosystem.Python,
                         reason="Python linting: pyflakes (undefined names, unused imports; zero-config)"))
