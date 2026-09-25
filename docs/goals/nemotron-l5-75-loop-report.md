@@ -762,6 +762,26 @@ reconciled HEAD: `p22-feed-rerun-9ded52bc.service` (user unit, not collected), s
   reviewed.
 - C39b (naming an empty timeout) is in progress in a separate worktree.
 
+### Row p28 re-freeze (2026-09-25, after the abort)
+
+- **C41 ACCEPTED** (`1c673c91`, merged `6babdb9f`):
+  - `Upstream._prep` rewrites a reasoning knob into the convention the served template demonstrably consumes
+    (`/props`: Nemotron → `enable_thinking`), and emits `reasoning.convention_autocorrect`.
+  - Bonsai-2's real template mentions both conventions, so it is ambiguous and left untouched.
+  - The compaction retry carries `SUMMARIZE_MAX_TOKENS`.
+  - Live replay of p28's `0079` body: 37,719 tok / 228 s / empty → **421 tok / 4.7 s / 1,677 chars of briefing**.
+  - Reasoning-ON bodies are unchanged in effect (the template defaults thinking on).
+  - Review follow-ups (non-blocking): the effort-only test fixtures misstate Bonsai-2; the rewrite also runs at
+    engagement level 0.
+- **C39b ACCEPTED** (`f1566336` + `8dfa98ac`, merged `257d49b0`):
+  - Per-transport facts are registered in `ingest_transport` (bounded FIFO), so an exit-124 section is named with
+    its command both while newest and after being superseded.
+  - After a restart or eviction it falls back to the generic label and the turn is kept.
+  - Model-facing sentences are in `cria/prompts/checks_*.txt`.
+  - p27 Orders replay: `python3 -m pytest -q` did not finish (timed out). On main the gate turns were dropped.
+- Integrated: 5307 passed, 5 skipped; pushed; `cria.service` restarted; `/health` ok.
+- p28 carries C37, C38, C38b, C39, C39b, C40, C41. Row HEAD = the commit recording this entry.
+
 ### Candidate C37 (row p27 cross-cell class) — harness compaction is never recognized, so its hardening never runs
 
 - **Walk evidence (p27 shipping seg-03, verified by the Supervisor):** CALL0046 (23:49:26 UTC) is Codex's compaction
