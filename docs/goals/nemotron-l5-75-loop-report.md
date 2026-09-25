@@ -619,6 +619,29 @@ reconciled HEAD: `p22-feed-rerun-9ded52bc.service` (user unit, not collected), s
   C37/C38/C39 implementation started in isolated worktrees `../cria-shepherd-c3{7,8,9}` (branches `cand-c3x`);
   nothing lands until the row ends and each unit is reviewed.
 
+### Row p27 post-row: walks, reconciliation, candidates (2026-09-25)
+
+- **Walks:** cart 80/80 verified (syntheses `p27-cart/synthesis-{1-27,28-54,55-80}.md`); feed 40/49 verified, 41-49 in
+  flight; rust capture `20260925T000732-01a0d764` \u2192 56 segments; handles `20260924T224416-01a0d717` \u2192 81 segments.
+- **Partial cross-cell reconciliation** (`~/.cria/walk-findings/2026-09-24/p27-cross-cell-partial.md`, shipping/cart/orders):
+  C37 confirmed in 3/3 (shipping CALL0045/46 origin, cart CALL0280, orders CALL0051); invented third-party API 2/3
+  (orders is stdlib-only); C39 orders-only. Regression lead (UNVERIFIED, no prior-HEAD walk): C34\u2013C36 turned
+  previously-empty one-word judges into answering ones; cart CALL0122 steer-code answers `SUPPORTED` for `go mod tidy`
+  while go.mod pins the REFUSED `v0.5.0` \u2014 Supervisor opened it: the action names no version, so this is a
+  rubric gap (the action implicitly relies on the refused pin), not a clean contradiction. Not yet a candidate.
+  Compactor length-with-empty-content: measured on authoritative responses \u2014 1\u20134 per session, 0 in orders/feed;
+  the `*-noreason` retry repeats identical parameters (`reasoning_effort=none` does not stop nemotron reasoning). Low
+  prevalence; recorded, not selected.
+- **Invented-API origin** (`~/.cria/walk-findings/2026-09-24/invented-api-cross-cell.md`): 4 cells (cart, shipping,
+  feed, rust \u2014 rust repeats P20's `Value::parse_str` exactly). Origin: no cria-side probe of the resolved
+  dependency's real surface, although it sits in the local cache for every cell. **C40** (trigger: RefusalLedger's own
+  SUCCEEDED event, not error text \u2014 answers P19) is in implementation on `cand-c40`.
+- **Reviews:** C37, C38, C39 each REJECTED by independent review; repairs are with the same owners. C37: Codex's
+  compaction ask stays in the writer/validator evidence (drop it by position, not by marker), and the no-reasoner
+  fail-safe is not implemented. C38: a size-dropped body sticks in the session cache, and the cache leaks across
+  roots; the replay was not recorded. C39: the false red becomes "no signal either way", so the timeout is still
+  hidden (`clean_gate_output` must abstain per section and state a 124 timeout).
+
 ### Candidate C37 (row p27 cross-cell class) — harness compaction is never recognized, so its hardening never runs
 
 - **Walk evidence (p27 shipping seg-03, verified by the Supervisor):** CALL0046 (23:49:26 UTC) is Codex's compaction
