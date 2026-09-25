@@ -837,6 +837,26 @@ reconciled HEAD: `p22-feed-rerun-9ded52bc.service` (user unit, not collected), s
 - Remaining p28 cells (orders, feed, handles, rust) wait on the user's decision about the GPU/model.
 - p28 walks continue meanwhile; they use no GPU.
 
+### Row p28 walks (shipping 64/64, cart 92/92) — while the model swap blocks the queue
+
+- Walkers now run at thinking `low`, at the user's request (launched with a hold prompt, switched to `low`, then
+  given the segment).
+- **Shipping:**
+  - C40 never fired: the gem was never installed, because a Gemfile `source` syntax loop blocked `bundle` for 10+
+    segments. That points to a manifest syntax gate (Class A).
+  - C37 handoffs were correct but carried no "already refuted" memory.
+  - The shipping synthesis claimed a dropped write (Class E). **REJECTED:** a history-order misreading; in 0226 the
+    read is msg 4 and the edit is msgs 22–23.
+- **Cart:**
+  - C40 fired correctly many times, yet the invented `Quantize`/`ROUND_UP` survived about 150 calls. Nothing
+    connects `undefined: decimal.X` in `⟦ctx:checks⟧` to the anchored surface. Three independent syntheses agree.
+    → **C43** is in implementation.
+  - A **false dedup pointer** was Supervisor-verified in 0160. Msg 21 (the `grep "type Cart"` result) reads
+    "(duplicate of content shown IN FULL further down …)", but no later message carries that content, which
+    violates principle 5. → **C42** is in implementation.
+- Classes present in both cells: invented third-party API; diagnosed-but-not-executed; judges contradicting their own
+  evidence; a semantic regression (`sub.Mul(pct)`) introduced while chasing compile errors.
+
 ### Candidate C37 (row p27 cross-cell class) — harness compaction is never recognized, so its hardening never runs
 
 - **Walk evidence (p27 shipping seg-03, verified by the Supervisor):** CALL0046 (23:49:26 UTC) is Codex's compaction
