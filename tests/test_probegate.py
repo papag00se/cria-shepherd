@@ -352,11 +352,8 @@ class CleanGateOutputTests(unittest.TestCase):
         self.assertNotIn("python", out.lower())         # doesn't leak the raw launch-failure line
 
     def test_launch_failure_is_neutral_not_an_error_to_fix_nor_a_pass(self):
-        # Restored, UNCHANGED shape (re-review of 8bf62f13): a probe that couldn't launch, next to a
-        # clean sibling, with NO PLAN (`clean_gate_output(raw)` — no `plan=`). Without a plan cria
-        # cannot positively confirm this was cria's own OPTIONAL composed check (see
-        # `_may_abstain_on_launch_failure`), so it fails CLOSED exactly like the pre-C39 default: the
-        # whole gate stays unverified, never a bare pass built on a check cria could not even name.
+        # THE regression: a probe that couldn't launch (`python` absent) is cria's OWN setup gap. The
+        # model sees a neutral non-actionable note — never an error to "fix", never a pass/clean claim.
         raw = self._raw("timeout: failed to run command 'python': No such file or directory\nEXIT:127")
         out = probegate.clean_gate_output(raw)
         self.assertIn("no usable result", out.lower())
@@ -435,6 +432,12 @@ class CleanGateOutputTests(unittest.TestCase):
         self.assertNotIn("checker's own message", out.lower())  # NOT reported as error-class findings
         self.assertIn("killed mid-run", out)                    # ...but what it printed survives
 
+    def test_timeout_with_no_output_stays_a_bare_no_signal(self):
+        raw = self._raw("EXIT:124")
+        out = probegate.clean_gate_output(raw)
+        self.assertIn("no usable result", out.lower())
+        self.assertNotIn("fix", out.lower())
+
     @unittest.skip(
         "C39 SCOPE NARROWING (re-review of a776842f): naming a 124 section that printed nothing, and "
         "keeping a clean sibling's verdict visible alongside an unrelated timeout, was the transport "
@@ -442,19 +445,34 @@ class CleanGateOutputTests(unittest.TestCase):
         "because it roughly doubled the gate script and broke a large repo's ARG_MAX budget, and "
         "because inserting it into compose_probe_command broke the cd-failure short-circuit (a probe "
         "could run in the wrong directory and report a false pass). clean_gate_output is now "
-        "byte-identical to base again: an empty timeout reads as the generic 'no usable result', same "
-        "as base always did. This IS a real gap (matrix items (b)/(f) in "
-        "tests/test_c39_gate_history_invariants.py) but it predates C39 and is explicitly OUT OF "
-        "SCOPE for this candidate -- a separate follow-up unit will design a way to name a timeout "
-        "that does not touch compose_probe_command's control flow or the script's size budget.")
+        "byte-identical to base again, and base's own test_timeout_with_no_output_stays_a_bare_no_"
+        "signal (restored above, verbatim) is what actually runs and passes. This method records the "
+        "SPLIT-OUT follow-up (matrix items (b)/(f) in tests/test_c39_gate_history_invariants.py) --"
+        " it does NOT replace the base test above, and it predates C39 (base never named a timeout's "
+        "command either). A separate follow-up unit will design a way to name a timeout that does not "
+        "touch compose_probe_command's control flow or the script's size budget.")
     def test_timeout_with_no_output_still_names_the_timeout_not_no_usable_result(self):
-        pass
+        # C39 repair: naming the timeout is required EVEN when it printed nothing (reviewer
+        # directive) — and since `_raw`'s probe-0 genuinely ran clean, the message must say so
+        # too rather than collapsing to the generic (and here false) "no usable result".
+        raw = self._raw("EXIT:124")
+        out = probegate.clean_gate_output(raw)
+        self.assertIn("no verdict either way", out.lower())
+        self.assertNotIn("no usable result", out.lower())
+        self.assertNotIn("fix", out.lower())
 
     @unittest.skip(
         "C39 SCOPE NARROWING: see test_timeout_with_no_output_still_names_the_timeout_not_no_usable_"
-        "result above -- the solo case of the same reverted mechanism.")
+        "result above -- the solo case of the same reverted, split-out follow-up. It does NOT replace "
+        "base's test_timeout_with_no_output_stays_a_bare_no_signal, which is restored above and is "
+        "what actually runs.")
     def test_solo_timeout_with_no_output_is_still_named_not_generic_no_usable_result(self):
-        pass
+        # The TRUE solo case (nothing else in the gate at all): still named, per the reviewer's
+        # directive that a 124 section is ALWAYS stated as a timeout, even printing nothing.
+        raw = self._raw_solo("EXIT:124")
+        out = probegate.clean_gate_output(raw)
+        self.assertIn("no verdict either way", out.lower())
+        self.assertNotIn("fix", out.lower())
 
     def test_nonzero_exit_empty_output_is_a_failure(self):
         raw = self._raw("EXIT:1")   # exited non-zero, printed nothing usable
