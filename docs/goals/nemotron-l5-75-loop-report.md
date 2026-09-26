@@ -953,6 +953,18 @@ reconciled HEAD: `p22-feed-rerun-9ded52bc.service` (user unit, not collected), s
   - **Tests:** 4 scripted end-to-end `_harden_compaction_reply` tests, which fail before the fix.
   - **Replay:** PART B re-runs the 18 real writer requests. Its acceptance was corrected: those 13 plan cases are the
     target (a non-empty validated handoff), shipped handoffs are re-checked, and `ruby_eu` must never ship.
+- **C44 review (`9eaadebe`) REJECTED `211169a7`:**
+  - B1: the truthful frame fires only on a blank summary. The common shape is prose dropped with the appendix kept
+    (shipping 0084/0141, cart 0079, orders 0087/0191, feed 0052/0088). There the frame still says "the handoff
+    below is an ungrounded account" and labels re-derived ground truth as ungrounded.
+  - B2: the lens examples were lifted from battery cells, including the `ruby_eu` control (#20; this contaminates
+    the replay). The final rule classes naming a file as PLAN.
+  - B3: the retry fires on any rejection (fidelity, scope, empty) but tells the writer it "contained a next step".
+  - B4: the replay is not the production path. It gives the validator no evidence, re-implements the pipeline, and
+    runs at temperature 0, so N=3 is one sample.
+  - Also, only 1 of the 4 retry tests fails before the fix.
+  - All findings went back to Coder `c24505f1`, with the reviewer's replay acceptance: real path; per-case lens,
+    retry and shipped text; untainted `ruby_eu` + synthetic controls; a Bonsai-2 arm.
   - Hand-label the rejected candidates, using the p27 `ruby_eu` plan-bearing reply as the must-reject control.
   - Prove the upstream cause (lens design, evidence framing, reasoning budget, or writer prompt), and decide the
     rejection behaviour so it is not whole-memory loss.
