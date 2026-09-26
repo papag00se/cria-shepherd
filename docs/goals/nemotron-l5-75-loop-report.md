@@ -972,6 +972,16 @@ both REJECTED. The Supervisor confirmed the key findings in code. Repros are in 
       the main tree and re-implemented the probe.
   - Back to Coder `076fca0c`, which will also restore a real per-session ask bound and add a drive-level `sess_key`
     test.
+- **C43 ACCEPTED on second re-review** (`eb51614d` on `cand-c43`):
+  - R1 is closed. The append is a post-pass over the list that is actually sent; the repro3 no-signal and
+    transport cases are now silent.
+  - The post-pass was run over all 3,759 captured inbound bodies with a recording probe: 885 firings, 0 mistargets.
+  - R2 is closed. `live_replay.py` calls the real probe from the candidate tree. The offline stub gives
+    0126/0166 → `Quantize`, 0202/0219 → none, 0214 → not asked. Variant B differs in exactly one message.
+  - A real per-session ask bound is in place, and a drive-level `sess_key` test exists. Full suite: 5338 passed.
+  - **Still required before it goes live:** the real-model replay (`~/.cria/review-scratch/c43/live_replay.py`)
+    after the row ends. C43 is a new assist.
+- `cand-p29-int` re-merged main + `cand-c42` + `cand-c43` as `9c67f497`; its full suite is running.
 
 ### Candidate C37 (row p27 cross-cell class) — harness compaction is never recognized, so its hardening never runs
 
