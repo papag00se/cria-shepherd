@@ -903,6 +903,17 @@ both REJECTED. The Supervisor confirmed the key findings in code. Repros are in 
     - B5: the tests fail before only by AttributeError, and none goes through `_frame_for_item`.
   - The real-model replay spec is recorded for after the row.
 - Repairs are with two Coders, each confined to its candidate worktree: C42 `b184c06d`, C43 `076fca0c`.
+- **C42 ACCEPTED on re-review** (`e6395f37` on `cand-c42`):
+  - Mechanism (a) was removed entirely. The prevalence scan covered 167 sessions and 13,681 bodies, keyed on the
+    fold's own key: 7,861 promises held and 0 broke between fold and wire. The reviewer's spot-check on
+    20260922T001020 agrees (31 held, 0 broken).
+  - `bodykeys`, `contextfloor` and `upstream` are byte-identical to the merge-base. Only the command-aware fold in
+    `dedup.py` remains.
+  - Fails before: `test_two_different_empty_searches_are_not_folded` gives `1 != 0` on `1dd90a44`. The new `_prep`
+    end-to-end same-command test fails at `240bee5e`.
+  - Full suite: 5311 passed, 5 skipped.
+  - It lands after row p28 ends.
+- **C43** is back with its Coder: its fails-before evidence is still an AttributeError, not a behavioural failure.
 
 ### Candidate C37 (row p27 cross-cell class) — harness compaction is never recognized, so its hardening never runs
 
