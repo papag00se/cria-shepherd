@@ -917,6 +917,22 @@ reconciled HEAD: `p22-feed-rerun-9ded52bc.service` (user unit, not collected), s
   - Before C41 the same judge answered `""`, which was also a rejection.
   - So C37, which routes every harness compaction here, has been emptying the coder's memory in every p28 cell.
     This is a direct C37/C41 interaction the p28 freeze did not measure.
+- **Correction after a full read of all 18 candidates** (Coder `c24505f1`; the Supervisor spot-checked orders 0047/0048
+  and feed 0049):
+  - **13 of 18 rejections are correct.** The writer ended an otherwise accurate retrospective with a forward "next
+    step" sentence, although line 2 of its prompt forbids that. Example, feed 0049: "The next step is to complete
+    the CSV-parsing fix, enable workers, …".
+  - **5 of 18 are false rejects:** cart 0274; orders 0048, 0110, 0130 and 0143.
+  - The consequence is unchanged: all 18 left the coder an empty memory.
+  - First candidate (`cand-c44`, 5324 passed):
+    - It sharpens the RETROSPECTIVE lens prompt, which addresses the 5 false rejects.
+    - It adds a truthful empty-handoff reframe (fails before on the 0049 shape).
+  - That is not enough. The owner is upstream (A): the writer emits forward sentences.
+  - Follow-up sent to the same Coder: find why the writer does this on the harness path (for example, the harness's
+    own "next steps" instruction in the transcript), and fix at the writer, or add one bounded re-validated writer
+    retry.
+  - The replay must measure the end-to-end outcome: how many of the 18 real requests yield a non-empty validated
+    handoff, with `ruby_eu` still blocked.
 - **Assigned:** Coder `c24505f1` in its own worktree `cand-c44`.
   - Hand-label the rejected candidates, using the p27 `ruby_eu` plan-bearing reply as the must-reject control.
   - Prove the upstream cause (lens design, evidence framing, reasoning budget, or writer prompt), and decide the
