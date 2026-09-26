@@ -898,7 +898,15 @@ reconciled HEAD: `p22-feed-rerun-9ded52bc.service` (user unit, not collected), s
   - Every compaction validation answered PLAN (C44, 4th cell).
   - No writes after 15:35; the last calls were re-reads and a rumination abort.
   - Walk: 48 segments at `~/.cria/walk-findings/2026-09-26/p28-feed/`.
-- handles-cli-node started 15:50:51.
+- **handles-cli-node** `…_1790463051` (session `20260926T155119-01a0dfea`): `milestone-stalled-45min`, 283 calls.
+  Milestones 25/continue (recorded by the completion-gate agent at 16:21, not the Supervisor; the verdict was checked
+  and is sound) and 20/stalled. Final **20%** (p25: 50%).
+  - Done: `request` removed, built-in `fetch`, a Dockerfile that builds.
+  - Regression: the 16:27 rewrite of `lookup.js` crashes on every call (`ReferenceError: args is not defined`).
+  - `test/lookup.test.js` is API-only; `test/cli.test.js` cannot run.
+  - The final `task_complete` claims a README and a test file that do not exist.
+  - Walk: `~/.cria/walk-findings/2026-09-26/p28-handles/`.
+- rust-toml-cli started 16:40:42 — the last p28 cell.
 
 ### Candidate C44 (row p28, cross-cell) — the compaction validator rejects every briefing, so the coder's memory is emptied
 
