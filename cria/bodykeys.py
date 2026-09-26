@@ -49,12 +49,6 @@ CONTEXT_REFIT_NO_CHANGE = "cria_context_refit_no_change"
 #: Kept through proxy/framing, then stripped from the message object at the wire.
 CALLER_INSTRUCTIONS = "cria_caller_instructions"
 
-#: `dedup.fold_repeated_messages` wrote this pointer message and carries the ORIGINAL content it
-#: replaced, so `Upstream._prep` can re-verify the pointer's promise (a byte-identical full copy
-#: rides later in the same body) against the FINAL wire body and restore the original if a later
-#: stage broke the promise. Consumed and stripped by `dedup.verify_pointers`, called from the wire.
-DEDUP_POINTER = "cria_dedup_pointer"
-
 #: A typed missing-file completion remediation owns this coder body.  The loop uses it only as
 #: wire-visible provenance for the suspended plan cursor; it must never reach the model server.
 COMPLETION_REMEDIATION = "cria_completion_remediation"
@@ -72,4 +66,4 @@ RUMINATION = "cria_rumination"
 #: Every key above. The wire strips this set wholesale, so adding a key here is all it takes to keep
 #: it off the API — the thing five scattered literals could not guarantee.
 ALL = (MERGE_TURNS, OUTPUT_RESERVE, LOST_CALL, PINNED_TASK, CONTEXT_REFIT_NO_CHANGE,
-       CALLER_INSTRUCTIONS, COMPLETION_REMEDIATION, NOTES, RUMINATION, DEDUP_POINTER)
+       CALLER_INSTRUCTIONS, COMPLETION_REMEDIATION, NOTES, RUMINATION)

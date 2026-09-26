@@ -29,8 +29,6 @@ from __future__ import annotations
 
 import re
 
-from . import bodykeys
-
 # A unit shorter than this is not worth a pointer, and short strings ("HTTP 200") legitimately
 # recur in unrelated content — the floor keeps matching to blocks that cannot collide by accident.
 MIN_UNIT_CHARS = 200
@@ -172,11 +170,6 @@ def fold_repeated_messages(msgs: list[dict], note: str, *, protect: "tuple[str, 
     result's meaning is its command plus its output, so folding across two different commands is
     never correct even when a downstream rewrite makes their rendered text collide.
 
-    Every folded pointer also carries the original content it replaced, as ``bodykeys.DEDUP_POINTER``
-    \u2014 a cria-internal hint, never sent to the model. `Upstream._prep` re-checks the promise against
-    the FINAL wire body (a stage between here and the wire can still mutate or drop the kept copy)
-    and restores the original text if the promise no longer holds; the hint is stripped either way.
-
     MEASURED, over 6,614 captured coder prompts: 885 of them (13%) carried a block of 200 characters
     or more repeated VERBATIM inside a single prompt, 2.2 MB of duplicate bytes in total. The largest
     groups were cria's own refusal (352 prompts carrying the identical ⟦ctx:denied⟧ twice), the same
@@ -242,48 +235,11 @@ def fold_repeated_messages(msgs: list[dict], note: str, *, protect: "tuple[str, 
         # never rewritten), never a system message (cria's frame)."
         if (m.get("role") in ("user", "tool") and isinstance(c, str)
                 and keep.get(_key(m), i) != i):
-            out.append({**m, "content": note, bodykeys.DEDUP_POINTER: c})
+            out.append({**m, "content": note})
             folded += 1
             continue
         out.append(m)
     return (out, folded) if folded else (msgs, 0)
-
-
-def verify_pointers(msgs: list[dict], *, strip_only: bool = False) -> tuple[list[dict], int]:
-    """THE WIRE INVARIANT: every pointer :func:`fold_repeated_messages` writes promises a
-    byte-identical full copy rides LATER in the SAME body. That promise is made at fold time but the
-    body is not final until `Upstream._prep` serializes it \u2014 a stage in between (focus-trim, self-
-    compaction, a downstream content rewrite) can still mutate or drop the kept copy the pointer
-    relies on, and the pointer message itself never changes to say so.
-
-    Re-checked here, against the ACTUAL final message list, right before the wire ("a wire invariant
-    belongs at the wire"): a pointer whose promised later copy is verifiably present is left alone
-    (just stripped of the internal hint); a pointer whose promise broke is RESTORED to the original
-    content carried on it since the fold ran (`bodykeys.DEDUP_POINTER`) \u2014 fail safe, per #5: cria
-    would rather ship the duplicate bytes again than ship a pointer to nothing.
-
-    ``strip_only=True`` skips the restore (used where a caller has already proven the invariant by
-    construction, e.g. a test fixture) \u2014 the hint is always removed either way, since it must never
-    reach the model. Returns ``(msgs, n_restored)``."""
-    if not msgs:
-        return msgs, 0
-    if not any(bodykeys.DEDUP_POINTER in m for m in msgs if isinstance(m, dict)):
-        return msgs, 0
-    out = list(msgs)
-    restored = 0
-    for i, m in enumerate(out):
-        if not isinstance(m, dict) or bodykeys.DEDUP_POINTER not in m:
-            continue
-        original = m[bodykeys.DEDUP_POINTER]
-        clean = {k: v for k, v in m.items() if k != bodykeys.DEDUP_POINTER}
-        if not strip_only:
-            promised = any(isinstance(later, dict) and later.get("content") == original
-                          for later in out[i + 1:])
-            if not promised:
-                clean["content"] = original
-                restored += 1
-        out[i] = clean
-    return out, restored
 
 
 # ── Per-run noise ────────────────────────────────────────────────────────────────────────────────

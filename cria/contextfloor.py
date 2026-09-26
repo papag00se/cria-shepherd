@@ -405,13 +405,7 @@ def ensure_tool_integrity(messages: list[dict]) -> tuple[list[dict], int]:
     out, n = [], 0
     for m in messages:
         if m.get("role") == "tool" and m.get("tool_call_id") and m["tool_call_id"] not in live_calls:
-            reclassed = {"role": "user", "content": m.get("content") if m.get("content") is not None else ""}
-            # A cria-internal hint riding on the tool result (e.g. `bodykeys.DEDUP_POINTER`, the
-            # dedup fold's "restore me if the promise breaks" payload) must survive this reclass \u2014
-            # dropping it here silently disarms whatever later wire check depends on it.
-            if bodykeys.DEDUP_POINTER in m:
-                reclassed[bodykeys.DEDUP_POINTER] = m[bodykeys.DEDUP_POINTER]
-            out.append(reclassed)
+            out.append({"role": "user", "content": m.get("content") if m.get("content") is not None else ""})
             n += 1
             continue
         out.append(m)

@@ -412,52 +412,39 @@ class LoadedModelTests(unittest.TestCase):
         self.assertEqual(body["model"], "explicit-alias")  # a set alias wins; no override
 
 
-class DedupPointerWireInvariantTests(unittest.TestCase):
-    """C42: `dedup.fold_repeated_messages` promises a pointer's full copy rides later in the SAME
-    body. A stage between the fold (loop._elide_ledger_copies, mid-pipeline) and the wire can mutate
-    or drop that kept copy without the pointer knowing \u2014 `_prep`, the last point before
-    serialization, is where the promise is re-checked against the body that is ACTUALLY about to be
-    sent, and repaired if it broke (principle 5, 24)."""
+class DedupSameCommandRerunEndToEndTests(unittest.TestCase):
+    """C42 (b), driven through the real outbound path: a command re-run whose result differs only in
+    per-call noise (Chunk ID / wall time) still folds to a pointer plus one live copy, and that fold
+    survives all the way to the bytes `_prep` actually serializes \u2014 no wire-level mechanism is
+    needed to keep the promise, because `fold_repeated_messages` never runs again after `_prep` and
+    nothing between the fold and the wire in this path touches these two messages' content."""
 
-    def test_an_intact_pointer_ships_as_is_and_the_hint_is_stripped(self):
-        from cria import bodykeys
-        up = Upstream("http://x", context_window=8192)
-        original = "the real grep output" * 20
-        body = {"model": "m", "messages": [
-            {"role": "tool", "tool_call_id": "a", "content": "POINTER", bodykeys.DEDUP_POINTER: original},
-            {"role": "tool", "tool_call_id": "b", "content": original},
-        ]}
-        data, _, _ = up._prep(body, False, _Rlog())
-        sent = json.loads(data)
-        self.assertEqual(sent["messages"][0]["content"], "POINTER")
-        self.assertNotIn(bodykeys.DEDUP_POINTER, sent["messages"][0])
+    def test_same_command_rerun_folds_through_prep(self):
+        from cria import dedup, prompts
+        note = prompts.load("repeated_message_note").strip()
+        body_txt = "\n".join(f"cart.go:{i}: func F{i}() {{}}" for i in range(40))
 
-    def test_a_broken_promise_is_restored_not_shipped_as_a_lie(self):
-        """The kept copy a later stage would have mutated/dropped is simulated directly: no later
-        message matches the pointer's original content, so the pointer's own body is restored."""
-        from cria import bodykeys
-        up = Upstream("http://x", context_window=8192)
-        original = "the real grep output for type Cart" * 20
-        body = {"model": "m", "messages": [
-            {"role": "tool", "tool_call_id": "a", "content": "POINTER", bodykeys.DEDUP_POINTER: original},
-            {"role": "tool", "tool_call_id": "b", "content": "a DIFFERENT tool result entirely"},
-        ]}
-        rlog = _Rlog()
-        data, _, _ = up._prep(body, False, rlog)
-        sent = json.loads(data)
-        self.assertEqual(sent["messages"][0]["content"], original,
-                         "a false pointer must never reach the wire — restore the real content")
-        self.assertNotIn(bodykeys.DEDUP_POINTER, sent["messages"][0])
-        self.assertTrue(any(k == "context.dedup_pointer_restored" for k, _ in rlog.events))
+        def envelope(chunk, wall):
+            return (f"Chunk ID: {chunk}\nWall time: {wall} seconds\nProcess exited with code 0\n"
+                    f"Original token count: 100\nOutput:\n{body_txt}")
 
-    def test_the_hint_never_reaches_the_wire_either_way(self):
-        from cria import bodykeys
-        up = Upstream("http://x", context_window=8192)
-        body = {"model": "m", "messages": [
-            {"role": "tool", "tool_call_id": "a", "content": "POINTER", bodykeys.DEDUP_POINTER: "x" * 200},
-        ]}
-        data, _, _ = up._prep(body, False, _Rlog())
-        self.assertNotIn(bodykeys.DEDUP_POINTER.encode(), data)
+        def call(cmd, tid):
+            return {"role": "assistant", "content": "", "tool_calls": [{"id": tid, "type": "function",
+                    "function": {"name": "exec_command", "arguments": json.dumps({"cmd": cmd})}}]}
+
+        msgs = [{"role": "system", "content": "sys"}, {"role": "user", "content": "task"},
+                call("grep -n func cart.go", "t1"),
+                {"role": "tool", "tool_call_id": "t1", "content": envelope("6a780e", "0.0100")},
+                call("grep -n func cart.go", "t2"),
+                {"role": "tool", "tool_call_id": "t2", "content": envelope("ffffff", "0.0200")}]
+        folded, n = dedup.fold_repeated_messages(msgs, note)
+        self.assertEqual(n, 1)
+
+        up = Upstream("http://x", context_window=32768)
+        data, _, _ = up._prep({"model": "m", "messages": folded}, False, _Rlog())
+        sent = json.loads(data)["messages"]
+        self.assertEqual(sent[3]["content"], note)
+        self.assertEqual(sent[5]["content"], envelope("ffffff", "0.0200"))
 
 
 class ReconcileReasoningConventionTests(unittest.TestCase):
