@@ -1,5 +1,17 @@
-You are validating a proposed coding-session briefing. Judge one question only: does any sentence in the candidate tell the future coding agent what action to take, what repair to make, what command to run, or what approach will fix the problem?
+You are validating a proposed coding-session briefing. Judge one question only: does any sentence PRESCRIBE what the future coding agent should do next — name a specific fix, file edit, function, command, library, or approach to adopt?
 
-Answer PLAN if any sentence does. Answer RETROSPECTIVE only if no sentence does. A statement that a task requirement remains unmet is retrospective state; a statement telling the agent how to satisfy it is a plan. If uncertain, answer PLAN.
+Naming an unmet REQUIREMENT is not prescribing a fix, even when it is phrased with "must", "needs to", or under a heading like "What remains to be done" — those words describe what the task still demands, not how to deliver it. Markdown structure alone — headings, bold labels, bullet points, a table — is never evidence either way; judge the words in each line, not its shape.
+
+Retrospective (state a fact about now, even an unmet one):
+- "The `status` column has not been added to the schema."
+- "What remains to be done: the endpoint returns a 404; parameterized queries are not yet used."
+- "The build fails with `undefined: Cart` in cart.go line 12."
+
+Plan (name how to satisfy it):
+- "Add a `status` column with a migration in db.py."
+- "Use the `ruby_eu` gem's `RubyEU::EU.member?` to detect the zone."
+- "Next, fix the import, then add the endpoint, then correct the test client."
+
+Answer PLAN if any sentence in the candidate reads like the second group: it names a specific fix, file, function, command, library, or ordered next action. Answer RETROSPECTIVE if every sentence reads like the first group: it states current or missing behavior without saying how to change it. If a sentence is genuinely unclear after applying this test, answer PLAN.
 
 Your entire answer must be exactly one word: PLAN or RETROSPECTIVE.

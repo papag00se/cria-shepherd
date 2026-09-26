@@ -3780,6 +3780,31 @@ class CompactionReframeTests(unittest.TestCase):
         self.assertIn("ungrounded account", out[1]["content"])  # normal reframe preserves no handoff authority
 
 
+    def test_a_validator_dropped_briefing_never_claims_an_account(self):
+        # C44: `_harden_compaction_reply` sets the reply's prose to "" when
+        # `validate_compaction_briefing` rejects it, and can append no appendix facts this early in
+        # a session (real capture: orders 20260926T141925-01a0df96, prompt 0049 "Handoff account
+        # (unverified):" followed by nothing). The boundary-stripped `summary` is then blank, and the
+        # normal reframe's "the handoff below is an ungrounded account" is FALSE over nothing (#5b).
+        from cria.loop import reframe_compaction
+        msgs = [{"role": "user", "content": self._MARKER + ""}]
+        # empty summary: nothing after the boundary line at all
+        blank = [{"role": "user",
+                  "content": ("Another language model started to solve this problem and produced a "
+                              "summary of its thinking process. You also have access to the state of "
+                              "the tools that were used by that language model. Use this to build on "
+                              "the work that has already been done and avoid duplicating work. Here is "
+                              "the summary produced by the other language model, use the information "
+                              "in this summary to assist with your own analysis:\n")}]
+        out, hit = reframe_compaction(blank)
+        self.assertTrue(hit)
+        new = out[0]["content"]
+        self.assertNotIn("ungrounded account", new)              # no account is claimed to exist
+        self.assertNotIn("Handoff account (unverified):", new)
+        self.assertIn("did not survive", new)                    # names the drop instead
+        self.assertIn("None at all".lower(), new.lower())        # or an equivalent explicit "none" claim
+
+
 class FreshDiskFactsTests(unittest.TestCase):
     """The reasoned redirect now grounds on the files as they ARE on disk (groundtruth port),
     not the transcript's stale view."""

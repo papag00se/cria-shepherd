@@ -5649,9 +5649,19 @@ def reframe_compaction(messages: list[dict]) -> tuple[list[dict], bool]:
                 # "another language model…" sentence is NEVER wrapped in "this is YOUR OWN work".
                 nl = text.find("\n", text.find(_COMPACTION_MARKER))
                 summary = text[nl + 1:].lstrip("\n") if nl != -1 else ""
+            # C44: a validator rejection upstream (`validate_compaction_briefing`) can leave `summary`
+            # BLANK — the harness's whole compaction reply was discarded because the writer's prose
+            # failed a fidelity/plan lens, so nothing but re-derivable appendices survived, and even
+            # those can be empty this early in a session. The normal/empty-workspace templates both
+            # assert "the handoff below is an ungrounded account" — TRUE only when there IS a handoff.
+            # Over a blank `summary` that sentence is FALSE (#5b): captured orders session
+            # 20260926T141925-01a0df96, prompt 0049, rendered "Handoff account (unverified):" followed
+            # by nothing. Route a blank summary to its own template that names the drop instead of
+            # inventing an account to disclaim.
+            tmpl = "compaction_reframe_dropped" if not summary.strip() else template
             # Tag with a ⟦ctx:⟧ marker so classify.latest_user_text skips it — this reframe is cria
             # scaffolding, not the user's task; classifying it flips a coding session onto the reasoner.
-            reframe = prompts.render(template, summary=summary, cwd=cwd,
+            reframe = prompts.render(tmpl, summary=summary, cwd=cwd,
                                      tool_results=_paired_tool_provenance(messages) or "(none)")
             out.append({**m, "content": f"{CONTINUATION_MARKER} {reframe}"})
             reframed = True
