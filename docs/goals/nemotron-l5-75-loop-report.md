@@ -942,6 +942,17 @@ reconciled HEAD: `p22-feed-rerun-9ded52bc.service` (user unit, not collected), s
   - The replay must measure the end-to-end outcome: how many of the 18 real requests yield a non-empty validated
     handoff, with `ruby_eu` still blocked.
 - **Assigned:** Coder `c24505f1` in its own worktree `cand-c44`.
+- **C44 round 2** (`cand-c44`, 5328 passed):
+  - **Cause A:** `_compaction_body` already strips Codex's own compaction instruction. The forward sentence follows
+    the LAST thing the writer reads, `compact_closing_ask.txt`, which ends on "what you were doing last" with
+    nothing closing it. That ask now forecloses a forward clause.
+  - **Safety net for C:** `server._retry_dropped_plan_briefing` makes ONE bounded writer retry on a rejected
+    non-empty draft, only when a validator role exists. The writer re-selects from its own draft (cria edits no
+    sentence), the result is re-validated by all three lenses, and it falls back to appendix-only if still rejected.
+    New prompt `compaction_retry_retrospective.txt`.
+  - **Tests:** 4 scripted end-to-end `_harden_compaction_reply` tests, which fail before the fix.
+  - **Replay:** PART B re-runs the 18 real writer requests. Its acceptance was corrected: those 13 plan cases are the
+    target (a non-empty validated handoff), shipped handoffs are re-checked, and `ruby_eu` must never ship.
   - Hand-label the rejected candidates, using the p27 `ruby_eu` plan-bearing reply as the must-reject control.
   - Prove the upstream cause (lens design, evidence framing, reasoning budget, or writer prompt), and decide the
     rejection behaviour so it is not whole-memory loss.
