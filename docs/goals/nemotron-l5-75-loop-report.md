@@ -888,6 +888,31 @@ reconciled HEAD: `p22-feed-rerun-9ded52bc.service` (user unit, not collected), s
     scratch copy). Walk: 70 segments at `~/.cria/walk-findings/2026-09-26/p28-orders/`, wave 1 (segs 1–5) running.
 - feed-pipeline-java started 15:10:39.
 
+### Candidate C44 (row p28, cross-cell) — the compaction validator rejects every briefing, so the coder's memory is emptied
+
+- **Chain (Supervisor-verified, orders session `20260926T141925-01a0df96`):**
+  - `0047`: the compactor writes an accurate retrospective briefing (what works / what is broken / what I was doing
+    last). It contains no imperative.
+  - `0048`: the RETROSPECTIVE lens (thinking off, "If uncertain, answer PLAN") answers `PLAN`.
+  - `server._harden_compaction_reply` then sets `text = ""`, so Codex stores only the inventory+checks appendix.
+  - From `0049` on, the coder sees `⟦ctx:continuation⟧ … Handoff account (unverified):` followed by nothing.
+  - The coder re-reads files it had already read (walk seg-09/10; chunk028 L560–568). The frame's claim "the
+    handoff below" is itself false (#5b).
+- **Prevalence** (`context.compaction_validation`, after C41 went live): **18 of 18** validations in row p28 were
+  rejected with `PLAN`.
+  - Shipping: 4 harness compactions. Cart: 4 harness + 1 self. Orders: 7 harness + 1 self.
+  - The only acceptance was the C41 replay.
+  - Before C41 the same judge answered `""`, which was also a rejection.
+  - So C37, which routes every harness compaction here, has been emptying the coder's memory in every p28 cell.
+    This is a direct C37/C41 interaction the p28 freeze did not measure.
+- **Assigned:** Coder `c24505f1` in its own worktree `cand-c44`.
+  - Hand-label the rejected candidates, using the p27 `ruby_eu` plan-bearing reply as the must-reject control.
+  - Prove the upstream cause (lens design, evidence framing, reasoning budget, or writer prompt), and decide the
+    rejection behaviour so it is not whole-memory loss.
+  - Fix the empty-handoff frame.
+  - Write capture-shaped tests and a real-model replay of all 16 captured in-row validator bodies. The replay runs
+    after the row.
+
 ### C42 / C43 independent reviews (2026-09-26, during p28)
 cand-p29-int re-merged on main as `c5368315`: 5330 passed, 5 skipped. Both reviews ran in isolated worktrees and
 both REJECTED. The Supervisor confirmed the key findings in code. Repros are in `~/.cria/review-scratch/c4{2,3}/`.
