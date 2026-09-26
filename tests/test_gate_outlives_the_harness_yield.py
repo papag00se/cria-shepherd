@@ -577,9 +577,10 @@ class ProcessGroupKillSurvivalTests(unittest.TestCase):
 
     def setUp(self):
         self.tid = probegate.GatePlan(workspace="").transport_id  # a fresh, real 24-hex token
-        self.spool = f"/tmp/.cria-gate-{self.tid}.spool"
+        tmp = tempfile.gettempdir()
+        self.spool = f"{tmp}/.cria-gate-{self.tid}.spool"
         self.done = self.spool + ".done"
-        self.cmd_file = f"/tmp/.cria-gate-{self.tid}-cmd.sh"
+        self.cmd_file = f"{tmp}/.cria-gate-{self.tid}-cmd.sh"
 
     def tearDown(self):
         for p in (self.spool, self.done, self.cmd_file):
@@ -682,7 +683,8 @@ class SpoolPermissionsTests(unittest.TestCase):
         """Stat the files WHILE the probe is still running (a slow probe, a short poll wait),
         before the final-page read can race in and unlink them."""
         tid = probegate.GatePlan(workspace="").transport_id
-        spool, cmd_file = f"/tmp/.cria-gate-{tid}.spool", f"/tmp/.cria-gate-{tid}-cmd.sh"
+        tmp = tempfile.gettempdir()
+        spool, cmd_file = f"{tmp}/.cria-gate-{tid}.spool", f"{tmp}/.cria-gate-{tid}-cmd.sh"
         self.addCleanup(lambda: [os.path.exists(p) and os.unlink(p)
                                  for p in (spool, cmd_file, spool + ".done")])
         guard = probegate._gate_launch_guard(f'"{spool}"', f'"{cmd_file}"', ["sleep 2", "echo ok"])
@@ -703,7 +705,8 @@ class SpoolPermissionsTests(unittest.TestCase):
         went from green to red). Both facts must hold TOGETHER: cria's own two files stay
         owner-only, and the probe still runs under the harness's real umask, unchanged."""
         tid = probegate.GatePlan(workspace="").transport_id
-        spool, cmd_file = f"/tmp/.cria-gate-{tid}.spool", f"/tmp/.cria-gate-{tid}-cmd.sh"
+        tmp = tempfile.gettempdir()
+        spool, cmd_file = f"{tmp}/.cria-gate-{tid}.spool", f"{tmp}/.cria-gate-{tid}-cmd.sh"
         self.addCleanup(lambda: [os.path.exists(p) and os.unlink(p)
                                  for p in (spool, cmd_file, spool + ".done")])
         body = ["umask", "sleep 1", "echo ok"]
@@ -959,7 +962,7 @@ class LostFinalPageRecoveryTests(unittest.TestCase):
 
     def setUp(self):
         self.tid = probegate.GatePlan(workspace="").transport_id
-        self.spool = f"/tmp/.cria-gate-{self.tid}.spool"
+        self.spool = f"{tempfile.gettempdir()}/.cria-gate-{self.tid}.spool"
 
     def tearDown(self):
         for p in (self.spool, self.spool + ".done"):

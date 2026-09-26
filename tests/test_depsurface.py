@@ -449,7 +449,10 @@ class JvmTests(_HomeCase):
         finally:
             depsurface._javap_lines = real_javap_lines
         self.assertIsNotNone(surface)
-        self.assertLess(len(surface.read_hint.encode()), 500)
+        # Bounded independent of class count; the jar's own path (which varies with the temp root)
+        # is not what this bound is about.
+        self.assertIn(jar, surface.read_hint)
+        self.assertLess(len(surface.read_hint.replace(jar, "<jar>").encode()), 500)
         self.assertIn("jar tf", surface.read_hint)
         remaining_count = 995 - depsurface.MAX_FILES
         self.assertIn(str(remaining_count), surface.read_hint)

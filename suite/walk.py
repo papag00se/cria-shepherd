@@ -28,7 +28,7 @@ were not enough: a chunk of many short lines came to 3,318 lines, a reader cappe
 head and moved on, and 2,406 lines went unwalked without anything saying so.
 
     python3 suite/walk.py ~/.cria/calls/<session>            # whole run to stdout
-    python3 suite/walk.py <session-name> --out /tmp/lw       # chunked into /tmp/lw/chunkNN.txt
+    python3 suite/walk.py <session-name> --out ~/.cria/walk-findings/<date>/<cell>   # chunkNN.txt; never /tmp
     python3 suite/walk.py <session-name> --full-prompts      # no prefix-dedup at all
 
 There is deliberately NO flag to shorten, sample, or filter content. If a walk needs less than
