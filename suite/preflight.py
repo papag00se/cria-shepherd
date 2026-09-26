@@ -23,6 +23,11 @@ import sys
 import tempfile
 from pathlib import Path
 
+try:  # importable as suite.preflight and executable as suite/preflight.py
+    from .run import RUNS_DIR
+except ImportError:
+    from run import RUNS_DIR
+
 SUITE = Path(__file__).resolve().parent
 
 # What a live-service probe identifies as. Never urllib's default — see live_services().
@@ -61,7 +66,7 @@ def stale_suite_installs():
     """Packages a PREVIOUS run installed into the real user site-packages, still on sys.path.
 
     A run is `--yolo`: nothing stops the model running `pip install -e .` on its own workspace.
-    That drops a `.pth` naming the run's `/tmp` directory into the user's site-packages, and it
+    That drops a `.pth` naming the run's workspace into the user's site-packages, and it
     OUTLIVES the run — every later Python process on the box, including the next cell's tests and
     the verifier itself, imports the dead run's code.
 
@@ -94,6 +99,15 @@ def stale_suite_installs():
                 found.append({"pth": p, "target": f"shadows cria's own `{name}` tool name",
                               "target_exists": True})
 
+    # A run workspace lives under RUNS_DIR (durable, ~/suite-runs) — and, for runs before that move,
+    # under /tmp. A .pth pointing into either is by definition not a durable install, whoever
+    # wrote it. Matching only /tmp went blind to every current workspace once they moved.
+    run_roots = ["/tmp", os.path.realpath(str(RUNS_DIR))]
+
+    def _in_run_root(target: str) -> bool:
+        t = os.path.realpath(target)
+        return any(t == r or t.startswith(r + os.sep) for r in run_roots)
+
     for pth in sorted(glob.glob(os.path.join(user_site, "*.pth"))):
         try:
             body = open(pth, errors="replace").read()
@@ -101,9 +115,7 @@ def stale_suite_installs():
             continue
         for line in body.splitlines():
             target = line.strip()
-            # A suite workspace is a mkdtemp under /tmp; anything pointing into a temp dir is by
-            # definition not a durable install, whoever wrote it.
-            if target.startswith("/tmp/"):
+            if target and not target.startswith(("#", "import ")) and _in_run_root(target):
                 found.append({"pth": pth, "target": target,
                               "target_exists": os.path.exists(target)})
     return found
