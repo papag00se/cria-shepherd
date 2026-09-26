@@ -857,6 +857,27 @@ reconciled HEAD: `p22-feed-rerun-9ded52bc.service` (user unit, not collected), s
 - Classes present in both cells: invented third-party API; diagnosed-but-not-executed; judges contradicting their own
   evidence; a semantic regression (`sub.Mul(pct)`) introduced while chasing compile errors.
 
+### Row p28 resumed (2026-09-26) — the four unrun cells at the same HEAD
+
+- The user stopped Supervisor aad2cc97 on 2026-09-25 to use the GPU for another model, then authorized taking it
+  back. A new Supervisor resumed the row.
+- Verified before launch:
+  - `main` = `origin/main` = `11e10e79`; `git diff 51e82781 11e10e79 -- cria suite/run.py suite/sampling.py` is
+    empty, so the live-behaviour code equals the row HEAD. The user's two uncommitted files are untouched.
+  - `:18084` served `defiant_fable_9b_mtp_q5ks`. `suite/run.py`'s swap stops only the units in its `SERVICES` map,
+    which does not list `llama-defiant-fable`, so the continuation script stops every active non-nemotron
+    `llama-*.service` before each cell.
+  - `~/.cria/cria.toml` after the runner's own `sampling.apply`: identical to the pre-Defiant-Fable backup except
+    `[server] host = "0.0.0.0"` (was `127.0.0.1`), the other session's listen-address change. That does not touch the
+    model wire, so it was left alone. Cadence is back to 60/30, and Codex's model/window were re-synced to nemotron
+    (49152).
+  - After the swap: `/v1/models` = `nemotron_elastic_12b_a2b_q4km`, `/props` n_ctx 49152, cria `/health` ok.
+- Unit `row-p28-51e82781-cont.service` runs `~/.cria/nemotron-l5-row-p28-51e82781-cont.sh`, appending to the same
+  log. It runs orders, feed, handles and rust with note `BATTERY2 L5 nemotron-elastic 51e82781 p28`, flocked on
+  `suite-gpu.lock`, guarded on cria/, suite/run.py and suite/sampling.py (diff and dirty state) against
+  `51e82781`. Started 14:18:48 PDT. Orders run id `orders-api-py_nemotron-elastic_codex_pon_1790457529`.
+- One heartbeat: `95bfca36` (*/10).
+
 ### Candidate C37 (row p27 cross-cell class) — harness compaction is never recognized, so its hardening never runs
 
 - **Walk evidence (p27 shipping seg-03, verified by the Supervisor):** CALL0046 (23:49:26 UTC) is Codex's compaction
