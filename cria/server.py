@@ -571,6 +571,54 @@ def _spill_listing(ws: str, view, labels: dict) -> list[str]:
     return [f"  {rel}/  ({prompts.named_list(kids)}) {note}".rstrip()]
 
 
+def _completion_text(c: dict) -> str:
+    for ch in c.get("choices") or []:
+        t = (ch.get("message") or {}).get("content")
+        if isinstance(t, str):
+            return t
+    return ""
+
+
+def _retry_dropped_plan_briefing(provider, role, rejected_text: str, body: dict, ws: str | None,
+                                 server, sk: str, rlog) -> str:
+    """ONE bounded retry (#9), fired only when the writer's own draft was rejected by
+    ``validate_compaction_briefing``. Most rejections on this path are a genuinely retrospective
+    briefing carrying ONE trailing forward sentence the writer prompt already told it not to add
+    (C44: 13 of 18 real row-p28 rejections read end-to-end) \u2014 not a briefing worth discarding
+    outright. Ask the SAME writer to redo the SAME evidence, quoting its own rejected draft and
+    naming why it failed; the MODEL re-selects what to keep (#2: cria never authors or edits a
+    sentence itself). The caller re-validates the redo through all three lenses unchanged and falls
+    back to the deterministic appendices on any further rejection \u2014 this never retries twice."""
+    pb = _proxy_body(dict(body))
+    pb = {**pb, "messages": [
+        {"role": "system",
+         "content": prompts.render("compaction_retry_retrospective", draft=rejected_text)},
+        *selfcompact.compaction_request_messages(
+            _compaction_messages(pb.get("messages", [])),
+            groundtruth.workspace_inventory(ws or "", flavor="briefing"),
+            _session_gate_plan(server, sk),
+            _last_gate_flag(server, sk)),
+    ]}
+    if not isinstance(pb.get("max_tokens"), int):
+        pb["max_tokens"] = SUMMARIZE_MAX_TOKENS
+    if role is not None:
+        replace(role, reasoning="off").apply(pb)
+    else:
+        pb.setdefault("chat_template_kwargs", {})["enable_thinking"] = False
+    rlog.emit("route.compaction_plan_retry", level="info")
+    try:
+        comp2 = massage.coerce_text_answer(
+            massage.apply(json.loads(provider.chat(pb, rlog)), None, rlog), rlog)
+        text2 = _completion_text(comp2).strip()
+        if text2 and not massage.has_tool_call_leak(text2) and not massage.is_truncated(comp2):
+            return text2
+        rlog.emit("route.compaction_plan_retry_no_briefing", level="warn")
+        return ""
+    except Exception:  # noqa: BLE001 \u2014 best-effort: a failed retry must never break the reply
+        rlog.emit("route.compaction_plan_retry_failed", level="warn")
+        return ""
+
+
 def _harden_compaction_reply(comp: dict, body: dict, provider, server, rlog, sess_key: str = "") -> dict:
     """The harness stores this reply as the session's ENTIRE remembered past — everything not in it
     is gone (self-compaction's anchors cannot protect messages the harness itself discards). Two
@@ -588,12 +636,7 @@ def _harden_compaction_reply(comp: dict, body: dict, provider, server, rlog, ses
     facts lived only in the discarded transcript. The deterministic fetch ledger (final status per
     URL + surfaced endpoint routes) is computed from the history being folded and appended to the
     summary — cria appends only facts it can re-derive from the record, never judgment."""
-    def _text_of(c: dict) -> str:
-        for ch in c.get("choices") or []:
-            t = (ch.get("message") or {}).get("content")
-            if isinstance(t, str):
-                return t
-        return ""
+    _text_of = _completion_text
 
     # Derived ONCE for both halves. The retry (1) composed its request with neither the disk
     # inventory nor the gate plan that the first pass gets, while the appendix (2) below derived the
@@ -701,12 +744,27 @@ def _harden_compaction_reply(comp: dict, body: dict, provider, server, rlog, ses
             _compaction_messages(body.get("messages", [])),
             gate_plan=_session_gate_plan(server, sk))
         role = server.cfg.routing.roles.get("compactor") or server.cfg.routing.roles.get("reasoner")
+        task = _history_root(body.get("messages", []))[0]
+        chat_fn = lambda call, log: provider.chat(call, log)  # noqa: E731
         if not validate_compaction_briefing(
-                lambda call, log: provider.chat(call, log), role, text,
-                files=writer_inventory, checks=checks, transcript_blocks=transcript,
-                task=_history_root(body.get("messages", []))[0], rlog=rlog,
+                chat_fn, role, text, files=writer_inventory, checks=checks,
+                transcript_blocks=transcript, task=task, rlog=rlog,
                 phase="harness-compaction-validate"):
-            text = ""
+            # C44: a rejection here overwhelmingly means "retrospective, plus one forward sentence"
+            # (13 of 18 real row-p28 rejections), not a briefing worth discarding \u2014 give the SAME
+            # writer ONE chance to redo it without that sentence before falling back to appendices.
+            # Gated on a configured role (#4: no fallback behind an unavailable reasoner) \u2014
+            # without one, `validate_compaction_briefing` can only fail again on the redo too, so the
+            # retry call would be spent with no possible acceptance.
+            retried = (_retry_dropped_plan_briefing(provider, role, text, body, ws, server, sk, rlog)
+                      if role is not None else "")
+            if retried and validate_compaction_briefing(
+                    chat_fn, role, retried, files=writer_inventory, checks=checks,
+                    transcript_blocks=transcript, task=task, rlog=rlog,
+                    phase="harness-compaction-retry-validate"):
+                text = retried
+            else:
+                text = ""
     # THE SAME REPAIR THE OTHER COMPACTION PATH HAS. `_briefing_disk_truth` appends a ground-truth
     # line when a briefing DENIES a file cria can see — never deletes — and the self-compaction path
     # has called it since it was written. This one, the HARNESS handshake, never did, and it is the
