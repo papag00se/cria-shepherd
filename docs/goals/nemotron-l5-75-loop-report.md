@@ -886,7 +886,19 @@ reconciled HEAD: `p22-feed-rerun-9ded52bc.service` (user unit, not collected), s
   - **Regression, 30→45 min:** `orders/db.py` rewritten whole — `row_factory`, `path=` params and `all_orders` lost,
     `create_order` returns `conn.lastrowid`; the repo's own `tests/test_db.py` now fails (2 failed, verified on a
     scratch copy). Walk: 70 segments at `~/.cria/walk-findings/2026-09-26/p28-orders/`, wave 1 (segs 1–5) running.
-- feed-pipeline-java started 15:10:39.
+- **feed-pipeline-java** `…_1790460639` (session `20260926T151107-01a0dfc5`): `milestone-stalled-30min`, 118
+  calls; milestone 15/stalled; final **15%** (p27: 20%).
+  - Done: a real `commons-csv:1.10.0` dependency, plus an `Importer` outline (skip-reason counters, currency
+    stripping, a fixed thread pool, a compatible `Summary`).
+  - It never compiles. It uses invented commons-csv members (`csv.exceptions.CsvValidationException`,
+    `new CSVFormat()` + setters, `parseHeader`/`getHeaderCount`/`parseRecord`) and has type errors.
+    `REVIEW.md` has no file:line references.
+  - C40 FIRED (`writeproxy.dependency_surface_reanchored`, jvm commons-csv), and the invention survived: this is
+    the cart class in a second cell.
+  - Every compaction validation answered PLAN (C44, 4th cell).
+  - No writes after 15:35; the last calls were re-reads and a rumination abort.
+  - Walk: 48 segments at `~/.cria/walk-findings/2026-09-26/p28-feed/`.
+- handles-cli-node started 15:50:51.
 
 ### Candidate C44 (row p28, cross-cell) — the compaction validator rejects every briefing, so the coder's memory is emptied
 
