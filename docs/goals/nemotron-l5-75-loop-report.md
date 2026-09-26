@@ -878,6 +878,32 @@ reconciled HEAD: `p22-feed-rerun-9ded52bc.service` (user unit, not collected), s
   `51e82781`. Started 14:18:48 PDT. Orders run id `orders-api-py_nemotron-elastic_codex_pon_1790457529`.
 - One heartbeat: `95bfca36` (*/10).
 
+### C42 / C43 independent reviews (2026-09-26, during p28)
+cand-p29-int re-merged on main as `c5368315`: 5330 passed, 5 skipped. Both reviews ran in isolated worktrees and
+both REJECTED. The Supervisor confirmed the key findings in code. Repros are in `~/.cria/review-scratch/c4{2,3}/`.
+
+- **C42 (`240bee5e`):**
+  - The command-aware fold (mechanism b) is accepted.
+  - The wire verify/restore (mechanism a) is rejected:
+    - It compares raw bytes while the fold keys on `volatile_key`, so about 40% of correct noise-only folds are
+      undone.
+    - It restores after `contextfloor.fit`, so the body can exceed the window and the refit raises
+      `ContextRefitNoChange`.
+    - It restores after `merge_for_alternation`, which deletes another message's text.
+    - Its cited incident does not hold: in 0105 msg 59 the promised copy exists at msg 65, and 0 of 43 pointers in
+      that session are broken.
+  - Repair: measure (a)'s prevalence, and drop (a) unless real incidents are found.
+- **C43 (`fce1194b`):**
+  - The structural trigger is accepted.
+  - Rejected for false facts:
+    - B1: it asserts absence over PARTIAL surfaces, which say themselves not to assume a member is fake.
+    - B2: the claimed name is never checked to occur in the findings (`NONE.` would render as a refuted member).
+    - B3: the pointer claims an anchor is "earlier" when the body does not carry it (0214/0217/0218).
+    - B4: the output is not byte-stable across renders with several dependencies.
+    - B5: the tests fail before only by AttributeError, and none goes through `_frame_for_item`.
+  - The real-model replay spec is recorded for after the row.
+- Repairs are with two Coders, each confined to its candidate worktree: C42 `b184c06d`, C43 `076fca0c`.
+
 ### Candidate C37 (row p27 cross-cell class) — harness compaction is never recognized, so its hardening never runs
 
 - **Walk evidence (p27 shipping seg-03, verified by the Supervisor):** CALL0046 (23:49:26 UTC) is Codex's compaction
