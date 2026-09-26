@@ -877,6 +877,16 @@ reconciled HEAD: `p22-feed-rerun-9ded52bc.service` (user unit, not collected), s
   `suite-gpu.lock`, guarded on cria/, suite/run.py and suite/sampling.py (diff and dirty state) against
   `51e82781`. Started 14:18:48 PDT. Orders run id `orders-api-py_nemotron-elastic_codex_pon_1790457529`.
 - One heartbeat: `95bfca36` (*/10).
+- **orders-api-py** `…_1790457529` (session `20260926T141925-01a0df96`): `milestone-stalled-45min`, 202 calls;
+  milestones 35/continue, 25/stalled; final **25%** (p27: 35%).
+  - Done: parameterized `get_order` (the seed's only string-formatted lookup); `status` column + in-place migration
+    (after an invalid `PRAGMA index_info(orders, 'idx_customer')` crashed `init`, `CREATE INDEX IF NOT EXISTS`).
+  - Broken: the customer route totals `row[3]*row[4]` over a 4-column SELECT; `tests/test_integration.py` was written
+    early and never runnable (`conn.read()` without `getresponse()`, `http.server` not imported).
+  - **Regression, 30→45 min:** `orders/db.py` rewritten whole — `row_factory`, `path=` params and `all_orders` lost,
+    `create_order` returns `conn.lastrowid`; the repo's own `tests/test_db.py` now fails (2 failed, verified on a
+    scratch copy). Walk: 70 segments at `~/.cria/walk-findings/2026-09-26/p28-orders/`, wave 1 (segs 1–5) running.
+- feed-pipeline-java started 15:10:39.
 
 ### C42 / C43 independent reviews (2026-09-26, during p28)
 cand-p29-int re-merged on main as `c5368315`: 5330 passed, 5 skipped. Both reviews ran in isolated worktrees and
