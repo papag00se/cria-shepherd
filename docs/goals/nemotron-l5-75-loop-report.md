@@ -949,6 +949,17 @@ both REJECTED. The Supervisor confirmed the key findings in code. Repros are in 
   - Full suite: 5311 passed, 5 skipped.
   - It lands after row p28 ends.
 - **C43** is back with its Coder: its fails-before evidence is still an AttributeError, not a behavioural failure.
+- **C43 re-review (`03c5afec`):**
+  - B1, B2, B4 and B5 are closed.
+  - The fails-before is now real: 14 tests fail against the rejected `fce1194b`, and 15 on base.
+  - Not accepted, on two blockers:
+    - R1: anchor presence and position are decided on `clean_gate_results`' INPUT list, which drops no-signal gate
+      results and later transport pages. So "anchored earlier" can still point at an anchor the sent body lacks.
+      547 of 3,530 inbound bodies have that newest-message shape.
+    - R2: `live_replay.py`'s coder A/B compared identical bodies, so the probe was never invoked. It defaulted to
+      the main tree and re-implemented the probe.
+  - Back to Coder `076fca0c`, which will also restore a real per-session ask bound and add a drive-level `sess_key`
+    test.
 
 ### Candidate C37 (row p27 cross-cell class) — harness compaction is never recognized, so its hardening never runs
 
