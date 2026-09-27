@@ -971,6 +971,20 @@ reconciled HEAD: `p22-feed-rerun-9ded52bc.service` (user unit, not collected), s
       way.
   - **C42 LANDED** (`a83aeb32`, merge of `cand-c42` `e6395f37`): full suite on main 5317 passed, 5 skipped; pushed;
     `cria.service` restarted; `/health` ok. The row p28 results records were committed as `bd57c685`.
+  - **C44a** (`81ec69dc` on `cand-c44`, 5324 passed):
+    - The lens, closing-ask and retry changes were reverted to the pre-C44 bytes.
+    - It keeps the `⟦prose-dropped⟧` marker + unconditional strip, the truthful frames and the render-order fix.
+    - Re-review by `9eaadebe`.
+  - **C45 selected** (the proposal is at `~/.cria/review-scratch/c45/proposal.md`):
+    - Findings: the task root survives compaction (Codex keeps user turns; the floor pins the task). The SCOPE
+      lens rejected 13 of 13 in the live replay.
+    - Chosen: a compact, deterministic **action ledger** derived from the messages, one line per real coder call
+      with its target and observable outcome, no bodies. It rides the harness-compaction appendix.
+    - The proposal's verbatim `_work_log` was rejected: it would re-inflate the compacted history.
+    - A live A/B replay is required on the real post-compaction coder bodies (N=5): re-read / redo / progress
+      rates.
+    - (c2) is a note on whether each fronted harness preserves the task root, with no gate change yet.
+    - Coder `c24505f1` on the new `cand-c45`, based on main with C42.
   - Process note: the Supervisor's C43 diagnostic call ran while the C44 replay was active. The server has one slot
     (`total_slots` 1), so requests queued rather than interleaved, and both runs are temperature 0.
 
