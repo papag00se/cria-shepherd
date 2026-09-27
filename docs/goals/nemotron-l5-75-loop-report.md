@@ -1030,6 +1030,18 @@ reconciled HEAD: `p22-feed-rerun-9ded52bc.service` (user unit, not collected), s
   flocked on `suite-gpu.lock`, guarded on cria/, suite/run.py and suite/sampling.py. Started 19:13:48.
 - One heartbeat: `43be95f3` (*/10).
 - C47 investigation launched (Coder `95f646ca`; read-only, proposal only, no GPU).
+- **C47 selected and implemented** (Option A, redesigned by the Supervisor to be language-agnostic; `cand-c47`
+  `88aee43c`, rebased on `72572042`; 5349 passed):
+  - After a write to a file whose previous bytes cria holds, the deterministic candidate set is the identifier tokens
+    present in the old bytes, absent from the new bytes, and present in another file cria holds.
+  - One closed reasoner question picks from that set, and each name it returns is re-verified against the set.
+  - A single fact line reaches the coder. Otherwise, silence.
+  - Offline over the p28 writes, with no model: it fires on 2 of 5 true breaks (orders 0140, and 0164 exactly:
+    `all_orders`). The control write 0121 stays silent. 3 of 5 are missed by design (a declaration dropped while
+    still referenced; same-file dependents).
+  - It overlaps the existing `passing_test_regression` (a test-tally drop between periodic gates), which must be
+    assessed.
+  - Independent review by `69a00e93`. The live replay (`~/.cria/review-scratch/c47/live_replay.py`) runs after p29.
   - Process note: the Supervisor's C43 diagnostic call ran while the C44 replay was active. The server has one slot
     (`total_slots` 1), so requests queued rather than interleaved, and both runs are temperature 0.
 
