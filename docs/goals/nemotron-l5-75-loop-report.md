@@ -965,6 +965,16 @@ reconciled HEAD: `p22-feed-rerun-9ded52bc.service` (user unit, not collected), s
   - Also, only 1 of the 4 retry tests fails before the fix.
   - All findings went back to Coder `c24505f1`, with the reviewer's replay acceptance: real path; per-case lens,
     retry and shipped text; untainted `ruby_eu` + synthetic controls; a Bonsai-2 arm.
+- **C44 re-review of `1b7c2f1e`:**
+  - B2 and B3 are accepted. The `prompts.render` reorder is byte-identical across all 246 prompts (1,362 renders).
+  - B1 is fixed for Codex at level ≥3 only.
+  - Not accepted on two blockers:
+    - R1: the new dropped-prose marker `⟦cria:prose-dropped⟧` reaches the model at level <3 (`<<<LOCAL_COMPACT>>>`
+      path) and when a harness stores the reply as an assistant message (#17). It must be stripped unconditionally
+      and at the wire.
+    - R2: replay flaws. The controls count any shipped text as a leak; Part B re-implements the harden decision;
+      the retry evidence is not compaction-time; Part C is not a real Bonsai-2 arm under Nemotron.
+  - Back to Coder `c24505f1`.
   - Hand-label the rejected candidates, using the p27 `ruby_eu` plan-bearing reply as the must-reject control.
   - Prove the upstream cause (lens design, evidence framing, reasoning budget, or writer prompt), and decide the
     rejection behaviour so it is not whole-memory loss.
