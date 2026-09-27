@@ -50,15 +50,26 @@ def render(name: str, **tokens: object) -> str:
 
     So a `{{FOO}}` the caller did not fill is looked up as the prompt file `foo`, and left exactly as
     it was when there is no such file (an unfilled token still fails `no placeholder reaches the
-    model`, which is the guard that caught this)."""
-    out = fill(load(name), **tokens)
-    for tok in set(re.findall(r"\{\{([A-Z][A-Z0-9_]*)\}\}", out)):
+    model`, which is the guard that caught this).
+
+    FRAGMENT INCLUDES EXPAND BEFORE ANY CALLER VALUE IS FILLED IN. This used to run the include scan
+    over the ALREADY-FILLED text, so a caller-supplied value containing its own literal `{{...}}`
+    text (a model's own draft is exactly that: untrusted, arbitrary prose cria did not write) could
+    introduce a NEW token that the same pass then "resolved" as a fragment include \u2014 turning a
+    quoted draft into a vector for pulling an unrelated prompt file into the model's turn. Scanning
+    the TEMPLATE first, before any value is substituted, means a caller's value is never re-scanned
+    for token-shaped text; it is inserted last, by `fill`, as inert text."""
+    template = load(name)
+    filled_keys = {k.lower() for k in tokens}
+    for tok in set(re.findall(r"\{\{([A-Z][A-Z0-9_]*)\}\}", template)):
+        if tok.lower() in filled_keys:
+            continue   # an explicit caller value wins over a same-named fragment file
         try:
             frag = load(tok.lower()).strip()
         except (FileNotFoundError, OSError):
             continue
-        out = out.replace("{{" + tok + "}}", frag)
-    return out
+        template = template.replace("{{" + tok + "}}", frag)
+    return fill(template, **tokens)
 
 
 def load_map(name: str) -> dict[str, str]:

@@ -5570,6 +5570,32 @@ def _drop_harness_frame(messages: list[dict]) -> list[dict]:
 _COMPACTION_MARKER = "Another language model started to solve this problem"
 _COMPACTION_BOUNDARY = "assist with your own analysis:"
 
+# C44 B1 (review 9eaadebe): `server._harden_compaction_reply` prepends this to the compaction REPLY
+# whenever no prose survived to ship (a validator rejection, or an empty/garbled writer after its
+# own empty-briefing retry) but the deterministic appendices (fetch
+# facts, workspace inventory, latest checks) were non-empty and so `summary` below is NOT blank.
+# Without it `reframe_compaction` could not tell "a real model account, plus appendices" from "NO
+# account, appendices only" and used the same "the handoff below is an ungrounded account" framing
+# for both — false over pure re-derived ground truth (#5b; shipping 0084/0141, cart 0079, orders
+# 0087/0191, feed 0052/0088 all shipped this way).
+#
+# C44 R1 (review 9eaadebe, second pass): `reframe_compaction` is the ONE place that INTERPRETS this
+# marker, but it only runs at CONTEXT_FIXES and above, for a `user`-role message carrying a
+# recognized Codex-preamble compaction turn — a lower engagement level, or a harness that stores the
+# reply verbatim under a different role with no Codex preamble at all (C37's OWN harness-agnostic
+# recognizer admits that shape on the way OUT), left the marker itself sitting in what the model
+# reads. `indicators.strip_prose_dropped_marker` is the unconditional net for every shape
+# `reframe_compaction` does not reach, called from `_strip_and_reframe_inbound` at EVERY level and
+# from `Upstream._prep` at the wire (#24) — either alone stops it from crossing; both together mean
+# no single missed call site can. Defined in `indicators` (a leaf module both `loop` and `upstream`
+# can import without a cycle — `loop` already imports `upstream`) so both wire it without one
+# importing the other; re-exported here so an existing `loop._PROSE_DROPPED_MARKER` /
+# `loop.strip_prose_dropped_marker` reference keeps working unchanged. The spelling itself carries
+# no literal "cria" (#17): if some THIRD path is ever missed too, what leaks is an odd bracketed
+# token, not the name.
+_PROSE_DROPPED_MARKER = indicators.PROSE_DROPPED_MARKER
+strip_prose_dropped_marker = indicators.strip_prose_dropped_marker
+
 
 def _workspace_is_empty(cwd: str) -> bool:
     """True when the advertised workspace does not exist or is empty. The continuation reframe's
@@ -5649,9 +5675,25 @@ def reframe_compaction(messages: list[dict]) -> tuple[list[dict], bool]:
                 # "another language model…" sentence is NEVER wrapped in "this is YOUR OWN work".
                 nl = text.find("\n", text.find(_COMPACTION_MARKER))
                 summary = text[nl + 1:].lstrip("\n") if nl != -1 else ""
+            # C44 B1: `summary` reads non-blank whenever the deterministic appendices (fetch facts,
+            # workspace inventory, checks) survived even though NO model prose did — the common
+            # shape (13 of 18 real row-p28 rejections), not the rarer fully-blank one. Detect that
+            # via the marker `_harden_compaction_reply` prepends in exactly that case, strip it before
+            # the model ever sees it (#17), and route to the appendix-aware dropped template so the
+            # re-derived ground truth is presented as retained fact, never as "the handoff below is an
+            # ungrounded account" (#5b) — that sentence is true only when a model actually wrote one.
+            prose_dropped = _PROSE_DROPPED_MARKER in summary
+            if prose_dropped:
+                summary = summary.replace(_PROSE_DROPPED_MARKER, "", 1).lstrip("\n")
+            if prose_dropped and summary.strip():
+                tmpl = "compaction_reframe_dropped_facts"
+            elif prose_dropped or not summary.strip():
+                tmpl = "compaction_reframe_dropped"
+            else:
+                tmpl = template
             # Tag with a ⟦ctx:⟧ marker so classify.latest_user_text skips it — this reframe is cria
             # scaffolding, not the user's task; classifying it flips a coding session onto the reasoner.
-            reframe = prompts.render(template, summary=summary, cwd=cwd,
+            reframe = prompts.render(tmpl, summary=summary, cwd=cwd,
                                      tool_results=_paired_tool_provenance(messages) or "(none)")
             out.append({**m, "content": f"{CONTINUATION_MARKER} {reframe}"})
             reframed = True

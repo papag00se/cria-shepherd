@@ -299,6 +299,18 @@ class PromptLoaderTests(unittest.TestCase):
         self.assertIn('"proposed_fix": "', rendered)
         self.assertTrue(rendered.rstrip().endswith("}"), rendered[-120:])
 
+    def test_a_caller_value_naming_a_prompt_file_is_never_expanded_as_an_include(self):
+        # C44a (review 9eaadebe): `reframe_compaction` renders the MODEL-WRITTEN harness summary as a
+        # caller value. Include fragments are expanded BEFORE caller values are filled, so text the
+        # model wrote that happens to spell `{{NAME}}` for an existing prompt file stays literal \u2014
+        # it must never splice an unrelated cria prompt into what the coder reads. On the pre-C44
+        # renderer (3cde247a) the fragment below was expanded.
+        self.assertTrue(prompts.load("seeded_test_rule"))   # the named fragment really exists
+        out = prompts.render("compaction_reframe", summary="x {{SEEDED_TEST_RULE}} y", cwd="",
+                             tool_results="")
+        self.assertIn("x {{SEEDED_TEST_RULE}} y", out)
+        self.assertNotIn(prompts.load("seeded_test_rule").strip()[:60], out)
+
     def test_unknown_token_is_left_in_place(self):
         self.assertIn("{{STEP}}", prompts.render("step_framing", idx=1, total=3, completed=""))
 

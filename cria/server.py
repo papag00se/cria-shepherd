@@ -37,6 +37,7 @@ from .loop import (
     Loop,
     _briefing_disk_truth,
     _drop_harness_frame,
+    _PROSE_DROPPED_MARKER,
     LoopContext,
     LoopStore,
     _fetch_ground_truth,
@@ -45,6 +46,7 @@ from .loop import (
     completion_to_sse,
     gate_age,
     reframe_compaction,
+    strip_prose_dropped_marker,
     validate_compaction_briefing,
     session_key,
     SUMMARIZE_MAX_TOKENS,
@@ -571,6 +573,14 @@ def _spill_listing(ws: str, view, labels: dict) -> list[str]:
     return [f"  {rel}/  ({prompts.named_list(kids)}) {note}".rstrip()]
 
 
+def _completion_text(c: dict) -> str:
+    for ch in c.get("choices") or []:
+        t = (ch.get("message") or {}).get("content")
+        if isinstance(t, str):
+            return t
+    return ""
+
+
 def _harden_compaction_reply(comp: dict, body: dict, provider, server, rlog, sess_key: str = "") -> dict:
     """The harness stores this reply as the session's ENTIRE remembered past — everything not in it
     is gone (self-compaction's anchors cannot protect messages the harness itself discards). Two
@@ -588,12 +598,7 @@ def _harden_compaction_reply(comp: dict, body: dict, provider, server, rlog, ses
     facts lived only in the discarded transcript. The deterministic fetch ledger (final status per
     URL + surfaced endpoint routes) is computed from the history being folded and appended to the
     summary — cria appends only facts it can re-derive from the record, never judgment."""
-    def _text_of(c: dict) -> str:
-        for ch in c.get("choices") or []:
-            t = (ch.get("message") or {}).get("content")
-            if isinstance(t, str):
-                return t
-        return ""
+    _text_of = _completion_text
 
     # Derived ONCE for both halves. The retry (1) composed its request with neither the disk
     # inventory nor the gate plan that the first pass gets, while the appendix (2) below derived the
@@ -728,6 +733,14 @@ def _harden_compaction_reply(comp: dict, body: dict, provider, server, rlog, ses
     # otherwise a dropped summary silently survives as the untouched original content.
     if facts or text != _text_of(comp).strip():
         merged = (text + "\n\n" + facts).strip()
+        # C44 B1: `not text` here means NO prose survived any of the paths above (an empty/garbled
+        # writer even after its own empty-briefing retry, or a validator rejection) \u2014 `merged` is the deterministic appendices ALONE. Mark it so
+        # `reframe_compaction`, which sees this same content again on a LATER turn wrapped in the
+        # harness's own "another language model" preamble, presents it as retained ground truth
+        # rather than disclaiming a handoff that was never written (#5b). Stripped there before the
+        # model reads it; never sent when real prose shipped.
+        if not text and merged:
+            merged = f"{_PROSE_DROPPED_MARKER}\n{merged}"
         chs = [dict(ch) for ch in comp.get("choices") or []]
         if chs:
             chs[0] = {**chs[0], "message": {**(chs[0].get("message") or {}), "content": merged}}
@@ -1147,12 +1160,25 @@ class CriaHandler(BaseHTTPRequestHandler):
         reframed = 0
         if self.server.cfg.routing.context_fixes:
             cleaned, reframed = reframe_compaction(cleaned)
-        if stripped or reframed:
+        # C44 R1 (review 9eaadebe): UNCONDITIONAL, every level — `reframe_compaction` above is the
+        # interpreter (picks the right template) for the shapes it recognizes, gated on CONTEXT_FIXES
+        # by the same "reattribution is surgery" rule as the reframe itself; this is the blanket net
+        # for everything it does not reach (a level below CONTEXT_FIXES never calls it at all; a
+        # harness that stores the compaction reply verbatim under a different role, with no Codex
+        # preamble, is never recognized by it either). Runs on `cleaned`, AFTER the interpreter has
+        # had its chance, so it only ever removes a marker nothing already consumed.
+        rescrubbed = strip_prose_dropped_marker(cleaned)
+        marker_left = rescrubbed is not cleaned
+        if marker_left:
+            cleaned = rescrubbed
+        if stripped or reframed or marker_left:
             body["messages"] = cleaned
             if stripped:
                 rlog.emit("indicators.stripped", lines=stripped)
             if reframed:
                 rlog.emit("loop.compaction_reframed", reshape="reframe")
+            if marker_left:
+                rlog.emit("loop.prose_dropped_marker_scrubbed", level="warn")
 
     def _setup_translation(self, body: dict, sess_key: str, rlog) -> None:
         """Set up the synthetic-tool ↔ shell round-trip for this request: STATELESSLY re-present prior

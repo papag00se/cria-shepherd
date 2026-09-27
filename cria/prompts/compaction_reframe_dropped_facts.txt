@@ -1,0 +1,9 @@
+Earlier in THIS session you worked on this task, but the handoff summary from that turn did not survive to reach you. Do not infer that nothing was done or that everything is missing from its absence.
+
+What follows is NOT a model's account of that work — none could be handed to you. It is ground truth that was re-derived AT THE TIME of that dropped compaction (whichever of a workspace listing, fetched facts, or check results applied then — not necessarily all of them), the same kind of fact a retained tool result carries, not a claim to verify. Time has passed since, so treat it as it was THEN, not necessarily as it is now — verify anything decisive again before relying on it. Establish current state from it and the retained tool results below.
+
+RE-DERIVED AT THE TIME OF THAT COMPACTION (not claimed, may be stale now):
+{{SUMMARY}}
+
+Retained authoritative paired tool results (their full original output remains in their paired tool messages):
+{{TOOL_RESULTS}}

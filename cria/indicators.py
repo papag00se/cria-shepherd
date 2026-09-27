@@ -39,6 +39,64 @@ THINK_FENCE = MARKER + "💭"
 _MIN_DELTAS_FOR_RATE = 3
 
 
+# C44 (review 9eaadebe): `server._harden_compaction_reply` prepends this to a harness compaction
+# REPLY whenever no model prose survived to ship but the deterministic appendices did (a validator
+# rejection, or an empty/garbled writer even after its own empty-briefing retry) — `loop.reframe_compaction` is the ONE place that INTERPRETS it (choosing the
+# appendix-aware "retained ground truth" framing over the normal "the handoff below is an ungrounded
+# account" claim, which is false over pure re-derived facts, #5b). That interpreter only runs at
+# CONTEXT_FIXES and above, for a recognized Codex-preamble compaction turn in a `user` message — a
+# lower engagement level, or a harness that stores the reply verbatim under a different role with no
+# Codex preamble, never reaches it. `strip_prose_dropped_marker` is the unconditional net for those
+# shapes, called from `server._strip_and_reframe_inbound` (every level) and from `Upstream._prep`
+# (the wire, #24) — either alone keeps it off the wire; both together mean no single missed call
+# site can leak it. Lives here (a leaf module with no internal imports) so both `loop` (which
+# already imports `upstream`) and `upstream` can import this without a cycle. No literal "cria" in
+# the spelling (#17): if some THIRD path is ever missed too, what leaks is an odd bracketed token,
+# not the name.
+PROSE_DROPPED_MARKER = "\u27e6prose-dropped\u27e7"
+
+
+def strip_prose_dropped_marker(messages: list[dict]) -> list[dict]:
+    """Unconditional last-resort removal of `PROSE_DROPPED_MARKER` from every message's content —
+    string or list-shaped (a Responses-API text part) — regardless of harness, role, or engagement
+    level. Returns the SAME list (no copy) when nothing changed, so a caller can cheaply tell
+    whether to write the result back."""
+    if not messages:
+        return messages
+    changed = False
+    out: list[dict] = []
+    for m in messages:
+        if not isinstance(m, dict):
+            out.append(m)
+            continue
+        content = m.get("content")
+        if isinstance(content, str) and PROSE_DROPPED_MARKER in content:
+            out.append({**m, "content": _strip_prose_dropped_marker_text(content)})
+            changed = True
+        elif isinstance(content, list):
+            new_parts = []
+            part_changed = False
+            for part in content:
+                text = part.get("text") if isinstance(part, dict) else None
+                if isinstance(text, str) and PROSE_DROPPED_MARKER in text:
+                    new_parts.append({**part, "text": _strip_prose_dropped_marker_text(text)})
+                    part_changed = True
+                else:
+                    new_parts.append(part)
+            if part_changed:
+                out.append({**m, "content": new_parts})
+                changed = True
+            else:
+                out.append(m)
+        else:
+            out.append(m)
+    return out if changed else messages
+
+
+def _strip_prose_dropped_marker_text(text: str) -> str:
+    return text.replace(PROSE_DROPPED_MARKER + "\n", "").replace(PROSE_DROPPED_MARKER, "")
+
+
 @dataclass
 class Indicator:
     enabled: bool
