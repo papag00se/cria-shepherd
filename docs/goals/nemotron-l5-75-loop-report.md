@@ -952,6 +952,23 @@ reconciled HEAD: `p22-feed-rerun-9ded52bc.service` (user unit, not collected), s
       - Revert the lens rewording, the closing ask and the retry.
       - **C45** is the strategy reset on the real outcome, the coder losing its memory at every harness compaction.
         A proposal comes first; nothing is implemented before the Supervisor selects.
+  - **C43 round 4** (`5970fb93`, 5341 passed):
+    - Example-free, one-package question with a 64-token answer cap. Live: the 0202/0219 controls now answer
+      `NONE` in 3 tokens, 0214 is not asked, and PARTIAL gives no text.
+    - The target still fails live on 0126/0166. The model names `decimal.Quantize` but repeats it until
+      `finish_reason=length`, and cria correctly discards a length-cut answer. Result: silence, never a false claim.
+    - The Coder's `repeat_penalty=1.3` override is inert. Supervisor-verified in `reasoning.apply_sampling`:
+      `[backends.local] reasoning_style = "openai"` doubles as the SAMPLING dialect, and the openai dialect DROPS
+      `top_k`/`min_p`/`repeat_penalty` for every role.
+    - **C43 is parked, not accepted.** Four rounds, and the live target is still 0 of 2.
+  - **New lead C46 (config/dialect):** `reasoning_style` conflates the reasoning-knob convention with the sampling
+    dialect.
+    - C41 corrects only the reasoning knob at `_prep`. Every llama.cpp extension sampler is still dropped on the
+      local backend.
+    - Nemotron's sampling spec sets none of them, so p28 is unaffected.
+    - Bonsai-2 declared `top_k = 20` under `reasoning_style = "openai"`. If that was set during the Bonsai-2 runs,
+      its `top_k` never reached the server. Check before touching it: the closed Bonsai-2 evidence was measured that
+      way.
   - Process note: the Supervisor's C43 diagnostic call ran while the C44 replay was active. The server has one slot
     (`total_slots` 1), so requests queued rather than interleaved, and both runs are temperature 0.
 
