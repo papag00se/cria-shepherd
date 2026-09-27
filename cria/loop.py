@@ -7140,8 +7140,7 @@ def ask_closed(chat_fn, role, question: str, rlog, *, phase: str, max_tokens: in
 
 def validate_compaction_briefing(chat_fn, role, briefing: str, *, files: str, checks: str,
                                   transcript_blocks: list[str], rlog, task: str = "",
-                                  phase: str = "compaction-validate",
-                                  answers_out: dict | None = None) -> bool:
+                                  phase: str = "compaction-validate") -> bool:
     """Fail-closed, independent judgments before model-made session memory is injected.
 
     One large verdict asked a weak judge to enforce format, task scope, files, checks, uncertainty,
@@ -7150,15 +7149,6 @@ def validate_compaction_briefing(chat_fn, role, briefing: str, *, files: str, ch
     retrospection, task-scope preservation, then evidence fidelity. Every applicable lens must
     return their exact positive verdict. Callers retain verbatim history (self-compaction) or only
     re-derivable appendices (a harness-owned compaction) on any rejection or unavailable answer.
-
-    ``answers_out``, when given a dict, is filled with the SAME per-lens answers the event carries
-    (``{"retrospective": ..., "scope": ..., "fidelity": ...}``, only the lenses that actually ran) —
-    a caller that reacts DIFFERENTLY to different rejection reasons (C44 B3: a plan-dropped retry
-    only makes sense, and is only a TRUE thing to tell the writer, when the retrospective lens
-    specifically said PLAN; a fidelity or scope rejection is a different defect a "drop the next
-    step" retry cannot fix and would misdescribe) reads this instead of re-deriving the reason from
-    the boolean alone. The return type stays ``bool`` — everything that already treats this as a
-    plain accept/reject (most callers) is unaffected.
     """
     if chat_fn is None or role is None or not briefing.strip():
         if rlog is not None:
@@ -7195,8 +7185,6 @@ def validate_compaction_briefing(chat_fn, role, briefing: str, *, files: str, ch
         blocks.append(prompts.render("compaction_checks_fact", checks=checks.strip()) if checks.strip()
                       else prompts.render("compaction_no_fact", kind="LATEST CHECK FACTS"))
         accepted = judge("fidelity", prompts.load("compaction_validate"), blocks, "FAITHFUL")
-    if answers_out is not None:
-        answers_out.update(answers)
     if rlog is not None:
         rlog.emit("context.compaction_validation", reshape="validate-rollup",
                   level="info" if accepted else "warn", accepted=accepted, answers=answers)

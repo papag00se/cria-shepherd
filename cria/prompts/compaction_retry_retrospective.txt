@@ -1,8 +1,0 @@
-Your previous draft of this SAME briefing, shown below, was rejected: it contained a next step, a recommendation, an ordered plan, or a forecast of what should happen after this point. A briefing states past and current fact only — it is never a plan.
-
-REJECTED DRAFT (do not repeat any forward-looking sentence from this):
-{{DRAFT}}
-
-Rewrite the briefing from the evidence below, following every rule you were given the first time. Keep every retrospective fact your previous draft got right — what works, what is broken, what you were doing last. Drop only the sentence(s) that told the agent what to do next; do not invent a new fact to replace what you drop, and do not restore it under different wording.
-
-{{SELFCOMPACT_SUMMARY}}

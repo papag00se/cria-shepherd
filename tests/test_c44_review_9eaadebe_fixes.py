@@ -8,12 +8,11 @@ cria's own re-derived ground truth (#5b). Fixed by a model-invisible marker
 `reframe_compaction` consumes and strips before routing to an appendix-aware "retained ground truth"
 template instead.
 
-B3 — the retry fired on ANY validator rejection (fidelity UNFAITHFUL, scope NARROWS, an unreadable
-answer) but always told the writer "your draft contained a next step" and to "keep every other
-fact" — false for a fidelity rejection (#5b), and for an invented-fact draft, an instruction to keep
-the invention. Fixed by threading `answers_out` through `validate_compaction_briefing` so the caller
-can gate the retry on `answers["retrospective"] == "PLAN"` specifically — the only rejection reason
-the retry's own claim to the writer is actually true for.
+C44a (strategy reset, real-model replay): the lens rewording, the closing-ask change, and the
+plan-dropped retry (B3's own fix, and `answers_out`) were REVERTED — Part A of the real-model replay
+showed the reworded lens producing a false-accept regression (7 of 13 hand-labelled plan-bearing
+drafts wrongly accepted) with no live evidence the retry ever helped. Only the deterministic
+truthfulness fixes below this point remain; B3's tests are gone with the code they tested.
 """
 
 from __future__ import annotations
@@ -141,77 +140,6 @@ class B1AppendixOnlyTruthfulFrameTests(unittest.TestCase):
         out2, hit = loop.reframe_compaction(wrapped)
         self.assertIn("ungrounded account", out2[0]["content"])   # the normal, TRUE claim for a real account
 
-
-class _FidelityRejectingProvider:
-    """The retrospective lens accepts (the draft names no next step); the fidelity lens rejects it
-    (an invented claim contradicted by the evidence) — the shape a plan-dropped retry cannot fix and
-    must not claim to be fixing."""
-
-    def __init__(self):
-        self.calls: list[dict] = []
-
-    def chat(self, body, rlog):
-        self.calls.append(body)
-        all_text = json.dumps(body.get("messages", []))
-        sys_text = "\n".join(str(m.get("content", "")) for m in body.get("messages", [])
-                             if m.get("role") == "system")
-        if "REJECTED DRAFT" in sys_text:
-            raise AssertionError("the plan-dropped retry must never fire on a fidelity rejection")
-        if "PLAN or RETROSPECTIVE" in all_text:
-            return json.dumps({"choices": [{"message": {"content": "RETROSPECTIVE"}}]}).encode()
-        if "NARROWS or PRESERVES" in all_text:
-            return json.dumps({"choices": [{"message": {"content": "PRESERVES"}}]}).encode()
-        if "UNFAITHFUL or FAITHFUL" in all_text:
-            return json.dumps({"choices": [{"message": {"content": "UNFAITHFUL"}}]}).encode()
-        return json.dumps({"choices": [{"message": {
-            "content": "Chose the foo_gem for EU detection. I was reading lib/x.rb last."}}]}).encode()
-
-
-class B3RetryOnlyOnRetrospectiveRejectionTests(unittest.TestCase):
-    """FAILS-BEFORE (confirmed against 211169a7): the retry fired unconditionally on ANY rejection,
-    so `_FidelityRejectingProvider.chat` above raises `AssertionError` on the base — the retry DID
-    reach the writer with the (false) claim "it contained a next step" for a fidelity rejection."""
-
-    def test_a_fidelity_rejection_never_triggers_the_plan_dropped_retry(self):
-        role = Role(name="compactor", backend="local")
-
-        class _Srv:
-            class cfg:
-                class routing:
-                    roles = {"compactor": role}
-            class loop:
-                _store = type("S", (), {"get": staticmethod(lambda k: None)})()
-
-        provider = _FidelityRejectingProvider()
-        rlog = _Rlog()
-        comp = {"choices": [{"message": {"role": "assistant",
-                            "content": "Chose the foo_gem for EU detection. I was reading lib/x.rb last."}}]}
-
-        out = srv._harden_compaction_reply(comp, {"messages": _base_messages()}, provider,
-                                           _Srv, rlog)
-        shipped = out["choices"][0]["message"]["content"]
-        self.assertNotIn("route.compaction_plan_retry", rlog.kinds())
-        self.assertNotIn("Chose the foo_gem", shipped)   # the fidelity-rejected draft did not ship
-        answers = next((f["answers"] for k, f in rlog.events if k == "context.compaction_validation"), {})
-        self.assertEqual(answers.get("fidelity"), "UNFAITHFUL")
-
-    def test_validate_compaction_briefing_exposes_which_lens_rejected(self):
-        def chat(body, rlog):
-            all_text = json.dumps(body.get("messages", []))
-            if "PLAN or RETROSPECTIVE" in all_text:
-                return json.dumps({"choices": [{"message": {"content": "RETROSPECTIVE"}}]}).encode()
-            if "NARROWS or PRESERVES" in all_text:
-                return json.dumps({"choices": [{"message": {"content": "PRESERVES"}}]}).encode()
-            return json.dumps({"choices": [{"message": {"content": "UNFAITHFUL"}}]}).encode()
-
-        role = Role(name="reasoner", backend="local")
-        answers: dict = {}
-        accepted = loop.validate_compaction_briefing(
-            chat, role, "a candidate briefing", files="", checks="", transcript_blocks=[],
-            rlog=_Rlog(), answers_out=answers)
-        self.assertFalse(accepted)
-        self.assertEqual(answers["retrospective"], "RETROSPECTIVE")
-        self.assertEqual(answers["fidelity"], "UNFAITHFUL")
 
 
 if __name__ == "__main__":

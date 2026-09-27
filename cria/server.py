@@ -581,46 +581,6 @@ def _completion_text(c: dict) -> str:
     return ""
 
 
-def _retry_dropped_plan_briefing(provider, role, rejected_text: str, body: dict, ws: str | None,
-                                 server, sk: str, rlog) -> str:
-    """ONE bounded retry (#9), fired only when the writer's own draft was rejected by
-    ``validate_compaction_briefing``. Most rejections on this path are a genuinely retrospective
-    briefing carrying ONE trailing forward sentence the writer prompt already told it not to add
-    (C44: 13 of 18 real row-p28 rejections read end-to-end) \u2014 not a briefing worth discarding
-    outright. Ask the SAME writer to redo the SAME evidence, quoting its own rejected draft and
-    naming why it failed; the MODEL re-selects what to keep (#2: cria never authors or edits a
-    sentence itself). The caller re-validates the redo through all three lenses unchanged and falls
-    back to the deterministic appendices on any further rejection \u2014 this never retries twice."""
-    pb = _proxy_body(dict(body))
-    pb = {**pb, "messages": [
-        {"role": "system",
-         "content": prompts.render("compaction_retry_retrospective", draft=rejected_text)},
-        *selfcompact.compaction_request_messages(
-            _compaction_messages(pb.get("messages", [])),
-            groundtruth.workspace_inventory(ws or "", flavor="briefing"),
-            _session_gate_plan(server, sk),
-            _last_gate_flag(server, sk)),
-    ]}
-    if not isinstance(pb.get("max_tokens"), int):
-        pb["max_tokens"] = SUMMARIZE_MAX_TOKENS
-    if role is not None:
-        replace(role, reasoning="off").apply(pb)
-    else:
-        pb.setdefault("chat_template_kwargs", {})["enable_thinking"] = False
-    rlog.emit("route.compaction_plan_retry", level="info")
-    try:
-        comp2 = massage.coerce_text_answer(
-            massage.apply(json.loads(provider.chat(pb, rlog)), None, rlog), rlog)
-        text2 = _completion_text(comp2).strip()
-        if text2 and not massage.has_tool_call_leak(text2) and not massage.is_truncated(comp2):
-            return text2
-        rlog.emit("route.compaction_plan_retry_no_briefing", level="warn")
-        return ""
-    except Exception:  # noqa: BLE001 \u2014 best-effort: a failed retry must never break the reply
-        rlog.emit("route.compaction_plan_retry_failed", level="warn")
-        return ""
-
-
 def _harden_compaction_reply(comp: dict, body: dict, provider, server, rlog, sess_key: str = "") -> dict:
     """The harness stores this reply as the session's ENTIRE remembered past — everything not in it
     is gone (self-compaction's anchors cannot protect messages the harness itself discards). Two
@@ -746,36 +706,12 @@ def _harden_compaction_reply(comp: dict, body: dict, provider, server, rlog, ses
             _compaction_messages(body.get("messages", [])),
             gate_plan=_session_gate_plan(server, sk))
         role = server.cfg.routing.roles.get("compactor") or server.cfg.routing.roles.get("reasoner")
-        task = _history_root(body.get("messages", []))[0]
-        chat_fn = lambda call, log: provider.chat(call, log)  # noqa: E731
-        answers: dict = {}
         if not validate_compaction_briefing(
-                chat_fn, role, text, files=writer_inventory, checks=checks,
-                transcript_blocks=transcript, task=task, rlog=rlog,
-                phase="harness-compaction-validate", answers_out=answers):
-            # C44 B3 (review 9eaadebe): the retry tells the writer "your draft contained a next
-            # step" and asks it to redo the SAME evidence keeping every OTHER fact \u2014 both halves
-            # are only true when the RETROSPECTIVE lens specifically said PLAN. A fidelity rejection
-            # (an invented fact, a laundered failure) or a scope rejection (the task quietly
-            # narrowed) is a DIFFERENT defect: telling that writer "you named a next step, keep
-            # everything else" is false and, for an invented fact, an instruction to keep the
-            # invention. Gated on a configured role too (#4: no fallback behind an unavailable
-            # reasoner) \u2014 without one the redo could never be validated either.
-            # Normalized (strip + upper) before the gate: `answers[lens]` is stored verbatim
-            # (`judge()` truncates to 40 chars but does not case-fold it), while the ACCEPT check
-            # itself already compares case-insensitively (`answer.strip().upper() == accepted_word`)
-            # \u2014 comparing this gate against the raw stored value would silently never retry a real
-            # PLAN rejection spelled "Plan" or "plan" by the model.
-            retrospective_verdict = (answers.get("retrospective") or "").strip().upper()
-            retried = (_retry_dropped_plan_briefing(provider, role, text, body, ws, server, sk, rlog)
-                      if role is not None and retrospective_verdict == "PLAN" else "")
-            if retried and validate_compaction_briefing(
-                    chat_fn, role, retried, files=writer_inventory, checks=checks,
-                    transcript_blocks=transcript, task=task, rlog=rlog,
-                    phase="harness-compaction-retry-validate"):
-                text = retried
-            else:
-                text = ""
+                lambda call, log: provider.chat(call, log), role, text,
+                files=writer_inventory, checks=checks, transcript_blocks=transcript,
+                task=_history_root(body.get("messages", []))[0], rlog=rlog,
+                phase="harness-compaction-validate"):
+            text = ""
     # THE SAME REPAIR THE OTHER COMPACTION PATH HAS. `_briefing_disk_truth` appends a ground-truth
     # line when a briefing DENIES a file cria can see — never deletes — and the self-compaction path
     # has called it since it was written. This one, the HARNESS handshake, never did, and it is the

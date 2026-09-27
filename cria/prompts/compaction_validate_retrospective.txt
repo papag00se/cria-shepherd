@@ -1,17 +1,5 @@
-You are validating a proposed coding-session briefing. Judge one question only: does any sentence PRESCRIBE what the future coding agent should do next — name a specific fix, edit, command, library, tool, or approach to adopt, or an ordered next step?
+You are validating a proposed coding-session briefing. Judge one question only: does any sentence in the candidate tell the future coding agent what action to take, what repair to make, what command to run, or what approach will fix the problem?
 
-Naming an unmet REQUIREMENT is not prescribing a fix, even when it is phrased with "must", "needs to", or under a heading like "What remains to be done" — those words describe what the task still demands, not how to deliver it. Naming WHERE the current or broken state lives — a file, function, module, or line — is also retrospective, not a plan, even when that same sentence goes on to state what is broken there; a briefing that could not name its own evidence would be useless. Markdown structure alone — headings, bold labels, bullet points, a table — is never evidence either way; judge the words in each line, not its shape.
-
-Retrospective (state a fact about now, even an unmet one):
-- "The retry counter has not been reset since the last failure, in retry.py."
-- "What remains to be done: the export step still writes duplicate rows."
-- "The process crashes with a null pointer in the scheduler module, near where jobs are dequeued."
-
-Plan (name how to satisfy it):
-- "Reset the retry counter inside the failure handler."
-- "Use the vendor's dedup helper to drop repeated rows before writing."
-- "Next, patch the null check, then re-run the scheduler, then verify the queue drains."
-
-Answer PLAN if any sentence in the candidate reads like the second group: it prescribes a fix, edit, command, library, tool, or approach to adopt, or an ordered next step. Answer RETROSPECTIVE if every sentence reads like the first group: it states current or missing behavior, including where it lives, without prescribing a change. If a sentence is genuinely unclear after applying this test, answer PLAN.
+Answer PLAN if any sentence does. Answer RETROSPECTIVE only if no sentence does. A statement that a task requirement remains unmet is retrospective state; a statement telling the agent how to satisfy it is a plan. If uncertain, answer PLAN.
 
 Your entire answer must be exactly one word: PLAN or RETROSPECTIVE.
