@@ -1,6 +1,6 @@
 """C28: the completion gate must observe a check that outlives the harness exec yield.
 
-Capture-proven (`docs/goals/nemotron-l5-75-loop-report.md`, "Candidate C28"): P18 Orders, session
+Capture-proven (Candidate C28; the capture was purged 2026-09-27 with its model): P18 Orders, session
 `20260924T023334-01a0d2c3-618e-7c41-b2b8-d99642fe1fdc`, raw inbound
 `inbound-ce7f6c3d-responses.json`. The coder's integration test hung forever; cria's composed gate
 `exec_command` asked for `yield_time_ms: 300000` and Codex answered (call `call_4b4fca253d184e38`,

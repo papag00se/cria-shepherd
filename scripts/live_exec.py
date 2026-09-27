@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the Ada Handles prompt live against Fabliq through cria with REAL execution in a throwaway
+"""Run the Ada Handles prompt live against the served model through cria with REAL execution in a throwaway
 git workspace — the 'run the prompt live' the goal loop needs (live_model.py fakes results; this
 one runs them). Each cria-lowered `shell` command is executed for real in the workspace, its real
 output fed back, ~N turns. cria's command_safety + dirguard (workspace bounded to the throwaway
@@ -80,7 +80,10 @@ def main() -> int:
     ap.add_argument("--turns", type=int, default=40)
     ap.add_argument("--timeout", type=float, default=600)
     args = ap.parse_args()
-    model = detect_model(args.endpoint) or "fabliq_8b_reasoning_q6"
+    model = detect_model(args.endpoint)
+    if not model:
+        print(f"could not detect a model at {args.endpoint} (is the server up?)", file=sys.stderr)
+        return 2
 
     ws = tempfile.mkdtemp(prefix="cria-ada-")
     subprocess.run(["git", "init", "-q"], cwd=ws)
@@ -88,7 +91,7 @@ def main() -> int:
 
     port = free_port()
     logdir = Path(tempfile.mkdtemp(prefix="cria-ada-log-"))
-    # Use the REAL fabliq config (~/.cria/cria.toml) so the run matches production exactly; only
+    # Use the REAL config (~/.cria/cria.toml) so the run matches production exactly; only
     # override the port (avoid the live :18085) and route logs/captures to our own dir.
     cfg = Config.load()
     _cap = os.environ.get("LIVE_EXEC_CAP")  # set to capture every per-call body for debugging

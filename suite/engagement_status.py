@@ -41,7 +41,7 @@ LEVEL_NAMES = {
     4: "DONE_REFUSALS_ENABLED",
     5: "ASSISTS_ENABLED",
 }
-# 2026-09-27: nemotron-elastic, qwen35 and qwen38 left the battery (operator decision); K2-Horizon-7B,
+# 2026-09-27: qwen35 and qwen38 left the battery (operator decision); K2-Horizon-7B,
 # phi-4, Ling-3.0-tiny and Qwen3.8-9B-Distill joined, and defiant-fable entered. The report renders
 # only this roster (plus gemma4's frozen row, the only gemma history); retired models are NAMED in
 # the report and keep every row in results.jsonl / historical_ladder.json.
@@ -52,9 +52,10 @@ MODELS = ("gemma4-qat", "bonsai2", "defiant-fable", "ornith1.5",
           "k2_horizon_7b", "phi4", "ling3-tiny", "qwen3.8_9b_distill")
 # CURRENT matrix only — a model here must be swappable and have canonical sampling.
 # gemma4 (stock Q4_K_M) and ternary-bonsai (Bonsai 1) left on 2026-09-18 when their weights
-# and units were deleted; like nemotron-elastic before them they stay VISIBLE in the reports
-# through suite/historical_ladder.json, which is where their scores live. Retiring a model
-# means dropping it from here, never deleting its history.
+# and units were deleted; they stay VISIBLE in the reports through suite/historical_ladder.json,
+# which is where their scores live. Retiring a model means dropping it from here, never deleting
+# its history — the ONE exception is an operator-ordered purge of a failed trial (2026-09-27, see
+# docs/model-history.md), where only a mean/best line survives.
 TASKS = ("shipping-rates-rb", "cart-billing-go", "orders-api-py",
          "feed-pipeline-java", "handles-cli-node", "rust-toml-cli")
 TOTAL = len(LEVELS) * len(MODELS) * len(TASKS)

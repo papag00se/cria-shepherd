@@ -1,7 +1,6 @@
 """Ground truth for a RESOLVED dependency's REAL exported surface — read, never guessed.
 
-WHY THIS EXISTS. Candidate C40 (walk 2026-09-24,
-``~/.cria/walk-findings/2026-09-24/invented-api-cross-cell.md``). Four cells of one row
+WHY THIS EXISTS. Candidate C40 (walk 2026-09-24). Four cells of one row
 (cart/Go, shipping/Ruby, feed/JVM, rust/toml) independently invented third-party API members while
 the real exported surface sat unread on this exact box the whole time.
 

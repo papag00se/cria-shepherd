@@ -4,7 +4,7 @@ never ran on it — cria classified it as an ordinary coding task and proxied it
 
 Evidence: p27 shipping capture CALL0046 (Codex's default compaction prompt, `tools: []`) was
 classified `engagement=task` and its reply invented a gem/API that the continuation carried forward
-as fact (see docs/goals/nemotron-l5-75-loop-report.md, Candidate C37).
+as fact (Candidate C37). The captured body is kept as tests/fixtures/codex_unmarked_compaction_call0046.json.
 
 `server._recognize_compaction` is harness-agnostic recognition: the deterministic trigger (empty/
 absent tool menu, LEVEL 3 enabled, a prior assistant/tool turn already in the transcript) narrows the
@@ -201,17 +201,13 @@ class FailSafeDirectionTests(unittest.TestCase):
 
 
 class P27Call0046ReplayTests(unittest.TestCase):
-    """Offline replay of the real shipping capture cited in the evidence: CALL0046, Codex's default
+    """Offline replay of the real shipping capture (now a fixture) cited in the evidence: CALL0046, Codex's default
     compaction prompt, `tools` absent from the body entirely. No live model touched — the judge is a
     deterministic stand-in that says YES exactly as a working reasoner would for this turn."""
 
-    CAPTURE = Path(
-        "/home/jesse/.cria/calls/20260924T164732-01a0d5d1-326e-7fc2-b978-c5d07d2d3451/0046-proxy.json"
-    )
+    CAPTURE = Path(__file__).parent / "fixtures" / "codex_unmarked_compaction_call0046.json"
 
     def test_call0046_body_is_recognized(self):
-        if not self.CAPTURE.exists():
-            self.skipTest("capture not present on this machine")
         captured = json.loads(self.CAPTURE.read_text())
         body = captured["body"]
         self.assertNotIn("tools", body)  # confirms the deterministic trigger the evidence cites
@@ -238,9 +234,7 @@ class Call0046HardeningEndToEndTests(unittest.TestCase):
     exactly the invariant `tests/test_server.py::...ask_is_last_and_the_summarize_turn_is_not_
     evidence` already holds for the MARKED case (the g8 0187/0188 incident)."""
 
-    CAPTURE = Path(
-        "/home/jesse/.cria/calls/20260924T164732-01a0d5d1-326e-7fc2-b978-c5d07d2d3451/0046-proxy.json"
-    )
+    CAPTURE = Path(__file__).parent / "fixtures" / "codex_unmarked_compaction_call0046.json"
     # "What remains to be done" alone is a bad needle: cria's OWN briefing prompt uses that exact
     # phrase too ("...requirements only, not a next-step plan)"). Codex's ask is distinctive in its
     # HEADING and its own parenthetical, which cria's prompt does not share.
@@ -259,8 +253,6 @@ class Call0046HardeningEndToEndTests(unittest.TestCase):
             return self
 
     def _body(self) -> dict:
-        if not self.CAPTURE.exists():
-            self.skipTest("capture not present on this machine")
         return json.loads(self.CAPTURE.read_text())["body"]
 
     def test_writer_body_excludes_the_codex_ask_and_ends_on_crias_own_ask(self):

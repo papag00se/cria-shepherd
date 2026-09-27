@@ -31,7 +31,7 @@ Only when Primary + Enabling hold for all four models is the goal met.
 Same models, same task. If a model **completed in codex-local but stalls, loops, or fails in cria**, the difference is in the cria path (the Responses↔Chat translation, the plan loop, routing, config) or a setting — **not the model**. Use codex-local's behavior as the baseline: if unsure, run the same task there, compare what its routing does that cria doesn't, and close the gap. This is the fastest way to avoid re-deriving from scratch what already works — and the antidote to spinning.
 
 ## Scope — the four proven models, not the MoE ones
-qwopus, qwythos, ornith, gemma4 are the baseline that did decently in codex-local. The MoE models (e.g. mellum2) have been struggling and are **out of scope** for this goal — do not let them absorb the loop's time. The target is codex-local parity on these four.
+qwopus, qwythos, ornith, gemma4 are the baseline that did decently in codex-local. The MoE models have been struggling and are **out of scope** for this goal — do not let them absorb the loop's time. The target is codex-local parity on these four.
 
 ## The Workload (run verbatim via codex-debug exec)
 ```

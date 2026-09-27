@@ -13,7 +13,7 @@ The 2026-07-15 port-parity pass (see the audit doc) closed the gaps a live Ada-h
 - **groundtruth wired** — the reasoned redirect now reads the coder's touched files from disk (`groundtruth.file_snapshot`) instead of the stale transcript view.
 - **runtime failover + per-role endpoints** — `cria/failover.py` (classify F1–F9 / decide / walk); `upstream.chat` retries the same endpoint once on a transient timeout; a `LocalRole` may name its own `base_url` (roles need not share a host/port); `Router.route_chain` yields the ordered routes.
 - **floor synthesis** — the last-resort drop-oldest now replaces dropped turns with a protected `⟦cria:compacted⟧` note recording the files they modified, instead of deleting them.
-- **LFM2/Fabliq sentinel stripping** — `<|tool_call_start|>…<|tool_call_end|>` (whole pairs + orphans) stripped from content, so a supported family's leaked native call can't poison the plan.
+- **Native `<|tool_call_start|>` sentinel stripping** — `<|tool_call_start|>…<|tool_call_end|>` (whole pairs + orphans) stripped from content, so a supported family's leaked native call can't poison the plan.
 - **lint gate is error-class only** — unused-import/never-used advisories no longer block a step.
 - **planner web_fetch fixed** — the `_USER_AGENT` NameError that broke every gather fetch.
 - **secrets hardening** — `BRAVE_SEARCH_API_KEY` is a hardcoded constant; the env-file loader is allowlist-scoped (never loads a shared file's other secrets); config = `~/.cria/cria.toml` merged with `./cria.toml` (cwd wins), `CRIA_CONFIG` removed.

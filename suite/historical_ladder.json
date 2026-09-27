@@ -1,5 +1,5 @@
 {
-  "_comment": "FROZEN historical inference-usefulness ladder, recovered from battery-report.md @8dc5aef after a field rename (usefulness -> usefulness_percent) + a report() rewrite orphaned it out of results.jsonl. These are inferred usefulness judgments (NOT mechanical grades) for the four models whose per-cell scores no longer survive in results.jsonl. battery_status.report() renders these for the frozen models and the LIVE usefulness_percent from results.jsonl for every other model. Task order = shipping-rates-rb, cart-billing-go, orders-api-py, feed-pipeline-java, handles-cli-node, rust-toml-cli (ruby, go, python, java, node, rust).",
+  "_comment": "FROZEN historical inference-usefulness ladder, recovered from battery-report.md @8dc5aef after a field rename (usefulness -> usefulness_percent) + a report() rewrite orphaned it out of results.jsonl. These are inferred usefulness judgments (NOT mechanical grades) for the models whose per-cell scores no longer survive in results.jsonl. battery_status.report() renders these for the frozen models and the LIVE usefulness_percent from results.jsonl for every other model. Task order = shipping-rates-rb, cart-billing-go, orders-api-py, feed-pipeline-java, handles-cli-node, rust-toml-cli (ruby, go, python, java, node, rust).",
   "levels": {
     "0": "pure proxy \u2014 wire translation only",
     "1": "TOOL_CALL_FIXES \u2014 dialect and template repair",
@@ -171,80 +171,6 @@
         ],
         "min": 40,
         "calls": 227
-      }
-    },
-    "nemotron-elastic": {
-      "0": {
-        "pct": [
-          0,
-          0,
-          0,
-          0,
-          0,
-          0
-        ],
-        "min": 3,
-        "calls": 6
-      },
-      "1": {
-        "pct": [
-          0,
-          6,
-          0,
-          0,
-          0,
-          0
-        ],
-        "min": 2,
-        "calls": 5
-      },
-      "2": {
-        "pct": [
-          0,
-          6,
-          45,
-          0,
-          0,
-          18
-        ],
-        "min": 4,
-        "calls": 8
-      },
-      "3": {
-        "pct": [
-          0,
-          0,
-          50,
-          12,
-          0,
-          15
-        ],
-        "min": 4,
-        "calls": 7
-      },
-      "4": {
-        "pct": [
-          26,
-          28,
-          40,
-          19,
-          40,
-          20
-        ],
-        "min": 33,
-        "calls": 141
-      },
-      "5": {
-        "pct": [
-          59,
-          31,
-          76,
-          20,
-          70,
-          84
-        ],
-        "min": 50,
-        "calls": 180
       }
     }
   }

@@ -32,10 +32,10 @@ def test_retired_models_are_named_not_silently_dropped():
     # model's history stays in results.jsonl / historical_ladder.json and the report NAMES it, so it
     # can never vanish silently — it just no longer occupies a battery row.
     text = battery_status.report([], now=2)
-    assert "| nemotron-elastic |" not in text
+    assert "| qwen35 |" not in text
     assert "| gemma4 |" in text
     retired = [l for l in text.splitlines() if l.startswith("Retired from the battery")]
-    assert retired and "nemotron-elastic" in retired[0]
+    assert retired and "qwen35" in retired[0]
     assert "engagement ladder" in text
     assert "### Level 5" in text
 

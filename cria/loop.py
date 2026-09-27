@@ -8148,8 +8148,7 @@ def _format_fetches(latest: dict, header: str = "PAGES YOU HAVE ALREADY FETCHED"
     identity). ``None`` means the caller did not check (kept for callers/tests that only care about
     the failed/spilled/no-structure splits, not this fact) and preserves the old assume-present
     behavior; a real ``set`` — possibly empty — makes the "in this conversation above" claim below
-    actually true for entries it names true of. See docs/goals/nemotron-l5-75-loop-report.md
-    Candidate C31.
+    actually true for entries it names true of (Candidate C31).
 
     ``absent_out``, when given a list, gets ``True`` appended iff at least one entry actually rendered
     the "not in this conversation" note — so a caller (the anchor tail) can scope its own "code

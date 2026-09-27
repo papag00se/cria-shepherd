@@ -86,7 +86,6 @@ SERVICES = {
     "qwen35": "llama-qwen35",
     "ornith1.5": "llama-ornith-q6",
     "gemma4-qat": "llama-gemma4-qat",
-    "maple-preview": "llama-maple-preview",  # DeepGrove ternary MoE 20B-A1B (stamsam prism fork)
     "defiant-fable": "llama-defiant-fable",
     # 2026-09-27 battery additions (settings + measurements: ~/.config/llama-fleet/models.toml)
     "qwen3.8_9b_distill": "llama-qwen38-distill",  # empero-ai Qwen3.8-9B-Distill Q6_K, MTP+ngram spec
@@ -100,8 +99,8 @@ SERVICES = {
 # results.jsonl, which is why the KEYS still appear there and must not be renamed:
 #   "ternary-bonsai" -> llama-ternary-bonsai   (Bonsai 1, superseded by ternary-bonsai-2)
 #   "gemma4"         -> llama-gemma4           (stock it Q4_K_M, superseded by gemma4-qat)
-#   "nemotron-elastic" -> llama-nemotron-elastic (retired from the battery 2026-09-27; unit and
-#                          weights stay on the box for reproducing historical rows)
+# Eight failed trials were PURGED 2026-09-27 (units, weights, rows and artifacts all deleted; only
+# a one-line verdict survives in docs/model-history.md).
 # test_suite_model_registries_agree.py fails if a SERVICES entry names a unit that is not installed,
 # which is exactly how the stale pair above was caught.
 

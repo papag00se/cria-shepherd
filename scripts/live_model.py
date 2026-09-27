@@ -9,7 +9,7 @@ whatever tool calls cria returns it fabricates plausible tool results and loops
 back — a few turns, enough to see each stage exercise the real model's real output
 and confirm the assists survive it. Nothing is actually executed on disk.
 
-    python scripts/live_model.py --endpoint http://127.0.0.1:18084 --model fabliq_8b_reasoning_q6
+    python scripts/live_model.py --endpoint http://127.0.0.1:18084 --model qwen35_9b_q6
     python scripts/live_model.py --turns 4 --label qwopus     # after swapping 18084
 
 SINGLE-SLOT WARNING: the target serves one request at a time. Do not run this while

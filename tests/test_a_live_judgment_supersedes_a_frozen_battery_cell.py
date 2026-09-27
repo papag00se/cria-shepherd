@@ -1,14 +1,14 @@
 """An un-paused model's new campaign must be visible, not shadowed by its own past.
 
-nemotron-elastic's ladder row is FROZEN in suite/historical_ladder.json (recovered inference
-judgments orphaned by a field rename). When the model was un-paused for the L5 >75% campaign
-(docs/goals/nemotron-l5-75-loop.md), the report generator still rendered the frozen row with
+A model's ladder row can be FROZEN in suite/historical_ladder.json (recovered inference
+judgments orphaned by a field rename). When such a model was un-paused for a new campaign
+(the L5 >75% campaign, 2026-09), the report generator still rendered the frozen row with
 absolute precedence — a fresh comparable run would have been judged, recorded in results.jsonl,
 and then silently invisible behind the stale 57% row. Fails before the per-cell merge, passes
 after.
 
-(2026-09-27: nemotron-elastic left the battery, so the invariant is exercised on gemma4, the
-frozen row the report still renders. The mechanism is the same for any frozen model.)
+(The invariant is exercised on gemma4, the frozen row the report still renders. The mechanism is
+the same for any frozen model.)
 
 The merge is PER CELL in both directions: a live judgment supersedes its frozen cell, and cells
 the campaign has not re-judged keep their frozen value — recovered history must never vanish
