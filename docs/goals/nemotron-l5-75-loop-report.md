@@ -975,6 +975,15 @@ reconciled HEAD: `p22-feed-rerun-9ded52bc.service` (user unit, not collected), s
     - R2: replay flaws. The controls count any shipped text as a leak; Part B re-implements the harden decision;
       the retry evidence is not compaction-time; Part C is not a real Bonsai-2 arm under Nemotron.
   - Back to Coder `c24505f1`.
+- **C44 ACCEPTED on review** (`4d47ea48` on `cand-c44`; full suite 5340 passed):
+  - R1 is closed. The marker, now `⟦prose-dropped⟧`, is stripped unconditionally in `_strip_and_reframe_inbound`
+    and at `Upstream._prep`. 4,714 captured bodies are byte-identical through `_prep` when no marker is present.
+  - The replay script (`~/.cria/review-scratch/c44/live_replay.py`) is accepted after three Part B fixes: the real
+    task is restored; `prose_shipped` comes from the validation events; the checks are framed once. Verified by an
+    offline fake-provider dry run over all 18 cases.
+  - **Still required before it goes live:** the real-model replay after the row. It must report how many of the 18
+    real compactions ship a validated handoff, show that neither control ships its invented API, and include a
+    separate Bonsai-2 Part C after a model swap.
   - Hand-label the rejected candidates, using the p27 `ruby_eu` plan-bearing reply as the must-reject control.
   - Prove the upstream cause (lens design, evidence framing, reasoning budget, or writer prompt), and decide the
     rejection behaviour so it is not whole-memory loss.
