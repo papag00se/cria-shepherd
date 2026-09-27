@@ -17,12 +17,20 @@ SUITE = Path(__file__).resolve().parent
 RESULTS = SUITE / "results" / "results.jsonl"
 NOTE_PREFIX = "BATTERY2"
 COUNTED_PREFIXES = (NOTE_PREFIX, "LOWSCORE", "RERANK")
-MODELS = ("qwen35", "ornith15", "ternary-bonsai-2", "gemma4-qat")
+# 2026-09-27: nemotron-elastic, qwen35 and qwen38 left the battery (operator decision); K2-Horizon-7B,
+# phi-4, Ling-3.0-tiny and Qwen3.8-9B-Distill joined, and defiant-fable entered. The report renders
+# only this roster (plus gemma4's frozen row, the only gemma history); retired models are NAMED in
+# the report and keep every row in results.jsonl / historical_ladder.json.
+MODELS = ("gemma4-qat", "ternary-bonsai-2", "defiant-fable", "ornith15",
+          "k2-horizon", "phi4", "ling3-tiny", "qwen38-distill")
 # CURRENT matrix only — a model here must be swappable and have canonical sampling.
 # gemma4 (stock Q4_K_M) and ternary-bonsai (Bonsai 1) left on 2026-09-18 when their weights
 # and units were deleted; like nemotron-elastic before them they stay VISIBLE in the reports
 # through suite/historical_ladder.json, which is where their scores live. Retiring a model
 # means dropping it from here, never deleting its history.
+# What the report renders: the live roster, plus gemma4's FROZEN row (stock Q4_K_M, retired
+# 2026-09-18) because it is the only gemma history until gemma4-qat has judged cells.
+DISPLAY = MODELS + ("gemma4",)
 TASKS = ("shipping-rates-rb", "cart-billing-go", "orders-api-py",
          "feed-pipeline-java", "handles-cli-node", "rust-toml-cli")
 ARMS = ("BASE", "CRIA")
@@ -150,14 +158,17 @@ def report(rs: list[dict], now: float | None = None) -> str:
         m = row.get("model")
         if m and m not in frozen and isinstance(row.get("usefulness_percent"), int) and m not in live:
             live.append(m)
-    ordered = list(frozen.keys()) + live
+    everything = list(frozen.keys()) + live
+    # The battery renders its CURRENT roster. A retired model is named below the tables, never
+    # dropped silently; its rows stay in results.jsonl and its frozen ladder in the JSON.
+    ordered = [m for m in everything if m in DISPLAY]
+    retired = [m for m in everything if m not in DISPLAY]
     out = ["# Battery — the engagement ladder", "", _stamp(rs, now), "",
            "Each cell is an inferred usefulness percentage \U0001F7E2\u226588 \U0001F7E1\u226563 "
            "\U0001F7E0\u226538 \U0001F534 below; `\u00b7` = not judged. `[engagement] level = 0..5`, "
-           "each rung implying every rung below it. gemma4 / qwen35 / "
-           "nemotron-elastic are FROZEN historical inference rows recovered into "
-           "suite/historical_ladder.json; every other model reads live from results.jsonl, and a "
-           "fresh live judgment supersedes a frozen cell.", ""]
+           "each rung implying every rung below it. gemma4 is a FROZEN historical inference row "
+           "recovered into suite/historical_ladder.json; every other model reads live from "
+           "results.jsonl, and a fresh live judgment supersedes a frozen cell.", ""]
     for lvl in range(6):
         lv = str(lvl)
         rowdata = []
@@ -198,6 +209,10 @@ def report(rs: list[dict], now: float | None = None) -> str:
             cellstr = " | ".join(_dot(p) for p in cells)
             out.append(f"| {m} | {cellstr} | {total} | "
                        f"{mn if mn is not None else '\u00b7'} | {cl if cl is not None else '\u00b7'} |")
+        out.append("")
+    if retired:
+        out.append("Retired from the battery (history kept in suite/results/results.jsonl and "
+                   "suite/historical_ladder.json): " + ", ".join(retired) + ".")
         out.append("")
     return "\n".join(out) + "\n"
 

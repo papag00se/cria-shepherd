@@ -70,5 +70,23 @@ class TheFreshCellBoundaryStillLinesUp(unittest.TestCase):
         self.assertEqual(cycle_run.cells()[0], (bs.TASKS[0], bs.MODELS[0]))
 
 
+
+def test_a_sub_grid_worklist_names_only_the_asked_levels_and_models():
+    """`--levels 0,5 --models ...` (2026-09-27: new models run L0 and L5 only) must not leak other
+    rungs or roster models into the queue, and keeps model-major order."""
+    import importlib, sys
+    from pathlib import Path
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "suite"))
+    lc = importlib.import_module("ladder_cycle")
+    lc_done, lc.done = lc.done, lambda: set()
+    try:
+        todo = lc.worklist((0, 5), ("phi4", "ling3-tiny"))
+    finally:
+        lc.done = lc_done
+    assert {lvl for lvl, _m, _t in todo} == {0, 5}
+    assert [m for _l, m, _t in todo][:12] == ["phi4"] * 12
+    assert len(todo) == 2 * 2 * len(lc.TASKS)
+
+
 if __name__ == "__main__":
     unittest.main()

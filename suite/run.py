@@ -81,13 +81,18 @@ KILL_GRACE = 20
 # fleet model name -> systemd service (one model at a time on the 3080)
 SERVICES = {
     "ternary-bonsai-2": "llama-ternary-bonsai-2",
-    "nemotron-elastic": "llama-nemotron-elastic",  # un-paused 2026-09-22 for the L5 >75% campaign (docs/goals/nemotron-l5-75-loop.md)
     "qwythos": "llama-qwythos-q6",
     "qwopus": "llama-qwopus-q6",
     "qwen35": "llama-qwen35",
     "ornith15": "llama-ornith-q6",
     "gemma4-qat": "llama-gemma4-qat",
     "maple-preview": "llama-maple-preview",  # DeepGrove ternary MoE 20B-A1B (stamsam prism fork)
+    "defiant-fable": "llama-defiant-fable",
+    # 2026-09-27 battery additions (settings + measurements: ~/.config/llama-fleet/models.toml)
+    "qwen38-distill": "llama-qwen38-distill",  # empero-ai Qwen3.8-9B-Distill Q6_K, MTP+ngram spec
+    "ling3-tiny": "llama-ling3-tiny",          # inclusionAI Ling-3.0-tiny Q6_K (bailingmoe3)
+    "phi4": "llama-phi4",                      # microsoft phi-4 Q4_K_S, tool template, q8/q4 KV
+    "k2-horizon": "llama-k2-horizon",          # IFM K2-Horizon-7B Q6_K (MBZUAI-IFM fork build)
 }
 
 # RETIRED 2026-09-18 — weights, units and (for bonsai) binaries deleted from the box, so these keys
@@ -95,16 +100,16 @@ SERVICES = {
 # results.jsonl, which is why the KEYS still appear there and must not be renamed:
 #   "ternary-bonsai" -> llama-ternary-bonsai   (Bonsai 1, superseded by ternary-bonsai-2)
 #   "gemma4"         -> llama-gemma4           (stock it Q4_K_M, superseded by gemma4-qat)
+#   "nemotron-elastic" -> llama-nemotron-elastic (retired from the battery 2026-09-27; unit and
+#                          weights stay on the box for reproducing historical rows)
 # test_suite_model_registries_agree.py fails if a SERVICES entry names a unit that is not installed,
 # which is exactly how the stale pair above was caught.
 
-# EXTERNALLY MANAGED MODELS — not llama.cpp systemd units on :18084. Qwen3.8-27B runs as a vLLM
-# container on its OWN card (the RTX 3090, :18020), which cria's [backends.local] points straight at,
-# so there is no GPU-swap to do here: the endpoint is already up and the llama.cpp fleet on the 3080
-# does not contend with it. swap_model just confirms the endpoint is live. Value = its health URL.
-EXTERNAL = {
-    "qwen38": "http://127.0.0.1:18020/health",
-}
+# EXTERNALLY MANAGED MODELS — endpoints cria may drive that are not llama.cpp units on :18084.
+# EMPTY since 2026-09-27: the Qwen3.8-27B vLLM container on the RTX 3090 (:18020) is the operator's
+# separate model and is NOT part of cria testing (cria is 3080-only). It stays installed on the box;
+# its historical rows stay in results.jsonl. Do not re-add it here.
+EXTERNAL: dict[str, str] = {}
 
 # Harness launchers: name -> argv builder (headless/exec mode only). Phase 0 ships codex;
 # the other adapters land with their harness phases.

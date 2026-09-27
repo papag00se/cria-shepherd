@@ -119,16 +119,40 @@ MODEL_SAMPLING = {
     # thinking-mode coding numbers (temp 0.6 / top_p 0.95 / top_k 20 / min_p 0 / presence 0 /
     # repeat 1.0) coincide with these, and its MTP note ("keep repeat penalty at 1") is already
     # satisfied since we leave repeat_penalty unset (=1.0). docs/model-settings.md.
-    "defiant-fable": {
+    # --- 2026-09-27 battery additions. Each cites its card; deterministic roles stay at temp 0. ---
+    # empero-ai/Qwen3.8-9B-Distill-GGUF card: "Recommended sampling: temperature=0.6, top_p=0.95,
+    # top_k=20" (reasoning model; every answer opens with <think>).
+    "qwen38-distill": {
         "coder":      {"temperature": 0.6, "top_p": 0.95, "top_k": 20},
         "reasoner":   {"temperature": 0.6, "top_p": 0.95, "top_k": 20},
         "classifier": {"temperature": 0.0},
         "compactor":  {"temperature": 0.0},
     },
-    # Qwen3.8-27B (W4A16 + MTP) on the vLLM/3090 endpoint, not the llama.cpp fleet. Qwen's card:
-    # thinking mode temp 0.6 / top_p 0.95 / top_k 20; cria drives coder+reasoner with thinking on and
-    # the deterministic roles with it off, so the thinking numbers map onto the four roles here too.
-    "qwen38": {
+    # bloomer010/Ling-3.0-tiny-GGUF card, quoting inclusionAI/Ling-3.0-tiny: "temperature=1.0,
+    # top_p=0.95, and top_k=20" (thinking on by default).
+    "ling3-tiny": {
+        "coder":      {"temperature": 1.0, "top_p": 0.95, "top_k": 20},
+        "reasoner":   {"temperature": 1.0, "top_p": 0.95, "top_k": 20},
+        "classifier": {"temperature": 0.0},
+        "compactor":  {"temperature": 0.0},
+    },
+    # microsoft/phi-4 card metadata: `inference: parameters: temperature: 0`. No other knob is
+    # published, so none is set (a non-thinking model: every role greedy).
+    "phi4": {
+        "coder":      {"temperature": 0.0},
+        "reasoner":   {"temperature": 0.0},
+        "classifier": {"temperature": 0.0},
+        "compactor":  {"temperature": 0.0},
+    },
+    # IFM/K2-Horizon-7B card: "Recommended settings: reasoning_effort=\"high\", temperature=1.0,
+    # top_p=0.95". The template's reasoning_effort defaults to high, so enable_thinking=true is it.
+    "k2-horizon": {
+        "coder":      {"temperature": 1.0, "top_p": 0.95},
+        "reasoner":   {"temperature": 1.0, "top_p": 0.95},
+        "classifier": {"temperature": 0.0},
+        "compactor":  {"temperature": 0.0},
+    },
+    "defiant-fable": {
         "coder":      {"temperature": 0.6, "top_p": 0.95, "top_k": 20},
         "reasoner":   {"temperature": 0.6, "top_p": 0.95, "top_k": 20},
         "classifier": {"temperature": 0.0},

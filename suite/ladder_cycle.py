@@ -11,6 +11,7 @@ the first comparison is available before the run finishes.
 
     python3 suite/ladder_cycle.py                 # run everything outstanding
     python3 suite/ladder_cycle.py --dry-run       # print the worklist and stop
+    python3 suite/ladder_cycle.py --levels 0,5 --models phi4,ling3-tiny   # a sub-grid only
 """
 from __future__ import annotations
 
@@ -33,7 +34,12 @@ SUITE = Path(__file__).resolve().parent
 RESULTS = SUITE / "results" / "results.jsonl"
 
 LEVELS = (0, 1, 2, 3, 4, 5)
-MODELS = ("qwen35", "ornith15", "ternary-bonsai-2", "gemma4-qat")
+# 2026-09-27: nemotron-elastic, qwen35 and qwen38 left the battery (operator decision); K2-Horizon-7B,
+# phi-4, Ling-3.0-tiny and Qwen3.8-9B-Distill joined, and defiant-fable entered. The report renders
+# only this roster (plus gemma4's frozen row, the only gemma history); retired models are NAMED in
+# the report and keep every row in results.jsonl / historical_ladder.json.
+MODELS = ("gemma4-qat", "ternary-bonsai-2", "defiant-fable", "ornith15",
+          "k2-horizon", "phi4", "ling3-tiny", "qwen38-distill")
 # CURRENT matrix only — a model here must be swappable and have canonical sampling.
 # gemma4 (stock Q4_K_M) and ternary-bonsai (Bonsai 1) left on 2026-09-18 when their weights
 # and units were deleted; like nemotron-elastic before them they stay VISIBLE in the reports
@@ -69,9 +75,9 @@ def done() -> set[tuple[int, str, str]]:
     return out
 
 
-def worklist() -> list[tuple[int, str, str]]:
+def worklist(levels=LEVELS, models=MODELS) -> list[tuple[int, str, str]]:
     have = done()
-    return [(lvl, m, t) for m in MODELS for lvl in LEVELS for t in TASKS
+    return [(lvl, m, t) for m in models for lvl in levels for t in TASKS
             if (lvl, m, t) not in have]
 
 
@@ -169,11 +175,20 @@ def reap_leaked_listeners() -> None:
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--levels", default=",".join(map(str, LEVELS)),
+                    help="comma-separated rungs to run (default: all)")
+    ap.add_argument("--models", default=",".join(MODELS),
+                    help="comma-separated roster models to run (default: the whole roster)")
     args = ap.parse_args()
+    levels = tuple(int(x) for x in args.levels.split(",") if x.strip())
+    models = tuple(x.strip() for x in args.models.split(",") if x.strip())
+    bad = [lvl for lvl in levels if lvl not in LEVELS] + [m for m in models if m not in MODELS]
+    if bad:
+        ap.error(f"not on the ladder: {bad}")
 
-    total = len(LEVELS) * len(MODELS) * len(TASKS)
+    total = len(levels) * len(models) * len(TASKS)
     if args.dry_run:
-        todo = worklist()
+        todo = worklist(levels, models)
         print(f"[ladder] {total - len(todo)}/{total} already done; {len(todo)} to run", flush=True)
         for lvl, m, t in todo:
             print(f"  L{lvl}  {m:18s} {t}")
@@ -188,7 +203,7 @@ def main() -> int:
     # left alone rather than retried forever: it is a finding for the operator to read, not a loop.
     seen_outstanding = None
     while True:
-        todo = worklist()
+        todo = worklist(levels, models)
         if not todo:
             print(f"[ladder] {total}/{total} done at {time.strftime('%H:%M:%S')}", flush=True)
             return 0

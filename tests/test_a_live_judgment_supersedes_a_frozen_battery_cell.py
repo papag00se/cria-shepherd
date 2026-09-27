@@ -7,6 +7,9 @@ absolute precedence — a fresh comparable run would have been judged, recorded 
 and then silently invisible behind the stale 57% row. Fails before the per-cell merge, passes
 after.
 
+(2026-09-27: nemotron-elastic left the battery, so the invariant is exercised on gemma4, the
+frozen row the report still renders. The mechanism is the same for any frozen model.)
+
 The merge is PER CELL in both directions: a live judgment supersedes its frozen cell, and cells
 the campaign has not re-judged keep their frozen value — recovered history must never vanish
 (the standing guarantee of test_current_model_fleet_is_coherent.py).
@@ -23,11 +26,11 @@ import battery_status  # noqa: E402
 
 def _live_row(task: str, pct: int) -> dict:
     return {
-        "run_id": f"{task}_nemotron-elastic_codex_pon_1790000000",
-        "model": "nemotron-elastic",
+        "run_id": f"{task}_gemma4_codex_pon_1790000000",
+        "model": "gemma4",
         "task": task,
         "level": 5,
-        "note": "BATTERY2 L5 nemotron-elastic deadbeef p4",
+        "note": "BATTERY2 L5 gemma4 deadbeef p4",
         "usefulness_percent": pct,
         "wall_seconds": 600,
         "calls": 50,
@@ -35,19 +38,19 @@ def _live_row(task: str, pct: int) -> dict:
 
 
 def test_a_live_judgment_supersedes_its_frozen_cell():
-    text = battery_status.report([_live_row("shipping-rates-rb", 90)], now=2)
+    text = battery_status.report([_live_row("shipping-rates-rb", 55)], now=2)
     l5 = text.split("### Level 5")[1]
-    nemo = next(line for line in l5.splitlines() if line.startswith("| nemotron-elastic |"))
-    assert "90%" in nemo, f"live 90% shadowed by the frozen row: {nemo}"
+    nemo = next(line for line in l5.splitlines() if line.startswith("| gemma4 |"))
+    assert "55%" in nemo, f"live 55% shadowed by the frozen row: {nemo}"
 
 
 def test_unrejudged_cells_keep_their_frozen_values():
     frozen_only = battery_status.report([], now=2)
-    with_live = battery_status.report([_live_row("shipping-rates-rb", 90)], now=2)
+    with_live = battery_status.report([_live_row("shipping-rates-rb", 55)], now=2)
 
     def nemo_cells(text: str) -> list[str]:
         l5 = text.split("### Level 5")[1]
-        line = next(l for l in l5.splitlines() if l.startswith("| nemotron-elastic |"))
+        line = next(l for l in l5.splitlines() if l.startswith("| gemma4 |"))
         # | model | 6 task cells | total | avg min | avg calls |
         return [c.strip() for c in line.split("|")[2:8]]
 

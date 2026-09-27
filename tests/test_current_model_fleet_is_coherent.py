@@ -27,14 +27,23 @@ def test_the_matrix_names_the_current_ornith_release_not_the_retired_names():
     assert "ornith" not in models
 
 
-def test_replaced_models_remain_visible_in_historical_reports():
-    # nemotron-elastic was replaced in the active fleet, but its recovered inference ladder is FROZEN
-    # in suite/historical_ladder.json, so it stays visible in the engagement-ladder report even with
-    # no live rows. (The data was orphaned once by a field rename; it must never silently vanish.)
+def test_retired_models_are_named_not_silently_dropped():
+    # 2026-09-27: the report renders only the current roster (plus gemma4's frozen row). A retired
+    # model's history stays in results.jsonl / historical_ladder.json and the report NAMES it, so it
+    # can never vanish silently — it just no longer occupies a battery row.
     text = battery_status.report([], now=2)
-    assert "| nemotron-elastic |" in text
+    assert "| nemotron-elastic |" not in text
+    assert "| gemma4 |" in text
+    retired = [l for l in text.splitlines() if l.startswith("Retired from the battery")]
+    assert retired and "nemotron-elastic" in retired[0]
     assert "engagement ladder" in text
     assert "### Level 5" in text
+
+
+def test_the_battery_roster_is_the_operator_named_fleet():
+    assert set(battery_status.MODELS) == {"gemma4-qat", "ternary-bonsai-2", "defiant-fable", "ornith15",
+                                          "k2-horizon", "phi4", "ling3-tiny", "qwen38-distill"}
+    assert "qwen38" not in run.SERVICES and "qwen38" not in run.EXTERNAL  # the 27B is not cria's
 
 
 def test_ornith15_uses_the_publishers_distinct_coding_and_general_sampling():
