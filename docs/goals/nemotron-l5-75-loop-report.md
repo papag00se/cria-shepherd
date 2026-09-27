@@ -1080,6 +1080,16 @@ reconciled HEAD: `p22-feed-rerun-9ded52bc.service` (user unit, not collected), s
   - **Selected:** Option B, Go first. A harness-executed, read-only, offline module-cache listing for the exact
     unresolved coordinate, stating only the proven versions and never a remedy. Implementation on `cand-c48`.
 
+- **C48 re-review of `74fdedaf`:**
+  - B5 (the survey command is byte-identical when nothing is queued), B1 and B3 are accepted.
+  - Not accepted:
+    - R1: `go env GOMODCACHE` can trigger a toolchain download. Reproduced with a go.mod declaring `go 1.99`.
+    - R2: `.partial` and half-unpacked directories are counted as versions.
+    - R3: REANCHOR is still silent on 0148's real go.mod.
+    - R4: a remembered "No version" is never refreshed and is now cited after the module was installed.
+  - Also, the replay script no longer runs.
+  - Back to Coder `95f646ca`.
+
 ### Row p29 — cell results
 
 - **shipping-rates-rb** `…_1790475228` (session `20260926T191409-01a0e0a4`): `milestone-stalled-45min`. Milestones
@@ -1105,7 +1115,15 @@ reconciled HEAD: `p22-feed-rerun-9ded52bc.service` (user unit, not collected), s
     - Candidate direction (principle 10, verify by doing): cria runs the authoritative existence check itself
       through the harness (module cache / `go list -m`) and states the fact, instead of asking the coder to.
   - Walk: 55 segments at `~/.cria/walk-findings/2026-09-26/p29-cart/`.
-- orders-api-py started 20:50:49.
+- **orders-api-py** `…_1790481049` (session `20260926T205110-01a0e0fc`): `milestone-stalled-60min`. Milestones
+  45/continue, 45/continue, 35/stalled. Final **35%** (p28: 25%).
+  - Correct core by 21:01: a parameterized `get_order`, `status` + index + in-place `ALTER` migration (verified on a
+    legacy DB), and `get_customer_orders` + its route.
+  - The integration tests never ran: a duplicate server on one port, and a `requests` dependency.
+  - At 22:03 the `init` rewrite gated schema creation on an always-truthy Cursor, so the repo's own
+    `tests/test_db.py` fails.
+  - Walk: 76 segments at `p29-orders`.
+- feed-pipeline-java started 22:10:40.
   - Process note: the Supervisor's C43 diagnostic call ran while the C44 replay was active. The server has one slot
     (`total_slots` 1), so requests queued rather than interleaved, and both runs are temperature 0.
 
