@@ -5,17 +5,17 @@ sections supersede older prose where they conflict.
 
 ## Acceptance ledger
 
-Reconciled 2026-09-24 against `suite/results/results.jsonl` and `~/.cria/suite/_usefulness/` (see
+Updated 2026-09-26 with row p28 (all six cells at `51e82781`). Originally reconciled 2026-09-24 against `suite/results/results.jsonl` and `~/.cria/suite/_usefulness/` (see
 "Ledger reconciliation — 2026-09-24" below).
 
 | Cell | Latest comparable run | Note | Final usefulness | Status |
 |---|---|---|---:|---|
-| shipping-rates-rb | `shipping-rates-rb_nemotron-elastic_codex_pon_1790293641` | `f6df9eea p27` | 15% | open — ≤75% |
-| cart-billing-go | `cart-billing-go_nemotron-elastic_codex_pon_1790298041` | `f6df9eea p27` | 30% | open — ≤75% |
-| orders-api-py | `orders-api-py_nemotron-elastic_codex_pon_1790308843` | `f6df9eea p27` | 35% | open — ≤75% |
-| feed-pipeline-java | `feed-pipeline-java_nemotron-elastic_codex_pon_1790312004` | `f6df9eea p27` | 20% | open — ≤75% |
-| handles-cli-node | `handles-cli-node_nemotron-elastic_codex_pon_1790285393` | `9fab19d9 p25` | 50% | open — ≤75% |
-| rust-toml-cli | `rust-toml-cli_nemotron-elastic_codex_pon_1790252780` | `c435329c p20` | 30% | open — ≤75% |
+| shipping-rates-rb | `shipping-rates-rb_nemotron-elastic_codex_pon_1790350009` | `51e82781 p28` | 25% | open — ≤75% |
+| cart-billing-go | `cart-billing-go_nemotron-elastic_codex_pon_1790354407` | `51e82781 p28` | 30% | open — ≤75% |
+| orders-api-py | `orders-api-py_nemotron-elastic_codex_pon_1790457529` | `51e82781 p28` | 25% | open — ≤75% |
+| feed-pipeline-java | `feed-pipeline-java_nemotron-elastic_codex_pon_1790460639` | `51e82781 p28` | 15% | open — ≤75% |
+| handles-cli-node | `handles-cli-node_nemotron-elastic_codex_pon_1790463051` | `51e82781 p28` | 20% | open — ≤75% |
+| rust-toml-cli | `rust-toml-cli_nemotron-elastic_codex_pon_1790466042` | `51e82781 p28` | 25% | open — ≤75% |
 
 Strict closure criterion: every cell's latest comparable L5 final usefulness judgment is >75%.
 Comparable means: launched by this campaign at a recorded HEAD with note form
@@ -906,7 +906,40 @@ reconciled HEAD: `p22-feed-rerun-9ded52bc.service` (user unit, not collected), s
   - `test/lookup.test.js` is API-only; `test/cli.test.js` cannot run.
   - The final `task_complete` claims a README and a test file that do not exist.
   - Walk: `~/.cria/walk-findings/2026-09-26/p28-handles/`.
-- rust-toml-cli started 16:40:42 — the last p28 cell.
+- **rust-toml-cli** `…_1790466042` (session `20260926T164108-01a0e018`): `milestone-stalled-60min`. Milestones
+  35/continue, 55/continue, 25/stalled. Final **25%** (p20: 30%).
+  - At 45 min it built and worked end to end (`server.port` → 8080, missing key/file → stderr + exit 1).
+  - Three later whole-file rewrites broke it: the tests were deleted twice, and it invented `Value::Number`,
+    `as_i64`, `Value::parse`.
+  - Walk: 90 segments at `~/.cria/walk-findings/2026-09-26/p28-rust/`.
+- **Row p28 queue finished 18:06:35. All finals are recorded.** Heartbeat `95bfca36` deleted.
+
+### Row p28 — complete (HEAD `51e82781`)
+
+| Cell | Run | Final | Previous comparable |
+|---|---|---:|---:|
+| shipping-rates-rb | `…_1790350009` | 25% | 15% (p27) |
+| cart-billing-go | `…_1790354407` | 30% | 30% (p27) |
+| orders-api-py | `…_1790457529` | 25% | 35% (p27) |
+| feed-pipeline-java | `…_1790460639` | 15% | 20% (p27) |
+| handles-cli-node | `…_1790463051` | 20% | 50% (p25) |
+| rust-toml-cli | `…_1790466042` | 25% | 30% (p20) |
+
+- All six cells are still open (≤75%).
+- Cross-cell classes seen so far (walks are in progress):
+  - (1) the post-compaction handoff is empty or appendix-only in every cell (C44);
+  - (2) invented third-party members survive or precede the real surface: cart, feed, rust (C43 + a pre-declaration
+    gap);
+  - (3) whole-file rewrites discard working code: orders, handles, rust;
+  - (4) fixes diagnosed but never executed, and false `task_complete` claims: orders, handles.
+- **Post-row replays** (unit `post-p28-replays`):
+  - **C43 FAILED live.**
+    - On 0126 and 0166 the reasoner answered `1: NONE\n2: Quantize, Round`, a verbatim copy of the prompt's own
+      example. Its example vocabulary is lifted from the cart capture (#20).
+    - Only one package is numbered, so line 2 is dropped and nothing is refuted.
+    - The 0202/0219 controls ran away to 68+ `N: NONE` lines.
+    - Back to Coder `076fca0c`: fix the question format and prove it live.
+  - C44 replay is running.
 
 ### Candidate C44 (row p28, cross-cell) — the compaction validator rejects every briefing, so the coder's memory is emptied
 
