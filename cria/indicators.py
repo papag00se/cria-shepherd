@@ -41,8 +41,7 @@ _MIN_DELTAS_FOR_RATE = 3
 
 # C44 (review 9eaadebe): `server._harden_compaction_reply` prepends this to a harness compaction
 # REPLY whenever no model prose survived to ship but the deterministic appendices did (a validator
-# rejection with no eligible retry, a rejected retry, or an empty/garbled writer even after its own
-# retry) — `loop.reframe_compaction` is the ONE place that INTERPRETS it (choosing the
+# rejection, or an empty/garbled writer even after its own empty-briefing retry) — `loop.reframe_compaction` is the ONE place that INTERPRETS it (choosing the
 # appendix-aware "retained ground truth" framing over the normal "the handoff below is an ungrounded
 # account" claim, which is false over pure re-derived facts, #5b). That interpreter only runs at
 # CONTEXT_FIXES and above, for a recognized Codex-preamble compaction turn in a `user` message — a

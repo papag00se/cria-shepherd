@@ -5571,8 +5571,8 @@ _COMPACTION_MARKER = "Another language model started to solve this problem"
 _COMPACTION_BOUNDARY = "assist with your own analysis:"
 
 # C44 B1 (review 9eaadebe): `server._harden_compaction_reply` prepends this to the compaction REPLY
-# whenever no prose survived to ship (a validator rejection with no eligible retry, a rejected
-# retry, or an empty/garbled writer after its own retry) but the deterministic appendices (fetch
+# whenever no prose survived to ship (a validator rejection, or an empty/garbled writer after its
+# own empty-briefing retry) but the deterministic appendices (fetch
 # facts, workspace inventory, latest checks) were non-empty and so `summary` below is NOT blank.
 # Without it `reframe_compaction` could not tell "a real model account, plus appendices" from "NO
 # account, appendices only" and used the same "the handoff below is an ungrounded account" framing

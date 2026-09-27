@@ -734,8 +734,7 @@ def _harden_compaction_reply(comp: dict, body: dict, provider, server, rlog, ses
     if facts or text != _text_of(comp).strip():
         merged = (text + "\n\n" + facts).strip()
         # C44 B1: `not text` here means NO prose survived any of the paths above (an empty/garbled
-        # writer even after its own retry, a validator rejection with no eligible plan-retry, or a
-        # rejected retry) \u2014 `merged` is the deterministic appendices ALONE. Mark it so
+        # writer even after its own empty-briefing retry, or a validator rejection) \u2014 `merged` is the deterministic appendices ALONE. Mark it so
         # `reframe_compaction`, which sees this same content again on a LATER turn wrapped in the
         # harness's own "another language model" preamble, presents it as retained ground truth
         # rather than disclaiming a handoff that was never written (#5b). Stripped there before the
