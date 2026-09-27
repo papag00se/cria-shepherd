@@ -990,6 +990,37 @@ reconciled HEAD: `p22-feed-rerun-9ded52bc.service` (user unit, not collected), s
       which fails on `3cde247a` because the fragment gets spliced in, and removed three stale retry comments.
     - Accepted by `9eaadebe`. Full suite on main 5329 passed, 5 skipped; pushed; `cria.service` restarted;
       `/health` ok.
+  - **C45 action ledger REJECTED on its live A/B** (`6faa595a` on `cand-c45`, not merged):
+    - 17 real post-compaction coder turns × N=5 × 2 arms = 170 live calls.
+    - Re-reads went 68/85 → 76/85, forward progress 12/85 → 8/85, no-tool turns 5/85 → 1/85. Redone edits: 0
+      in both arms.
+    - After a compaction the coder legitimately needs current bytes, which a body-less ledger cannot give, so
+      re-reading is not the harm the walks implied.
+    - Report: `~/.cria/review-scratch/c45/ledger_replay_report.md`.
+    - (c2) note: cria's suite fronts only Codex, which keeps user turns, and the floor pins the task, so the scope
+      lens's premise does not hold on this harness. No gate change without a wider harness census.
+
+### Row p29 freeze (2026-09-26)
+
+- **New accepted units since p28** (each with fails-before/passes-after tests, an independent review and the full
+  suite):
+  - **C42** (`a83aeb32`): the dedup fold keys a tool result on its owning command, so there are no cross-command
+    false pointers.
+  - **C44a** (`b06b2777`): truthful post-compaction frames when prose was dropped (the appendix is presented as
+    re-derived ground truth, never "the handoff below"), the `⟦prose-dropped⟧` marker stripped unconditionally
+    inbound and at `_prep`, and `prompts.render` expanding includes before caller values.
+- Not carried: C43 (parked, live target 0/2), C44's lens/closing-ask/retry (live 0/18, lens false-accepts), and
+  C45 (live negative).
+- Main at freeze: full suite 5329 passed, 5 skipped. `cria.service` restarted, `/health` ok.
+- Row HEAD = the commit recording this entry. All six cells are open (p28 max 30%). One queue, one note, one
+  heartbeat.
+- What p29 must measure:
+  - post-compaction frames: are they truthful, and are they acted on correctly?
+  - does a dedup pointer ever point across commands?
+  - baseline rates for the p28 classes, to pick the next candidate: whole-file rewrites of working code (orders,
+    handles, rust); invented API with fetch tools available (feed, handles, rust); diagnosed-not-executed.
+- Next candidate in design during p29, with no GPU until the row ends: **C47**, regression-only protection against
+  a whole-file rewrite that discards working, checked code (principle 2).
   - Process note: the Supervisor's C43 diagnostic call ran while the C44 replay was active. The server has one slot
     (`total_slots` 1), so requests queued rather than interleaved, and both runs are temperature 0.
 
