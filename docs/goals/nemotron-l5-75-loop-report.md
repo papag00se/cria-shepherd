@@ -1068,6 +1068,18 @@ reconciled HEAD: `p22-feed-rerun-9ded52bc.service` (user unit, not collected), s
   - Includes the related shipping gem and feed dependency boundaries, and the git history of why the Go clause
     exists.
 
+- **C48 proposal** (`~/.cria/review-scratch/c48/proposal.md`):
+  - Cart p29: the coder invented pseudo-versions for the real module `shopspring/decimal`. Two Go module-state
+    REANCHORs said "don't guess" but supplied no fact. C40 abstains on an exact-version miss. The module cache
+    holds v1.2.0 and v1.4.0.
+  - Prevalence: 14 sessions, 284 dependency notes; `shopspring/decimal` alone had 105 notes across 3 sessions.
+  - Distinct gaps elsewhere:
+    - shipping p29: invented code in an unloaded file, so no notes;
+    - feed p28: `probeparse`'s Java pattern misses javac's `package … does not exist`, so no notes.
+  - The withhold-`go get` clause comes from `724339e7` (the `oklog/decimal` incident). It must not be re-blessed.
+  - **Selected:** Option B, Go first. A harness-executed, read-only, offline module-cache listing for the exact
+    unresolved coordinate, stating only the proven versions and never a remedy. Implementation on `cand-c48`.
+
 ### Row p29 — cell results
 
 - **shipping-rates-rb** `…_1790475228` (session `20260926T191409-01a0e0a4`): `milestone-stalled-45min`. Milestones
