@@ -5577,10 +5577,24 @@ _COMPACTION_BOUNDARY = "assist with your own analysis:"
 # Without it `reframe_compaction` could not tell "a real model account, plus appendices" from "NO
 # account, appendices only" and used the same "the handoff below is an ungrounded account" framing
 # for both — false over pure re-derived ground truth (#5b; shipping 0084/0141, cart 0079, orders
-# 0087/0191, feed 0052/0088 all shipped this way). Stripped here before the model ever reads it, so
-# it never crosses the wire as a literal token (#17) — same convention as any other cria-internal
-# marker meant to be consumed and removed, not read.
-_PROSE_DROPPED_MARKER = "\u27e6cria:prose-dropped\u27e7"
+# 0087/0191, feed 0052/0088 all shipped this way).
+#
+# C44 R1 (review 9eaadebe, second pass): `reframe_compaction` is the ONE place that INTERPRETS this
+# marker, but it only runs at CONTEXT_FIXES and above, for a `user`-role message carrying a
+# recognized Codex-preamble compaction turn — a lower engagement level, or a harness that stores the
+# reply verbatim under a different role with no Codex preamble at all (C37's OWN harness-agnostic
+# recognizer admits that shape on the way OUT), left the marker itself sitting in what the model
+# reads. `indicators.strip_prose_dropped_marker` is the unconditional net for every shape
+# `reframe_compaction` does not reach, called from `_strip_and_reframe_inbound` at EVERY level and
+# from `Upstream._prep` at the wire (#24) — either alone stops it from crossing; both together mean
+# no single missed call site can. Defined in `indicators` (a leaf module both `loop` and `upstream`
+# can import without a cycle — `loop` already imports `upstream`) so both wire it without one
+# importing the other; re-exported here so an existing `loop._PROSE_DROPPED_MARKER` /
+# `loop.strip_prose_dropped_marker` reference keeps working unchanged. The spelling itself carries
+# no literal "cria" (#17): if some THIRD path is ever missed too, what leaks is an odd bracketed
+# token, not the name.
+_PROSE_DROPPED_MARKER = indicators.PROSE_DROPPED_MARKER
+strip_prose_dropped_marker = indicators.strip_prose_dropped_marker
 
 
 def _workspace_is_empty(cwd: str) -> bool:

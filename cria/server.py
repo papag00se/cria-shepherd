@@ -46,6 +46,7 @@ from .loop import (
     completion_to_sse,
     gate_age,
     reframe_compaction,
+    strip_prose_dropped_marker,
     validate_compaction_briefing,
     session_key,
     SUMMARIZE_MAX_TOKENS,
@@ -760,8 +761,14 @@ def _harden_compaction_reply(comp: dict, body: dict, provider, server, rlog, ses
             # everything else" is false and, for an invented fact, an instruction to keep the
             # invention. Gated on a configured role too (#4: no fallback behind an unavailable
             # reasoner) \u2014 without one the redo could never be validated either.
+            # Normalized (strip + upper) before the gate: `answers[lens]` is stored verbatim
+            # (`judge()` truncates to 40 chars but does not case-fold it), while the ACCEPT check
+            # itself already compares case-insensitively (`answer.strip().upper() == accepted_word`)
+            # \u2014 comparing this gate against the raw stored value would silently never retry a real
+            # PLAN rejection spelled "Plan" or "plan" by the model.
+            retrospective_verdict = (answers.get("retrospective") or "").strip().upper()
             retried = (_retry_dropped_plan_briefing(provider, role, text, body, ws, server, sk, rlog)
-                      if role is not None and answers.get("retrospective") == "PLAN" else "")
+                      if role is not None and retrospective_verdict == "PLAN" else "")
             if retried and validate_compaction_briefing(
                     chat_fn, role, retried, files=writer_inventory, checks=checks,
                     transcript_blocks=transcript, task=task, rlog=rlog,
@@ -1218,12 +1225,25 @@ class CriaHandler(BaseHTTPRequestHandler):
         reframed = 0
         if self.server.cfg.routing.context_fixes:
             cleaned, reframed = reframe_compaction(cleaned)
-        if stripped or reframed:
+        # C44 R1 (review 9eaadebe): UNCONDITIONAL, every level — `reframe_compaction` above is the
+        # interpreter (picks the right template) for the shapes it recognizes, gated on CONTEXT_FIXES
+        # by the same "reattribution is surgery" rule as the reframe itself; this is the blanket net
+        # for everything it does not reach (a level below CONTEXT_FIXES never calls it at all; a
+        # harness that stores the compaction reply verbatim under a different role, with no Codex
+        # preamble, is never recognized by it either). Runs on `cleaned`, AFTER the interpreter has
+        # had its chance, so it only ever removes a marker nothing already consumed.
+        rescrubbed = strip_prose_dropped_marker(cleaned)
+        marker_left = rescrubbed is not cleaned
+        if marker_left:
+            cleaned = rescrubbed
+        if stripped or reframed or marker_left:
             body["messages"] = cleaned
             if stripped:
                 rlog.emit("indicators.stripped", lines=stripped)
             if reframed:
                 rlog.emit("loop.compaction_reframed", reshape="reframe")
+            if marker_left:
+                rlog.emit("loop.prose_dropped_marker_scrubbed", level="warn")
 
     def _setup_translation(self, body: dict, sess_key: str, rlog) -> None:
         """Set up the synthetic-tool ↔ shell round-trip for this request: STATELESSLY re-present prior

@@ -22,8 +22,8 @@ from pathlib import Path
 from typing import Iterator
 
 from . import bodykeys
-from . import (callcapture, config, contextfloor, failover, massage, probegate, reasoning,
-               rumination, tokenratio)
+from . import (callcapture, config, contextfloor, failover, indicators, massage, probegate,
+               reasoning, rumination, tokenratio)
 
 # Sentinel for "window not yet resolved" (distinct from None = "no window / skip floor").
 _UNSET = object()
@@ -419,6 +419,13 @@ class Upstream:
                                 else (msgs, 0))
             if deorphaned:
                 rlog.emit("context.deorphaned", reshape="deorphan", count=deorphaned, level="info")
+            # C44 R1 (review 9eaadebe): THE WIRE INVARIANT. `indicators.PROSE_DROPPED_MARKER` must
+            # never reach a model (#17: no literal "cria"-family token; #24: a wire invariant belongs
+            # at the wire). `loop.reframe_compaction` and `server._strip_and_reframe_inbound` are the
+            # two upstream owners that interpret/strip it, but this is the LAST point before
+            # serialization \u2014 unconditional, independent of engagement level, so no missed call
+            # site anywhere upstream can put it on the wire.
+            msgs = indicators.strip_prose_dropped_marker(msgs)
             msgs = _merge_consecutive_assistant(msgs)
             # THE LAST message transform, and last is the point. A template that enforces strict
             # user/assistant alternation ({user,tool} vs {assistant}) rejects the body outright, and

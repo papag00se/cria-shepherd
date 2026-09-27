@@ -90,18 +90,20 @@ class B1AppendixOnlyTruthfulFrameTests(unittest.TestCase):
                                                _NoRoleProvider(), _NoRoleSrv, _Rlog())
         shipped = out["choices"][0]["message"]["content"]
         self.assertTrue(shipped.strip(), "the appendix must still ship — never destroy re-derivable facts")
-        self.assertIn(loop._PROSE_DROPPED_MARKER, shipped)   # the marker travels WITH the appendix
 
         # The harness round-trips this exact text back as the NEXT turn's "another language model"
-        # preamble — reframe_compaction must consume the marker, not merely tolerate its presence.
+        # preamble. FAILS-BEFORE (behaviourally, not via AttributeError — every assertion below
+        # exists on the pre-fix base too): on 211169a7, `summary` reads non-blank (the appendix
+        # survived) so the OLD blank-only check chose the NORMAL template, and the very first
+        # assertion below fails with a real AssertionError ("ungrounded account" unexpectedly found).
         wrapped = [{"role": "user", "content": PRE + shipped}]
         out2, hit = loop.reframe_compaction(wrapped)
         self.assertTrue(hit)
         final = out2[0]["content"]
-        self.assertNotIn(loop._PROSE_DROPPED_MARKER, final)          # stripped before the model reads it
         self.assertNotIn("ungrounded account", final)                # #5b: not a handoff, never claimed as one
-        self.assertIn("RETAINED GROUND TRUTH", final)                 # presented as cria's own re-derived fact
+        self.assertIn("RE-DERIVED AT THE TIME OF THAT COMPACTION", final)                 # presented as cria's own re-derived fact
         self.assertIn("README.md", final)                            # the real appendix content survives
+        self.assertNotIn("prose-dropped", final)                     # the internal marker itself never ships
 
     def test_a_genuine_accepted_handoff_keeps_the_normal_ungrounded_account_frame(self):
         """Regression guard: the marker must NEVER appear when real prose shipped — only an actual
@@ -133,7 +135,7 @@ class B1AppendixOnlyTruthfulFrameTests(unittest.TestCase):
         out = srv._harden_compaction_reply(comp, {"messages": _base_messages()},
                                            _AcceptingProvider(), _Srv, _Rlog())
         shipped = out["choices"][0]["message"]["content"]
-        self.assertNotIn(loop._PROSE_DROPPED_MARKER, shipped)
+        self.assertNotIn("prose-dropped", shipped)   # the marker never appears when real prose shipped
 
         wrapped = [{"role": "user", "content": PRE + shipped}]
         out2, hit = loop.reframe_compaction(wrapped)
