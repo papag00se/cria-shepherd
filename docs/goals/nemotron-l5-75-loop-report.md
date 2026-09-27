@@ -1021,6 +1021,15 @@ reconciled HEAD: `p22-feed-rerun-9ded52bc.service` (user unit, not collected), s
     handles, rust); invented API with fetch tools available (feed, handles, rust); diagnosed-not-executed.
 - Next candidate in design during p29, with no GPU until the row ends: **C47**, regression-only protection against
   a whole-file rewrite that discards working, checked code (principle 2).
+
+### Row p29 launched
+
+- Row HEAD **`10761695`**. Unit `row-p29-10761695.service` runs `~/.cria/nemotron-l5-row-p29-10761695.sh`, with the
+  log in `~/.cria/nemotron-l5-row-p29-10761695.log`.
+- Six cells, in the order shipping, cart, orders, feed, handles, rust. Note `BATTERY2 L5 nemotron-elastic 10761695 p29`,
+  flocked on `suite-gpu.lock`, guarded on cria/, suite/run.py and suite/sampling.py. Started 19:13:48.
+- One heartbeat: `43be95f3` (*/10).
+- C47 investigation launched (Coder `95f646ca`; read-only, proposal only, no GPU).
   - Process note: the Supervisor's C43 diagnostic call ran while the C44 replay was active. The server has one slot
     (`total_slots` 1), so requests queued rather than interleaved, and both runs are temperature 0.
 
