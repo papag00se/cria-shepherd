@@ -1050,6 +1050,24 @@ reconciled HEAD: `p22-feed-rerun-9ded52bc.service` (user unit, not collected), s
   - Repaired as `39ad3539`: gather is idempotent per `tool_call_id` and the fact is re-validated at surface time.
     Full suite 5370 passed. Offline, 36 of 71 qualifying p28 rewrites give ≥1 candidate. Re-review in progress.
 
+- **C47 STOPPED:** real reach is too low.
+  - Repairs up to `da11045e` were accepted by review: the old body is captured before `apply_survey` drops it, and
+    trimming is bounded.
+  - But driving the real raw inbound sequence (`~/.cria/review-scratch/c47/reach.md`), 0 of 5 true p28 breaks reach
+    the model as wired. The 0140 result first arrives in a harness compaction request, and after it the view no
+    longer holds the file.
+  - With a grace-period delivery fix, 1 of 5 at most, and partial (only `create_order`).
+  - The other breaks are structural misses: a declaration dropped while still referenced, and no separate citing file
+    in a single-file project.
+  - `cand-c47` is left unmerged.
+- **C48 investigation assigned** (Coder `95f646ca`; proposal only):
+  - The Go dependency note withholds `go get` and asks the coder to "inspect the authoritative listing" that neither
+    side ever inspects.
+  - Candidate direction: cria verifies existence and versions by a harness-executed read-only probe and states only
+    the proven fact.
+  - Includes the related shipping gem and feed dependency boundaries, and the git history of why the Go clause
+    exists.
+
 ### Row p29 — cell results
 
 - **shipping-rates-rb** `…_1790475228` (session `20260926T191409-01a0e0a4`): `milestone-stalled-45min`. Milestones
