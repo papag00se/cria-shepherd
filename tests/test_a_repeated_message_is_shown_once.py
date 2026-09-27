@@ -134,6 +134,51 @@ class WhatIsNeverFoldedTests(unittest.TestCase):
         self.assertEqual(fold([]), ([], 0))
 
 
+def call(cmd, tid):
+    return {"role": "assistant", "tool_calls": [{"id": tid, "type": "function",
+            "function": {"name": "exec_command", "arguments": json.dumps({"cmd": cmd})}}]}
+
+
+class DifferentCommandsAreNeverPairedTests(unittest.TestCase):
+    """C42, walked on cart-billing-go x nemotron-elastic 20260925T094032, coder prompt 0160: `grep
+    -n "type Cart"` and `grep -n "type Item"` both matched nothing. Both got the identical
+    `search_found_nothing` note appended by writeproxy, so after `volatile_key` scrubs the per-call
+    envelope (Chunk ID, Wall time, token count) the two tool results were byte-identical \u2014 despite
+    answering two entirely different questions. The fold pointed the Cart result at the Item result's
+    body: a pointer promising "the full copy below" that did not contain the Cart answer at all, and
+    the coder was left unable to confirm Cart was undefined."""
+
+    def _empty_search_envelope(self, chunk_id):
+        return (f"Chunk ID: {chunk_id}\nWall time: 0.0000 seconds\nProcess exited with code 1\n"
+                "Original token count: 0\nOutput:\n\n\n" + prompts.load("search_found_nothing"))
+
+    def test_two_different_empty_searches_are_not_folded(self):
+        msgs = [call('grep -n "type Cart" cart.go', "t1"), tool(self._empty_search_envelope("6a780e"), "t1"),
+                call('grep -n "type Item" cart.go', "t2"), tool(self._empty_search_envelope("aa3750"), "t2")]
+        out, n = fold(msgs)
+        self.assertEqual(n, 0, "two different commands must never fold into one pointer")
+        self.assertNotEqual(out[1]["content"], NOTE)
+        self.assertNotEqual(out[3]["content"], NOTE)
+
+    def test_the_same_command_rerun_still_folds(self):
+        """The fix must not blind the fold to a REAL repeat: the same command, run twice, is still
+        one fact said twice."""
+        env_a = self._empty_search_envelope("6a780e")
+        env_b = self._empty_search_envelope("ffffff")  # only the per-run Chunk ID differs
+        msgs = [call('grep -n "type Cart" cart.go', "t1"), tool(env_a, "t1"),
+                call('grep -n "type Cart" cart.go', "t2"), tool(env_b, "t2")]
+        out, n = fold(msgs)
+        self.assertEqual(n, 1)
+        self.assertEqual(out[1]["content"], NOTE)
+        self.assertEqual(out[3]["content"], env_b)
+
+    def test_a_user_message_with_no_command_still_folds_on_content(self):
+        """Only `tool` results carry a command; a `user` turn keeps the old content-only behavior."""
+        msgs = [{"role": "user", "content": BIG}, {"role": "user", "content": BIG}]
+        out, n = fold(msgs)
+        self.assertEqual(n, 1)
+
+
 class ItIsWiredIntoTheOutboundViewTests(unittest.TestCase):
     def test_the_coder_view_folds_repeats(self):
         """Drive the real function: two byte-identical big payloads must fold to one NOTE pointer

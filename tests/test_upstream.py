@@ -412,6 +412,41 @@ class LoadedModelTests(unittest.TestCase):
         self.assertEqual(body["model"], "explicit-alias")  # a set alias wins; no override
 
 
+class DedupSameCommandRerunEndToEndTests(unittest.TestCase):
+    """C42 (b), driven through the real outbound path: a command re-run whose result differs only in
+    per-call noise (Chunk ID / wall time) still folds to a pointer plus one live copy, and that fold
+    survives all the way to the bytes `_prep` actually serializes \u2014 no wire-level mechanism is
+    needed to keep the promise, because `fold_repeated_messages` never runs again after `_prep` and
+    nothing between the fold and the wire in this path touches these two messages' content."""
+
+    def test_same_command_rerun_folds_through_prep(self):
+        from cria import dedup, prompts
+        note = prompts.load("repeated_message_note").strip()
+        body_txt = "\n".join(f"cart.go:{i}: func F{i}() {{}}" for i in range(40))
+
+        def envelope(chunk, wall):
+            return (f"Chunk ID: {chunk}\nWall time: {wall} seconds\nProcess exited with code 0\n"
+                    f"Original token count: 100\nOutput:\n{body_txt}")
+
+        def call(cmd, tid):
+            return {"role": "assistant", "content": "", "tool_calls": [{"id": tid, "type": "function",
+                    "function": {"name": "exec_command", "arguments": json.dumps({"cmd": cmd})}}]}
+
+        msgs = [{"role": "system", "content": "sys"}, {"role": "user", "content": "task"},
+                call("grep -n func cart.go", "t1"),
+                {"role": "tool", "tool_call_id": "t1", "content": envelope("6a780e", "0.0100")},
+                call("grep -n func cart.go", "t2"),
+                {"role": "tool", "tool_call_id": "t2", "content": envelope("ffffff", "0.0200")}]
+        folded, n = dedup.fold_repeated_messages(msgs, note)
+        self.assertEqual(n, 1)
+
+        up = Upstream("http://x", context_window=32768)
+        data, _, _ = up._prep({"model": "m", "messages": folded}, False, _Rlog())
+        sent = json.loads(data)["messages"]
+        self.assertEqual(sent[3]["content"], note)
+        self.assertEqual(sent[5]["content"], envelope("ffffff", "0.0200"))
+
+
 class ReconcileReasoningConventionTests(unittest.TestCase):
     """C41: row p28 — [backends.local] reasoning_style = "openai" (written for ternary-bonsai-2)
     stayed configured after the box swapped to Nemotron-Elastic-12B. Every OFF-reasoning role wrote

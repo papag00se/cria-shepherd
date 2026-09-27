@@ -133,10 +133,42 @@ def elide_from_messages(msgs: list[dict], units: list[str], note: str, *,
     return (out, total) if total else (msgs, 0)
 
 
+def _tool_commands(msgs: list[dict]) -> dict[str, str]:
+    """``tool_call_id`` -> the exact ``name:arguments`` text of the call that produced it.
+
+    A tool result's MEANING depends on its command: two different searches that both come back
+    empty are two different facts ("Cart is undefined" vs "Item is undefined"), not one fact said
+    twice. Best-effort \u2014 an id with no owning assistant ``tool_calls`` entry (compacted away, or a
+    synthetic result with no call in view) maps to nothing, and a candidate with no known command
+    falls back to content alone, same as before this existed."""
+    cmds: dict[str, str] = {}
+    for m in msgs:
+        if m.get("role") != "assistant":
+            continue
+        for tc in m.get("tool_calls") or []:
+            tid = tc.get("id")
+            fn = tc.get("function") or {}
+            if tid:
+                cmds[tid] = f"{fn.get('name', '')}:{fn.get('arguments', '')}"
+    return cmds
+
+
 def fold_repeated_messages(msgs: list[dict], note: str, *, protect: "tuple[str, ...]" = (),
                            min_chars: int = MIN_UNIT_CHARS) -> tuple[list[dict], int]:
     """Keep ONE copy of each byte-identical ``user``/``tool`` payload — the NEWEST — and point the
     earlier ones at it. Rule 5's first exception, applied to whole messages.
+
+    A ``tool`` result is keyed on its COMMAND too (see :func:`_tool_commands`), never on content
+    alone: two different commands can render byte-identical text after per-run noise is scrubbed by
+    :func:`volatile_key` \u2014 an empty search's envelope carries no trace of what was searched for.
+    Walked on cart-billing-go x nemotron-elastic 20260925T094032, coder prompt 0160: ``grep -n
+    "type Cart"`` and ``grep -n "type Item"`` both matched nothing, both got the identical
+    ``search_found_nothing`` note appended, and the fold pointed the Cart result at the Item
+    result's body \u2014 a pointer promising "the full copy below" that did not contain the Cart answer
+    at all. The coder could no longer tell whether ``Cart`` itself was undefined (#5, #5b: a pointer
+    that resolves to the WRONG fact is a false statement about the world, not a compression). A tool
+    result's meaning is its command plus its output, so folding across two different commands is
+    never correct even when a downstream rewrite makes their rendered text collide.
 
     MEASURED, over 6,614 captured coder prompts: 885 of them (13%) carried a block of 200 characters
     or more repeated VERBATIM inside a single prompt, 2.2 MB of duplicate bytes in total. The largest
@@ -164,6 +196,19 @@ def fold_repeated_messages(msgs: list[dict], note: str, *, protect: "tuple[str, 
                     and len(c.strip()) >= min_chars
                     and not any(mark in c for mark in protect))
 
+    commands = _tool_commands(msgs)   # tool_call_id -> the command that produced it, see above
+
+    def _key(m) -> str:
+        c = m["content"]
+        base = volatile_key(c.strip()) or c.strip()
+        if m.get("role") == "tool":
+            cmd = commands.get(m.get("tool_call_id"))
+            if cmd:
+                # A UNIT SEPARATOR, not a printable delimiter a real command or note could contain —
+                # the join must not accidentally collide two (command, content) pairs into one key.
+                return f"{cmd}\x1f{base}"
+        return base
+
     # KEYED ON `volatile_key`, NOT ON THE RAW BYTES. `volatile_key` is this module's own answer to
     # "is this the same thing again?" and the two other duplicate detectors (focustrim's tool-result
     # groups, probegate's gate collapse) both use it — this one did not, and it is the one that folds
@@ -177,20 +222,19 @@ def fold_repeated_messages(msgs: list[dict], note: str, *, protect: "tuple[str, 
     for i, m in enumerate(msgs):
         if _candidate(m):
             n_candidates += 1
-            keep[volatile_key(m["content"].strip()) or m["content"].strip()] = i
+            keep[_key(m)] = i
     if len(keep) == n_candidates:
         return msgs, 0                   # every candidate was unique — same list, no copy
     out, folded = [], 0
     for i, m in enumerate(msgs):
         c = m.get("content")
-        key = volatile_key(c.strip()) or c.strip() if isinstance(c, str) else None
         # THE ROLE FILTER GATES THE WRITE. It guarded only the index build above, so any message —
         # including an `assistant` turn and a `system` message — whose content matched a later
         # user/tool payload had its content replaced by cria's third-person pointer. Reproduced both
         # ways. The docstring says the opposite: "NEVER an assistant turn (the model's own words are
         # never rewritten), never a system message (cria's frame)."
         if (m.get("role") in ("user", "tool") and isinstance(c, str)
-                and keep.get(key, i) != i):
+                and keep.get(_key(m), i) != i):
             out.append({**m, "content": note})
             folded += 1
             continue
