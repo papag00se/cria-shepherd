@@ -9,7 +9,7 @@ place that defines it.
 
     python3 suite/cycle_run.py                 # the whole 24-cell CRIA arm, from the top
     python3 suite/cycle_run.py --start 9       # resume at cell 9 after a kill
-    python3 suite/cycle_run.py --models ornith15 qwen35  # selected complete model rows
+    python3 suite/cycle_run.py --models ornith1.5 qwen35  # selected complete model rows
     python3 suite/cycle_run.py --dry-run       # print the cell order and exit
 
 NO TIMEOUT OF ITS OWN. The suite already owns the wall clock — 15 minutes per budget interval, read

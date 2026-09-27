@@ -45,8 +45,11 @@ LEVEL_NAMES = {
 # phi-4, Ling-3.0-tiny and Qwen3.8-9B-Distill joined, and defiant-fable entered. The report renders
 # only this roster (plus gemma4's frozen row, the only gemma history); retired models are NAMED in
 # the report and keep every row in results.jsonl / historical_ladder.json.
-MODELS = ("gemma4-qat", "ternary-bonsai-2", "defiant-fable", "ornith15",
-          "k2-horizon", "phi4", "ling3-tiny", "qwen38-distill")
+# Keys renamed 2026-09-27 (operator): ternary-bonsai-2 -> bonsai2, ornith15 -> ornith1.5,
+# qwen38-distill -> qwen3.8_9b_distill, k2-horizon -> k2_horizon_7b. results.jsonl `model`
+# fields were migrated with them; run_ids, archives and systemd units keep their names.
+MODELS = ("gemma4-qat", "bonsai2", "defiant-fable", "ornith1.5",
+          "k2_horizon_7b", "phi4", "ling3-tiny", "qwen3.8_9b_distill")
 # CURRENT matrix only — a model here must be swappable and have canonical sampling.
 # gemma4 (stock Q4_K_M) and ternary-bonsai (Bonsai 1) left on 2026-09-18 when their weights
 # and units were deleted; like nemotron-elastic before them they stay VISIBLE in the reports

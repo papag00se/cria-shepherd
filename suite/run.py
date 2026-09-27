@@ -80,19 +80,19 @@ KILL_GRACE = 20
 
 # fleet model name -> systemd service (one model at a time on the 3080)
 SERVICES = {
-    "ternary-bonsai-2": "llama-ternary-bonsai-2",
+    "bonsai2": "llama-ternary-bonsai-2",
     "qwythos": "llama-qwythos-q6",
     "qwopus": "llama-qwopus-q6",
     "qwen35": "llama-qwen35",
-    "ornith15": "llama-ornith-q6",
+    "ornith1.5": "llama-ornith-q6",
     "gemma4-qat": "llama-gemma4-qat",
     "maple-preview": "llama-maple-preview",  # DeepGrove ternary MoE 20B-A1B (stamsam prism fork)
     "defiant-fable": "llama-defiant-fable",
     # 2026-09-27 battery additions (settings + measurements: ~/.config/llama-fleet/models.toml)
-    "qwen38-distill": "llama-qwen38-distill",  # empero-ai Qwen3.8-9B-Distill Q6_K, MTP+ngram spec
+    "qwen3.8_9b_distill": "llama-qwen38-distill",  # empero-ai Qwen3.8-9B-Distill Q6_K, MTP+ngram spec
     "ling3-tiny": "llama-ling3-tiny",          # inclusionAI Ling-3.0-tiny Q6_K (bailingmoe3)
     "phi4": "llama-phi4",                      # microsoft phi-4 Q4_K_S, tool template, q8/q4 KV
-    "k2-horizon": "llama-k2-horizon",          # IFM K2-Horizon-7B Q6_K (MBZUAI-IFM fork build)
+    "k2_horizon_7b": "llama-k2-horizon",          # IFM K2-Horizon-7B Q6_K (MBZUAI-IFM fork build)
 }
 
 # RETIRED 2026-09-18 — weights, units and (for bonsai) binaries deleted from the box, so these keys

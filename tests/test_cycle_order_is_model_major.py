@@ -45,7 +45,7 @@ class ModelMajor(unittest.TestCase):
         self.assertEqual(switches, len(bs.MODELS) - 1)
 
     def test_selected_models_still_get_complete_rows_in_requested_order(self):
-        chosen = ("ornith15", "qwen35")
+        chosen = ("ornith1.5", "qwen35")
         cells = cycle_run.cells(chosen)
         self.assertEqual(len(cells), len(chosen) * len(bs.TASKS))
         self.assertEqual([model for _task, model in cells[:len(bs.TASKS)]],

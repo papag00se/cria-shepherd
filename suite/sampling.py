@@ -48,7 +48,7 @@ MODEL_SAMPLING = {
     # weights in the same step and make the row uninterpretable as a Bonsai-1 comparison. If the
     # carried-over values misbehave on these weights (the m15 verification was done on Bonsai 1),
     # that is a finding to record and re-tune from — not a reason to quietly switch mid-row.
-    "ternary-bonsai-2": {
+    "bonsai2": {
         "coder":      {"temperature": 0.2, "top_p": 0.95, "top_k": 20, "repeat_penalty": 1.1},
         "reasoner":   {"temperature": 0.6, "top_p": 0.90, "top_k": 40, "repeat_penalty": 1.1},
         "classifier": {"temperature": 0.0, "repeat_penalty": 1.1},
@@ -122,7 +122,7 @@ MODEL_SAMPLING = {
     # --- 2026-09-27 battery additions. Each cites its card; deterministic roles stay at temp 0. ---
     # empero-ai/Qwen3.8-9B-Distill-GGUF card: "Recommended sampling: temperature=0.6, top_p=0.95,
     # top_k=20" (reasoning model; every answer opens with <think>).
-    "qwen38-distill": {
+    "qwen3.8_9b_distill": {
         "coder":      {"temperature": 0.6, "top_p": 0.95, "top_k": 20},
         "reasoner":   {"temperature": 0.6, "top_p": 0.95, "top_k": 20},
         "classifier": {"temperature": 0.0},
@@ -146,7 +146,7 @@ MODEL_SAMPLING = {
     },
     # IFM/K2-Horizon-7B card: "Recommended settings: reasoning_effort=\"high\", temperature=1.0,
     # top_p=0.95". The template's reasoning_effort defaults to high, so enable_thinking=true is it.
-    "k2-horizon": {
+    "k2_horizon_7b": {
         "coder":      {"temperature": 1.0, "top_p": 0.95},
         "reasoner":   {"temperature": 1.0, "top_p": 0.95},
         "classifier": {"temperature": 0.0},
@@ -168,7 +168,7 @@ MODEL_SAMPLING = {
     # Ornith 1.5 publisher card: precise coding 0.6/.95/k20/min-p0/presence0/repetition1;
     # general 1.0/.95/k20/min-p0/presence1.5/repetition1. Coding maps to coder; general maps
     # to the reasoner. Deterministic roles retain temp 0 and neutral penalties.
-    "ornith15": {
+    "ornith1.5": {
         "coder":      {"temperature": 0.6, "top_p": 0.95, "top_k": 20, "min_p": 0.0,
                        "presence_penalty": 0.0, "repeat_penalty": 1.0},
         "reasoner":   {"temperature": 1.0, "top_p": 0.95, "top_k": 20, "min_p": 0.0,
