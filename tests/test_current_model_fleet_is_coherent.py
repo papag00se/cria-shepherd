@@ -52,3 +52,15 @@ def test_ornith15_uses_the_publishers_distinct_coding_and_general_sampling():
     assert spec["coder"]["presence_penalty"] == 0.0
     assert spec["reasoner"]["temperature"] == 1.0
     assert spec["reasoner"]["presence_penalty"] == 1.5
+
+
+def test_no_result_row_still_uses_a_renamed_model_key():
+    """The 2026-09-27 key rename (ternary-bonsai-2 -> bonsai2, ornith15 -> ornith1.5, qwen38-distill ->
+    qwen3.8_9b_distill, k2-horizon -> k2_horizon_7b) migrated results.jsonl's `model` field. A row left
+    on an old key is invisible to the report and makes ladder_cycle re-run a cell that is done."""
+    import json
+    old = {"ternary-bonsai-2", "ornith15", "qwen38-distill", "k2-horizon"}
+    path = ROOT / "suite" / "results" / "results.jsonl"
+    stale = [json.loads(l)["run_id"] for l in path.read_text().splitlines()
+             if l.strip() and json.loads(l).get("model") in old]
+    assert not stale, f"rows still on a renamed key: {stale[:5]}"
