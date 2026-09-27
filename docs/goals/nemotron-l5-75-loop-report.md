@@ -985,6 +985,11 @@ reconciled HEAD: `p22-feed-rerun-9ded52bc.service` (user unit, not collected), s
       rates.
     - (c2) is a note on whether each fronted harness preserves the task root, with no gate change yet.
     - Coder `c24505f1` on the new `cand-c45`, based on main with C42.
+  - **C44a LANDED:** `cand-c44` `3be99624` merged to main.
+    - The review's last blocker was that the render include-order change had no test. The Supervisor added one,
+      which fails on `3cde247a` because the fragment gets spliced in, and removed three stale retry comments.
+    - Accepted by `9eaadebe`. Full suite on main 5329 passed, 5 skipped; pushed; `cria.service` restarted;
+      `/health` ok.
   - Process note: the Supervisor's C43 diagnostic call ran while the C44 replay was active. The server has one slot
     (`total_slots` 1), so requests queued rather than interleaved, and both runs are temperature 0.
 
