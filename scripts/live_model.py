@@ -156,9 +156,18 @@ def summarize_response(raw: bytes) -> tuple[str, list[dict], str]:
     return ch.get("finish_reason", "?"), msg.get("tool_calls") or [], msg.get("content") or ""
 
 
+# Durable, and never /tmp: this used to be a hard-coded scratchpad path of one long-gone agent
+# session under /tmp, so every live smoke left cria traces in the shared tmpfs (2026-09-27).
+LIVE_LOG_ROOT = Path.home() / ".cria" / "live-smoke"
+
+
+def live_log_dir(label: str) -> Path:
+    return LIVE_LOG_ROOT / f"cria-live-{label}"
+
+
 def run(endpoint: str, model: str, turns: int, timeout: float, label: str) -> int:
     port = free_port()
-    logdir = Path("/tmp/claude-1000/-home-jesse-src-codex-local/9b0db794-ff29-470c-9934-90172df66967/scratchpad") / f"cria-live-{label}"
+    logdir = live_log_dir(label)
     logdir.mkdir(parents=True, exist_ok=True)
     for stale in logdir.glob("cria-*.jsonl"):  # fresh log per run — don't mix traces
         stale.unlink()
