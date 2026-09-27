@@ -940,6 +940,20 @@ reconciled HEAD: `p22-feed-rerun-9ded52bc.service` (user unit, not collected), s
     - The 0202/0219 controls ran away to 68+ `N: NONE` lines.
     - Back to Coder `076fca0c`: fix the question format and prove it live.
   - C44 replay is running.
+  - **C44 FAILED live** (103 real calls; `~/.cria/review-scratch/c44/live_replay_results.json`):
+    - Part B: **0 of 18** real compactions shipped validated prose (12 appendix-only, 4 empty). The retrospective
+      lens rejected 9, the retry was also rejected, and the scope lens rejected 9.
+    - Part A: the reworded lens **accepts 7 of 13 plan-bearing drafts**. That is a false-accept regression on a lens
+      that self-compaction shares.
+    - Controls held.
+    - Verdict: rework.
+      - C44a keeps only the deterministic truthfulness fixes: the `⟦prose-dropped⟧` marker + unconditional strip,
+        the truthful dropped/appendix frames, and the `prompts.render` include order.
+      - Revert the lens rewording, the closing ask and the retry.
+      - **C45** is the strategy reset on the real outcome, the coder losing its memory at every harness compaction.
+        A proposal comes first; nothing is implemented before the Supervisor selects.
+  - Process note: the Supervisor's C43 diagnostic call ran while the C44 replay was active. The server has one slot
+    (`total_slots` 1), so requests queued rather than interleaved, and both runs are temperature 0.
 
 ### Candidate C44 (row p28, cross-cell) — the compaction validator rejects every briefing, so the coder's memory is emptied
 
