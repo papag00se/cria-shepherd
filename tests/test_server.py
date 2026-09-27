@@ -1195,7 +1195,8 @@ class CompactionFirstPassFramingTests(unittest.TestCase):
         # (recency-privileged \u2014 nothing about the harness's own instruction survives after it), not
         # the harness's own compaction marker text.
         self.assertIn("what you were doing last", t)
-        self.assertTrue(t.rstrip().endswith("delete that sentence before you finish."))
+        self.assertTrue(t.rstrip().endswith(
+            "or any sentence about what should happen after this point."))
         self.assertLess(t.index("write_file call"), t.index("Write the briefing now"))
 
 

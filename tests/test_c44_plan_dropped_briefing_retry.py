@@ -102,7 +102,18 @@ class _Srv:
 
 
 class PlanDroppedRetryTests(unittest.TestCase):
+    """Evidentiary note (review 9eaadebe): only the FIRST test below fails on the pre-retry base
+    (211169a7's parent) for a behavioural reason \u2014 no retry mechanism existed, so the rejected
+    draft's text simply became "" and never got a redo. The other three assert properties that are
+    ALSO true on that base by construction (no retry code path exists at all, so it obviously never
+    fires wrongly, and an already-accepted draft was never touched either way) \u2014 they are
+    regression guards against a WRONG version of this feature (e.g. one that retries unconditionally
+    or spends a call with no role), not fails-before evidence for the feature's existence. Labelled
+    honestly rather than reported as four fails-before results."""
+
     def test_a_rejected_plan_bearing_draft_is_retried_and_the_clean_redo_ships(self):
+        """FAILS-BEFORE (confirmed): on the pre-retry base, `final_text` stays "" \u2014 no redo is
+        ever attempted, so neither the clean redo text nor `route.compaction_plan_retry` exist."""
         provider = _Provider(retry_writer_text=CLEAN_REDO)
         role = Role(name="compactor", backend="local")
         server = _Srv(role)

@@ -5570,6 +5570,18 @@ def _drop_harness_frame(messages: list[dict]) -> list[dict]:
 _COMPACTION_MARKER = "Another language model started to solve this problem"
 _COMPACTION_BOUNDARY = "assist with your own analysis:"
 
+# C44 B1 (review 9eaadebe): `server._harden_compaction_reply` prepends this to the compaction REPLY
+# whenever no prose survived to ship (a validator rejection with no eligible retry, a rejected
+# retry, or an empty/garbled writer after its own retry) but the deterministic appendices (fetch
+# facts, workspace inventory, latest checks) were non-empty and so `summary` below is NOT blank.
+# Without it `reframe_compaction` could not tell "a real model account, plus appendices" from "NO
+# account, appendices only" and used the same "the handoff below is an ungrounded account" framing
+# for both — false over pure re-derived ground truth (#5b; shipping 0084/0141, cart 0079, orders
+# 0087/0191, feed 0052/0088 all shipped this way). Stripped here before the model ever reads it, so
+# it never crosses the wire as a literal token (#17) — same convention as any other cria-internal
+# marker meant to be consumed and removed, not read.
+_PROSE_DROPPED_MARKER = "\u27e6cria:prose-dropped\u27e7"
+
 
 def _workspace_is_empty(cwd: str) -> bool:
     """True when the advertised workspace does not exist or is empty. The continuation reframe's
@@ -5649,16 +5661,22 @@ def reframe_compaction(messages: list[dict]) -> tuple[list[dict], bool]:
                 # "another language model…" sentence is NEVER wrapped in "this is YOUR OWN work".
                 nl = text.find("\n", text.find(_COMPACTION_MARKER))
                 summary = text[nl + 1:].lstrip("\n") if nl != -1 else ""
-            # C44: a validator rejection upstream (`validate_compaction_briefing`) can leave `summary`
-            # BLANK — the harness's whole compaction reply was discarded because the writer's prose
-            # failed a fidelity/plan lens, so nothing but re-derivable appendices survived, and even
-            # those can be empty this early in a session. The normal/empty-workspace templates both
-            # assert "the handoff below is an ungrounded account" — TRUE only when there IS a handoff.
-            # Over a blank `summary` that sentence is FALSE (#5b): captured orders session
-            # 20260926T141925-01a0df96, prompt 0049, rendered "Handoff account (unverified):" followed
-            # by nothing. Route a blank summary to its own template that names the drop instead of
-            # inventing an account to disclaim.
-            tmpl = "compaction_reframe_dropped" if not summary.strip() else template
+            # C44 B1: `summary` reads non-blank whenever the deterministic appendices (fetch facts,
+            # workspace inventory, checks) survived even though NO model prose did — the common
+            # shape (13 of 18 real row-p28 rejections), not the rarer fully-blank one. Detect that
+            # via the marker `_harden_compaction_reply` prepends in exactly that case, strip it before
+            # the model ever sees it (#17), and route to the appendix-aware dropped template so the
+            # re-derived ground truth is presented as retained fact, never as "the handoff below is an
+            # ungrounded account" (#5b) — that sentence is true only when a model actually wrote one.
+            prose_dropped = _PROSE_DROPPED_MARKER in summary
+            if prose_dropped:
+                summary = summary.replace(_PROSE_DROPPED_MARKER, "", 1).lstrip("\n")
+            if prose_dropped and summary.strip():
+                tmpl = "compaction_reframe_dropped_facts"
+            elif prose_dropped or not summary.strip():
+                tmpl = "compaction_reframe_dropped"
+            else:
+                tmpl = template
             # Tag with a ⟦ctx:⟧ marker so classify.latest_user_text skips it — this reframe is cria
             # scaffolding, not the user's task; classifying it flips a coding session onto the reasoner.
             reframe = prompts.render(tmpl, summary=summary, cwd=cwd,
@@ -7108,7 +7126,8 @@ def ask_closed(chat_fn, role, question: str, rlog, *, phase: str, max_tokens: in
 
 def validate_compaction_briefing(chat_fn, role, briefing: str, *, files: str, checks: str,
                                   transcript_blocks: list[str], rlog, task: str = "",
-                                  phase: str = "compaction-validate") -> bool:
+                                  phase: str = "compaction-validate",
+                                  answers_out: dict | None = None) -> bool:
     """Fail-closed, independent judgments before model-made session memory is injected.
 
     One large verdict asked a weak judge to enforce format, task scope, files, checks, uncertainty,
@@ -7117,6 +7136,15 @@ def validate_compaction_briefing(chat_fn, role, briefing: str, *, files: str, ch
     retrospection, task-scope preservation, then evidence fidelity. Every applicable lens must
     return their exact positive verdict. Callers retain verbatim history (self-compaction) or only
     re-derivable appendices (a harness-owned compaction) on any rejection or unavailable answer.
+
+    ``answers_out``, when given a dict, is filled with the SAME per-lens answers the event carries
+    (``{"retrospective": ..., "scope": ..., "fidelity": ...}``, only the lenses that actually ran) —
+    a caller that reacts DIFFERENTLY to different rejection reasons (C44 B3: a plan-dropped retry
+    only makes sense, and is only a TRUE thing to tell the writer, when the retrospective lens
+    specifically said PLAN; a fidelity or scope rejection is a different defect a "drop the next
+    step" retry cannot fix and would misdescribe) reads this instead of re-deriving the reason from
+    the boolean alone. The return type stays ``bool`` — everything that already treats this as a
+    plain accept/reject (most callers) is unaffected.
     """
     if chat_fn is None or role is None or not briefing.strip():
         if rlog is not None:
@@ -7153,6 +7181,8 @@ def validate_compaction_briefing(chat_fn, role, briefing: str, *, files: str, ch
         blocks.append(prompts.render("compaction_checks_fact", checks=checks.strip()) if checks.strip()
                       else prompts.render("compaction_no_fact", kind="LATEST CHECK FACTS"))
         accepted = judge("fidelity", prompts.load("compaction_validate"), blocks, "FAITHFUL")
+    if answers_out is not None:
+        answers_out.update(answers)
     if rlog is not None:
         rlog.emit("context.compaction_validation", reshape="validate-rollup",
                   level="info" if accepted else "warn", accepted=accepted, answers=answers)

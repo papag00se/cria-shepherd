@@ -37,6 +37,7 @@ from .loop import (
     Loop,
     _briefing_disk_truth,
     _drop_harness_frame,
+    _PROSE_DROPPED_MARKER,
     LoopContext,
     LoopStore,
     _fetch_ground_truth,
@@ -746,18 +747,21 @@ def _harden_compaction_reply(comp: dict, body: dict, provider, server, rlog, ses
         role = server.cfg.routing.roles.get("compactor") or server.cfg.routing.roles.get("reasoner")
         task = _history_root(body.get("messages", []))[0]
         chat_fn = lambda call, log: provider.chat(call, log)  # noqa: E731
+        answers: dict = {}
         if not validate_compaction_briefing(
                 chat_fn, role, text, files=writer_inventory, checks=checks,
                 transcript_blocks=transcript, task=task, rlog=rlog,
-                phase="harness-compaction-validate"):
-            # C44: a rejection here overwhelmingly means "retrospective, plus one forward sentence"
-            # (13 of 18 real row-p28 rejections), not a briefing worth discarding \u2014 give the SAME
-            # writer ONE chance to redo it without that sentence before falling back to appendices.
-            # Gated on a configured role (#4: no fallback behind an unavailable reasoner) \u2014
-            # without one, `validate_compaction_briefing` can only fail again on the redo too, so the
-            # retry call would be spent with no possible acceptance.
+                phase="harness-compaction-validate", answers_out=answers):
+            # C44 B3 (review 9eaadebe): the retry tells the writer "your draft contained a next
+            # step" and asks it to redo the SAME evidence keeping every OTHER fact \u2014 both halves
+            # are only true when the RETROSPECTIVE lens specifically said PLAN. A fidelity rejection
+            # (an invented fact, a laundered failure) or a scope rejection (the task quietly
+            # narrowed) is a DIFFERENT defect: telling that writer "you named a next step, keep
+            # everything else" is false and, for an invented fact, an instruction to keep the
+            # invention. Gated on a configured role too (#4: no fallback behind an unavailable
+            # reasoner) \u2014 without one the redo could never be validated either.
             retried = (_retry_dropped_plan_briefing(provider, role, text, body, ws, server, sk, rlog)
-                      if role is not None else "")
+                      if role is not None and answers.get("retrospective") == "PLAN" else "")
             if retried and validate_compaction_briefing(
                     chat_fn, role, retried, files=writer_inventory, checks=checks,
                     transcript_blocks=transcript, task=task, rlog=rlog,
@@ -786,6 +790,15 @@ def _harden_compaction_reply(comp: dict, body: dict, provider, server, rlog, ses
     # otherwise a dropped summary silently survives as the untouched original content.
     if facts or text != _text_of(comp).strip():
         merged = (text + "\n\n" + facts).strip()
+        # C44 B1: `not text` here means NO prose survived any of the paths above (an empty/garbled
+        # writer even after its own retry, a validator rejection with no eligible plan-retry, or a
+        # rejected retry) \u2014 `merged` is the deterministic appendices ALONE. Mark it so
+        # `reframe_compaction`, which sees this same content again on a LATER turn wrapped in the
+        # harness's own "another language model" preamble, presents it as retained ground truth
+        # rather than disclaiming a handoff that was never written (#5b). Stripped there before the
+        # model reads it; never sent when real prose shipped.
+        if not text and merged:
+            merged = f"{_PROSE_DROPPED_MARKER}\n{merged}"
         chs = [dict(ch) for ch in comp.get("choices") or []]
         if chs:
             chs[0] = {**chs[0], "message": {**(chs[0].get("message") or {}), "content": merged}}
