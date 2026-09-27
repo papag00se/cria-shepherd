@@ -1059,7 +1059,23 @@ reconciled HEAD: `p22-feed-rerun-9ded52bc.service` (user unit, not collected), s
     an invented `iso_countries` API; the gems were never installed; there are no express tests.
   - The last interval went on gem searches, as in p28.
   - Walk: 76 segments at `~/.cria/walk-findings/2026-09-26/p29-shipping/`.
-- cart-billing-go started 20:10:46.
+- **cart-billing-go** `…_1790478646` (session `20260926T201107-01a0e0d8`): `milestone-stalled-30min`. Final **15%**
+  (p28: 30%).
+  - `go.mod` required an invented `shopspring/decimal v0.0.0-20231030-1` (resolver: unknown revision), then an
+    unversioned require. The module never resolved, so C40 never fired.
+  - `cart.go` uses invented `NewFromFloat64`/`Quantize`/`ToFloat64` and inverts the discount. The test expects
+    48.51.
+  - What is useful: `discounts.json` with a fallback, and the stderr log.
+  - **Lead C48 (Supervisor-verified from the log):** `writeproxy.dependency_note` fired **52 times** this session.
+    - Its Go text (`cria/prompts/dependency_note.txt:35`) tells the coder that the failure "does NOT establish
+      that `go get` … is valid" and to "inspect the module's authoritative package listing or source first".
+    - cria never performs or offers that check. `shopspring/decimal` is a real module in the local cache (C40 read
+      it in p28).
+    - So cria withholds the one-command remedy and leaves the coder cycling: read `go.mod`, `go test`, rumination.
+    - Candidate direction (principle 10, verify by doing): cria runs the authoritative existence check itself
+      through the harness (module cache / `go list -m`) and states the fact, instead of asking the coder to.
+  - Walk: 55 segments at `~/.cria/walk-findings/2026-09-26/p29-cart/`.
+- orders-api-py started 20:50:49.
   - Process note: the Supervisor's C43 diagnostic call ran while the C44 replay was active. The server has one slot
     (`total_slots` 1), so requests queued rather than interleaved, and both runs are temperature 0.
 
