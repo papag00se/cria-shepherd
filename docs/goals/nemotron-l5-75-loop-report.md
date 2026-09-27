@@ -1042,6 +1042,24 @@ reconciled HEAD: `p22-feed-rerun-9ded52bc.service` (user unit, not collected), s
   - It overlaps the existing `passing_test_regression` (a test-tally drop between periodic gates), which must be
     assessed.
   - Independent review by `69a00e93`. The live replay (`~/.cria/review-scratch/c47/live_replay.py`) runs after p29.
+- **C47 review rejected `88aee43c`:**
+  - B1: not one-shot. The history replay re-records the fact on every request, so it is false after a restore.
+  - B2: the wording said "use".
+  - B3: the answer parse was lenient.
+  - B4: the spill dir counted as "other files".
+  - Repaired as `39ad3539`: gather is idempotent per `tool_call_id` and the fact is re-validated at surface time.
+    Full suite 5370 passed. Offline, 36 of 71 qualifying p28 rewrites give ≥1 candidate. Re-review in progress.
+
+### Row p29 — cell results
+
+- **shipping-rates-rb** `…_1790475228` (session `20260926T191409-01a0e0a4`): `milestone-stalled-45min`. Milestones
+  20/continue, 20/stalled. Final **20%** (p28: 25%).
+  - Done: the `>=` fix (the repo tests pass) and a correct README rate table.
+  - Not done usefully: express, `zone_for` and routing exist only in an unloaded duplicate `lib/shipping.rb` built on
+    an invented `iso_countries` API; the gems were never installed; there are no express tests.
+  - The last interval went on gem searches, as in p28.
+  - Walk: 76 segments at `~/.cria/walk-findings/2026-09-26/p29-shipping/`.
+- cart-billing-go started 20:10:46.
   - Process note: the Supervisor's C43 diagnostic call ran while the C44 replay was active. The server has one slot
     (`total_slots` 1), so requests queued rather than interleaved, and both runs are temperature 0.
 
