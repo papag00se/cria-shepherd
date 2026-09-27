@@ -969,6 +969,8 @@ reconciled HEAD: `p22-feed-rerun-9ded52bc.service` (user unit, not collected), s
     - Bonsai-2 declared `top_k = 20` under `reasoning_style = "openai"`. If that was set during the Bonsai-2 runs,
       its `top_k` never reached the server. Check before touching it: the closed Bonsai-2 evidence was measured that
       way.
+  - **C42 LANDED** (`a83aeb32`, merge of `cand-c42` `e6395f37`): full suite on main 5317 passed, 5 skipped; pushed;
+    `cria.service` restarted; `/health` ok. The row p28 results records were committed as `bd57c685`.
   - Process note: the Supervisor's C43 diagnostic call ran while the C44 replay was active. The server has one slot
     (`total_slots` 1), so requests queued rather than interleaved, and both runs are temperature 0.
 
