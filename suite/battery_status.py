@@ -16,7 +16,7 @@ from pathlib import Path
 SUITE = Path(__file__).resolve().parent
 RESULTS = SUITE / "results" / "results.jsonl"
 NOTE_PREFIX = "BATTERY2"
-COUNTED_PREFIXES = (NOTE_PREFIX, "LOWSCORE", "RERANK")
+COUNTED_PREFIXES = ("FRESH-L5", NOTE_PREFIX, "LOWSCORE", "RERANK")
 # Current roster: Nemotron Elastic restored 2026-09-30; eight models entered on 2026-09-27.
 # Retired models remain named in reports and keep their rows in results.jsonl / historical_ladder.json.
 # Keys renamed 2026-09-27 (operator): ternary-bonsai-2 -> bonsai2, ornith15 -> ornith1.5,
