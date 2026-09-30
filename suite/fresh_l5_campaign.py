@@ -46,7 +46,11 @@ def _valid_capture_evidence(row: dict) -> bool:
         except (OSError, ValueError):
             return False
         choices = res.get("choices") if isinstance(res, dict) else None
-        if (not isinstance(req, dict) or not isinstance(req.get("messages"), list)
+        filename_phase = name.split("-", 1)[1].removesuffix(".response.json") if "-" in name else ""
+        body = req.get("body") if isinstance(req, dict) else None
+        if (not isinstance(req, dict) or not filename_phase
+                or req.get("phase") != filename_phase
+                or not isinstance(body, dict) or not isinstance(body.get("messages"), list)
                 or not isinstance(choices, list) or not choices
                 or not isinstance(choices[0], dict)
                 or not isinstance(choices[0].get("message"), dict)):
