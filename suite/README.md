@@ -30,7 +30,7 @@ printf '%s' '<judgment JSON>' | python3 suite/milestones.py record <checkpoint>
 
 The runner remains paused until the campaign agent records the inferred usefulness percentage and control decision. Its progress log prints that percentage at every checkpoint. Waiting time does not consume the run's active budget.
 
-Each row records run identity, settings, elapsed time, terminal state, call/phase counts, throughput, assist events, workspace/archive paths, captures, and harness log. Fresh L5 campaign rows also record an immutable `revision`, explicit planner config state, and request phase counts; only rows proving planner disabled in config and no planner request phase satisfy the revision-pinned worklist. Delivered-work quality is absent until an independent usefulness judgment is recorded.
+Each row records run identity, settings, elapsed time, terminal state, call/phase counts, throughput, assist events, workspace/archive paths, captures, and harness log. Fresh L5 campaign rows also record an immutable `revision`, the live engagement level read after cria's healthy restart, explicit planner config state, and request phase counts. The worklist credits only explicit L5 rows with live L5 provenance, preserved workspace and matching valid request/response captures, and no abort. Fresh L5 cells have no fixed wall timeout because independent judgment waits are excluded from active time; ordinary cells retain the two-hour wrapper timeout. Delivered-work quality is absent until an independent usefulness judgment is recorded.
 
 The fresh L5 cohort is exactly nine roster models × six tasks. Materialize/resume its manifest at a committed revision:
 

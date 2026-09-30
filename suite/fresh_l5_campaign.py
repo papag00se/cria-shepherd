@@ -3,6 +3,10 @@
 from __future__ import annotations
 import argparse, json
 from pathlib import Path
+try:
+    from .run import collect_capture
+except ImportError:
+    from run import collect_capture
 
 SUITE = Path(__file__).resolve().parent
 RESULTS = SUITE / "results" / "results.jsonl"
@@ -22,19 +26,60 @@ def rows():
     return out
 
 
+def _valid_capture_evidence(row: dict) -> bool:
+    """Require preserved request/response pairs whose phase inventory matches the row."""
+    dirs = row.get("capture_dirs")
+    if not isinstance(dirs, list) or not dirs:
+        one = row.get("capture_dir")
+        dirs = [one] if isinstance(one, str) and one else []
+    if not all(isinstance(d, str) and d for d in dirs):
+        return False
+    responses = [p for d in dirs for p in Path(d).glob("*.response.json")]
+    if not responses or row.get("calls") != len(responses):
+        return False
+    for response in responses:
+        name = response.name
+        request = response.with_name(name.removesuffix(".response.json") + ".json")
+        try:
+            req = json.loads(request.read_text())
+            res = json.loads(response.read_text())
+        except (OSError, ValueError):
+            return False
+        choices = res.get("choices") if isinstance(res, dict) else None
+        if (not isinstance(req, dict) or not isinstance(req.get("messages"), list)
+                or not isinstance(choices, list) or not choices
+                or not isinstance(choices[0], dict)
+                or not isinstance(choices[0].get("message"), dict)):
+            return False
+    captured = collect_capture([Path(d) for d in dirs])
+    return captured.get("calls") == row.get("calls") and captured.get("phases") == row.get("phases")
+
+
+def _eligible(row: dict, revision: str) -> bool:
+    archive = Path(row.get("archive") or "")
+    return (
+        type(row.get("level")) is int and row["level"] == LEVEL
+        and type(row.get("live_engagement_level")) is int and row["live_engagement_level"] == LEVEL
+        and not row.get("superseded") and not row.get("aborted")
+        and row.get("terminal") not in (None, "crashed-early")
+        and row.get("workspace_lost") is False
+        and (archive / "workspace").is_dir()
+        and row.get("planner") == "off" and row.get("planner_enabled") is False
+        and row.get("planner_phase_count") == 0
+        and isinstance(row.get("phases"), dict) and row["phases"].get("planner", 0) == 0
+        and str(row.get("note", "")).startswith("FRESH-L5 ")
+        and row.get("revision") == revision
+        and _valid_capture_evidence(row)
+    )
+
+
 def worklist(revision: str, result_rows=None):
-    """Fresh, revision-pinned cells; only current non-superseded L5 rows satisfy a cell."""
+    """Fresh cells only; requested settings never substitute for captured run evidence."""
     if not revision or any(c.isspace() for c in revision):
         raise ValueError("a fixed git revision is required")
     done = set()
     for row in result_rows if result_rows is not None else rows():
-        phases = row.get("phases")
-        if (row.get("level") is None or row.get("superseded") or row.get("planner") != "off"
-                or row.get("planner_enabled") is not False or row.get("planner_phase_count") != 0
-                or not isinstance(phases, dict) or phases.get("planner", 0) != 0):
-            continue
-        if (str(row.get("note", "")).startswith("FRESH-L5 ")
-                and row.get("revision") == revision):
+        if _eligible(row, revision):
             done.add((row.get("model"), row.get("task")))
     return [{"model": m, "task": t, "level": LEVEL, "revision": revision, "planner": "off"}
             for m in MODELS for t in TASKS if (m, t) not in done]

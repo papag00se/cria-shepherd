@@ -176,6 +176,12 @@ def swap_model(model: str) -> None:
         raise RuntimeError(f"model {model} ({target}) never became healthy")
 
 
+def validate_fresh_l5_live_level(fresh_l5: bool, live_level: int) -> None:
+    """Requested CLI level is not evidence of the configuration cria loaded."""
+    if fresh_l5 and live_level != 5:
+        raise RuntimeError(f"fresh L5 requires live cria engagement level 5, got {live_level}")
+
+
 def configure_cria(model: str, planner_enabled: bool = False) -> dict:
     """Write this model's sampling AND the planner setting, then restart cria once.
 
@@ -681,7 +687,14 @@ def main() -> None:
 
     swap_model(args.model)
     spec = configure_cria(args.model, args.planner == "on")
-    planner_enabled_verified = tomllib.loads(CRIA_TOML.read_text()).get("planner", {}).get("enabled", False)
+    live_config = tomllib.loads(CRIA_TOML.read_text())
+    planner_enabled_verified = live_config.get("planner", {}).get("enabled", False)
+    repo_root = str(SUITE.parent)
+    if repo_root not in sys.path:
+        sys.path.insert(0, repo_root)
+    from cria.config import _engagement_level
+    live_engagement_level = _engagement_level(live_config.get("engagement", {}))
+    validate_fresh_l5_live_level(args.fresh_l5, live_engagement_level)
     print(f"[sampling] {args.model}: "
           + "  ".join(f"{r}={dict(k)}" for r, k in spec.items()), flush=True)
     # SEEDED tasks start from existing code the model must read, not a blank directory. Every task
@@ -821,6 +834,7 @@ def main() -> None:
         "planner": args.planner,
         "planner_enabled": planner_enabled_verified,
         "planner_phase_count": (capture.get("phases") or {}).get("planner", 0),
+        "live_engagement_level": live_engagement_level,
         "note": ((f"FRESH-L5 {args.campaign_revision} " + args.note).strip()
                  if args.fresh_l5 else args.note),
         **({"revision": args.campaign_revision} if args.fresh_l5 else {}),
@@ -839,6 +853,7 @@ def main() -> None:
         "user_install_leak": sorted(user_install_listing() - installs_before),
         "capture_dir": str(session_dir) if session_dir else None,
         "capture_dirs": sorted(str(d) for d in new_sessions) or None,
+        "workspace_lost": workspace_lost,
         "harness_log": str(log_path),
     }
     throttled = throttled_mid_run(session_dir)

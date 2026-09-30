@@ -83,8 +83,13 @@ def set_level(want: str) -> str | None:
     return before
 
 
-def sh(*cmd: str, timeout: int = 120) -> int:
+def sh(*cmd: str, timeout: int | None = 120) -> int:
     return subprocess.run(cmd, timeout=timeout).returncode
+
+
+def cell_timeout(fresh_l5: bool) -> int | None:
+    """Fresh campaign cells may pause indefinitely for independent judgments."""
+    return None if fresh_l5 else 7200
 
 
 def main() -> int:
@@ -149,7 +154,7 @@ def main() -> int:
                    "--level", str(level)]
         if args.fresh_l5:
             command += ["--fresh-l5", "--campaign-revision", args.campaign_revision]
-        return sh(*command, timeout=7200)
+        return sh(*command, timeout=cell_timeout(args.fresh_l5))
     finally:
         # Restore, always. An interrupted campaign must not leave the live config in the baseline
         # arm — every later run would silently measure a plain proxy and look like a collapse.
