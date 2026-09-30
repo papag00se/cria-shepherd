@@ -26,8 +26,10 @@ TOML = Path("~/.cria/cria.toml").expanduser()
 sys.path.insert(0, str(SUITE))
 try:  # importable as suite.battery_run and executable as suite/battery_run.py
     from .battery_status import NOTE_PREFIX  # noqa: E402
+    from . import run_guard  # noqa: E402
 except ImportError:
     from battery_status import NOTE_PREFIX  # noqa: E402
+    import run_guard  # noqa: E402
 
 # Which revision of the TASK PROMPTS a row was earned against. The six prompts were rewritten
 # on 2026-08-12 twice: p2 removed idiom and undefined words, and p3 is the operator's own
@@ -97,16 +99,37 @@ def main() -> int:
     ap.add_argument("--task", required=True)
     ap.add_argument("--planner", choices=("on", "off"), default="off",
                     help="experimental planner; off unless explicitly requested")
+    ap.add_argument("--fresh-l5", action="store_true",
+                    help="record one cell in the revision-pinned fresh L5 cohort")
+    ap.add_argument("--campaign-revision", default=None,
+                    help="immutable full git revision pinned for the fresh L5 cohort")
     ap.add_argument("--milestone-minutes", type=int, choices=[15], default=15,
                     help="fixed 15-minute pacing; the first inference judgment is at minute 30")
     args = ap.parse_args()
 
+    other_runs = run_guard.other_suite_runners()
+    if other_runs:
+        print("another suite/run.py is active (possibly paused for a judgment); leaving it untouched: "
+              + "; ".join(f"pid {pid}" for pid, _ in other_runs), file=sys.stderr)
+        return 3
     if not TOML.exists():
         print(f"no config at {TOML}", file=sys.stderr)
         return 2
     if args.level is None and args.arm is None:
         ap.error("one of --level or --arm is required")
     level = args.level if args.level is not None else (0 if args.arm == "BASE" else 5)
+    if args.fresh_l5 and (level != 5 or args.planner != "off" or not args.campaign_revision):
+        ap.error("--fresh-l5 requires L5, --planner off, and --campaign-revision")
+    if args.campaign_revision and any(c.isspace() for c in args.campaign_revision):
+        ap.error("--campaign-revision must be one immutable revision token")
+    if args.fresh_l5:
+        from fresh_l5_campaign import MODELS, TASKS
+        if args.model not in MODELS or args.task not in TASKS:
+            ap.error("--fresh-l5 model and task must belong to its fixed 9×6 cohort")
+        head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=SUITE.parent,
+                              capture_output=True, text=True, check=True).stdout.strip()
+        if args.campaign_revision != head:
+            ap.error(f"fresh L5 revision must equal current HEAD {head}")
     want = str(level)
     tag = f"L{level}"
     sha = subprocess.run(["git", "rev-parse", "--short", "HEAD"], capture_output=True,
@@ -120,10 +143,13 @@ def main() -> int:
         if sh("sudo", "-n", "systemctl", "restart", "cria.service") != 0:
             print("could not restart cria.service", file=sys.stderr)
             return 2
-        return sh(sys.executable, str(SUITE / "run.py"), "--task", args.task, "--model", args.model,
-                  "--planner", args.planner, "--milestone-minutes", str(args.milestone_minutes),
-                  "--note", f"{NOTE_PREFIX} {tag} {args.model} {sha} {PROMPT_REV}",
-                  "--level", str(level), timeout=7200)
+        command = [sys.executable, str(SUITE / "run.py"), "--task", args.task, "--model", args.model,
+                   "--planner", args.planner, "--milestone-minutes", str(args.milestone_minutes),
+                   "--note", f"{NOTE_PREFIX} {tag} {args.model} {sha} {PROMPT_REV}",
+                   "--level", str(level)]
+        if args.fresh_l5:
+            command += ["--fresh-l5", "--campaign-revision", args.campaign_revision]
+        return sh(*command, timeout=7200)
     finally:
         # Restore, always. An interrupted campaign must not leave the live config in the baseline
         # arm — every later run would silently measure a plain proxy and look like a collapse.

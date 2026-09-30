@@ -41,15 +41,13 @@ LEVEL_NAMES = {
     4: "DONE_REFUSALS_ENABLED",
     5: "ASSISTS_ENABLED",
 }
-# 2026-09-27: qwen35 and qwen38 left the battery (operator decision); K2-Horizon-7B,
-# phi-4, Ling-3.0-tiny and Qwen3.8-9B-Distill joined, and defiant-fable entered. The report renders
-# only this roster (plus gemma4's frozen row, the only gemma history); retired models are NAMED in
-# the report and keep every row in results.jsonl / historical_ladder.json.
+# Current roster: Nemotron Elastic restored 2026-09-30; eight models entered on 2026-09-27.
+# Retired models remain named in reports and keep their rows in results.jsonl / historical_ladder.json.
 # Keys renamed 2026-09-27 (operator): ternary-bonsai-2 -> bonsai2, ornith15 -> ornith1.5,
 # qwen38-distill -> qwen3.8_9b_distill, k2-horizon -> k2_horizon_7b. results.jsonl `model`
 # fields were migrated with them; run_ids, archives and systemd units keep their names.
 MODELS = ("gemma4-qat", "bonsai2", "defiant-fable", "ornith1.5",
-          "k2_horizon_7b", "phi4", "ling3-tiny", "qwen3.8_9b_distill")
+          "k2_horizon_7b", "phi4", "ling3-tiny", "qwen3.8_9b_distill", "nemotron-elastic")
 # CURRENT matrix only — a model here must be swappable and have canonical sampling.
 # gemma4 (stock Q4_K_M) and ternary-bonsai (Bonsai 1) left on 2026-09-18 when their weights
 # and units were deleted; they stay VISIBLE in the reports through suite/historical_ladder.json,

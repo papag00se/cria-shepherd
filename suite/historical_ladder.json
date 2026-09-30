@@ -1,5 +1,5 @@
 {
-  "_comment": "FROZEN historical inference-usefulness ladder, recovered from battery-report.md @8dc5aef after a field rename (usefulness -> usefulness_percent) + a report() rewrite orphaned it out of results.jsonl. These are inferred usefulness judgments (NOT mechanical grades) for the models whose per-cell scores no longer survive in results.jsonl. battery_status.report() renders these for the frozen models and the LIVE usefulness_percent from results.jsonl for every other model. Task order = shipping-rates-rb, cart-billing-go, orders-api-py, feed-pipeline-java, handles-cli-node, rust-toml-cli (ruby, go, python, java, node, rust).",
+  "_comment": "FROZEN historical inference-usefulness ladder, recovered from battery-report.md @8dc5aef after a field rename (usefulness -> usefulness_percent) + a report() rewrite orphaned it out of results.jsonl. These are inferred usefulness judgments (NOT mechanical grades) for the models whose per-cell scores no longer survive in results.jsonl. battery_status.report() renders these for the frozen models and the LIVE usefulness_percent from results.jsonl for every other model. Task order = shipping-rates-rb, cart-billing-go, orders-api-py, feed-pipeline-java, handles-cli-node, rust-toml-cli (ruby, go, python, java, node, rust). Nemotron Elastic L0-L4 was restored from pre-purge acd9017f^; its old L5 observation is intentionally excluded from this frozen L0-L4 record and is never a fresh L5 result.",
   "levels": {
     "0": "pure proxy \u2014 wire translation only",
     "1": "TOOL_CALL_FIXES \u2014 dialect and template repair",
@@ -171,6 +171,108 @@
         ],
         "min": 40,
         "calls": 227
+      }
+    },
+    "nemotron-elastic": {
+      "0": {
+        "pct": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ],
+        "min": 3,
+        "calls": 6,
+        "run_ids": [
+          "shipping-rates-rb_nemotron-elastic_codex_poff_1787737795",
+          "cart-billing-go_nemotron-elastic_codex_poff_1787737849",
+          "orders-api-py_nemotron-elastic_codex_poff_1787738249",
+          "feed-pipeline-java_nemotron-elastic_codex_poff_1787738648",
+          "handles-cli-node_nemotron-elastic_codex_poff_1787738932",
+          "rust-toml-cli_nemotron-elastic_codex_poff_1787738995"
+        ]
+      },
+      "1": {
+        "pct": [
+          0,
+          6,
+          0,
+          0,
+          0,
+          0
+        ],
+        "min": 2,
+        "calls": 5,
+        "run_ids": [
+          "shipping-rates-rb_nemotron-elastic_codex_poff_1787739099",
+          "cart-billing-go_nemotron-elastic_codex_poff_1787739121",
+          "orders-api-py_nemotron-elastic_codex_poff_1787739481",
+          "feed-pipeline-java_nemotron-elastic_codex_poff_1787739554",
+          "handles-cli-node_nemotron-elastic_codex_poff_1787739616",
+          "rust-toml-cli_nemotron-elastic_codex_poff_1787739658"
+        ]
+      },
+      "2": {
+        "pct": [
+          0,
+          6,
+          45,
+          0,
+          0,
+          18
+        ],
+        "min": 4,
+        "calls": 8,
+        "run_ids": [
+          "shipping-rates-rb_nemotron-elastic_codex_poff_1787739772",
+          "cart-billing-go_nemotron-elastic_codex_poff_1787739794",
+          "orders-api-py_nemotron-elastic_codex_poff_1787739940",
+          "feed-pipeline-java_nemotron-elastic_codex_poff_1787740034",
+          "handles-cli-node_nemotron-elastic_codex_poff_1787740512",
+          "rust-toml-cli_nemotron-elastic_codex_poff_1787740922"
+        ]
+      },
+      "3": {
+        "pct": [
+          0,
+          0,
+          50,
+          12,
+          0,
+          15
+        ],
+        "min": 4,
+        "calls": 7,
+        "run_ids": [
+          "shipping-rates-rb_nemotron-elastic_codex_poff_1787741368",
+          "cart-billing-go_nemotron-elastic_codex_poff_1787741401",
+          "orders-api-py_nemotron-elastic_codex_poff_1787741802",
+          "feed-pipeline-java_nemotron-elastic_codex_poff_1787741999",
+          "handles-cli-node_nemotron-elastic_codex_poff_1787742626",
+          "rust-toml-cli_nemotron-elastic_codex_poff_1787742668"
+        ]
+      },
+      "4": {
+        "pct": [
+          26,
+          28,
+          40,
+          19,
+          40,
+          20
+        ],
+        "min": 33,
+        "calls": 141,
+        "run_ids": [
+          "shipping-rates-rb_nemotron-elastic_codex_poff_1787742783",
+          "cart-billing-go_nemotron-elastic_codex_poff_1787744641",
+          "orders-api-py_nemotron-elastic_codex_poff_1787746504",
+          "feed-pipeline-java_nemotron-elastic_codex_poff_1787748370",
+          "handles-cli-node_nemotron-elastic_codex_poff_1787750280",
+          "rust-toml-cli_nemotron-elastic_codex_poff_1787753036"
+        ]
       }
     }
   }

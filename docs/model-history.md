@@ -10,6 +10,7 @@ The models cria's fleet has **run, evaluated, or rejected**, and why. This is th
 
 ## Retired / replaced / paused
 
+- **nemotron-elastic** (NVIDIA Nemotron-Labs-3-Elastic 12B-A2B) — restored to the active fleet 2026-09-30. Exact source: `mradermacher/NVIDIA-Nemotron-Labs-3-Elastic-12B-A2B-GGUF` Q4_K_M, derived from DavidAU's Elastic model; original local path and launch settings recovered from `~/.config/llama-fleet/models.toml.pre-retire-20260918`. Exact L0–L4 row IDs, task scores, and `(minutes,calls)` are frozen in `suite/historical_ladder.json` from `acd9017f^:suite/results/results.jsonl` plus `acd9017f^:suite/historical_ladder.json`. Historical L5 is deliberately not restored as a fresh row. Verified model file is installed at the recovered path and its SHA-256 matches the HF LFS OID. Historical systemd journal confirms the same service successfully ran on the pinned 3080 for 3d 13h; service is restored but disabled/inactive pending the campaign operator's planned swap.
 - **ornith 1.0** (9B) — the version tested before 2026-09-05 (`deepreinforce-ai/Ornith-1.0-9B-GGUF:Q6_K`). Replaced by `ornith15`; historical result rows remain `ornith` so releases are never conflated.
 - **gemma4-finetune** (yuxinlu1, 12B) — replaced by stock `gemma4` on 2026-08-05 after repeated runs showed stock completing substantially more of the same lane. 46 result rows; kept for its history.
 
@@ -17,11 +18,10 @@ The models cria's fleet has **run, evaluated, or rejected**, and why. This is th
 
 ## Tried and failed — purged 2026-09-27
 
-Eight models were tried and failed. On the operator's order, everything else about them was deleted: units, weights, launch entries, result rows, captures, walks and working directories. This table is all that remains. "No score" means the model ran before inferred-usefulness judging existed, so no percentage was ever recorded.
+Seven models in this table were tried and purged. On the operator's order, their units, weights, launch entries, result rows, captures, walks and working directories were deleted. "No score" means a model ran before inferred-usefulness judging existed, so no percentage was ever recorded.
 
 | model | what it was | result |
 |---|---|---|
-| nemotron-elastic | NVIDIA Nemotron-Labs-3-Elastic 12B-A2B MoE | usefulness **mean 29%, best 70%** (52 judged runs); frozen ladder mean 19%, best 84% |
 | gigachat31 | GigaChat 3.1 10B-A1.8B MoE | usefulness **mean 0.5%, best 2%** (6 L5 cells) |
 | mellum2 | Mellum2 12B-A2.5B MoE | no score (48 runs, 27 reached a clean exit) |
 | maple-preview | DeepGrove Maple-Preview 20B-A1B ternary MoE | no score (18 runs, 10 reached a clean exit) |

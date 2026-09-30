@@ -18,7 +18,10 @@ import sys
 import time
 from pathlib import Path
 
-import workspace_evidence
+try:
+    from . import workspace_evidence
+except ImportError:
+    import workspace_evidence
 
 
 SUITE = Path(__file__).resolve().parent
@@ -31,7 +34,8 @@ def checkpoint_name(run_id: str, minute: int) -> str:
     return f"{run_id}.{minute:03d}min"
 
 
-def create(run_id: str, minute: int, ws: Path, task_dir: Path) -> Path:
+def create(run_id: str, minute: int, ws: Path, task_dir: Path,
+           previous: list[dict] | None = None) -> Path:
     """Freeze one live workspace and return its checkpoint directory."""
     out = ROOT / checkpoint_name(run_id, minute)
     snapshot = out / "workspace"
@@ -40,11 +44,20 @@ def create(run_id: str, minute: int, ws: Path, task_dir: Path) -> Path:
         shutil.rmtree(snapshot)
     shutil.copytree(ws, snapshot, symlinks=True)
     prompt = (task_dir / "prompt.txt").read_text(errors="replace").strip()
+    seed = task_dir / "seed"
+    baseline = workspace_evidence.tree(seed) if seed.is_dir() else "(empty baseline)"
+    prior = "\n".join(
+        f"{v['at_active_minutes']} min judgment: {v['usefulness_percent']}%, "
+        f"{v['decision']}: {v['reason']}\nPrior frozen snapshot (inspect read-only): "
+        f"{v['checkpoint']}/workspace" for v in (previous or [])) or "No earlier milestone judgment."
     packet = "\n".join([
         SYSTEM.read_text().strip(),
         "", "=" * 78, "",
         f"CHECKPOINT: {run_id} at {minute} active minutes", "",
         f"THE TASK THE CODER WAS GIVEN:\n{prompt}", "",
+        f"BASELINE SEED DIRECTORY (inspect read-only):\n{seed}", "",
+        f"BASELINE SEED TREE (before coder started):\n{baseline}", "",
+        f"PRIOR MILESTONE JUDGMENTS (context, not score targets):\n{prior}", "",
         f"FROZEN WORKSPACE SNAPSHOT (inspect with read-only tools):\n{snapshot}", "",
         "COMPLETE FROZEN WORKSPACE TREE (all entries; symlinks are not followed):\n"
         f"{workspace_evidence.tree(snapshot)}", "",

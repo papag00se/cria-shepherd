@@ -23,7 +23,7 @@ def test_every_current_matrix_model_has_service_and_sampling_configuration():
 def test_the_matrix_names_the_current_ornith_release_not_the_retired_names():
     models = set(battery_status.MODELS)
     assert "ornith1.5" in models
-    assert "nemotron-elastic" not in models
+    assert "nemotron-elastic" in models
     assert "ornith" not in models
 
 
@@ -42,7 +42,8 @@ def test_retired_models_are_named_not_silently_dropped():
 
 def test_the_battery_roster_is_the_operator_named_fleet():
     assert set(battery_status.MODELS) == {"gemma4-qat", "bonsai2", "defiant-fable", "ornith1.5",
-                                          "k2_horizon_7b", "phi4", "ling3-tiny", "qwen3.8_9b_distill"}
+                                          "k2_horizon_7b", "phi4", "ling3-tiny", "qwen3.8_9b_distill",
+                                          "nemotron-elastic"}
     assert "qwen38" not in run.SERVICES and "qwen38" not in run.EXTERNAL  # the 27B is not cria's
 
 

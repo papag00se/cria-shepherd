@@ -143,6 +143,13 @@ MODEL_SAMPLING = {
         "classifier": {"temperature": 0.0},
         "compactor":  {"temperature": 0.0},
     },
+    # NVIDIA Nemotron-Labs-3-Elastic 12B-A2B: historical recipe restored from pre-purge.
+    "nemotron-elastic": {
+        "coder":      {"temperature": 0.6, "top_p": 0.95},
+        "reasoner":   {"temperature": 0.6, "top_p": 0.95},
+        "classifier": {"temperature": 0.0},
+        "compactor":  {"temperature": 0.0},
+    },
     "defiant-fable": {
         "coder":      {"temperature": 0.6, "top_p": 0.95, "top_k": 20},
         "reasoner":   {"temperature": 0.6, "top_p": 0.95, "top_k": 20},

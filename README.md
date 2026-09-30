@@ -46,7 +46,7 @@ cria advertises the model's real context window in `/v1/models` (the standard wa
 
 ## Battle-tested across the board
 
-- **A fleet of 7B–27B models, dense and MoE** — Bonsai 2, Gemma 4 QAT, Defiant Fable, Ornith 1.5, Qwen3.8 Distill, Ling 3 Tiny, phi-4, K2-Horizon. A model that breaks cria isn't a nuisance here — it's a requirement. Launch recipes per model in [`docs/model-settings.md`](docs/model-settings.md).
+- **A fleet of 7B–27B models, dense and MoE** — Nemotron Elastic, Bonsai 2, Gemma 4 QAT, Defiant Fable, Ornith 1.5, Qwen3.8 Distill, Ling 3 Tiny, phi-4, K2-Horizon. A model that breaks cria isn't a nuisance here — it's a requirement. Launch recipes per model in [`docs/model-settings.md`](docs/model-settings.md).
 - **Harnesses**: exercised under Codex (Responses API) and Claude tooling; anything speaking OpenAI Chat-Completions works. Tools are matched by *family*, never by one harness's names.
 - **Languages**: gates and probes discover each ecosystem's own checks — parse floors, builds, linters, and test runners — for JS/TS, Python, Rust, Go, JVM (Maven and Gradle), .NET, PHP, Ruby, and Elixir, fresh from the workspace on every gate. Completion judges also receive three-valued build/source/test participation evidence: exact runner lines where available, honest unknowns where a green event did not identify what it reached.
 - **Prompts**: hardened on multi-step agentic tasks — API integrations, database work, test suites, and CLI tools — evaluated by independent usefulness judgments over archived workspaces and exact call captures. cria never special-cases a benchmark prompt.

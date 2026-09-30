@@ -6,12 +6,10 @@ drives one harness run of the task prompt under an active-time budget, then coll
 cria's own capture/events, preserves the workspace for an independent usefulness judgment, and
 appends one JSON row to suite/results/results.jsonl.
 
-At every checkpoint the runner pauses the harness, freezes the workspace, and waits for the
-campaign agent to infer a percentage of usefulness plus whether the work is complete, progressing,
-or stalled. That percentage appears in every checkpoint progress report and the final archived-
-workspace judgment is also a usefulness percentage. A progressing run earns the next interval, up
-to the task's explicitly budget-only limit; no checklist count or mechanical percentage threshold
-participates. Checkpoints begin at 30 active minutes and recur every 15 active minutes.
+The runner requests independent read-only usefulness snapshots every 10 active minutes (informational
+only), and separate milestone judgments at 30 active minutes and every 15 minutes thereafter. At a
+shared time, both judgments are independently requested. All judge waits are excluded from active
+time. Only milestone decisions control continuation; no mechanical score threshold participates.
 
 Kill mechanics follow the runctl scars: match the codex process list explicitly (ps + grep of
 the exec pattern, excluding shells), never `pkill -f` (it matches the invoking shell).
@@ -36,9 +34,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 try:  # importable as suite.run and executable as suite/run.py
-    from . import sampling
+    from . import sampling, run_guard
 except ImportError:
     import sampling
+    import run_guard
 
 SUITE = Path(__file__).resolve().parent
 RESULTS = SUITE / "results" / "results.jsonl"
@@ -87,6 +86,7 @@ SERVICES = {
     "ornith1.5": "llama-ornith-q6",
     "gemma4-qat": "llama-gemma4-qat",
     "defiant-fable": "llama-defiant-fable",
+    "nemotron-elastic": "llama-nemotron-elastic",
     # 2026-09-27 battery additions (settings + measurements: ~/.config/llama-fleet/models.toml)
     "qwen3.8_9b_distill": "llama-qwen38-distill",  # empero-ai Qwen3.8-9B-Distill Q6_K, MTP+ngram spec
     "ling3-tiny": "llama-ling3-tiny",          # inclusionAI Ling-3.0-tiny Q6_K (bailingmoe3)
@@ -99,8 +99,8 @@ SERVICES = {
 # results.jsonl, which is why the KEYS still appear there and must not be renamed:
 #   "ternary-bonsai" -> llama-ternary-bonsai   (Bonsai 1, superseded by ternary-bonsai-2)
 #   "gemma4"         -> llama-gemma4           (stock it Q4_K_M, superseded by gemma4-qat)
-# Eight failed trials were PURGED 2026-09-27 (units, weights, rows and artifacts all deleted; only
-# a one-line verdict survives in docs/model-history.md).
+# Seven failed trials were PURGED 2026-09-27 (units, weights, rows and artifacts all deleted; only
+# one-line summaries survive in docs/model-history.md). Nemotron Elastic history is restored separately.
 # test_suite_model_registries_agree.py fails if a SERVICES entry names a unit that is not installed,
 # which is exactly how the stale pair above was caught.
 
@@ -204,6 +204,9 @@ def configure_cria(model: str, planner_enabled: bool = False) -> dict:
             header += "\n"
         new = header + settings + text[end:]
     CRIA_TOML.write_text(new)
+    verified = tomllib.loads(CRIA_TOML.read_text()).get("planner", {}).get("enabled", False)
+    if verified is not planner_enabled:
+        raise RuntimeError(f"planner config verification failed: expected {planner_enabled}, got {verified!r}")
     sh("sudo", "-n", "systemctl", "restart", "cria.service", timeout=60)
     if not wait_health("http://127.0.0.1:18085/health"):
         raise RuntimeError("cria never became healthy after reconfiguration")
@@ -543,6 +546,7 @@ class MilestonePacing:
     budget_intervals: int
     paused_seconds: float = 0.0
     next_milestone: int = field(init=False)
+    next_progress_report: int = field(init=False, default=600)
 
     def __post_init__(self) -> None:
         if self.interval_minutes != TASK_MINUTES:
@@ -568,6 +572,12 @@ class MilestonePacing:
 
     def due(self, now: float) -> bool:
         return self.active_elapsed(now) >= self.next_milestone
+
+    def progress_due(self, now: float) -> bool:
+        return self.active_elapsed(now) >= self.next_progress_report
+
+    def advance_progress(self) -> None:
+        self.next_progress_report += 10 * 60
 
     def record_pause(self, seconds: float) -> None:
         self.paused_seconds += seconds
@@ -629,6 +639,10 @@ def main() -> None:
     ap.add_argument("--planner", default="off", choices=["on", "off"],
                     help="experimental planner; off unless explicitly requested")
     ap.add_argument("--note", default="")
+    ap.add_argument("--campaign-revision", default=None,
+                    help="immutable source revision for a fresh L5 campaign cell")
+    ap.add_argument("--fresh-l5", action="store_true",
+                    help="record this as a fresh planner-off L5 cell; requires --campaign-revision")
     # The engagement level this cell ran at, recorded as a FIELD rather than parsed back out of the
     # note. The note is prose and has been reformatted twice; a column that a status command counts
     # must not depend on a regex over prose surviving the next edit.
@@ -638,6 +652,23 @@ def main() -> None:
     args = ap.parse_args()
     if args.milestone_minutes <= 0:
         ap.error("--milestone-minutes must be positive")
+    if args.fresh_l5 and (args.level != 5 or args.planner != "off" or not args.campaign_revision):
+        ap.error("--fresh-l5 requires --level 5, --planner off, and --campaign-revision")
+    if args.campaign_revision and any(c.isspace() for c in args.campaign_revision):
+        ap.error("--campaign-revision must be one immutable revision token")
+    if args.fresh_l5:
+        import fresh_l5_campaign
+        if args.model not in fresh_l5_campaign.MODELS or args.task not in fresh_l5_campaign.TASKS:
+            ap.error("--fresh-l5 model and task must belong to its fixed 9×6 cohort")
+        head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=SUITE.parent,
+                              capture_output=True, text=True, check=True).stdout.strip()
+        if args.campaign_revision != head:
+            ap.error(f"fresh L5 revision must equal current HEAD {head}")
+
+    other_runs = run_guard.other_suite_runners()
+    if other_runs:
+        ap.error("another suite/run.py is active (possibly paused for a judgment); leaving it untouched: "
+                 + "; ".join(f"pid {pid}" for pid, _ in other_runs))
 
     if args.harness == "codex":
         _require_codex_home()   # fail before any model swap if cria routing is not set up
@@ -650,6 +681,7 @@ def main() -> None:
 
     swap_model(args.model)
     spec = configure_cria(args.model, args.planner == "on")
+    planner_enabled_verified = tomllib.loads(CRIA_TOML.read_text()).get("planner", {}).get("enabled", False)
     print(f"[sampling] {args.model}: "
           + "  ".join(f"{r}={dict(k)}" for r, k in spec.items()), flush=True)
     # SEEDED tasks start from existing code the model must read, not a blank directory. Every task
@@ -700,8 +732,33 @@ def main() -> None:
                              budget_intervals=budget_intervals(task_dir))
     terminal = "exited"
     milestone_judgments = []
+    progress_judgments = []
 
     while proc.poll() is None:
+        if pacing.progress_due(time.time()):
+            minute = pacing.next_progress_report // 60
+            pause_started = time.time()
+            if not pause_run():
+                terminal = "exited"
+                break
+            try:
+                sys.path.insert(0, str(SUITE))
+                import progress_reports
+                checkpoint = progress_reports.create(run_id, minute, ws, task_dir, progress_judgments)
+                print(f"[progress-report] {minute} active minutes -> {checkpoint}", flush=True)
+                print("[progress-report] fresh read-only usefulness judgment requested; run continues regardless", flush=True)
+                verdict = progress_reports.wait(checkpoint)
+            except BaseException:
+                stop_run()
+                raise
+            finally:
+                pacing.record_pause(time.time() - pause_started)
+            progress_judgments.append({"minute": minute, "checkpoint": str(checkpoint),
+                                       "verdict": verdict})
+            print(f"[progress-report] {minute}min usefulness={verdict['usefulness_percent']}%: {verdict['reason']}", flush=True)
+            pacing.advance_progress()
+            resume_run()
+            continue
         if pacing.due(time.time()):
             minute = round(pacing.next_milestone / 60)
             pause_started = time.time()
@@ -711,7 +768,7 @@ def main() -> None:
             try:
                 sys.path.insert(0, str(SUITE))
                 import milestones
-                checkpoint = milestones.create(run_id, minute, ws, task_dir)
+                checkpoint = milestones.create(run_id, minute, ws, task_dir, milestone_judgments)
                 print(f"[milestone] {minute} active minutes -> {checkpoint}", flush=True)
                 print("[milestone] waiting for the campaign agent's inference judgment", flush=True)
                 verdict = milestones.wait(checkpoint)
@@ -722,7 +779,8 @@ def main() -> None:
                 raise
             finally:
                 pacing.record_pause(time.time() - pause_started)
-            milestone_judgments.append({"at_active_minutes": minute, **verdict})
+            milestone_judgments.append({"at_active_minutes": minute,
+                                        "checkpoint": str(checkpoint), **verdict})
             print(milestone_progress(verdict, minute), flush=True)
             outcome = milestone_terminal(verdict, minute, at_limit=pacing.at_limit)
             if outcome is not None:
@@ -760,13 +818,20 @@ def main() -> None:
 
     row = {
         "run_id": run_id, "task": args.task, "model": args.model, "harness": args.harness,
-        "planner": args.planner, "note": args.note, "sampling": spec,
+        "planner": args.planner,
+        "planner_enabled": planner_enabled_verified,
+        "planner_phase_count": (capture.get("phases") or {}).get("planner", 0),
+        "note": ((f"FRESH-L5 {args.campaign_revision} " + args.note).strip()
+                 if args.fresh_l5 else args.note),
+        **({"revision": args.campaign_revision} if args.fresh_l5 else {}),
+        "sampling": spec,
         **({"level": args.level} if args.level is not None else {}),
         "started": t0, "wall_seconds": round(t1 - t0, 1),
         "active_seconds": round(pacing.active_elapsed(t1), 1), "terminal": terminal,
         "milestone_minutes": args.milestone_minutes,
         "budget_intervals": pacing.budget_intervals,
         "milestone_judgments": milestone_judgments,
+        "progress_judgments": progress_judgments,
         **capture,
         "assists": collect_assists(t0, t1),
         "workspace": str(ws),
