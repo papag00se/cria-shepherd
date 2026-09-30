@@ -81,11 +81,6 @@ def set_level(want: str) -> str | None:
     return before
 
 
-def planner_for_level(level: int) -> str:
-    """The planner is an L5 assist; lower rungs are deliberately planner-agnostic."""
-    return "on" if level == 5 else "off"
-
-
 def sh(*cmd: str, timeout: int = 120) -> int:
     return subprocess.run(cmd, timeout=timeout).returncode
 
@@ -100,6 +95,8 @@ def main() -> int:
     ap.add_argument("--arm", choices=("BASE", "CRIA"))
     ap.add_argument("--model", required=True)
     ap.add_argument("--task", required=True)
+    ap.add_argument("--planner", choices=("on", "off"), default="off",
+                    help="experimental planner; off unless explicitly requested")
     ap.add_argument("--milestone-minutes", type=int, choices=[15], default=15,
                     help="fixed 15-minute pacing; the first inference judgment is at minute 30")
     args = ap.parse_args()
@@ -124,7 +121,7 @@ def main() -> int:
             print("could not restart cria.service", file=sys.stderr)
             return 2
         return sh(sys.executable, str(SUITE / "run.py"), "--task", args.task, "--model", args.model,
-                  "--planner", planner_for_level(level), "--milestone-minutes", str(args.milestone_minutes),
+                  "--planner", args.planner, "--milestone-minutes", str(args.milestone_minutes),
                   "--note", f"{NOTE_PREFIX} {tag} {args.model} {sha} {PROMPT_REV}",
                   "--level", str(level), timeout=7200)
     finally:

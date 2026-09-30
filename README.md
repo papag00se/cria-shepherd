@@ -66,7 +66,9 @@ Six families. Every one of them exists because a captured run failed without it 
 
 ## Planning mode
 
-Optional plan-first loop, built for small attention spans:
+**Off by default and retired from normal operation.** The implementation remains for explicitly requested experiments only. Opt in with `[planner].enabled = true`, or `--planner on` in the suite. L5/full engagement does not enable it, and no flag is needed to keep it off.
+
+The experimental plan-first loop:
 
 - The planner **investigates before it plans** — a real tool loop over the repo, docs, and filesystem. Steps come from evidence, not vibes.
 - The plan is **alive** — after each verified step (and on stalls) a reasoner re-derives what remains from the work actually done.
@@ -108,7 +110,7 @@ Backends can also be `transport = "cli"` subprocesses — ride your `claude` OAu
 ```bash
 cria-tail -f                         # follow the decision log — every action has a reason
 python -m pytest                     # 1,591 stdlib-only tests, no GPU, no network
-python suite/run.py --task ada-handles --model qwythos --harness codex --planner on
+python suite/run.py --task ada-handles --model qwythos --harness codex
 ```
 
 Every action emits a structured event to `~/.cria/logs/`. Every suite run archives its full evidence — workspace, per-call capture, event trail — because every future fix starts from a captured failure.

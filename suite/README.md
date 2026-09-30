@@ -6,12 +6,13 @@ The first inference checkpoint is at 30 active minutes; later checkpoints are 15
 
 ## Run a cell
 
+Planning defaults to **off** in both `run.py` and `battery_run.py`, including L5 and the CRIA arm. It is retained only for explicit experiments (`--planner on`); neither selecting a level nor swapping a model is consent to enable it. Ordinary runs require no planner flag.
+
 ```bash
 python3 suite/run.py \
   --task cart-billing-go \
   --model ornith1.5 \
   --harness codex \
-  --planner off \
   --note "experiment label"
 ```
 

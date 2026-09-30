@@ -45,7 +45,7 @@ satisfaction_check_start = 100     # first "task done?" check at drive N
 satisfaction_check_every = 25      # then re-check every N (0 disables)
 
 [planner]
-enabled = false                    # plan-first loop on/off
+enabled = false                    # opt-in experiment only; never enabled by L5
 max_gather_rounds = 12             # cap the planner investigate loop
 
 [engagement]

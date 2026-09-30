@@ -16,7 +16,7 @@ participates. Checkpoints begin at 30 active minutes and recur every 15 active m
 Kill mechanics follow the runctl scars: match the codex process list explicitly (ps + grep of
 the exec pattern, excluding shells), never `pkill -f` (it matches the invoking shell).
 
-Usage: run.py --task ada-handles --model ternary-bonsai --harness codex --planner off [--note x]
+Usage: run.py --task ada-handles --model ternary-bonsai --harness codex [--planner on] [--note x]
 """
 
 import argparse
@@ -176,7 +176,7 @@ def swap_model(model: str) -> None:
         raise RuntimeError(f"model {model} ({target}) never became healthy")
 
 
-def configure_cria(model: str, planner_enabled: bool) -> dict:
+def configure_cria(model: str, planner_enabled: bool = False) -> dict:
     """Write this model's sampling AND the planner setting, then restart cria once.
 
     Sampling used to be a manual step in the goal doc, and it was missed 26 consecutive times: every
@@ -187,10 +187,22 @@ def configure_cria(model: str, planner_enabled: bool) -> dict:
     """
     spec = sampling.apply(model, CRIA_TOML)
     text = CRIA_TOML.read_text()
-    new = re.sub(r"(\[planner\][^\[]*?enabled\s*=\s*)(true|false)",
-                 lambda m: m.group(1) + ("true" if planner_enabled else "false"), text, count=1)
-    if new == text and f"= {'true' if planner_enabled else 'false'}" not in text:
-        raise RuntimeError("could not toggle [planner].enabled in cria.toml")
+    value = "true" if planner_enabled else "false"
+    section = re.search(r"(?m)^[ \t]*\[planner\][ \t]*(?:#[^\n]*)?(?:\n|\Z)", text)
+    if section is None:
+        new = text.rstrip() + f"\n\n[planner]\nenabled = {value}\n"
+    else:
+        following = re.search(r"(?m)^[ \t]*\[", text[section.end():])
+        end = section.end() + following.start() if following else len(text)
+        settings = text[section.end():end]
+        settings, changed = re.subn(r"(?m)^([ \t]*enabled[ \t]*=[ \t]*)(true|false)",
+                                    lambda m: m.group(1) + value, settings, count=1)
+        if not changed:
+            settings = f"enabled = {value}\n" + settings
+        header = text[:section.end()]
+        if not header.endswith("\n"):
+            header += "\n"
+        new = header + settings + text[end:]
     CRIA_TOML.write_text(new)
     sh("sudo", "-n", "systemctl", "restart", "cria.service", timeout=60)
     if not wait_health("http://127.0.0.1:18085/health"):
@@ -614,7 +626,8 @@ def main() -> None:
     ap.add_argument("--task", required=True)
     ap.add_argument("--model", required=True, choices=sorted(set(SERVICES) | set(EXTERNAL)))
     ap.add_argument("--harness", default="codex", choices=sorted(HARNESSES))
-    ap.add_argument("--planner", required=True, choices=["on", "off"])
+    ap.add_argument("--planner", default="off", choices=["on", "off"],
+                    help="experimental planner; off unless explicitly requested")
     ap.add_argument("--note", default="")
     # The engagement level this cell ran at, recorded as a FIELD rather than parsed back out of the
     # note. The note is prose and has been reformatted twice; a column that a status command counts

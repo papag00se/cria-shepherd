@@ -412,7 +412,7 @@ class RoutingConfig:
     #                              task_complete handling, and the on-disk brake on an approval.
     #   5  ASSISTS_ENABLED         everything else and the context work each assist needs: steers,
     #                              periodic gates, the periodic satisfaction check, every detector,
-    #                              the planner.
+    #                              the planner only with separate explicit opt-in.
     #
     # WHY THE BOTTOM RUNG MOVED. The old switch was a bool, and False was called "the model on its
     # own". It never was. Counting events inside the 24 baseline windows of the 2026-08-24 campaign:
@@ -463,7 +463,7 @@ class RoutingConfig:
 
     @property
     def assists_enabled(self) -> bool:
-        """Steers, periodic gates, the periodic satisfaction check, detectors, the planner."""
+        """Allow assists; planner still requires its separate, default-off opt-in."""
         return self.engagement_level >= ASSISTS_ENABLED
 
     @property
@@ -555,7 +555,8 @@ class PlannerConfig:
     files, fetch docs, search the web) and runs a bounded loop until it understands the task, then
     emits a plan grounded in what it found."""
 
-    enabled: bool = True
+    # Retained for explicit experiments only; engagement level never opts in.
+    enabled: bool = False
     # The web-search (Brave) key is read from the fixed env var brave.API_KEY_ENV
     # (BRAVE_SEARCH_API_KEY) — a constant, not a config knob. Unset → the planner still
     # gathers, but its web_search tool is disabled.
@@ -621,7 +622,7 @@ class Config:
             ),
             safety=_safety(data.get("safety", {})),
             planner=PlannerConfig(
-                enabled=bool(data.get("planner", {}).get("enabled", True)),
+                enabled=bool(data.get("planner", {}).get("enabled", False)),
                 max_gather_rounds=int(data.get("planner", {}).get("max_gather_rounds", 12)),
             ),
             env_file=(str(data["env_file"]) if data.get("env_file") else None),

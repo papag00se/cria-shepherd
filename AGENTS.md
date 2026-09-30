@@ -31,6 +31,10 @@ which carries the incident that made this a ban rather than a preference.
 - **A wire invariant belongs at the wire** — if a property must be true of the body the model RECEIVES (strict role alternation, no orphan `tool`, no malformed historical tool_call), enforce it in `Upstream._prep`, the last point before serialization. A transform run at a call site is undone by anything appended downstream, and ordering two lines per call site is a band-aid per site. Carry the role's intent as a cria-internal body hint, consume and strip it at the wire, keep it opt-in so models that don't need it ship byte-identical bodies. And fix the path that PRODUCED the incident, not the one that resembles it — the phase is on every captured body; a census takes one command.
 - **Invisible & agnostic** — the model never sees the literal token "cria" (`⟦ctx:…⟧` markers only); agnostic across harness, model, prompt, and language.
 
+## Planning policy — OFF unless explicitly requested
+
+Planning was deliberately retired from normal operation. Keep its implementation only for optional experiments. Config construction/loading and suite CLIs default to OFF; no engagement level (including L5), battery arm, model swap, or automation may enable it implicitly. Turning it ON requires explicit operator opt-in (`[planner].enabled = true` or `--planner on`). Do not infer consent from retained planner code, capability descriptions, or historical planner-on runs. Do not add a required `--planner off` flag. Commit `4a089fe7` incorrectly re-enabled it at L5; preserve regression coverage for that incident. Planner-on results do not measure the intended planner-off system.
+
 ## Hard operational rules (cria-specific)
 
 - **Prompts live in `cria/prompts/*.txt`** (via `prompts.load` / `render` / `load_map`) — never an inline f-string the model reads.
