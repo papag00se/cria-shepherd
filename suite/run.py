@@ -494,15 +494,19 @@ def capture_manifest(session_dirs) -> dict:
     return {"complete": complete, "entries": entries}
 
 
-def stopped_capture_manifest(proc, session_dirs, *, resume, stopper=None) -> dict:
-    """Stop the owned harness process group before fixing the run's evidence cutoff.
+def shutdown_and_capture(proc, *, calls_dir, before_sessions, resume, stopper=None):
+    """Stop the owned process group, then timestamp and discover the complete capture set.
 
-    A completed leader does not imply every child has stopped. Always cross the same
-    process-group shutdown barrier before observing captures, including ordinary exits.
+    The row cutoff, session inventory, and snapshot all follow the shutdown barrier. This
+    includes sessions/calls emitted by surviving children during the grace period and prevents
+    post-cutoff responses from being counted as in-window evidence.
     """
     resume()
     (stopper or stop_process_group)(proc)
-    return capture_manifest(session_dirs)
+    stopped_at = time.time()
+    new_sessions = [Path(calls_dir) / name for name in
+                    set(p.name for p in Path(calls_dir).glob("2*")) - before_sessions]
+    return stopped_at, new_sessions, capture_manifest(new_sessions)
 
 
 def collect_capture(session_dirs, snapshot=None) -> dict:
@@ -851,16 +855,16 @@ def main() -> None:
             pacing.advance()
             resume_run()
         time.sleep(2)
-    t1 = time.time()
+    # Stop first. A child may still finish a response or create a new session during the grace
+    # period, so the wall cutoff and session inventory must be taken only after the group is gone.
+    t1, new_sessions, capture_snapshot = shutdown_and_capture(
+        proc, calls_dir=CALLS_DIR, before_sessions=before_sessions, resume=resume_run)
     if terminal == "exited" and t1 - t0 < 60:
         terminal = "crashed-early"
 
-    new_sessions = [CALLS_DIR / n for n in
-                    set(p.name for p in CALLS_DIR.glob("2*")) - before_sessions]
     # The primary directory is the one that carries the work, not the one that finished last.
     session_dir = max(new_sessions, key=lambda p: len(list(p.glob("*.response.json"))),
                       default=None) if new_sessions else None
-    capture_snapshot = stopped_capture_manifest(proc, new_sessions, resume=resume_run)
     capture = collect_capture(new_sessions, capture_snapshot) if new_sessions else \
         {"calls": 0, "phases": {}, "avg_tok_s": None, "output_tokens_timed": 0}
 
