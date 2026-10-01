@@ -17,7 +17,7 @@ APPROVED_RUNTIME_SHA256 = {
     # This exact delta records official display names only; it cannot exempt future edits.
     "AGENTS.md": "4671e91acab4c62cc29ded2c3d2a592dc6ca785a3d9744a7cf426a96894cd516",
     "suite/battery_run.py": "369ae623803314fd388947e8d58b53b7e268b0389a98392a8948ab3178dbc375",
-    "suite/fresh_l5_campaign.py": "30e22a9ef77eed8e30acb459ef442ff56967edab2e2a2690b055b9e81844459c",
+    "suite/fresh_l5_campaign.py": "9d33ea4e5275f6b8f80f6433c0bfaec5d0e9c891cc8d6a631dfd46dd9ce9dc11",
     "suite/run.py": "41e4616f2574c689d155b91df013b1e555c91f01d960f355d00a600ceef4bf9a",
 }
 PROVENANCE_PATH = "suite/campaign_provenance.py"

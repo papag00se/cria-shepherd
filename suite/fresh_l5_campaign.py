@@ -121,6 +121,7 @@ def _valid_capture_evidence(row: dict) -> bool:
             followup, = extras
             match = re.match(r"^(\d+)-(.+)\.json$", followup.name)
             previous = Path(late_entries[0]["request"])
+            previous_response = previous.with_name(previous.stem + ".response.json")
             followup_response = followup.with_name(followup.stem + ".response.json")
             try:
                 data = json.loads(followup.read_text())
@@ -128,7 +129,9 @@ def _valid_capture_evidence(row: dict) -> bool:
                 bounded_followup = (match is not None and int(match.group(1)) == int(late_entries[0]["seq"]) + 1
                     and data.get("seq") == int(match.group(1))
                     and isinstance(data.get("phase"), str) and not data["phase"].startswith("planner")
-                    and previous.stat().st_mtime <= cutoff < followup.stat().st_mtime
+                    and isinstance(data.get("body"), dict) and isinstance(data["body"].get("messages"), list)
+                    and previous.stat().st_mtime <= cutoff < previous_response.stat().st_mtime
+                    and previous_response.stat().st_mtime <= followup.stat().st_mtime
                     and followup_response in actual_responses - expected_responses
                     and _valid_response(answer)
                     and followup_response.stat().st_mtime >= followup.stat().st_mtime)

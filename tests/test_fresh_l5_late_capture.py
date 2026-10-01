@@ -96,7 +96,12 @@ def test_snapshot_allows_only_one_late_pending_reply_and_one_immediate_followup(
     request4.unlink()
     request3.write_text("not json")
     assert not campaign._valid_capture_evidence(row)
+    request3.write_text(json.dumps({"seq": 3, "phase": "coder-s1", "body": {}}))
+    assert not campaign._valid_capture_evidence(row)
     request3.write_text(json.dumps({"seq": 3, "phase": "planner-s1", "body": {"messages": []}}))
+    assert not campaign._valid_capture_evidence(row)
+    request3.write_text(json.dumps({"seq": 3, "phase": "coder-s1", "body": {"messages": []}}))
+    os.utime(response2, (100, 100))
     assert not campaign._valid_capture_evidence(row)
 
 
