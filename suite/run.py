@@ -494,6 +494,17 @@ def capture_manifest(session_dirs) -> dict:
     return {"complete": complete, "entries": entries}
 
 
+def stopped_capture_manifest(proc, session_dirs, *, resume, stopper=None) -> dict:
+    """Stop the owned harness process group before fixing the run's evidence cutoff.
+
+    A completed leader does not imply every child has stopped. Always cross the same
+    process-group shutdown barrier before observing captures, including ordinary exits.
+    """
+    resume()
+    (stopper or stop_process_group)(proc)
+    return capture_manifest(session_dirs)
+
+
 def collect_capture(session_dirs, snapshot=None) -> dict:
     """Every call the run made, across ALL of its capture directories.
 
@@ -849,7 +860,7 @@ def main() -> None:
     # The primary directory is the one that carries the work, not the one that finished last.
     session_dir = max(new_sessions, key=lambda p: len(list(p.glob("*.response.json"))),
                       default=None) if new_sessions else None
-    capture_snapshot = capture_manifest(new_sessions)
+    capture_snapshot = stopped_capture_manifest(proc, new_sessions, resume=resume_run)
     capture = collect_capture(new_sessions, capture_snapshot) if new_sessions else \
         {"calls": 0, "phases": {}, "avg_tok_s": None, "output_tokens_timed": 0}
 
