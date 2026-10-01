@@ -17,11 +17,11 @@ APPROVED_RUNTIME_SHA256 = {
     # This exact delta records official display names only; it cannot exempt future edits.
     "AGENTS.md": "4671e91acab4c62cc29ded2c3d2a592dc6ca785a3d9744a7cf426a96894cd516",
     "suite/battery_run.py": "369ae623803314fd388947e8d58b53b7e268b0389a98392a8948ab3178dbc375",
-    "suite/fresh_l5_campaign.py": "3fa170c6f003f95fd549dad9175d2a1aed67c0a6ec5bc71171e98befa1bf7ebc",
-    "suite/run.py": "ffbf93097bece4b28c31feb386ae0d34c100b31124da9c31a46503dfd2726a1d",
+    "suite/fresh_l5_campaign.py": "30e22a9ef77eed8e30acb459ef442ff56967edab2e2a2690b055b9e81844459c",
+    "suite/run.py": "41e4616f2574c689d155b91df013b1e555c91f01d960f355d00a600ceef4bf9a",
 }
 PROVENANCE_PATH = "suite/campaign_provenance.py"
-PROVENANCE_SOURCE_SHA256 = "383f90c7f651918792f1733efb8197a50abc853e9660f7e61b5a6bec90c6a60a"
+PROVENANCE_SOURCE_SHA256 = "1e171c559b3705dcca2a21c0068b1daf6200b9584f6334e4a5874b70fee3d3ba"
 APPROVED_RUNTIME_PATHS = set(APPROVED_RUNTIME_SHA256) | {PROVENANCE_PATH}
 NON_RUNTIME_PREFIXES = ("docs/", "tests/", "suite/results/", "runs/")
 

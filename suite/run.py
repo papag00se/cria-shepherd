@@ -444,20 +444,18 @@ def stop_process_group(proc, *, grace: float = KILL_GRACE, sleeper=time.sleep) -
     `Popen(..., start_new_session=True)` makes `proc.pid` the group leader. The old process-list
     sweep matched every host `codex exec --yolo`, so ending one battery cell could SIGKILL unrelated
     interactive or campaign work. Ownership is already precise; use it."""
-    if proc.poll() is not None:
-        return
+    # The leader may exit on SIGINT while a harness child remains alive and can still submit
+    # queued requests. Process-group ownership, not leader liveness, is the shutdown boundary.
+    # Signal and reap the whole group even when poll() says the leader already exited.
     try:
         os.killpg(proc.pid, signal.SIGINT)
     except ProcessLookupError:
         return
-    if proc.poll() is not None:
-        return
     sleeper(grace)
-    if proc.poll() is None:
-        try:
-            os.killpg(proc.pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
+    try:
+        os.killpg(proc.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
     try:
         proc.wait(timeout=30)
     except subprocess.TimeoutExpired:

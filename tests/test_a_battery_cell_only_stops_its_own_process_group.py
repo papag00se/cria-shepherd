@@ -30,9 +30,9 @@ def test_stopping_a_cell_signals_only_its_own_process_group(monkeypatch):
     assert proc.waited
 
 
-def test_an_already_exited_owned_group_does_not_signal_anyone(monkeypatch):
+def test_an_exited_leader_does_not_leave_its_owned_children_running(monkeypatch):
     sent = []
     proc = _Proc(731, [0])
     monkeypatch.setattr(run.os, "killpg", lambda pid, sig: sent.append((pid, sig)))
     run.stop_process_group(proc, grace=0, sleeper=lambda _: None)
-    assert sent == []
+    assert sent == [(731, signal.SIGINT), (731, signal.SIGKILL)]

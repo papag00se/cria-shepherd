@@ -106,8 +106,37 @@ def _valid_capture_evidence(row: dict) -> bool:
             for request in [Path(entry["request"])]
             if request.with_name(request.stem + ".response.json").is_file())
         actual_responses = {p for directory in dirs for p in directory.glob("*.response.json")}
-        if (actual_requests != named_requests or actual_responses != expected_responses or any(
-                str(entry.get("phase", "")).startswith("planner") for entry in entries)):
+        # A stopped harness can leave one already-issued completion in flight and that completion
+        # can immediately issue one follow-up request before shutdown reaches the proxy. Preserve
+        # these artifacts, but never add them to the measured snapshot. The exception is precisely
+        # bounded: one pending request from the snapshot may complete late, and one subsequent
+        # request/response pair may be recorded, in the same non-planner phase and strictly after
+        # the run cutoff. No further request can be laundered through this allowance.
+        extras = actual_requests - named_requests
+        cutoff = float(row.get("started", 0)) + float(row.get("wall_seconds", 0))
+        late_entries = [entry for entry in entries if entry.get("pending") and
+                        Path(entry["request"]).with_name(Path(entry["request"]).stem + ".response.json") in actual_responses]
+        bounded_followup = False
+        if len(extras) == 1 and len(late_entries) == 1 and len(actual_responses - expected_responses) == 1:
+            followup, = extras
+            match = re.match(r"^(\d+)-(.+)\.json$", followup.name)
+            previous = Path(late_entries[0]["request"])
+            followup_response = followup.with_name(followup.stem + ".response.json")
+            try:
+                data = json.loads(followup.read_text())
+                answer = json.loads(followup_response.read_text())
+                bounded_followup = (match is not None and int(match.group(1)) == int(late_entries[0]["seq"]) + 1
+                    and data.get("seq") == int(match.group(1))
+                    and isinstance(data.get("phase"), str) and not data["phase"].startswith("planner")
+                    and previous.stat().st_mtime <= cutoff < followup.stat().st_mtime
+                    and followup_response in actual_responses - expected_responses
+                    and _valid_response(answer)
+                    and followup_response.stat().st_mtime >= followup.stat().st_mtime)
+            except (OSError, ValueError, TypeError):
+                bounded_followup = False
+        if (not (actual_requests == named_requests or bounded_followup)
+                or actual_responses - expected_responses != ({Path(next(iter(extras)).with_name(next(iter(extras)).stem + ".response.json"))} if bounded_followup else set())
+                or any(str(entry.get("phase", "")).startswith("planner") for entry in entries)):
             return False
         phases = {}
         for _phase, response, _response_obj in completed:
