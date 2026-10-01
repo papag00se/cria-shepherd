@@ -33,7 +33,8 @@ def test_retired_models_are_named_not_silently_dropped():
     # can never vanish silently — it just no longer occupies a battery row.
     text = battery_status.report([], now=2)
     assert "| qwen35 |" not in text
-    assert "| gemma4 |" in text
+    assert "| gemma4-qat |" in text
+    assert "| gemma4 |" not in text
     retired = [l for l in text.splitlines() if l.startswith("Retired from the battery")]
     assert retired and "qwen35" in retired[0]
     assert "engagement ladder" in text

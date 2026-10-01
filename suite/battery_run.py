@@ -131,10 +131,14 @@ def main() -> int:
         from fresh_l5_campaign import MODELS, TASKS
         if args.model not in MODELS or args.task not in TASKS:
             ap.error("--fresh-l5 model and task must belong to its fixed 9×6 cohort")
-        head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=SUITE.parent,
-                              capture_output=True, text=True, check=True).stdout.strip()
-        if args.campaign_revision != head:
-            ap.error(f"fresh L5 revision must equal current HEAD {head}")
+        try:
+            from .campaign_provenance import ProvenanceError, validate
+        except ImportError:
+            from campaign_provenance import ProvenanceError, validate
+        try:
+            validate(args.campaign_revision)
+        except ProvenanceError as exc:
+            ap.error(str(exc))
     want = str(level)
     tag = f"L{level}"
     sha = subprocess.run(["git", "rev-parse", "--short", "HEAD"], capture_output=True,

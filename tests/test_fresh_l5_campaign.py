@@ -1,9 +1,11 @@
+import hashlib
 import json
+import time
 
 import pytest
 
-from suite import fresh_l5_campaign as campaign
-from suite.run import validate_fresh_l5_live_level
+from suite import fresh_l5_campaign as campaign, sampling
+from suite.run import capture_manifest, validate_fresh_l5_live_level
 
 
 def candidate(tmp_path, **changes):
@@ -15,7 +17,8 @@ def candidate(tmp_path, **changes):
         "seq": 1, "iso": "2026-08-20T02:08:16.280+00:00", "session": "session-id",
         "turn": "turn-id", "phase": "coder-s1", "url": "http://127.0.0.1:18084/v1/chat/completions",
         "stats": {"n_messages": 1, "n_tools": 1},
-        "body": {"model": "cria", "messages": [{"role": "user", "content": "x"}]},
+        "body": {"model": "cria", "temperature": 1.0, "top_p": 0.95,
+                 "messages": [{"role": "user", "content": "x"}]},
         "rendered_prompt_file": "0001-coder-s1.prompt.txt",
     }))
     (capture / "0001-coder-s1.response.json").write_text(json.dumps({
@@ -23,10 +26,12 @@ def candidate(tmp_path, **changes):
     }))
     row = {
         "model": campaign.MODELS[0], "task": campaign.TASKS[0], "level": 5,
+        "sampling": sampling.render(campaign.MODELS[0]),
         "live_engagement_level": 5, "planner": "off", "planner_enabled": False,
         "planner_phase_count": 0, "revision": "rev-a", "note": "FRESH-L5 rev-a",
         "phases": {"coder": 1}, "calls": 1, "capture_dirs": [str(capture)],
         "archive": str(archive), "workspace_lost": False, "terminal": "exited",
+        "started": time.time(), "wall_seconds": 1_000_000,
     }
     row.update(changes)
     return row
@@ -40,6 +45,29 @@ def test_worklist_is_exact_fresh_54_cell_grid_and_revision_pinned():
     assert {(c["model"], c["task"]) for c in cells} == {
         (model, task) for model in campaign.MODELS for task in campaign.TASKS
     }
+
+
+def test_snapshot_must_be_nonempty_and_complete(tmp_path):
+    row = candidate(tmp_path)
+    row["capture_snapshot"] = {"complete": True, "entries": []}
+    row["calls"] = 0
+    row["phases"] = {}
+    assert not campaign._valid_capture_evidence(row)
+
+    row["calls"] = 1
+    row["phases"] = {"coder": 1}
+    row["capture_snapshot"] = capture_manifest(row["capture_dirs"])
+    row["capture_snapshot"]["complete"] = False
+    assert not campaign._valid_capture_evidence(row)
+
+
+def test_snapshot_hashes_and_phase_inventory_must_match_captures(tmp_path):
+    row = candidate(tmp_path)
+    row["capture_snapshot"] = capture_manifest(row["capture_dirs"])
+    assert campaign._valid_capture_evidence(row)
+
+    row["capture_snapshot"]["entries"][0]["sha256"] = "0" * 64
+    assert not campaign._valid_capture_evidence(row)
 
 
 def test_worklist_credits_real_envelope_capture_and_matching_phase(tmp_path):

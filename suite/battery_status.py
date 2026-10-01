@@ -32,7 +32,11 @@ MODELS = ("gemma4-qat", "bonsai2", "defiant-fable", "ornith1.5",
 # docs/model-history.md), where only a mean/best line survives.
 # What the report renders: the current roster plus gemma4's FROZEN row (stock Q4_K_M, retired
 # 2026-09-18); Nemotron Elastic's frozen L0-L4 rows are visible alongside its live roster row.
-DISPLAY = MODELS + ("gemma4",)
+DISPLAY = MODELS
+# The executable key remains gemma4-qat; the frozen ladder key predates the QAT alias.
+# Resolve history only for reporting: live rows retain their original model/run provenance.
+REPORT_ALIASES = {"gemma4-qat": "gemma4"}
+REPORT_INFERENCE_REVISION = "f79cc6146470281b5909cf605b27afca1177e2d1"
 TASKS = ("shipping-rates-rb", "cart-billing-go", "orders-api-py",
          "feed-pipeline-java", "handles-cli-node", "rust-toml-cli")
 ARMS = ("BASE", "CRIA")
@@ -160,25 +164,30 @@ def report(rs: list[dict], now: float | None = None) -> str:
         m = row.get("model")
         if m and m not in frozen and isinstance(row.get("usefulness_percent"), int) and m not in live:
             live.append(m)
+    # Report aliases fold historical keys into the current roster; they never alter executable
+    # model keys or the provenance of rows in results.jsonl.
+    historical_key = {model: REPORT_ALIASES.get(model, model) for model in DISPLAY}
     everything = list(frozen.keys()) + live
-    # The battery renders its CURRENT roster. A retired model is named below the tables, never
-    # dropped silently; its rows stay in results.jsonl and its frozen ladder in the JSON.
-    ordered = [m for m in everything if m in DISPLAY]
-    retired = [m for m in everything if m not in DISPLAY]
-    out = ["# Battery — the engagement ladder", "", _stamp(rs, now), "",
+    ordered = [m for m in DISPLAY if m in everything or historical_key[m] in frozen]
+    retired = [m for m in everything if m not in DISPLAY and m not in REPORT_ALIASES.values()]
+    out = ["# Battery — the engagement ladder", "", _stamp(rs, now),
+           f"**Report code revision `{sha()}`; inference anchor remains `{REPORT_INFERENCE_REVISION}`.**", "",
            "Each cell is an inferred usefulness percentage \U0001F7E2\u226588 \U0001F7E1\u226563 "
            "\U0001F7E0\u226538 \U0001F534 below; `\u00b7` = not judged. `[engagement] level = 0..5`, "
-           "each rung implying every rung below it. gemma4 is a FROZEN historical inference row "
-           "recovered into suite/historical_ladder.json; every other model reads live from "
-           "results.jsonl, and a fresh live judgment supersedes a frozen cell.", ""]
+           "each rung implying every rung below it. Gemma4 and gemma4-qat are one logical model: "
+           "the gemma4 frozen history is retained for unreplaced cells, while live gemma4-qat "
+           "judgments supersede the matching cell. Live rows retain their executable key and provenance.", ""]
     for lvl in range(6):
         lv = str(lvl)
         rowdata = []
         for m in ordered:
-            fro = frozen.get(m, {}).get(lv)
+            history_name = historical_key.get(m, m)
+            fro = frozen.get(history_name, {}).get(lv)
             cells, mins, calls = [], [], []
             for t in tasks:
                 r = level_cell(rs, lvl, m, t)
+                if r is None and history_name != m:
+                    r = level_cell(rs, lvl, history_name, t)
                 cells.append(r.get("usefulness_percent")
                              if r and isinstance(r.get("usefulness_percent"), int) else None)
                 if r and r.get("wall_seconds"):

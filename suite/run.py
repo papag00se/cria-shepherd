@@ -466,7 +466,37 @@ def stop_process_group(proc, *, grace: float = KILL_GRACE, sleeper=time.sleep) -
         pass
 
 
-def collect_capture(session_dirs) -> dict:
+def capture_manifest(session_dirs) -> dict:
+    """Snapshot request/response evidence at harness shutdown without folding late responses
+    into the run's measured call and phase counts. Pending requests remain named evidence.
+    """
+    entries = []
+    complete = True
+    for directory in session_dirs:
+        for request in sorted(Path(directory).glob("[0-9]*-*.json")):
+            if request.name.endswith((".response.json", ".prompt.txt", ".reasoning.txt")):
+                continue
+            match = re.match(r"^(\d+)-(.+?)\.json$", request.name)
+            if not match:
+                continue
+            response = request.with_name(request.stem + ".response.json")
+            try:
+                req = json.loads(request.read_text())
+                phase = req.get("phase")
+                entry = {"request": str(request), "sha256": hashlib.sha256(request.read_bytes()).hexdigest(),
+                         "phase": phase, "seq": int(match.group(1))}
+                if response.is_file():
+                    entry["response"] = str(response)
+                    entry["response_sha256"] = hashlib.sha256(response.read_bytes()).hexdigest()
+                else:
+                    entry["pending"] = True
+                entries.append(entry)
+            except (OSError, ValueError):
+                complete = False
+    return {"complete": complete, "entries": entries}
+
+
+def collect_capture(session_dirs, snapshot=None) -> dict:
     """Every call the run made, across ALL of its capture directories.
 
     cria opens a fresh capture directory per server session, and one cell can span several: the
@@ -475,7 +505,9 @@ def collect_capture(session_dirs) -> dict:
     recorded `calls: 2` against 93 real calls in the directory next to it, which reads in the
     report as a model that produced nothing in half an hour. Sum them.
     """
-    calls = sorted(f for d in session_dirs for f in d.glob("*.response.json"))
+    calls = ([Path(entry["response"]) for entry in snapshot.get("entries", [])
+              if entry.get("response")] if snapshot is not None else
+             sorted(f for d in session_dirs for f in d.glob("*.response.json")))
     phases, tok_n, tok_ms = {}, 0, 0.0
     for f in calls:
         m = re.match(r"\d+-(.+?)(?:-s\d+.*)?\.response\.json$", f.name)
@@ -666,10 +698,17 @@ def main() -> None:
         import fresh_l5_campaign
         if args.model not in fresh_l5_campaign.MODELS or args.task not in fresh_l5_campaign.TASKS:
             ap.error("--fresh-l5 model and task must belong to its fixed 9×6 cohort")
-        head = subprocess.run(["git", "rev-parse", "HEAD"], cwd=SUITE.parent,
-                              capture_output=True, text=True, check=True).stdout.strip()
-        if args.campaign_revision != head:
-            ap.error(f"fresh L5 revision must equal current HEAD {head}")
+        try:
+            from . import campaign_provenance
+        except ImportError:
+            import campaign_provenance
+        try:
+            code_revision = campaign_provenance.validate(args.campaign_revision)
+        except campaign_provenance.ProvenanceError as exc:
+            ap.error(str(exc))
+    else:
+        code_revision = subprocess.run(["git", "rev-parse", "HEAD"], cwd=SUITE.parent,
+                                       capture_output=True, text=True, check=True).stdout.strip()
 
     other_runs = run_guard.other_suite_runners()
     if other_runs:
@@ -812,7 +851,8 @@ def main() -> None:
     # The primary directory is the one that carries the work, not the one that finished last.
     session_dir = max(new_sessions, key=lambda p: len(list(p.glob("*.response.json"))),
                       default=None) if new_sessions else None
-    capture = collect_capture(new_sessions) if new_sessions else \
+    capture_snapshot = capture_manifest(new_sessions)
+    capture = collect_capture(new_sessions, capture_snapshot) if new_sessions else \
         {"calls": 0, "phases": {}, "avg_tok_s": None, "output_tokens_timed": 0}
 
     # EVIDENCE PRESERVATION (operator directive 2026-07-29): every run's artifacts are evidence
@@ -837,7 +877,8 @@ def main() -> None:
         "live_engagement_level": live_engagement_level,
         "note": ((f"FRESH-L5 {args.campaign_revision} " + args.note).strip()
                  if args.fresh_l5 else args.note),
-        **({"revision": args.campaign_revision} if args.fresh_l5 else {}),
+        **({"revision": args.campaign_revision, "code_revision": code_revision}
+           if args.fresh_l5 else {}),
         "sampling": spec,
         **({"level": args.level} if args.level is not None else {}),
         "started": t0, "wall_seconds": round(t1 - t0, 1),
@@ -847,6 +888,7 @@ def main() -> None:
         "milestone_judgments": milestone_judgments,
         "progress_judgments": progress_judgments,
         **capture,
+        **({"capture_snapshot": capture_snapshot} if args.fresh_l5 else {}),
         "assists": collect_assists(t0, t1),
         "workspace": str(ws),
         "archive": str(archive),
