@@ -33,7 +33,7 @@ def test_retired_models_are_named_not_silently_dropped():
     # can never vanish silently — it just no longer occupies a battery row.
     text = battery_status.report([], now=2)
     assert "| qwen35 |" not in text
-    assert "| gemma4-qat |" in text
+    assert "| gemma4_12b |" in text
     assert "| gemma4 |" not in text
     retired = [l for l in text.splitlines() if l.startswith("Retired from the battery")]
     assert retired and "qwen35" in retired[0]
@@ -41,7 +41,7 @@ def test_retired_models_are_named_not_silently_dropped():
     assert "### Level 5" in text
 
 
-def test_the_battery_roster_is_the_operator_named_fleet():
+def test_the_executable_battery_roster_keeps_compatible_service_keys():
     assert set(battery_status.MODELS) == {"gemma4-qat", "bonsai2", "defiant-fable", "ornith1.5",
                                           "k2_horizon_7b", "phi4", "ling3-tiny", "qwen3.8_9b_distill",
                                           "nemotron-elastic"}

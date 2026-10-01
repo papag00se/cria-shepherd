@@ -40,7 +40,7 @@ def _live_row(task: str, pct: int) -> dict:
 def test_a_live_judgment_supersedes_its_frozen_cell():
     text = battery_status.report([_live_row("shipping-rates-rb", 55)], now=2)
     l5 = text.split("### Level 5")[1]
-    nemo = next(line for line in l5.splitlines() if line.startswith("| gemma4-qat |"))
+    nemo = next(line for line in l5.splitlines() if line.startswith("| gemma4_12b |"))
     assert "55%" in nemo, f"live 55% shadowed by the frozen row: {nemo}"
 
 
@@ -50,7 +50,7 @@ def test_unrejudged_cells_keep_their_frozen_values():
 
     def nemo_cells(text: str) -> list[str]:
         l5 = text.split("### Level 5")[1]
-        line = next(l for l in l5.splitlines() if l.startswith("| gemma4-qat |"))
+        line = next(l for l in l5.splitlines() if l.startswith("| gemma4_12b |"))
         # | model | 6 task cells | total | avg min | avg calls |
         return [c.strip() for c in line.split("|")[2:8]]
 

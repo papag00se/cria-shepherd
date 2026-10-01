@@ -44,6 +44,14 @@ def test_a_planner_change_inside_run_owner_is_not_hidden_by_path_allowance():
         provenance.verify_change_set({"suite/run.py"}, hashes)
 
 
+@pytest.mark.parametrize("path", ["suite/battery_status.py", "suite/model_names.py", "AGENTS.md"])
+def test_naming_approval_does_not_exempt_future_unreviewed_edits(path):
+    hashes = _hashes()
+    hashes[path] = hashlib.sha256(b"unreviewed naming or policy change").hexdigest()
+    with pytest.raises(provenance.ProvenanceError, match=path.replace(".", r"\.")):
+        provenance.verify_change_set({path}, hashes)
+
+
 def test_a_different_inference_anchor_is_rejected():
     with pytest.raises(provenance.ProvenanceError, match="inference anchor"):
         provenance.validate("other-revision")

@@ -18,18 +18,18 @@ def test_live_alias_keeps_unreplaced_frozen_cells_and_overrides_only_its_cell():
     # Exactly one canonical row per level; no separate historical alias row.
     for level in range(6):
         block = text.split(f"### Level {level}", 1)[1].split("### Level ", 1)[0]
-        assert sum(line.startswith("| gemma4-qat |") for line in block.splitlines()) == 1
+        assert sum(line.startswith("| gemma4_12b |") for line in block.splitlines()) == 1
         assert "| gemma4 |" not in block
 
     level0 = text.split("### Level 0", 1)[1].split("### Level ", 1)[0]
-    row0 = next(line for line in level0.splitlines() if line.startswith("| gemma4-qat |"))
+    row0 = next(line for line in level0.splitlines() if line.startswith("| gemma4_12b |"))
     assert "17%" in row0
     # L0 historical cart-billing value remains where no live judgment replaced it.
     assert battery_status._historical()["frozen"]["gemma4"]["0"]["pct"][1] == 92
     assert row0.count("92%") == 1
 
     level5 = text.split("### Level 5", 1)[1]
-    row5 = next(line for line in level5.splitlines() if line.startswith("| gemma4-qat |"))
+    row5 = next(line for line in level5.splitlines() if line.startswith("| gemma4_12b |"))
     assert "71%" in row5
 
 
@@ -39,4 +39,4 @@ def test_report_alias_does_not_rewrite_live_row_provenance():
     assert row["model"] == "gemma4-qat"
     assert row["run_id"].endswith("gemma4-qat_codex_pon_1790000000")
     assert "| gemma4 |" not in rendered
-    assert "| gemma4-qat |" in rendered
+    assert "| gemma4_12b |" in rendered

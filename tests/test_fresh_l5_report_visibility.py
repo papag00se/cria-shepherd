@@ -26,5 +26,5 @@ def test_fresh_l5_row_is_in_canonical_level_report_without_becoming_an_arm(tmp_p
     assert battery_status.cell(rows, "CRIA", "gemma4-qat", "shipping-rates-rb") is None
 
     level_five = battery_status.report(rows, now=2).split("### Level 5", 1)[1]
-    assert "| gemma4-qat |" in level_five
+    assert "| gemma4_12b |" in level_five
     assert "68%" in level_five
