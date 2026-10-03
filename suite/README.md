@@ -40,6 +40,23 @@ python3 suite/fresh_l5_campaign.py --revision "$(git rev-parse HEAD)"
 
 Run a listed cell through `suite/battery_run.py` with `--level 5 --planner off --fresh-l5 --campaign-revision <same-full-revision>`. The runner rejects a different HEAD. Historical rows are never edited or counted as fresh campaign cells.
 
+## Machine-local Codex sandbox policy
+
+To opt this machine's suite launches into Codex's own filesystem sandbox, put
+`workspace_sandbox = true` in `~/.cria/suite-codex-policy.toml`. This is enabled on
+Jesse's test machine. `suite/run.py` then supplies a per-invocation `cria_suite`
+permission profile: read access across the filesystem, write access only to the
+cell workspace and its isolated install/scratch directory, with approvals disabled
+and normal networking retained. `TMPDIR` points to that cell's scratch directory;
+the host-wide `/tmp` is not granted write access. A malformed policy stops launch.
+
+This requires a Codex version supporting named permission profiles. The local
+integration test invokes `codex sandbox` with the exact launch policy against a
+disposable outside sentinel; it never starts inference or executes incident code.
+No user/global Codex settings, harness code, or system services are changed. With
+no local policy file, other machines retain the existing `--yolo` suite behavior.
+The middleware cleanup review is separate and **is not** a filesystem sandbox.
+
 ## Usefulness judgments
 
 ```bash

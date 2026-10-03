@@ -112,7 +112,23 @@ EXTERNAL: dict[str, str] = {}
 
 # Harness launchers: name -> argv builder (headless/exec mode only). Phase 0 ships codex;
 # the other adapters land with their harness phases.
-def _codex_argv(prompt: str):
+SUITE_CODEX_POLICY = Path.home() / '.cria' / 'suite-codex-policy.toml'
+
+
+def _codex_argv(prompt: str, workspace=None):
+    # Machine-local opt-in, consumed ONLY by this cria benchmark launcher.
+    # Never edit the user's Codex config or change ordinary Codex sessions.
+    if SUITE_CODEX_POLICY.exists():
+        policy = tomllib.loads(SUITE_CODEX_POLICY.read_text())
+        if policy != {'workspace_sandbox': True}:
+            raise ValueError('invalid cria suite Codex policy; refusing to launch')
+        state_write = ''
+        if workspace is not None:
+            state_write = ',' + json.dumps(str(_cell_install_root(workspace))) + '="write"'
+        permissions = ('permissions={cria_suite={filesystem={"/"="read",":workspace_roots"="write"'
+                       + state_write + '},network={enabled=true}}}')
+        return ['codex', 'exec', '-c', 'default_permissions="cria_suite"',
+                '-c', permissions, '-c', 'approval_policy="never"', prompt]
     return ["codex", "exec", "--yolo", prompt]
 
 HARNESSES = {"codex": _codex_argv}
@@ -736,6 +752,12 @@ def main() -> None:
     run_id = f"{args.task}_{args.model}_{args.harness}_p{args.planner}_{int(time.time())}"
     ws = Path(tempfile.mkdtemp(prefix=f"suite-{run_id}-", dir=RUNS_DIR))
     log_path = SUITE / "results" / f"{run_id}.log"
+    harness_argv = HARNESSES[args.harness](prompt, ws)
+    suite_scratch = None
+    if args.harness == 'codex' and 'default_permissions="cria_suite"' in harness_argv:
+        state = _cell_install_root(ws)
+        suite_scratch = state / 'tmp'
+        suite_scratch.mkdir(parents=True, exist_ok=True)
 
     swap_model(args.model)
     spec = configure_cria(args.model, args.planner == "on")
@@ -766,13 +788,15 @@ def main() -> None:
     installs_before = user_install_listing()
 
     env = _codex_env(dict(os.environ, **_isolated_installs(ws)))
+    if suite_scratch is not None:
+        env['TMPDIR'] = str(suite_scratch)
     t0 = time.time()
     with open(log_path, "w") as lf:
         # stdin MUST be closed explicitly: `codex exec` reads stdin to EOF as "additional input"
         # BEFORE starting the turn, and after an interrupted turn it returns to reading stdin.
         # An inherited never-closing stdin (a live socket from the launch environment) froze two
         # cells for their full 30-minute walls with zero work — pre-banner, zero API calls.
-        proc = subprocess.Popen(HARNESSES[args.harness](prompt), cwd=ws,
+        proc = subprocess.Popen(harness_argv, cwd=ws,
                                 stdin=subprocess.DEVNULL,
                                 stdout=lf, stderr=subprocess.STDOUT, env=env,
                                 start_new_session=True)
