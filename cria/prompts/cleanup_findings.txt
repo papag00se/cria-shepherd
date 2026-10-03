@@ -1,0 +1,3 @@
+root = Recursive deletion resolves to the filesystem root.
+external = A filesystem mutation resolves outside the permitted workspace boundary.
+temp_parent = Recursive cleanup targets the shared parent of a temporary resource, not the resource created. Creating a temporary file or directory does not grant ownership of its parent.

@@ -1342,7 +1342,7 @@ def _survey_due(session: str | None, name: str) -> bool:
 def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: set[str] | None = None,
                        brave_key: str | None = None, native_search: str | None = None,
                        session: str | None = None, workspace_root: str | None = None,
-                       external_dir_permission: str = "write", cleanup_ask=None, cleanup_task: str = '') -> dict:
+                       external_dir_permission: str = "write") -> dict:
     """Lower cria's synthetic tool calls to shell commands the harness runs, each stamped with the
     stateless re-presentation sentinel. Only lowers a tool cria INJECTED (a harness-native tool of
     the same name is the harness's to run). ``web_search`` routes to ``native_search`` when the
@@ -1485,7 +1485,7 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
                         from . import cleanupsafety
                         candidate = _repair_double_escaped(str(body))
                         refusal = cleanupsafety.review(str(path), candidate, None,
-                                                       workspace_root, cleanup_ask, rlog, task=cleanup_task)
+                                                       workspace_root, rlog, permission=external_dir_permission)
                         cmd = (_refusal_command(refusal) if refusal
                                else _write_command(str(path), candidate))
             elif name in _EDIT_NAMES and name in injected:
@@ -1527,7 +1527,7 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
                         # harness hasn't supplied the file or matching is ambiguous.
                         if previous is not None and old and previous.count(old) == 1:
                             refusal = cleanupsafety.review(str(path), previous.replace(old, new, 1),
-                                                           previous, workspace_root, cleanup_ask, rlog, task=cleanup_task)
+                                                           previous, workspace_root, rlog, permission=external_dir_permission)
                             if refusal:
                                 # Bind the finding to the reviewed bytes. If they changed,
                                 # ask for a fresh read, never bypass a known unsafe finding.

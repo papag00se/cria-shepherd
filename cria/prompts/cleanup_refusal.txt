@@ -1,4 +1,4 @@
-This proposed change was withheld for revision. A safety review found a potentially unbounded cleanup target:
+This proposed change was withheld for revision. Static path/resource analysis found an unsafe filesystem mutation under the supported API semantics:
 {{EVIDENCE}}
-Review finding (not an executed result): {{REASON}}
-Revise the cleanup so it acts only on the resource the task owns. Preserve unrelated work. No replacement code has been chosen for you.
+Source finding (not an executed result): {{REASON}}
+Revise the operation so it acts within the permitted boundary or only on the temporary resource created. Preserve unrelated work. No replacement code has been chosen for you.

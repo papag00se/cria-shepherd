@@ -1,0 +1,83 @@
+# Inference-free filesystem-mutation review
+
+`cleanupsafety.review` runs at synthetic `write_file` / exact `edit_file` lowering.
+It analyzes source as data: no imports of candidate code, execution, network calls,
+or reasoner. It uses complete candidates; edits need source bytes from `wsview`,
+not reads against cria's own filesystem. Missing or ambiguous edit source is UNKNOWN.
+
+## Confidence is evidence strength, not a probability
+
+- **PROVEN**: all represented targets violate a supported rule under the adapter's
+  API/path assumptions, conditional on the operation executing. Refuse the change.
+- **POSSIBLE**: a known unsafe alternative or unresolved scope/control semantics.
+  Log only; do not refuse.
+- **UNKNOWN**: target, operation identity, or language semantics are unresolved.
+  Log only. This is not permission or a safety certificate.
+- **WITHIN_SCOPE**: the represented direct target is within the lexical permission
+  boundary or a tracked temporary resource. This does not certify the whole file.
+
+The rules live in `cleanupfacts.py`: mutations of resolved absolute external paths
+respect `external_dir_permission`; recursive filesystem-root deletion and recursive
+cleanup of a default shared temporary parent are refused independently. A temporary
+file owns that file, not its parent. A tracked temporary directory owns its children;
+cleanup of the directory itself is legitimate. Lexical containment belongs to
+`dirguard`, not another boundary implementation. POSIX path semantics are used.
+
+## Coverage today
+
+| Adapter | What it can establish | Deliberate limits |
+|---|---|---|
+| Python (`.py`, `.pyw`) | AST import aliases, assignments/reassignments, literals, `os.path` parent/join/normalization, `pathlib` construction/parent/join, tempfile file/directory ownership; branch alternatives and exception-prefix state for `finally`; simple undecorated zero-argument helper return summaries | Not a complete interpreter, type checker, or interprocedural analyzer. Unsupported expressions become unknown; complex helper summaries are withheld. |
+| JavaScript/TypeScript | Static default/namespace/require imports for Node fs/path; straight-line path assignments and dirname/join; fs deletion/truncation/writes and explicit recursive options; mkdtempSync ownership | No JS execution, dynamic imports, general destructuring or control-flow/type resolution. |
+| Go | os mutation contracts, import aliases, filepath Dir/Join and simple assignments | Function bodies/scopes downgrade findings to POSSIBLE; no error-tuple/temp-resource analysis. |
+| Rust | Qualified std::fs contracts and simple std use imports, Path/PathBuf literal construction | No borrow/type/lifetime analysis, macros, general use syntax or third-party tempfile semantics. Scoped findings are POSSIBLE. |
+| JVM | Java Files/FileUtils mutation contracts and Path/Paths constructors; Kotlin imported deleteRecursively extension on a resolved variable receiver | No compiler/type resolution or general extension dispatch. Normal method bodies are POSSIBLE. |
+| .NET | System.IO File/Directory mutations, Path parent/combine, GetTempFileName ownership | POSIX targets only; scoped/control-flow findings are POSSIBLE. No C# compiler or overload resolution. |
+| PHP | unlink/rmdir/file_put_contents, dirname/tempnam and simple `$variable` assignment | Interpolated/dynamic paths unresolved; no namespace/function override resolution. Assumes the named builtin semantics. |
+| Ruby | File/FileUtils/Dir mutation contracts, File parent/join, default mktmpdir ownership with tmpdir required; parenthesized and simple parenthesis-free calls | No metaprogramming, monkey-patching or general block semantics. Scoped findings are POSSIBLE. |
+| Elixir | File mutation contracts, Path dirname/join, parenthesized and simple parenthesis-free calls | No macro expansion, alias/rebinding or pipeline analysis. Scoped findings are POSSIBLE. |
+| Shell scripts | Reuse the existing direct-shell root-deletion backstop for `.sh`/`.bash` candidates, without execution | Narrow direct commands only; no expansion, invoked-program or heredoc analysis. |
+| Universal | Tokenized destructive-looking calls, with common strings/comments excluded; literal/assignment path leads | **UNKNOWN only.** A name like deleteTree might not do filesystem IO. Arbitrary languages do not get a blocking static analyzer from this scan. |
+
+Non-Python adapters deliberately do **not** claim Python-equivalent analysis.
+They recognize narrow contracts, not entire languages. Braces/control/declarations
+normally lower confidence; recognized plain Node recursive-option objects are data,
+not control scopes. Unknown mutation names can escape detection completely. Universal
+leads supplement Python findings where its adapter cannot resolve an API.
+
+## Assumptions and safety boundary
+
+- Known APIs must resolve to their ordinary library semantics. Import shadowing and
+  rebinding handled by a subset of syntax are invalidated, not guessed. Custom modules,
+  monkey-patching through untracked aliases/calls, FFI and reflective dispatch remain gaps.
+- Relative paths, cwd changes, symlinks, mount topology, environment expansion and
+  Windows path semantics are not certified. No remote filesystem observations are invented.
+- Syntax-validity is established by Python's parser only. Other adapters are lexical;
+  they do not establish that the source compiles or a referenced library is installed.
+- Analysis limits yield an explicit `analysis-limit`, not a partial clean verdict.
+- Files written through raw shell/native tools, existing unsafe files and other execution
+  paths bypass this candidate hook. A file with no findings is **not** declared safe.
+- Only synthetic-tool lowering uses this review. The local suite's separate Codex
+  filesystem sandbox remains the independent boundary against missed behavior.
+
+No numerical score is presented because no calibrated probability has been measured.
+No broad safety or false-positive rate is inferred from the test count.
+
+## Recovered incident and regression
+
+`tests/fixtures/incident_parent_cleanup.py.txt` is the exact recovered orders-api-py
+source from session `01a0f776-6370-7912-a47a-b050238406f5`, source read in
+`inbound-03a9ae51-responses.json` input[119]. SHA-256:
+`c79913cdf0fc195be9d9a1d7159d80275f01264f960da19e4f0c42c09ea78f74`.
+
+The tempfile helper's returned file path flows into `rmtree(dirname(path))`.
+The last test reuses that variable for absolute HTTP routes, including `/`.
+The analyzer reports shared-parent cleanup and a route-derived root target. The
+production server lowering test has no reasoner; it asserts that the result is a
+refusal and contains no write command. Separate plumbing tests run only refusal/file
+operations inside disposable test directories, never the recovered program.
+
+This regression failed with the prior implementation, which emitted the write when
+its judge was unavailable. The replacement blocks the same source without inference.
+The old fake-judge tests were retargeted to actual analysis and preserved incident,
+stale-edit, repair, missing-source, inert-text and no-inference coverage.

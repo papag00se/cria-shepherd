@@ -1,17 +1,15 @@
-"""Candidate code is inert data: tests execute only file plumbing or refusal printf.
+"""Recovered source is inert data. Only safe lowering/refusal plumbing is executed.
 
-Fixture: recovered orders-api-py test_http.py, session
-01a0f776-6370-7912-a47a-b050238406f5, inbound-03a9ae51-responses.json input[119].
-The source reuses a temp database path for /-prefixed routes before rmtree(dirname(path)).
-Never import this fixture or run its tests. Fake judge replies exercise the safety
-pipeline; these tests do not establish a live reasoner's accuracy.
+Original capture: 01a0f776-6370-7912-a47a-b050238406f5,
+inbound-03a9ae51-responses.json input[119]. Never import/run the fixture.
+Former fake-judge tests now assert actual static findings and file outcomes.
 """
 import hashlib
 import json
 import subprocess
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 
 import pytest
 from cria import cleanupsafety, writeproxy
@@ -20,12 +18,7 @@ INCIDENT = (Path(__file__).parent / 'fixtures/incident_parent_cleanup.py.txt').r
 EVIDENCE = 'shutil.rmtree(os.path.dirname(path), ignore_errors=True)'
 
 
-def unsafe(evidence=EVIDENCE, target='/'):
-    return json.dumps(dict(verdict='UNSAFE', evidence=evidence,
-                           reason='The parent of the reused route variable can be the filesystem root.', target=target))
-
-
-def lower(name, args, ask, previous=None):
+def lower(name, args, previous=None):
     completion = {'choices': [{'message': {'tool_calls': [
         {'id': 'one', 'type': 'function', 'function': {'name': name, 'arguments': json.dumps(args)}}]}}]}
     view = SimpleNamespace(read_bytes=lambda path: previous.encode() if previous is not None else None)
@@ -33,119 +26,125 @@ def lower(name, args, ask, previous=None):
             patch.object(writeproxy, '_survey_due', return_value=False), \
             patch.object(writeproxy, '_litter_leg', return_value=''):
         writeproxy.translate_outbound(completion, {'name': 'exec_command', 'schema': {'properties': {'cmd': {'type': 'string'}}}},
-                                      injected={'write_file', 'edit_file'}, workspace_root='/remote/project',
-                                      cleanup_ask=ask)
+                                      injected={'write_file', 'edit_file'}, workspace_root='/remote/project')
     return json.loads(completion['choices'][0]['message']['tool_calls'][0]['function']['arguments'])['cmd']
 
 
 def test_exact_recovered_candidate_never_lands(tmp_path):
     assert hashlib.sha256(INCIDENT.encode()).hexdigest() == 'c79913cdf0fc195be9d9a1d7159d80275f01264f960da19e4f0c42c09ea78f74'
-    ask = Mock(return_value=unsafe())
     target = tmp_path / 'test_http.py'
-    cmd = lower('write_file', {'path': str(target), 'content': INCIDENT}, ask)
+    cmd = lower('write_file', {'path': str(target), 'content': INCIDENT})
     result = subprocess.run(['bash', '-c', cmd], capture_output=True, text=True)
     assert result.returncode != 0
     assert not target.exists()
-    assert INCIDENT in ask.call_args.args[0]  # complete candidate, no clipping
     assert 'withheld' in result.stdout
-
-
-@pytest.mark.parametrize('source,evidence', [
-    ('fs.rmSync(path.dirname(route), {recursive: true});', 'fs.rmSync(path.dirname(route), {recursive: true})'),
-    ('std::fs::remove_dir_all(route.parent().unwrap())?;', 'std::fs::remove_dir_all(route.parent().unwrap())'),
-    ('os.RemoveAll(filepath.Dir(route))', 'os.RemoveAll(filepath.Dir(route))'),
-    ('FileUtils.deleteDirectory(route.getParentFile());', 'FileUtils.deleteDirectory(route.getParentFile())'),
-    ('rm -rf "$parent"', 'rm -rf "$parent"'),
-])
-def test_operation_tripwire_is_not_python_or_extension_bound(source, evidence):
-    ask = Mock(return_value=unsafe(evidence))
-    assert cleanupsafety.review('arbitrary.filename', source, None, '/project', ask)
-    ask.assert_called_once()
+    report = cleanupsafety.analyze('test_http.py', INCIDENT, '/remote/project')
+    assert any(f.rule == 'temp_parent' and f.confidence == 'PROVEN' for f in report.findings)
+    assert any('/' in f.targets and f.confidence == 'PROVEN' for f in report.findings)
 
 
 @pytest.mark.parametrize('source', [
-    'value = 123',
-    '# shutil.rmtree(os.path.dirname(path))',
-    '// fs.rmSync(path.dirname(route), {recursive: true})',
-    '/* os.RemoveAll(filepath.Dir(route)) */',
-    'example = "shutil.rmtree(os.path.dirname(path))"',
-    'route = "/orders"',
+    'value = 123', '# shutil.rmtree(os.path.dirname(path))',
+    'example = "shutil.rmtree(os.path.dirname(path))"', 'route = "/orders"',
+    'import shutil, tempfile\np=tempfile.mkdtemp()\nshutil.rmtree(p)',
+    'import os, tempfile\nfd,p=tempfile.mkstemp()\nos.unlink(p)',
+    'from tempfile import TemporaryDirectory\nimport shutil, os\nwith TemporaryDirectory() as d:\n p=os.path.join(d,"owned")\n shutil.rmtree(p)',
+    'import shutil\ndef f(shutil):\n shutil.rmtree("/")',
+    'import shutil\nshutil=custom()\nshutil.rmtree("/")',
+    'import shutil\nif False:\n shutil.rmtree("/")',
+    'def f():\n return\n import shutil\n shutil.rmtree("/")',
+    'class Thing:\n def unlink(self): pass\nx=Thing()\nx.unlink()',
+    'open("/etc/hosts", "r")',
+    'import os\nx="/external"\nx=unknown()\nos.remove(x)',
+    'import os\np="/external"\n(p:="/project/owned")\nos.unlink(p)',
+    'import os\np="/external"\nif (p:="/project/owned"):\n pass\nos.unlink(p)',
+    'import os\np="/external"\nexec("p = unknown()")\nos.unlink(p)',
+    'import shutil\ns=shutil\nshutil.rmtree=custom\ns.rmtree("/")',
+    'import shutil\ndef f():\n from . import shutil\n shutil.rmtree("/")',
+    'import shutil\nfor x in []:\n shutil.rmtree("/")',
+    'import shutil\nwhile False:\n shutil.rmtree("/")',
+    'import tempfile,shutil\nwith tempfile.TemporaryDirectory() as d:\n shutil.rmtree(d)',
 ])
-def test_ordinary_edits_and_inert_examples_make_zero_calls(source):
-    ask = Mock(side_effect=AssertionError('must not call'))
-    assert cleanupsafety.review('file', source, None, '/project', ask) is None
-    ask.assert_not_called()
+def test_legitimate_inert_shadowed_and_unresolved_code_is_not_blocked(source):
+    assert cleanupsafety.review('file.py', source, None, '/project') is None
 
 
-def test_unchanged_candidate_does_not_repeat_review():
-    ask = Mock()
-    assert cleanupsafety.review('file', INCIDENT, INCIDENT, '/project', ask) is None
-    ask.assert_not_called()
+@pytest.mark.parametrize('source', [
+    'import shutil as s\ns.rmtree("/")',
+    'from shutil import rmtree as erase\nerase("/external")',
+    'import os\np="/external/file"\nos.unlink(p)',
+    'import os\np=os.path.join("/external", "file")\nos.remove(p)',
+    'from pathlib import Path\np=Path("/external") / "file"\np.write_text("x")',
+    'from pathlib import Path\nPath("/external/file").parent.rmdir()',
+    'open("/external/file", "w")',
+    'import io\nio.open("/external/file", mode="a")',
+    'import shutil\nclass C:\n def cleanup(self):\n  shutil.rmtree("/")',
+    'import tempfile,os,shutil\nf=tempfile.NamedTemporaryFile()\nshutil.rmtree(os.path.dirname(f.name))',
+    'import tempfile,os,shutil\nd=tempfile.TemporaryDirectory()\nshutil.rmtree(os.path.dirname(d.name))',
+])
+def test_resolved_mutations_block_at_restricted_boundary(source):
+    assert cleanupsafety.analyze('file.py', source, '/project').blocked
 
 
-@pytest.mark.parametrize('answer', ['{"verdict":"SAFE"}', '{"verdict":"UNKNOWN"}', 'garbage',
-                                  unsafe('invented operation'), unsafe('import os')])
-def test_safe_unknown_and_ungrounded_findings_do_not_refuse(answer):
-    assert cleanupsafety.review('file', INCIDENT, None, '/project', lambda _: answer) is None
+def test_mixed_control_flow_is_possible_not_proven():
+    source = 'import shutil\nif condition:\n p="/"\nelse:\n p="/project/owned"\nshutil.rmtree(p)'
+    result = cleanupsafety.analyze('file.py', source, '/project')
+    assert not result.blocked
+    assert any(f.confidence == 'POSSIBLE' for f in result.findings)
 
 
-def test_reasoner_failure_is_silent_not_safety_approval():
-    log = Mock()
-    assert cleanupsafety.review('file', INCIDENT, None, '/project', Mock(side_effect=OSError()), log) is None
-    assert log.emit.call_args.kwargs['verdict'] == 'UNKNOWN'
+def test_external_permission_is_respected_but_shared_temp_cleanup_still_blocks():
+    assert not cleanupsafety.analyze('f.py', 'import os\nos.unlink("/external/file")', '/project', 'write').blocked
+    assert cleanupsafety.analyze('f.py', 'import os,shutil,tempfile\nfd,p=tempfile.mkstemp()\nshutil.rmtree(os.path.dirname(p))', '/project', 'write').blocked
 
 
-def test_safe_owned_cleanup_passes_unchanged():
-    source = 'fs.rmSync(ownedTemporaryDirectory, {recursive: true});'
-    assert cleanupsafety.review('file', source, None, '/project', lambda _: '{"verdict":"SAFE"}') is None
+def test_owned_temp_parent_is_not_shared_parent():
+    source='import os,shutil,tempfile\nd=tempfile.mkdtemp()\nfd,p=tempfile.mkstemp(dir=d)\nshutil.rmtree(os.path.dirname(p))'
+    assert not cleanupsafety.analyze('f.py', source, '/project').blocked
+
+
+def test_universal_lead_survives_when_python_cannot_resolve_the_api():
+    report = cleanupsafety.analyze('f.py', 'custom.deleteTree("/external")', '/project')
+    assert not report.blocked
+    assert any(f.confidence == 'UNKNOWN' for f in report.findings)
+
+
+def test_invalid_source_is_unknown():
+    assert cleanupsafety.analyze('f.py', 'import (', '/project').coverage == 'invalid-source'
 
 
 def test_edit_reviews_complete_candidate_and_preserves_disk(tmp_path):
-    target = tmp_path / 'candidate.txt'
+    target = tmp_path / 'candidate.py'
     previous = INCIDENT.replace(EVIDENCE, 'pass')
     target.write_text(previous)
-    ask = Mock(return_value=unsafe())
-    cmd = lower('edit_file', dict(path=str(target), old_string=previous, new_string=INCIDENT), ask, previous)
+    cmd = lower('edit_file', dict(path=str(target), old_string=previous, new_string=INCIDENT), previous)
     result = subprocess.run(['bash', '-c', cmd], capture_output=True, text=True)
     assert result.returncode != 0
     assert target.read_text() == previous
-    assert INCIDENT in ask.call_args.args[0]
 
 
 def test_stale_source_cannot_bypass_a_known_unsafe_finding(tmp_path):
-    target = tmp_path / 'candidate.txt'
+    target = tmp_path / 'candidate.py'
     previous = INCIDENT.replace(EVIDENCE, 'pass')
-    # The exact old text still matches, so executing the normal edit would succeed.
     on_disk = previous + '\n# changed elsewhere\n'
     target.write_text(on_disk)
-    cmd = lower('edit_file', dict(path=str(target), old_string=previous, new_string=INCIDENT),
-                Mock(return_value=unsafe()), previous)
+    cmd = lower('edit_file', dict(path=str(target), old_string=previous, new_string=INCIDENT), previous)
     result = subprocess.run(['bash', '-c', cmd], capture_output=True, text=True)
     assert result.returncode != 0
     assert target.read_text() == on_disk
     assert 'Read the current file' in result.stdout
 
 
-def test_literal_boundary_checks_are_only_for_operation_arguments():
-    source = 'route = "/orders"\nfs.rmSync("/outside", {recursive:true});'
-    ask = Mock(return_value='{"verdict":"UNKNOWN"}')
-    assert cleanupsafety.review('file', source, None, '/project', ask) is None
-    assert '{"target": "/outside", "external": true}' in ask.call_args.args[0]
-    assert '{"target": "/orders"' not in ask.call_args.args[0]
-
-
 def test_missing_edit_source_abstains_without_guessing():
-    ask = Mock()
-    lower('edit_file', dict(path='remote', old_string='pass', new_string=EVIDENCE), ask)
-    ask.assert_not_called()
+    cmd=lower('edit_file', dict(path='remote.py', old_string='pass', new_string=EVIDENCE))
+    assert 'withheld' not in cmd
 
 
-def test_repair_removing_operation_does_not_need_judge(tmp_path):
-    ask = Mock()
-    target = tmp_path / 'candidate.txt'
-    target.write_text('before '+EVIDENCE)
-    cmd = lower('edit_file', dict(path=str(target), old_string=EVIDENCE, new_string='safe'), ask, target.read_text())
-    result = subprocess.run(['bash', '-c', cmd], capture_output=True, text=True)
+def test_repair_removing_operation_passes(tmp_path):
+    target = tmp_path / 'candidate.py'
+    previous='import shutil\nshutil.rmtree("/")\n'
+    target.write_text(previous)
+    cmd=lower('edit_file', dict(path=str(target), old_string=previous, new_string='value=1\n'), previous)
+    result=subprocess.run(['bash','-c',cmd], capture_output=True, text=True)
     assert result.returncode == 0
-    assert target.read_text() == 'before safe'
-    ask.assert_not_called()
+    assert target.read_text() == 'value=1\n'
