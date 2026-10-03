@@ -1,0 +1,1 @@
+This command would recursively delete from the filesystem root and was not run. Do not retry it, disguise it, or broaden the target. If you need to remove project files, identify and operate only on explicit paths inside the current project directory.

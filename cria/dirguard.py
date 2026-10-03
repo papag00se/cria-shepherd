@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import os
 import re
+import shlex
 
 from . import prompts, toolpath
 
@@ -763,11 +764,48 @@ def path_refusal(path: str, is_write: bool, level: str, workspace: str | None) -
     return _refusal("Writing" if is_write else "Reading", path, workspace)
 
 
+def root_recursive_delete_refusal(command: str) -> str | None:
+    """Narrow direct-shell root deletion backstop, independent of directory permission.
+
+    Tokenize rather than matching prose in echo/grep/comments. This is not a shell
+    interpreter: expansions, wrappers and heredoc bodies are outside its scope.
+    """
+    if not command or '<<' in command:
+        return None
+    lexer = shlex.shlex(command, posix=True, punctuation_chars=';&|()\n')
+    lexer.whitespace = ' \t\r'
+    try:
+        words = list(lexer)
+    except ValueError:
+        return None
+    segment = []
+    for word in [*words, ';']:
+        if word and set(word) <= set(';&|()\n'):
+            if segment[:1] == ['sudo']:
+                segment = segment[1:]
+                while segment and segment[0] in ('-n', '--'):
+                    segment = segment[1:]
+            recursive = any(w == '--recursive' or (w.startswith('-') and not w.startswith('--')
+                                                    and 'r' in w.lower()) for w in segment[1:])
+            if ((segment[:1] == ['rm'] and recursive and any(w in ('/', '/*') for w in segment[1:]))
+                    or (segment[:2] == ['find', '/'] and '-delete' in segment[2:])):
+                return prompts.load('root_recursive_delete_refusal')
+            segment = []
+        else:
+            segment.append(word)
+    return None
+
+
 def command_refusal(command: str, level: str, workspace: str | None) -> str | None:
     """The refusal for a RAW shell command, or None when allowed — heuristic: refuse when the command
     names an external absolute/``~`` path, weighed against whether it looks like a write. Under
     ``none`` any external path is refused; under ``read`` only an external WRITE is."""
-    if level == "write" or not command:
+    if not command:
+        return None
+    root_delete = root_recursive_delete_refusal(command)
+    if root_delete:
+        return root_delete
+    if level == "write":
         return None
     # An install writes outside the workspace WITHOUT naming a path, so it must be judged before
     # the path scan — which by construction finds nothing to refuse in it.

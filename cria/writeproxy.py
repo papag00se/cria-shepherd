@@ -1240,7 +1240,14 @@ def _external_refusal(name, args, fn, injected, level: str, workspace: str | Non
     A synthetic file tool is checked by its explicit path + operation; a raw shell command by a
     heuristic scan. cria's OWN composed commands (the gate probe / a lowered synthetic, carrying a
     marker) are exempt — trusted and always workspace-scoped. See cria/dirguard.py."""
-    if level == "write" or not workspace:  # unrestricted, or no known workspace to classify against
+    if is_shell_tool_name(name):
+        command = _command_of(fn.get("arguments"))
+        root_delete = dirguard.root_recursive_delete_refusal(command)
+        if root_delete:
+            return root_delete
+    if not workspace:
+        return None
+    if level == "write":  # unrestricted external-directory permission, except root-wide recursive deletion
         return None
     if name in injected:  # a synthetic file tool cria advertised → explicit path + operation
         target = _guarded_path(name, args)

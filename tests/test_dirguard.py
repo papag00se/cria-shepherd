@@ -73,6 +73,20 @@ class CommandRefusalTests(unittest.TestCase):
     def test_write_level_never_refuses(self):
         self.assertIsNone(dirguard.command_refusal("rm -rf /etc/x", "write", WS))
 
+    def test_recursive_filesystem_root_deletion_is_refused_at_every_level(self):
+        for command in ("rm -rf /", "rm -fr /", "rm -rf /*", "find / -mindepth 1 -delete"):
+            for level in ("none", "read", "write"):
+                with self.subTest(command=command, level=level):
+                    self.assertIsNotNone(dirguard.command_refusal(command, level, WS))
+
+
+    def test_root_backstop_ignores_prose_comments_and_heredoc_examples(self):
+        for command in ('echo "never rm -rf / on a host"', 'grep "rm -rf / warning" README.md',
+                        '# rm -rf /', "printf '%s' 'rm -rf / is dangerous'",
+                        "cat <<'EOF'\nrm -rf /\nEOF"):
+            with self.subTest(command=command):
+                self.assertIsNone(dirguard.root_recursive_delete_refusal(command))
+
     def test_urls_are_not_treated_as_external_paths(self):
         # the guard governs the FILESYSTEM, never the network — a curl/wget to a URL must pass
         for cmd in ("curl -s https://api.handle.me/handles/goose",
@@ -171,6 +185,12 @@ class TranslateOutboundEnforcementTests(unittest.TestCase):
         comp = self._completion("write_file", '{"path": "/etc/evil", "content": "x"}')
         translate_outbound(comp, self.SHELL, injected={"write_file"}, workspace_root=WS)  # default write
         self.assertNotIn("outside the working directory", self._lowered_cmd(comp))
+
+    def test_root_delete_refusal_reaches_raw_shell_chokepoint(self):
+        comp = self._completion("shell", '{"command": ["bash", "-lc", "rm -rf /*"]}')
+        translate_outbound(comp, self.SHELL, injected=set(), workspace_root=None,
+                           external_dir_permission="write")
+        self.assertIn("would recursively delete", self._lowered_cmd(comp))
 
 
 class GlobalInstallTests(unittest.TestCase):
