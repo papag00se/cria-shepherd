@@ -33,6 +33,12 @@ def join_fact(left, right):
     return PathFact('unknown')
 
 
+def is_root(atom):
+    if atom is not None and atom.kind == 'path':
+        atom = atom.parent
+    return atom is not None and atom.kind == 'literal' and posixpath.normpath(atom.text) == '/'
+
+
 def classify(targets, workspace, permission, recursive=False, possible=False):
     rules = []
     for atom in targets:
@@ -41,7 +47,7 @@ def classify(targets, workspace, permission, recursive=False, possible=False):
         if recursive and atom.kind == 'temp-parent':
             rules.append('temp_parent')
         elif atom.kind == 'literal' and atom.text.startswith('/'):
-            if recursive and posixpath.normpath(atom.text) == '/':
+            if recursive and is_root(atom):
                 rules.append('root')
             elif workspace and permission != 'write' and dirguard.is_external(atom.text, workspace):
                 rules.append('external')

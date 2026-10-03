@@ -1,16 +1,16 @@
 """Shared lexical adapter for non-Python source, with explicit API contracts.
 
-This is NOT a compiler. Only straight-line, scope-free fragments can produce
-PROVEN findings. Braces, control flow, declarations, interpolation, rebinding,
-computed dispatch and unsupported expressions lower confidence. Function bodies
-are scanned for possible hazards, never certified using a global variable map.
+This is NOT a compiler. Control flow lowers confidence in the flat variable map,
+not in a closed root-target expression with a stable API binding. Such root calls
+remain PROVEN inside functions/conditionals. Shadowing, rebinding, computed dispatch
+and unsupported target expressions remain uncertain.
 The universal mode supplies UNKNOWN leads only; no lexical match alone blocks.
 """
 from dataclasses import dataclass
 import json
 import re
 
-from .cleanupfacts import Analysis, Finding, PathFact, classify, parent_fact, join_fact
+from .cleanupfacts import Analysis, Finding, PathFact, classify, parent_fact, join_fact, is_root
 
 LANGUAGES = {
     '.js': 'javascript', '.mjs': 'javascript', '.cjs': 'javascript', '.jsx': 'javascript',
@@ -190,6 +190,95 @@ def canonical(raw, imports):
     return imports.get(head, '') + raw[len(head):] if head in imports else raw if raw.startswith(('System.IO.', 'java.', 'org.apache.')) else ''
 
 
+def stable_bindings(ts, language, imports):
+    """Bindings usable without trusting the flat, execution-order variable map.
+
+    Accept import declarations and qualified uses only. A parameter, bare escape,
+    reassignment or member replacement invalidates that identity for this proof.
+    This is deliberately whole-candidate conservative, not invented scope analysis.
+    """
+    declarations = set()
+    requires = set()
+    scopes, stack = [], []
+    macro_context, delimiters = [], []
+    origins = {}
+    for i, token in enumerate(ts):
+        if token.text in (')', ']', '}') and delimiters:
+            delimiters.pop()
+        macro_context.append(any(delimiters))
+        if token.text in ('(', '[', '{'):
+            macro = language == 'rust' and (
+                (i > 0 and ts[i-1].kind == 'word' and ts[i-1].text.endswith('!'))
+                or (i > 1 and ts[i-2].text == 'macro_rules!'))
+            delimiters.append(macro)
+        if token.text == '}' and stack:
+            stack.pop()
+        scopes.append(tuple(stack))
+        if token.text == '{':
+            stack.append(i)
+
+    def declare(found, start, end):
+        declarations.update(range(start, end))
+        for root in found:
+            origins.setdefault(root, []).append(scopes[start])
+    for i, token in enumerate(ts):
+        if token.text in ('import', 'using', 'use'):
+            end = i+1
+            while end < len(ts) and ts[end].text not in (';', '\n'):
+                end += 1
+            found = bindings(ts[i:end], language)
+            if found and all(imports.get(k) == v for k,v in found.items()):
+                declare(found, i, end)
+        if (token.text == 'require' and i >= 3 and i+3 < len(ts) and ts[i-1].text == '='
+                and ts[i-3].text in ('const', 'let', 'var')):
+            end = closing(ts, i+1) if ts[i+1].text == '(' else None
+            if end is not None:
+                found = bindings(ts[i-2:end+1], language)
+                if found and all(imports.get(k) == v for k,v in found.items()):
+                    declare(found, i-2, end+1)
+                    requires.update(found)
+
+    def stable(root, callable_name=False):
+        for i, token in enumerate(ts):
+            if token.kind != 'word' or token.text != root or i in declarations:
+                continue
+            prev = ts[i-1].text if i else ''
+            if prev in ('.', '::'):
+                continue  # a property with this spelling is not the binding
+            if prev in ('function', 'def', 'defp', 'class', 'module', 'namespace', 'fn', 'mod'):
+                return False
+            j = i+1
+            if callable_name and j < len(ts) and ts[j].text == '(':
+                continue
+            if j >= len(ts) or ts[j].text not in ('.', '::'):
+                return False
+            while j+1 < len(ts) and ts[j].text in ('.', '::') and ts[j+1].kind == 'word':
+                j += 2
+            if j < len(ts) and ts[j].text in ('=', ':=', '[', '+', '-'):
+                return False
+        return True
+
+    contracts = set(APIS.get(language, {})) | PARENTS | JOINS | CONSTRUCTORS
+    candidates = dict(imports)
+    # Fully qualified standard-library paths don't require an import declaration.
+    if language in ('java', 'kotlin', 'csharp'):
+        candidates.update({root:root for root in ('java', 'org', 'System') if root not in candidates})
+    dynamic_bindings = any(t.kind == 'word' and t.text in ('eval', 'exec', 'with') for t in ts)
+    known = {root:api for root,api in candidates.items()
+             if not dynamic_bindings and stable(root, api in contracts)
+             and (root not in requires or stable('require', True))}
+
+    def visible(at):
+        # A macro's token tree need not execute its apparent calls (stringify!,
+        # quote-like macros, etc.). No expansion means no API proof there.
+        if macro_context[at]:
+            return {}
+        scope = scopes[at]
+        return {root:api for root,api in known.items() if root not in origins or any(
+            scope[:len(origin)] == origin for origin in origins[root])}
+    return visible
+
+
 def expression(seq, variables, imports, language, depth=0):
     if depth > 64:
         return None
@@ -269,10 +358,11 @@ def inspect_source(source, language, workspace, permission):
                 expanded.append(Token('\n', 'newline', line[-1].end, line[-1].end))
         ts = expanded
     imports = bindings(ts, language)
+    visible_imports = stable_bindings(ts, language, imports)
     variables = {}
     findings = []
-    # Scope/control parsing is intentionally not invented. This adapter can still
-    # emit useful POSSIBLE findings for normal function bodies in every ecosystem.
+    # Scope/control parsing is intentionally not invented for the flat variable
+    # map. The closed-root proof below does not depend on that map.
     option_braces = set()
     if language in ('javascript', 'typescript'):
         for i,t in enumerate(ts):
@@ -312,7 +402,8 @@ def inspect_source(source, language, workspace, permission):
         while begin >= 2 and ts[begin-1].text in ('.', '::', '?.') and ts[begin-2].kind == 'word':
             begin -= 2
         raw = name(ts[begin:i])
-        api = canonical(raw, imports)
+        api_name = raw
+        api = canonical(api_name, imports)
         end = closing(ts, i)
         if end is None:
             continue
@@ -323,6 +414,8 @@ def inspect_source(source, language, workspace, permission):
         if language == 'kotlin' and raw.endswith('.deleteRecursively') and imports.get('deleteRecursively') == 'kotlin.io.path.deleteRecursively':
             # Imported extension on a receiver, not a fictitious first-argument API.
             target = expression(ts[begin:i-2], variables, imports, language)
+            api_name = 'deleteRecursively'
+            api = imports[api_name]
             recognized, recursive = True, True
         if not recognized and not LEADS.search(raw):
             continue
@@ -332,7 +425,23 @@ def inspect_source(source, language, workspace, permission):
             recursive = bool(options and options.get('recursive'))
         if api == 'System.IO.Directory.Delete':
             recursive = len(args) > 1 and name(args[1]) == 'true'
-        confidence, rule = classify((target,) if target is not None else (), workspace, permission, recursive, uncertain)
+        possible = uncertain
+        if is_root(target):
+            closed_imports = visible_imports(begin)
+            root = re.split(r'\.|::', api_name)[0]
+            identity_known = root in closed_imports and canonical(api_name, closed_imports) == api
+            if not identity_known:
+                recognized = False
+            elif args:
+                # Evaluate again WITHOUT variables from other branches/scopes.
+                # Also require stable identities for every qualified path helper.
+                roots = {tok.text for j,tok in enumerate(args[0]) if tok.kind == 'word'
+                         and (j == 0 or args[0][j-1].text not in ('.', '::'))
+                         and j+1 < len(args[0]) and args[0][j+1].text in ('.', '::')}
+                closed_target = expression(args[0], {}, closed_imports, language)
+                if roots <= closed_imports.keys() and is_root(closed_target):
+                    possible = False
+        confidence, rule = classify((target,) if target is not None else (), workspace, permission, recursive, possible)
         if not recognized:
             confidence, rule = 'UNKNOWN', 'unresolved'
         findings.append(Finding(confidence, rule,

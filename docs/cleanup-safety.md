@@ -29,21 +29,37 @@ cleanup of the directory itself is legitimate. Lexical containment belongs to
 |---|---|---|
 | Python (`.py`, `.pyw`) | AST import aliases, assignments/reassignments, literals, `os.path` parent/join/normalization, `pathlib` construction/parent/join, tempfile file/directory ownership; branch alternatives and exception-prefix state for `finally`; simple undecorated zero-argument helper return summaries | Not a complete interpreter, type checker, or interprocedural analyzer. Unsupported expressions become unknown; complex helper summaries are withheld. |
 | JavaScript/TypeScript | Static default/namespace/require imports for Node fs/path; straight-line path assignments and dirname/join; fs deletion/truncation/writes and explicit recursive options; mkdtempSync ownership | No JS execution, dynamic imports, general destructuring or control-flow/type resolution. |
-| Go | os mutation contracts, import aliases, filepath Dir/Join and simple assignments | Function bodies/scopes downgrade findings to POSSIBLE; no error-tuple/temp-resource analysis. |
-| Rust | Qualified std::fs contracts and simple std use imports, Path/PathBuf literal construction | No borrow/type/lifetime analysis, macros, general use syntax or third-party tempfile semantics. Scoped findings are POSSIBLE. |
-| JVM | Java Files/FileUtils mutation contracts and Path/Paths constructors; Kotlin imported deleteRecursively extension on a resolved variable receiver | No compiler/type resolution or general extension dispatch. Normal method bodies are POSSIBLE. |
-| .NET | System.IO File/Directory mutations, Path parent/combine, GetTempFileName ownership | POSIX targets only; scoped/control-flow findings are POSSIBLE. No C# compiler or overload resolution. |
+| Go | os mutation contracts, import aliases, filepath Dir/Join and simple assignments | Scope-dependent targets remain POSSIBLE; closed root-target proofs survive function/conditional wrappers. No error-tuple/temp-resource analysis. |
+| Rust | Qualified std::fs contracts and simple std use imports, Path/PathBuf literal construction | No borrow/type/lifetime analysis, macros, general use syntax or third-party tempfile semantics. Scope-dependent findings are POSSIBLE, except independently resolved root targets. |
+| JVM | Java Files/FileUtils mutation contracts and Path/Paths constructors; Kotlin imported deleteRecursively extension on a resolved variable receiver | No compiler/type resolution or general extension dispatch. Method-body dataflow remains POSSIBLE, but closed root-target proofs remain blocking. |
+| .NET | System.IO File/Directory mutations, Path parent/combine, GetTempFileName ownership | POSIX targets only; scope-dependent findings are POSSIBLE except closed root-target proofs. No C# compiler or overload resolution. |
 | PHP | unlink/rmdir/file_put_contents, dirname/tempnam and simple `$variable` assignment | Interpolated/dynamic paths unresolved; no namespace/function override resolution. Assumes the named builtin semantics. |
-| Ruby | File/FileUtils/Dir mutation contracts, File parent/join, default mktmpdir ownership with tmpdir required; parenthesized and simple parenthesis-free calls | No metaprogramming, monkey-patching or general block semantics. Scoped findings are POSSIBLE. |
-| Elixir | File mutation contracts, Path dirname/join, parenthesized and simple parenthesis-free calls | No macro expansion, alias/rebinding or pipeline analysis. Scoped findings are POSSIBLE. |
+| Ruby | File/FileUtils/Dir mutation contracts, File parent/join, default mktmpdir ownership with tmpdir required; parenthesized and simple parenthesis-free calls | No metaprogramming, monkey-patching or general block semantics. Scope-dependent findings are POSSIBLE, except independently resolved root targets. |
+| Elixir | File mutation contracts, Path dirname/join, parenthesized and simple parenthesis-free calls | No macro expansion, alias/rebinding or pipeline analysis. Scope-dependent findings are POSSIBLE, except independently resolved root targets. |
 | Shell scripts | Reuse the existing direct-shell root-deletion backstop for `.sh`/`.bash` candidates, without execution | Narrow direct commands only; no expansion, invoked-program or heredoc analysis. |
 | Universal | Tokenized destructive-looking calls, with common strings/comments excluded; literal/assignment path leads | **UNKNOWN only.** A name like deleteTree might not do filesystem IO. Arbitrary languages do not get a blocking static analyzer from this scan. |
 
 Non-Python adapters deliberately do **not** claim Python-equivalent analysis.
 They recognize narrow contracts, not entire languages. Braces/control/declarations
-normally lower confidence; recognized plain Node recursive-option objects are data,
-not control scopes. Unknown mutation names can escape detection completely. Universal
-leads supplement Python findings where its adapter cannot resolve an API.
+still lower confidence in the **flat variable map**, not in an independently resolved
+root target. For root calls, the adapter checks a stable API identity and re-evaluates
+the target without that variable map: literals and closed path expressions such as
+`path.dirname("/child")` can remain PROVEN inside a function or `if`. A parameter,
+rebinding, member replacement, or escaped API binding prevents this proof. Imported
+bindings must be visible from the call's enclosing brace scope; default-argument
+`require` expressions are not treated as fixed imports. Identity checks are deliberately
+whole-candidate conservative, so an ambiguous use elsewhere can still withhold proof.
+Variable-dependent target paths, mixed branches and general scope/type resolution
+remain limited; this change does not pretend those were solved. Recognized plain Node
+recursive-option objects are data, not control scopes. Unknown mutation names can
+escape detection completely. Universal leads supplement Python findings where its
+adapter cannot resolve an API.
+
+Regression examples (inert source tests in `tests/test_cleanup_control_flow.py`):
+`function cleanup() { if (enabled) fs.rmSync("/", {recursive:true}); }` blocks when
+`fs` is the stable Node import; the same body with an unknown `fs` parameter or a
+computed target remains unproven. Both write and edit lowering must emit refusal
+rather than the original file operation. No candidate source is executed.
 
 ## Assumptions and safety boundary
 
