@@ -1,0 +1,214 @@
+"""HTTP integration tests for the orders service.
+
+Starts a real server and makes live requests to verify all routes work end-to-end.
+"""
+import json
+import os
+import shutil
+import socket
+import sys
+import tempfile
+import time
+import threading
+from http.client import HTTPConnection
+
+import pytest
+
+import orders.app as app
+
+
+def find_free_port():
+    """Find a free TCP port using a socket."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
+def _tmpdb():
+    """Create a temporary database file."""
+    fd, path = tempfile.mkstemp(suffix=".db")
+    os.close(fd)
+    return path
+
+
+def _start_server(path, port):
+    """Start the orders server in a background thread."""
+    app.db.DB_PATH = path
+    app.db.init(path)
+    server = app.HTTPServer(("127.0.0.1", port), app.Handler)
+    server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+    server_thread.start()
+    time.sleep(0.1)  # Give server time to start
+    return server, server_thread
+
+
+def _request(method, path, body=None, headers=None):
+    """Make an HTTP request and return (status_code, json_body or raw)."""
+    conn = HTTPConnection("127.0.0.1", 8080)
+    try:
+        if body is not None:
+            headers = headers or {}
+            headers["Content-Type"] = "application/json"
+            conn.request(method, path, body=json.dumps(body), headers=headers)
+        else:
+            conn.request(method, path)
+        response = conn.getresponse()
+        data = response.read().decode()
+        try:
+            return response.status, json.loads(data)
+        except json.JSONDecodeError:
+            return response.status, data
+    finally:
+        conn.close()
+
+
+def test_post_orders():
+    """Test creating a new order via POST /orders."""
+    path = _tmpdb()
+    port = find_free_port()
+    server, thread = _start_server(path, port)
+
+    try:
+        body = {"customer": "alice", "item": "pen", "quantity": 3, "unit_price": 2.50}
+        status, resp = _request("POST", "/orders", body=body)
+        assert status == 201
+        assert "id" in resp
+        assert resp["id"] > 0
+
+        # Verify the order was created
+        status, order = _request("GET", f"/orders/{resp['id']}")
+        assert status == 200
+        assert order["customer"] == "alice"
+        assert order["item"] == "pen"
+        assert order["quantity"] == 3
+        assert order["unit_price"] == 2.50
+        assert order["status"] == "pending"  # Verify default status
+    finally:
+        server.shutdown()
+        thread.join(timeout=1)
+        shutil.rmtree(os.path.dirname(path), ignore_errors=True)
+
+
+def test_get_order_not_found():
+    """Test 404 for non-existent order."""
+    path = _tmpdb()
+    port = find_free_port()
+    server, thread = _start_server(path, port)
+
+    try:
+        status, resp = _request("GET", "/orders/999")
+        assert status == 404
+        assert resp["error"] == "not found"
+    finally:
+        server.shutdown()
+        thread.join(timeout=1)
+        shutil.rmtree(os.path.dirname(path), ignore_errors=True)
+
+
+def test_get_all_orders():
+    """Test GET /orders returns all orders."""
+    path = _tmpdb()
+    port = find_free_port()
+    server, thread = _start_server(path, port)
+
+    try:
+        # Create some orders
+        _request("POST", "/orders", {"customer": "alice", "item": "pen", "quantity": 1, "unit_price": 1.0})
+        _request("POST", "/orders", {"customer": "bob", "item": "pad", "quantity": 2, "unit_price": 3.0})
+
+        status, orders = _request("GET", "/orders")
+        assert status == 200
+        assert len(orders) == 2
+
+        # Verify both orders are present
+        customers = {o["customer"] for o in orders}
+        assert customers == {"alice", "bob"}
+    finally:
+        server.shutdown()
+        thread.join(timeout=1)
+        shutil.rmtree(os.path.dirname(path), ignore_errors=True)
+
+
+def test_get_customer_orders_and_total():
+    """Test GET /customers/<name>/orders returns orders and total value."""
+    path = _tmpdb()
+    port = find_free_port()
+    server, thread = _start_server(path, port)
+
+    try:
+        # Create orders for different customers
+        _request("POST", "/orders", {"customer": "alice", "item": "pen", "quantity": 2, "unit_price": 5.0})
+        _request("POST", "/orders", {"customer": "alice", "item": "notebook", "quantity": 1, "unit_price": 10.0})
+        _request("POST", "/orders", {"customer": "bob", "item": "pen", "quantity": 3, "unit_price": 2.0})
+
+        # Get alice's orders
+        status, resp = _request("GET", "/customers/alice/orders")
+        assert status == 200
+        assert "orders" in resp
+        assert "total_value" in resp
+
+        # Verify orders
+        orders = resp["orders"]
+        assert len(orders) == 2
+        customers = {o["customer"] for o in orders}
+        assert customers == {"alice"}
+
+        # Verify total value: (2 * 5.0) + (1 * 10.0) = 20.0
+        assert resp["total_value"] == 20.0
+
+        # Get bob's orders
+        status, resp = _request("GET", "/customers/bob/orders")
+        assert status == 200
+        assert resp["total_value"] == 6.0  # 3 * 2.0
+
+        # Non-existent customer
+        status, resp = _request("GET", "/customers/nobody/orders")
+        assert status == 200
+        assert resp["orders"] == []
+        assert resp["total_value"] == 0.0
+    finally:
+        server.shutdown()
+        thread.join(timeout=1)
+        shutil.rmtree(os.path.dirname(path), ignore_errors=True)
+
+
+def test_invalid_post_body():
+    """Test handling of invalid POST request bodies."""
+    path = _tmpdb()
+    port = find_free_port()
+    server, thread = _start_server(path, port)
+
+    try:
+        # Missing fields
+        status, resp = _request("POST", "/orders", {"customer": "alice"})
+        assert status == 400
+        assert "error" in resp
+
+        # Invalid JSON
+        status, resp = _request("POST", "/orders", body="not json")
+        assert status == 400
+    finally:
+        server.shutdown()
+        thread.join(timeout=1)
+        shutil.rmtree(os.path.dirname(path), ignore_errors=True)
+
+
+def test_invalid_routes():
+    """Test 404 for invalid routes."""
+    path = _tmpdb()
+    port = find_free_port()
+    server, thread = _start_server(path, port)
+
+    try:
+        for path in ["/", "/orders", "/customers/alice", "/customers/alice/orders/details"]:
+            status, resp = _request("GET", path)
+            assert status == 404, f"Expected 404 for {path}, got {status}"
+    finally:
+        server.shutdown()
+        thread.join(timeout=1)
+        shutil.rmtree(os.path.dirname(path), ignore_errors=True)
+
+
+if __name__ == "__main__":
+    import threading
+    pytest.main([__file__, "-v"])

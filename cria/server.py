@@ -1192,6 +1192,7 @@ class CriaHandler(BaseHTTPRequestHandler):
         checks under another. On the Responses path the reader key is ``sid:<sess>`` (from the body's
         cache key), NOT ``session_key(headers, messages)`` — so passing the caller's sess_key here is
         what lets the 'you already fetched this' refusal fire (it re-fetched openapi.json 10+ times)."""
+        self._cleanup_task = _history_root(body.get('messages', []))[0]
         self._shell_tool = None
         self._synthetic: set[str] = set()
         self._native_search = None
@@ -1264,11 +1265,19 @@ class CriaHandler(BaseHTTPRequestHandler):
         request (set up in `_setup_translation`). ``sess_key`` enables webfetch's per-session
         fetch/search repeat + stop-guessing gates."""
         if self._shell_tool is not None:
+            cleanup_ask = None
+            if self.server.reasoner_role is not None:
+                def cleanup_ask(question):
+                    return ask_closed(self.server.reasoner_upstream.chat, self.server.reasoner_role,
+                                      question, rlog, phase='cleanup-safety',
+                                      max_tokens=SUMMARIZE_MAX_TOKENS, retry_off=False)
             translate_outbound(completion, self._shell_tool, rlog, injected=getattr(self, "_synthetic", set()),
                                brave_key=getattr(self, "_brave_key", None),
                                native_search=getattr(self, "_native_search", None), session=sess_key,
                                workspace_root=getattr(self, "_workspace_root", None),
-                               external_dir_permission=self.server.cfg.safety.external_dir_permission)
+                               external_dir_permission=self.server.cfg.safety.external_dir_permission,
+                               cleanup_ask=cleanup_ask,
+                               cleanup_task=getattr(self, '_cleanup_task', ''))
         return completion
 
     def _focus_trim(self, framed: dict, rlog) -> tuple[dict, bool]:

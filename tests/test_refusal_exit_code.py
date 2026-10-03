@@ -70,7 +70,8 @@ class OneOwnerTests(unittest.TestCase):
         calls = sum(1 for n in ast.walk(tree)
                    if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
                    and n.func.id == "_refusal_command")
-        self.assertEqual(calls, 10)
+        # +3: generated cleanup refusal on write/edit, plus stale reviewed-edit refusal.
+        self.assertEqual(calls, 13)
 
     @staticmethod
     def _lower_fetch(result):

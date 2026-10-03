@@ -1342,7 +1342,7 @@ def _survey_due(session: str | None, name: str) -> bool:
 def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: set[str] | None = None,
                        brave_key: str | None = None, native_search: str | None = None,
                        session: str | None = None, workspace_root: str | None = None,
-                       external_dir_permission: str = "write") -> dict:
+                       external_dir_permission: str = "write", cleanup_ask=None, cleanup_task: str = '') -> dict:
     """Lower cria's synthetic tool calls to shell commands the harness runs, each stamped with the
     stateless re-presentation sentinel. Only lowers a tool cria INJECTED (a harness-native tool of
     the same name is the harness's to run). ``web_search`` routes to ``native_search`` when the
@@ -1482,7 +1482,12 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
                         # every string argument, at `massage.strip_debris_from_args` — which runs on
                         # this completion before it ever reaches translation. A copy of the rule in
                         # this one branch is what left `edit_file` still receiving the junk (#23).
-                        cmd = _write_command(str(path), _repair_double_escaped(str(body)))
+                        from . import cleanupsafety
+                        candidate = _repair_double_escaped(str(body))
+                        refusal = cleanupsafety.review(str(path), candidate, None,
+                                                       workspace_root, cleanup_ask, rlog, task=cleanup_task)
+                        cmd = (_refusal_command(refusal) if refusal
+                               else _write_command(str(path), candidate))
             elif name in _EDIT_NAMES and name in injected:
                 path = _tool_path(args)
                 if not path or args.get("old_string") is None:
@@ -1510,8 +1515,31 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
                         if rlog is not None:
                             rlog.emit("writeproxy.edit_missing_arg", tool=name, arg="new_string")
                     else:
-                        cmd = _edit_command(str(path), str(args.get("old_string") or ""),
-                                            str(args.get("new_string") or ""))
+                        old, new = str(args.get("old_string") or ""), str(args.get("new_string") or "")
+                        cmd = _edit_command(str(path), old, new)
+                        from . import cleanupsafety
+                        raw = wsview.current().read_bytes(str(path))
+                        try:
+                            previous = raw.decode() if raw is not None else None
+                        except UnicodeError:
+                            previous = None
+                        # Exact edits only: never invent the candidate when the
+                        # harness hasn't supplied the file or matching is ambiguous.
+                        if previous is not None and old and previous.count(old) == 1:
+                            refusal = cleanupsafety.review(str(path), previous.replace(old, new, 1),
+                                                           previous, workspace_root, cleanup_ask, rlog, task=cleanup_task)
+                            if refusal:
+                                # Bind the finding to the reviewed bytes. If they changed,
+                                # ask for a fresh read, never bypass a known unsafe finding.
+                                check = ("import base64,pathlib,sys; "
+                                         "p=pathlib.Path(base64.b64decode(" + repr(_b64(str(path))) + ").decode()); "
+                                         "sys.exit(0 if p.read_bytes()==base64.b64decode(" + repr(_b64(previous)) + ") else 1)")
+                                stale = _refusal_command(prompts.load('cleanup_stale'))
+                                cmd = (f"if python3 -c {_qbash(check)}; then\n"
+                                       f"{_refusal_command(refusal)}\nelse\n{stale}\nfi")
+                        elif rlog is not None:
+                            rlog.emit('safety.cleanup_review', path=str(path), verdict='UNKNOWN',
+                                      reason='complete exact edit candidate unavailable')
             elif name in _READ_NAMES and name in injected:
                 cmd = _read_command(args)
             elif name in _LIST_NAMES and name in injected:

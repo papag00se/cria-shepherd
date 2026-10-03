@@ -1,0 +1,4 @@
+This proposed change was withheld for revision. A safety review found a potentially unbounded cleanup target:
+{{EVIDENCE}}
+Review finding (not an executed result): {{REASON}}
+Revise the cleanup so it acts only on the resource the task owns. Preserve unrelated work. No replacement code has been chosen for you.
