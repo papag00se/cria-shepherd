@@ -20,6 +20,9 @@ def analyze(path: str, source: str, workspace: str | None, permission: str = 'no
             resolved = {(f.line, f.evidence) for f in result.findings}
             return Analysis(result.language, result.findings + tuple(
                 f for f in leads.findings if (f.line, f.evidence) not in resolved), result.coverage)
+        from .cleanup_extra import LANGUAGES as EXTRA_LANGUAGES, inspect_source as extra_scan
+        if suffix in EXTRA_LANGUAGES:
+            return extra_scan(source, EXTRA_LANGUAGES[suffix], workspace, permission)
         from .cleanup_languages import LANGUAGES, inspect_source
         language = LANGUAGES.get(suffix, 'universal')
         result = inspect_source(source, language, workspace, permission)

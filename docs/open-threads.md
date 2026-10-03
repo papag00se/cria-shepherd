@@ -23,6 +23,18 @@ The single source of truth for work that is **undecided or unbuilt right now**. 
 
 ## Build queue
 
+### Candidate new cria-wide languages
+
+Candidates requested by the operator: **C, C++, Swift, Objective-C, Dart, Lua,
+Perl, R, Julia, and PowerShell**. These are candidates, not a commitment to an
+implementation order and not a claim of existing cria-wide support.
+
+The immediate work is narrower: [filesystem-mutation analysis](cleanup-safety.md)
+for these languages. Promoting any of them to cria-wide support is separate work:
+workspace/ecosystem discovery, authoritative build/lint/test commands, participation
+evidence, appropriate battery tasks, and regression coverage. A destruction-check
+adapter alone does not satisfy that bar.
+
 ### Theme 1 — Reasoning legibility  ❌ CANCELLED (D1)
 No rename. The one real bug it carried (B3b half-done: the loop's internal reasoner hand-rolled `enable_thinking=false`, so a cloud reasoner's "off" was a no-op) is **CLOSED by the config unify** — every role now goes through `role.apply()`, which translates via its backend's `think_protocol`. Nothing left here.
 

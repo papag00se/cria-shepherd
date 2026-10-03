@@ -36,13 +36,41 @@ cleanup of the directory itself is legitimate. Lexical containment belongs to
 | PHP | unlink/rmdir/file_put_contents, dirname/tempnam and simple `$variable` assignment | Interpolated/dynamic paths unresolved; no namespace/function override resolution. Assumes the named builtin semantics. |
 | Ruby | File/FileUtils/Dir mutation contracts, File parent/join, default mktmpdir ownership with tmpdir required; parenthesized and simple parenthesis-free calls | No metaprogramming, monkey-patching or general block semantics. Scope-dependent findings are POSSIBLE, except independently resolved root targets. |
 | Elixir | File mutation contracts, Path dirname/join, parenthesized and simple parenthesis-free calls | No macro expansion, alias/rebinding or pipeline analysis. Scope-dependent findings are POSSIBLE, except independently resolved root targets. |
+| C (`.c`, `.h`) | Direct standard-header `remove`, `unlink`, `rmdir`, and `fopen` with literal write modes | No preprocessor expansion, pointer/function alias analysis or variable dataflow. No recursive deletion API is implied by `remove`/`rmdir`. |
+| C++ (`.cc`, `.cpp`, `.cxx`, `.hpp`, `.hh`, `.hxx`) | Standard-header `std::filesystem::remove_all`/`remove`, `path` construction, `std::remove`/`fopen`, and `std::ofstream` construction | Explicit qualified spellings, not namespace aliases or overload/type resolution. Recognized unevaluated `sizeof`/`decltype`/`noexcept`/`alignof` contexts are excluded. |
+| Swift (`.swift`) | Foundation `FileManager.default.removeItem(atPath:)` / `removeItem(at:)` with `URL(fileURLWithPath:)`; `createFile(atPath:)` | Direct default-manager receiver only. No inferred instance types, Foundation aliases or general URL resolution. |
+| Objective-C (`.m`, `.mm`) | Foundation-header `[[NSFileManager defaultManager] removeItemAtPath:…]` / `createFileAtPath:…` | Exact class/factory receiver, not arbitrary selectors on `id`; no swizzling/type resolution. `.m` is ambiguous with MATLAB, so the Foundation declaration is required for these proofs. |
+| Dart (`.dart`) | Unaliased `dart:io` import; direct `Directory(path)` / `File(path)` receivers with `delete`/`deleteSync` and explicit recursive options; File `writeAsString`/`writeAsBytes` and Sync variants | No receiver-variable typing, import aliases, extension-method dispatch or general path-package resolution. |
+| Lua (`.lua`) | Builtin `os.remove`; `io.open` with literal write modes | Read-only/default opens do not fire. No module aliases, metatables or resource ownership. |
+| Perl (`.pl`, `.pm`) | Builtin/CORE `unlink`, `rmdir`, three-argument `open`; File::Path `remove_tree` with explicit module/import evidence; simple parenthesis-free removal calls | No glob/alias dispatch, two-argument open interpretation or general list/dataflow analysis. Literal variadic removal targets are checked separately. |
+| R (`.r`, `.R`) | Builtin/base `unlink` with explicit `recursive=TRUE`, `file.remove`, `writeLines`; closed `dirname`/`file.path` expressions | No vector/connection-object dataflow, package masking resolution or NSE evaluation. Recognized `quote`/`expression`/`substitute` bodies are excluded. |
+| Julia (`.jl`) | Builtin/Base `rm` with explicit recursion, `open` with write modes/flags, `write`; closed `dirname`/`joinpath` expressions | No multiple-dispatch or variable/type analysis. Quoted expressions and macro arguments are not presumed to execute. |
+| PowerShell (`.ps1`, `.psm1`) | Case-insensitive direct `Remove-Item`, `Clear-Content`, `Set-Content`; literal `-Path`/`-LiteralPath` targets, explicit recursion and WhatIf switches | POSIX filesystem paths only, **not Windows drive/UNC roots or other providers**. No aliases, abbreviated parameters, splatting, pipeline-input paths or general argument binding. Explicit WhatIf is non-mutating; dynamic WhatIf remains unknown. |
 | Shell scripts | Reuse the existing direct-shell root-deletion backstop for `.sh`/`.bash` candidates, without execution | Narrow direct commands only; no expansion, invoked-program or heredoc analysis. |
 | Universal | Tokenized destructive-looking calls, with common strings/comments excluded; literal/assignment path leads | **UNKNOWN only.** A name like deleteTree might not do filesystem IO. Arbitrary languages do not get a blocking static analyzer from this scan. |
 
+The ten added destruction-only adapters live in `cleanup_extra.py`; their future
+cria-wide candidacy is tracked separately in [open threads](open-threads.md#candidate-new-cria-wide-languages).
+They resolve **closed expressions only**, never a guessed cross-scope variable value.
+Computed/variable targets stay UNKNOWN. Direct API/builtin identity requires the
+listed declaration evidence and no detected shadowing, rebinding or escaped binding.
+Unresolved lexical/preprocessor/dynamic-binding constructs can withhold proof for a
+whole candidate; this is uncertainty about interpretation/identity, not a downgrade
+merely because a function or `if` exists. Unsupported macros, aliases and reflection
+remain gaps. None of these adapters tracks temporary-resource ownership yet.
+
+Their lexer excludes language-specific comments, common raw/long/triple strings,
+Perl POD/data sections and quote operators, and PowerShell here-strings. Interpolated,
+escaped or unsupported target literals remain unresolved rather than being decoded
+with another language's rules. Unterminated recognized lexical regions report
+`invalid-source`; token/expression budgets report `analysis-limit`. This is not a
+syntax validator. All regression candidates are inert strings; tests also exercise
+actual write/edit lowering without executing the resulting candidate programs.
+
 Non-Python adapters deliberately do **not** claim Python-equivalent analysis.
-They recognize narrow contracts, not entire languages. Braces/control/declarations
-still lower confidence in the **flat variable map**, not in an independently resolved
-root target. For root calls, the adapter checks a stable API identity and re-evaluates
+They recognize narrow contracts, not entire languages. In the original lexical
+adapters (`cleanup_languages.py`), braces/control/declarations still lower confidence
+in the **flat variable map**, not in an independently resolved root target. For root calls, the adapter checks a stable API identity and re-evaluates
 the target without that variable map: literals and closed path expressions such as
 `path.dirname("/child")` can remain PROVEN inside a function or `if`. A parameter,
 rebinding, member replacement, or escaped API binding prevents this proof. Imported
