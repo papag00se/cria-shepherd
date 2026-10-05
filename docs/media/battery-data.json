@@ -1,0 +1,400 @@
+{
+  "excluded_models": [
+    "phi4"
+  ],
+  "task_labels": [
+    "ruby",
+    "go",
+    "python",
+    "java",
+    "node",
+    "rust"
+  ],
+  "levels": {
+    "0": {
+      "reported_label": "pure proxy \u2014 wire translation only",
+      "overall": 50,
+      "rows": [
+        {
+          "model": "gemma4_12b",
+          "cells": [
+            85,
+            92,
+            89,
+            100,
+            93,
+            86
+          ]
+        },
+        {
+          "model": "bonsai2",
+          "cells": [
+            0,
+            88,
+            90,
+            0,
+            88,
+            92
+          ]
+        },
+        {
+          "model": "k2_horizon_7b",
+          "cells": [
+            0,
+            85,
+            90,
+            30,
+            92,
+            95
+          ]
+        },
+        {
+          "model": "ling3.0_tiny",
+          "cells": [
+            2,
+            6,
+            50,
+            45,
+            4,
+            78
+          ]
+        },
+        {
+          "model": "qwen3.8_9b_distill",
+          "cells": [
+            72,
+            82,
+            22,
+            8,
+            52,
+            84
+          ]
+        },
+        {
+          "model": "nemotron-elastic",
+          "cells": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ]
+        }
+      ],
+      "selection": "standing-visible-roster",
+      "excluded_models": [
+        "phi4"
+      ]
+    },
+    "5": {
+      "selection": "best-recorded",
+      "overall": 62,
+      "rows": [
+        {
+          "model": "gemma4_12b",
+          "cells": [
+            73,
+            89,
+            92,
+            100,
+            91,
+            100
+          ]
+        },
+        {
+          "model": "bonsai2",
+          "cells": [
+            85,
+            90,
+            95,
+            85,
+            95,
+            90
+          ]
+        },
+        {
+          "model": "ornith1.5_9b",
+          "cells": [
+            95,
+            84,
+            85,
+            70,
+            75,
+            95
+          ]
+        },
+        {
+          "model": "k2_horizon_7b",
+          "cells": [
+            10,
+            80,
+            33,
+            2,
+            78,
+            18
+          ]
+        },
+        {
+          "model": "ling3.0_tiny",
+          "cells": [
+            3,
+            10,
+            33,
+            0,
+            28,
+            78
+          ]
+        },
+        {
+          "model": "qwen3.8_9b_distill",
+          "cells": [
+            68,
+            62,
+            15,
+            10,
+            62,
+            80
+          ]
+        },
+        {
+          "model": "nemotron-elastic",
+          "cells": [
+            59,
+            50,
+            76,
+            20,
+            70,
+            84
+          ]
+        }
+      ],
+      "provenance": {
+        "recorded_utc": "2026-10-05T05:58:00+00:00",
+        "report_date": "2026-10-04 22:58",
+        "report_timezone": "PDT",
+        "source_revision": "bc0f12f00239779718dc8a940de125304e12e9d5",
+        "omitted_models": [
+          "phi4"
+        ],
+        "identity_registry_sha256": "6cb2bde3d22f5473ceb47d8192ce957de2ac88659312e4f877ec1d6da20847eb",
+        "selection": "Latest retained final judgment per run, then maximum per canonical model/task; also include explicitly frozen inference-usefulness history. Superseded runs count; grade/checkpoint fields do not. Working ledger takes priority over Git history.",
+        "scope": "Existing README roster; Defiant-Fable merged into qwen3.8_9b_distill. Retained working files and all Git refs only, not purged/absent observations. Historical Nemotron L5 is best-ever evidence, not a fresh campaign result.",
+        "limitations": "Selection-biased maxima across different dates, revisions, variants and planner settings; not one run, not expected performance, not causal uplift. Some full captures are unavailable."
+      }
+    }
+  },
+  "model_order": [
+    "gemma4_12b",
+    "bonsai2",
+    "ornith1.5_9b",
+    "k2_horizon_7b",
+    "ling3.0_tiny",
+    "qwen3.8_9b_distill",
+    "nemotron-elastic"
+  ],
+  "provenance": {
+    "recorded_utc": "2026-10-05T05:57:34+00:00",
+    "report_date": "2026-10-04 22:57",
+    "report_timezone": "PDT",
+    "source_revision": "bc0f12f00239779718dc8a940de125304e12e9d5",
+    "inference_anchor": "f79cc6146470281b5909cf605b27afca1177e2d1",
+    "source_sha256": {
+      "suite/battery_status.py": "596ccf6970fae3f212c424e72904fd08d4cb208b213f85430e727acb7ac9e7f1",
+      "suite/model_names.py": "43192635e67d4eb13186648ddbf18e0370da53c80b9eb2b53a1a18fd79160a88",
+      "suite/historical_ladder.json": "65e62a138d4d2bcc69d6783d35d59bc54b0ab809df5164eab12bdfe58a489b47",
+      "suite/results/results.jsonl": "4ba7aac30eaf884581b0cc9a32f7d095468f33f693db5ef92f58b6dcfb84e1a4",
+      "docs/audits/battery-report.md": "cdd099f27e5247b4f3d9900fe918f261e75edff85facad5e8dd55e5cbc51551c"
+    },
+    "source_inputs_dirty": true,
+    "metric": "Holistically inferred usefulness, not a task pass rate",
+    "limits": "Mixed dates, revisions, model variants and historical planner settings; not controlled A/B. Some recent full captures are unavailable in this checkout; this freezes reported judgments, not a fresh re-audit of each run."
+  },
+  "standing_l0": {
+    "reported_label": "pure proxy \u2014 wire translation only",
+    "overall": 43,
+    "rows": [
+      {
+        "model": "gemma4_12b",
+        "cells": [
+          85,
+          92,
+          89,
+          100,
+          93,
+          86
+        ]
+      },
+      {
+        "model": "bonsai2",
+        "cells": [
+          0,
+          88,
+          90,
+          0,
+          88,
+          92
+        ]
+      },
+      {
+        "model": "k2_horizon_7b",
+        "cells": [
+          0,
+          85,
+          90,
+          30,
+          92,
+          95
+        ]
+      },
+      {
+        "model": "phi4",
+        "cells": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ]
+      },
+      {
+        "model": "ling3.0_tiny",
+        "cells": [
+          2,
+          6,
+          50,
+          45,
+          4,
+          78
+        ]
+      },
+      {
+        "model": "qwen3.8_9b_distill",
+        "cells": [
+          72,
+          82,
+          22,
+          8,
+          52,
+          84
+        ]
+      },
+      {
+        "model": "nemotron-elastic",
+        "cells": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ]
+      }
+    ]
+  },
+  "roster_model_order": [
+    "gemma4_12b",
+    "bonsai2",
+    "ornith1.5_9b",
+    "k2_horizon_7b",
+    "phi4",
+    "ling3.0_tiny",
+    "qwen3.8_9b_distill",
+    "nemotron-elastic"
+  ],
+  "standing_l5": {
+    "reported_label": "ASSISTS_ENABLED \u2014 steers, periodic gates, detectors, planner",
+    "overall": 42,
+    "rows": [
+      {
+        "model": "gemma4_12b",
+        "cells": [
+          49,
+          74,
+          78,
+          55,
+          62,
+          91
+        ]
+      },
+      {
+        "model": "bonsai2",
+        "cells": [
+          18,
+          0,
+          87,
+          5,
+          59,
+          3
+        ]
+      },
+      {
+        "model": "defiant-fable",
+        "cells": [
+          68,
+          52,
+          null,
+          null,
+          null,
+          null
+        ]
+      },
+      {
+        "model": "ornith1.5_9b",
+        "cells": [
+          95,
+          84,
+          85,
+          70,
+          75,
+          95
+        ]
+      },
+      {
+        "model": "k2_horizon_7b",
+        "cells": [
+          10,
+          80,
+          33,
+          2,
+          78,
+          18
+        ]
+      },
+      {
+        "model": "phi4",
+        "cells": [
+          0,
+          0,
+          0,
+          0,
+          0,
+          0
+        ]
+      },
+      {
+        "model": "ling3.0_tiny",
+        "cells": [
+          3,
+          10,
+          33,
+          0,
+          28,
+          78
+        ]
+      },
+      {
+        "model": "qwen3.8_9b_distill",
+        "cells": [
+          45,
+          62,
+          15,
+          10,
+          62,
+          80
+        ]
+      }
+    ]
+  }
+}

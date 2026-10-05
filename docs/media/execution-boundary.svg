@@ -1,0 +1,41 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="930" viewBox="0 0 1600 930" role="img" aria-labelledby="title desc">
+  <title id="title">The harness still owns execution</title>
+  <desc id="desc">The coding harness sends requests through cria to a model server. cria shapes context and repairs supported tool calls. Workspace tools and diagnostic checks execute through the harness, which returns evidence to cria. Model roles can use local or optionally remote backends. This is an architecture illustration.</desc>
+  <defs><marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto-start-reverse"><path d="M0 0L9 5L0 10Z" fill="#76ceda"/></marker></defs>
+  <rect width="1600" height="930" rx="24" fill="#0b1b29"/>
+  <g font-family="DejaVu Sans, sans-serif">
+    <text x="64" y="77" fill="#76ceda" font-size="22" letter-spacing="3">THE EXECUTION BOUNDARY</text>
+    <text x="64" y="142" fill="#f0f7fa" font-size="48" font-weight="700">The harness still runs the tools.</text>
+    <rect x="64" y="310" width="370" height="290" rx="20" fill="#122c3d" stroke="#335469"/>
+    <rect x="570" y="275" width="460" height="360" rx="20" fill="#123442" stroke="#76ceda" stroke-width="2"/>
+    <rect x="1166" y="310" width="370" height="290" rx="20" fill="#122c3d" stroke="#335469"/>
+    <text x="96" y="366" fill="#76ceda" font-size="21" letter-spacing="2">YOUR AGENT</text>
+    <text x="96" y="418" fill="#f0f7fa" font-size="36" font-weight="700">Coding harness</text>
+    <text x="96" y="472" fill="#b6cbd8" font-size="25">Tools and their results</text>
+    <text x="96" y="514" fill="#b6cbd8" font-size="25">Workspace access</text>
+    <text x="96" y="556" fill="#b6cbd8" font-size="25">Permissions and UI</text>
+    <text x="606" y="334" fill="#76ceda" font-size="21" letter-spacing="2">THE SUPERVISION LAYER</text>
+    <text x="606" y="390" fill="#f0f7fa" font-size="38" font-weight="700">cria-shepherd</text>
+    <text x="606" y="445" fill="#b6cbd8" font-size="25">Context shaping</text>
+    <text x="606" y="489" fill="#b6cbd8" font-size="25">Supported tool-call repair</text>
+    <text x="606" y="533" fill="#b6cbd8" font-size="25">Check requests and evidence</text>
+    <text x="606" y="577" fill="#b6cbd8" font-size="25">Grounded reasoner guidance</text>
+    <text x="1200" y="366" fill="#76ceda" font-size="21" letter-spacing="2">YOUR BACKENDS</text>
+    <text x="1200" y="418" fill="#f0f7fa" font-size="36" font-weight="700">Model server</text>
+    <text x="1200" y="472" fill="#b6cbd8" font-size="25">Local by default</text>
+    <text x="1200" y="514" fill="#b6cbd8" font-size="25">Configurable roles</text>
+    <text x="1200" y="556" fill="#b6cbd8" font-size="25">Remote backends optional</text>
+    <text x="505" y="240" text-anchor="middle" fill="#a6c1cf" font-size="20">OpenAI wire</text>
+    <text x="1100" y="240" text-anchor="middle" fill="#a6c1cf" font-size="20">Chat Completions</text>
+    <path d="M445 410H552" fill="none" stroke="#76ceda" stroke-width="3" marker-end="url(#arrow)"/>
+    <path d="M1040 410H1150" fill="none" stroke="#76ceda" stroke-width="3" marker-end="url(#arrow)"/>
+    <path d="M552 500H445" fill="none" stroke="#76ceda" stroke-width="3" marker-end="url(#arrow)"/>
+    <path d="M1150 500H1040" fill="none" stroke="#76ceda" stroke-width="3" marker-end="url(#arrow)"/>
+    <rect x="64" y="710" width="965" height="137" rx="18" fill="#101f2d" stroke="#335469"/>
+    <text x="96" y="759" fill="#f0f7fa" font-size="29" font-weight="700">Workspace / through harness tools</text>
+    <text x="96" y="809" fill="#b6cbd8" font-size="25">Edits · syntax checks · builds · tests · returned tool output</text>
+    <path d="M220 610V691" fill="none" stroke="#76ceda" stroke-width="3" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
+    <path d="M800 646V677H280V610" fill="none" stroke="#76ceda" stroke-width="2" stroke-dasharray="7 7" marker-end="url(#arrow)"/>
+    <text x="440" y="705" fill="#76ceda" font-size="20">cria requests checks; the harness executes them</text>
+  </g>
+</svg>
