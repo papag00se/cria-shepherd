@@ -20,6 +20,7 @@ ALIASES = {
     "ternary-bonsai-2": "bonsai2",
     "k2-horizon": "k2_horizon_7b",
     "qwen38-distill": "qwen3.8_9b_distill",
+    "defiant-fable": "qwen3.8_9b_distill",
 }
 
 

@@ -10,13 +10,15 @@ These are the operator-defined project identities, recorded **2026-09-30**. Use 
 | `bonsai2` | `ternary-bonsai-2` |
 | `k2_horizon_7b` | `k2-horizon` |
 | `phi4` | — |
-| `qwen3.8_9b_distill` | `qwen38-distill` |
+| `qwen3.8_9b_distill` | `qwen38-distill`, `defiant-fable` |
+
+**Defiant-Fable is the same logical model as `qwen3.8_9b_distill`** (owner correction during README review). Combine their cells at presentation boundaries; do not show a separate `defiant-fable` row. Preserve its original IDs in historical evidence.
 
 **Gemma4 and Gemma4 QAT are one logical model: `gemma4_12b`.** Quantization, QAT, a service unit name or a historical spelling does not create another battery row. Fresh judgments supersede only the matching cell; unreplaced historical L0–L4 and other cells remain visible.
 
 ## One owner, immutable provenance
 
-`suite/model_names.py` owns `OFFICIAL_NAMES`, explicit compatibility `ALIASES`, and `canonical_name()`. The battery generator imports that registry, normalizes lookup/display identity and renders one canonical row. Unknown names are preserved rather than guessed. `defiant-fable` and restored `nemotron-elastic` keep their existing names; this naming instruction did not remove them or specify replacements.
+`suite/model_names.py` owns `OFFICIAL_NAMES`, explicit compatibility `ALIASES`, and `canonical_name()`. The battery generator imports that registry, normalizes lookup/display identity and renders one canonical row. Unknown names are preserved rather than guessed. The later owner correction adds `defiant-fable` as a distill alias; restored `nemotron-elastic` retains its existing name.
 
 Executable keys, service units, model filenames, historical `model` fields, run IDs, captures and archives retain their original spellings. In particular, the running fresh L5 campaign continues using its existing executable keys and fixed inference anchor; display naming does not reset its worklist, add cells, alter sampling or require a model reload. When citing an artifact, quote its actual stored ID, identifying the official model separately.
 

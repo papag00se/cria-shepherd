@@ -12,6 +12,7 @@ from suite import battery_status
     ("ling3-tiny", "ling3.0_tiny"),
     ("bonsai2", "bonsai2"), ("k2_horizon_7b", "k2_horizon_7b"),
     ("phi4", "phi4"), ("qwen3.8_9b_distill", "qwen3.8_9b_distill"),
+    ("defiant-fable", "qwen3.8_9b_distill"),
 ])
 def test_reports_use_official_names_without_rewriting_evidence(monkeypatch, legacy, official):
     monkeypatch.setattr(battery_status, "_historical", lambda: {"frozen": {}})
@@ -50,3 +51,19 @@ def test_official_frozen_key_and_legacy_live_key_merge(monkeypatch):
     assert text.count("| ornith1.5_9b |") == 1
     line = next(line for line in text.splitlines() if line.startswith("| ornith1.5_9b |"))
     assert "83%" in line and "20%" in line
+
+
+def test_defiant_is_distill_without_rewriting_original_run_ids(monkeypatch):
+    monkeypatch.setattr(battery_status, "_historical", lambda: {"frozen": {}})
+    rows = [
+        {"model": "qwen3.8_9b_distill", "task": "shipping-rates-rb", "level": 5,
+         "run_id": "distill-original", "usefulness_percent": 45},
+        {"model": "defiant-fable", "task": "shipping-rates-rb", "level": 5,
+         "run_id": "defiant-original", "usefulness_percent": 68},
+    ]
+    before = deepcopy(rows)
+    report = battery_status.report(rows, now=2)
+    assert report.count("| qwen3.8_9b_distill |") == 1
+    assert "| defiant-fable |" not in report
+    assert battery_status.level_cell(rows, 5, "qwen3.8_9b_distill", "shipping-rates-rb") is rows[-1]
+    assert rows == before
