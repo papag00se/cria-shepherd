@@ -42,20 +42,35 @@ Run a listed cell through `suite/battery_run.py` with `--level 5 --planner off -
 
 ## Machine-local Codex sandbox policy
 
-To opt this machine's suite launches into Codex's own filesystem sandbox, put
-`workspace_sandbox = true` in `~/.cria/suite-codex-policy.toml`. This is enabled on
-Jesse's test machine. `suite/run.py` then supplies a per-invocation `cria_suite`
-permission profile: read access across the filesystem, write access only to the
-cell workspace and its isolated install/scratch directory, with approvals disabled
-and normal networking retained. `TMPDIR` points to that cell's scratch directory;
-the host-wide `/tmp` is not granted write access. A malformed policy stops launch.
+**Sandboxing is mandatory for Codex testing launches from this repo.** Put
+`workspace_sandbox = true` in `~/.cria/suite-codex-policy.toml`. Missing, unreadable,
+malformed or disabled policy stops launch; there is no unsandboxed fallback.
+`suite/run.py` supplies a fresh per-invocation `cria_suite_<unique-id>` permission
+profile: read access across the filesystem, write access only to the explicitly
+named cell workspace and its isolated install/scratch directory, with approvals
+disabled and normal networking retained. Fresh profile names prevent Codex's TOML
+merging from retaining extra writes in an existing same-named profile. No inferred
+cwd/git-root write grant is used. `TMPDIR` points to the cell's scratch directory;
+the host-wide `/tmp` is not granted write access.
 
 This requires a Codex version supporting named permission profiles. The local
 integration test invokes `codex sandbox` with the exact launch policy against a
 disposable outside sentinel; it never starts inference or executes incident code.
-No user/global Codex settings, harness code, or system services are changed. With
-no local policy file, other machines retain the existing `--yolo` suite behavior.
-The middleware cleanup review is separate and **is not** a filesystem sandbox.
+The integration probe verifies outside deletion, overwrite, creation, rename and
+symlink writes are denied, including with an inherited permissive profile, while
+workspace and scratch writes succeed. No user/global Codex settings, harness code,
+or system services are changed. Other machines must configure the same required
+policy before launching tests.
+
+Battery and ladder runs go through `suite/run.py`. Any new Codex test launcher must
+reuse `_codex_argv(prompt, workspace)` and the suite's isolated environment/scratch
+setup, or use the suite runner itself; do not launch bare Codex or add bypass flags.
+The isolated `~/.cria/codex-home/config.toml` routing configuration is also required;
+its absence stops launch rather than selecting an ambient provider.
+
+This confines Codex child-tool filesystem writes, not the trusted Python runner,
+ordinary pytest invocations, host-wide reads or network traffic. The middleware
+cleanup review is separate and **is not** a filesystem sandbox.
 
 ## Usefulness judgments
 

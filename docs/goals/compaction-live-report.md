@@ -13,7 +13,7 @@ Companion to [compaction-live-loop.md](compaction-live-loop.md). Goal: the four 
 - Codex config `~/.codex/config.toml`: `model = "cria"`, `model_context_window = 49152`, `model_auto_compact_token_limit` UNSET, `compact_prompt` carries `<<<LOCAL_COMPACT>>>`.
 - cria code live as of 2026-07-07 22:55 restart: verifier fail-closed + reasoning-off retry; `content_reduce.py` ported but NOT wired; trim floor NOT ported.
 - Brave key: cria reads `BRAVE_SEARCH_API_KEY` from its own `env_file` (cria-only; never a shared/personal secrets file, never a coded path).
-- exec invocation: `codex-debug exec --dangerously-bypass-approvals-and-sandbox --skip-git-repo-check -C <ws> --json`.
+- Historical execution bypassed the sandbox. That unsafe invocation is retired, not a current run command. New tests must use `suite/run.py` and its [mandatory sandbox policy](../../suite/README.md#machine-local-codex-sandbox-policy). The results below remain the historical record; their execution was not sandboxed.
 
 ---
 

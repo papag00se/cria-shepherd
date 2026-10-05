@@ -1,5 +1,10 @@
 # GOAL: get cria to codex-local parity — the four models COMPLETE the task
 
+> **Historical goal; current launch policy takes precedence.** New Codex tests must
+> use `suite/run.py` and the [mandatory sandbox policy](../../suite/README.md#machine-local-codex-sandbox-policy).
+> The historical direct-launch and ambient-config guidance below is not authorization
+> to bypass that policy. This does not alter the recorded context-management research.
+
 ## Mission
 Get cria-shepherd to the level codex-local reached: the four models — **qwopus, qwythos, ornith, gemma4** — actually **complete** the Ada Handle Lambda task (working handler + passing unit tests + a live test that resolves `goose`/`papagoose` + a README), driven headlessly through `codex-debug exec`. These four did a decent job in codex-local; cria must match that.
 
@@ -33,7 +38,7 @@ Same models, same task. If a model **completed in codex-local but stalls, loops,
 ## Scope — the four proven models, not the MoE ones
 qwopus, qwythos, ornith, gemma4 are the baseline that did decently in codex-local. The MoE models have been struggling and are **out of scope** for this goal — do not let them absorb the loop's time. The target is codex-local parity on these four.
 
-## The Workload (run verbatim via codex-debug exec)
+## The Workload (task prompt; launch through the suite runner)
 ```
 I would like you to write a Python Lambda handler that accepts an Ada Handle as input and resolves it to the Cardano address using the Ada Handles API (api.handle.me). The response should include the resolved address, the holder address, and the total Handles the holder possesses. Unit tests are required. Separately, create a live test that resolves the handle `goose` or `papagoose`. When you're done, add a README.
 ```
@@ -53,7 +58,7 @@ Source of truth for settings: `docs/model-settings.md`, plus `~/.cria/cria.toml`
 3. **Set sampling/reasoning** in `~/.cria/cria.toml` per docs/model-settings.md.
 4. **Restart cria** (see Runbook) so config + latest code are live.
 5. **Fresh throwaway workspace** — a new empty dir per run (e.g. `/tmp/compaction-test/<model>-<n>/`). Never reuse a real project; the task writes files. (A local model once ran `find . -delete` — throwaway dirs only.)
-6. **Run the Workload headlessly:** `codex-debug exec` in the workspace (confirm exact flags with `codex-debug exec --help`). Tee output to a log.
+6. **Run the Workload headlessly:** use the `ada-handles` task through `suite/run.py`, which creates its own cell workspace, sandbox profile, scratch and log. Follow [the current suite guide](../../suite/README.md); do not substitute a direct Codex launch.
 7. **Watch the context floor live** (see Observability).
 8. **Diagnose + fix** each failure at its upstream source; restart; re-run. Loop until Done holds for this model, twice.
 9. **Record** findings in the Report as you go, then move to the next model.

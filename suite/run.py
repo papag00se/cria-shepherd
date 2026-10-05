@@ -30,6 +30,7 @@ import sys
 import tempfile
 import time
 import tomllib
+import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -116,20 +117,31 @@ SUITE_CODEX_POLICY = Path.home() / '.cria' / 'suite-codex-policy.toml'
 
 
 def _codex_argv(prompt: str, workspace=None):
-    # Machine-local opt-in, consumed ONLY by this cria benchmark launcher.
+    # Required machine-local policy, consumed ONLY by repo test launches.
+    # Missing, unreadable or malformed policy must never yield an unsandboxed argv.
     # Never edit the user's Codex config or change ordinary Codex sessions.
-    if SUITE_CODEX_POLICY.exists():
+    try:
         policy = tomllib.loads(SUITE_CODEX_POLICY.read_text())
-        if policy != {'workspace_sandbox': True}:
-            raise ValueError('invalid cria suite Codex policy; refusing to launch')
-        state_write = ''
-        if workspace is not None:
-            state_write = ',' + json.dumps(str(_cell_install_root(workspace))) + '="write"'
-        permissions = ('permissions={cria_suite={filesystem={"/"="read",":workspace_roots"="write"'
-                       + state_write + '},network={enabled=true}}}')
-        return ['codex', 'exec', '-c', 'default_permissions="cria_suite"',
-                '-c', permissions, '-c', 'approval_policy="never"', prompt]
-    return ["codex", "exec", "--yolo", prompt]
+    except (OSError, ValueError) as exc:
+        raise ValueError(f'cannot load cria suite sandbox policy {SUITE_CODEX_POLICY}; refusing to launch') from exc
+    if set(policy) != {'workspace_sandbox'} or policy['workspace_sandbox'] is not True:
+        raise ValueError('invalid cria suite sandbox policy; refusing to launch')
+    if workspace is None or not Path(workspace).is_absolute():
+        raise ValueError('an explicit absolute cell workspace is required; refusing to launch')
+    workspace = Path(workspace).resolve()
+    if workspace == Path(workspace.anchor) or not workspace.is_dir():
+        raise ValueError('an existing non-root cell workspace is required; refusing to launch')
+    state = _cell_install_root(workspace).resolve()
+    # Exact paths, not a cwd/git-root-derived :workspace_roots grant. The parent
+    # runner creates the state directory before starting Codex.
+    writes = ','.join(json.dumps(str(p)) + '="write"' for p in (workspace, state))
+    # Codex merges TOML tables: a fixed profile name can inherit extra writes
+    # from config.toml even when supplied with -c. A fresh profile has no such base.
+    profile = 'cria_suite_' + uuid.uuid4().hex
+    permissions = ('permissions={' + profile + '={filesystem={"/"="read",'
+                   + writes + '},network={enabled=true}}}')
+    return ['codex', 'exec', '-c', 'default_permissions=' + json.dumps(profile),
+            '-c', permissions, '-c', 'approval_policy="never"', prompt]
 
 HARNESSES = {"codex": _codex_argv}
 
@@ -754,7 +766,7 @@ def main() -> None:
     log_path = SUITE / "results" / f"{run_id}.log"
     harness_argv = HARNESSES[args.harness](prompt, ws)
     suite_scratch = None
-    if args.harness == 'codex' and 'default_permissions="cria_suite"' in harness_argv:
+    if args.harness == 'codex':
         state = _cell_install_root(ws)
         suite_scratch = state / 'tmp'
         suite_scratch.mkdir(parents=True, exist_ok=True)
