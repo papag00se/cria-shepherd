@@ -1,0 +1,11 @@
+{
+  "historical_status": "Original historical evidence; inactive and not revalidated. Does not replace current benchmark scores or active runtime prompts.",
+  "source_branch": "origin/ornith-feed-causal-closure",
+  "source_commit": "5d97c4fd813245f48a1cfbcd46024d8efcd6cb94",
+  "archive_paths": [
+    "docs/research-archive/2026-10-07/ornith-feed-causal-closure/results-source-records.json",
+    "docs/research-archive/2026-10-07/ornith-feed-causal-closure/docs/audits/2026-09-15-ornith-feed-cross-archive-ruling.md"
+  ],
+  "canonical_ledger_unchanged": true,
+  "validation": "Exact Git source postimages / selected record fields preserved; no inference, replay, or provider calls."
+}
