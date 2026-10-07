@@ -1,0 +1,1 @@
+Use the apply_patch tool to create proof.txt containing exactly 73 followed by a newline. Then use the shell tool to read proof.txt and report its contents. Do not modify any other file.
