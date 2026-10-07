@@ -6,6 +6,11 @@ from test_engagement_levels import _Harness
 
 
 class RequestFidelityTests(unittest.TestCase):
+    def setUp(self):
+        from cria import massage
+        previous = massage._TOOL_CALL_FIXES
+        self.addCleanup(massage.set_tool_call_fixes, previous)
+
     def test_local_sampling_extensions_survive_responses_translation(self):
         knobs = {'temperature': 0.6, 'top_p': 0.95, 'top_k': 20,
                  'min_p': 0.0, 'repeat_penalty': 1.1,

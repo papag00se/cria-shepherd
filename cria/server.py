@@ -775,7 +775,9 @@ class CriaServer(ThreadingHTTPServer):
         self._endpoint_for = _ep
         self.classifier = (
             Classifier(_ep("classifier"), cfg.routing.engagement_bias, role=roles.get("classifier"))
-            if "classifier" in roles
+            # The wire-only control never consumes a classifier verdict. Do not even
+            # construct an auxiliary caller that could spend active baseline time.
+            if "classifier" in roles and cfg.routing.engagement_level != config.PURE_PROXY
             else None
         )
         # The loop is cria's ONE coder driver: with the planner ON it decomposes and drives item by
@@ -1049,10 +1051,7 @@ class CriaHandler(BaseHTTPRequestHandler):
         of wall clock, the single largest block of dead time in the campaign. Deciding earlier is
         the fix; capping the runaway would only have made the wasted call cheaper (A, not B)."""
         server: CriaServer = self.server
-        if (server.cfg.routing.engagement_level == config.PURE_PROXY
-                or server.classifier is None):
-            # L0 never routes by classification: even an unused verdict would consume
-            # auxiliary inference and active campaign time in the wire-only control.
+        if server.classifier is None:
             return None
         # `compaction` is the caller's precomputed answer (marker OR judged); the cheap marker check
         # is repeated here too so a caller that only knows the marker (no `_recognize_compaction`
