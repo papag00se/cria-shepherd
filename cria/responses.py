@@ -95,8 +95,11 @@ def to_chat_body(r: dict) -> dict:
         body["parallel_tool_calls"] = r["parallel_tool_calls"]
     # Preserve the Chat-Completions controls with direct wire equivalents. Silent omission changes
     # caller behavior; unsupported Responses-only controls are handled explicitly at the HTTP edge.
-    for key in ("temperature", "top_p", "frequency_penalty", "presence_penalty", "seed", "stop",
-                "response_format"):
+    # Local OpenAI-compatible backends also accept these caller-supplied extensions.
+    # Preserve them without inventing defaults, particularly in the L0 wire-only arm.
+    for key in ("temperature", "top_p", "top_k", "min_p", "repeat_penalty",
+                "frequency_penalty", "presence_penalty", "seed", "stop",
+                "response_format", "chat_template_kwargs"):
         if key in r:
             body[key] = r[key]
     if "max_output_tokens" in r:

@@ -1049,7 +1049,10 @@ class CriaHandler(BaseHTTPRequestHandler):
         of wall clock, the single largest block of dead time in the campaign. Deciding earlier is
         the fix; capping the runaway would only have made the wasted call cheaper (A, not B)."""
         server: CriaServer = self.server
-        if server.classifier is None:
+        if (server.cfg.routing.engagement_level == config.PURE_PROXY
+                or server.classifier is None):
+            # L0 never routes by classification: even an unused verdict would consume
+            # auxiliary inference and active campaign time in the wire-only control.
             return None
         # `compaction` is the caller's precomputed answer (marker OR judged); the cheap marker check
         # is repeated here too so a caller that only knows the marker (no `_recognize_compaction`
