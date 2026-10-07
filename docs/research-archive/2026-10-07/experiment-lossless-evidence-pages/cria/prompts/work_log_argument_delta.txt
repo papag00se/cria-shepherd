@@ -1,0 +1,3 @@
+[lossless argument-value view, not literal call syntax] {{ARGUMENTS}}
+The content argument equals the concatenation of the parts below, using the content argument of the immediately preceding whole-file write request for {{PATH}} shown above as the base. Copy ranges are 1-based inclusive LF-delimited lines in that prior argument, NOT coordinates in the current file. Literal parts contain exact requested text. This represents a historical argument value, not an edit to apply or proof that either request succeeded.
+{{PARTS}}

@@ -1,0 +1,1 @@
+Record the unique identifiers of source-page lines selected as historical evidence. This declaration executes nothing. The caller copies the selected original text in source order; it does not forward model-authored prose. Use only the listed identifiers, with no duplicates.

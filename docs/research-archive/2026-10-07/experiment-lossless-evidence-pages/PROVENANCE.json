@@ -1,0 +1,24 @@
+{
+  "historical_status": "Original historical evidence; inactive and not revalidated. Does not replace current benchmark scores or active runtime prompts.",
+  "source_branch": "origin/experiment/lossless-evidence-pages",
+  "source_commit": "6fd6d22f801deac5bb64ca4abe506bfccfea4fa1",
+  "archive_paths": [
+    "docs/research-archive/2026-10-07/experiment-lossless-evidence-pages/cria/prompts/evidence_select.txt",
+    "docs/research-archive/2026-10-07/experiment-lossless-evidence-pages/cria/prompts/evidence_select_page.txt",
+    "docs/research-archive/2026-10-07/experiment-lossless-evidence-pages/cria/prompts/evidence_select_tool.txt",
+    "docs/research-archive/2026-10-07/experiment-lossless-evidence-pages/cria/prompts/evidence_select_tool_desc.txt",
+    "docs/research-archive/2026-10-07/experiment-lossless-evidence-pages/cria/prompts/evidence_selected_span.txt",
+    "docs/research-archive/2026-10-07/experiment-lossless-evidence-pages/cria/prompts/evidence_selection_gap.txt",
+    "docs/research-archive/2026-10-07/experiment-lossless-evidence-pages/cria/prompts/evidence_selection_task.txt",
+    "docs/research-archive/2026-10-07/experiment-lossless-evidence-pages/cria/prompts/evidence_summary_page.txt",
+    "docs/research-archive/2026-10-07/experiment-lossless-evidence-pages/cria/prompts/evidence_summary_span_note.txt",
+    "docs/research-archive/2026-10-07/experiment-lossless-evidence-pages/cria/prompts/work_log_argument_delta.txt",
+    "docs/research-archive/2026-10-07/experiment-lossless-evidence-pages/cria/prompts/work_log_duplicate_result.txt",
+    "docs/research-archive/2026-10-07/experiment-lossless-evidence-pages/cria/prompts/work_log_read_matches_write.txt",
+    "docs/research-archive/2026-10-07/experiment-lossless-evidence-pages/cria/prompts/work_log_supplied_file_argument.txt",
+    "docs/research-archive/2026-10-07/experiment-lossless-evidence-pages/cria/prompts/work_log_supplied_file_result.txt",
+    "docs/research-archive/2026-10-07/experiment-lossless-evidence-pages/docs/audits/2026-09-10-lossless-evidence-view-experiments.md"
+  ],
+  "canonical_ledger_unchanged": true,
+  "validation": "Exact Git source postimages / selected record fields preserved; no inference, replay, or provider calls."
+}
