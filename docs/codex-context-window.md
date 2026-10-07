@@ -28,8 +28,11 @@ window truthfully. `GET http://127.0.0.1:18085/v1/models` returns the **runtime*
 }
 ```
 
-The value is sourced live from the backend's `/props` `n_ctx`, so it tracks a model swap
-with nothing to hand-edit and nothing to go stale.
+The value is discovered from the backend's `/props` `n_ctx` and cached for the cria
+process lifetime. After a backend swap, restart cria once the new backend is ready,
+then verify its model ID and context before syncing Codex. The restored fleet's managed
+`llama-fleet switch` performs that check and restarts cria if its card is stale;
+changing the backend alone does not refresh the cached advertisement.
 
 ## Why Codex needs an exception
 
