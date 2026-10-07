@@ -1,0 +1,10 @@
+{
+  "historical_status": "Original historical evidence; inactive and not revalidated. Does not replace current benchmark scores or active runtime prompts.",
+  "source_branch": "origin/data/ornith-feed-1789686396",
+  "source_commit": "635b531bdaadb984fea73f80e9e4bb2fe34042a3",
+  "archive_paths": [
+    "docs/research-archive/2026-10-07/data-ornith-feed-1789686396/results-source-records.json"
+  ],
+  "canonical_ledger_unchanged": true,
+  "validation": "Exact Git source postimages / selected record fields preserved; no inference, replay, or provider calls."
+}

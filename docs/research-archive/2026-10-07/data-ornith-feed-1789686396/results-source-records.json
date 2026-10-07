@@ -1,0 +1,112 @@
+[
+  {
+    "run_id": "feed-pipeline-java_ornith15_codex_poff_1789686396",
+    "task": "feed-pipeline-java",
+    "model": "ornith15",
+    "harness": "codex",
+    "planner": "off",
+    "note": "campaign continuation: current main 79a8b9a; historical private-copy EOF walks in progress; no unproven behavior change",
+    "sampling": {
+      "coder": {
+        "temperature": 0.6,
+        "top_p": 0.95,
+        "top_k": 20,
+        "min_p": 0.0,
+        "presence_penalty": 0.0,
+        "repeat_penalty": 1.0
+      },
+      "reasoner": {
+        "temperature": 1.0,
+        "top_p": 0.95,
+        "top_k": 20,
+        "min_p": 0.0,
+        "presence_penalty": 1.5,
+        "repeat_penalty": 1.0
+      },
+      "classifier": {
+        "temperature": 0.0,
+        "presence_penalty": 0.0,
+        "repeat_penalty": 1.0
+      },
+      "compactor": {
+        "temperature": 0.0,
+        "presence_penalty": 0.0,
+        "repeat_penalty": 1.0
+      }
+    },
+    "level": 5,
+    "started": 1789686416.8841403,
+    "wall_seconds": 1914.2,
+    "active_seconds": 1820.1,
+    "terminal": "milestone-stalled-30min",
+    "milestone_minutes": 15,
+    "budget_intervals": 5,
+    "milestone_judgments": [
+      {
+        "at_active_minutes": 30,
+        "usefulness_percent": 8,
+        "decision": "stalled",
+        "reason": "The model added a correct OpenCSV dependency and Maven compile succeeds, but the production Importer.java is still the seed implementation: it hand-splits CSV, keeps workers disabled, uses shared mutable totals, and retains the quadratic SKU scan. The only other authored implementation is an unintegrated tmp/Experiment.java; no REVIEW.md or working requested behavior exists, so another interval has no concrete basis to add material reusable work.",
+        "evidence": [
+          "private-copy mvn -q clean compile exited 0",
+          "git diff HEAD shows only pom.xml changed in production",
+          "Importer.java still declares WORKERS_ENABLED = false and uses header.split/line.split",
+          "REVIEW.md is absent",
+          "tmp/Experiment.java is not production source"
+        ]
+      }
+    ],
+    "calls": 55,
+    "phases": {
+      "classifier": 1,
+      "coder": 49,
+      "reasoner": 2,
+      "compactor": 1,
+      "compactor-noreason": 1,
+      "satisfaction": 1
+    },
+    "avg_tok_s": 73.4,
+    "output_tokens_timed": 66001,
+    "assists": {
+      "context.window": 1,
+      "context.calibrated": 2,
+      "decision": 1,
+      "loop.start": 1,
+      "writeproxy.lowered": 33,
+      "compat.connect": 1,
+      "context.repeat_dedup": 41,
+      "rumination.abort": 6,
+      "loop.rumination": 6,
+      "loop.rumination_reasoning_off": 6,
+      "writeproxy.blocked_external": 2,
+      "loop.write_streak_corrected": 1,
+      "loop.periodic_gate": 2,
+      "loop.periodic_gate_result": 2,
+      "loop.gate_survey_only": 1,
+      "loop.wheel_spinning": 1,
+      "loop.spin_probe": 1,
+      "loop.gate_offline": 2,
+      "loop.steer_outcome": 1,
+      "loop.spin_probe_result": 1,
+      "loop.satisfaction_blocked": 1,
+      "context.focus_trim": 19,
+      "loop.work_log_denied": 1,
+      "evidence.repeats_folded": 1,
+      "summarize.truncated": 2,
+      "loop.judge_files_seeded": 1,
+      "loop.negative_diagnosis_suppressed": 1,
+      "loop.satisfaction_check": 1
+    },
+    "workspace": "/home/jesse/suite-runs/suite-feed-pipeline-java_ornith15_codex_poff_1789686396-ppj6anr_",
+    "archive": "/home/jesse/.cria/suite/feed-pipeline-java_ornith15_codex_poff_1789686396",
+    "user_install_leak": [],
+    "capture_dir": "/home/jesse/.cria/calls/20260917T160656-01a0b19f-862f-77a2-9952-994178f8b9a3",
+    "capture_dirs": [
+      "/home/jesse/.cria/calls/20260917T160656-01a0b19f-862f-77a2-9952-994178f8b9a3"
+    ],
+    "harness_log": "/home/jesse/src/cria-shepherd/suite/results/feed-pipeline-java_ornith15_codex_poff_1789686396.log",
+    "usefulness_percent": 8,
+    "usefulness_reason": "The only delivered production change was adding OpenCSV 5.9 to pom.xml. Importer.java was never changed: workers remain disabled, CSV parsing still uses split(\",\"), malformed rows still fail, O(n\u00b2) SKU discovery remains, skipped-row reporting is absent, and REVIEW.md was never created. The final raw call ends requesting a dependency tree, with no corresponding result or subsequent implementation/validation.",
+    "usefulness_model": "campaign agent, full toolset"
+  }
+]
