@@ -3,7 +3,7 @@
 **Last updated 2026-10-05 11:02** — newest row `cart-billing-go_defiant-fable_codex_poff_1790855379`, finished 2026-10-01 05:30.
 **Report code revision `cab43fb0`; inference anchor remains `f79cc6146470281b5909cf605b27afca1177e2d1`.**
 
-Each cell is an inferred usefulness percentage 🟢≥88 🟡≥63 🟠≥38 🔴 below; `·` = not judged. `[engagement] level = 0..5`, each rung implying every rung below it. Model rows use the [official project names](../model-names.md). Gemma4/QAT share the single `gemma4_12b` row: frozen history remains for unreplaced cells and the latest live judgment supersedes its matching cell. Historical model keys, run IDs and executable aliases retain their original provenance.
+Each cell is an inferred usefulness percentage 🟢≥88 🟡≥63 🟠≥38 🔴 below; `·` = not judged. `[engagement] level = 0..5`, each rung implying every rung below it. Model rows use the [official project names](model-names.md). Gemma4/QAT share the single `gemma4_12b` row: frozen history remains for unreplaced cells and the latest live judgment supersedes its matching cell. Historical model keys, run IDs and executable aliases retain their original provenance.
 
 ### Level 0 — pure proxy — wire translation only — 43%
 

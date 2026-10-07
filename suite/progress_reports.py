@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fresh, independent 10-active-minute usefulness reports; these never control run duration."""
+"""Legacy independent-report packet tooling; current runs use the unified 15-minute milestones."""
 from __future__ import annotations
 import json, shutil, sys, time
 from pathlib import Path

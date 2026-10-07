@@ -48,7 +48,8 @@ def create(run_id: str, minute: int, ws: Path, task_dir: Path,
     baseline = workspace_evidence.tree(seed) if seed.is_dir() else "(empty baseline)"
     prior = "\n".join(
         f"{v['at_active_minutes']} min judgment: {v['usefulness_percent']}%, "
-        f"{v['decision']}: {v['reason']}\nPrior frozen snapshot (inspect read-only): "
+        f"{v['decision']}: {v['reason']}\nMaterial changes: {v.get('material_changes', 'not recorded')}\n"
+        f"Prior frozen snapshot (inspect read-only): "
         f"{v['checkpoint']}/workspace" for v in (previous or [])) or "No earlier milestone judgment."
     packet = "\n".join([
         SYSTEM.read_text().strip(),
@@ -76,6 +77,9 @@ def parse(text: str) -> dict | None:
     usefulness = value.get("usefulness_percent")
     reason = value.get("reason")
     evidence = value.get("evidence")
+    changes = value.get("material_changes")
+    if not isinstance(changes, str) or not changes.strip():
+        return None
     if not isinstance(usefulness, int) or isinstance(usefulness, bool) or not 0 <= usefulness <= 100:
         return None
     if not isinstance(reason, str) or not reason.strip() or not isinstance(evidence, list) or not evidence:
@@ -83,7 +87,7 @@ def parse(text: str) -> dict | None:
     if not all(isinstance(item, str) and item.strip() for item in evidence):
         return None
     return {"usefulness_percent": usefulness, "decision": value["decision"],
-            "reason": reason.strip(), "evidence": evidence}
+            "reason": reason.strip(), "evidence": evidence, "material_changes": changes.strip()}
 
 
 def verdict_path(checkpoint: Path) -> Path:
@@ -136,7 +140,7 @@ def main() -> int:
 
     verdict = parse(sys.stdin.read())
     if verdict is None:
-        raise SystemExit("expected usefulness_percent, decision complete|continue|stalled, reason, and evidence")
+        raise SystemExit("expected usefulness_percent, decision complete|continue|stalled, reason, evidence, and material_changes")
     verdict_path(checkpoint).write_text(json.dumps(verdict, indent=1) + "\n")
     print(f"{checkpoint.name}: {verdict['usefulness_percent']}% useful; {verdict['decision']}")
     return 0

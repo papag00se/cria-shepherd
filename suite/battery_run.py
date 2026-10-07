@@ -109,7 +109,7 @@ def main() -> int:
     ap.add_argument("--campaign-revision", default=None,
                     help="immutable full git revision pinned for the fresh L5 cohort")
     ap.add_argument("--milestone-minutes", type=int, choices=[15], default=15,
-                    help="fixed 15-minute pacing; the first inference judgment is at minute 30")
+                    help="review every 15 active minutes; continuation decisions start at minute 30")
     args = ap.parse_args()
 
     other_runs = run_guard.other_suite_runners()

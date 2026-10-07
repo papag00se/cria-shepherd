@@ -83,7 +83,8 @@ def test_worklist_rejects_requested_but_unobserved_or_invalid_candidates(tmp_pat
     rejected = (
         {**row, "level": 0}, {**row, "level": None}, {**row, "level": "5"},
         {**row, "live_engagement_level": 0}, {**row, "live_engagement_level": None},
-        {**row, "terminal": "crashed-early"}, {**row, "terminal": None},
+        {**row, "terminal": "crashed-early"}, {**row, "terminal": "harness-error"},
+        {**row, "terminal": None},
         {**row, "aborted": "throttled"}, {**row, "archive": str(tmp_path / "missing")},
         {**row, "workspace_lost": True}, {**row, "capture_dirs": []},
         {**row, "calls": 0}, {**row, "phases": {}},

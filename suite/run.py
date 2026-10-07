@@ -2,14 +2,15 @@
 """Suite runner — one cell of the test matrix per invocation.
 
 Provisions a throwaway workspace, points the rig at the requested model + planner setting,
-drives one harness run of the task prompt under an active-time budget, then collects metrics from
+drives one harness run of the task prompt with active-time milestone reviews, then collects metrics from
 cria's own capture/events, preserves the workspace for an independent usefulness judgment, and
 appends one JSON row to suite/results/results.jsonl.
 
-The runner requests independent read-only usefulness snapshots every 10 active minutes (informational
-only), and separate milestone judgments at 30 active minutes and every 15 minutes thereafter. At a
-shared time, both judgments are independently requested. All judge waits are excluded from active
-time. Only milestone decisions control continuation; no mechanical score threshold participates.
+The campaign agent reviews a frozen snapshot every 15 active minutes, reporting total inferred
+usefulness and material changes since the previous milestone. The first 30 active minutes are
+protected unless the harness finishes naturally (the completion gate, or the model alone at L0).
+From minute 30 onward the agent judges continuation; neither scores nor legacy task budgets decide
+it. Judge waits are excluded from active time. Planning remains off unless explicitly requested.
 
 Kill mechanics follow the runctl scars: match the codex process list explicitly (ps + grep of
 the exec pattern, excluding shells), never `pkill -f` (it matches the invoking shell).
@@ -607,7 +608,7 @@ def collect_assists(t0: float, t1: float) -> dict:
 
 
 def budget_intervals(task_dir: Path) -> int:
-    """Maximum milestone intervals for this task; never a description of required work."""
+    """Retained legacy budget metadata; neither a stop rule nor required task content."""
     meta = tomllib.loads((task_dir / "meta.toml").read_text())
     value = meta.get("budget_intervals")
     if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
@@ -618,21 +619,20 @@ def budget_intervals(task_dir: Path) -> int:
 
 @dataclass
 class MilestonePacing:
-    """First inference at minute 30, then every 15 active minutes; judge waits cost no time."""
+    """One review every 15 active minutes; legacy budget metadata is not a stop rule."""
 
     started_at: float
     interval_minutes: int
     budget_intervals: int
     paused_seconds: float = 0.0
     next_milestone: int = field(init=False)
-    next_progress_report: int = field(init=False, default=600)
 
     def __post_init__(self) -> None:
         if self.interval_minutes != TASK_MINUTES:
             raise ValueError("suite pacing is fixed at 15 active minutes")
         if self.budget_intervals < 2:
             raise ValueError("suite pacing requires a budget of at least 30 active minutes")
-        self.next_milestone = 30 * 60
+        self.next_milestone = self.interval_seconds
 
     @property
     def interval_seconds(self) -> int:
@@ -652,12 +652,6 @@ class MilestonePacing:
     def due(self, now: float) -> bool:
         return self.active_elapsed(now) >= self.next_milestone
 
-    def progress_due(self, now: float) -> bool:
-        return self.active_elapsed(now) >= self.next_progress_report
-
-    def advance_progress(self) -> None:
-        self.next_progress_report += 10 * 60
-
     def record_pause(self, seconds: float) -> None:
         self.paused_seconds += seconds
 
@@ -667,20 +661,59 @@ class MilestonePacing:
 
 def milestone_progress(verdict: dict, minute: int) -> str:
     """The canonical checkpoint progress report: always an inferred usefulness percentage."""
+    control = "protected first 30min" if minute < 30 else f"decision={verdict['decision']}"
     return (f"[milestone] {minute}min usefulness={verdict['usefulness_percent']}% "
-            f"decision={verdict['decision']}: {verdict['reason']}")
+            f"{control}: {verdict['reason']}\n"
+            f"[material changes] {verdict['material_changes']}")
 
 
-def milestone_terminal(verdict: dict, minute: int, at_limit: bool) -> str | None:
-    """Translate one grounded, holistic usefulness inference into run control."""
+def milestone_terminal(verdict: dict, minute: int, at_limit: bool = False) -> str | None:
+    """Honor the half-hour floor, then the judge. Legacy at_limit never overrides inference."""
+    if minute < 30:
+        return None
     decision = verdict.get("decision")
     if decision == "complete":
         return f"milestone-complete-{minute}min"
     if decision == "stalled":
         return f"milestone-stalled-{minute}min"
-    if at_limit:
-        return "budget-killed"
     return None
+
+
+def monitor_milestones(proc, pacing, run_id, ws, task_dir, *, pause, resume, stop):
+    """Observe one harness; only the campaign agent's accepted judgments control its lifetime."""
+    try:
+        from . import milestones
+    except ImportError:
+        import milestones
+    judgments = []
+    while proc.poll() is None:
+        if pacing.due(time.time()):
+            minute = pacing.next_milestone // 60
+            pause_started = time.time()
+            if not pause():
+                break
+            try:
+                checkpoint = milestones.create(run_id, minute, ws, task_dir, judgments)
+                print(f"[milestone] {minute} active minutes -> {checkpoint}", flush=True)
+                print("[milestone] waiting for the campaign agent's inference judgment", flush=True)
+                verdict = milestones.wait(checkpoint)
+            except BaseException:
+                # Never strand the harness in SIGSTOP if packet creation or judgment is interrupted.
+                stop()
+                raise
+            finally:
+                pacing.record_pause(time.time() - pause_started)
+            judgments.append({"at_active_minutes": minute, "checkpoint": str(checkpoint), **verdict})
+            print(milestone_progress(verdict, minute), flush=True)
+            outcome = milestone_terminal(verdict, minute)
+            if outcome is not None:
+                stop()
+                return outcome, judgments
+            pacing.advance()
+            resume()
+        time.sleep(2)
+    # A naturally completed L0 turn may be very short. Elapsed time cannot establish a crash.
+    return ("exited" if proc.poll() == 0 else "harness-error"), judgments
 
 
 def throttled_mid_run(session_dir) -> str:
@@ -727,7 +760,7 @@ def main() -> None:
     # must not depend on a regex over prose surviving the next edit.
     ap.add_argument("--level", type=int, default=None)
     ap.add_argument("--milestone-minutes", type=int, choices=[TASK_MINUTES], default=TASK_MINUTES,
-                    help="fixed 15-minute pacing; the first inference judgment is at minute 30")
+                    help="review every 15 active minutes; continuation decisions start at minute 30")
     args = ap.parse_args()
     if args.milestone_minutes <= 0:
         ap.error("--milestone-minutes must be positive")
@@ -831,72 +864,12 @@ def main() -> None:
 
     pacing = MilestonePacing(started_at=t0, interval_minutes=args.milestone_minutes,
                              budget_intervals=budget_intervals(task_dir))
-    terminal = "exited"
-    milestone_judgments = []
-    progress_judgments = []
-
-    while proc.poll() is None:
-        if pacing.progress_due(time.time()):
-            minute = pacing.next_progress_report // 60
-            pause_started = time.time()
-            if not pause_run():
-                terminal = "exited"
-                break
-            try:
-                sys.path.insert(0, str(SUITE))
-                import progress_reports
-                checkpoint = progress_reports.create(run_id, minute, ws, task_dir, progress_judgments)
-                print(f"[progress-report] {minute} active minutes -> {checkpoint}", flush=True)
-                print("[progress-report] fresh read-only usefulness judgment requested; run continues regardless", flush=True)
-                verdict = progress_reports.wait(checkpoint)
-            except BaseException:
-                stop_run()
-                raise
-            finally:
-                pacing.record_pause(time.time() - pause_started)
-            progress_judgments.append({"minute": minute, "checkpoint": str(checkpoint),
-                                       "verdict": verdict})
-            print(f"[progress-report] {minute}min usefulness={verdict['usefulness_percent']}%: {verdict['reason']}", flush=True)
-            pacing.advance_progress()
-            resume_run()
-            continue
-        if pacing.due(time.time()):
-            minute = round(pacing.next_milestone / 60)
-            pause_started = time.time()
-            if not pause_run():
-                terminal = "exited"
-                break
-            try:
-                sys.path.insert(0, str(SUITE))
-                import milestones
-                checkpoint = milestones.create(run_id, minute, ws, task_dir, milestone_judgments)
-                print(f"[milestone] {minute} active minutes -> {checkpoint}", flush=True)
-                print("[milestone] waiting for the campaign agent's inference judgment", flush=True)
-                verdict = milestones.wait(checkpoint)
-            except BaseException:
-                # Never strand the harness in SIGSTOP when packet creation, waiting, or the operator
-                # session is interrupted. The judgment remains mandatory; this run aborts loudly.
-                stop_run()
-                raise
-            finally:
-                pacing.record_pause(time.time() - pause_started)
-            milestone_judgments.append({"at_active_minutes": minute,
-                                        "checkpoint": str(checkpoint), **verdict})
-            print(milestone_progress(verdict, minute), flush=True)
-            outcome = milestone_terminal(verdict, minute, at_limit=pacing.at_limit)
-            if outcome is not None:
-                terminal = outcome
-                stop_run()
-                break
-            pacing.advance()
-            resume_run()
-        time.sleep(2)
+    terminal, milestone_judgments = monitor_milestones(
+        proc, pacing, run_id, ws, task_dir, pause=pause_run, resume=resume_run, stop=stop_run)
     # Stop first. A child may still finish a response or create a new session during the grace
     # period, so the wall cutoff and session inventory must be taken only after the group is gone.
     t1, new_sessions, capture_snapshot = shutdown_and_capture(
         proc, calls_dir=CALLS_DIR, before_sessions=before_sessions, resume=resume_run)
-    if terminal == "exited" and t1 - t0 < 60:
-        terminal = "crashed-early"
 
     # The primary directory is the one that carries the work, not the one that finished last.
     session_dir = max(new_sessions, key=lambda p: len(list(p.glob("*.response.json"))),
@@ -935,7 +908,7 @@ def main() -> None:
         "milestone_minutes": args.milestone_minutes,
         "budget_intervals": pacing.budget_intervals,
         "milestone_judgments": milestone_judgments,
-        "progress_judgments": progress_judgments,
+        "pacing_policy": "inferred-progress-15m-protected-30m-v1",
         **capture,
         **({"capture_snapshot": capture_snapshot} if args.fresh_l5 else {}),
         "assists": collect_assists(t0, t1),
@@ -1000,7 +973,7 @@ def _refresh_grid(row: dict | None = None) -> None:
         import battery_status
         if rs := battery_status.rows():
             battery_status.write_report(rs)
-            print("[battery] refreshed docs/audits/battery-report.md")
+            print("[battery] refreshed docs/battery-report.md")
         # A ROW THE GRID CANNOT SEE MUST SAY SO. `battery_status.rows()` keeps only rows whose note
         # starts with a counted prefix, and `cell()` then matches an arm token inside it — so a run
         # launched with free text in --note completes, gets judged, and is silently absent from the

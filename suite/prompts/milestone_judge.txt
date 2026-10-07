@@ -9,8 +9,10 @@ Also decide whether the run should stop or receive more active time:
 - `continue`: more active time is likely to produce materially more useful work.
 - `stalled`: the workspace is not usefully complete and more time is unlikely to help this run.
 
-The control decision is a separate inference. No percentage automatically requires any decision. Spend another interval only when the inspected work gives a concrete reason to expect materially more useful code. Do not continue merely because budget remains: very low usefulness at the first checkpoint with no substantial requested code is ordinarily stalled, while substantial correct partial work with a credible path forward ordinarily merits another interval.
+The campaign agent is the continuation judge. Use a non-strict, qualitative inference of useful progress SINCE THE PREVIOUS MILESTONE, not a deterministic rule, numeric delta, minimum score, or forecast of perfection. Explain the material changes (or absence of them) separately from the full-task usefulness percentage. Small but genuinely useful progress can justify another interval; failing checks or an unchanged rounded percentage need not mean stagnation. Activity alone is not useful progress. At the first milestone compare against the seed; at every later milestone inspect the previous frozen snapshot as well as the current one.
+
+The first two 15-minute intervals are protected: at minute 15 report honestly but select continue. Only natural harness completion (the gate, or the model alone at L0) may end a run before minute 30. At minute 30 and every 15 active minutes afterward infer complete, continue, or stalled. No score threshold or legacy task budget overrides that judgment. Judge wait time does not consume active time.
 
 Output only:
 
-{"usefulness_percent":<integer from 0 through 100>,"decision":"complete|continue|stalled","reason":"<brief evidence-based explanation>","evidence":["<specific inspected fact>"]}
+{"usefulness_percent":<integer from 0 through 100>,"decision":"complete|continue|stalled","reason":"<brief evidence-based explanation>","material_changes":"<useful changes since the prior milestone, or explicitly none>","evidence":["<specific inspected fact>"]}

@@ -2,28 +2,26 @@ from suite import milestones, progress_reports
 from suite.run import MilestonePacing
 
 
-def test_ten_minute_reports_are_independent_of_milestone_clock_and_never_control_run():
+def test_one_report_per_fifteen_minute_milestone_not_two_independent_clocks():
+    # Replaces the former 10-minute reporting / 30-minute control split at operator request.
     clock = MilestonePacing(started_at=0, interval_minutes=15, budget_intervals=4)
     observed = []
-    for now in (600, 1200, 1800, 2400):
-        assert clock.progress_due(now)
-        observed.append(clock.next_progress_report // 60)
-        clock.advance_progress()
-    assert observed == [10, 20, 30, 40]
-    assert clock.next_milestone == 1800
-    assert clock.due(1800)  # at 30 both independent judgments are due
-    clock.advance()
-    assert clock.next_milestone == 2700  # milestone schedule remains 30,45,...
-    assert clock.progress_due(2400) is False
+    for now in (900, 1800, 2700, 3600):
+        assert clock.due(now)
+        observed.append(clock.next_milestone // 60)
+        clock.advance()
+        assert not clock.due(now)  # no duplicate review at the shared timestamp
+    assert observed == [15, 30, 45, 60]
 
 
 def test_every_judge_wait_is_excluded_from_active_time():
     clock = MilestonePacing(started_at=100, interval_minutes=15, budget_intervals=4)
     clock.record_pause(900)
     assert clock.active_elapsed(1000) == 0
-    assert not clock.progress_due(699)
-    assert clock.progress_due(1600)
-    assert not clock.due(1900)
+    assert not clock.due(1899)
+    assert clock.due(1900)
+    clock.advance()
+    assert not clock.due(2799)
     assert clock.due(2800)
 
 

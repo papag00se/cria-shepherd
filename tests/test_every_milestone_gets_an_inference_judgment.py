@@ -16,6 +16,7 @@ def _judgment(decision="continue", usefulness_percent=50):
         "decision": decision,
         "reason": "The frozen workspace supports this holistic usefulness judgment.",
         "evidence": ["The implementation changed and the current checks are visible."],
+        "material_changes": "The parser accepts nested input now.",
     }
 
 
@@ -51,9 +52,10 @@ def test_only_holistic_inference_decisions_are_accepted():
     assert milestones.parse('{"usefulness_percent":50,"decision":"continue","reason":"x","tasks":[]}') is None
 
 
-def test_first_gate_is_30_minutes_and_has_no_numeric_completion_threshold():
+def test_first_report_is_fifteen_but_first_stop_decision_is_thirty():
     pacing = suite_run.MilestonePacing(started_at=0.0, interval_minutes=15, budget_intervals=5)
-    assert pacing.next_milestone == 30 * 60
+    assert pacing.next_milestone == 15 * 60
+    assert suite_run.milestone_terminal(_judgment("stalled"), 15, False) is None
     assert pacing.maximum_active_seconds == 75 * 60
     assert suite_run.milestone_terminal(_judgment("continue"), 30, False) is None
     assert suite_run.milestone_terminal(_judgment("stalled"), 30, False) == \
@@ -70,9 +72,10 @@ def test_usefulness_means_model_written_work_the_user_does_not_have_to_write():
         assert "Correct, reusable model-authored code retains value" in prompt
         assert "pre-existing code is not work delivered by the model" in prompt
         assert "not a count of task items, lines, passed checks" in prompt
-    assert "Do not continue merely because budget remains" in milestone_prompt
-    assert "no substantial requested code is ordinarily stalled" in milestone_prompt
-    assert "substantial correct partial work with a credible path forward" in milestone_prompt
+    # Judge instructions are the semantic contract, not an executable scoring rubric.
+    assert "SINCE THE PREVIOUS MILESTONE" in milestone_prompt
+    assert "Small but genuinely useful progress can justify another interval" in milestone_prompt
+    assert "No score threshold or legacy task budget overrides" in milestone_prompt
 
 
 def test_every_checkpoint_progress_report_states_the_usefulness_percentage():
@@ -87,7 +90,7 @@ def test_the_inferred_percentage_is_reported_but_never_mechanically_controls_the
     assert suite_run.milestone_terminal(_judgment("stalled", 99), 45, False) == \
         "milestone-stalled-45min"
     assert suite_run.milestone_terminal(_judgment("continue", 50), 60, False) is None
-    assert suite_run.milestone_terminal(_judgment("continue", 50), 75, True) == "budget-killed"
+    assert suite_run.milestone_terminal(_judgment("continue", 50), 75, True) is None
 
 
 def test_every_task_declares_an_integer_budget_not_a_second_judgment_contract():
@@ -114,13 +117,12 @@ def test_maximum_active_budget_is_fifteen_minutes_per_interval(tmp_path):
 
 def test_waiting_for_the_judge_does_not_consume_active_time():
     pacing = suite_run.MilestonePacing(started_at=100.0, interval_minutes=15, budget_intervals=4)
-    assert not pacing.due(1899.9)
-    assert pacing.due(1900.0)
+    assert not pacing.due(999.9)
+    assert pacing.due(1000.0)
     pacing.record_pause(40.0)
+    assert not pacing.due(1039.9)
+    assert pacing.due(1040.0)
+    pacing.advance()
+    assert pacing.next_milestone == 30 * 60
     assert not pacing.due(1939.9)
     assert pacing.due(1940.0)
-    assert not pacing.at_limit
-    pacing.advance()
-    assert pacing.next_milestone == 45 * 60
-    pacing.advance()
-    assert pacing.at_limit

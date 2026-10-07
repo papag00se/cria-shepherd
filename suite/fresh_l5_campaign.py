@@ -284,7 +284,7 @@ def _eligible(row: dict, revision: str) -> bool:
         type(row.get("level")) is int and row["level"] == LEVEL
         and type(row.get("live_engagement_level")) is int and row["live_engagement_level"] == LEVEL
         and not row.get("superseded") and not row.get("aborted")
-        and row.get("terminal") not in (None, "crashed-early")
+        and row.get("terminal") not in (None, "crashed-early", "harness-error")
         and row.get("workspace_lost") is False
         and (archive / "workspace").is_dir()
         and row.get("planner") == "off" and row.get("planner_enabled") is False

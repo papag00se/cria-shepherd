@@ -175,7 +175,7 @@ def report(rs: list[dict], now: float | None = None) -> str:
            f"**Report code revision `{sha()}`; inference anchor remains `{REPORT_INFERENCE_REVISION}`.**", "",
            "Each cell is an inferred usefulness percentage \U0001F7E2\u226588 \U0001F7E1\u226563 "
            "\U0001F7E0\u226538 \U0001F534 below; `\u00b7` = not judged. `[engagement] level = 0..5`, "
-           "each rung implying every rung below it. Model rows use the [official project names](../model-names.md). "
+           "each rung implying every rung below it. Model rows use the [official project names](model-names.md). "
            "Gemma4/QAT share the single `gemma4_12b` row: frozen history remains for unreplaced cells "
            "and the latest live judgment supersedes its matching cell. Historical model keys, run IDs "
            "and executable aliases retain their original provenance.", ""]
@@ -228,7 +228,7 @@ def report(rs: list[dict], now: float | None = None) -> str:
 
 
 def write_report(rs: list[dict]) -> Path:
-    path = SUITE.parent / "docs" / "audits" / "battery-report.md"
+    path = SUITE.parent / "docs" / "battery-report.md"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(report(rs))
     return path
