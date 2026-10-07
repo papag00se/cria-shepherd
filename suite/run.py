@@ -28,6 +28,7 @@ import signal
 import site
 import subprocess
 import sys
+import shutil
 import tempfile
 import time
 import tomllib
@@ -148,12 +149,44 @@ def _codex_argv(prompt: str, workspace=None):
 HARNESSES = {"codex": _codex_argv}
 
 
-def _codex_env(base: dict) -> dict:
+def cell_codex_home(workspace: Path) -> Path:
+    """Copy only routing configuration, never credentials or mutable shared state."""
+    home = _cell_install_root(workspace) / 'codex-home'
+    home.mkdir(parents=True, exist_ok=False)
+    shutil.copyfile(SUITE_CODEX_HOME / 'config.toml', home / 'config.toml')
+    return home
+
+
+def local_codex_catalog(model: str, context: int, home: Path) -> Path:
+    """Explicit capabilities avoid Codex's unknown-model fallback (which omits patching)."""
+    from cria import prompts
+    record = {
+        'slug': model, 'display_name': model,
+        'description': prompts.load('codex_suite_model_description').strip(),
+        'base_instructions': prompts.load('codex_suite_base'),
+        'default_reasoning_level': 'none', 'supported_reasoning_levels': [],
+        'shell_type': 'unified_exec', 'visibility': 'list', 'supported_in_api': True,
+        'priority': 0, 'apply_patch_tool_type': 'freeform',
+        'context_window': context, 'max_context_window': context,
+        'effective_context_window_percent': 95,
+        'truncation_policy': {'mode': 'tokens', 'limit': context},
+        'input_modalities': ['text'], 'supports_image_detail_original': False,
+        'default_reasoning_summary': 'none', 'support_verbosity': False,
+        'experimental_supported_tools': [],
+        'include_skills_usage_instructions': False,
+        'include_plugin_usage_instructions': False, 'include_apps_usage_instructions': False,
+    }
+    path = home / 'models.json'
+    path.write_text(json.dumps({'models': [record]}, ensure_ascii=False) + '\n')
+    return path
+
+
+def _codex_env(base: dict, workspace: Path | None = None) -> dict:
     """Force the suite's cria-routing Codex home onto the child env, whatever the operator's shell
     had. The override is the point: an inherited CODEX_HOME (a `.envrc` left active, an export in a
     profile) would otherwise silently repoint the harness, and the run would score a different
     target than the one it names. Returns a new dict; the input is not mutated."""
-    return {**base, "CODEX_HOME": str(SUITE_CODEX_HOME)}
+    return {**base, "CODEX_HOME": str(cell_codex_home(workspace) if workspace else SUITE_CODEX_HOME)}
 
 
 def _require_codex_home() -> None:
@@ -747,7 +780,7 @@ def throttled_mid_run(session_dir) -> str:
 RESTORED_CODEX_BINARY = Path.home() / ".local/share/mise/installs/codex/0.159.3/bin/codex"
 
 
-def restored_codex_argv(argv, model, context, adapter_url):
+def restored_codex_argv(argv, model, context, adapter_url, home=None):
     """Supported provider URL overrides only; explicit binary avoids mise latest drift."""
     home_config = tomllib.loads((SUITE_CODEX_HOME / "config.toml").read_text())
     provider = home_config.get("model_provider")
@@ -767,6 +800,11 @@ def restored_codex_argv(argv, model, context, adapter_url):
     extra = ["-c", f"model_providers.{provider}.base_url=" + json.dumps(adapter_url),
              "-c", "model=" + json.dumps(model), "-c", f"model_context_window={context}",
              "-c", f"model_auto_compact_token_limit={int(context * .85)}"]
+    if home is not None:
+        catalog = local_codex_catalog(model, context, home)
+        extra += ['-c', 'model_catalog_json=' + json.dumps(str(catalog))]
+        provenance['model_catalog'] = l0_config_fingerprint(catalog)
+        provenance['cell_home'] = str(home)
     return [str(RESTORED_CODEX_BINARY), *argv[1:-1], *extra, argv[-1]], provenance
 
 
@@ -862,6 +900,7 @@ def main() -> None:
         suite_scratch = state / 'tmp'
         suite_scratch.mkdir(parents=True, exist_ok=True)
 
+    env = None
     adapter = None
     harness_provenance = None
     if args.restored_fleet:
@@ -872,12 +911,16 @@ def main() -> None:
         if l0_campaign.validate_live(CRIA_TOML) != live_snapshot:
             raise RuntimeError("live L0 config changed during switch")
         spec = fleet["roles"][args.model]
+        env = _codex_env(dict(os.environ, **_isolated_installs(ws)), ws)
         adapter = SamplingAdapter(spec["coder"], RateLimitGate(l0_campaign.ROOT))
         harness_argv, harness_provenance = restored_codex_argv(
-            harness_argv, args.model, fleet["config"]["models"][args.model]["ctx"], adapter.base_url)
+            harness_argv, args.model, fleet["config"]["models"][args.model]["ctx"], adapter.base_url,
+            Path(env['CODEX_HOME']))
     else:
         swap_model(args.model)
         spec = configure_cria(args.model, args.planner == "on")
+    if env is None:
+        env = _codex_env(dict(os.environ, **_isolated_installs(ws)), ws)
     live_config = tomllib.loads(CRIA_TOML.read_text())
     planner_enabled_verified = live_config.get("planner", {}).get("enabled", False)
     repo_root = str(SUITE.parent)
@@ -904,7 +947,6 @@ def main() -> None:
     before_sessions = set(p.name for p in CALLS_DIR.glob("2*"))
     installs_before = user_install_listing()
 
-    env = _codex_env(dict(os.environ, **_isolated_installs(ws)))
     if suite_scratch is not None:
         env['TMPDIR'] = str(suite_scratch)
     with adapter if adapter is not None else nullcontext():

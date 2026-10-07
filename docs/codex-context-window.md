@@ -61,6 +61,36 @@ trigger as `model_auto_compact_token_limit` if set, else 90% of the window
 (`ModelInfo::auto_compact_token_limit` = `context_window * 9 / 10`), and `min(explicit,
 derived)` means an explicit trigger can only pull it lower, never past the wall.
 
+## Suite model metadata and writable homes
+
+The restored L0 launcher also supplies `model_catalog_json` in Codex 0.159.3. Context
+numbers alone do not supply tool capabilities: the unknown-model fallback omitted
+`apply_patch` while its instructions still required it. The suite's explicit local
+catalog declares the native freeform patch tool, actual runtime context, text input,
+and no requested reasoning. It uses the original generic Codex instructions retained
+in `cria/prompts/codex_suite_base.txt`, with the patch example corrected to the translated
+`input` argument; it does not impersonate another model or enable planning.
+
+Responses freeform tools translate to Chat-Completions functions with one string `input`.
+The full input-format declaration remains in the schema description (not backend grammar
+enforcement); replies return native `custom_tool_call` items, and calls/results round-trip
+without changing patch bytes. Streaming and buffered paths use the request's tool types,
+not tool-name guesses. Real pinned-Codex tests execute an allowed patch and reject an
+outside-workspace patch through an L0 server and fake upstream, without GPU inference.
+
+Each suite child now gets a fresh `codex-home` in its isolated cell install directory.
+Only routing `config.toml` is copied; credentials, shared skills, sessions and databases
+are not. Codex may write trust bookkeeping there without modifying the fingerprinted
+canonical template. Each restored row records its catalog digest and cell home.
+
+`l0_campaign.py --resume-after-launcher-repair OLD_SHA --campaign-revision NEW_SHA`
+is an explicit, locked provenance transition, not a retry. It preserves only completed,
+judged fresh runs from that campaign with their exact original revision and fleet snapshot;
+remaining untouched cells run at the new immutable revision. All fleet assets must remain
+exact, except inode/mtime changes for a byte-identically restored canonical Codex config.
+The original manifest and repair history are retained. Reports must disclose this revision
+boundary; the first result is neither overwritten nor reclassified as a repaired run.
+
 ## Minimal setup
 
 Point Codex at cria via an isolated `CODEX_HOME` (so your global `~/.codex` is untouched):

@@ -1,0 +1,1 @@
+Local coding model served through the configured Responses provider.

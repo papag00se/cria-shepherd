@@ -225,21 +225,26 @@ def valid_row(row, manifest):
         from .fresh_l5_campaign import _valid_capture_evidence
     except ImportError:
         from fresh_l5_campaign import _valid_capture_evidence
-    if (row.get('campaign_id') != manifest['campaign_id'] or row.get('revision') != manifest['revision']
-        or row.get('code_revision') != manifest['revision'] or row.get('model') not in MODELS
+    preserved = manifest.get('preserved_runs', {}).get(row.get('run_id'))
+    if preserved and (preserved['model'], preserved['task']) != (row.get('model'), row.get('task')):
+        return False
+    revision = preserved['revision'] if preserved else manifest['revision']
+    snapshot = preserved['fleet_snapshot'] if preserved else manifest['fleet_snapshot']
+    if (row.get('campaign_id') != manifest['campaign_id'] or row.get('revision') != revision
+        or row.get('code_revision') != revision or row.get('model') not in MODELS
         or row.get('task') not in TASKS or row.get('restored_fleet') is not True
         or row.get('level') != 0 or row.get('live_engagement_level') != 0
         or row.get('planner') != 'off' or row.get('planner_enabled') is not False
         or row.get('planner_phase_count') != 0 or row.get('aborted') or row.get('workspace_lost')
         or row.get('terminal') == 'harness-error' or row.get('pacing_policy') != POLICY
-        or row.get('fleet_snapshot') != manifest['fleet_snapshot']
+        or row.get('fleet_snapshot') != snapshot
         or not isinstance(row.get('capture_snapshot'),dict)):
         return False
     archive=Path(row.get('archive') or '')/'workspace'
     log=Path(row.get('harness_log') or '')
     if not archive.is_dir() or not log.is_file() or not _valid_capture_evidence(row): return False
     try:
-        source=manifest['fleet_snapshot']['roles'][row['model']]['coder']
+        source=snapshot['roles'][row['model']]['coder']
         return (row.get('source_coder_sampling') == source and
                 row.get('actual_sent_sampling') == actual_sampling(row['capture_snapshot'],row['model'],source)
                 and bool(row.get('injected_sampling'))
@@ -292,10 +297,50 @@ def cell_command(manifest, cell):
             '--campaign-revision',manifest['revision']]
 
 
+def resume_after_repair(manifest, previous_revision, revision, snapshot, rows):
+    """Explicit provenance transition; never retry an attempted cell or rewrite a result."""
+    if manifest['revision'] != previous_revision or revision == previous_revision:
+        raise ValueError('repair must name the previous and a new revision')
+    previous_snapshot = manifest['fleet_snapshot']
+    if previous_snapshot != snapshot:
+        # Codex atomically rewrote ONLY its trust metadata. Restoring byte-identical
+        # configuration cannot restore a deleted inode; all other assets stay exact.
+        config = str(Path.home() / '.cria/codex-home/config.toml')
+        old = previous_snapshot.get('assets', {}).get(config, {})
+        new = snapshot.get('assets', {}).get(config, {})
+        normalized = {**snapshot, 'assets': {**snapshot.get('assets', {}), config: old}}
+        if (not old.get('sha256') or old['sha256'] != new.get('sha256')
+                or old.get('size') != new.get('size') or normalized != previous_snapshot):
+            raise ValueError('repair cannot adopt changed fleet assets')
+    if any(c['state'] not in ('done', 'pending') for c in manifest['cells']):
+        raise ValueError('repair requires completed judgments and untouched pending cells')
+    preserved = dict(manifest.get('preserved_runs', {}))
+    for cell in manifest['cells']:
+        if cell['state'] == 'pending':
+            if 'attempted_at' in cell or 'run_id' in cell:
+                raise ValueError('pending cell has an attempt; no automatic retry')
+            continue
+        found = [r for r in rows if r.get('campaign_id') == manifest['campaign_id']
+                 and r.get('run_id') == cell['run_id']]
+        if (len(found) != 1 or found[0].get('started', 0) < manifest['created']
+                or not valid_row(found[0], manifest) or not judgment(found[0])):
+            raise ValueError('repair requires valid completed fresh evidence')
+        row = found[0]
+        preserved[row['run_id']] = {**{k: row[k] for k in ('revision', 'model', 'task')},
+                                   'fleet_snapshot': row['fleet_snapshot']}
+    manifest.setdefault('repair_history', []).append({
+        'at': time.time(), 'from_revision': previous_revision, 'to_revision': revision,
+        'preserved_run_ids': sorted(preserved)})
+    manifest.update(revision=revision, preserved_runs=preserved, fleet_snapshot=snapshot)
+    return manifest
+
+
 def main():
     ap=argparse.ArgumentParser(description=__doc__)
     ap.add_argument('--campaign-id',required=True)
     ap.add_argument('--campaign-revision',required=True)
+    ap.add_argument('--resume-after-launcher-repair', metavar='PREVIOUS_REVISION',
+                    help='explicitly preserve completed current cells under their original revision')
     ap.add_argument('--drive',action='store_true',help='drive serial cells, waiting for independent final judgments')
     args=ap.parse_args()
     directory=campaign_dir(args.campaign_id)
@@ -312,6 +357,15 @@ def main():
         fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
         path=directory/'manifest.json'
         manifest=json.loads(path.read_text()) if path.exists() else create_manifest(args.campaign_id,args.campaign_revision,snapshot)
+        if args.resume_after_launcher_repair:
+            # Exclusive driver lock is held. The original manifest remains immutable evidence.
+            before = directory / ('manifest-before-repair-' + manifest['revision'] + '.json')
+            original_text = json.dumps(manifest, indent=2) + '\n'
+            resume_after_repair(manifest, args.resume_after_launcher_repair,
+                                args.campaign_revision, snapshot, read_rows())
+            with before.open('x') as original:
+                original.write(original_text)
+            save(path, manifest)
         if (manifest['revision'] != args.campaign_revision or manifest['fleet_snapshot'] != snapshot
             or manifest['models'] != list(MODELS) or manifest['tasks'] != list(TASKS)
             or manifest['campaign_id'] != args.campaign_id):

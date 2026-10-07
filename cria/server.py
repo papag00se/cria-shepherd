@@ -1627,11 +1627,12 @@ class CriaHandler(BaseHTTPRequestHandler):
                   inbound_tool_types=sorted({(t.get("type") if isinstance(t, dict) else "?") for t in _raw_tools}),
                   tools_after=len(body.get("tools") or []))
         if stream:
-            self._respond_responses_stream(body, sess_key, rlog)
+            self._respond_responses_stream(body, sess_key, rlog, responses.custom_tool_names(rbody))
         else:
-            self._respond_responses_buffered(body, sess_key, rlog)
+            self._respond_responses_buffered(body, sess_key, rlog, responses.custom_tool_names(rbody))
 
-    def _respond_responses_stream(self, body: dict, sess_key: str, rlog) -> None:
+    def _respond_responses_stream(self, body: dict, sess_key: str, rlog,
+                                  custom_tools: frozenset[str] = frozenset()) -> None:
         self.close_connection = True
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
@@ -1712,7 +1713,7 @@ class CriaHandler(BaseHTTPRequestHandler):
             for chunk in responses.body_events(comp, resp_id, model, banner,
                                                show_reasoning=show_reasoning,
                                                reasoning_transcript=reasoning_transcript,
-                                               start_index=start_index, extra_items=extra_items):
+                                               start_index=start_index, extra_items=extra_items, custom_tools=custom_tools):
                 hb.write(chunk)
             rlog.emit("response.sent", api="responses", stream=True, beats=hb.beats,
                       status_lines=len(status_lines))
@@ -1743,7 +1744,8 @@ class CriaHandler(BaseHTTPRequestHandler):
             banner += f" · {tps:.0f} tok/s"
         return banner
 
-    def _respond_responses_buffered(self, body: dict, sess_key: str, rlog) -> None:
+    def _respond_responses_buffered(self, body: dict, sess_key: str, rlog,
+                                    custom_tools: frozenset[str] = frozenset()) -> None:
         try:
             comp, _indic = self._produce_completion(body, rlog, sess_key)
         except UpstreamError as e:
@@ -1760,7 +1762,8 @@ class CriaHandler(BaseHTTPRequestHandler):
         banner = self._compute_banner(comp, _indic, rlog)  # parity with the streaming path
         self._send_raw_json(json.dumps(responses.to_responses_json(
             comp, body.get("model", "") or "", show_reasoning=show_reasoning,
-            reasoning_transcript=reasoning_transcript, banner=banner)).encode("utf-8"))
+            reasoning_transcript=reasoning_transcript, banner=banner,
+            custom_tools=custom_tools)).encode("utf-8"))
         rlog.emit("response.sent", api="responses", stream=False)
 
     def _send_raw_json(self, raw: bytes) -> None:

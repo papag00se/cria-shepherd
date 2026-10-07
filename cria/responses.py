@@ -20,7 +20,7 @@ import json
 import uuid
 from collections.abc import Iterator
 
-from . import bodykeys
+from . import bodykeys, prompts
 from .indicators import MARKER, THINK_FENCE
 
 
@@ -52,17 +52,19 @@ def to_chat_body(r: dict) -> dict:
                     sys_parts.append(text)
             else:
                 rest.append({"role": "assistant" if role == "assistant" else "user", "content": text})
-        elif t == "function_call":
+        elif t in ("function_call", "custom_tool_call"):
             rest.append({
                 "role": "assistant",
                 "content": None,
                 "tool_calls": [{
                     "id": item.get("call_id") or item.get("id") or _new_id("call"),
                     "type": "function",
-                    "function": {"name": item.get("name", ""), "arguments": _as_args_str(item.get("arguments"))},
+                    "function": {"name": item.get("name", ""), "arguments": (
+                        json.dumps({"input": item.get("input", "")}, ensure_ascii=False)
+                        if t == "custom_tool_call" else _as_args_str(item.get("arguments")))},
                 }],
             })
-        elif t == "function_call_output":
+        elif t in ("function_call_output", "custom_tool_call_output"):
             call_id = item.get("call_id") or item.get("id")
             if call_id is None:
                 continue  # no id to pair on — a role:tool with null tool_call_id orphans and
@@ -157,7 +159,7 @@ def _to_chat_tool_choice(tc):
     if tc is None or isinstance(tc, str):
         return tc
     if isinstance(tc, dict):
-        if tc.get("type") == "function" and tc.get("name"):
+        if tc.get("type") in ("function", "custom") and tc.get("name"):
             return {"type": "function", "function": {"name": tc["name"]}}
         if tc.get("type") == "function" and isinstance(tc.get("function"), dict):
             return tc  # already nested
@@ -166,7 +168,8 @@ def _to_chat_tool_choice(tc):
 
 def _to_chat_tools(tools) -> list[dict]:
     """Responses tools are FLAT (`{type:function, name, description, parameters}`);
-    chat completions nests them under `function`. Non-function tools are skipped."""
+    chat completions nests them under `function`. Custom freeform tools use one string input;
+    namespace/search controls are handled by their existing compatibility policy."""
     out = []
     for t in tools or []:
         if not isinstance(t, dict):
@@ -175,6 +178,14 @@ def _to_chat_tools(tools) -> list[dict]:
             # Codex sends client-side namespace controls and a native search capability. Neither
             # has a Chat-Completions schema; L2+ re-advertises search through cria's portable tool
             # layer, so they must not make a coding request invalid at this boundary.
+            continue
+        if t.get("type") == "custom":
+            out.append({"type": "function", "function": {
+                "name": t["name"], "description": t.get("description", ""),
+                "parameters": {"type": "object", "properties": {"input": {
+                    "type": "string", "description": prompts.load("responses_freeform_input")
+                    + json.dumps(t.get("format", {"type": "text"}), ensure_ascii=False)}},
+                    "required": ["input"], "additionalProperties": False}}})
             continue
         if t.get("type") != "function":
             raise ValueError(f"unsupported Responses tool type: {t.get('type')!r}")
@@ -188,6 +199,12 @@ def _to_chat_tools(tools) -> list[dict]:
             fn["strict"] = t["strict"]  # carry structured-output enforcement across the boundary
         out.append({"type": "function", "function": fn})
     return out
+
+
+def custom_tool_names(request: dict) -> frozenset[str]:
+    """Request-scoped wire intent, not a name-based guess or process-global registry."""
+    return frozenset(t['name'] for t in request.get('tools') or []
+                     if t.get('type') == 'custom')
 
 
 # ------------------------------------------------------------------ outbound
@@ -317,6 +334,25 @@ def _message_item(text: str, idx: int) -> tuple[list[bytes], dict]:
     return evs, done
 
 
+def _custom_item(tc: dict, idx: int) -> tuple[list[bytes], dict]:
+    fn = tc['function']
+    args = json.loads(_as_args_str(fn.get('arguments')))
+    if not isinstance(args, dict) or set(args) != {'input'} or not isinstance(args['input'], str):
+        raise ValueError('custom tool requires exactly one string input')
+    item_id = _new_id('ctc')
+    done = {'id': item_id, 'type': 'custom_tool_call', 'status': 'completed',
+            'name': fn['name'], 'call_id': tc.get('id') or _new_id('call'), 'input': args['input']}
+    return [
+        _event('response.output_item.added', {'output_index': idx,
+            'item': {**done, 'status': 'in_progress', 'input': ''}}),
+        _event('response.custom_tool_call_input.delta', {'item_id': item_id, 'output_index': idx,
+            'delta': args['input']}),
+        _event('response.custom_tool_call_input.done', {'item_id': item_id, 'output_index': idx,
+            'input': args['input']}),
+        _event('response.output_item.done', {'output_index': idx, 'item': done}),
+    ], done
+
+
 def _function_item(tc: dict, idx: int) -> tuple[list[bytes], dict]:
     fn = tc.get("function") or {}
     item_id = _new_id("fc")
@@ -346,7 +382,8 @@ def _reasoning_transcript_block(reasoning: str) -> str:
 
 def body_events(completion: dict, resp_id: str, model: str, banner: str | None = None,
                 show_reasoning: bool = False, reasoning_transcript: bool = False,
-                start_index: int = 0, extra_items: list | None = None) -> Iterator[bytes]:
+                start_index: int = 0, extra_items: list | None = None,
+                custom_tools: frozenset[str] = frozenset()) -> Iterator[bytes]:
     """Everything after `response.created`: the model's reasoning (its 'thinking', when present and
     enabled), an optional cria banner line, one message item (if any text), one function_call item
     per tool call, then `response.completed`."""
@@ -390,7 +427,8 @@ def body_events(completion: dict, resp_id: str, model: str, banner: str | None =
         evs, done = _message_item(text, idx); out_items.append(done); idx += 1
         yield from evs
     for tc in msg.get("tool_calls") or []:
-        evs, done = _function_item(tc, idx); out_items.append(done); idx += 1
+        emit_item = _custom_item if tc.get('function', {}).get('name') in custom_tools else _function_item
+        evs, done = emit_item(tc, idx); out_items.append(done); idx += 1
         yield from evs
 
     resp = {"id": resp_id, "object": "response", "status": "completed", "model": model,
@@ -398,15 +436,17 @@ def body_events(completion: dict, resp_id: str, model: str, banner: str | None =
     yield _event("response.completed", {"response": resp})
 
 
-def to_responses_sse(completion: dict, model: str, resp_id: str | None = None, banner: str | None = None) -> Iterator[bytes]:
+def to_responses_sse(completion: dict, model: str, resp_id: str | None = None, banner: str | None = None,
+                     custom_tools: frozenset[str] = frozenset()) -> Iterator[bytes]:
     """Full SSE stream (created + body) — for when there's no early-created split."""
     rid = resp_id or _new_id("resp")
     yield created_event(rid, model)
-    yield from body_events(completion, rid, model, banner)
+    yield from body_events(completion, rid, model, banner, custom_tools=custom_tools)
 
 
 def to_responses_json(completion: dict, model: str, show_reasoning: bool = False,
-                      reasoning_transcript: bool = False, banner: str | None = None) -> dict:
+                      reasoning_transcript: bool = False, banner: str | None = None,
+                      custom_tools: frozenset[str] = frozenset()) -> dict:
     """Non-streaming Responses object (stream:false). Mirrors ``body_events`` — including the
     ⟦cria⟧ lead (reasoning transcript + banner) — so the buffered and streaming paths agree."""
     choice = (completion.get("choices") or [{}])[0]
@@ -436,6 +476,9 @@ def to_responses_json(completion: dict, model: str, show_reasoning: bool = False
                     "content": [{"type": "output_text", "text": text}]})
     for tc in msg.get("tool_calls") or []:
         fn = tc.get("function") or {}
+        if fn.get('name') in custom_tools:
+            out.append(_custom_item(tc, len(out))[1])
+            continue
         out.append({"id": _new_id("fc"), "type": "function_call", "status": "completed",
                     "name": fn.get("name", ""), "call_id": tc.get("id") or _new_id("call"),
                     "arguments": _as_args_str(fn.get("arguments"))})
