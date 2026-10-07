@@ -1,0 +1,10 @@
+{
+  "historical_status": "Original historical evidence; inactive and not revalidated. Does not replace current benchmark scores or active runtime prompts.",
+  "source_branch": "origin/docs/ornith-feed-cross-archive-matrix",
+  "source_commit": "edc7f7ac018faa20fda1ee14e3b2ec00b2830f46",
+  "archive_paths": [
+    "docs/research-archive/2026-10-07/docs-ornith-feed-cross-archive-matrix/docs/audits/2026-09-18-ornith-feed-cross-archive-matrix.md"
+  ],
+  "canonical_ledger_unchanged": true,
+  "validation": "Exact Git source postimages / selected record fields preserved; no inference, replay, or provider calls."
+}
