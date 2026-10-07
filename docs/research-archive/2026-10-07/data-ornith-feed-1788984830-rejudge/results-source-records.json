@@ -1,0 +1,142 @@
+[
+  {
+    "run_id": "feed-pipeline-java_ornith15_codex_poff_1788984830",
+    "task": "feed-pipeline-java",
+    "model": "ornith15",
+    "harness": "codex",
+    "planner": "off",
+    "note": "Maven flagged-line grounding 8c679c0",
+    "sampling": {
+      "coder": {
+        "temperature": 0.6,
+        "top_p": 0.95,
+        "top_k": 20,
+        "min_p": 0.0,
+        "presence_penalty": 0.0,
+        "repeat_penalty": 1.0
+      },
+      "reasoner": {
+        "temperature": 1.0,
+        "top_p": 0.95,
+        "top_k": 20,
+        "min_p": 0.0,
+        "presence_penalty": 1.5,
+        "repeat_penalty": 1.0
+      },
+      "classifier": {
+        "temperature": 0.0,
+        "presence_penalty": 0.0,
+        "repeat_penalty": 1.0
+      },
+      "compactor": {
+        "temperature": 0.0,
+        "presence_penalty": 0.0,
+        "repeat_penalty": 1.0
+      }
+    },
+    "level": 5,
+    "started": 1788984841.3197398,
+    "wall_seconds": 3134.2,
+    "active_seconds": 2720.1,
+    "terminal": "milestone-stalled-45min",
+    "milestone_minutes": 15,
+    "budget_intervals": 5,
+    "milestone_judgments": [
+      {
+        "at_active_minutes": 30,
+        "usefulness_percent": 35,
+        "decision": "continue",
+        "reason": "Substantial requested structures are present and the correct OpenCSV dependency was added, but the loader uses nonexistent/incorrect OpenCSV APIs, the worker tasks are invoked sequentially, one helper clears computed totals, and REVIEW.md is absent. Fresh compiler feedback gives this active run a credible path to materially improve in another interval.",
+        "evidence": [
+          "pom.xml declares com.opencsv:opencsv:5.9",
+          "Importer.java adds per-reason skipped counters, currency handling, linear SKU deduplication, and private worker maps",
+          "Importer.java imports/uses unresolved CSVRecord and CSVParser/buildWithParser APIs",
+          "RecursiveTask instances are invoked one-by-one without being forked",
+          "worker() clears privateTotals after accumulation",
+          "No REVIEW.md exists in the frozen workspace"
+        ]
+      },
+      {
+        "at_active_minutes": 45,
+        "usefulness_percent": 35,
+        "decision": "stalled",
+        "reason": "The 45-minute snapshot is byte-identical to the 30-minute snapshot after another full active interval, with the same noncompiling OpenCSV loader, sequential task invocation, totals-clearing helper, and missing REVIEW.md. Repeated non-advance makes further useful progress unlikely in this run.",
+        "evidence": [
+          "Importer.java SHA-256 is identical at 30 and 45 minutes",
+          "pom.xml SHA-256 is identical at 30 and 45 minutes",
+          "A recursive diff outside .git reports no changes between snapshots",
+          "No REVIEW.md exists at either checkpoint",
+          "The unchanged Importer.java still uses unresolved CSVRecord/CSVParser/buildWithParser APIs"
+        ]
+      }
+    ],
+    "calls": 102,
+    "phases": {
+      "classifier": 1,
+      "coder": 61,
+      "compactor": 3,
+      "satisfaction": 11,
+      "reasoner": 6,
+      "steer-code": 4,
+      "self-compact": 5,
+      "compaction-validate-retrospective": 5,
+      "compaction-validate-scope": 3,
+      "compaction-validate-fidelity": 3
+    },
+    "avg_tok_s": 70.5,
+    "output_tokens_timed": 94592,
+    "assists": {
+      "context.window": 1,
+      "context.calibrated": 2,
+      "decision": 1,
+      "loop.start": 1,
+      "writeproxy.lowered": 37,
+      "compat.connect": 1,
+      "rumination.abort": 5,
+      "loop.rumination": 5,
+      "loop.rumination_reasoning_off": 5,
+      "writeproxy.blocked_external": 1,
+      "loop.write_streak_corrected": 3,
+      "loop.periodic_gate": 3,
+      "gate.transport_page": 10,
+      "loop.gate_offline": 4,
+      "loop.periodic_gate_result": 3,
+      "harness.truncated_a_result": 174,
+      "context.repeat_dedup": 30,
+      "context.focus_trim": 29,
+      "loop.work_log_denied": 3,
+      "evidence.repeats_folded": 3,
+      "evidence.summarised": 3,
+      "loop.judge_files_seeded": 3,
+      "loop.verify_inspect": 11,
+      "loop.verdict_by_tool": 2,
+      "loop.negative_diagnosis_suppressed": 3,
+      "loop.satisfaction_check": 3,
+      "loop.wheel_spinning": 1,
+      "loop.spin_probe": 1,
+      "loop.steer_multiple_actions": 1,
+      "loop.spin_probe_result": 1,
+      "loop.satisfaction_blocked": 4,
+      "loop.steer_diagnostic_action": 1,
+      "loop.steer_outcome": 2,
+      "loop.thrash_diagnosed": 2,
+      "context.compaction_validation": 5,
+      "context.floor": 24,
+      "context.floor_over_budget": 6,
+      "loop.steer_restate": 2,
+      "loop.steer_dictated_code": 1,
+      "summarize.truncated": 1
+    },
+    "workspace": "/home/jesse/suite-runs/suite-feed-pipeline-java_ornith15_codex_poff_1788984830-irlz6xw4",
+    "archive": "/home/jesse/.cria/suite/feed-pipeline-java_ornith15_codex_poff_1788984830",
+    "user_install_leak": [],
+    "capture_dir": "/home/jesse/.cria/calls/20260909T131401-01a087ce-54c2-7940-8284-95520d92fd12",
+    "capture_dirs": [
+      "/home/jesse/.cria/calls/20260909T131401-01a087ce-54c2-7940-8284-95520d92fd12"
+    ],
+    "harness_log": "/home/jesse/src/cria-shepherd/suite/results/feed-pipeline-java_ornith15_codex_poff_1788984830.log",
+    "usefulness_percent": 20,
+    "usefulness_reason": "The model-authored build descriptor adds OpenCSV and the importer contains a substantially expanded intended parser, malformed-value counters, and per-chunk accumulation design. The delivered importer cannot compile because it imports and uses undefined parser APIs, lacks the requested review document, and does not establish actual parallelism, correctness, or speedup.",
+    "usefulness_model": "campaign agent, full toolset"
+  }
+]
