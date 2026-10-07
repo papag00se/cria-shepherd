@@ -1,0 +1,147 @@
+[
+  {
+    "run_id": "feed-pipeline-java_ornith15_codex_poff_1788969546",
+    "task": "feed-pipeline-java",
+    "model": "ornith15",
+    "harness": "codex",
+    "planner": "off",
+    "note": "BATTERY2 L5 ornith15 381c3b0 p4",
+    "sampling": {
+      "coder": {
+        "temperature": 0.6,
+        "top_p": 0.95,
+        "top_k": 20,
+        "min_p": 0.0,
+        "presence_penalty": 0.0,
+        "repeat_penalty": 1.0
+      },
+      "reasoner": {
+        "temperature": 1.0,
+        "top_p": 0.95,
+        "top_k": 20,
+        "min_p": 0.0,
+        "presence_penalty": 1.5,
+        "repeat_penalty": 1.0
+      },
+      "classifier": {
+        "temperature": 0.0,
+        "presence_penalty": 0.0,
+        "repeat_penalty": 1.0
+      },
+      "compactor": {
+        "temperature": 0.0,
+        "presence_penalty": 0.0,
+        "repeat_penalty": 1.0
+      }
+    },
+    "level": 5,
+    "started": 1788969556.8132956,
+    "wall_seconds": 4808.3,
+    "active_seconds": 3620.2,
+    "terminal": "milestone-stalled-60min",
+    "milestone_minutes": 15,
+    "budget_intervals": 5,
+    "milestone_judgments": [
+      {
+        "at_active_minutes": 30,
+        "usefulness_percent": 50,
+        "decision": "continue",
+        "reason": "L5, 30-min, INSPECTED, diffed vs seed. DEP-CACHE FIX WORKS END-TO-END: 0 offline-misinference calls and NO ./tmp/m2repo scratch repo built \u2014 the prior run (1788933193) burned ~5 early turns inferring 'no network' and hand-building that repo; this run avoided the rabbit hole entirely. With those turns freed the model reached the code sooner: Importer.java genuinely rewritten (237L vs seed 129L) with opencsv wired (0 hand-split), thread-safety x4, 12 skip/reason refs, and compile errors already down to 8 (prior run was at 12 at this checkpoint). Rumination reasoning-off fired 7x (still active). Gaps: does not compile yet (8 errors), no REVIEW.md. Decision=continue: ahead of the prior run on every axis; grant time to drive 8->0 and add REVIEW.md. ~50 (offline waste removed + fewer errors + full requirement coverage, docked for non-compile + missing REVIEW).",
+        "evidence": [
+          "0 offline-misinference in coder reasoning; no tmp/m2repo built (prior run: both present)",
+          "compile errors 8 at 30min (prior run 1788933193: 12 at 30min)",
+          "Importer 237L vs seed 129L; opencsv=3, handsplit=0, threadsafe=4, skip=12",
+          "loop.rumination_reasoning_off x7; no REVIEW.md yet"
+        ]
+      },
+      {
+        "at_active_minutes": 45,
+        "usefulness_percent": 70,
+        "decision": "continue",
+        "reason": "L5, 45-min, JUDGED ON SUBSTANCE. Holds at ~70: all hard requirements remain implemented (R2 correct per-worker-local-merge determinism, R3 real opencsv + currency/thousands clean + skipped-reason, R4 Summary{skus,rows,totals} preserved, R1 parallel design for speed). Dep-cache fix still holding (0 offline-misinference, no tmp/m2repo). BUT no advance this interval: Importer unchanged at 237L, still 4 unique shallow compile errors, REVIEW.md still absent. reasoning-off fired 6x. This is the first no-advance interval; one more continue to 60 to see whether it lands REVIEW.md (the one whole missing deliverable) or closes the 4 trivial type errors. If 60 also shows no advance it is stalled at ~70 (a strong partial: hard requirements done, ~10 min of dev cleanup + REVIEW.md outstanding). Well above the prior run (40%) which never got the requirements coherent.",
+        "evidence": [
+          "substance stable: opencsv/threads/Summary/skip all present; 4 unique compile errors (same as 30min)",
+          "REVIEW.md absent; Importer 237L unchanged 30->45min (no advance this interval)",
+          "dep-cache fix holds: 0 offline-misinference, no tmp/m2repo; reasoning_off x6"
+        ]
+      },
+      {
+        "at_active_minutes": 60,
+        "usefulness_percent": 70,
+        "decision": "stalled",
+        "reason": "L5, 60-min terminal, JUDGED ON SUBSTANCE (not error count). Strong partial, held at ~70 across all three checkpoints. 4 of 5 requirements substantially implemented: R2 correct parallel determinism (threads + per-worker-local-map merge, order-independent), R3 real opencsv CSVReader (no hand-rolled parser) with currency/thousands cleaning + 21 skip/reason refs, R4 Summary{skus,rows,totals} preserved, R1 parallel design for the 4x speed. Outstanding: REVIEW.md ABSENT (the one whole missing deliverable, R5) and 3 unique shallow compile errors remain (4->4->3; ~10 min of dev cleanup, not missing work). Stalled=won't reach complete within budget (no REVIEW.md, doesn't compile), but this is the job largely done for the dev. THE TWO FIXES BOTH WORKED: dep-cache offline note held all run (0 offline-misinference, no tmp/m2repo \u2014 prior run 1788933193 wasted ~5 turns there), rumination reasoning-off fired throughout. Net: 8% (pre-fix) -> 40% (rumination fix, requirements incoherent) -> 70% (dep-cache fix, coherent implementation of the hard requirements). The freed early turns let the model actually build the design.",
+        "evidence": [
+          "R2 threads+local-merge determinism, R3 opencsv+skip-reason x21, R4 Summary preserved \u2014 4/5 requirements in substance",
+          "REVIEW.md absent; 3 unique compile errors remain (trivial type/API)",
+          "dep-cache fix: 0 offline-misinference all run, no tmp/m2repo (prior run had both)",
+          "supersedes 1788933193 (40%): same fixes + dep-cache, coherent requirement implementation"
+        ]
+      }
+    ],
+    "calls": 161,
+    "phases": {
+      "classifier": 1,
+      "coder": 101,
+      "compactor": 2,
+      "satisfaction": 8,
+      "satisfaction-noreason": 1,
+      "self-compact": 12,
+      "compaction-validate-retrospective": 12,
+      "compaction-validate-scope": 9,
+      "compaction-validate-fidelity": 9,
+      "self-compact-refold": 2,
+      "compaction-refold-validate-retrospective": 2,
+      "compaction-refold-validate-scope": 1,
+      "compaction-refold-validate-fidelity": 1
+    },
+    "avg_tok_s": 71.9,
+    "output_tokens_timed": 129761,
+    "assists": {
+      "context.window": 1,
+      "context.calibrated": 2,
+      "decision": 1,
+      "loop.start": 1,
+      "writeproxy.lowered": 98,
+      "compat.connect": 1,
+      "rumination.abort": 8,
+      "loop.rumination": 8,
+      "loop.rumination_reasoning_off": 8,
+      "writeproxy.blocked_external": 1,
+      "loop.write_streak_corrected": 10,
+      "loop.periodic_gate": 6,
+      "gate.transport_page": 13,
+      "loop.gate_offline": 6,
+      "loop.periodic_gate_result": 6,
+      "context.repeat_dedup": 69,
+      "context.focus_trim": 42,
+      "loop.work_log_denied": 2,
+      "evidence.repeats_folded": 2,
+      "evidence.summarised": 2,
+      "loop.judge_files_seeded": 2,
+      "loop.verify_inspect": 6,
+      "loop.satisfaction_truncated": 1,
+      "loop.negative_diagnosis_suppressed": 2,
+      "loop.satisfaction_check": 2,
+      "loop.satisfaction_blocked": 51,
+      "context.compaction_validation": 14,
+      "context.floor": 11,
+      "context.self_compact": 42,
+      "context.floor_over_budget": 3,
+      "context.refit": 1,
+      "loop.verdict_by_tool": 1,
+      "harness.truncated_a_result": 70,
+      "context.deorphaned": 5
+    },
+    "workspace": "/home/jesse/suite-runs/suite-feed-pipeline-java_ornith15_codex_poff_1788969546-34smf6qj",
+    "archive": "/home/jesse/.cria/suite/feed-pipeline-java_ornith15_codex_poff_1788969546",
+    "user_install_leak": [],
+    "capture_dir": "/home/jesse/.cria/calls/20260909T085916-01a086e5-1b82-7753-969b-0cd35d556a64",
+    "capture_dirs": [
+      "/home/jesse/.cria/calls/20260909T085916-01a086e5-1b82-7753-969b-0cd35d556a64"
+    ],
+    "harness_log": "/home/jesse/src/cria-shepherd/suite/results/feed-pipeline-java_ornith15_codex_poff_1788969546.log",
+    "usefulness_percent": 20,
+    "usefulness_reason": "The delivered source contains reusable direction\u2014a declared OpenCSV 5.9 dependency, HashSet SKU deduplication, and a per-worker accumulation design\u2014but the rewritten importer was left uncompilable in observed Maven runs. No post-rewrite behavior, baseline equivalence, speedup, deterministic execution, malformed-input handling, skipped-count reporting, or required REVIEW.md was verified, so the reusable value is limited to partial implementation scaffolding.",
+    "usefulness_model": "campaign agent, full toolset"
+  }
+]
