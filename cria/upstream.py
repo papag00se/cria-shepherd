@@ -56,6 +56,33 @@ _REASONING_SINKS: dict = {}
 class UpstreamError(Exception):
     """The upstream model server could not be reached or errored."""
 
+    def __init__(self, message, response_error=None):
+        super().__init__(message)
+        self.response_error = response_error or {"message": str(message)}
+
+
+def _http_error_body(err) -> bytes:
+    """Retain the single-read rejection for both fitting and protocol translation."""
+    if not hasattr(err, "response_body"):
+        err.response_body = err.read()
+        try:
+            payload = json.loads(err.response_body)
+        except (ValueError, TypeError):
+            payload = None
+        inner = payload.get("error", payload) if isinstance(payload, dict) else None
+        if isinstance(inner, dict):
+            error = dict(inner)
+            if not isinstance(error.get("message"), str):
+                error["message"] = str(err)
+            real, window = error.get("n_prompt_tokens"), error.get("n_ctx")
+            if (err.code == 400 and type(real) is int and type(window) is int
+                    and real > window > 0):
+                error["code"] = "context_length_exceeded"
+            elif not isinstance(error.get("code"), str):
+                error.pop("code", None)
+            err.response_error = error
+    return err.response_body
+
 
 class ContextRefitNoChange(UpstreamError):
     """A parsed context rejection whose normal inner refit has identical final bytes.
@@ -65,7 +92,7 @@ class ContextRefitNoChange(UpstreamError):
     """
 
     def __init__(self, source: BaseException, final_wire: bytes):
-        super().__init__(str(source))
+        super().__init__(str(source), getattr(source, "response_error", None))
         self.code = getattr(source, "code", None)
         self.final_wire = final_wire
 
@@ -74,7 +101,7 @@ class CallerContextRetryNoChange(UpstreamError):
     """The one opted-in caller retry re-prepared to the same final wire and was not sent."""
 
     def __init__(self, source: ContextRefitNoChange, final_wire: bytes):
-        super().__init__(str(source))
+        super().__init__(str(source), source.response_error)
         self.code = source.code
         self.final_wire = final_wire
 
@@ -521,7 +548,7 @@ class Upstream:
         if not isinstance(err, urllib.error.HTTPError):
             return None
         try:
-            payload = json.loads(err.read())  # consumes the HTTPError body (readable once)
+            payload = json.loads(_http_error_body(err))
         except (ValueError, OSError, AttributeError):
             return None
         inner = payload.get("error") if isinstance(payload.get("error"), dict) else payload
@@ -612,12 +639,18 @@ class Upstream:
                         sent_estimate, capture_path)
             except urllib.error.URLError as e:
                 last_err = e
+                if isinstance(e, urllib.error.HTTPError):
+                    try:
+                        rejected = _http_error_body(e)
+                        callcapture.capture_response(capture_path, rejected, rlog)
+                    except (OSError, AttributeError):
+                        pass  # Missing error bytes must not replace the original rejection.
                 refit = self._overflow_refit(e, sent_estimate, body.get("model"), rlog) if attempt == 0 else None
                 if refit is not None:
                     safety_override = refit  # re-prep tighter against the server's real count, retry
                     continue
                 rlog.emit("upstream.error", level="error", url=self._chat_url, error=str(e))
-                err = UpstreamError(str(e))
+                err = UpstreamError(str(e), getattr(e, "response_error", None))
                 err.code = getattr(e, "code", None)  # carry the real HTTP status for classify_failure
                 raise err from e
 

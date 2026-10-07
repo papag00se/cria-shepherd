@@ -490,7 +490,12 @@ def _map_usage(u) -> dict:
     u = u or {}
     inp = u.get("prompt_tokens", 0)
     out = u.get("completion_tokens", 0)
-    return {"input_tokens": inp, "output_tokens": out, "total_tokens": u.get("total_tokens", inp + out)}
+    result = {"input_tokens": inp, "output_tokens": out, "total_tokens": u.get("total_tokens", inp + out)}
+    if isinstance(u.get("prompt_tokens_details"), dict):
+        result["input_tokens_details"] = dict(u["prompt_tokens_details"])
+    if isinstance(u.get("completion_tokens_details"), dict):
+        result["output_tokens_details"] = dict(u["completion_tokens_details"])
+    return result
 
 
 def session_key_of(r: dict) -> str | None:

@@ -34,6 +34,22 @@ then verify its model ID and context before syncing Codex. The restored fleet's 
 `llama-fleet switch` performs that check and restarts cria if its card is stale;
 changing the backend alone does not refresh the cached advertisement.
 
+## Usage must be measured, not estimated
+
+At L0, cria forwards the backend's measured prompt/completion/total token counts.
+Responses maps the input/output names and preserves cached-input and output details;
+the chars/4 inbound estimate is logging only. Replacing native usage with that estimate
+prevents a harness from reaching its configured compaction trigger before the real window
+fills. This caused the fresh Ornith shipping run's HTTP400 on 2026-10-07.
+
+A native rejection with measured `n_prompt_tokens > n_ctx` maps to the Responses error
+code `context_length_exceeded`, retaining the original message and counts. The rejection
+body is captured before parsing consumes it. Codex0.159.3 exits on this typed error rather
+than blindly reconnecting; it does **not** retroactively repair an overflowing session.
+The real pinned-harness regression proves proactive compaction on native usage and a safe,
+non-retrying terminal on overflow, through L0 and a fake backend without GPU inference.
+None of this enables cria's context floor or any new assist.
+
 ## Why Codex needs an exception
 
 Codex ignores that advertisement for a keyless local provider. Its model-catalog refresh is
@@ -90,6 +106,16 @@ remaining untouched cells run at the new immutable revision. All fleet assets mu
 exact, except inode/mtime changes for a byte-identically restored canonical Codex config.
 The original manifest and repair history are retained. Reports must disclose this revision
 boundary; the first result is neither overwritten nor reclassified as a repaired run.
+
+For an operator-authorized infrastructure repair, the same explicit transition accepts
+`--resume-after-infrastructure-repair OLD_SHA --preserve-infrastructure-failure RUN_ID`.
+It validates that exact blocked, fresh `harness-error` attempt against the old inputs,
+preserves its row digest and evidence, and consumes the slot as `infrastructure-failed`.
+It never judges, credits, or retries that cell; the failed row remains rejected by ordinary
+scoreable-row validation. Reconciliation blocks if the retained failure disappears,
+changes, or gains a duplicate. Only untouched pending cells launch under the new revision.
+A finished campaign may therefore contain unscored infrastructure failures; report those
+separately rather than claiming all 48 cells have usefulness judgments.
 
 ## Minimal setup
 

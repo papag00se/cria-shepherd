@@ -274,9 +274,28 @@ def create_manifest(campaign_id, revision, snapshot):
             'fleet_snapshot':snapshot,'cells':[{'model':m,'task':t,'state':'pending'} for m in MODELS for t in TASKS]}
 
 
+def row_digest(row):
+    return hashlib.sha256(json.dumps(row, sort_keys=True).encode()).hexdigest()
+
+
+def valid_failed_row(row, manifest):
+    # Evidence validation only: this never makes the original failed row scoreable.
+    return (row.get('terminal') == 'harness-error'
+            and row.get('started', 0) >= manifest['created']
+            and valid_row({**row, 'terminal': 'infrastructure-evidence'}, manifest))
+
+
 def reconcile(manifest, rows):
     cohort=[r for r in rows if r.get('campaign_id') == manifest['campaign_id']]
     for cell in manifest['cells']:
+        if cell['state'] == 'infrastructure-failed':
+            found = [r for r in cohort if (r.get('model'), r.get('task')) == (cell['model'], cell['task'])]
+            saved = manifest.get('preserved_runs', {}).get(cell.get('run_id'), {})
+            if (len(found) != 1 or found[0].get('run_id') != cell.get('run_id')
+                    or row_digest(found[0]) != saved.get('unscored_failure_sha256')
+                    or not valid_failed_row(found[0], manifest) or 'judgment' in cell):
+                cell.update(state='blocked', reason='preserved infrastructure failure changed; no automatic retry')
+            continue
         if cell['state'] == 'blocked': continue
         found=[r for r in cohort if r.get('model') == cell['model'] and r.get('task') == cell['task']]
         if not found:
@@ -297,7 +316,7 @@ def cell_command(manifest, cell):
             '--campaign-revision',manifest['revision']]
 
 
-def resume_after_repair(manifest, previous_revision, revision, snapshot, rows):
+def resume_after_repair(manifest, previous_revision, revision, snapshot, rows, *, failed_run_id=None):
     """Explicit provenance transition; never retry an attempted cell or rewrite a result."""
     if manifest['revision'] != previous_revision or revision == previous_revision:
         raise ValueError('repair must name the previous and a new revision')
@@ -312,7 +331,24 @@ def resume_after_repair(manifest, previous_revision, revision, snapshot, rows):
         if (not old.get('sha256') or old['sha256'] != new.get('sha256')
                 or old.get('size') != new.get('size') or normalized != previous_snapshot):
             raise ValueError('repair cannot adopt changed fleet assets')
-    if any(c['state'] not in ('done', 'pending') for c in manifest['cells']):
+    failure_cell = failure_row = None
+    if failed_run_id is not None:
+        found = [r for r in rows if r.get('campaign_id') == manifest['campaign_id']
+                 and r.get('run_id') == failed_run_id]
+        if len(found) != 1 or not valid_failed_row(found[0], manifest):
+            raise ValueError('repair requires exact fresh infrastructure failure evidence')
+        failure_row = found[0]
+        matches = [c for c in manifest['cells'] if (c['model'], c['task']) ==
+                   (failure_row['model'], failure_row['task'])]
+        if (len(matches) != 1 or matches[0]['state'] != 'blocked'
+                or 'attempted_at' not in matches[0] or 'judgment' in matches[0]
+                or matches[0].get('run_id', failed_run_id) != failed_run_id
+                or sum(r.get('campaign_id') == manifest['campaign_id']
+                       and (r.get('model'), r.get('task')) == (failure_row['model'], failure_row['task'])
+                       for r in rows) != 1):
+            raise ValueError('repair can preserve only one blocked, unscored exact attempt')
+        failure_cell = matches[0]
+    if any(c['state'] not in ('done', 'pending') and c is not failure_cell for c in manifest['cells']):
         raise ValueError('repair requires completed judgments and untouched pending cells')
     preserved = dict(manifest.get('preserved_runs', {}))
     for cell in manifest['cells']:
@@ -320,17 +356,26 @@ def resume_after_repair(manifest, previous_revision, revision, snapshot, rows):
             if 'attempted_at' in cell or 'run_id' in cell:
                 raise ValueError('pending cell has an attempt; no automatic retry')
             continue
-        found = [r for r in rows if r.get('campaign_id') == manifest['campaign_id']
-                 and r.get('run_id') == cell['run_id']]
-        if (len(found) != 1 or found[0].get('started', 0) < manifest['created']
-                or not valid_row(found[0], manifest) or not judgment(found[0])):
-            raise ValueError('repair requires valid completed fresh evidence')
-        row = found[0]
+        if cell is failure_cell:
+            row = failure_row
+        else:
+            found = [r for r in rows if r.get('campaign_id') == manifest['campaign_id']
+                     and r.get('run_id') == cell['run_id']]
+            if (len(found) != 1 or found[0].get('started', 0) < manifest['created']
+                    or not valid_row(found[0], manifest) or not judgment(found[0])):
+                raise ValueError('repair requires valid completed fresh evidence')
+            row = found[0]
         preserved[row['run_id']] = {**{k: row[k] for k in ('revision', 'model', 'task')},
                                    'fleet_snapshot': row['fleet_snapshot']}
+        if cell is failure_cell:
+            preserved[row['run_id']]['unscored_failure_sha256'] = row_digest(row)
+    if failure_cell is not None:
+        failure_cell.update(state='infrastructure-failed', run_id=failed_run_id,
+                            reason='explicitly preserved infrastructure failure; unscored, never retried')
     manifest.setdefault('repair_history', []).append({
         'at': time.time(), 'from_revision': previous_revision, 'to_revision': revision,
-        'preserved_run_ids': sorted(preserved)})
+        'preserved_run_ids': sorted(preserved),
+        **({'unscored_failed_run_id': failed_run_id} if failed_run_id is not None else {})})
     manifest.update(revision=revision, preserved_runs=preserved, fleet_snapshot=snapshot)
     return manifest
 
@@ -339,10 +384,15 @@ def main():
     ap=argparse.ArgumentParser(description=__doc__)
     ap.add_argument('--campaign-id',required=True)
     ap.add_argument('--campaign-revision',required=True)
-    ap.add_argument('--resume-after-launcher-repair', metavar='PREVIOUS_REVISION',
+    ap.add_argument('--resume-after-launcher-repair', '--resume-after-infrastructure-repair',
+                    dest='resume_after_launcher_repair', metavar='PREVIOUS_REVISION',
                     help='explicitly preserve completed current cells under their original revision')
+    ap.add_argument('--preserve-infrastructure-failure', metavar='RUN_ID',
+                    help='with explicit repair resume, consume this exact failed slot without score or retry')
     ap.add_argument('--drive',action='store_true',help='drive serial cells, waiting for independent final judgments')
     args=ap.parse_args()
+    if args.preserve_infrastructure_failure and not args.resume_after_launcher_repair:
+        ap.error('--preserve-infrastructure-failure requires an explicit repair resume')
     directory=campaign_dir(args.campaign_id)
     validate_revision(args.campaign_revision)
     snapshot=fleet_snapshot()
@@ -362,7 +412,8 @@ def main():
             before = directory / ('manifest-before-repair-' + manifest['revision'] + '.json')
             original_text = json.dumps(manifest, indent=2) + '\n'
             resume_after_repair(manifest, args.resume_after_launcher_repair,
-                                args.campaign_revision, snapshot, read_rows())
+                                args.campaign_revision, snapshot, read_rows(),
+                                failed_run_id=args.preserve_infrastructure_failure)
             with before.open('x') as original:
                 original.write(original_text)
             save(path, manifest)
@@ -378,6 +429,7 @@ def main():
             waiting=[c for c in manifest['cells'] if c['state'] == 'awaiting-usefulness']
             pending=[c for c in manifest['cells'] if c['state'] == 'pending']
             print(json.dumps({'manifest':str(path),'done':sum(c['state']=='done' for c in manifest['cells']),
+                              'infrastructure_failed': [c for c in manifest['cells'] if c['state'] == 'infrastructure-failed'],
                               'waiting':waiting,'next':pending[:1]}),flush=True)
             if not args.drive or not pending and not waiting: return 0
             if waiting:

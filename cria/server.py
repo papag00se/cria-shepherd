@@ -1546,7 +1546,10 @@ class CriaHandler(BaseHTTPRequestHandler):
             indic.note = "⚠ output truncated at the token limit"
             rlog.emit("response.truncated")
         out = self._finalize(self._translate_out(comp, sess_key, rlog), sess_key, rlog)
-        _report_context_usage(out, getattr(self, "_ctx_tokens", 0), rlog)
+        # L0 forwards the backend's measured usage; chars/4 is observation, not accounting.
+        # The harness uses this count to compact before the next request fills the native window.
+        if server.cfg.routing.engagement_level != config.PURE_PROXY:
+            _report_context_usage(out, getattr(self, "_ctx_tokens", 0), rlog)
         return out, indic
 
     def _respond_buffered(self, body: dict, rlog) -> None:
@@ -1687,7 +1690,7 @@ class CriaHandler(BaseHTTPRequestHandler):
             except UpstreamError as e:
                 rlog.emit("response.error", level="error", error=str(e))
                 hb.write(responses._event("response.failed",
-                    {"response": {"id": resp_id, "status": "failed", "error": {"message": str(e)}}}))
+                    {"response": {"id": resp_id, "status": "failed", "error": e.response_error}}))
                 return
             except Exception as e:  # noqa: BLE001 — the exact scope g4 died in, six times, silently:
                 # a FileNotFoundError here killed the handler with no event and no response; codex
@@ -1750,7 +1753,7 @@ class CriaHandler(BaseHTTPRequestHandler):
             comp, _indic = self._produce_completion(body, rlog, sess_key)
         except UpstreamError as e:
             rlog.emit("response.error", level="error", error=str(e))
-            self._send_json(502, {"error": f"upstream error: {e}"})
+            self._send_json(getattr(e, "code", None) or 502, {"error": e.response_error})
             return
         except Exception as e:  # noqa: BLE001 — never die silently (the g4 hole)
             rlog.emit("response.error", level="error", error=repr(e))
