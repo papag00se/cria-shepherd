@@ -12,6 +12,13 @@ import sys
 import time
 import tomllib
 from pathlib import Path
+
+# Direct script launches put only suite/ on sys.path. Validate against the same
+# local runtime config implementation used by module launches and the service.
+REPO = Path(__file__).resolve().parent.parent
+if str(REPO) not in sys.path:
+    sys.path.insert(0, str(REPO))
+
 try:
     from .battery_status import TASKS
     from .sampling_adapter import validate_knobs
