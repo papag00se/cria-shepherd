@@ -32,6 +32,7 @@ import tempfile
 import time
 import tomllib
 import uuid
+from contextlib import nullcontext
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -743,16 +744,49 @@ def throttled_mid_run(session_dir) -> str:
             "Not the model's failure and not cria's; excluded from the ladder.")
 
 
+RESTORED_CODEX_BINARY = Path.home() / ".local/share/mise/installs/codex/0.159.3/bin/codex"
+
+
+def restored_codex_argv(argv, model, context, adapter_url):
+    """Supported provider URL overrides only; explicit binary avoids mise latest drift."""
+    home_config = tomllib.loads((SUITE_CODEX_HOME / "config.toml").read_text())
+    provider = home_config.get("model_provider")
+    if not isinstance(provider, str) or not re.fullmatch(r"[A-Za-z0-9_-]+", provider):
+        raise ValueError("isolated Codex home needs an explicit provider")
+    record = home_config.get("model_providers", {}).get(provider, {})
+    if record.get("base_url", "").rstrip("/") != "http://127.0.0.1:18085/v1" or record.get("wire_api") != "responses":
+        raise ValueError("isolated Codex provider must route Responses to local cria")
+    if not RESTORED_CODEX_BINARY.is_file() or not os.access(RESTORED_CODEX_BINARY, os.X_OK):
+        raise ValueError("tested pinned Codex 0.159.3 executable missing")
+    version = sh(str(RESTORED_CODEX_BINARY), "--version").stdout.strip()
+    if version != "codex-cli 0.159.3":
+        raise ValueError("pinned Codex executable version changed")
+    provenance = {"binary": str(RESTORED_CODEX_BINARY.resolve()), "version": version,
+                  "sha256": hashlib.sha256(RESTORED_CODEX_BINARY.read_bytes()).hexdigest(),
+                  "config": l0_config_fingerprint(SUITE_CODEX_HOME / "config.toml")}
+    extra = ["-c", f"model_providers.{provider}.base_url=" + json.dumps(adapter_url),
+             "-c", "model=" + json.dumps(model), "-c", f"model_context_window={context}",
+             "-c", f"model_auto_compact_token_limit={int(context * .85)}"]
+    return [str(RESTORED_CODEX_BINARY), *argv[1:-1], *extra, argv[-1]], provenance
+
+
+def l0_config_fingerprint(path):
+    # Hash metadata only: never copy credentials into campaign artifacts.
+    return {"path": str(path), "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--task", required=True)
-    ap.add_argument("--model", required=True, choices=sorted(set(SERVICES) | set(EXTERNAL)))
+    ap.add_argument("--model", required=True)
     ap.add_argument("--harness", default="codex", choices=sorted(HARNESSES))
     ap.add_argument("--planner", default="off", choices=["on", "off"],
                     help="experimental planner; off unless explicitly requested")
     ap.add_argument("--note", default="")
     ap.add_argument("--campaign-revision", default=None,
-                    help="immutable source revision for a fresh L5 campaign cell")
+                    help="immutable source revision for a fresh campaign cell")
+    ap.add_argument("--campaign-id")
+    ap.add_argument("--restored-fleet", action="store_true")
     ap.add_argument("--fresh-l5", action="store_true",
                     help="record this as a fresh planner-off L5 cell; requires --campaign-revision")
     # The engagement level this cell ran at, recorded as a FIELD rather than parsed back out of the
@@ -762,6 +796,28 @@ def main() -> None:
     ap.add_argument("--milestone-minutes", type=int, choices=[TASK_MINUTES], default=TASK_MINUTES,
                     help="review every 15 active minutes; continuation decisions start at minute 30")
     args = ap.parse_args()
+    try:
+        from . import l0_campaign
+        from .sampling_adapter import SamplingAdapter, RateLimitGate
+    except ImportError:
+        import l0_campaign
+        from sampling_adapter import SamplingAdapter, RateLimitGate
+    fleet = None
+    live_snapshot = None
+    if args.restored_fleet:
+        if args.level != 0 or args.planner != "off" or args.fresh_l5:
+            ap.error("--restored-fleet currently requires L0 with planner off")
+        if args.model not in l0_campaign.MODELS or args.task not in l0_campaign.TASKS:
+            ap.error("restored L0 model/task must belong to the eight by six roster")
+        fleet = l0_campaign.fleet_snapshot()
+        live_snapshot = l0_campaign.validate_live(CRIA_TOML)
+    elif args.model not in set(SERVICES) | set(EXTERNAL):
+        ap.error("unknown legacy model; official fleet identities require --restored-fleet")
+    if args.campaign_id:
+        l0_campaign.campaign_dir(args.campaign_id)
+        if not args.campaign_revision:
+            ap.error("--campaign-id requires --campaign-revision")
+        l0_campaign.validate_revision(args.campaign_revision)
     if args.milestone_minutes <= 0:
         ap.error("--milestone-minutes must be positive")
     if args.fresh_l5 and (args.level != 5 or args.planner != "off" or not args.campaign_revision):
@@ -796,7 +852,9 @@ def main() -> None:
     prompt = (task_dir / "prompt.txt").read_text().strip()
     run_id = f"{args.task}_{args.model}_{args.harness}_p{args.planner}_{int(time.time())}"
     ws = Path(tempfile.mkdtemp(prefix=f"suite-{run_id}-", dir=RUNS_DIR))
-    log_path = SUITE / "results" / f"{run_id}.log"
+    log_root = l0_campaign.campaign_dir(args.campaign_id) if args.campaign_id else SUITE / "results"
+    log_root.mkdir(parents=True, exist_ok=True)
+    log_path = log_root / f"{run_id}.log"
     harness_argv = HARNESSES[args.harness](prompt, ws)
     suite_scratch = None
     if args.harness == 'codex':
@@ -804,8 +862,22 @@ def main() -> None:
         suite_scratch = state / 'tmp'
         suite_scratch.mkdir(parents=True, exist_ok=True)
 
-    swap_model(args.model)
-    spec = configure_cria(args.model, args.planner == "on")
+    adapter = None
+    harness_provenance = None
+    if args.restored_fleet:
+        # No live role.apply/config writes: the permanent launcher owns guarded fleet switching.
+        switched = sh(str(l0_campaign.LAUNCHER), "switch", args.model, timeout=180)
+        if switched.returncode:
+            raise RuntimeError("restored fleet switch failed: " + switched.stderr)
+        if l0_campaign.validate_live(CRIA_TOML) != live_snapshot:
+            raise RuntimeError("live L0 config changed during switch")
+        spec = fleet["roles"][args.model]
+        adapter = SamplingAdapter(spec["coder"], RateLimitGate(l0_campaign.ROOT))
+        harness_argv, harness_provenance = restored_codex_argv(
+            harness_argv, args.model, fleet["config"]["models"][args.model]["ctx"], adapter.base_url)
+    else:
+        swap_model(args.model)
+        spec = configure_cria(args.model, args.planner == "on")
     live_config = tomllib.loads(CRIA_TOML.read_text())
     planner_enabled_verified = live_config.get("planner", {}).get("enabled", False)
     repo_root = str(SUITE.parent)
@@ -835,41 +907,42 @@ def main() -> None:
     env = _codex_env(dict(os.environ, **_isolated_installs(ws)))
     if suite_scratch is not None:
         env['TMPDIR'] = str(suite_scratch)
-    t0 = time.time()
-    with open(log_path, "w") as lf:
-        # stdin MUST be closed explicitly: `codex exec` reads stdin to EOF as "additional input"
-        # BEFORE starting the turn, and after an interrupted turn it returns to reading stdin.
-        # An inherited never-closing stdin (a live socket from the launch environment) froze two
-        # cells for their full 30-minute walls with zero work — pre-banner, zero API calls.
-        proc = subprocess.Popen(harness_argv, cwd=ws,
-                                stdin=subprocess.DEVNULL,
-                                stdout=lf, stderr=subprocess.STDOUT, env=env,
-                                start_new_session=True)
-    def pause_run() -> bool:
-        try:
-            os.killpg(proc.pid, signal.SIGSTOP)
-            return True
-        except ProcessLookupError:
-            return False
+    with adapter if adapter is not None else nullcontext():
+        t0 = time.time()
+        with open(log_path, "w") as lf:
+            # stdin MUST be closed explicitly: `codex exec` reads stdin to EOF as "additional input"
+            # BEFORE starting the turn, and after an interrupted turn it returns to reading stdin.
+            # An inherited never-closing stdin (a live socket from the launch environment) froze two
+            # cells for their full 30-minute walls with zero work — pre-banner, zero API calls.
+            proc = subprocess.Popen(harness_argv, cwd=ws,
+                                    stdin=subprocess.DEVNULL,
+                                    stdout=lf, stderr=subprocess.STDOUT, env=env,
+                                    start_new_session=True)
+        def pause_run() -> bool:
+            try:
+                os.killpg(proc.pid, signal.SIGSTOP)
+                return True
+            except ProcessLookupError:
+                return False
 
-    def resume_run():
-        try:
-            os.killpg(proc.pid, signal.SIGCONT)
-        except ProcessLookupError:
-            pass
+        def resume_run():
+            try:
+                os.killpg(proc.pid, signal.SIGCONT)
+            except ProcessLookupError:
+                pass
 
-    def stop_run():
-        resume_run()
-        stop_process_group(proc)
+        def stop_run():
+            resume_run()
+            stop_process_group(proc)
 
-    pacing = MilestonePacing(started_at=t0, interval_minutes=args.milestone_minutes,
-                             budget_intervals=budget_intervals(task_dir))
-    terminal, milestone_judgments = monitor_milestones(
-        proc, pacing, run_id, ws, task_dir, pause=pause_run, resume=resume_run, stop=stop_run)
-    # Stop first. A child may still finish a response or create a new session during the grace
-    # period, so the wall cutoff and session inventory must be taken only after the group is gone.
-    t1, new_sessions, capture_snapshot = shutdown_and_capture(
-        proc, calls_dir=CALLS_DIR, before_sessions=before_sessions, resume=resume_run)
+        pacing = MilestonePacing(started_at=t0, interval_minutes=args.milestone_minutes,
+                                 budget_intervals=budget_intervals(task_dir))
+        terminal, milestone_judgments = monitor_milestones(
+            proc, pacing, run_id, ws, task_dir, pause=pause_run, resume=resume_run, stop=stop_run)
+        # Stop first. A child may still finish a response or create a new session during the grace
+        # period, so the wall cutoff and session inventory must be taken only after the group is gone.
+        t1, new_sessions, capture_snapshot = shutdown_and_capture(
+            proc, calls_dir=CALLS_DIR, before_sessions=before_sessions, resume=resume_run)
 
     # The primary directory is the one that carries the work, not the one that finished last.
     session_dir = max(new_sessions, key=lambda p: len(list(p.glob("*.response.json"))),
@@ -900,7 +973,11 @@ def main() -> None:
         "note": ((f"FRESH-L5 {args.campaign_revision} " + args.note).strip()
                  if args.fresh_l5 else args.note),
         **({"revision": args.campaign_revision, "code_revision": code_revision}
-           if args.fresh_l5 else {}),
+           if args.fresh_l5 or args.campaign_id else {}),
+        **({"campaign_id": args.campaign_id} if args.campaign_id else {}),
+        **({"restored_fleet": True, "fleet_snapshot": fleet, "live_config_snapshot": live_snapshot,
+            "source_coder_sampling": spec["coder"], "injected_sampling": adapter.injected,
+            "harness_provenance": harness_provenance} if args.restored_fleet else {}),
         "sampling": spec,
         **({"level": args.level} if args.level is not None else {}),
         "started": t0, "wall_seconds": round(t1 - t0, 1),
@@ -910,7 +987,7 @@ def main() -> None:
         "milestone_judgments": milestone_judgments,
         "pacing_policy": "inferred-progress-15m-protected-30m-v1",
         **capture,
-        **({"capture_snapshot": capture_snapshot} if args.fresh_l5 else {}),
+        **({"capture_snapshot": capture_snapshot} if args.fresh_l5 or args.campaign_id or args.restored_fleet else {}),
         "assists": collect_assists(t0, t1),
         "workspace": str(ws),
         "archive": str(archive),
@@ -920,6 +997,14 @@ def main() -> None:
         "workspace_lost": workspace_lost,
         "harness_log": str(log_path),
     }
+    if args.restored_fleet:
+        try:
+            row["actual_sent_sampling"] = l0_campaign.actual_sampling(
+                capture_snapshot, args.model, spec["coder"])
+            if l0_campaign.validate_live(CRIA_TOML) != live_snapshot:
+                raise ValueError("live config changed during cell")
+        except (OSError, ValueError, KeyError) as exc:
+            row["aborted"] = "invalid restored sampling/config: " + str(exc)
     throttled = throttled_mid_run(session_dir)
     if throttled:
         row["aborted"] = throttled
@@ -930,7 +1015,8 @@ def main() -> None:
     print(json.dumps({k: row[k] for k in
                       ("run_id", "terminal", "wall_seconds", "calls", "avg_tok_s")}, indent=1))
     _freeze_usefulness_evidence(row)
-    _refresh_grid(row)
+    if not args.campaign_id:
+        _refresh_grid(row)
 
 
 def _freeze_usefulness_evidence(row: dict) -> None:

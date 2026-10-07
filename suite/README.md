@@ -84,7 +84,28 @@ cleanup review is separate and **is not** a filesystem sandbox.
 
 The generated standing report is [`docs/battery-report.md`](../docs/battery-report.md). Generation must not recreate `docs/audits/battery-report.md`. Existing historical rows are not fresh rerun results; record final judgments before claiming measured usefulness.
 
-A restored fleet must be launched from its verified current weights, runtimes, libraries and profiles, not obsolete paths or substituted assets. Missing assets block launch, not count as failed coding cells. The pending full L0 rerun is **not launched** while the restored fleet location is unresolved; its current roster is eight logical models (Defiant-Fable is the selected `qwen3.8_9b_distill` artifact), not nine separate identities. Do not reuse the historical fresh-L5 manifest as this rerun's worklist.
+A restored fleet must be launched from its verified current weights, runtimes, libraries and profiles, not obsolete paths or substituted assets. Missing assets block launch, not count as failed coding cells. The restored fleet now has a completed operational readiness receipt at `~/.local/share/cria/fleet/restoration-state.json` and an immutable `verification/restoration-completion.json`. The fresh L0 roster has eight logical models (Defiant-Fable is the selected `qwen3.8_9b_distill` artifact) × the six `battery_status.TASKS`: **48 new cells**. Phi's unconstrained Unicode tool-argument limitation remains recorded; restored readiness does not claim a full protocol pass or delivered-work quality. Historical rows and the fresh-L5 manifest receive no credit.
+
+The owner must establish live L0, planner off, and call capture before launch. This path reads and verifies that config and its service startup; it never rewrites live role settings. The permanent `~/.local/bin/llama-fleet switch <official-id>` owns guarded model switching and frontend cache synchronization. All four source roles come from canonical `~/.config/llama-fleet/roles.json`. At L0 a per-cell stdlib loopback adapter injects only source numeric coder sampling into complete Responses requests, forwards every response byte, and records both the injected map and actual upstream capture values. A persistent rate-limit gate honors wait signals across calls/cells; there are no adapter retries. Codex uses the tested explicit `0.159.3` binary with the mandatory sandbox and an isolated provider URL override; the row records binary path/version/hash.
+
+Create or inspect a manifest without launching inference:
+
+```bash
+python3 suite/l0_campaign.py --campaign-id l0-restored-20261007 \
+  --campaign-revision "$(git rev-parse HEAD)"
+```
+
+Add `--drive` to run serially. State, driver logs and harness logs live under `~/.cria/suite/_campaigns/<campaign-id>/`. Before every cell the driver rejects changed revision, config, effective units, weights, runtimes, libraries, templates or receipts. It requires completed restored readiness, retains scoped known limitations, and checks only the six task runners without installing dependencies. The manifest uses the existing 15-minute semantic milestone policy, protects the first 30 active minutes and ignores legacy budgets. The controlling agent must answer milestone packets and record final usefulness via `suite/usefulness.py`; the next cell waits for that final judgment. Invalid, duplicate, interrupted or missing runs block the campaign with **no automatic retry**.
+
+A single manifest cell is routed through:
+
+```bash
+python3 suite/battery_run.py --level 0 --restored-fleet \
+  --model gemma4_12b --task shipping-rates-rb \
+  --campaign-id l0-restored-20261007 --campaign-revision <full-revision>
+```
+
+`--campaign-id` and `--campaign-revision` are also supported by `suite/run.py`. Legacy service and sampling registries remain available only on the existing path without `--restored-fleet`; archived identities are preserved.
 
 ## Usefulness judgments
 

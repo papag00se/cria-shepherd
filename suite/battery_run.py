@@ -107,7 +107,9 @@ def main() -> int:
     ap.add_argument("--fresh-l5", action="store_true",
                     help="record one cell in the revision-pinned fresh L5 cohort")
     ap.add_argument("--campaign-revision", default=None,
-                    help="immutable full git revision pinned for the fresh L5 cohort")
+                    help="immutable full git revision pinned for a fresh campaign")
+    ap.add_argument("--campaign-id")
+    ap.add_argument("--restored-fleet", action="store_true")
     ap.add_argument("--milestone-minutes", type=int, choices=[15], default=15,
                     help="review every 15 active minutes; continuation decisions start at minute 30")
     args = ap.parse_args()
@@ -117,6 +119,35 @@ def main() -> int:
         print("another suite/run.py is active (possibly paused for a judgment); leaving it untouched: "
               + "; ".join(f"pid {pid}" for pid, _ in other_runs), file=sys.stderr)
         return 3
+    if args.restored_fleet:
+        try:
+            from . import l0_campaign
+        except ImportError:
+            import l0_campaign
+        if not args.restored_fleet or args.level != 0 or args.arm or args.planner != "off" or args.fresh_l5:
+            ap.error("restored campaigns require --restored-fleet --level 0, planner off")
+        if args.campaign_id and not args.campaign_revision:
+            ap.error("--campaign-id requires --campaign-revision")
+        if args.model not in l0_campaign.MODELS or args.task not in l0_campaign.TASKS:
+            ap.error("restored L0 model/task must belong to the eight by six roster")
+        if args.campaign_id:
+            l0_campaign.campaign_dir(args.campaign_id)
+            l0_campaign.validate_revision(args.campaign_revision)
+        l0_campaign.fleet_snapshot()
+        command = [sys.executable, str(SUITE / "run.py"), "--task", args.task,
+                   "--model", args.model, "--level", "0", "--restored-fleet",
+                   "--milestone-minutes", str(args.milestone_minutes)]
+        if args.campaign_id:
+            command += ["--campaign-id", args.campaign_id,
+                        "--campaign-revision", args.campaign_revision]
+        return sh(*command, timeout=cell_timeout())
+    if args.campaign_id:
+        try:
+            from . import l0_campaign
+        except ImportError:
+            import l0_campaign
+        l0_campaign.campaign_dir(args.campaign_id)
+        l0_campaign.validate_revision(args.campaign_revision)
     if not TOML.exists():
         print(f"no config at {TOML}", file=sys.stderr)
         return 2
@@ -156,6 +187,8 @@ def main() -> int:
                    "--planner", args.planner, "--milestone-minutes", str(args.milestone_minutes),
                    "--note", f"{NOTE_PREFIX} {tag} {args.model} {sha} {PROMPT_REV}",
                    "--level", str(level)]
+        if args.campaign_id:
+            command += ["--campaign-id", args.campaign_id, "--campaign-revision", args.campaign_revision]
         if args.fresh_l5:
             command += ["--fresh-l5", "--campaign-revision", args.campaign_revision]
         return sh(*command, timeout=cell_timeout())
