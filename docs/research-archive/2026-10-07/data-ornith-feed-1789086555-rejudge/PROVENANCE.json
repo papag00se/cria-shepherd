@@ -1,0 +1,10 @@
+{
+  "historical_status": "Original historical evidence; inactive and not revalidated. Does not replace current benchmark scores or active runtime prompts.",
+  "source_branch": "origin/data/ornith-feed-1789086555-rejudge",
+  "source_commit": "7a510eedf2ed038e5d3c8de159947f677969d4a3",
+  "archive_paths": [
+    "docs/research-archive/2026-10-07/data-ornith-feed-1789086555-rejudge/results-source-records.json"
+  ],
+  "canonical_ledger_unchanged": true,
+  "validation": "Exact Git source postimages / selected record fields preserved; no inference, replay, or provider calls."
+}
