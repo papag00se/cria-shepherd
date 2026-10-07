@@ -35,6 +35,28 @@ class RequestFidelityTests(unittest.TestCase):
         finally:
             h.close()
 
+    def test_l0_responses_extensions_reach_actual_upstream(self):
+        import urllib.request
+        h = _Harness(0, False)
+        try:
+            h.fake.request_bodies = []
+            knobs = {'temperature': 0.6, 'top_p': 0.95, 'top_k': 20,
+                     'min_p': 0.0, 'repeat_penalty': 1.1,
+                     'chat_template_kwargs': {'enable_thinking': False}}
+            request = {'model': 'm', 'input': [{'role': 'user', 'content': 'Reply 73'}],
+                       **knobs}
+            req = urllib.request.Request(h.base + '/v1/responses',
+                                         data=json.dumps(request).encode(),
+                                         headers={'Content-Type': 'application/json'})
+            with urllib.request.urlopen(req, timeout=20) as response:
+                self.assertEqual(response.status, 200)
+                response.read()
+            self.assertEqual(len(h.fake.request_bodies), 1)
+            for key, value in knobs.items():
+                self.assertEqual(h.fake.request_bodies[0][key], value)
+        finally:
+            h.close()
+
     def test_engaged_level_retains_classifier(self):
         h = _Harness(1, False)
         try:
