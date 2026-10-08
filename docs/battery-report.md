@@ -41,11 +41,11 @@
 | gemma4_12b | 🟢 100% | 🟡 73% | 🟢 100% | 🟢 100% | 🟢 93% | 🟡 86% | 92% | 10 | 46 |
 | nemotron-elastic | 🔴 26% | 🔴 28% | 🟠 40% | 🔴 19% | 🟠 40% | 🔴 20% | 29% | 33 | 141 |
 
-## L5 — ASSISTS_ENABLED — steers, periodic gates, detectors, planner — 42%
+## L5 — ASSISTS_ENABLED — steers, periodic gates, detectors, planner — 43%
 
 | model | ruby | go | python | java | node | rust | total | avg min | avg calls |
 |---|---|---|---|---|---|---|---:|---:|---:|
-| gemma4_12b | 🟠 49% | 🟡 74% | 🟡 78% | 🟠 55% | 🟠 62% | 🟢 91% | 68% | 43 | 106 |
+| gemma4_12b | 🟢 95% | 🟡 74% | 🟡 78% | 🟠 55% | 🟠 62% | 🟢 91% | 76% | 38 | 105 |
 | bonsai2 | 🔴 18% | 🔴 0% | 🟡 87% | 🔴 5% | 🟠 59% | 🔴 3% | 29% | 41 | 58 |
 | qwen3.8_9b_distill | 🟡 68% | 🟠 52% | 🔴 15% | 🔴 10% | 🟠 62% | 🟡 80% | 48% | 38 | 239 |
 | ornith1.5_9b | 🟢 95% | 🟡 84% | 🟡 85% | 🟡 70% | 🟡 75% | 🟢 95% | 84% | 60 | 126 |

@@ -293,3 +293,20 @@ Each cell is an inferred usefulness percentage 🟢≥88 🟡≥63 🟠≥38 �
 
 Retired from the battery (history kept in suite/results/results.jsonl and suite/historical_ladder.json): qwen35, qwen38.
 
+
+
+## Standing update — l5-restored-20261008 — L5
+
+gemma4_12b: usefulness6/6, minutes6/6, calls6/6.
+Pending cells retain prior standings; metrics use matching authoritative judged result rows only, never historical rounded row means. Unknown metrics are excluded.
+
+ gemma4_12b: usefulness1/1, minutes1/1, calls1/1.
+Means use selected independently judged logical cells once; zeros count, pending/unjudged cells and failed originals do not. Missing, non-numeric or invalid metrics are excluded, not fabricated as zero. Minutes are authoritative wall_seconds/60, including judge waits (not active-work minutes); operator-ended measurement basis remains in attempt provenance. A mean with incomplete coverage is a partial known-metric mean.
+
+
+### L5 restored Gemma shipping — exact natural final
+
+Express pricing, threshold handling, gem-backed country dispatch and rate documentation are reusable, with fresh copied-cache execution passing all 13 authored and seven original seed tests despite deletion of the original negative-weight test from delivered sources. This exact archive ended naturally (exited), not by checkpoint review; broader country and invalid-input coverage and clean-install runtime remain unverified.
+
+Run `shipping-rates-rb_gemma4_12b_codex_poff_1791480323`, independently judged95%; source and verification evidence: `~/.cria/validation/l5-gemma-shipping/final/`. Authoritative100calls/1308.1wall seconds/1150.1active seconds; 15min checkpoint60%/continue was not reused as final.
+Original negative-weight assertion was deleted and never restored in delivered sources: an unaddressed test-preservation opportunity at L5, not an infrastructure rerun. Fresh external seed tests pass including that missing assertion. No coder-tree edits or new API requests were made by supervision.
