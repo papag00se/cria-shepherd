@@ -14,6 +14,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from fractions import Fraction
 
 try:
     from .model_names import canonical_name
@@ -264,7 +265,7 @@ def add_throughput_column(text: str, rs: list[dict], *, refresh_levels=None) -> 
                 raise ValueError('malformed standing row for throughput')
             if len(fields) == 11 and refresh_levels is not None and level not in refresh_levels:
                 out.append(line)
-                continue  # ordinary campaign updates preserve every other level byte-for-byte
+                continue  # preserve other levels' row bytes; shared L5 ordering may move rows
             rates, sources, judged_count = [], [], 0
             for task, score in zip(TASKS, fields[1:7]):
                 if not score or score == '·':
@@ -362,6 +363,51 @@ def fresh_table(manifest: dict, rs: list[dict], *, include_coverage: bool = True
     return '\n'.join(out)
 
 
+def order_by_l5(text: str) -> str:
+    """Reorder every standing table by exact L5 task-score means, retaining row bytes.
+
+    Ties (including no judged L5 scores) use model identity, not prior row order.
+    Historical subsets share this order without inventing absent rows or measurements.
+    """
+    sections = re.split(r'(?=^## L[0-5] — )', text, flags=re.M)
+    if len(sections) != 7:
+        raise ValueError('shared ordering requires six L0–L5 tables')
+    tables, l5_scores = [], {}
+    for level, section in enumerate(sections[1:]):
+        lines = section.splitlines(keepends=True)
+        entries, seen = [], set()
+        for index, line in enumerate(lines):
+            if not line.startswith('| ') or line.startswith('| model |'):
+                continue
+            fields = [field.strip() for field in line.strip().strip('|').split('|')]
+            if len(fields) not in (10, 11) or fields[0] in seen:
+                raise ValueError('malformed or duplicate model row')
+            seen.add(fields[0])
+            scores = []
+            for value in fields[1:7]:
+                if value in ('', '·'):
+                    continue
+                match = re.search(r'(\d+)%$', value)
+                if not match or not 0 <= int(match.group(1)) <= 100:
+                    raise ValueError('malformed standing usefulness score')
+                scores.append(int(match.group(1)))
+            if level == 5:
+                l5_scores[fields[0]] = scores
+            entries.append((index, fields[0], line))
+        tables.append((lines, entries))
+
+    def rank(model):
+        scores = l5_scores.get(model, [])
+        return (not scores, -Fraction(sum(scores), len(scores)) if scores else Fraction(0), model)
+
+    for level, (lines, entries) in enumerate(tables):
+        ordered = sorted(entries, key=lambda entry: rank(entry[1]))
+        for (index, _, _), (_, _, row) in zip(entries, ordered):
+            lines[index] = row
+        sections[level + 1] = ''.join(lines)
+    return ''.join(sections)
+
+
 def write_report(rs: list[dict], *, campaign: dict | None = None) -> Path:
     path = SUITE.parent / 'docs' / 'battery-report.md'
     existing = path.read_text() if path.exists() else ''
@@ -444,6 +490,8 @@ def write_report(rs: list[dict], *, campaign: dict | None = None) -> Path:
     sections[level + 1] = title + '\n\n' + '\n'.join([header, separator] +
         ['| ' + ' | '.join(fields) + ' |' for fields in old_rows.values()]) + tail
     text, rate_coverage = add_throughput_column(''.join(sections), rs, refresh_levels={level})
+    # Shared ranking is finalized after the standing overlay, even on non-L5 updates.
+    text = order_by_l5(text)
     # Measurement gaps and campaign provenance belong outside the score report.
     evidence = path.with_name('battery-report-evidence.md')
     note = ('\n\n## Standing update — ' + campaign['campaign_id'] + f' — L{level}\n\n'

@@ -345,3 +345,27 @@ L5/ornith1.5_9b: tok/s4/6; sources cart-billing-go_ornith15_codex_poff_178867444
 L5/k2_horizon_7b: tok/s6/6; sources shipping-rates-rb_k2_horizon_7b_codex_pon_1790541832, cart-billing-go_k2_horizon_7b_codex_pon_1790543687, orders-api-py_k2_horizon_7b_codex_pon_1790552974, feed-pipeline-java_k2_horizon_7b_codex_pon_1790545580, handles-cli-node_k2_horizon_7b_codex_pon_1790547434, rust-toml-cli_k2_horizon_7b_codex_pon_1790550208
 L5/phi4: tok/s6/6; sources shipping-rates-rb_phi4_codex_pon_1790518544, cart-billing-go_phi4_codex_pon_1790520385, orders-api-py_phi4_codex_pon_1790522239, feed-pipeline-java_phi4_codex_pon_1790522328, handles-cli-node_phi4_codex_pon_1790522418, rust-toml-cli_phi4_codex_pon_1790524267
 L5/ling3.0_tiny: tok/s6/6; sources shipping-rates-rb_ling3-tiny_codex_pon_1790534409, cart-billing-go_ling3-tiny_codex_pon_1790507402, orders-api-py_ling3-tiny_codex_pon_1790509263, feed-pipeline-java_ling3-tiny_codex_pon_1790512241, handles-cli-node_ling3-tiny_codex_pon_1790513421, rust-toml-cli_ling3-tiny_codex_pon_1790516441
+
+
+## Shared L5 standing order
+
+Operator-required synchronized ordering: all six tables now follow descending exact mean of known L5 task scores, identity ties, unscored identities last. Existing row contents, titles, legend and measurements are unchanged; historical subsets retain their shared relative order without fabricated rows. Current L5 standings still mix the new independently judged Gemma shipping final with prior judged pending-cell standings; no running/checkpoint score enters this ranking. Migration byte-preservation/idempotence receipt and before/after regressions: `~/.cria/validation/l5-launch-20261008/shared-order-*`. The publication writer recomputes the shared order on every subsequent campaign overlay.
+
+
+## Standing update — l5-restored-20261008 — L5
+
+gemma4_12b: usefulness6/6, minutes6/6, calls6/6.
+Pending cells retain prior standings; metrics use matching authoritative judged result rows only, never historical rounded row means. Unknown metrics are excluded.
+
+ gemma4_12b: usefulness1/1, minutes1/1, calls1/1, tok/s1/1.
+Means use selected independently judged logical cells once; zeros count, pending/unjudged cells and failed originals do not. Missing, non-numeric or invalid metrics are excluded, not fabricated as zero. Minutes are authoritative wall_seconds/60, including judge waits (not active-work minutes); operator-ended measurement basis remains in attempt provenance. Token rate is the arithmetic mean of known per-task avg_tok_s values, displayed to one decimal; each run rate uses timed output tokens over timed generation seconds across all captured phases, not coder-only speed or wall-time throughput. A mean with incomplete coverage is a partial known-metric mean.
+
+
+Throughput coverage and authoritative source runs:
+L5/ornith1.5_9b: tok/s4/6; sources cart-billing-go_ornith15_codex_poff_1788674442, orders-api-py_ornith15_codex_poff_1788680447, handles-cli-node_ornith15_codex_poff_1788687645, rust-toml-cli_ornith15_codex_poff_1788688897
+L5/gemma4_12b: tok/s6/6; sources shipping-rates-rb_gemma4_12b_codex_poff_1791480323, cart-billing-go_gemma4-qat_codex_poff_1790811722, orders-api-py_gemma4-qat_codex_poff_1790813004, feed-pipeline-java_gemma4-qat_codex_poff_1790816197, handles-cli-node_gemma4-qat_codex_poff_1790827472, rust-toml-cli_gemma4-qat_codex_poff_1790830700
+L5/qwen3.8_9b_distill: tok/s6/6; sources shipping-rates-rb_defiant-fable_codex_poff_1790851113, cart-billing-go_defiant-fable_codex_poff_1790855379, orders-api-py_qwen38-distill_codex_pon_1790498563, feed-pipeline-java_qwen38-distill_codex_pon_1790500422, handles-cli-node_qwen38-distill_codex_pon_1790501476, rust-toml-cli_qwen38-distill_codex_pon_1790504439
+L5/k2_horizon_7b: tok/s6/6; sources shipping-rates-rb_k2_horizon_7b_codex_pon_1790541832, cart-billing-go_k2_horizon_7b_codex_pon_1790543687, orders-api-py_k2_horizon_7b_codex_pon_1790552974, feed-pipeline-java_k2_horizon_7b_codex_pon_1790545580, handles-cli-node_k2_horizon_7b_codex_pon_1790547434, rust-toml-cli_k2_horizon_7b_codex_pon_1790550208
+L5/bonsai2: tok/s6/6; sources shipping-rates-rb_bonsai2_codex_poff_1790832927, cart-billing-go_bonsai2_codex_poff_1790836181, orders-api-py_bonsai2_codex_poff_1790838937, feed-pipeline-java_bonsai2_codex_poff_1790842014, handles-cli-node_bonsai2_codex_poff_1790845854, rust-toml-cli_bonsai2_codex_poff_1790849024
+L5/ling3.0_tiny: tok/s6/6; sources shipping-rates-rb_ling3-tiny_codex_pon_1790534409, cart-billing-go_ling3-tiny_codex_pon_1790507402, orders-api-py_ling3-tiny_codex_pon_1790509263, feed-pipeline-java_ling3-tiny_codex_pon_1790512241, handles-cli-node_ling3-tiny_codex_pon_1790513421, rust-toml-cli_ling3-tiny_codex_pon_1790516441
+L5/phi4: tok/s6/6; sources shipping-rates-rb_phi4_codex_pon_1790518544, cart-billing-go_phi4_codex_pon_1790520385, orders-api-py_phi4_codex_pon_1790522239, feed-pipeline-java_phi4_codex_pon_1790522328, handles-cli-node_phi4_codex_pon_1790522418, rust-toml-cli_phi4_codex_pon_1790524267

@@ -40,6 +40,9 @@ which carries the incident that made this a ban rather than a preference.
 Before publishing scores, read [`docs/battery-report-policy.md`](docs/battery-report-policy.md).
 `docs/battery-report.md` contains exactly six latest-value L0–L5 tables, original descriptive
 level titles with table-average usefulness, and a legend—no supervision prose or attempt ledger.
+All six tables share descending exact L5 average-usefulness order, synchronized on every publication;
+ties use ascending official model identity, unscored L5 identities follow scored ones, and historical
+subsets preserve that shared relative order without fabricated rows. Other levels keep their scores/metrics.
 Evidence and metric-coverage disclosures belong in `docs/battery-report-evidence.md` and external
 campaign records. Use the guarded campaign-aware writer; do not paste historical/campaign previews
 wholesale into the scorecard. Pending cells retain prior judged standings; never publish checkpoints

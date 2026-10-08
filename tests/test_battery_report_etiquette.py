@@ -26,7 +26,11 @@ def test_writer_preserves_six_tables_titles_and_pending_standings(tmp_path, monk
                task=status.TASKS[0], usefulness_percent=0, wall_seconds=0, calls=0)
     status.write_report([row], campaign=manifest)
     after = path.read_text()
-    assert after.split('## L5')[0] == before.split('## L5')[0]
+    # Shared L5 ranking may move rows at every level, never change their contents.
+    def other_levels(text):
+        return [sorted(section.splitlines()) for section in
+                re.split(r'(?=^## L[0-5] — )', text, flags=re.M)[1:6]]
+    assert other_levels(after) == other_levels(before)
     assert len(re.findall(r'^## L[0-5] ', after, re.M)) == 6
     assert after.count('| model |') == 6
     assert 'ASSISTS_ENABLED — steers, periodic gates, detectors, planner — 40%' in after
