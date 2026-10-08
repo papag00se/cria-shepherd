@@ -4,13 +4,13 @@
 ## Current fresh campaign — planner-off L0
 
 Campaign **`l0-restored-20261007`**; authoritative state: `~/.cria/suite/_campaigns/l0-restored-20261007/manifest.json`.
-**Eleven logical cells judged: nine main finals, shipping replacement, and separately labeled operator-ended feed. Next: Ornith/rust.** Original failed attempts remain unscored and preserved separately; no failure is represented as0% or promoted to natural completion.
+**Twelve logical cells judged: ten main finals, shipping replacement, and separately labeled operator-ended feed. Gemma and Ornith rows complete; next: Bonsai/shipping.** Original failed attempts remain unscored and preserved separately; no failure is represented as0% or promoted to natural completion.
 Each percentage is the recorded holistic usefulness judgment, not test completion or a model-capability ceiling. Unjudged cells have no percentage; failed attempts retain their evidence outside the score matrix. Every cell must obtain a successful, judged run (0% is valid) before serial execution moves on; infrastructure failures are repaired and rerun, never treated as scores.
 
 | model | ruby | go | python | java | node | rust | avg usefulness | avg min | avg calls |
 |---|---|---|---|---|---|---|---:|---:|---:|
 | gemma4_12b | 🔴 0% | 🟡 80% | 🔴 2% | 🔴 3% | 🔴 35% | 🟢 95% | 36% | 1 | 24 |
-| ornith1.5_9b | 🟢 90% | 🟡 75% | 🟢 90% | 🔴 30% | 🟡 75% |  | 72% | 45 | 151 |
+| ornith1.5_9b | 🟢 90% | 🟡 75% | 🟢 90% | 🔴 30% | 🟡 75% | 🟢 100% | 77% | 37 | 130 |
 | bonsai2 |  |  |  |  |  |  | · | · | · |
 | nemotron-elastic |  |  |  |  |  |  | · | · | · |
 | ling3.0_tiny |  |  |  |  |  |  | · | · | · |
@@ -18,7 +18,7 @@ Each percentage is the recorded holistic usefulness judgment, not test completio
 | k2_horizon_7b |  |  |  |  |  |  | · | · | · |
 | qwen3.8_9b_distill |  |  |  |  |  |  | · | · | · |
 
-**Row-average coverage:** gemma4_12b: usefulness6/6, minutes6/6, calls6/6; ornith1.5_9b: usefulness5/5, minutes5/5, calls4/5.
+**Row-average coverage:** gemma4_12b: usefulness6/6, minutes6/6, calls6/6; ornith1.5_9b: usefulness6/6, minutes6/6, calls5/6.
 Means use selected independently judged logical cells once; zeros count, pending/unjudged cells and failed originals do not. Missing, non-numeric or invalid metrics are excluded, not fabricated as zero. Minutes are authoritative wall_seconds/60, including judge waits (not active-work minutes); operator-ended measurement basis remains in attempt provenance. A mean with incomplete coverage is a partial known-metric mean.
 
 ### Attempt evidence (provenance outside score cells)
@@ -33,6 +33,7 @@ Means use selected independently judged logical cells once; zeros count, pending
 | `rust-toml-cli_gemma4_12b_codex_poff_1791415702` | 95% | Cargo TOML parser CLI, dotted lookup, error handling, tests and README; build/runtime unverified, strings use TOML formatting. |
 | `cart-billing-go_ornith1.5_9b_codex_poff_1791417342` | 75% | Decimal/cents calculations, corrected Subtotal, rounding regression, JSON/fallback discounts and logging; module-mode tests/vet/build pass, but file lookup is cwd-relative, logged subtotal is discounted cents and default vendoring fails. |
 | `feed-pipeline-java_ornith1.5_9b_codex_poff_1791419572` | **unscored original failure** | Length-truncated historical tool arguments poisoned Codex compaction/native template parsing; original archive/captures/row retained, never judged. Fresh linked rerun follows the wire repair. |
+| `rust-toml-cli_ornith1.5_9b_codex_poff_1791440916` | 100% | Natural final; published toml parser, dotted lookup, value-only output, stderr/nonzero file/key errors, three unit tests and README delivered. Independent exact-source offline locked build/tests and integer/string/missing-file/key executions pass; broader value types/cross-platform runtime unverified. Authoritative46calls/114.0wall and active seconds. |
 | `handles-cli-node_ornith1.5_9b_codex_poff_1791437986` | 75% | Natural exited final; independent exact-archive judgment credits fetch/CLI/metadata/tests/Docker, captured four passing tests and container goose lookup; eight-page scan independently returns1instead of2fixture matches, actual arbitrary-holder totals unverified. Authoritative209calls,2458.1wall/1808.1active seconds; not a checkpoint score. |
 | `orders-api-py_ornith1.5_9b_codex_poff_1791419168` | 90% | Customer orders/totals, pending status and in-place migration/index, parameterized lookups and real HTTP tests; captured tests/migration probe pass, but URL decoding is absent, custom server DB path ignored and index detection name-based, with these edge cases runtime-unverified. |
 | `shipping-rates-rb_ornith1.5_9b_codex_poff_1791418723` | 90% — authorized rerun | Threshold fix, express rates/tests, rate table and gem-backed country inputs; captured repository tests pass, but GB wrongly maps to international and its added test/README reinforce that error. |
