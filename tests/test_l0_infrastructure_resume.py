@@ -1,5 +1,6 @@
 """Explicit repair resume must consume, never retry/score, the infrastructure-failed slot."""
 import copy
+import hashlib
 import json
 
 import pytest
@@ -8,7 +9,7 @@ from suite import fresh_l5_campaign
 
 
 def fixture(tmp_path, monkeypatch):
-    monkeypatch.setattr(fresh_l5_campaign, '_valid_capture_evidence', lambda _: True)
+    monkeypatch.setattr(fresh_l5_campaign, '_valid_capture_evidence', lambda _, **kw: True)
     model, task = campaign.MODELS[1], campaign.TASKS[0]
     knobs = {'temperature': .6}
     snapshot = {'roles': {model: {'coder': knobs}}}
@@ -31,6 +32,51 @@ def fixture(tmp_path, monkeypatch):
            'terminal': 'harness-error'}
     monkeypatch.setattr(campaign, 'judgment', lambda _: pytest.fail('failed cell must never be judged'))
     return manifest, cell, row, snapshot
+
+
+def captured_error_fixture(tmp_path, monkeypatch):
+    validator = fresh_l5_campaign._valid_capture_evidence
+    manifest, cell, row, snapshot = fixture(tmp_path, monkeypatch)
+    monkeypatch.setattr(fresh_l5_campaign, '_valid_capture_evidence', validator)
+    request = tmp_path / '0001-proxy.json'
+    request.write_text(json.dumps({'phase': 'proxy', 'seq': 1,
+                                  'body': {'model': row['model'], 'messages': [], 'temperature': .6}}))
+    response = tmp_path / '0001-proxy.response.json'
+    response.write_text(json.dumps({'error': {'code': 500, 'type': 'server_error',
+                                             'message': 'missing closing quote'}}))
+    capture = {'complete': True, 'entries': [{'request': str(request), 'seq': 1, 'phase': 'proxy',
+               'sha256': hashlib.sha256(request.read_bytes()).hexdigest(), 'response': str(response),
+               'response_sha256': hashlib.sha256(response.read_bytes()).hexdigest()}]}
+    row.update(capture_snapshot=capture, capture_dirs=[str(tmp_path)], calls=1, phases={'proxy': 1},
+               actual_sent_sampling=campaign.actual_sampling(capture, row['model'], {'temperature': .6}))
+    return manifest, cell, row, snapshot, response
+
+
+def test_captured_native_error_is_preservable_but_never_scoreable(tmp_path, monkeypatch):
+    manifest, cell, row, snapshot, _ = captured_error_fixture(tmp_path, monkeypatch)
+    assert not campaign.valid_row(row, manifest)
+    assert not fresh_l5_campaign._valid_capture_evidence(row)
+    assert campaign.valid_failed_row(row, manifest)
+    before = copy.deepcopy(row)
+    campaign.resume_after_repair(manifest, 'a'*40, 'b'*40, snapshot, [row], failed_run_id='failed')
+    campaign.reconcile(manifest, [row])
+    assert cell['state'] == 'infrastructure-failed' and row == before
+    assert not campaign.valid_row(row, manifest)
+
+
+@pytest.mark.parametrize('error', [{}, {'error': {}}, {'error': {'message': ''}},
+                                   {'error': 'not an error object'}])
+def test_failure_preservation_does_not_accept_opaque_response(tmp_path, monkeypatch, error):
+    manifest, cell, row, _, response = captured_error_fixture(tmp_path, monkeypatch)
+    response.write_text(json.dumps(error))
+    row['capture_snapshot']['entries'][0]['response_sha256'] = hashlib.sha256(response.read_bytes()).hexdigest()
+    assert not campaign.valid_failed_row(row, manifest)
+
+
+def test_failure_preservation_checks_error_response_digest(tmp_path, monkeypatch):
+    manifest, cell, row, _, response = captured_error_fixture(tmp_path, monkeypatch)
+    response.write_text(json.dumps({'error': {'message': 'tampered'}}))
+    assert not campaign.valid_failed_row(row, manifest)
 
 
 def test_repair_preserves_failed_slot_without_score_retry_or_result_mutation(tmp_path, monkeypatch):

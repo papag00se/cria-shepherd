@@ -220,7 +220,7 @@ def read_rows():
     return [json.loads(line) for line in RESULTS.read_text().splitlines() if line.strip()]
 
 
-def valid_row(row, manifest):
+def valid_row(row, manifest, *, allow_capture_errors=False):
     try:
         from .fresh_l5_campaign import _valid_capture_evidence
     except ImportError:
@@ -242,7 +242,10 @@ def valid_row(row, manifest):
         return False
     archive=Path(row.get('archive') or '')/'workspace'
     log=Path(row.get('harness_log') or '')
-    if not archive.is_dir() or not log.is_file() or not _valid_capture_evidence(row): return False
+    if not archive.is_dir() or not log.is_file(): return False
+    capture_valid = (_valid_capture_evidence(row, allow_errors=True) if allow_capture_errors
+                     else _valid_capture_evidence(row))
+    if not capture_valid: return False
     try:
         source=snapshot['roles'][row['model']]['coder']
         return (row.get('source_coder_sampling') == source and
@@ -282,7 +285,8 @@ def valid_failed_row(row, manifest):
     # Evidence validation only: this never makes the original failed row scoreable.
     return (row.get('terminal') == 'harness-error'
             and row.get('started', 0) >= manifest['created']
-            and valid_row({**row, 'terminal': 'infrastructure-evidence'}, manifest))
+            and valid_row({**row, 'terminal': 'infrastructure-evidence'}, manifest,
+                          allow_capture_errors=True))
 
 
 def preserved_failed_row(cell, rows, manifest):

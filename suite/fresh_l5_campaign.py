@@ -26,9 +26,13 @@ def rows():
     return out
 
 
-def _valid_response(response: object) -> bool:
+def _valid_response(response: object, *, allow_errors: bool = False) -> bool:
     if not isinstance(response, dict):
         return False
+    error = response.get("error")
+    if (allow_errors and isinstance(error, dict)
+            and isinstance(error.get("message"), str) and error["message"]):
+        return True
     choices = response.get("choices")
     return (isinstance(choices, list) and bool(choices)
             and isinstance(choices[0], dict)
@@ -43,8 +47,11 @@ def _capture_dirs(row: dict) -> list[Path]:
     return [Path(d) for d in dirs if isinstance(d, str) and d]
 
 
-def _valid_capture_evidence(row: dict) -> bool:
-    """Verify shutdown evidence; pending requests' later responses stay uncredited."""
+def _valid_capture_evidence(row: dict, *, allow_errors: bool = False) -> bool:
+    """Verify shutdown evidence; pending requests' later responses stay uncredited.
+
+    Structured errors are admissible only for unscored failure preservation, never judgments.
+    """
     if "capture_snapshot" in row and not isinstance(row["capture_snapshot"], dict):
         return False
     snapshot = row.get("capture_snapshot")
@@ -81,14 +88,14 @@ def _valid_capture_evidence(row: dict) -> bool:
                     if hashlib.sha256(response.read_bytes()).hexdigest() != entry.get("response_sha256"):
                         return False
                     response_obj = json.loads(response.read_text())
-                    if not _valid_response(response_obj):
+                    if not _valid_response(response_obj, allow_errors=allow_errors):
                         return False
                     completed.append((phase, response, response_obj))
                 elif entry.get("pending") is not True:
                     return False
                 elif response.exists():
                     response_obj = json.loads(response.read_text())  # late response is retained, not counted
-                    if not _valid_response(response_obj):
+                    if not _valid_response(response_obj, allow_errors=allow_errors):
                         return False
             except (OSError, ValueError, TypeError):
                 return False
@@ -133,7 +140,7 @@ def _valid_capture_evidence(row: dict) -> bool:
                     and previous.stat().st_mtime <= cutoff < previous_response.stat().st_mtime
                     and previous_response.stat().st_mtime <= followup.stat().st_mtime
                     and followup_response in actual_responses - expected_responses
-                    and _valid_response(answer)
+                    and _valid_response(answer, allow_errors=allow_errors)
                     and followup_response.stat().st_mtime >= followup.stat().st_mtime)
             except (OSError, ValueError, TypeError):
                 bounded_followup = False

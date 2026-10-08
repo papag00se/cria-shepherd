@@ -16,6 +16,8 @@ Native `0244-proxy.response.json` reports finish_reason`length`:48935prompt+217c
 
 One prior infrastructure failure prevented a second explicit repair transition. The resume path now shares the reconciliation path's exact prior-failure validation (cohort, row identity, immutable digest, source/fleet/capture evidence); it retains that prior receipt unchanged, without judging or relaunching it. A changed/missing/duplicate prior row still fails closed. Operational supervision, not a failed row, decides when a separately authorized successful replacement permits the main serial driver to continue.
 
+The first guardian invocation exposed a separate evidence-validation mismatch before it could launch any inference: the shared capture validator required a successful choices/message reply even when validating an **unscored infrastructure failure** whose retained response is a structured native error. Failure-only validation now explicitly admits hashed structured error objects while retaining all original request/response identity, sampling, phase/count and shutdown checks. Default validation and ordinary scoreable rows still reject those replies. The error evidence is neither discarded nor relabeled successful; the original row remains unchanged. A dedicated positive regression fails before the opt-in and passes after it, with negative cases for opaque/empty errors and changed response digests.
+
 ## Proof
 
 - Pre-fix L0 history behavior reproduced by disabling its formerly absent envelope: malformed history tests fail, and real pinned Codex0.159.3 fails during fake-native compaction; all corresponding repaired cases pass.
