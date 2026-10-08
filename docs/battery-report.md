@@ -150,7 +150,7 @@ Each percentage is the recorded holistic usefulness judgment, not test completio
 | ling3.0_tiny | 🔴 0% | 🔴 0% | 🟡 65% | 🟠 50% | 🟠 60% | 🟡 80% | 42% | 2 | 47 |
 | phi4 | 🔴 0% | 🔴 0% | 🔴 0% | 🔴 0% | 🔴 0% | 🔴 0% | 0% | 0 | 1 |
 | k2_horizon_7b | 🔴 0% | 🔴 2% | 🟢 90% | 🟠 50% | 🟡 75% | 🟡 85% | 50% | 8 | 81 |
-| qwen3.8_9b_distill | 🟡 75% | 🟡 80% | 🟠 50% |  |  |  | 68% | 21 | 407 |
+| qwen3.8_9b_distill | 🟡 75% | 🟡 80% | 🟠 50% | 🟡 75% |  |  | 70% | 19 | 358 |
 
 **Row-average coverage:** gemma4_12b: usefulness6/6, minutes6/6, calls6/6; ornith1.5_9b: usefulness6/6, minutes6/6, calls5/6; bonsai2: usefulness6/6, minutes6/6, calls6/6; nemotron-elastic: usefulness6/6, minutes6/6, calls6/6; ling3.0_tiny: usefulness6/6, minutes6/6, calls6/6; phi4: usefulness6/6, minutes6/6, calls6/6; k2_horizon_7b: usefulness6/6, minutes6/6, calls6/6; qwen3.8_9b_distill: usefulness3/3, minutes3/3, calls3/3.
 Means use selected independently judged logical cells once; zeros count, pending/unjudged cells and failed originals do not. Missing, non-numeric or invalid metrics are excluded, not fabricated as zero. Minutes are authoritative wall_seconds/60, including judge waits (not active-work minutes); operator-ended measurement basis remains in attempt provenance. A mean with incomplete coverage is a partial known-metric mean.
