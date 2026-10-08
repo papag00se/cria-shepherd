@@ -4,21 +4,29 @@
 ## Current fresh campaign — planner-off L0
 
 Campaign **`l0-restored-20261007`**; authoritative state: `~/.cria/suite/_campaigns/l0-restored-20261007/manifest.json`.
-**Twelve logical cells judged: ten main finals, shipping replacement, and separately labeled operator-ended feed. Gemma and Ornith rows complete; next: Bonsai/shipping.** Original failed attempts remain unscored and preserved separately; no failure is represented as0% or promoted to natural completion.
+**Thirteen logical cells judged: eleven main terminal archives (including Bonsai/shipping review-ended), shipping replacement, and separately labeled operator-ended feed. Gemma and Ornith rows complete; next Bonsai/cart.**
+
+**Bonsai/shipping15-active-minute report (checkpoint, NOT final):** `shipping-rates-rb_bonsai2_codex_poff_1791441266.015min` — **0% useful / continue**. Full task/seed/frozen sources read and all seed files independently confirmed byte-identical; no material changes, no requested requirement finished. Exact frozen original tests still fail free shipping at the threshold (expected0.0, actual7.24). Continue solely under first30-active-minute protection, not evidence of progress; at30minutes total requirement completion must justify continuation. Judge wait excluded; matrix cell stays blank.
+
+**Bonsai/shipping30-active-minute review (checkpoint, NOT final):** `shipping-rates-rb_bonsai2_codex_poff_1791441266.030min` — **0% useful / stop for requirement pace**. Fully read seed/prior/current frozen files remain byte-identical; no material changes or substantive requested deliverable. Independent frozen tests retain the equality-threshold failure (expected0.0, actual7.24); express/tests, README table, gem-backed country mapping and country-code integration absent. Both protected intervals elapsed without completed requirements, too far behind approximate first-two-requirement allowance; repeated probes cannot justify another interval. Review-ended termination is not natural completion; exact terminal archive subsequently independently judged0% through suite/usefulness.py, original tests rerun, full terminal sources read rather than copying checkpoint. New required behavior absent/runtime-unverified. Matrix now shows truthful final0%; generated averages include this genuine zero once.
+
+**Quarter-hour status (first dedicated scheduled update):** Bonsai/shipping remains running, about26wall minutes since harness launch; judge wait is excluded by the runner's active clock. Latest independently scored snapshot is15active minutes/0% (about10wall minutes old), not a fresh score. Current exact active elapsed is not exposed in a live result row;30-active-minute review is not yet pending. Inspected captures show repeated missing-iso3166 probes with real LoadError returned intact; no progress is credited from those probes. Logical judgments remain12/48; no final/new cell.
+
+**Visible reporting:** additional heartbeat `5e31572e`, `*/15 * * * *`, sends a user-facing update each quarter-hour even absent a new checkpoint; last scores are labeled by checkpoint age, never invented fresh. Existing one-minute repair/supervision heartbeat `0fc734a6` retained. Active-time frozen reviews and requirement-pace decisions remain separate from wall-clock status reminders. Original failed attempts remain unscored and preserved separately; no failure is represented as0% or promoted to natural completion.
 Each percentage is the recorded holistic usefulness judgment, not test completion or a model-capability ceiling. Unjudged cells have no percentage; failed attempts retain their evidence outside the score matrix. Every cell must obtain a successful, judged run (0% is valid) before serial execution moves on; infrastructure failures are repaired and rerun, never treated as scores.
 
 | model | ruby | go | python | java | node | rust | avg usefulness | avg min | avg calls |
 |---|---|---|---|---|---|---|---:|---:|---:|
 | gemma4_12b | 🔴 0% | 🟡 80% | 🔴 2% | 🔴 3% | 🔴 35% | 🟢 95% | 36% | 1 | 24 |
 | ornith1.5_9b | 🟢 90% | 🟡 75% | 🟢 90% | 🔴 30% | 🟡 75% | 🟢 100% | 77% | 37 | 130 |
-| bonsai2 |  |  |  |  |  |  | · | · | · |
+| bonsai2 | 🔴 0% |  |  |  |  |  | 0% | 35 | 629 |
 | nemotron-elastic |  |  |  |  |  |  | · | · | · |
 | ling3.0_tiny |  |  |  |  |  |  | · | · | · |
 | phi4 |  |  |  |  |  |  | · | · | · |
 | k2_horizon_7b |  |  |  |  |  |  | · | · | · |
 | qwen3.8_9b_distill |  |  |  |  |  |  | · | · | · |
 
-**Row-average coverage:** gemma4_12b: usefulness6/6, minutes6/6, calls6/6; ornith1.5_9b: usefulness6/6, minutes6/6, calls5/6.
+**Row-average coverage:** gemma4_12b: usefulness6/6, minutes6/6, calls6/6; ornith1.5_9b: usefulness6/6, minutes6/6, calls5/6; bonsai2: usefulness1/1, minutes1/1, calls1/1.
 Means use selected independently judged logical cells once; zeros count, pending/unjudged cells and failed originals do not. Missing, non-numeric or invalid metrics are excluded, not fabricated as zero. Minutes are authoritative wall_seconds/60, including judge waits (not active-work minutes); operator-ended measurement basis remains in attempt provenance. A mean with incomplete coverage is a partial known-metric mean.
 
 ### Attempt evidence (provenance outside score cells)
@@ -33,6 +41,7 @@ Means use selected independently judged logical cells once; zeros count, pending
 | `rust-toml-cli_gemma4_12b_codex_poff_1791415702` | 95% | Cargo TOML parser CLI, dotted lookup, error handling, tests and README; build/runtime unverified, strings use TOML formatting. |
 | `cart-billing-go_ornith1.5_9b_codex_poff_1791417342` | 75% | Decimal/cents calculations, corrected Subtotal, rounding regression, JSON/fallback discounts and logging; module-mode tests/vet/build pass, but file lookup is cwd-relative, logged subtotal is discounted cents and default vendoring fails. |
 | `feed-pipeline-java_ornith1.5_9b_codex_poff_1791419572` | **unscored original failure** | Length-truncated historical tool arguments poisoned Codex compaction/native template parsing; original archive/captures/row retained, never judged. Fresh linked rerun follows the wire repair. |
+| `shipping-rates-rb_bonsai2_codex_poff_1791441266` | 0% — review-ended | Exact terminal independently judged: all task files unchanged seed, threshold test still fails, no requested additions delivered. Terminal milestone-stalled-30min, NOT natural completion/infrastructure failure;629authoritative calls/2072.1wall seconds/1820.1active seconds. Original archive/captures retained; honest judged zero permits next serial cell. |
 | `rust-toml-cli_ornith1.5_9b_codex_poff_1791440916` | 100% | Natural final; published toml parser, dotted lookup, value-only output, stderr/nonzero file/key errors, three unit tests and README delivered. Independent exact-source offline locked build/tests and integer/string/missing-file/key executions pass; broader value types/cross-platform runtime unverified. Authoritative46calls/114.0wall and active seconds. |
 | `handles-cli-node_ornith1.5_9b_codex_poff_1791437986` | 75% | Natural exited final; independent exact-archive judgment credits fetch/CLI/metadata/tests/Docker, captured four passing tests and container goose lookup; eight-page scan independently returns1instead of2fixture matches, actual arbitrary-holder totals unverified. Authoritative209calls,2458.1wall/1808.1active seconds; not a checkpoint score. |
 | `orders-api-py_ornith1.5_9b_codex_poff_1791419168` | 90% | Customer orders/totals, pending status and in-place migration/index, parameterized lookups and real HTTP tests; captured tests/migration probe pass, but URL decoding is absent, custom server DB path ignored and index detection name-based, with these edge cases runtime-unverified. |
