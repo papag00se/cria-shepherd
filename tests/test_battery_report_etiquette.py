@@ -33,9 +33,18 @@ def test_writer_preserves_six_tables_titles_and_pending_standings(tmp_path, monk
     assert other_levels(after) == other_levels(before)
     assert len(re.findall(r'^## L[0-5] ', after, re.M)) == 6
     assert after.count('| model |') == 6
-    assert 'ASSISTS_ENABLED — steers, periodic gates, detectors, planner — 40%' in after
-    assert '| gemma4_12b | 🔴 0% | 🟡 74%' in after
-    assert '| 60% | 0 | 0 |' in after
+    # Published standings are live fixtures: assert their retained values, not yesterday's scores.
+    prior_rows = [line for line in before.split('## L5')[1].splitlines()
+                  if line.startswith('| ') and not line.startswith('| model |')]
+    prior_gemma = next(line for line in prior_rows if line.startswith('| gemma4_12b |'))
+    fields = [f.strip() for f in prior_gemma.strip('|').split('|')]
+    gemma_scores = [0] + [int(re.search(r'(\d+)%$', f).group(1)) for f in fields[2:7]]
+    all_scores = [int(value) for line in prior_rows for value in re.findall(r'(\d+)%', line)[:6]]
+    original_ruby = int(re.search(r'(\d+)%$', fields[1]).group(1))
+    expected_title = round((sum(all_scores) - original_ruby) / len(all_scores))
+    assert f'ASSISTS_ENABLED — steers, periodic gates, detectors, planner — {expected_title}%' in after
+    assert f'| gemma4_12b | 🔴 0% | {fields[2]}' in after
+    assert f'| {round(sum(gemma_scores) / len(gemma_scores))}% | 0 | 0 |' in after
     assert after.split('Legend:')[1] == before.split('Legend:')[1]
     assert 'Attempt evidence' not in after and 'Row-average coverage' not in after
     evidence = (tmp_path / 'docs/battery-report-evidence.md').read_text()

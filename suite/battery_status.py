@@ -18,8 +18,10 @@ from fractions import Fraction
 
 try:
     from .model_names import canonical_name
+    from .report_labels import TASK_LANGUAGES
 except ImportError:  # direct suite/battery_status.py invocation
     from model_names import canonical_name
+    from report_labels import TASK_LANGUAGES
 
 SUITE = Path(__file__).resolve().parent
 RESULTS = SUITE / "results" / "results.jsonl"
@@ -331,7 +333,7 @@ def fresh_table(manifest: dict, rs: list[dict], *, include_coverage: bool = True
             raise ValueError('operator-ended result requires explicit disposition')
         selected[key] = row
         used.add(run_id)
-    labels = ('ruby', 'go', 'python', 'java', 'node', 'rust')
+    labels = tuple(TASK_LANGUAGES[task].lower() for task in TASKS)
     out = ['| model | ' + ' | '.join(labels) + ' | avg usefulness | avg min | avg calls | avg tok/s |',
            '|---|' + '---|' * len(TASKS) + '---:|---:|---:|---:|']
     coverage = []

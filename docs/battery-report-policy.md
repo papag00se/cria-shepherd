@@ -2,6 +2,12 @@
 
 `docs/battery-report.md` is a standing scorecard, not a supervision log.
 
+## Chat and progress labels
+
+Every operator-facing chat update (checkpoint, final, progress, blocker or completion) identifies a cell by **official model / language**, matching the scorecard columns, never by task type. For example, write `gemma4_12b / Go`, not `Gemma/cart`, and `gemma4_12b / Python`, not `Gemma/orders`. The shared mapping is `suite/report_labels.py::TASK_LANGUAGES`; use `cell_label(model, task)` when generating labels. Languages are Ruby, Go, Python, Java, Node and Rust (Node matches the existing `node` column). Unknown task identities must not be guessed. Internal task/run IDs, commands, archive paths and exact provenance quotes remain unchanged; these are evidence references, not cell display labels. This rule applies to scheduled supervision as well as manual replies.
+
+## Standing scorecard
+
 - Exactly six tables, ordered L0–L5. Keep the original descriptive level titles and append each table's rounded average usefulness. No extra “latest run” commentary.
 - Apart from the document title, descriptive level titles, tables and legend, no narrative, timestamps, revision notes, campaign sections, checkpoint prose or attempt ledgers.
 - All six tables share L5's model ranking: highest average usefulness first, lowest last. Rank from the exact mean of known L5 task percentages (zeros count; blanks/unknowns do not), never the rounded displayed mean or a pass-rate threshold. Break equal means by ascending official model identity. Models with no judged L5 score, including historical-only identities absent from L5, follow scored models in that same identity order. Historical subsets keep the shared relative order; never fabricate absent model rows. Every publication recomputes this order from retained L5 standings and moves rows in all six tables simultaneously, even when updating another level.

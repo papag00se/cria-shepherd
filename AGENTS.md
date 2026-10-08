@@ -37,7 +37,11 @@ which carries the incident that made this a ban rather than a preference.
 
 ## Battery report etiquette
 
-Before publishing scores, read [`docs/battery-report-policy.md`](docs/battery-report-policy.md).
+Before publishing scores or chat progress, read [`docs/battery-report-policy.md`](docs/battery-report-policy.md).
+All operator-facing checkpoint/final/progress/blocker updates use official model / language labels,
+never task types (e.g. `gemma4_12b / Go`, not `Gemma/cart`). Use
+`suite/report_labels.py::cell_label` and its shared language mapping; keep internal task/run IDs and
+archive/command provenance unchanged. Scheduled supervision follows the same rule.
 `docs/battery-report.md` contains exactly six latest-value L0–L5 tables, original descriptive
 level titles with table-average usefulness, and a legend—no supervision prose or attempt ledger.
 All six tables share descending exact L5 average-usefulness order, synchronized on every publication;
