@@ -442,7 +442,9 @@ def _isolated_installs(ws) -> dict:
     The install tripwire still measures a run against its own empty slate. Download caches can
     remain shared only where their tool can use them read-only. Go writes module downloads and
     checksum-database state under GOMODCACHE and GOPATH, so those must be cell-local too: the Codex
-    sandbox permits writes only to the workspace and this install root, not the host's ~/go."""
+    sandbox permits writes only to the workspace and this install root, not the host's ~/go.
+    Cargo also writes registry downloads/index state to CARGO_HOME; CARGO_INSTALL_ROOT alone
+    changes only installed binaries and leaves the host's ~/.cargo read-only cache in use."""
     root = _cell_install_root(ws)
     return {
         # THE USER-LEVEL ROOT ITSELF. `gem install --user-install` ignores GEM_HOME and writes to
@@ -480,6 +482,7 @@ def _isolated_installs(ws) -> dict:
         "GOMODCACHE": str(root / "gomodcache"),
         "GOCACHE": str(root / "xdg-cache" / "go-build"),
         "GOBIN": str(root / "go" / "bin"),
+        "CARGO_HOME": str(root / "cargo"),
         "CARGO_INSTALL_ROOT": str(root / "cargo"),
         # Install destinations are not usable until their executable dirs are on PATH. This replaces
         # the dead hard-coded Node 22 prepend at the launch site; preserve the ambient runtime path
