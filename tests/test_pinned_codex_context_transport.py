@@ -11,24 +11,40 @@ from test_server import _FakeUpstream
 
 
 @pytest.mark.skipif(not run.RESTORED_CODEX_BINARY.exists(), reason='pinned Codex integration')
-@pytest.mark.parametrize('trigger', ['usage', 'overflow'])
+@pytest.mark.parametrize('trigger', ['usage', 'overflow', 'incomplete-history'])
 def test_pinned_codex_owns_context_recovery_at_l0(tmp_path, monkeypatch, trigger):
     from cria import massage
     monkeypatch.setattr(massage, '_TOOL_CALL_FIXES', massage._TOOL_CALL_FIXES)
     seen, compactions = [], []
+    incomplete_args = '{"cmd":"echo unfinished'
     rejected = False
     def post(handler):
         nonlocal rejected
         body = json.loads(handler.rfile.read(int(handler.headers['Content-Length'])))
         seen.append(body)
         if not body.get('tools'):
+            # Native chat templates parse historical arguments before generating a summary.
+            for message in body['messages']:
+                for call in message.get('tool_calls', []):
+                    try:
+                        json.loads(call['function']['arguments'])
+                    except json.JSONDecodeError:
+                        error = b'{"error":{"message":"malformed historical arguments"}}'
+                        handler.send_response(500)
+                        handler.send_header('Content-Length', str(len(error)))
+                        handler.end_headers()
+                        handler.wfile.write(error)
+                        return
             compactions.append(body)
             message = {'content': 'The user requested a local echo. The echo command succeeded. No files changed.'}
             usage = {'prompt_tokens': 500, 'completion_tokens': 20, 'total_tokens': 520}
         elif len(seen) == 1:
             message = {'tool_calls': [{'id': 'echo-proof', 'type': 'function', 'function': {
                 'name': 'exec_command', 'arguments': json.dumps({'cmd': 'echo context-proof'})}}]}
-            prompt = 48614 if trigger == 'usage' else 500
+            if trigger == 'incomplete-history':
+                message['tool_calls'].append({'id': 'cut-off', 'type': 'function', 'function': {
+                    'name': 'exec_command', 'arguments': incomplete_args}})
+            prompt = 48614 if trigger in ('usage', 'incomplete-history') else 500
             usage = {'prompt_tokens': prompt, 'completion_tokens': 20, 'total_tokens': prompt + 20}
         elif trigger == 'overflow' and not rejected:
             rejected = True
@@ -44,7 +60,8 @@ def test_pinned_codex_owns_context_recovery_at_l0(tmp_path, monkeypatch, trigger
             message = {'content': 'Done: context-proof.'}
             usage = {'prompt_tokens': 500, 'completion_tokens': 20, 'total_tokens': 520}
         handler._json(json.dumps({'choices': [{'message': {'role': 'assistant', **message},
-            'finish_reason': 'tool_calls' if message.get('tool_calls') else 'stop'}], 'usage': usage}).encode())
+            'finish_reason': ('length' if trigger == 'incomplete-history' and len(seen) == 1 else
+                              'tool_calls' if message.get('tool_calls') else 'stop')}], 'usage': usage}).encode())
     monkeypatch.setattr(_FakeUpstream, 'do_POST', post)
     policy = tmp_path / 'policy.toml'
     policy.write_text('workspace_sandbox=true\n')
@@ -69,9 +86,15 @@ def test_pinned_codex_owns_context_recovery_at_l0(tmp_path, monkeypatch, trigger
         assert seen[0].get('tools')
         assert seen[-1].get('tools')
         assert not any(k.startswith(('context.floor', 'summarize.', 'loop.', 'plan.')) for k in h.kinds())
-        if trigger == 'usage':
+        if trigger in ('usage', 'incomplete-history'):
             assert result.returncode == 0, result.stderr
             assert len(compactions) == 1, result.stderr
+            if trigger == 'incomplete-history':
+                historical = [json.loads(call['function']['arguments'])
+                              for message in compactions[0]['messages']
+                              for call in message.get('tool_calls', [])]
+                assert {'_unparsed': incomplete_args} in historical
+                assert 'Reconnecting...' not in result.stderr
         else:
             # Codex0.159.3 does not repair an already-rejected context; it exits safely.
             # Recovery therefore depends on accurate usage BEFORE reaching that rejection.

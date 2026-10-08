@@ -285,15 +285,23 @@ def valid_failed_row(row, manifest):
             and valid_row({**row, 'terminal': 'infrastructure-evidence'}, manifest))
 
 
+def preserved_failed_row(cell, rows, manifest):
+    """Return the unchanged failure's authoritative row, never a completion judgment."""
+    found = [r for r in rows if r.get('campaign_id') == manifest['campaign_id']
+             and (r.get('model'), r.get('task')) == (cell['model'], cell['task'])]
+    saved = manifest.get('preserved_runs', {}).get(cell.get('run_id'), {})
+    if (len(found) == 1 and found[0].get('run_id') == cell.get('run_id')
+            and row_digest(found[0]) == saved.get('unscored_failure_sha256')
+            and valid_failed_row(found[0], manifest) and 'judgment' not in cell):
+        return found[0]
+    return None
+
+
 def reconcile(manifest, rows):
     cohort=[r for r in rows if r.get('campaign_id') == manifest['campaign_id']]
     for cell in manifest['cells']:
         if cell['state'] == 'infrastructure-failed':
-            found = [r for r in cohort if (r.get('model'), r.get('task')) == (cell['model'], cell['task'])]
-            saved = manifest.get('preserved_runs', {}).get(cell.get('run_id'), {})
-            if (len(found) != 1 or found[0].get('run_id') != cell.get('run_id')
-                    or row_digest(found[0]) != saved.get('unscored_failure_sha256')
-                    or not valid_failed_row(found[0], manifest) or 'judgment' in cell):
+            if preserved_failed_row(cell, cohort, manifest) is None:
                 cell.update(state='blocked', reason='preserved infrastructure failure changed; no automatic retry')
             continue
         if cell['state'] == 'blocked': continue
@@ -348,10 +356,15 @@ def resume_after_repair(manifest, previous_revision, revision, snapshot, rows, *
                        for r in rows) != 1):
             raise ValueError('repair can preserve only one blocked, unscored exact attempt')
         failure_cell = matches[0]
-    if any(c['state'] not in ('done', 'pending') and c is not failure_cell for c in manifest['cells']):
+    if any(c['state'] not in ('done', 'pending', 'infrastructure-failed')
+           and c is not failure_cell for c in manifest['cells']):
         raise ValueError('repair requires completed judgments and untouched pending cells')
     preserved = dict(manifest.get('preserved_runs', {}))
     for cell in manifest['cells']:
+        if cell['state'] == 'infrastructure-failed':
+            if preserved_failed_row(cell, rows, manifest) is None:
+                raise ValueError('preserved infrastructure failure changed')
+            continue
         if cell['state'] == 'pending':
             if 'attempted_at' in cell or 'run_id' in cell:
                 raise ValueError('pending cell has an attempt; no automatic retry')

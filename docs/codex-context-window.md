@@ -50,6 +50,19 @@ The real pinned-harness regression proves proactive compaction on native usage a
 non-retrying terminal on overflow, through L0 and a fake backend without GPU inference.
 None of this enables cria's context floor or any new assist.
 
+## Incomplete tool history must remain renderable
+
+A native `length` finish can leave a second tool call with an unfinished JSON argument.
+Codex rejects that call, preserves its error result, and asks for context compaction.
+Native templates parse historical argument JSON even on a tool-free compaction request;
+forwarding the unfinished argument verbatim as executable-shaped JSON prevents compaction.
+At the final wire boundary, L0 losslessly encodes malformed historical argument bytes under
+`_unparsed`, retaining call identity and result without completing or guessing a command.
+Valid arguments remain unchanged; argument recovery remains L1. A real pinned-harness
+regression proves compaction and successful exit after an incomplete call, and native
+CPU-only template replay proves the rejected original request renders after translation.
+See [the incident and exact evidence](audits/2026-10-08-l0-incomplete-history-wire.md).
+
 ## Why Codex needs an exception
 
 Codex ignores that advertisement for a keyless local provider. Its model-catalog refresh is
@@ -114,8 +127,11 @@ preserves its row digest and evidence, and consumes the slot as `infrastructure-
 It never judges, credits, or retries that cell; the failed row remains rejected by ordinary
 scoreable-row validation. Reconciliation blocks if the retained failure disappears,
 changes, or gains a duplicate. Only untouched pending cells launch under the new revision.
-A finished campaign may therefore contain unscored infrastructure failures; report those
-separately rather than claiming all 48 cells have usefulness judgments.
+A second explicit repair also validates and retains every prior failed-row digest unchanged.
+For the current campaign, the operator requires a successful, independently judged replacement
+run (0% is valid) before any subsequent cell proceeds. Supervision launches that replacement
+serially in a distinct linked cohort, waits for its judgment, then resumes the original driver;
+retained failures are historical evidence, never scores or permission to skip a cell.
 
 ## Minimal setup
 

@@ -72,6 +72,40 @@ def test_repair_refuses_unproven_or_unrelated_failure(tmp_path, monkeypatch, cha
     assert manifest == before
 
 
+def test_second_repair_retains_first_failure_and_new_attempt_separately(tmp_path, monkeypatch):
+    manifest, cell, row, snapshot = fixture(tmp_path, monkeypatch)
+    campaign.resume_after_repair(manifest, 'a'*40, 'b'*40, snapshot, [row], failed_run_id='failed')
+    saved = copy.deepcopy(manifest['preserved_runs']['failed'])
+    second = next(c for c in manifest['cells'] if c['model'] == cell['model']
+                  and c['task'] == campaign.TASKS[3])
+    second.update(state='blocked', attempted_at=manifest['created']+3)
+    newer = {**row, 'run_id': 'second-failed', 'task': second['task'],
+             'revision': 'b'*40, 'code_revision': 'b'*40, 'started': manifest['created']+4}
+    rows = copy.deepcopy([row, newer])
+    campaign.resume_after_repair(manifest, 'b'*40, 'c'*40, snapshot, rows,
+                                 failed_run_id='second-failed')
+    assert manifest['preserved_runs']['failed'] == saved
+    assert cell['state'] == second['state'] == 'infrastructure-failed'
+    assert rows == [row, newer]
+    campaign.reconcile(manifest, rows)
+    assert cell['state'] == second['state'] == 'infrastructure-failed'
+    assert not any('judgment' in c for c in (cell, second))
+
+
+@pytest.mark.parametrize('change', ['missing', 'mutated', 'duplicate'])
+def test_second_repair_refuses_changed_prior_failure(tmp_path, monkeypatch, change):
+    manifest, cell, row, snapshot = fixture(tmp_path, monkeypatch)
+    campaign.resume_after_repair(manifest, 'a'*40, 'b'*40, snapshot, [row], failed_run_id='failed')
+    rows = [row]
+    if change == 'missing': rows = []
+    elif change == 'mutated': row['note'] = 'changed'
+    else: rows.append(copy.deepcopy(row))
+    before = copy.deepcopy(manifest)
+    with pytest.raises(ValueError, match='preserved infrastructure failure changed'):
+        campaign.resume_after_repair(manifest, 'b'*40, 'c'*40, snapshot, rows)
+    assert manifest == before
+
+
 def test_reconcile_rejects_disappeared_failure_instead_of_relaunching(tmp_path, monkeypatch):
     manifest, cell, row, snapshot = fixture(tmp_path, monkeypatch)
     campaign.resume_after_repair(manifest, 'a'*40, 'b'*40, snapshot, [row], failed_run_id='failed')

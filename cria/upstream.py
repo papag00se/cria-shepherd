@@ -429,15 +429,11 @@ class Upstream:
                               **rep.as_event())
                 if rep.tools_compressed and tools is not None:
                     out["tools"] = tools  # send the bounded tool schema, not the fat original
-            # A malformed tool_call in the REPLAYED history (a weak model's over-escaped nested-quote
-            # shell command) makes a strict template's JSON re-parse 500 on EVERY turn — poisoning the
-            # whole session, not just the turn that produced it. Repair the history's args before send.
-            # LEVEL 1 — TOOL_CALL_FIXES. Both of these make a conversation structurally acceptable
-            # to a strict template rather than changing what it says: a malformed tool_call in
-            # REPLAYED history 500s every later turn, and an orphaned `tool` message 400s every turn.
-            # Neither alters the toolset, and neither is an assist.
-            if self._tool_call_fixes:
-                msgs = massage.repair_history_tool_args(msgs, rlog)
+            # Native templates reparse historical arguments even on tool-free compaction calls.
+            # A length-ended argument must remain readable context, not poison every later request.
+            # At L0 only losslessly envelope the exact malformed bytes; argument recovery remains
+            # LEVEL 1. Never complete the command or change any valid historical call at L0.
+            msgs = massage.repair_history_tool_args(msgs, rlog, recover=self._tool_call_fixes)
             # UNCONDITIONAL tool-integrity: an orphan `tool` (its assistant call folded by self-compaction,
             # or dropped) 400s a strict template EVERY turn — and the floor's orphan strip runs only when
             # the request is OVER budget, so a fitting request ships the orphan. Convert it to `user` here,

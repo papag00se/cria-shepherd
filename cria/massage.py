@@ -1857,7 +1857,7 @@ def repair_tool_args(completion: dict, rlog=None) -> dict:
     return completion
 
 
-def repair_history_tool_args(messages: list, rlog=None) -> list:
+def repair_history_tool_args(messages: list, rlog=None, *, recover: bool = True) -> list:
     """Ensure every tool_call in the REPLAYED HISTORY has valid-JSON ``arguments``, so ONE malformed
     call can't 500 a strict chat template on EVERY subsequent turn.
 
@@ -1872,7 +1872,11 @@ def repair_history_tool_args(messages: list, rlog=None) -> list:
     forwards. Repair each malformed historical call with the same primitives; if it can't be
     reconstructed, neutralize it to a valid stub that preserves the original text under ``_unparsed``
     (the call already happened — this is context, not a re-execution — so a faithful stub is enough).
-    Valid arguments are left untouched, so the common path is a no-op."""
+    Valid arguments are left untouched, so the common path is a no-op.
+
+    With ``recover=False`` (L0 wire translation), never infer or repair arguments:
+    encode malformed historical bytes only in the lossless ``_unparsed`` envelope.
+    This makes strict native history rendering possible without inventing a command."""
     repaired = 0
     out = []
     for m in messages:
@@ -1888,7 +1892,7 @@ def repair_history_tool_args(messages: list, rlog=None) -> list:
                 try:
                     json.loads(raw)
                 except json.JSONDecodeError:
-                    obj = extract_json_object(raw) or _recover_write_args(raw)
+                    obj = (extract_json_object(raw) or _recover_write_args(raw)) if recover else None
                     # SAME BAR AS THE REPLY SIDE. An empty recovery carries nothing the model wrote,
                     # and here it would be written into the REPLAYED history — the version the model
                     # reads back as its own past. `{}` escapes today only because it is falsy and the
@@ -1901,7 +1905,8 @@ def repair_history_tool_args(messages: list, rlog=None) -> list:
             new_tcs.append(tc)
         out.append({**m, "tool_calls": new_tcs})
     if repaired:
-        _log(rlog, "massage.history_args_repaired", count=repaired)
+        _log(rlog, "massage.history_args_repaired" if recover else
+             "upstream.history_args_enveloped", count=repaired)
     return out
 
 
