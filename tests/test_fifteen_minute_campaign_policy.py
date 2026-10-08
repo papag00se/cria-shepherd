@@ -46,7 +46,7 @@ def test_moved_report_is_the_only_generated_report(tmp_path, monkeypatch):
     monkeypatch.setattr(battery_status, "SUITE", tmp_path / "suite")
     from pathlib import Path
     (tmp_path / 'docs').mkdir()
-    standing = Path('docs/battery-report.md').read_text()
+    standing = battery_status.add_throughput_column(Path('docs/battery-report.md').read_text(), [])[0]
     (tmp_path / 'docs/battery-report.md').write_text(standing)
     out = battery_status.write_report([], campaign=dict(campaign_id='new', level=0,
                                                         models=[], cells=[]))

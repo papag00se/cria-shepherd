@@ -310,3 +310,38 @@ Express pricing, threshold handling, gem-backed country dispatch and rate docume
 
 Run `shipping-rates-rb_gemma4_12b_codex_poff_1791480323`, independently judged95%; source and verification evidence: `~/.cria/validation/l5-gemma-shipping/final/`. Authoritative100calls/1308.1wall seconds/1150.1active seconds; 15min checkpoint60%/continue was not reused as final.
 Original negative-weight assertion was deleted and never restored in delivered sources: an unaddressed test-preservation opportunity at L5, not an infrastructure rerun. Fresh external seed tests pass including that missing assertion. No coder-tree edits or new API requests were made by supervision.
+
+
+## Standing update — l0-restored-20261007 — L0
+
+gemma4_12b: usefulness6/6, minutes6/6, calls6/6; ornith1.5_9b: usefulness6/6, minutes6/6, calls5/6; bonsai2: usefulness6/6, minutes6/6, calls6/6; nemotron-elastic: usefulness6/6, minutes6/6, calls6/6; ling3.0_tiny: usefulness6/6, minutes6/6, calls6/6; phi4: usefulness6/6, minutes6/6, calls6/6; k2_horizon_7b: usefulness6/6, minutes6/6, calls6/6; qwen3.8_9b_distill: usefulness6/6, minutes6/6, calls6/6.
+Pending cells retain prior standings; metrics use matching authoritative judged result rows only, never historical rounded row means. Unknown metrics are excluded.
+
+ gemma4_12b: usefulness6/6, minutes6/6, calls6/6, tok/s6/6; ornith1.5_9b: usefulness6/6, minutes6/6, calls5/6, tok/s5/6; bonsai2: usefulness6/6, minutes6/6, calls6/6, tok/s6/6; nemotron-elastic: usefulness6/6, minutes6/6, calls6/6, tok/s6/6; ling3.0_tiny: usefulness6/6, minutes6/6, calls6/6, tok/s6/6; phi4: usefulness6/6, minutes6/6, calls6/6, tok/s6/6; k2_horizon_7b: usefulness6/6, minutes6/6, calls6/6, tok/s6/6; qwen3.8_9b_distill: usefulness6/6, minutes6/6, calls6/6, tok/s6/6.
+Means use selected independently judged logical cells once; zeros count, pending/unjudged cells and failed originals do not. Missing, non-numeric or invalid metrics are excluded, not fabricated as zero. Minutes are authoritative wall_seconds/60, including judge waits (not active-work minutes); operator-ended measurement basis remains in attempt provenance. Token rate is the arithmetic mean of known per-task avg_tok_s values, displayed to one decimal; each run rate uses timed output tokens over timed generation seconds across all captured phases, not coder-only speed or wall-time throughput. A mean with incomplete coverage is a partial known-metric mean.
+
+
+Throughput coverage and authoritative source runs:
+L0/gemma4_12b: tok/s6/6; sources shipping-rates-rb_gemma4_12b_codex_poff_1791411301, cart-billing-go_gemma4_12b_codex_poff_1791412888, orders-api-py_gemma4_12b_codex_poff_1791413132, feed-pipeline-java_gemma4_12b_codex_poff_1791413299, handles-cli-node_gemma4_12b_codex_poff_1791415541, rust-toml-cli_gemma4_12b_codex_poff_1791415702
+L0/ornith1.5_9b: tok/s5/6; sources shipping-rates-rb_ornith1.5_9b_codex_poff_1791418723, cart-billing-go_ornith1.5_9b_codex_poff_1791417342, orders-api-py_ornith1.5_9b_codex_poff_1791419168, handles-cli-node_ornith1.5_9b_codex_poff_1791437986, rust-toml-cli_ornith1.5_9b_codex_poff_1791440916
+L0/bonsai2: tok/s6/6; sources shipping-rates-rb_bonsai2_codex_poff_1791441266, cart-billing-go_bonsai2_codex_poff_1791445535, orders-api-py_bonsai2_codex_poff_1791448041, feed-pipeline-java_bonsai2_codex_poff_1791451972, handles-cli-node_bonsai2_codex_poff_1791454418, rust-toml-cli_bonsai2_codex_poff_1791455770
+L0/nemotron-elastic: tok/s6/6; sources shipping-rates-rb_nemotron-elastic_codex_poff_1791458193, cart-billing-go_nemotron-elastic_codex_poff_1791459508, orders-api-py_nemotron-elastic_codex_poff_1791459750, feed-pipeline-java_nemotron-elastic_codex_poff_1791460514, handles-cli-node_nemotron-elastic_codex_poff_1791460766, rust-toml-cli_nemotron-elastic_codex_poff_1791461236
+L0/ling3.0_tiny: tok/s6/6; sources shipping-rates-rb_ling3.0_tiny_codex_poff_1791461458, cart-billing-go_ling3.0_tiny_codex_poff_1791461712, orders-api-py_ling3.0_tiny_codex_poff_1791462033, feed-pipeline-java_ling3.0_tiny_codex_poff_1791462579, handles-cli-node_ling3.0_tiny_codex_poff_1791463193, rust-toml-cli_ling3.0_tiny_codex_poff_1791464321
+L0/phi4: tok/s6/6; sources shipping-rates-rb_phi4_codex_poff_1791464704, cart-billing-go_phi4_codex_poff_1791464965, orders-api-py_phi4_codex_poff_1791465272, feed-pipeline-java_phi4_codex_poff_1791465506, handles-cli-node_phi4_codex_poff_1791465943, rust-toml-cli_phi4_codex_poff_1791466150
+L0/k2_horizon_7b: tok/s6/6; sources shipping-rates-rb_k2_horizon_7b_codex_poff_1791466391, cart-billing-go_k2_horizon_7b_codex_poff_1791466998, orders-api-py_k2_horizon_7b_codex_poff_1791467583, feed-pipeline-java_k2_horizon_7b_codex_poff_1791469718, handles-cli-node_k2_horizon_7b_codex_poff_1791471213, rust-toml-cli_k2_horizon_7b_codex_poff_1791471737
+L0/qwen3.8_9b_distill: tok/s6/6; sources shipping-rates-rb_qwen3.8_9b_distill_codex_poff_1791472568, cart-billing-go_qwen3.8_9b_distill_codex_poff_1791473415, orders-api-py_qwen3.8_9b_distill_codex_poff_1791473786, feed-pipeline-java_qwen3.8_9b_distill_codex_poff_1791477250, handles-cli-node_qwen3.8_9b_distill_codex_poff_1791478293, rust-toml-cli_qwen3.8_9b_distill_codex_poff_1791478650
+L1/gemma4_12b: tok/s0/6; sources none
+L1/nemotron-elastic: tok/s0/6; sources none
+L2/gemma4_12b: tok/s0/6; sources none
+L2/nemotron-elastic: tok/s0/6; sources none
+L3/gemma4_12b: tok/s0/6; sources none
+L3/nemotron-elastic: tok/s0/6; sources none
+L4/gemma4_12b: tok/s0/6; sources none
+L4/nemotron-elastic: tok/s0/6; sources none
+L5/gemma4_12b: tok/s6/6; sources shipping-rates-rb_gemma4_12b_codex_poff_1791480323, cart-billing-go_gemma4-qat_codex_poff_1790811722, orders-api-py_gemma4-qat_codex_poff_1790813004, feed-pipeline-java_gemma4-qat_codex_poff_1790816197, handles-cli-node_gemma4-qat_codex_poff_1790827472, rust-toml-cli_gemma4-qat_codex_poff_1790830700
+L5/bonsai2: tok/s6/6; sources shipping-rates-rb_bonsai2_codex_poff_1790832927, cart-billing-go_bonsai2_codex_poff_1790836181, orders-api-py_bonsai2_codex_poff_1790838937, feed-pipeline-java_bonsai2_codex_poff_1790842014, handles-cli-node_bonsai2_codex_poff_1790845854, rust-toml-cli_bonsai2_codex_poff_1790849024
+L5/qwen3.8_9b_distill: tok/s6/6; sources shipping-rates-rb_defiant-fable_codex_poff_1790851113, cart-billing-go_defiant-fable_codex_poff_1790855379, orders-api-py_qwen38-distill_codex_pon_1790498563, feed-pipeline-java_qwen38-distill_codex_pon_1790500422, handles-cli-node_qwen38-distill_codex_pon_1790501476, rust-toml-cli_qwen38-distill_codex_pon_1790504439
+L5/ornith1.5_9b: tok/s4/6; sources cart-billing-go_ornith15_codex_poff_1788674442, orders-api-py_ornith15_codex_poff_1788680447, handles-cli-node_ornith15_codex_poff_1788687645, rust-toml-cli_ornith15_codex_poff_1788688897
+L5/k2_horizon_7b: tok/s6/6; sources shipping-rates-rb_k2_horizon_7b_codex_pon_1790541832, cart-billing-go_k2_horizon_7b_codex_pon_1790543687, orders-api-py_k2_horizon_7b_codex_pon_1790552974, feed-pipeline-java_k2_horizon_7b_codex_pon_1790545580, handles-cli-node_k2_horizon_7b_codex_pon_1790547434, rust-toml-cli_k2_horizon_7b_codex_pon_1790550208
+L5/phi4: tok/s6/6; sources shipping-rates-rb_phi4_codex_pon_1790518544, cart-billing-go_phi4_codex_pon_1790520385, orders-api-py_phi4_codex_pon_1790522239, feed-pipeline-java_phi4_codex_pon_1790522328, handles-cli-node_phi4_codex_pon_1790522418, rust-toml-cli_phi4_codex_pon_1790524267
+L5/ling3.0_tiny: tok/s6/6; sources shipping-rates-rb_ling3-tiny_codex_pon_1790534409, cart-billing-go_ling3-tiny_codex_pon_1790507402, orders-api-py_ling3-tiny_codex_pon_1790509263, feed-pipeline-java_ling3-tiny_codex_pon_1790512241, handles-cli-node_ling3-tiny_codex_pon_1790513421, rust-toml-cli_ling3-tiny_codex_pon_1790516441

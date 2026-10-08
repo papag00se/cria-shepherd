@@ -10,7 +10,8 @@ def setup(tmp_path, monkeypatch):
     docs = tmp_path / 'docs'
     docs.mkdir()
     path = docs / 'battery-report.md'
-    path.write_text(Path('docs/battery-report.md').read_text())
+    # Normal publication preserves other levels; column migration is tested separately.
+    path.write_text(status.add_throughput_column(Path('docs/battery-report.md').read_text(), [])[0])
     monkeypatch.setattr(status, 'SUITE', suite)
     return path
 

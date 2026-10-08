@@ -36,7 +36,7 @@ def parse_report(report: str) -> dict:
             if not line.startswith("| ") or line.startswith("| model |"):
                 continue
             fields = [part.strip() for part in line.split("|")[1:-1]]
-            if len(fields) != 10:
+            if len(fields) != len(header):
                 raise ValueError(f"Unexpected report row: {line}")
             cells = []
             for field in fields[1:7]:

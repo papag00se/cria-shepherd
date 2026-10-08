@@ -226,12 +226,64 @@ def report(rs: list[dict], now: float | None = None) -> str:
         out.append("Retired from the battery (history kept in suite/results/results.jsonl and "
                    "suite/historical_ladder.json): " + ", ".join(retired) + ".")
         out.append("")
-    return "\n".join(out) + "\n"
+    return add_throughput_column("\n".join(out) + "\n", rs)[0]
 
 
 def _measurement(value) -> bool:
     return (isinstance(value, (int, float)) and not isinstance(value, bool)
             and math.isfinite(value) and value >= 0)
+
+
+def _rate_mean(values) -> str:
+    return f'{sum(values) / len(values):.1f}' if values else '·'
+
+
+def add_throughput_column(text: str, rs: list[dict], *, refresh_levels=None) -> tuple[str, str]:
+    """Append/refresh rates using authoritative rows matching the standing task scores.
+
+    This never changes a score or reconstructs timing from rounded rates. Frozen-only
+    history has no invented rate. Each task's stored all-phase rate has equal row weight.
+    """
+    eligible = [r for r in rs if judged(r) and not r.get('aborted')
+                and r.get('terminal') != 'harness-error']
+    out, coverage = [], []
+    level = None
+    for line in text.splitlines():
+        heading = re.match(r'(?:## L|### Level )([0-5])\b', line)
+        if heading:
+            level = int(heading.group(1))
+        if line.startswith('| model |'):
+            if 'avg tok/s' not in line:
+                line += ' avg tok/s |'
+        elif line.startswith('|---|'):
+            if out[-1].count('|') > line.count('|'):
+                line += '---:|'
+        elif level is not None and line.startswith('| '):
+            fields = [f.strip() for f in line.strip('|').split('|')]
+            if len(fields) not in (10, 11):
+                raise ValueError('malformed standing row for throughput')
+            if len(fields) == 11 and refresh_levels is not None and level not in refresh_levels:
+                out.append(line)
+                continue  # ordinary campaign updates preserve every other level byte-for-byte
+            rates, sources, judged_count = [], [], 0
+            for task, score in zip(TASKS, fields[1:7]):
+                if not score or score == '·':
+                    continue
+                match = re.search(r'(\d+)%$', score)
+                if not match:
+                    raise ValueError('malformed standing score')
+                judged_count += 1
+                row = level_cell(eligible, level, fields[0], task)
+                if (row is not None and row.get('usefulness_percent') == int(match.group(1))
+                        and _measurement(row.get('avg_tok_s'))):
+                    rates.append(row['avg_tok_s'])
+                    sources.append(row.get('run_id', '?'))
+            fields = fields[:10] + [_rate_mean(rates)]
+            line = '| ' + ' | '.join(fields) + ' |'
+            coverage.append(f'L{level}/{fields[0]}: tok/s{len(rates)}/{judged_count}; sources '
+                            + (', '.join(sources) if sources else 'none'))
+        out.append(line)
+    return '\n'.join(out) + '\n', '\n'.join(coverage)
 
 
 def fresh_table(manifest: dict, rs: list[dict], *, include_coverage: bool = True) -> str:
@@ -279,8 +331,8 @@ def fresh_table(manifest: dict, rs: list[dict], *, include_coverage: bool = True
         selected[key] = row
         used.add(run_id)
     labels = ('ruby', 'go', 'python', 'java', 'node', 'rust')
-    out = ['| model | ' + ' | '.join(labels) + ' | avg usefulness | avg min | avg calls |',
-           '|---|' + '---|' * len(TASKS) + '---:|---:|---:|']
+    out = ['| model | ' + ' | '.join(labels) + ' | avg usefulness | avg min | avg calls | avg tok/s |',
+           '|---|' + '---|' * len(TASKS) + '---:|---:|---:|---:|']
     coverage = []
     for model in manifest['models']:
         present = [selected[(model, t)] for t in TASKS if (model, t) in selected]
@@ -291,10 +343,11 @@ def fresh_table(manifest: dict, rs: list[dict], *, include_coverage: bool = True
         calls = [r['calls'] for r in present if _measurement(r.get('calls'))]
         means = [str(round(sum(v) / len(v))) + suffix if v else '·'
                  for v, suffix in ((pct, '%'), (minutes, ''), (calls, ''))]
-        out.append('| ' + model + ' | ' + ' | '.join(cells + means) + ' |')
+        rates = [r['avg_tok_s'] for r in present if _measurement(r.get('avg_tok_s'))]
+        out.append('| ' + model + ' | ' + ' | '.join(cells + means + [_rate_mean(rates)]) + ' |')
         if present:
             n = len(present)
-            coverage.append(f'{model}: usefulness{len(pct)}/{n}, minutes{len(minutes)}/{n}, calls{len(calls)}/{n}')
+            coverage.append(f'{model}: usefulness{len(pct)}/{n}, minutes{len(minutes)}/{n}, calls{len(calls)}/{n}, tok/s{len(rates)}/{n}')
     if not include_coverage:
         return '\n'.join(out) + '\n'
     out += ['', '**Row-average coverage:** ' + ('; '.join(coverage) if coverage else 'no judged cells') + '.',
@@ -302,6 +355,9 @@ def fresh_table(manifest: dict, rs: list[dict], *, include_coverage: bool = True
             'cells and failed originals do not. Missing, non-numeric or invalid metrics are excluded, '
             'not fabricated as zero. Minutes are authoritative wall_seconds/60, including judge waits '
             '(not active-work minutes); operator-ended measurement basis remains in attempt provenance. '
+            'Token rate is the arithmetic mean of known per-task avg_tok_s values, displayed to one '
+            'decimal; each run rate uses timed output tokens over timed generation seconds across all '
+            'captured phases, not coder-only speed or wall-time throughput. '
             'A mean with incomplete coverage is a partial known-metric mean.', '']
     return '\n'.join(out)
 
@@ -337,7 +393,7 @@ def write_report(rs: list[dict], *, campaign: dict | None = None) -> Path:
     for line in lines:
         if line.startswith('| ') and not line.startswith('| model |'):
             fields = [field.strip() for field in line.strip('|').split('|')]
-            if len(fields) != 10 or fields[0] in old_rows:
+            if len(fields) not in (10, 11) or fields[0] in old_rows:
                 raise ValueError('malformed or duplicate model row')
             old_rows[fields[0]] = fields
     coverage = []
@@ -377,7 +433,7 @@ def write_report(rs: list[dict], *, campaign: dict | None = None) -> Path:
             metrics.append(row)
         minutes = [r['wall_seconds'] / 60 for r in metrics if _measurement(r.get('wall_seconds'))]
         calls = [r['calls'] for r in metrics if _measurement(r.get('calls'))]
-        target[8:] = [str(round(sum(v) / len(v))) if v else '·' for v in (minutes, calls)]
+        target[8:10] = [str(round(sum(v) / len(v))) if v else '·' for v in (minutes, calls)]
         coverage.append(f'{model}: usefulness{len(scores)}/6, minutes{len(minutes)}/6, calls{len(calls)}/6')
     all_scores = [int(re.search(r'(\d+)%$', v).group(1))
                   for fields in old_rows.values() for v in fields[1:7] if v and v != '·']
@@ -387,13 +443,14 @@ def write_report(rs: list[dict], *, campaign: dict | None = None) -> Path:
     tail = '\n\nLegend:' + existing.split('Legend:', 1)[1] if level == 5 else '\n\n'
     sections[level + 1] = title + '\n\n' + '\n'.join([header, separator] +
         ['| ' + ' | '.join(fields) + ' |' for fields in old_rows.values()]) + tail
-    text = ''.join(sections)
+    text, rate_coverage = add_throughput_column(''.join(sections), rs, refresh_levels={level})
     # Measurement gaps and campaign provenance belong outside the score report.
     evidence = path.with_name('battery-report-evidence.md')
     note = ('\n\n## Standing update — ' + campaign['campaign_id'] + f' — L{level}\n\n'
             + '; '.join(coverage) + '.\nPending cells retain prior standings; metrics use matching authoritative '
             'judged result rows only, never historical rounded row means. Unknown metrics are excluded.\n\n'
-            + fresh_table(campaign, rs).split('**Row-average coverage:**', 1)[1])
+            + fresh_table(campaign, rs).split('**Row-average coverage:**', 1)[1]
+            + '\n\nThroughput coverage and authoritative source runs:\n' + rate_coverage + '\n')
     with evidence.open('a') as stream:
         stream.write(note)
     temp = path.with_suffix('.tmp')
