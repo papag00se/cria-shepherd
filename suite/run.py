@@ -843,6 +843,12 @@ def l0_config_fingerprint(path):
 
 
 def main() -> None:
+    from contextlib import ExitStack
+    with ExitStack() as scope:
+        return _main(scope)
+
+
+def _main(scope) -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--task", required=True)
     ap.add_argument("--model", required=True)
@@ -872,12 +878,13 @@ def main() -> None:
     fleet = None
     live_snapshot = None
     if args.restored_fleet:
-        if args.level != 0 or args.planner != "off" or args.fresh_l5:
-            ap.error("--restored-fleet currently requires L0 with planner off")
+        if args.level not in (0, 5) or args.planner != "off" or args.fresh_l5:
+            ap.error("--restored-fleet requires L0 or L5 with planner off")
         if args.model not in l0_campaign.MODELS or args.task not in l0_campaign.TASKS:
-            ap.error("restored L0 model/task must belong to the eight by six roster")
-        fleet = l0_campaign.fleet_snapshot()
-        live_snapshot = l0_campaign.validate_live(CRIA_TOML)
+            ap.error("restored model/task must belong to the eight by six roster")
+        fleet = l0_campaign.fleet_snapshot(level=args.level) if args.level else l0_campaign.fleet_snapshot()
+        live_snapshot = (l0_campaign.validate_live(CRIA_TOML, level=args.level) if args.level
+                         else l0_campaign.validate_live(CRIA_TOML))
     elif args.model not in set(SERVICES) | set(EXTERNAL):
         ap.error("unknown legacy model; official fleet identities require --restored-fleet")
     if args.campaign_id:
@@ -932,13 +939,22 @@ def main() -> None:
     env = None
     adapter = None
     harness_provenance = None
+    role_config_receipt = None
     if args.restored_fleet:
-        # No live role.apply/config writes: the permanent launcher owns guarded fleet switching.
+        if args.level == 5:
+            try:
+                from .restored_roles import scoped
+            except ImportError:
+                from restored_roles import scoped
+            role_config_receipt = scope.enter_context(scoped(
+                CRIA_TOML, fleet['roles'][args.model], log_root / (run_id + '-roles')))
+            live_snapshot = l0_campaign.validate_live(CRIA_TOML, level=args.level)
+        # The permanent launcher owns guarded fleet switching; L5 sampling is cell-scoped.
         switched = sh(str(l0_campaign.LAUNCHER), "switch", args.model, timeout=180)
         if switched.returncode:
             raise RuntimeError("restored fleet switch failed: " + switched.stderr)
-        if l0_campaign.validate_live(CRIA_TOML) != live_snapshot:
-            raise RuntimeError("live L0 config changed during switch")
+        if l0_campaign.validate_live(CRIA_TOML, level=args.level) != live_snapshot:
+            raise RuntimeError("live engagement config changed during switch")
         spec = fleet["roles"][args.model]
         env = _codex_env(dict(os.environ, **_isolated_installs(ws)), ws)
         adapter = SamplingAdapter(spec["coder"], RateLimitGate(l0_campaign.ROOT))
@@ -1048,7 +1064,8 @@ def main() -> None:
         **({"campaign_id": args.campaign_id} if args.campaign_id else {}),
         **({"restored_fleet": True, "fleet_snapshot": fleet, "live_config_snapshot": live_snapshot,
             "source_coder_sampling": spec["coder"], "injected_sampling": adapter.injected,
-            "harness_provenance": harness_provenance} if args.restored_fleet else {}),
+            "harness_provenance": harness_provenance,
+            "restored_role_config": role_config_receipt} if args.restored_fleet else {}),
         "sampling": spec,
         **({"level": args.level} if args.level is not None else {}),
         "started": t0, "wall_seconds": round(t1 - t0, 1),
@@ -1072,8 +1089,8 @@ def main() -> None:
     if args.restored_fleet:
         try:
             row["actual_sent_sampling"] = l0_campaign.actual_sampling(
-                capture_snapshot, args.model, spec["coder"])
-            if l0_campaign.validate_live(CRIA_TOML) != live_snapshot:
+                capture_snapshot, args.model, spec["coder"], coder_only=args.level == 5)
+            if l0_campaign.validate_live(CRIA_TOML, level=args.level) != live_snapshot:
                 raise ValueError("live config changed during cell")
         except (OSError, ValueError, KeyError) as exc:
             row["aborted"] = "invalid restored sampling/config: " + str(exc)

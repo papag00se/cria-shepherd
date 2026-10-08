@@ -124,18 +124,21 @@ def main() -> int:
             from . import l0_campaign
         except ImportError:
             import l0_campaign
-        if not args.restored_fleet or args.level != 0 or args.arm or args.planner != "off" or args.fresh_l5:
-            ap.error("restored campaigns require --restored-fleet --level 0, planner off")
+        if args.level not in (0, 5) or args.arm or args.planner != "off" or args.fresh_l5:
+            ap.error("restored campaigns require --restored-fleet --level 0 or 5, planner off")
         if args.campaign_id and not args.campaign_revision:
             ap.error("--campaign-id requires --campaign-revision")
         if args.model not in l0_campaign.MODELS or args.task not in l0_campaign.TASKS:
-            ap.error("restored L0 model/task must belong to the eight by six roster")
+            ap.error("restored model/task must belong to the eight by six roster")
         if args.campaign_id:
             l0_campaign.campaign_dir(args.campaign_id)
             l0_campaign.validate_revision(args.campaign_revision)
-        l0_campaign.fleet_snapshot()
+        if args.level:
+            l0_campaign.fleet_snapshot(level=args.level)
+        else:
+            l0_campaign.fleet_snapshot()
         command = [sys.executable, str(SUITE / "run.py"), "--task", args.task,
-                   "--model", args.model, "--level", "0", "--restored-fleet",
+                   "--model", args.model, "--level", str(args.level), "--restored-fleet",
                    "--milestone-minutes", str(args.milestone_minutes)]
         if args.campaign_id:
             command += ["--campaign-id", args.campaign_id,

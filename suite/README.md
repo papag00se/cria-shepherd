@@ -88,7 +88,15 @@ Cargo's `CARGO_HOME` and `CARGO_INSTALL_ROOT` also point to the cell's `cargo` d
 
 ## Report location and launch readiness
 
-The generated standing report is [`docs/battery-report.md`](../docs/battery-report.md). Generation must not recreate `docs/audits/battery-report.md`. Existing historical rows are not fresh rerun results; record final judgments before claiming measured usefulness.
+The generated standing report is [`docs/battery-report.md`](../docs/battery-report.md). Follow [report etiquette](../docs/battery-report-policy.md): exactly six L0–L5 tables, original descriptive titles with table-average percentages, and a legend only. Coverage, supervision, attempts and limitations go in `docs/battery-report-evidence.md` and external campaign records. The campaign-aware writer overlays independent final judgments without erasing pending standings or other levels; bare `--write` refuses overwrite. Generation must not recreate `docs/audits/battery-report.md`. Existing historical rows are not fresh rerun results; record final judgments before claiming measured usefulness.
+
+For the restored eight-model planner-off L5 run, use the shared serial driver:
+
+```bash
+python suite/l0_campaign.py --level 5 --campaign-id NAME --campaign-revision FULL_HEAD --drive
+```
+
+The historical script name remains compatible with L0. L5 cell-scoped canonical role sampling is preserved in external config receipts and restored after each cell; newer operator edits are never overwritten. Fleet validation, isolated installs, protected checkpoint pace and independent-final-judgment gating remain shared with the completed L0 campaign.
 
 Refresh a fresh campaign's score table and row averages with:
 

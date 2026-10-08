@@ -44,8 +44,12 @@ def test_material_changes_are_required_and_reported():
 def test_moved_report_is_the_only_generated_report(tmp_path, monkeypatch):
     (tmp_path / "suite").mkdir()
     monkeypatch.setattr(battery_status, "SUITE", tmp_path / "suite")
-    monkeypatch.setattr(battery_status, "_historical", lambda: {})
-    out = battery_status.write_report([])
+    from pathlib import Path
+    (tmp_path / 'docs').mkdir()
+    standing = Path('docs/battery-report.md').read_text()
+    (tmp_path / 'docs/battery-report.md').write_text(standing)
+    out = battery_status.write_report([], campaign=dict(campaign_id='new', level=0,
+                                                        models=[], cells=[]))
     assert out == tmp_path / "docs" / "battery-report.md"
     assert not (tmp_path / "docs" / "audits" / "battery-report.md").exists()
-    assert "(model-names.md)" in out.read_text()
+    assert out.read_text() == standing

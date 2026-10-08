@@ -35,6 +35,16 @@ which carries the incident that made this a ban rather than a preference.
 
 `gemma4_12b`, `ornith1.5_9b`, `ling3.0_tiny`, `bonsai2`, `k2_horizon_7b`, `phi4`, `qwen3.8_9b_distill` are the official names (operator, 2026-09-30). Gemma4 and Gemma4 QAT are **one** `gemma4_12b` row. Use official names in reports and findings; legacy service/executable keys and historical artifact IDs are compatibility/provenance, not additional models. The single registry is `suite/model_names.py`; full policy and alias table: [`docs/model-names.md`](docs/model-names.md). Never rename stored run IDs/captures or reset a live campaign just to change display names. Unspecified models retain their names.
 
+## Battery report etiquette
+
+Before publishing scores, read [`docs/battery-report-policy.md`](docs/battery-report-policy.md).
+`docs/battery-report.md` contains exactly six latest-value L0–L5 tables, original descriptive
+level titles with table-average usefulness, and a legend—no supervision prose or attempt ledger.
+Evidence and metric-coverage disclosures belong in `docs/battery-report-evidence.md` and external
+campaign records. Use the guarded campaign-aware writer; do not paste historical/campaign previews
+wholesale into the scorecard. Pending cells retain prior judged standings; never publish checkpoints
+as final scores, erase failed originals, or select best rather than latest judgments.
+
 ## Planning policy — OFF unless explicitly requested
 
 Planning was deliberately retired from normal operation. Keep its implementation only for optional experiments. Config construction/loading and suite CLIs default to OFF; no engagement level (including L5), battery arm, model swap, or automation may enable it implicitly. Turning it ON requires explicit operator opt-in (`[planner].enabled = true` or `--planner on`). Do not infer consent from retained planner code, capability descriptions, or historical planner-on runs. Do not add a required `--planner off` flag. Commit `4a089fe7` incorrectly re-enabled it at L5; preserve regression coverage for that incident. Planner-on results do not measure the intended planner-off system.

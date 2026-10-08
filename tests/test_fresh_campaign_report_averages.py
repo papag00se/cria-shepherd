@@ -71,7 +71,7 @@ def test_write_refreshes_fresh_table_without_destroying_attempts_or_history(tmp_
     wrong={**m,'campaign_id':'wrong'}
     with pytest.raises(ValueError):status.write_report(r,campaign=wrong)
     assert path.read_text()==text
-    status.write_report(r,campaign=m)
-    got=path.read_text();assert 'avg usefulness | avg min | avg calls' in got
-    assert 'Scope stays.' in got and got.endswith('Historical ladder stays byte-for-byte.\n')
-    assert 'Preserve failed originals and checkpoint prose.' in got
+    # Legacy evidence-rich reports must be explicitly preserved/migrated, not silently
+    # regenerated into a standing score report or destructively stripped by the writer.
+    with pytest.raises(ValueError):status.write_report(r,campaign=m)
+    assert path.read_text()==text

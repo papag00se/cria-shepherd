@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fresh restored eight-model L0 campaign; launch serially and await semantic judgments."""
+"""Fresh restored eight-model L0/L5 campaign; serial, planner-off, independently judged."""
 from __future__ import annotations
 import argparse
 import fcntl
@@ -87,7 +87,7 @@ def fingerprint(path, *, large=False):
     return out
 
 
-def fleet_snapshot():
+def fleet_snapshot(*, level=0):
     """Read-only validation. No switch, restart, model inference or implicit acquisition."""
     receipt=json.loads(READINESS.read_text())
     validate_readiness(receipt)
@@ -114,7 +114,7 @@ def fleet_snapshot():
     add(Path.home()/'.local/share/mise/installs/codex/0.159.3/bin/codex')
     add(Path.home()/'.cria/codex-home/config.toml')
     add(Path.home()/'.cria/suite-codex-policy.toml')
-    live_config=validate_live(Path.home()/'.cria/cria.toml')
+    live_config=validate_live(Path.home()/'.cria/cria.toml', level=level)
     effective_units={}
     for model in MODELS:
         cfg={**config.get('defaults',{}),**config['models'][model]}
@@ -173,13 +173,15 @@ def fleet_snapshot():
             'phi4_known_limits':receipt['models']['phi4']['known_limits']}
 
 
-def validate_live(config_path):
+def validate_live(config_path, *, level=0):
     from cria.config import _engagement_level
     cfg=tomllib.loads(Path(config_path).read_text())
-    if (_engagement_level(cfg.get('engagement',{})) != 0 or
+    if level not in (0, 5):
+        raise ValueError('restored campaigns support only L0 or L5')
+    if (_engagement_level(cfg.get('engagement',{})) != level or
         cfg.get('planner',{}).get('enabled',False) is not False or
         cfg.get('logging',{}).get('capture_calls') is not True):
-        raise ValueError('restored L0 requires live L0, planner off, capture_calls=true')
+        raise ValueError(f'restored L{level} requires live L{level}, planner off, capture_calls=true')
     service=subprocess.run(['systemctl','show','cria.service',
         '--property=MainPID,ExecMainStartTimestampMonotonic'],capture_output=True,text=True,check=True).stdout
     state=dict(line.split('=',1) for line in service.splitlines() if '=' in line)
@@ -203,15 +205,18 @@ def validate_live(config_path):
     return fingerprint(config_path)
 
 
-def actual_sampling(snapshot, model, knobs):
+def actual_sampling(snapshot, model, knobs, *, coder_only=False):
     actual=[]
     for entry in snapshot.get('entries',[]):
-        body=json.loads(Path(entry['request']).read_text())['body']
+        request=json.loads(Path(entry['request']).read_text())
+        if coder_only and not str(request.get('phase', '')).startswith('coder-s'):
+            continue
+        body=request['body']
         fields={k:body[k] for k in validate_knobs(knobs) if k in body}
         if fields != knobs or body.get('model') != model:
             raise ValueError('actual upstream sampling/model differs from source coder request')
         actual.append({'request':entry['request'],'fields':fields})
-    if not actual: raise ValueError('no upstream sampling capture')
+    if not actual and not coder_only: raise ValueError('no upstream sampling capture')
     return actual
 
 
@@ -233,7 +238,7 @@ def valid_row(row, manifest, *, allow_capture_errors=False):
     if (row.get('campaign_id') != manifest['campaign_id'] or row.get('revision') != revision
         or row.get('code_revision') != revision or row.get('model') not in MODELS
         or row.get('task') not in TASKS or row.get('restored_fleet') is not True
-        or row.get('level') != 0 or row.get('live_engagement_level') != 0
+        or row.get('level') != manifest['level'] or row.get('live_engagement_level') != manifest['level']
         or row.get('planner') != 'off' or row.get('planner_enabled') is not False
         or row.get('planner_phase_count') != 0 or row.get('aborted') or row.get('workspace_lost')
         or row.get('terminal') == 'harness-error' or row.get('pacing_policy') != POLICY
@@ -247,9 +252,24 @@ def valid_row(row, manifest, *, allow_capture_errors=False):
                      else _valid_capture_evidence(row))
     if not capture_valid: return False
     try:
+        if manifest['level'] == 5:
+            try:
+                from .restored_roles import render
+            except ImportError:
+                from restored_roles import render
+            receipt = row.get('restored_role_config') or {}
+            before = Path(receipt['before']).read_bytes()
+            active = Path(receipt['active']).read_bytes()
+            roles = snapshot['roles'][row['model']]
+            if (receipt.get('roles') != roles or active != render(before.decode(), roles).encode()
+                    or hashlib.sha256(before).hexdigest() != snapshot['live_config']['sha256']
+                    or hashlib.sha256(active).hexdigest() != receipt.get('active_sha256')
+                    or row.get('live_config_snapshot', {}).get('sha256') != receipt.get('active_sha256')):
+                return False
         source=snapshot['roles'][row['model']]['coder']
         return (row.get('source_coder_sampling') == source and
-                row.get('actual_sent_sampling') == actual_sampling(row['capture_snapshot'],row['model'],source)
+                row.get('actual_sent_sampling') == actual_sampling(row['capture_snapshot'],row['model'],source,
+                                                                 coder_only=manifest['level'] == 5)
                 and bool(row.get('injected_sampling'))
                 and all(item.get('fields') == source for item in row['injected_sampling']))
     except (OSError,ValueError,KeyError,TypeError): return False
@@ -271,9 +291,11 @@ def save(path, value):
     temp.write_text(json.dumps(value,indent=2)+'\n'); temp.replace(path)
 
 
-def create_manifest(campaign_id, revision, snapshot):
+def create_manifest(campaign_id, revision, snapshot, *, level=0):
+    if type(level) is not int or level not in (0, 5):
+        raise ValueError('restored campaigns support only L0 or L5')
     return {'schema':1,'campaign_id':campaign_id,'revision':revision,'created':time.time(),
-            'models':list(MODELS),'tasks':list(TASKS),'level':0,'planner':'off','pacing_policy':POLICY,
+            'models':list(MODELS),'tasks':list(TASKS),'level':level,'planner':'off','pacing_policy':POLICY,
             'fleet_snapshot':snapshot,'cells':[{'model':m,'task':t,'state':'pending'} for m in MODELS for t in TASKS]}
 
 
@@ -323,7 +345,7 @@ def reconcile(manifest, rows):
 
 
 def cell_command(manifest, cell):
-    return [sys.executable,str(SUITE/'battery_run.py'),'--level','0','--model',cell['model'],
+    return [sys.executable,str(SUITE/'battery_run.py'),'--level',str(manifest['level']),'--model',cell['model'],
             '--task',cell['task'],'--restored-fleet','--campaign-id',manifest['campaign_id'],
             '--campaign-revision',manifest['revision']]
 
@@ -399,6 +421,7 @@ def resume_after_repair(manifest, previous_revision, revision, snapshot, rows, *
 
 def main():
     ap=argparse.ArgumentParser(description=__doc__)
+    ap.add_argument('--level', type=int, choices=(0, 5), default=0)
     ap.add_argument('--campaign-id',required=True)
     ap.add_argument('--campaign-revision',required=True)
     ap.add_argument('--resume-after-launcher-repair', '--resume-after-infrastructure-repair',
@@ -412,7 +435,7 @@ def main():
         ap.error('--preserve-infrastructure-failure requires an explicit repair resume')
     directory=campaign_dir(args.campaign_id)
     validate_revision(args.campaign_revision)
-    snapshot=fleet_snapshot()
+    snapshot=fleet_snapshot(level=args.level) if args.level else fleet_snapshot()
     # Validate only this cohort's task runners, with no installs or inference.
     import shutil
     for exe in ('ruby','go','python','mvn','node','cargo'):
@@ -423,7 +446,7 @@ def main():
     with (ROOT/'driver.lock').open('a+b') as lock:
         fcntl.flock(lock,fcntl.LOCK_EX|fcntl.LOCK_NB)
         path=directory/'manifest.json'
-        manifest=json.loads(path.read_text()) if path.exists() else create_manifest(args.campaign_id,args.campaign_revision,snapshot)
+        manifest=json.loads(path.read_text()) if path.exists() else create_manifest(args.campaign_id,args.campaign_revision,snapshot,level=args.level)
         if args.resume_after_launcher_repair:
             # Exclusive driver lock is held. The original manifest remains immutable evidence.
             before = directory / ('manifest-before-repair-' + manifest['revision'] + '.json')
@@ -436,7 +459,8 @@ def main():
             save(path, manifest)
         if (manifest['revision'] != args.campaign_revision or manifest['fleet_snapshot'] != snapshot
             or manifest['models'] != list(MODELS) or manifest['tasks'] != list(TASKS)
-            or manifest['campaign_id'] != args.campaign_id):
+            or manifest['campaign_id'] != args.campaign_id or manifest['level'] != args.level
+            or manifest['planner'] != 'off'):
             raise ValueError('stale campaign manifest inputs; never credit changed assets/revision')
         while True:
             reconcile(manifest,read_rows()); save(path,manifest)
@@ -452,7 +476,8 @@ def main():
             if waiting:
                 time.sleep(2); continue
             validate_revision(args.campaign_revision)
-            if fleet_snapshot() != snapshot: raise ValueError('fleet changed before next cell')
+            current = fleet_snapshot(level=args.level) if args.level else fleet_snapshot()
+            if current != snapshot: raise ValueError('fleet changed before next cell')
             cell=pending[0]; cell.update(state='running',attempted_at=time.time()); save(path,manifest)
             with (directory/'driver.jsonl').open('a') as events:
                 events.write(json.dumps({'event':'launch','at':time.time(),'cell':cell})+'\n')

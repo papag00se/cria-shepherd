@@ -9,6 +9,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import re
 import subprocess
 import sys
 import time
@@ -233,7 +234,7 @@ def _measurement(value) -> bool:
             and math.isfinite(value) and value >= 0)
 
 
-def fresh_table(manifest: dict, rs: list[dict]) -> str:
+def fresh_table(manifest: dict, rs: list[dict], *, include_coverage: bool = True) -> str:
     """Render only independently judged selected logical cells, never failed originals.
 
     The campaign manifest owns selection, including linked replacements/dispositions.
@@ -294,6 +295,8 @@ def fresh_table(manifest: dict, rs: list[dict]) -> str:
         if present:
             n = len(present)
             coverage.append(f'{model}: usefulness{len(pct)}/{n}, minutes{len(minutes)}/{n}, calls{len(calls)}/{n}')
+    if not include_coverage:
+        return '\n'.join(out) + '\n'
     out += ['', '**Row-average coverage:** ' + ('; '.join(coverage) if coverage else 'no judged cells') + '.',
             'Means use selected independently judged logical cells once; zeros count, pending/unjudged '
             'cells and failed originals do not. Missing, non-numeric or invalid metrics are excluded, '
@@ -306,31 +309,96 @@ def fresh_table(manifest: dict, rs: list[dict]) -> str:
 def write_report(rs: list[dict], *, campaign: dict | None = None) -> Path:
     path = SUITE.parent / 'docs' / 'battery-report.md'
     existing = path.read_text() if path.exists() else ''
-    fresh_start = existing.find('<!-- fresh-')
-    if fresh_start >= 0:
-        if campaign is None:
-            raise ValueError('fresh campaign report requires explicit --campaign-id; refusing overwrite')
-        marker = f"<!-- fresh-{campaign['campaign_id']}:start -->"
-        if not existing.startswith(marker, fresh_start):
-            raise ValueError('campaign does not match fresh report section')
-        end = existing.find(f"<!-- fresh-{campaign['campaign_id']}:end -->", fresh_start)
-        table = existing.find('| model |', fresh_start)
-        attempts = existing.find('### Attempt evidence', table)
-        if not (fresh_start < table < attempts < end):
-            raise ValueError('fresh report boundaries missing; refusing overwrite')
-        # Preserve the surrounding narrative, checkpoints, failures and historical ladder exactly.
-        text = existing[:table] + fresh_table(campaign, rs) + '\n' + existing[attempts:]
-    elif campaign is not None:
-        name = campaign['campaign_id']
-        text = (f'# Battery — fresh campaign and historical engagement ladder\n\n'
-                f'<!-- fresh-{name}:start -->\n## Current fresh campaign\n\n'
-                + fresh_table(campaign, rs) + '\n### Attempt evidence\n'
-                + f'Campaign `{name}`; see its manifest and result-row provenance.\n'
-                + f'<!-- fresh-{name}:end -->\n\n' + report(rs))
-    else:
-        text = report(rs)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(text)
+    if campaign is None:
+        raise ValueError('standing report requires explicit --campaign-id; refusing overwrite')
+    level = campaign.get('level')
+    if type(level) is not int or level not in range(6):
+        raise ValueError('campaign requires an explicit engagement level')
+    # Validate authoritative selection before deriving any display data.
+    table = fresh_table(campaign, rs, include_coverage=False)
+    sections = re.split(r'(?=^## L[0-5] — )', existing, flags=re.M)
+    if (len(sections) != 7 or sections[0] != '# Battery report\n\n'
+            or existing.count('| model |') != 6 or existing.count('Legend:') != 1):
+        raise ValueError('report must already satisfy six-table etiquette; preserve legacy evidence before migration')
+    for index, section in enumerate(sections[1:]):
+        lines = section.splitlines()
+        if not re.fullmatch(rf'## L{index} — .+ — \d+%', lines[0]):
+            raise ValueError('report level titles must retain descriptions and averages')
+        body = [line for line in lines[1:] if line.strip()]
+        if index == 5:
+            if not body[-1].startswith('Legend:'):
+                raise ValueError('report legend missing')
+            body = body[:-1]
+        if not body or any(not line.startswith('|') for line in body):
+            raise ValueError('score report cannot contain narrative or attempt ledgers')
+    section = sections[level + 1]
+    lines = section.splitlines()
+    old_rows = {}
+    for line in lines:
+        if line.startswith('| ') and not line.startswith('| model |'):
+            fields = [field.strip() for field in line.strip('|').split('|')]
+            if len(fields) != 10 or fields[0] in old_rows:
+                raise ValueError('malformed or duplicate model row')
+            old_rows[fields[0]] = fields
+    coverage = []
+    for line in table.splitlines()[2:]:
+        fields = [field.strip() for field in line.strip('|').split('|')]
+        model = fields[0]
+        if not any(fields[1:7]):
+            continue  # pending attempts never erase a standing judgment
+        target = old_rows.setdefault(model, [model] + [''] * 6 + ['·'] * 3)
+        for column, value in enumerate(fields[1:7], 1):
+            if value:
+                target[column] = value
+        scores = [int(re.search(r'(\d+)%$', v).group(1)) for v in target[1:7] if v and v != '·']
+        target[7] = f'{round(sum(scores) / len(scores))}%'
+        metrics = []
+        for column, task in enumerate(TASKS, 1):
+            if not target[column] or target[column] == '·':
+                continue
+            score = int(re.search(r'(\d+)%$', target[column]).group(1))
+            if fields[column]:
+                # fresh_table has already rejected ambiguous/failed/unjudged selections.
+                cell = next(c for c in campaign['cells'] if (c['model'], c['task']) == (model, task))
+                run_id = cell['run_id']
+                if cell['state'] == 'infrastructure-failed':
+                    links = {**campaign.get('successful_replacements', {}),
+                             **campaign.get('judged_operator_dispositions', {})}
+                    run_id = links[run_id]['run_id']
+                row = next(r for r in rs if r.get('run_id') == run_id)
+                if row.get('level') != level:
+                    raise ValueError('selected result engagement differs from campaign')
+            else:
+                # Reuse only a matching authoritative standing result, not a rounded old mean.
+                row = level_cell([r for r in rs if judged(r) and r.get('terminal') != 'harness-error'],
+                                 level, model, task)
+                if row is None or row.get('usefulness_percent') != score:
+                    continue
+            metrics.append(row)
+        minutes = [r['wall_seconds'] / 60 for r in metrics if _measurement(r.get('wall_seconds'))]
+        calls = [r['calls'] for r in metrics if _measurement(r.get('calls'))]
+        target[8:] = [str(round(sum(v) / len(v))) if v else '·' for v in (minutes, calls)]
+        coverage.append(f'{model}: usefulness{len(scores)}/6, minutes{len(minutes)}/6, calls{len(calls)}/6')
+    all_scores = [int(re.search(r'(\d+)%$', v).group(1))
+                  for fields in old_rows.values() for v in fields[1:7] if v and v != '·']
+    title = re.sub(r'\d+%$', f'{round(sum(all_scores) / len(all_scores))}%' if all_scores else '0%', lines[0])
+    header = next(line for line in lines if line.startswith('| model |'))
+    separator = next(line for line in lines if line.startswith('|---|'))
+    tail = '\n\nLegend:' + existing.split('Legend:', 1)[1] if level == 5 else '\n\n'
+    sections[level + 1] = title + '\n\n' + '\n'.join([header, separator] +
+        ['| ' + ' | '.join(fields) + ' |' for fields in old_rows.values()]) + tail
+    text = ''.join(sections)
+    # Measurement gaps and campaign provenance belong outside the score report.
+    evidence = path.with_name('battery-report-evidence.md')
+    note = ('\n\n## Standing update — ' + campaign['campaign_id'] + f' — L{level}\n\n'
+            + '; '.join(coverage) + '.\nPending cells retain prior standings; metrics use matching authoritative '
+            'judged result rows only, never historical rounded row means. Unknown metrics are excluded.\n\n'
+            + fresh_table(campaign, rs).split('**Row-average coverage:**', 1)[1])
+    with evidence.open('a') as stream:
+        stream.write(note)
+    temp = path.with_suffix('.tmp')
+    temp.write_text(text)
+    temp.replace(path)
     return path
 
 
