@@ -3,7 +3,7 @@ from unittest.mock import patch
 
 import pytest
 
-from suite import battery_run
+from suite import battery_run, run_guard
 
 
 @pytest.mark.parametrize("arm", ["BASE", "CRIA"])
@@ -11,7 +11,9 @@ def test_legacy_arm_does_not_enable_the_retired_planner(tmp_path, arm):
     config = tmp_path / "cria.toml"
     config.write_text("[engagement]\nlevel = 5\n")
     commands = []
-    with patch("sys.argv", ["battery_run.py", "--arm", arm, "--model", "test-model",
+    # Observe the fake launch's planner argument, not unrelated live machine processes.
+    with patch.object(run_guard, "other_suite_runners", return_value=[]), \
+            patch("sys.argv", ["battery_run.py", "--arm", arm, "--model", "test-model",
                             "--task", "test-task"]), \
             patch.object(battery_run, "TOML", config), \
             patch.object(battery_run, "sh", side_effect=lambda *cmd, **kw: commands.append(cmd) or 0):

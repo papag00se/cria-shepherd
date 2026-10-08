@@ -6,7 +6,7 @@ from unittest.mock import patch
 import pytest
 
 from cria.config import Config, PlannerConfig
-from suite import battery_run, run
+from suite import battery_run, run, run_guard
 
 
 @pytest.mark.parametrize("text", ["", "[planner]\nmax_gather_rounds = 3\n"])
@@ -70,7 +70,9 @@ def test_suite_cli_defaults_off_and_preserves_explicit_opt_in(flags, expected):
         prefixes.append(prefix)
         raise StopBeforeExecution
     argv = ["run.py", "--task", "shipping-rates-rb", "--model", next(iter(run.SERVICES)), *flags]
-    with patch.object(sys, "argv", argv), patch.object(run, "_require_codex_home"), \
+    # CLI parsing is simulated; the real campaign process census is not this test's subject.
+    with patch.object(run_guard, "other_suite_runners", return_value=[]), \
+            patch.object(sys, "argv", argv), patch.object(run, "_require_codex_home"), \
             patch.object(run.tempfile, "mkdtemp", side_effect=stop):
         with pytest.raises(StopBeforeExecution):
             run.main()
@@ -84,7 +86,8 @@ def test_battery_never_automatically_enables_planning(tmp_path, level):
     commands = []
     argv = ["battery_run.py", "--level", str(level), "--model", "test-model",
             "--task", "test-task"]
-    with patch.object(sys, "argv", argv), patch.object(battery_run, "TOML", config), \
+    with patch.object(run_guard, "other_suite_runners", return_value=[]), \
+            patch.object(sys, "argv", argv), patch.object(battery_run, "TOML", config), \
             patch.object(battery_run, "sh", side_effect=lambda *cmd, **kw: commands.append(cmd) or 0):
         assert battery_run.main() == 0
     suite_command = next(c for c in commands if str(battery_run.SUITE / "run.py") in c)
@@ -98,7 +101,8 @@ def test_battery_planning_requires_explicit_opt_in(tmp_path):
     commands = []
     argv = ["battery_run.py", "--level", "5", "--model", "test-model", "--task", "test-task",
             "--planner", "on"]
-    with patch.object(sys, "argv", argv), patch.object(battery_run, "TOML", config), \
+    with patch.object(run_guard, "other_suite_runners", return_value=[]), \
+            patch.object(sys, "argv", argv), patch.object(battery_run, "TOML", config), \
             patch.object(battery_run, "sh", side_effect=lambda *cmd, **kw: commands.append(cmd) or 0):
         assert battery_run.main() == 0
     suite_command = next(c for c in commands if str(battery_run.SUITE / "run.py") in c)

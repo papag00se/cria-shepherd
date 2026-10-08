@@ -7,6 +7,7 @@ percentage is inferred holistically by a reasoner, never assembled by determinis
 from __future__ import annotations
 
 import json
+import math
 import os
 import subprocess
 import sys
@@ -43,7 +44,7 @@ TASKS = ("shipping-rates-rb", "cart-billing-go", "orders-api-py",
 ARMS = ("BASE", "CRIA")
 
 
-def rows() -> list[dict]:
+def rows(*, all_rows: bool = False) -> list[dict]:
     if not RESULTS.exists():
         return []
     out = []
@@ -52,7 +53,7 @@ def rows() -> list[dict]:
             row = json.loads(line)
         except ValueError:
             continue
-        if str(row.get("note", "")).startswith(COUNTED_PREFIXES):
+        if all_rows or str(row.get("note", "")).startswith(COUNTED_PREFIXES):
             out.append(row)
     return out
 
@@ -189,9 +190,9 @@ def report(rs: list[dict], now: float | None = None) -> str:
                 r = level_cell(rs, lvl, m, t)
                 cells.append(r.get("usefulness_percent")
                              if r and isinstance(r.get("usefulness_percent"), int) else None)
-                if r and r.get("wall_seconds"):
+                if judged(r) and _measurement(r.get("wall_seconds")):
                     mins.append(r["wall_seconds"] / 60)
-                if r and r.get("calls"):
+                if judged(r) and _measurement(r.get("calls")):
                     calls.append(r["calls"])
             if fro:
                 # A frozen row is recovered history for a model whose per-cell judgments were
@@ -227,17 +228,126 @@ def report(rs: list[dict], now: float | None = None) -> str:
     return "\n".join(out) + "\n"
 
 
-def write_report(rs: list[dict]) -> Path:
-    path = SUITE.parent / "docs" / "battery-report.md"
+def _measurement(value) -> bool:
+    return (isinstance(value, (int, float)) and not isinstance(value, bool)
+            and math.isfinite(value) and value >= 0)
+
+
+def fresh_table(manifest: dict, rs: list[dict]) -> str:
+    """Render only independently judged selected logical cells, never failed originals.
+
+    The campaign manifest owns selection, including linked replacements/dispositions.
+    Metrics come only from each selected result row; missing values retain coverage gaps.
+    Ambiguous selection is an error, not permission to take the latest/best attempt.
+    """
+    selected = {}
+    used = set()
+    for cell in manifest['cells']:
+        key = (cell['model'], cell['task'])
+        link = None
+        if cell['state'] == 'done':
+            run_id, cohort = cell['run_id'], manifest['campaign_id']
+        elif cell['state'] == 'infrastructure-failed':
+            links = [mapping[cell['run_id']] for mapping in
+                     (manifest.get('successful_replacements', {}),
+                      manifest.get('judged_operator_dispositions', {}))
+                     if cell['run_id'] in mapping]
+            if len(links) > 1:
+                raise ValueError('multiple dispositions for one logical cell')
+            if not links:
+                continue
+            link = links[0]
+            run_id, cohort = link['run_id'], link['campaign_id']
+        else:
+            continue
+        found = [r for r in rs if r.get('run_id') == run_id]
+        if len(found) != 1 or key in selected or run_id in used:
+            raise ValueError('missing or ambiguous selected result')
+        row = found[0]
+        pct = row.get('usefulness_percent')
+        if (row.get('campaign_id') != cohort or (row.get('model'), row.get('task')) != key
+                or not isinstance(pct, int) or isinstance(pct, bool) or not 0 <= pct <= 100
+                or row.get('terminal') == 'harness-error' or row.get('superseded')):
+            raise ValueError('selected cell lacks matching independently judged result')
+        if link and link.get('termination') == 'operator-ended':
+            if (row.get('terminal') != 'operator-ended' or row.get('natural_completion') is not False
+                    or link.get('natural_completion') is not False):
+                raise ValueError('operator disposition cannot claim natural completion')
+        elif row.get('terminal') == 'operator-ended':
+            raise ValueError('operator-ended result requires explicit disposition')
+        selected[key] = row
+        used.add(run_id)
+    labels = ('ruby', 'go', 'python', 'java', 'node', 'rust')
+    out = ['| model | ' + ' | '.join(labels) + ' | avg usefulness | avg min | avg calls |',
+           '|---|' + '---|' * len(TASKS) + '---:|---:|---:|']
+    coverage = []
+    for model in manifest['models']:
+        present = [selected[(model, t)] for t in TASKS if (model, t) in selected]
+        cells = [(_dot(selected[(model, t)]['usefulness_percent'])
+                  if (model, t) in selected else '') for t in TASKS]
+        pct = [r['usefulness_percent'] for r in present]
+        minutes = [r['wall_seconds'] / 60 for r in present if _measurement(r.get('wall_seconds'))]
+        calls = [r['calls'] for r in present if _measurement(r.get('calls'))]
+        means = [str(round(sum(v) / len(v))) + suffix if v else '·'
+                 for v, suffix in ((pct, '%'), (minutes, ''), (calls, ''))]
+        out.append('| ' + model + ' | ' + ' | '.join(cells + means) + ' |')
+        if present:
+            n = len(present)
+            coverage.append(f'{model}: usefulness{len(pct)}/{n}, minutes{len(minutes)}/{n}, calls{len(calls)}/{n}')
+    out += ['', '**Row-average coverage:** ' + ('; '.join(coverage) if coverage else 'no judged cells') + '.',
+            'Means use selected independently judged logical cells once; zeros count, pending/unjudged '
+            'cells and failed originals do not. Missing, non-numeric or invalid metrics are excluded, '
+            'not fabricated as zero. Minutes are authoritative wall_seconds/60, including judge waits '
+            '(not active-work minutes); operator-ended measurement basis remains in attempt provenance. '
+            'A mean with incomplete coverage is a partial known-metric mean.', '']
+    return '\n'.join(out)
+
+
+def write_report(rs: list[dict], *, campaign: dict | None = None) -> Path:
+    path = SUITE.parent / 'docs' / 'battery-report.md'
+    existing = path.read_text() if path.exists() else ''
+    fresh_start = existing.find('<!-- fresh-')
+    if fresh_start >= 0:
+        if campaign is None:
+            raise ValueError('fresh campaign report requires explicit --campaign-id; refusing overwrite')
+        marker = f"<!-- fresh-{campaign['campaign_id']}:start -->"
+        if not existing.startswith(marker, fresh_start):
+            raise ValueError('campaign does not match fresh report section')
+        end = existing.find(f"<!-- fresh-{campaign['campaign_id']}:end -->", fresh_start)
+        table = existing.find('| model |', fresh_start)
+        attempts = existing.find('### Attempt evidence', table)
+        if not (fresh_start < table < attempts < end):
+            raise ValueError('fresh report boundaries missing; refusing overwrite')
+        # Preserve the surrounding narrative, checkpoints, failures and historical ladder exactly.
+        text = existing[:table] + fresh_table(campaign, rs) + '\n' + existing[attempts:]
+    elif campaign is not None:
+        name = campaign['campaign_id']
+        text = (f'# Battery — fresh campaign and historical engagement ladder\n\n'
+                f'<!-- fresh-{name}:start -->\n## Current fresh campaign\n\n'
+                + fresh_table(campaign, rs) + '\n### Attempt evidence\n'
+                + f'Campaign `{name}`; see its manifest and result-row provenance.\n'
+                + f'<!-- fresh-{name}:end -->\n\n' + report(rs))
+    else:
+        text = report(rs)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(report(rs))
+    path.write_text(text)
     return path
 
 
 def main() -> int:
-    rs = rows()
+    campaign = None
+    if '--campaign-id' in sys.argv:
+        index = sys.argv.index('--campaign-id')
+        if index + 1 >= len(sys.argv):
+            raise SystemExit('--campaign-id requires a manifest name')
+        name = sys.argv[index + 1]
+        if Path(name).name != name:
+            raise SystemExit('campaign-id must be a manifest name')
+        manifest = Path.home() / '.cria/suite/_campaigns' / name / 'manifest.json'
+        campaign = json.loads(manifest.read_text())
+    rs = rows(all_rows=campaign is not None)
     if "--write" in sys.argv:
-        print(f"wrote {write_report(rs)}")
+        print(f"wrote {write_report(rs, campaign=campaign)}")
         return 0
 
     print("BATTERY CAMPAIGN — inferred usefulness percentages\n")

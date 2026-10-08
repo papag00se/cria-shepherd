@@ -4,19 +4,22 @@
 ## Current fresh campaign — planner-off L0
 
 Campaign **`l0-restored-20261007`**; authoritative state: `~/.cria/suite/_campaigns/l0-restored-20261007/manifest.json`.
-**Pinned output default restored; fresh feed replacement running: 8 original judgments plus the authorized shipping rerun = 9 recorded judgments.** Ornith/feed must finish a successful, judged rerun before the remaining38 cells proceed. Its failed attempt remains unscored and preserved separately; no failure is represented as0% or promoted to successful completion.
+**Ten logical cells judged: eight main finals, shipping replacement, and separately labeled operator-ended feed. Ornith/handles is running.** Original failed attempts remain unscored and preserved separately; no failure is represented as0% or promoted to natural completion.
 Each percentage is the recorded holistic usefulness judgment, not test completion or a model-capability ceiling. Unjudged cells have no percentage; failed attempts retain their evidence outside the score matrix. Every cell must obtain a successful, judged run (0% is valid) before serial execution moves on; infrastructure failures are repaired and rerun, never treated as scores.
 
-| model | ruby | go | python | java | node | rust |
-|---|---|---|---|---|---|---|
-| gemma4_12b | 🔴 0% | 🟡 80% | 🔴 2% | 🔴 3% | 🔴 35% | 🟢 95% |
-| ornith1.5_9b | 🟢 90% | 🟡 75% | 🟢 90% | 🟠 30% |  |  |
-| bonsai2 |  |  |  |  |  |  |
-| nemotron-elastic |  |  |  |  |  |  |
-| ling3.0_tiny |  |  |  |  |  |  |
-| phi4 |  |  |  |  |  |  |
-| k2_horizon_7b |  |  |  |  |  |  |
-| qwen3.8_9b_distill |  |  |  |  |  |  |
+| model | ruby | go | python | java | node | rust | avg usefulness | avg min | avg calls |
+|---|---|---|---|---|---|---|---:|---:|---:|
+| gemma4_12b | 🔴 0% | 🟡 80% | 🔴 2% | 🔴 3% | 🔴 35% | 🟢 95% | 36% | 1 | 24 |
+| ornith1.5_9b | 🟢 90% | 🟡 75% | 🟢 90% | 🔴 30% |  |  | 71% | 45 | 132 |
+| bonsai2 |  |  |  |  |  |  | · | · | · |
+| nemotron-elastic |  |  |  |  |  |  | · | · | · |
+| ling3.0_tiny |  |  |  |  |  |  | · | · | · |
+| phi4 |  |  |  |  |  |  | · | · | · |
+| k2_horizon_7b |  |  |  |  |  |  | · | · | · |
+| qwen3.8_9b_distill |  |  |  |  |  |  | · | · | · |
+
+**Row-average coverage:** gemma4_12b: usefulness6/6, minutes6/6, calls6/6; ornith1.5_9b: usefulness4/4, minutes4/4, calls3/4.
+Means use selected independently judged logical cells once; zeros count, pending/unjudged cells and failed originals do not. Missing, non-numeric or invalid metrics are excluded, not fabricated as zero. Minutes are authoritative wall_seconds/60, including judge waits (not active-work minutes); operator-ended measurement basis remains in attempt provenance. A mean with incomplete coverage is a partial known-metric mean.
 
 ### Attempt evidence (provenance outside score cells)
 
@@ -53,6 +56,8 @@ Each percentage is the recorded holistic usefulness judgment, not test completio
 **Disclosed revision boundaries:** first Gemma/shipping at `f56f2d08fee69788c5d8c6bdea924c3a8a6cf761`; other five Gemma cells and failed Ornith/shipping at `c250b92a18c2c6ec884b008fc55bb34d73e67f5e`; Ornith/cart, orders, original failed feed and successful shipping rerun at `115b699d008990e9738edc5bca5c2152ba408629`; failed feed replacement1 at `f1e5f1261928d608bb9f760db0c622819d19de3d` after lossless historical-argument wire repair and failure-only evidence validation; operator-ended replacement2 at **`879ecac87ae44cff34d290d56f04ef4db2fdab1e`**; untouched cells resume from main after `25760ae5` under requirement-pace judgment policy v2, retaining prior run revisions and unchanged fleet assets after restoring the pinned output default, preserving executable argument bytes and disclosing wire translations. Native template replay proves original500/repaired200; pinned-harness compaction passes; full5796passed/2skipped/3565subtests, same19historical failures. No assists added; planner off, mandatory sandbox, pinned Codex0.159.3, unchanged canonical fleet sampling. First30 active minutes protected; checkpoints every15 active minutes, with semantic continuation thereafter and judgment waits excluded.
 
 Full verdicts and archived workspaces remain under `~/.cria/suite/`; repair evidence: `~/.cria/validation/l0-ornith-context-repair/FINDING.md`. Historical scores below are **not credit for this fresh campaign**. This current section is updated after each newly completed cell, including unscored failures.
+**Current Ornith/handles report (not a final/cell score):** `handles-cli-node_ornith1.5_9b_codex_poff_1791437986.030min` — **65% useful / continue**. Since full15-minute snapshot: metadata repaired to valid dependency-free JSON, broken stdout-buffer/forced-exit shutdown removed, Dockerfile/.gitignore and usage documentation added. Fetch migration and container definition are substantive delivered requirements near the approximate first-half-hour allowance, not an extension for minor edits. Offline help passes; independent synthetic execution proves8-page cap undercounts a holder with another match on page9 (1returned versus2fixture total). CLI tests unchanged; live API correctness/end-to-end execution and image runtime unverified. Earlier15-minute40%report retained. Judge/maintenance wait excluded; no next cell launched.
+
 <!-- fresh-l0-restored-20261007:end -->
 
 ## Historical engagement ladder — retained, not the current campaign
