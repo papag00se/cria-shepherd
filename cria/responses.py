@@ -135,19 +135,15 @@ def _output_text(output) -> str:
 
 
 def _as_args_str(args) -> str:
-    """Return tool-call arguments as a VALID-JSON string. A model/harness sometimes
-    emits arguments with raw newlines (or tabs) inside string values — invalid JSON.
-    Left as-is, the upstream model server's chat-template tool parser 500s on it AND
-    poisons every later turn (the whole history is re-parsed). Re-parse leniently
-    (`strict=False` tolerates control chars) and re-serialize with proper escaping."""
-    if isinstance(args, dict):
-        return json.dumps(args, ensure_ascii=False)
-    if not isinstance(args, str):
-        return json.dumps(args or {})
-    try:
-        return json.dumps(json.loads(args, strict=False), ensure_ascii=False)
-    except (json.JSONDecodeError, ValueError):
-        return args  # unrecoverable — leave it (better than dropping the call)
+    """Serialize structured arguments; already-serialized strings remain byte-faithful.
+
+    Parsing leniently here made malformed fresh calls executable at L0 and normalized
+    valid strings. The harness must see the real argument bytes and their parse errors.
+    Historical wire rendering and opt-in L1 recovery have separate owners upstream.
+    """
+    if isinstance(args, str):
+        return args
+    return json.dumps(args, ensure_ascii=False)
 
 
 def _to_chat_tool_choice(tc):

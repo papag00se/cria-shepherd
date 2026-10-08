@@ -199,12 +199,21 @@ class ToResponsesSseTests(unittest.TestCase):
 
 
 class ArgSanitizeTests(unittest.TestCase):
-    def test_raw_newline_arguments_made_valid(self):
-        bad = '{"content": "import requests\nx = 1"}'  # raw newline → invalid JSON
+    def test_raw_newline_is_rejected_fresh_and_preserved_in_historical_wire_envelope(self):
+        """The old template-poison incident must not justify repairing a fresh executable call."""
+        from cria import massage
+        bad = '{"content": "import requests\nx = 1"}'
+        forwarded = responses._as_args_str(bad)
+        self.assertEqual(forwarded, bad)
         with self.assertRaises(json.JSONDecodeError):
-            json.loads(bad)                              # confirm it starts invalid
-        fixed = responses._as_args_str(bad)
-        self.assertEqual(json.loads(fixed)["content"], "import requests\nx = 1")  # now parses
+            json.loads(forwarded)  # the harness sees and rejects the actual malformed argument
+        history = [{'role': 'assistant', 'tool_calls': [{'id': 'rejected-call', 'type': 'function',
+                    'function': {'name': 'write_file', 'arguments': forwarded}}]},
+                   {'role': 'tool', 'tool_call_id': 'rejected-call', 'content': 'Invalid control character'}]
+        rendered = massage.repair_history_tool_args(history, recover=False)
+        self.assertEqual(json.loads(rendered[0]['tool_calls'][0]['function']['arguments']),
+                         {'_unparsed': bad})
+        self.assertEqual(rendered[1], history[1])
 
     def test_valid_and_dict_args_preserved(self):
         self.assertEqual(json.loads(responses._as_args_str('{"a": 1}')), {"a": 1})
