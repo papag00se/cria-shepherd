@@ -446,7 +446,16 @@ def _isolated_installs(ws) -> dict:
     Cargo also writes registry downloads/index state to CARGO_HOME; CARGO_INSTALL_ROOT alone
     changes only installed binaries and leaves the host's ~/.cargo read-only cache in use."""
     root = _cell_install_root(ws)
+    # JVM tools ignore TMPDIR; Maven also defaults its writable repository to ~/.m2.
+    # JAVA_TOOL_OPTIONS is parsed by the JVM itself, so quoted paths with spaces remain
+    # single properties (unlike Maven's shell-expanded MAVEN_OPTS). Keep unrelated options.
+    java_tmp = root / "java-tmp"
+    java_tmp.mkdir(parents=True, exist_ok=True)
+    java_options = " ".join(filter(None, [os.environ.get("JAVA_TOOL_OPTIONS", ""),
+        json.dumps("-Dmaven.repo.local=" + str(root / "m2" / "repository")),
+        json.dumps("-Djava.io.tmpdir=" + str(java_tmp))]))
     return {
+        "JAVA_TOOL_OPTIONS": java_options,
         # THE USER-LEVEL ROOT ITSELF. `gem install --user-install` ignores GEM_HOME and writes to
         # `Gem.user_dir`, which is derived from XDG_DATA_HOME — and `--user-install` is exactly the
         # command that leaked `iso_country_codes` onto this box. Verified: with XDG_DATA_HOME set,

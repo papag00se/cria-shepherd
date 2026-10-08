@@ -82,6 +82,8 @@ cleanup review is separate and **is not** a filesystem sandbox.
 
 Go's `GOPATH`, `GOMODCACHE` and `GOCACHE` are explicitly cell-local under the same permitted install root as `GOBIN`. Go writes module downloads and checksum-database state even when the source workspace is untouched; leaving its default `~/go` or inherited cache paths shared/read-only breaks dependency resolution under the sandbox. No extra writable host directories or coder instructions are added. Real Go/login-shell regressions and an offline cache-writing build cover the environment, not task implementation.
 
+JVM tools receive cell-local `maven.repo.local` and `java.io.tmpdir` properties through `JAVA_TOOL_OPTIONS`, retaining unrelated ambient JVM options. Maven otherwise writes to the sandbox's read-only host `~/.m2`; Java/Jansi ignore shell `TMPDIR`. The JVM parses quoted properties directly, including install paths with spaces. Offline real Maven/login-shell regressions exercise absent and poisoned ambient properties without fetching plugins or changing task sources.
+
 Cargo's `CARGO_HOME` and `CARGO_INSTALL_ROOT` also point to the cell's `cargo` directory. Install-root isolation alone does not redirect registry/index/download writes from the host's read-only `~/.cargo`. The toolchain remains the existing runtime; neither host write permissions nor task dependencies are changed. Real Cargo/login-shell tests prove isolated home/config use and an offline compiled binary with absent and poisoned ambient home settings.
 
 ## Report location and launch readiness
