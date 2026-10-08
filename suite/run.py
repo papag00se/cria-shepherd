@@ -169,7 +169,8 @@ def local_codex_catalog(model: str, context: int, home: Path) -> Path:
         'priority': 0, 'apply_patch_tool_type': 'freeform',
         'context_window': context, 'max_context_window': context,
         'effective_context_window_percent': 95,
-        'truncation_policy': {'mode': 'tokens', 'limit': context},
+        # Preserve pinned Codex's no-catalog default; capabilities must not widen tool output.
+        'truncation_policy': {'mode': 'bytes', 'limit': 10000},
         'input_modalities': ['text'], 'supports_image_detail_original': False,
         'default_reasoning_summary': 'none', 'support_verbosity': False,
         'experimental_supported_tools': [],
@@ -601,10 +602,14 @@ def collect_capture(session_dirs, snapshot=None) -> dict:
             "output_tokens_timed": tok_n}
 
 
-def collect_assists(t0: float, t1: float) -> dict:
-    """Count rlog event kinds in the run's window. Single-run-at-a-time makes the time window
-    authoritative; refine to session-scoped when events grow a session field."""
+def collect_event_census(t0: float, t1: float) -> dict:
+    """Collect row observations from authoritative events in the serial run's window.
+
+    Model-visible wire envelopes are disclosed separately, including their original counts,
+    even though their upstream namespace is excluded from the coding-assist census.
+    """
     kinds = {}
+    wire_translations = []
     for day_file in sorted(EVENTS_DIR.glob("cria-*.jsonl")):
         try:
             with open(day_file, errors="replace") as fh:
@@ -616,6 +621,8 @@ def collect_assists(t0: float, t1: float) -> dict:
                     if t0 <= ev.get("ts", 0) <= t1:
                         k = ev.get("kind", "?")
                         kinds[k] = kinds.get(k, 0) + 1
+                        if k == 'upstream.history_args_enveloped':
+                            wire_translations.append(ev)
                         # the floor's own confession that a request may not fit even after every
                         # lever — fired 58x in one run (C1) with nothing counting it.
                         if k == "context.floor" and ev.get("over_budget"):
@@ -638,7 +645,13 @@ def collect_assists(t0: float, t1: float) -> dict:
     # re-processing, by design) — counting it as an assist inflated one run by 85. Occurrences of
     # compaction itself are context.self_compact / route.compaction.
     kinds.pop("loop.compaction_reframed", None)
-    return {k: v for k, v in kinds.items() if not any(k.startswith(p) for p in plumbing)}
+    assists = {k: v for k, v in kinds.items() if not any(k.startswith(p) for p in plumbing)}
+    return {'assists': assists, 'wire_translations': wire_translations}
+
+
+def collect_assists(t0: float, t1: float) -> dict:
+    """Compatibility view of coding-assist observations; rows carry the full census."""
+    return collect_event_census(t0, t1)['assists']
 
 
 def budget_intervals(task_dir: Path) -> int:
@@ -1030,7 +1043,7 @@ def main() -> None:
         "pacing_policy": "inferred-progress-15m-protected-30m-v1",
         **capture,
         **({"capture_snapshot": capture_snapshot} if args.fresh_l5 or args.campaign_id or args.restored_fleet else {}),
-        "assists": collect_assists(t0, t1),
+        **collect_event_census(t0, t1),
         "workspace": str(ws),
         "archive": str(archive),
         "user_install_leak": sorted(user_install_listing() - installs_before),

@@ -48,7 +48,12 @@ body is captured before parsing consumes it. Codex0.159.3 exits on this typed er
 than blindly reconnecting; it does **not** retroactively repair an overflowing session.
 The real pinned-harness regression proves proactive compaction on native usage and a safe,
 non-retrying terminal on overflow, through L0 and a fake backend without GPU inference.
-None of this enables cria's context floor or any new assist.
+None of this enables cria's context floor or any new assist. Faithful preceding usage is
+necessary, not sufficient: Codex estimates new tool results locally before the next native
+measurement. The capability catalog must preserve the pinned client's actual output-budget
+default (`bytes/10000`), not accidentally widen it to a context-sized token budget. The
+CPU-only default-parity and dense-burst regressions are documented in the
+[restoration evidence](audits/2026-10-08-l0-codex-default-output-restoration.md).
 
 ## Incomplete tool history must remain renderable
 
@@ -96,7 +101,7 @@ The restored L0 launcher also supplies `model_catalog_json` in Codex 0.159.3. Co
 numbers alone do not supply tool capabilities: the unknown-model fallback omitted
 `apply_patch` while its instructions still required it. The suite's explicit local
 catalog declares the native freeform patch tool, actual runtime context, text input,
-and no requested reasoning. It uses the original generic Codex instructions retained
+and explicit reasoning effort `none` (unchanged by the output-default restoration). It uses the original generic Codex instructions retained
 in `cria/prompts/codex_suite_base.txt`, with the patch example corrected to the translated
 `input` argument; it does not impersonate another model or enable planning.
 
@@ -132,6 +137,9 @@ For the current campaign, the operator requires a successful, independently judg
 run (0% is valid) before any subsequent cell proceeds. Supervision launches that replacement
 serially in a distinct linked cohort, waits for its judgment, then resumes the original driver;
 retained failures are historical evidence, never scores or permission to skip a cell.
+New rows also disclose model-visible historical wire envelopes under `wire_translations`,
+including their authoritative event/count data. These are lossless translations, not a
+claim of invisibility or byte-identical history.
 
 ## Minimal setup
 

@@ -398,9 +398,11 @@ class RoutingConfig:
     # that combination while nothing can run it.
     #
     #   0  pure proxy              Responses↔chat wire translation and nothing else. No indicators,
-    #                              no tool changes, no context changes, no repairs, no loop.
+    #                              no tool changes, no context surgery, no executable-call repairs,
+    #                              no loop. Strict historical JSON rendering uses a lossless,
+    #                              model-visible envelope; rows disclose these wire translations.
     #   1  TOOL_CALL_FIXES         make the many dialects a model emits homogeneous: template repair,
-    #                              tool-call dialect recovery, malformed-history repair, fenced-JSON,
+    #                              tool-call dialect recovery, malformed-history argument recovery, fenced-JSON,
     #                              tool-name normalisation. The harness's OWN toolset is untouched,
     #                              cria offers no tools of its own, and nothing is lowered to shell.
     #   2  SIMPLE_TOOLS            cria's tool menu, lowered to shell and represented back, plus the
