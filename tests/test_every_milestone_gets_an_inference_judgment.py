@@ -74,7 +74,10 @@ def test_usefulness_means_model_written_work_the_user_does_not_have_to_write():
         assert "not a count of task items, lines, passed checks" in prompt
     # Judge instructions are the semantic contract, not an executable scoring rubric.
     assert "SINCE THE PREVIOUS MILESTONE" in milestone_prompt
-    assert "Small but genuinely useful progress can justify another interval" in milestone_prompt
+    assert "small reusable edits" in milestone_prompt
+    assert "only35% complete at45minutes" in milestone_prompt
+    assert '"requirements"' in milestone_prompt
+    assert '"pace_reason"' in milestone_prompt
     assert "No score threshold or legacy task budget overrides" in milestone_prompt
 
 
