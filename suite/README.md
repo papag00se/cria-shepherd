@@ -80,6 +80,8 @@ This confines Codex child-tool filesystem writes, not the trusted Python runner,
 ordinary pytest invocations, host-wide reads or network traffic. The middleware
 cleanup review is separate and **is not** a filesystem sandbox.
 
+Go's `GOPATH`, `GOMODCACHE` and `GOCACHE` are explicitly cell-local under the same permitted install root as `GOBIN`. Go writes module downloads and checksum-database state even when the source workspace is untouched; leaving its default `~/go` or inherited cache paths shared/read-only breaks dependency resolution under the sandbox. No extra writable host directories or coder instructions are added. Real Go/login-shell regressions and an offline cache-writing build cover the environment, not task implementation.
+
 ## Report location and launch readiness
 
 The generated standing report is [`docs/battery-report.md`](../docs/battery-report.md). Generation must not recreate `docs/audits/battery-report.md`. Existing historical rows are not fresh rerun results; record final judgments before claiming measured usefulness.

@@ -418,7 +418,7 @@ def _cell_install_bin_dirs(root) -> list:
 
 
 def _isolated_installs(ws) -> dict:
-    """Environment that keeps this cell's package installs INSIDE its own workspace.
+    """Environment that keeps this cell's package installs inside its own install root.
 
     NO CELL MAY AFFECT ANOTHER CELL, and for five days they did. `user_install_listing` was built to
     make contamination visible rather than to prevent it — its own words: "Nothing is prevented or
@@ -439,11 +439,10 @@ def _isolated_installs(ws) -> dict:
     and never less. That is why a batch comparison drifts one way and a repeat of a single cell does
     not.
 
-    Every root here is one `user_install_listing` already probes, so the tripwire keeps working and
-    now measures a run against its own empty slate. The shared DOWNLOAD caches are left alone
-    deliberately: a cached artifact is not discoverable by name, and taking them away would make
-    every run re-fetch the world inside a 30-minute budget, which changes what the suite measures
-    for a reason unrelated to isolation."""
+    The install tripwire still measures a run against its own empty slate. Download caches can
+    remain shared only where their tool can use them read-only. Go writes module downloads and
+    checksum-database state under GOMODCACHE and GOPATH, so those must be cell-local too: the Codex
+    sandbox permits writes only to the workspace and this install root, not the host's ~/go."""
     root = _cell_install_root(ws)
     return {
         # THE USER-LEVEL ROOT ITSELF. `gem install --user-install` ignores GEM_HOME and writes to
@@ -475,7 +474,11 @@ def _isolated_installs(ws) -> dict:
         "PYTHONUSERBASE": str(root / "py"),
         # node: `npm install -g` and `npm root -g`.
         "npm_config_prefix": str(root / "npm"),
-        # go and rust install binaries here; the module/registry caches stay shared.
+        # Go module downloads AND sumdb state must fit the same writable roots as installs.
+        # Isolating GOBIN alone leaves go get/download using a read-only host ~/go.
+        "GOPATH": str(root / "go"),
+        "GOMODCACHE": str(root / "gomodcache"),
+        "GOCACHE": str(root / "xdg-cache" / "go-build"),
         "GOBIN": str(root / "go" / "bin"),
         "CARGO_INSTALL_ROOT": str(root / "cargo"),
         # Install destinations are not usable until their executable dirs are on PATH. This replaces
