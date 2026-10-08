@@ -1,0 +1,30 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="1600" height="760" viewBox="0 0 1600 760" role="img" aria-labelledby="title desc">
+  <title id="title">cria-shepherd — small models, grounded coding</title>
+  <desc id="desc">The cria llama artwork accompanies three areas of work: context shaping, tool-call repair, and completion checks. This is project artwork, not a product screenshot.</desc>
+  <defs>
+    <linearGradient id="bg" x2="1" y2="1"><stop stop-color="#081725"/><stop offset="1" stop-color="#112a3d"/></linearGradient>
+    <radialGradient id="halo"><stop stop-color="#0c91ad" stop-opacity=".18"/><stop offset="1" stop-color="#0c91ad" stop-opacity="0"/></radialGradient>
+  </defs>
+  <rect width="1600" height="760" rx="28" fill="url(#bg)"/>
+  <circle cx="1275" cy="330" r="360" fill="url(#halo)"/>
+  <path d="M1040 0V550M1200 0V550M1360 0V550M1520 0V550M940 130H1600M940 290H1600M940 450H1600" stroke="#b9e6ef" stroke-opacity=".055"/>
+  <g font-family="DejaVu Sans, sans-serif">
+    <rect x="72" y="66" width="9" height="35" rx="4" fill="#00bddb"/>
+    <text x="101" y="96" fill="#eef8fb" font-size="36" font-weight="700">cria-shepherd</text>
+    <text x="72" y="173" fill="#72ccd9" font-size="22" letter-spacing="4">A LAYER BETWEEN HARNESS AND MODEL</text>
+    <text x="65" y="297" fill="#f5f8f9" font-size="105" font-weight="700" letter-spacing="-5">Small models.</text>
+    <text x="65" y="410" fill="#f5f8f9" font-size="105" font-weight="700" letter-spacing="-5">Grounded coding<tspan fill="#ffc83e">.</tspan></text>
+    <text x="72" y="477" fill="#b7cbd7" font-size="28">Context shaping, tool-call repair and completion checks.</text>
+  </g>
+  <image x="1030" y="105" width="480" height="480" xlink:href="cria-logo.png"/>
+  <path d="M72 560H1528" stroke="#305061"/>
+  <g font-family="DejaVu Sans, sans-serif" font-size="25">
+    <text x="72" y="616" fill="#72ccd9" font-size="21" letter-spacing="2">01 / CONTEXT</text>
+    <text x="72" y="661" fill="#eef8fb">Shape what the model sees</text>
+    <text x="575" y="616" fill="#72ccd9" font-size="21" letter-spacing="2">02 / TOOL CALLS</text>
+    <text x="575" y="661" fill="#eef8fb">Repair supported dialects</text>
+    <text x="1070" y="616" fill="#72ccd9" font-size="21" letter-spacing="2">03 / COMPLETION</text>
+    <text x="1070" y="661" fill="#eef8fb">Check execution evidence</text>
+    <text x="72" y="720" fill="#8ca8b9" font-size="20">LOCAL-FIRST · OPENAI-COMPATIBLE WIRE · CONFIGURABLE MODEL ROLES</text>
+  </g>
+</svg>

@@ -1,0 +1,26 @@
+Command: PYTHONPATH=. python docs/media/tool-repair-demo.py
+Source commit: bc0f12f00239779718dc8a940de125304e12e9d5
+Recorded UTC: 2026-10-05T06:02:00Z
+Python 3.14.7
+
+FIXED-INPUT REPLAY / no model calls / no shell execution
+
+INPUT / a complete call stranded in reasoning_content
+<tool_call>
+<function=exec_command>
+<parameter=cmd>ls</parameter>
+<parameter=yield_time_ms>30000</parameter>
+</function>
+</tool_call>
+
+OUTPUT / a structured call the harness can receive
+{
+  "name": "exec_command",
+  "arguments": {
+    "cmd": "ls",
+    "yield_time_ms": 30000
+  }
+}
+
+CHECK / tool name and arguments preserved; integer type verified
+BOUNDARY / "soon" stays "soon"; recovery does not invent a number
