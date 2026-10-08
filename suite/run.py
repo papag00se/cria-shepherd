@@ -9,8 +9,9 @@ appends one JSON row to suite/results/results.jsonl.
 The campaign agent reviews a frozen snapshot every 15 active minutes, reporting total inferred
 usefulness and material changes since the previous milestone. The first 30 active minutes are
 protected unless the harness finishes naturally (the completion gate, or the model alone at L0).
-From minute 30 onward the agent judges continuation; neither scores nor legacy task budgets decide
-it. Judge waits are excluded from active time. Planning remains off unless explicitly requested.
+From minute30 onward the agent judges total main-requirement completion against approximate
+15-minute-per-requirement pace, not merely recent edits. Scores and legacy budgets do not
+mechanically decide it. Judge waits are excluded. Planning remains explicitly opt-in.
 
 Kill mechanics follow the runctl scars: match the codex process list explicitly (ps + grep of
 the exec pattern, excluding shells), never `pkill -f` (it matches the invoking shell).
@@ -1040,7 +1041,8 @@ def main() -> None:
         "milestone_minutes": args.milestone_minutes,
         "budget_intervals": pacing.budget_intervals,
         "milestone_judgments": milestone_judgments,
-        "pacing_policy": "inferred-progress-15m-protected-30m-v1",
+        "pacing_policy": "inferred-progress-15m-protected-30m-v1",  # existing cadence/provenance identity
+        "judgment_policy": "requirement-pace-15m-protected-30m-v2",
         **capture,
         **({"capture_snapshot": capture_snapshot} if args.fresh_l5 or args.campaign_id or args.restored_fleet else {}),
         **collect_event_census(t0, t1),

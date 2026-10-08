@@ -1,4 +1,61 @@
-# Battery — the engagement ladder
+# Battery — fresh campaign and historical engagement ladder
+
+<!-- fresh-l0-restored-20261007:start -->
+## Current fresh campaign — planner-off L0
+
+Campaign **`l0-restored-20261007`**; authoritative state: `~/.cria/suite/_campaigns/l0-restored-20261007/manifest.json`.
+**Pinned output default restored; fresh feed replacement running: 8 original judgments plus the authorized shipping rerun = 9 recorded judgments.** Ornith/feed must finish a successful, judged rerun before the remaining38 cells proceed. Its failed attempt remains unscored and preserved separately; no failure is represented as0% or promoted to successful completion.
+Each percentage is the recorded holistic usefulness judgment, not test completion or a model-capability ceiling. Unjudged cells have no percentage; failed attempts retain their evidence outside the score matrix. Every cell must obtain a successful, judged run (0% is valid) before serial execution moves on; infrastructure failures are repaired and rerun, never treated as scores.
+
+| model | ruby | go | python | java | node | rust |
+|---|---|---|---|---|---|---|
+| gemma4_12b | 🔴 0% | 🟡 80% | 🔴 2% | 🔴 3% | 🔴 35% | 🟢 95% |
+| ornith1.5_9b | 🟢 90% | 🟡 75% | 🟢 90% |  |  |  |
+| bonsai2 |  |  |  |  |  |  |
+| nemotron-elastic |  |  |  |  |  |  |
+| ling3.0_tiny |  |  |  |  |  |  |
+| phi4 |  |  |  |  |  |  |
+| k2_horizon_7b |  |  |  |  |  |  |
+| qwen3.8_9b_distill |  |  |  |  |  |  |
+
+### Attempt evidence (provenance outside score cells)
+
+| run ID | judgment | delivered work / limitation |
+|---|---|---|
+| `shipping-rates-rb_gemma4_12b_codex_poff_1791411301` | 0% | Seed unchanged; requested changes absent. |
+| `cart-billing-go_gemma4_12b_codex_poff_1791412888` | 80% | Decimal arithmetic, rounding regression, JSON discounts and logging; wrong config location/log semantics, runtime unverified. |
+| `orders-api-py_gemma4_12b_codex_poff_1791413132` | 2% | Reusable default-pending schema fragment; bodyless init makes module invalid, remaining API/migration/index/test work absent. |
+| `feed-pipeline-java_gemma4_12b_codex_poff_1791413299` | 3% | OpenCSV dependency only; importer unchanged, REVIEW.md absent, runtime unverified. |
+| `handles-cli-node_gemma4_12b_codex_poff_1791415541` | 35% | Fetch/output/error branches, Dockerfile and attempted tests; ES-module/require crash, commander dependency violates contract, tests misuse execSync result. |
+| `rust-toml-cli_gemma4_12b_codex_poff_1791415702` | 95% | Cargo TOML parser CLI, dotted lookup, error handling, tests and README; build/runtime unverified, strings use TOML formatting. |
+| `cart-billing-go_ornith1.5_9b_codex_poff_1791417342` | 75% | Decimal/cents calculations, corrected Subtotal, rounding regression, JSON/fallback discounts and logging; module-mode tests/vet/build pass, but file lookup is cwd-relative, logged subtotal is discounted cents and default vendoring fails. |
+| `feed-pipeline-java_ornith1.5_9b_codex_poff_1791419572` | **unscored original failure** | Length-truncated historical tool arguments poisoned Codex compaction/native template parsing; original archive/captures/row retained, never judged. Fresh linked rerun follows the wire repair. |
+| `orders-api-py_ornith1.5_9b_codex_poff_1791419168` | 90% | Customer orders/totals, pending status and in-place migration/index, parameterized lookups and real HTTP tests; captured tests/migration probe pass, but URL decoding is absent, custom server DB path ignored and index detection name-based, with these edge cases runtime-unverified. |
+| `shipping-rates-rb_ornith1.5_9b_codex_poff_1791418723` | 90% — authorized rerun | Threshold fix, express rates/tests, rate table and gem-backed country inputs; captured repository tests pass, but GB wrongly maps to international and its added test/README reinforce that error. |
+| `shipping-rates-rb_ornith1.5_9b_codex_poff_1791415881` | **unscored infrastructure failure** | Native context overflow after cria substituted estimated usage and hid typed rejection; evidence preserved, never retried or judged. |
+
+**Failure preservation and repair:** `~/.cria/validation/l0-ornith-feed-blocker/` holds the exact result row, manifest and hash receipt linking retained log/archive/captures. Operator now authorizes fixing infrastructure failures and requires a successful, judged run before moving to the next cell; the original failed attempt is never overwritten or scored.
+
+**Ornith/feed checkpoint:** `feed-pipeline-java_ornith1.5_9b_codex_poff_1791419572.015min` recorded **35% / continue**, not a final. OpenCSV dependency, validation/skip reporting and typed aggregation fragments are reusable; nested-method compilation failure, missing CSV wiring/helper, sequential ForkJoin children and shared state remain, with speedup/determinism unverified and REVIEW absent. First30 active minutes protected.
+
+**Ornith/cart progression:** 15-active-minute checkpoint65%/continue, then natural final75%. Subtotal units were corrected after the checkpoint; module-mode test/vet/build results are captured, while a read-only offline dependency check confirms default vendoring is broken.
+
+**Operator-authorized rerun:** Ornith/shipping finished naturally as `shipping-rates-rb_ornith1.5_9b_codex_poff_1791418723`, recorded90%, under distinct cohort `l0-restored-20261007-ornith-shipping-rerun-1` at repaired `115b699d`. The table displays this authorized new judgment, not credit for the original failure, which remains unscored and preserved above. The serial guardian launched shipping only after cart exited, waited for both judgments, and resumed the original main driver; no GPU overlap or historical Ornith reruns.
+
+**Latest feed attempt:** `feed-pipeline-java_ornith1.5_9b_codex_poff_1791422591`, distinct cohort `l0-restored-20261008-ornith-feed-rerun-1`, linked to the exact original failure, at `f1e5f1261928d608bb9f760db0c622819d19de3d`. It ended with a typed native context overflow after a large tool-output burst; **unscored**, not0%, with exact row/captures retained at `~/.cria/validation/l0-ornith-feed-rerun-1-failure/`. Both read-only reviewers converged on restoring the pinned client's default; no next cell launched before a successful replacement judgment. Original main manifest retains8judged/2preserved failures/38pending; the additional failed rerun does not satisfy the successful-cell gate. Heartbeat `0fc734a6` remains active through repairs. Native error reports60964tokens against49152context; previous native reply26438input/184output, and the next requests still carried tools rather than compaction. These are captured protocol facts, not a final usefulness judgment or an established full root-cause finding.
+
+**Active replacement:** `l0-restored-20261008-ornith-feed-rerun-2` at `879ecac87ae44cff34d290d56f04ef4db2fdab1e`, linked to both original and failed replacement attempts. Output policy is the verified pinned default `bytes/10000` (~10KB); the capability catalog had accidentally widened it to~40KB since35cf333c. This is caller-owned default restoration, not L0 server clipping/tool reduction. Compaction85%, native context, sampling and planner-off remain unchanged. Dense-burst pinned-client tests pass; native CPU template/tokenizer checks fit both measured incident baselines. Full5811passed/2skipped/3568subtests, same19historical failures. Guardian waits for successful usefulness judgment before main progression. New rows disclose model-visible historical wire envelopes; no byte-invisibility claim. Existing explicit reasoning effortnone is unchanged, and prior widened-policy judgments retain their original provenance.
+
+**Operator-ended feed attempt:** User stopped `feed-pipeline-java_ornith1.5_9b_codex_poff_1791426897`; guardian and complete descendant tree terminated, with no live descendants verified. Full workspace/captures/logs/manifests and hash index preserved under linked rerun2 `operator-stop-20261008/`. This is not a natural completion; no final score assigned and no next cell launched. Campaign held. Operator clarified substantive prompt requirements define milestones, with approximately15minutes per requirement, first two protected30minutes;35% completion at45minutes on a five-requirement task warrants ending rather than indefinite continuation for edits.
+
+**Last recorded feed checkpoint (historical, not a final/cell score; continuation superseded by operator stop):** `feed-pipeline-java_ornith1.5_9b_codex_poff_1791426897.120min` — 30% useful, continue for concrete worker-local Partial/map/counter and post-join merge redesign, not activity or a score threshold. Full current/prior source/seed/changed probes inspected; exact frozen rewrite regresses compilation (duplicated merge fragment outside any method, diagnostics begin at145). Uninitialized Partial slots, unresolved rows/readRows, invalid thread construction and immutable skip-counter mutations prevent integration. String-path compatibility, currency handling, summary skip reporting and REVIEW.md remain absent. Current runtime totals and4x speedup unverified; prior105-minute executable snapshot's demonstrated nondeterministic counts remain preserved, not treated as current execution. Earlier15/30/45/60/75/90/105-minute checkpoints20%/25%/30%/20%/25%/25%/35% remain preserved, not final scores. Judgment wait excluded; no next cell launched.
+
+**Disclosed revision boundaries:** first Gemma/shipping at `f56f2d08fee69788c5d8c6bdea924c3a8a6cf761`; other five Gemma cells and failed Ornith/shipping at `c250b92a18c2c6ec884b008fc55bb34d73e67f5e`; Ornith/cart, orders, original failed feed and successful shipping rerun at `115b699d008990e9738edc5bca5c2152ba408629`; failed feed replacement1 at `f1e5f1261928d608bb9f760db0c622819d19de3d` after lossless historical-argument wire repair and failure-only evidence validation; active replacement2 and remaining untouched cells at **`879ecac87ae44cff34d290d56f04ef4db2fdab1e`** after restoring the pinned output default, preserving executable argument bytes and disclosing wire translations. Native template replay proves original500/repaired200; pinned-harness compaction passes; full5796passed/2skipped/3565subtests, same19historical failures. No assists added; planner off, mandatory sandbox, pinned Codex0.159.3, unchanged canonical fleet sampling. First30 active minutes protected; checkpoints every15 active minutes, with semantic continuation thereafter and judgment waits excluded.
+
+Full verdicts and archived workspaces remain under `~/.cria/suite/`; repair evidence: `~/.cria/validation/l0-ornith-context-repair/FINDING.md`. Historical scores below are **not credit for this fresh campaign**. This current section is updated after each newly completed cell, including unscored failures.
+<!-- fresh-l0-restored-20261007:end -->
+
+## Historical engagement ladder — retained, not the current campaign
 
 **Last updated 2026-10-05 11:02** — newest row `cart-billing-go_defiant-fable_codex_poff_1790855379`, finished 2026-10-01 05:30.
 **Report code revision `cab43fb0`; inference anchor remains `f79cc6146470281b5909cf605b27afca1177e2d1`.**

@@ -63,6 +63,7 @@ def create(run_id: str, minute: int, ws: Path, task_dir: Path,
         "COMPLETE FROZEN WORKSPACE TREE (all entries; symlinks are not followed):\n"
         f"{workspace_evidence.tree(snapshot)}", "",
     ])
+    (out / "policy.json").write_text(json.dumps({"pacing_policy": "requirement-pace-15m-protected-30m-v2"}) + "\n")
     (out / "packet.txt").write_text(packet)
     return out
 
@@ -90,6 +91,29 @@ def parse(text: str) -> dict | None:
             "reason": reason.strip(), "evidence": evidence, "material_changes": changes.strip()}
 
 
+def parse_for_checkpoint(checkpoint: Path, text: str) -> dict | None:
+    """New reviews require semantic requirement/pace evidence; old evidence stays readable.
+
+    Code validates evidence shape, never counts task bullets or decides pace from percentages.
+    """
+    verdict = parse(text)
+    if verdict is None or not (checkpoint / "policy.json").exists():
+        return verdict
+    value = json.loads(text)
+    requirements = value.get("requirements")
+    pace = value.get("pace_reason")
+    if not isinstance(pace, str) or not pace.strip() or not isinstance(requirements, list) or not requirements:
+        return None
+    for item in requirements:
+        if not isinstance(item, dict) or item.get("status") not in {"completed", "partial", "not_started"}:
+            return None
+        if any(not isinstance(item.get(key), str) or not item[key].strip()
+               for key in ("requirement", "evidence")):
+            return None
+    verdict.update(requirements=requirements, pace_reason=pace.strip())
+    return verdict
+
+
 def verdict_path(checkpoint: Path) -> Path:
     return checkpoint / "verdict.json"
 
@@ -99,7 +123,7 @@ def wait(checkpoint: Path, poll_seconds: float = 2.0) -> dict:
     path = verdict_path(checkpoint)
     while True:
         if path.is_file():
-            verdict = parse(path.read_text(errors="replace"))
+            verdict = parse_for_checkpoint(checkpoint, path.read_text(errors="replace"))
             if verdict is not None:
                 return verdict
         time.sleep(poll_seconds)
@@ -138,9 +162,9 @@ def main() -> int:
         print((checkpoint / "packet.txt").read_text())
         return 0
 
-    verdict = parse(sys.stdin.read())
+    verdict = parse_for_checkpoint(checkpoint, sys.stdin.read())
     if verdict is None:
-        raise SystemExit("expected usefulness_percent, decision complete|continue|stalled, reason, evidence, and material_changes")
+        raise SystemExit("expected usefulness_percent, decision complete|continue|stalled, reason, evidence, material_changes; new checkpoints also require requirements and pace_reason")
     verdict_path(checkpoint).write_text(json.dumps(verdict, indent=1) + "\n")
     print(f"{checkpoint.name}: {verdict['usefulness_percent']}% useful; {verdict['decision']}")
     return 0
