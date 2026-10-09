@@ -2,7 +2,7 @@
 
 ## L0 — Pure proxy — wire translation only — 42%
 
-| model | ruby | go | python | java | node | rust | avg usefulness | avg min | avg calls | avg tok/s |
+| model | ruby | go | python | java | node | rust | avg pct | avg min | avg calls | avg tok/s |
 |---|---|---|---|---|---|---|---:|---:|---:|---:|
 | gemma4_12b | 🔴 0% | 🟡 80% | 🔴 2% | 🔴 3% | 🔴 35% | 🟢 95% | 36% | 1 | 24 | 143.5 |
 | ornith1.5_9b | 🟢 90% | 🟡 75% | 🟢 90% | 🔴 30% | 🟡 75% | 🟢 100% | 77% | 37 | 130 | 118.1 |
@@ -15,35 +15,35 @@
 
 ## L1 — TOOL_CALL_FIXES — dialect and template repair — 21%
 
-| model | ruby | go | python | java | node | rust | total | avg min | avg calls | avg tok/s |
+| model | ruby | go | python | java | node | rust | avg pct | avg min | avg calls | avg tok/s |
 |---|---|---|---|---|---|---|---:|---:|---:|---:|
 | gemma4_12b | 🔴 28% | 🟢 92% | 🔴 34% | 🔴 33% | 🔴 6% | 🟠 51% | 41% | 15 | 130 | · |
 | nemotron-elastic | 🔴 0% | 🔴 6% | 🔴 0% | 🔴 0% | 🔴 0% | 🔴 0% | 1% | 2 | 5 | · |
 
 ## L2 — SIMPLE_TOOLS — cria's tool menu, lowered to shell — 41%
 
-| model | ruby | go | python | java | node | rust | total | avg min | avg calls | avg tok/s |
+| model | ruby | go | python | java | node | rust | avg pct | avg min | avg calls | avg tok/s |
 |---|---|---|---|---|---|---|---:|---:|---:|---:|
 | gemma4_12b | 🔴 11% | 🟢 89% | 🟡 81% | 🟡 76% | 🟡 66% | 🟢 100% | 70% | 9 | 71 | · |
 | nemotron-elastic | 🔴 0% | 🔴 6% | 🟠 45% | 🔴 0% | 🔴 0% | 🔴 18% | 12% | 4 | 8 | · |
 
 ## L3 — CONTEXT_FIXES — floor, trims, dedups, compaction reframing — 50%
 
-| model | ruby | go | python | java | node | rust | total | avg min | avg calls | avg tok/s |
+| model | ruby | go | python | java | node | rust | avg pct | avg min | avg calls | avg tok/s |
 |---|---|---|---|---|---|---|---:|---:|---:|---:|
 | gemma4_12b | 🟡 85% | 🟢 88% | 🟡 84% | 🟢 96% | 🟡 78% | 🟡 86% | 86% | 6 | 27 | · |
 | nemotron-elastic | 🔴 0% | 🔴 0% | 🟠 50% | 🔴 12% | 🔴 0% | 🔴 15% | 13% | 4 | 7 | · |
 
 ## L4 — DONE_REFUSALS_ENABLED — refusing a completion CLAIM — 60%
 
-| model | ruby | go | python | java | node | rust | total | avg min | avg calls | avg tok/s |
+| model | ruby | go | python | java | node | rust | avg pct | avg min | avg calls | avg tok/s |
 |---|---|---|---|---|---|---|---:|---:|---:|---:|
 | gemma4_12b | 🟢 100% | 🟡 73% | 🟢 100% | 🟢 100% | 🟢 93% | 🟡 86% | 92% | 10 | 46 | · |
 | nemotron-elastic | 🔴 26% | 🔴 28% | 🟠 40% | 🔴 19% | 🟠 40% | 🔴 20% | 29% | 33 | 141 | · |
 
 ## L5 — ASSISTS_ENABLED — steers, periodic gates, detectors, planner — 46%
 
-| model | ruby | go | python | java | node | rust | total | avg min | avg calls | avg tok/s |
+| model | ruby | go | python | java | node | rust | avg pct | avg min | avg calls | avg tok/s |
 |---|---|---|---|---|---|---|---:|---:|---:|---:|
 | gemma4_12b | 🟢 95% | 🟡 85% | 🟡 85% | 🟡 85% | 🟡 75% | 🟢 95% | 87% | 56 | 187 | 71.9 |
 | ornith1.5_9b | 🔴 20% | 🟢 90% | 🟡 85% | 🔴 30% | 🟡 85% | 🟢 100% | 68% | 41 | 117 | 105.5 |
@@ -53,4 +53,4 @@
 | ling3.0_tiny | 🔴 3% | 🔴 10% | 🔴 33% | 🔴 0% | 🔴 28% | 🟡 78% | 25% | 35 | 261 | 217.6 |
 | phi4 | 🔴 0% | 🔴 0% | 🔴 0% | 🔴 0% | 🔴 0% | 🔴 0% | 0% | 33 | 180 | 71.8 |
 
-Legend: 🟢 ≥88% · 🟡 ≥63% · 🟠 ≥38% · 🔴 <38%; blank = pending/unjudged. Percentages are independently judged usefulness; averages include judged zeros, exclude failed/unjudged attempts, and use known metrics only. Average minutes are wall time (including judge waits); partially filled rows have partial coverage. Avg tok/s is the mean of known per-task all-phase generation rates, not wall-time throughput; `·` = unknown timing. Ruby/Go/Python/Java/Node/Rust are the six task columns.
+Legend: 🟢 ≥88% · 🟡 ≥63% · 🟠 ≥38% · 🔴 <38%; blank = pending/unjudged. Usefulness: share of requested work delivered as useful code. Percentages are independently judged usefulness; averages include judged zeros, exclude failed/unjudged attempts, and use known metrics only. Average minutes are wall time (including judge waits); partially filled rows have partial coverage. Avg tok/s is the mean of known per-task all-phase generation rates, not wall-time throughput; `·` = unknown timing. Ruby/Go/Python/Java/Node/Rust are the six task columns.

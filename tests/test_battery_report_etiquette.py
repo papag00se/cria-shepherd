@@ -51,6 +51,34 @@ def test_writer_preserves_six_tables_titles_and_pending_standings(tmp_path, monk
     assert 'l5-new' in evidence and 'calls1/6' in evidence
 
 
+@pytest.mark.parametrize('old_label', ['total', 'avg usefulness', 'avg pct'])
+def test_publication_normalizes_average_label_without_changing_standings(tmp_path, monkeypatch, old_label):
+    path = setup(tmp_path, monkeypatch)
+    before = path.read_text()
+    lines = before.splitlines()
+    for index, line in enumerate(lines):
+        if line.startswith('| model |'):
+            fields = line.split('|')
+            fields[8] = f' {old_label} '
+            lines[index] = '|'.join(fields)
+    path.write_text('\n'.join(lines) + '\n')
+    # An empty campaign still exercises the real guarded publication pipeline.
+    campaign = dict(campaign_id='label-only', level=5, models=[], cells=[])
+    status.write_report([], campaign=campaign)
+    after = path.read_text()
+    headers = [line for line in after.splitlines() if line.startswith('| model |')]
+    assert len(headers) == 6
+    assert all(line.split('|')[8].strip() == 'avg pct' for line in headers)
+    def standings(text):
+        return sorted(line for line in text.splitlines()
+                      if line.startswith('| ') and not line.startswith('| model |'))
+    assert standings(after) == standings(before)
+    assert after.split('Legend:')[1] == before.split('Legend:')[1]
+    assert 'Usefulness: share of requested work delivered as useful code.' in after.split('Legend:')[1]
+    preview = status.fresh_table(campaign, [], include_coverage=False)
+    assert preview.splitlines()[0].split('|')[8].strip() == 'avg pct'
+
+
 def test_writer_refuses_without_campaign_and_preserves_bytes(tmp_path, monkeypatch):
     path = setup(tmp_path, monkeypatch)
     before = path.read_bytes()

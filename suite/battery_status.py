@@ -216,7 +216,7 @@ def report(rs: list[dict], now: float | None = None) -> str:
         label = labels.get(lv, "")
         out.append(f"### Level {lvl}" + (f" \u2014 {label}" if label else "") + f" \u2014 {lvavg}%")
         out.append("")
-        out.append("| model | " + " | ".join(tlabels) + " | total | avg min | avg calls |")
+        out.append("| model | " + " | ".join(tlabels) + " | avg pct | avg min | avg calls |")
         out.append("|---|" + "---|" * len(tlabels) + "---:|---:|---:|")
         for m, cells, mn, cl in rowdata:
             present = [p for p in cells if p is not None]
@@ -334,7 +334,7 @@ def fresh_table(manifest: dict, rs: list[dict], *, include_coverage: bool = True
         selected[key] = row
         used.add(run_id)
     labels = tuple(TASK_LANGUAGES[task].lower() for task in TASKS)
-    out = ['| model | ' + ' | '.join(labels) + ' | avg usefulness | avg min | avg calls | avg tok/s |',
+    out = ['| model | ' + ' | '.join(labels) + ' | avg pct | avg min | avg calls | avg tok/s |',
            '|---|' + '---|' * len(TASKS) + '---:|---:|---:|---:|']
     coverage = []
     for model in manifest['models']:
@@ -494,6 +494,14 @@ def write_report(rs: list[dict], *, campaign: dict | None = None) -> Path:
     text, rate_coverage = add_throughput_column(''.join(sections), rs, refresh_levels={level})
     # Shared ranking is finalized after the standing overlay, even on non-L5 updates.
     text = order_by_l5(text)
+    # Normalize legacy average labels in every table without touching measurements.
+    display_lines = text.splitlines(keepends=True)
+    for index, line in enumerate(display_lines):
+        if line.startswith('| model |'):
+            fields = line.split('|')
+            fields[8] = ' avg pct '
+            display_lines[index] = '|'.join(fields)
+    text = ''.join(display_lines)
     # Measurement gaps and campaign provenance belong outside the score report.
     evidence = path.with_name('battery-report-evidence.md')
     note = ('\n\n## Standing update — ' + campaign['campaign_id'] + f' — L{level}\n\n'

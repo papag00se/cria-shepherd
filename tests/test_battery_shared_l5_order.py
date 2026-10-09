@@ -8,7 +8,7 @@ def scorecard():
     out = ['# Battery report', '']
     for level in range(6):
         out += [f'## L{level} — description {level} — 81%', '',
-                '| model | ruby | go | python | java | node | rust | avg usefulness | avg min | avg calls | avg tok/s |',
+                '| model | ruby | go | python | java | node | rust | avg pct | avg min | avg calls | avg tok/s |',
                 '|---|' + '---|' * 6 + '---:|' * 4]
         for model in ('zeta', 'alpha', 'beta', 'unknown'):
             scores = {'alpha': [80, 81], 'beta': [81, 81], 'zeta': [81, 81],
