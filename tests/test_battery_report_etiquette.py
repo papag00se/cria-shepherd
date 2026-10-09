@@ -39,7 +39,10 @@ def test_writer_preserves_six_tables_titles_and_pending_standings(tmp_path, monk
     prior_gemma = next(line for line in prior_rows if line.startswith('| gemma4_12b |'))
     fields = [f.strip() for f in prior_gemma.strip('|').split('|')]
     gemma_scores = [0] + [int(re.search(r'(\d+)%$', f).group(1)) for f in fields[2:7]]
-    all_scores = [int(value) for line in prior_rows for value in re.findall(r'(\d+)%', line)[:6]]
+    # Sparse task rows must not accidentally count the row average as a task score.
+    all_scores = [int(value) for line in prior_rows
+                  for field in line.strip('|').split('|')[1:7]
+                  for value in re.findall(r'(\d+)%', field)]
     original_ruby = int(re.search(r'(\d+)%$', fields[1]).group(1))
     expected_title = round((sum(all_scores) - original_ruby) / len(all_scores))
     assert f'ASSISTS_ENABLED — steers, periodic gates, detectors, planner — {expected_title}%' in after
