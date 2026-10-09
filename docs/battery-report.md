@@ -8,8 +8,8 @@
 | ornith1.5_9b | 🟢 90% | 🟡 75% | 🟢 90% | 🔴 30% | 🟡 75% | 🟢 100% | 77% | 37 | 130 | 118.1 |
 | qwen3.8_9b_distill | 🟡 75% | 🟡 80% | 🟠 50% | 🟡 75% | 🟡 70% | 🟢 95% | 74% | 13 | 248 | 118.2 |
 | nemotron-elastic | 🔴 30% | 🔴 0% | 🔴 0% | 🔴 0% | 🟠 55% | 🔴 0% | 14% | 5 | 141 | 169.8 |
-| k2_horizon_7b | 🔴 0% | 🔴 2% | 🟢 90% | 🟠 50% | 🟡 75% | 🟡 85% | 50% | 8 | 81 | 86.9 |
 | ling3.0_tiny | 🔴 0% | 🔴 0% | 🟡 65% | 🟠 50% | 🟠 60% | 🟡 80% | 42% | 2 | 47 | 609.7 |
+| k2_horizon_7b | 🔴 0% | 🔴 2% | 🟢 90% | 🟠 50% | 🟡 75% | 🟡 85% | 50% | 8 | 81 | 86.9 |
 | phi4 | 🔴 0% | 🔴 0% | 🔴 0% | 🔴 0% | 🔴 0% | 🔴 0% | 0% | 0 | 1 | 48.1 |
 ## L1 — TOOL_CALL_FIXES — dialect and template repair — 21%
 
@@ -39,7 +39,7 @@
 | gemma4_12b | 🟢 100% | 🟡 73% | 🟢 100% | 🟢 100% | 🟢 93% | 🟡 86% | 92% | 10 | 46 | · |
 | nemotron-elastic | 🔴 26% | 🔴 28% | 🟠 40% | 🔴 19% | 🟠 40% | 🔴 20% | 29% | 33 | 141 | · |
 
-## L5 — ASSISTS_ENABLED — steers, periodic gates, detectors, planner — 49%
+## L5 — ASSISTS_ENABLED — steers, periodic gates, detectors, planner — 50%
 
 | model | ruby | go | python | java | node | rust | avg pct | avg min | avg calls | avg tok/s |
 |---|---|---|---|---|---|---|---:|---:|---:|---:|
@@ -48,8 +48,8 @@
 | ornith1.5_9b | 🔴 20% | 🟢 90% | 🟡 85% | 🔴 30% | 🟡 85% | 🟢 100% | 68% | 41 | 117 | 105.5 |
 | qwen3.8_9b_distill | 🟡 68% | 🟠 52% | 🔴 15% | 🔴 10% | 🟠 62% | 🟡 80% | 48% | 38 | 239 | 134.0 |
 | nemotron-elastic | 🔴 30% | 🔴 25% | 🟡 80% | 🔴 35% | 🟡 65% | 🔴 35% | 45% | 43 | 121 | 151.1 |
+| ling3.0_tiny | 🔴 20% | 🟠 55% | 🟡 65% | 🔴 0% | 🔴 28% | 🟡 78% | 41% | 39 | 270 | 210.9 |
 | k2_horizon_7b | 🔴 10% | 🟡 80% | 🔴 33% | 🔴 2% | 🟡 78% | 🔴 18% | 37% | 38 | 116 | 61.9 |
-| ling3.0_tiny | 🔴 20% | 🟠 55% | 🔴 33% | 🔴 0% | 🔴 28% | 🟡 78% | 36% | 41 | 288 | 214.6 |
 | phi4 | 🔴 0% | 🔴 0% | 🔴 0% | 🔴 0% | 🔴 0% | 🔴 0% | 0% | 33 | 180 | 71.8 |
 
 Legend: 🟢 ≥88% · 🟡 ≥63% · 🟠 ≥38% · 🔴 <38%; blank = pending/unjudged. Usefulness: share of requested work delivered as useful code. Percentages are independently judged usefulness; averages include judged zeros, exclude failed/unjudged attempts, and use known metrics only. Average minutes are wall time (including judge waits); partially filled rows have partial coverage. Avg tok/s is the mean of known per-task all-phase generation rates, not wall-time throughput; `·` = unknown timing. Ruby/Go/Python/Java/Node/Rust are the six task columns.
