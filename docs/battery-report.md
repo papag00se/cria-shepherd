@@ -50,6 +50,6 @@
 | qwen3.8_9b_distill | 🟡 68% | 🟠 52% | 🔴 15% | 🔴 10% | 🟠 62% | 🟡 80% | 48% | 38 | 239 | 134.0 |
 | nemotron-elastic | 🔴 30% | 🔴 25% | 🟡 80% | 🔴 35% | 🟡 65% | 🔴 35% | 45% | 43 | 121 | 151.1 |
 | k2_horizon_7b | 🔴 10% | 🟡 80% | 🔴 33% | 🔴 2% | 🟡 78% | 🔴 18% | 37% | 38 | 116 | 61.9 |
-| phi4 | 🔴 0% | 🔴 0% | 🔴 0% | 🔴 0% | 🔴 0% | 🔴 0% | 0% | 34 | 174 | 70.5 |
+| phi4 | 🔴 0% | 🔴 0% | 🔴 0% | 🔴 0% | 🔴 0% | 🔴 0% | 0% | 35 | 165 | 67.1 |
 
 Legend: 🟢 ≥88% · 🟡 ≥63% · 🟠 ≥38% · 🔴 <38%; blank = pending/unjudged. Usefulness: share of requested work delivered as useful code. Percentages are independently judged usefulness; averages include judged zeros, exclude failed/unjudged attempts, and use known metrics only. Average minutes are wall time (including judge waits); partially filled rows have partial coverage. Avg tok/s is the mean of known per-task all-phase generation rates, not wall-time throughput; `·` = unknown timing. Ruby/Go/Python/Java/Node/Rust are the six task columns.
