@@ -39,7 +39,7 @@
 | gemma4_12b | 🟢 100% | 🟡 73% | 🟢 100% | 🟢 100% | 🟢 93% | 🟡 86% | 92% | 10 | 46 | · |
 | nemotron-elastic | 🔴 26% | 🔴 28% | 🟠 40% | 🔴 19% | 🟠 40% | 🔴 20% | 29% | 33 | 141 | · |
 
-## L5 — ASSISTS_ENABLED — steers, periodic gates, detectors, planner — 48%
+## L5 — ASSISTS_ENABLED — steers, periodic gates, detectors, planner — 47%
 
 | model | ruby | go | python | java | node | rust | avg pct | avg min | avg calls | avg tok/s |
 |---|---|---|---|---|---|---|---:|---:|---:|---:|
@@ -48,7 +48,7 @@
 | ornith1.5_9b | 🔴 20% | 🟢 90% | 🟡 85% | 🔴 30% | 🟡 85% | 🟢 100% | 68% | 41 | 117 | 105.5 |
 | qwen3.8_9b_distill | 🟡 68% | 🟠 52% | 🔴 15% | 🔴 10% | 🟠 62% | 🟡 80% | 48% | 38 | 239 | 134.0 |
 | k2_horizon_7b | 🔴 10% | 🟡 80% | 🔴 33% | 🔴 2% | 🟡 78% | 🔴 18% | 37% | 38 | 116 | 61.9 |
-| nemotron-elastic | 🔴 30% |  |  |  |  |  | 30% | 39 | 104 | 142.9 |
+| nemotron-elastic | 🔴 30% | 🔴 25% |  |  |  |  | 28% | 39 | 114 | 147.4 |
 | ling3.0_tiny | 🔴 3% | 🔴 10% | 🔴 33% | 🔴 0% | 🔴 28% | 🟡 78% | 25% | 35 | 261 | 217.6 |
 | phi4 | 🔴 0% | 🔴 0% | 🔴 0% | 🔴 0% | 🔴 0% | 🔴 0% | 0% | 33 | 180 | 71.8 |
 
