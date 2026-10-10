@@ -32,6 +32,7 @@ figure so the real rendered prompt lands under the window.
 from __future__ import annotations
 
 import json
+import math
 import re
 from dataclasses import dataclass, field
 
@@ -131,13 +132,11 @@ class FloorReport:
     applied: bool = False
     window: int = 0
     reserve: int = 0
+    reserve_requested: int = 0
     tool_tokens: int = 0
     tool_tokens_before: int = 0
     tools_compressed: int = 0
-    # A TOOL THE MODEL NO LONGER HAS IS NOT A SHORTER DESCRIPTION. `_compress_tools` removes whole
-    # tools when the schema still will not fit at the description floor, and folded that into
-    # `tools_compressed` — so the event said "N tools compressed" for a menu that had lost some, and
-    # nothing anywhere said which. Counted separately (#12).
+    # Historical event field retained for compatibility. The floor no longer drops tools.
     tools_dropped: int = 0
     msg_tokens_before: int = 0
     msg_tokens_after: int = 0
@@ -150,7 +149,8 @@ class FloorReport:
 
     def as_event(self) -> dict:
         return {
-            "window": self.window, "reserve": self.reserve, "tool_tokens": self.tool_tokens,
+            "window": self.window, "reserve": self.reserve,
+            "reserve_requested": self.reserve_requested, "tool_tokens": self.tool_tokens,
             "tool_tokens_before": self.tool_tokens_before, "tools_compressed": self.tools_compressed,
             "tools_dropped": self.tools_dropped,
             "msg_before": self.msg_tokens_before, "msg_after": self.msg_tokens_after,
@@ -257,7 +257,7 @@ def fit(messages: list[dict], tools, *, window: int, reserve: int,
     reduced/dropped messages and compressed tools are new objects. ``safety`` inflates the
     chars/4 estimate to approximate real tokens; the caller raises it (via a real /tokenize
     measurement) for dense base64/code requests where chars/4 badly underestimates."""
-    rep = FloorReport(window=window, reserve=reserve)
+    rep = FloorReport(window=window, reserve=reserve, reserve_requested=reserve)
     if not isinstance(messages, list) or not messages or window <= 0:
         rep.tool_tokens = rep.tool_tokens_before = est_tokens(json.dumps(tools)) if tools else 0
         return messages, tools, rep
@@ -267,7 +267,15 @@ def fit(messages: list[dict], tools, *, window: int, reserve: int,
     # gets trimmed to the floor and STILL reports over budget. Bound it so at least MIN_MSG_BUDGET of
     # real window is left for the prompt (a harness may send max_tokens ≥ window, and reserve_for
     # falls back to max_tokens). Reflect the effective reserve in the report.
-    reserve = max(0, min(reserve, window - MIN_MSG_BUDGET))
+    # Output room is a reservation, not permission to destroy the callable menu or
+    # the initial task/environment. Size its ceiling from the irreducible live input,
+    # not a fixed 512-token allowance (a 16K reserve on a 16K window deleted 8 tools).
+    core = _input_core(messages, pinned_task)
+    minimum_input = math.ceil((_msgs_tokens(core) + est_tokens(json.dumps(tools or []))) * safety)
+    # When the live input itself exceeds the window, it needs the ordinary floor
+    # reduction. Reserving zero cannot save that input and would suppress compaction.
+    input_room = max(MIN_MSG_BUDGET, minimum_input) if minimum_input < window else MIN_MSG_BUDGET
+    reserve = max(0, min(reserve, window - input_room))
     rep.reserve = reserve
     # Budget in ESTIMATE space: real ≈ est × safety must fit window − reserve.
     target_est = int((window - reserve) / safety)
@@ -314,7 +322,7 @@ def fit(messages: list[dict], tools, *, window: int, reserve: int,
         rep.orphans_removed += more_orphans
         rep.msg_tokens_after = _msgs_tokens(work)
         over = (rep.msg_tokens_after + tool_tokens) * safety > (window - reserve)
-    rep.applied = not fits_at_start
+    rep.applied = not fits_at_start or rep.reserve != rep.reserve_requested
     # Honest signal: if even the last resort couldn't make it fit (system + request + minimal
     # tail alone exceed the window), surface it rather than pretend.
     rep.over_budget = over
@@ -325,23 +333,19 @@ def _compress_tools(tools, budget_est: int) -> tuple[list, int, int]:
     """Bound the tool SCHEMA to ``budget_est`` estimated tokens by truncating free-text
     descriptions (function + parameter), longest cap first until it fits. Every tool stays
     callable: name, parameter names/types/required/enum are untouched. Returns
-    ``(tools, n_compressed)``. Harness-agnostic — a harness that ships verbose connector
+    ``(tools, n_compressed, 0)``. Harness-agnostic — a harness that ships verbose connector
     schemas doesn't get to eat the whole window."""
     if est_tokens(json.dumps(tools)) <= budget_est:
-        return tools, 0
+        return tools, 0, 0
     for cap in _DESC_CAPS:
         out = [_cap_descriptions(t, cap) for t in tools]
         if est_tokens(json.dumps(out)) <= budget_est:
             n = sum(1 for a, b in zip(tools, out) if a != b)
             return out, n, 0
-    # STILL OVER AT THE FLOOR. Shrinking further meant deleting the description key, which leaves a
-    # bare name and a type — a tool the model cannot know when to use. Drop whole tools from the END
-    # of the menu instead (the menu is ordered by usefulness where a curator ran), keeping at least
-    # one, so what survives is usable.
+    # Every capability survives even when its schema cannot fit. The caller reports
+    # over_budget honestly; deleting a tool changes what the agent can accomplish.
     out = [_cap_descriptions(t, _DESC_FLOOR) for t in tools]
-    while len(out) > 1 and est_tokens(json.dumps(out)) > budget_est:
-        out = out[:-1]
-    n = sum(1 for a, b in zip(tools, out) if a != b) + (len(tools) - len(out))
+    n = sum(1 for a, b in zip(tools, out) if a != b)
     return out, n, len(tools) - len(out)
 
 
@@ -474,6 +478,29 @@ _ENV_PREAMBLE = re.compile(
 
 def _is_env_preamble(m: dict) -> bool:
     return bool(_ENV_PREAMBLE.search(_msg_text(m)))
+
+
+def _input_core(messages: list[dict], pinned_task: str) -> list[dict]:
+    """Input that must win over output room: initial environment/task and live tail.
+
+    Do not reserve against the entire historical active span: that would disable
+    compaction as history grows. Include paired calls for surviving tool results.
+    """
+    task_at = next((i for i, m in enumerate(messages)
+                    if m.get("role") == "user" and pinned_task
+                    and _msg_text(m).strip() == pinned_task.strip()), None)
+    if task_at is None:
+        task_at = next((i for i, m in enumerate(messages)
+                        if m.get("role") == "user" and not _is_env_preamble(m)), -1)
+    last_user = max((i for i, m in enumerate(messages) if m.get("role") == "user"), default=-1)
+    tail = max(0, len(messages) - OVERFLOW_KEEP_TAIL)
+    keep = {i for i, m in enumerate(messages)
+            if (i <= task_at and m.get("role") == "user") or i >= tail or i == last_user
+            or m.get("role") in ("system", "developer") or _has_protect_marker(m)}
+    ids = {messages[i].get("tool_call_id") for i in keep if messages[i].get("role") == "tool"}
+    keep.update(i for i, m in enumerate(messages)
+                if any(tc.get("id") in ids for tc in m.get("tool_calls") or []))
+    return [m for i, m in enumerate(messages) if i in keep]
 
 
 def _protected_mask(messages: list[dict], pinned_task: str = "") -> list[bool]:
