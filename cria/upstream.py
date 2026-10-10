@@ -362,7 +362,8 @@ class Upstream:
             rlog.emit("reasoning.convention_autocorrect", level="warn", from_style="chat_template",
                       to_style="openai", enable_thinking=enable, reasoning_effort=body["reasoning_effort"])
 
-    def _prep(self, body: dict, stream: bool, rlog, safety_override: float | None = None) -> tuple[bytes, int, str | None]:
+    def _prep(self, body: dict, stream: bool, rlog, safety_override: float | None = None,
+              _previous_fit: bytes | None = None) -> tuple[bytes, int, str | None]:
         """Serialize the request and return ``(bytes, sent_estimate)``: apply the CONTEXT FLOOR
         (guarantee it fits the window, budgeting with the model's LEARNED density ratio), force the
         stream flag, and MERGE adjacent assistant messages. Codex splits one assistant turn into a
@@ -478,6 +479,22 @@ class Upstream:
         # transform and internal-key strip, with the exact bytes about to be POSTed.  A non-coder
         # role or a coder call without a fresh observer remains silent rather than inheriting state.
         data = json.dumps(out).encode("utf-8")
+        rendered = None
+        if (isinstance(msgs, list) and window and self._api_key is None
+                and isinstance(self._props, dict) and self._props.get("chat_template")):
+            # Average density cannot settle THIS prompt: numeric evidence can run much
+            # hotter than prose. Measure the final template before POST or capture, then
+            # let the one floor refit the ORIGINAL input (never trim a trimmed copy).
+            rendered = self._render_prompt(out)
+            real = self._tokenize_prompt(rendered, rlog) if rendered is not None else None
+            if real is not None:
+                rlog.emit("context.measured", tokens=real, n_ctx=window, reserve=rep.reserve)
+                if real > window:
+                    if data == _previous_fit:
+                        raise UpstreamError("Measured input cannot fit the context window without losing protected input")
+                    tighter = max(safety, real / max(sent_estimate, 1))
+                    return self._prep(body, stream, rlog, safety_override=tighter,
+                                      _previous_fit=data)
         phase = getattr(rlog, "phase", None)
         state = getattr(rlog, "coder_preframe", None)
         receipt = None
@@ -486,7 +503,7 @@ class Upstream:
                        "final_wire": {"sha256": hashlib.sha256(data).hexdigest(), "bytes": len(data)}}
         capture_path = None
         if self._capture_dir is not None:  # record EXACTLY what the model will see, per call
-            rendered = self._render_prompt(out) if self._capture_rendered else None
+            rendered = (rendered if rendered is not None else self._render_prompt(out)) if self._capture_rendered else None
             capture_path = callcapture.capture(out, rlog, calls_dir=self._capture_dir,
                                                phase=phase, url=self._chat_url, rendered=rendered,
                                                coder_preframe=receipt)
@@ -679,6 +696,19 @@ class Upstream:
             with urllib.request.urlopen(req, timeout=_RENDER_TIMEOUT_S) as resp:
                 p = json.loads(resp.read()).get("prompt")
                 return p if isinstance(p, str) else None
+        except (urllib.error.URLError, ValueError, OSError):
+            return None
+
+    def _tokenize_prompt(self, prompt: str, rlog) -> int | None:
+        """Measure the exact rendered local prompt; unavailable is unknown, not zero."""
+        try:
+            req = urllib.request.Request(
+                self._base_url + "/tokenize",
+                data=json.dumps({"content": prompt, "add_special": False}).encode("utf-8"),
+                method="POST", headers={"Content-Type": "application/json"})
+            with urllib.request.urlopen(req, timeout=_RENDER_TIMEOUT_S) as resp:
+                tokens = json.loads(resp.read()).get("tokens")
+            return len(tokens) if isinstance(tokens, list) else None
         except (urllib.error.URLError, ValueError, OSError):
             return None
 

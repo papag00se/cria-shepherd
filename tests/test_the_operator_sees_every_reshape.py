@@ -23,6 +23,7 @@ _NOT_A_RESHAPE = {
     "context.overflow": "a refusal to send, not a rewrite of what is sent",
     "context.calibrated": "the token-density average moved; no message was touched",
     "context.refit": "the density to re-prep WITH — the trim it causes fires as context.floor",
+    "context.measured": "exact server token count; any resulting rewrite fires as context.floor",
     "context.briefing_symbols_unreachable": "an ABSTENTION — the vouching note was withheld and "
                                             "nothing was appended; the event records the silence",
 }
