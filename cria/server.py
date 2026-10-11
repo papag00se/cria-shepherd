@@ -1295,7 +1295,10 @@ class CriaHandler(BaseHTTPRequestHandler):
                                shrink_check=getattr(self, "_shrink_check", None),
                                # N2: harness-side plumbing is packed only at the gate's rung (L4+, N1's scope);
                                # L2/L3 lowered commands are byte-for-byte what they always were.
-                               pack=self.server.cfg.routing.done_refusals)
+                               pack=self.server.cfg.routing.done_refusals,
+                               # Edit echo is context work only an assist-rung coder gets (L5); L2-L4 results
+                               # stay exactly the harness's own confirmation.
+                               edit_echo=self.server.cfg.routing.assists_enabled)
         return completion
 
     def _focus_trim(self, framed: dict, rlog) -> tuple[dict, bool]:

@@ -769,6 +769,7 @@ class EditCommandTests(unittest.TestCase):
         from cria import content_reduce
         script = (_VALIDATE_FN + _EDIT_PY).format(path=b(path), old=b(old), new=b(new),
                                                   wrote=_WROTE, editfail=editrecovery.EDITFAIL, packblock="",
+                                                  echodef="", echocall="", posx="", posf="",
                                                   cap=content_reduce.INLINE_RESULT_MAX_BYTES)
         r = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True)
         out = open(path).read(); os.unlink(path)

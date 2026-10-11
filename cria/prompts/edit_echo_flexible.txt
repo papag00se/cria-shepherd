@@ -1,0 +1,1 @@
+Your old_string matched only after whitespace differences were ignored; the file spells that text with different spacing.
