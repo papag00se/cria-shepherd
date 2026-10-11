@@ -89,9 +89,8 @@ no_spec_here =  (this page answered with content rather than an endpoint definit
 descriptions = this page is a catalogue — it names where each API's description lives; fetch a service-desc url to get the spec itself:
 # The workspace files the coder has already READ. Paths and sizes only — the contents are on disk
 # and re-reading one is a single call; what compaction destroys is the knowledge that it looked.
-read_header = FILES YOU HAVE ALREADY READ FROM THIS WORKSPACE — this is the record that you looked, so you do not spend a turn rediscovering it after older messages scroll away. It is not the text itself: each entry says whether that file's read result is still in this conversation.\n{{FILES}}{{MORE}}
-read_in_view =  — its read result is in this conversation
-read_out_of_view =  — its read result is not in this conversation
+read_header = FILES YOU HAVE ALREADY READ FROM THIS WORKSPACE — this is the record that you looked, so you do not spend a turn rediscovering it after older messages scroll away. It is not the text itself: an entry marked as having no read result in this conversation has none in the messages you were sent.\n{{FILES}}{{MORE}}
+read_out_of_view =  — no read result for it is in this conversation
 read_more = \n- …and {{COUNT}} more file(s) you have read this session.
 # The closing sentence of the durable anchor. It is about FETCHES, so it may only be said when the
 # block holds one. Appending the read ledger to the same anchor made it render with zero fetches

@@ -8876,15 +8876,17 @@ def _read_ground_truth(sess, messages: list[dict]) -> str:
     if not seen:
         return ""
     labels = prompts.load_map("fetched_facts_sections")
-    # WHETHER THE TEXT IS HERE, MEASURED. The ledger is durable — it outlives the messages it was
-    # built from — so "you read this" says nothing about whether the read RESULT is still in the
-    # window, and the old header told the coder to "look for it above" in a conversation that held no
-    # tool result at all (phi4 A2 0042: the compaction had replaced every one). Each entry now states
-    # the structural fact: is a non-refused read result for this path among the messages this anchor
-    # is being built for (#5b). The wording says nothing about what to do about it.
+    # ABSENCE, MEASURED — NEVER PRESENCE. The ledger is durable: it outlives the messages it was built
+    # from, so "you read this" says nothing about whether the read RESULT is in the window, and the old
+    # header told the coder to "look for it above" in a conversation holding no tool result at all
+    # (phi4 A2 0042). An entry is marked when no non-refused read result for its path is among the
+    # messages this anchor is built for. That claim survives the floor (the floor only removes
+    # messages); the opposite one — "its result IS here" — would be true only before it, and an
+    # anchor is built before the floor, so it is never said (#5b). The wording names no action.
     live = set(_extract_reads(messages or []))
-    where = {True: labels["read_in_view"], False: labels["read_out_of_view"]}
-    lines = "\n".join(f"- {p} ({size}){where[p in live]}" for p, (_n, size) in sorted(seen.items()))
+    out_of_view = labels["read_out_of_view"]
+    lines = "\n".join(f"- {p} ({size}){'' if p in live else out_of_view}"
+                      for p, (_n, size) in sorted(seen.items()))
     rest = 0
     more = prompts.fill(labels["read_more"], count=rest) if rest else ""
     return "\n\n" + prompts.fill(labels["read_header"], files=lines, more=more)
