@@ -250,3 +250,92 @@ def test_a_held_answer_keeps_the_rejected_payload_and_marks_the_call_denied(view
     result = msgs[1]["content"]
     assert "⟦ctx:rejected-candidate⟧" in result and "pad79 -->" in result
     assert "pad79" not in json.dumps(msgs[0]["tool_calls"])                    # collapsed out of the call itself
+
+
+# ---- Q1 (phi4 A7): the coder's OWN landed edits must not blind H2 ----------------------------------
+
+def _replay(view, tmp_path, edits, whole_read=True):
+    """The A7 history: whole read of Importer.java, then landed edit_file calls (each lowered by cria and
+    RUN on disk), replayed through represent_inbound exactly as the next request would."""
+    _seed(tmp_path)
+    msgs, n = [], 0
+    def lower(name, args):
+        nonlocal n
+        n += 1
+        comp = {"choices": [{"message": {"tool_calls": [
+            {"id": f"t{n}", "type": "function", "function": {"name": name, "arguments": json.dumps(args)}}]}}]}
+        translate_outbound(comp, _CMD_SHELL, injected={"read_file", "edit_file", "write_file"})   # no survey rides: hermetic
+        tc = comp["choices"][0]["message"]["tool_calls"][0]
+        out = _run(json.loads(tc["function"]["arguments"])["cmd"], tmp_path)
+        msgs.append({"role": "assistant", "tool_calls": [tc]})
+        msgs.append({"role": "tool", "tool_call_id": tc["id"], "content": "Chunk ID: a1\nWall time: 0.0 seconds\nProcess exited with code 0\nOutput:\n" + out.stdout})
+        return out.stdout
+    if whole_read:
+        lower("read_file", {"path": JAVA})
+    for old, new in edits:
+        assert "ctx:wrote" in lower("edit_file", {"path": JAVA, "old_string": old, "new_string": new})
+    represent_inbound(msgs, workspace_root=ROOT)
+    return (tmp_path / JAVA).read_text()
+
+
+EDITS = [("import java.io.IOException;", "import java.io.IOException;\nimport java.util.List;"),
+         ("Summary result = summarize(path);", "Summary result = summarize(path); // checked")]
+
+
+def test_the_a7_gutting_write_after_the_coders_own_edits_is_held_on_the_current_file(view, tmp_path):
+    on_disk = _replay(view, tmp_path, EDITS)
+    assert view.read(JAVA) == on_disk != SEED_JAVA            # the held body followed the landed edits
+    check, _ = _check(_Judge("OTHER"))
+    _, cmd = _lower(JAVA, STUB, check)
+    out = _run(cmd, tmp_path).stdout
+    assert (tmp_path / JAVA).read_text() == on_disk            # held: the file is untouched
+    assert "This write_file call was not run" in out and "Importer.java exists on disk" in out
+    assert f"{len(on_disk.encode())} bytes" in out             # the facts are of the EDITED file
+
+
+def test_a_legitimate_full_rewrite_after_edits_still_goes_to_the_judge(view, tmp_path):
+    on_disk = _replay(view, tmp_path, EDITS)
+    judge = _Judge("WHOLE_FILE. A complete file.")
+    check, _ = _check(judge)
+    import sys; v=wsview.current(ROOT); print("DBG", v.surveyed, v.isfile(JAVA), v.read_bytes(JAVA) is None, file=sys.stderr)
+    _, cmd = _lower(JAVA, STUB, check)
+    assert not _held(cmd, tmp_path) and (tmp_path / JAVA).read_text() == STUB
+    assert len(judge.prompts) == 1 and on_disk != STUB
+
+
+def test_a_flexible_or_ambiguous_edit_clears_the_body_as_before(view, tmp_path):
+    """No exact single match in the held body -> never guess: the body is unknown (silence, #11b)."""
+    _seed(tmp_path)
+    assert view.note_edited(JAVA, "no such text", "x") is False
+    assert view.note_edited(JAVA, "import java", "x") is False        # several matches
+    assert view.note_edited("unread.txt", "a", "b") is False          # no held body at all
+
+
+def test_a_shell_mutator_after_the_edits_stays_unmeasurable_or_unheld(view, tmp_path):
+    on_disk = _replay(view, tmp_path, EDITS)
+    view.note_a_mutator_ran()
+    check, _ = _check(_Judge("OTHER"))
+    _, cmd = _lower(JAVA, STUB, check)
+    (tmp_path / JAVA).write_text(on_disk + "// shell\n")               # the shell moved the disk
+    assert not _held(cmd, tmp_path) and (tmp_path / JAVA).read_text() == STUB
+
+
+def test_a_survey_riding_the_edit_result_does_not_drop_the_followed_body(view, tmp_path):
+    """The result's own survey reports the post-edit size; applying it before the edit would drop the
+    pre-edit body as stale. It must instead corroborate the reconstruction (and a wrong size drops it)."""
+    _seed(tmp_path)
+    old, new = EDITS[0]
+    post = SEED_JAVA.replace(old, new, 1)
+    for size, kept in ((len(post.encode()), True), (len(post.encode()) + 7, False)):
+        view.note_read(JAVA, SEED_JAVA)
+        tc = {"id": "e1", "type": "function", "function": {"name": "edit_file", "arguments": json.dumps(
+            {"path": JAVA, "old_string": old, "new_string": new})}}
+        comp = {"choices": [{"message": {"tool_calls": [tc]}}]}
+        translate_outbound(comp, _CMD_SHELL, injected={"edit_file"}, workspace_root=ROOT)
+        tc = comp["choices"][0]["message"]["tool_calls"][0]
+        body = (f"Chunk ID: a\nProcess exited with code 0\nOutput:\n⟦ctx:wrote⟧\n{wsview.SURVEY_OPEN}\n" + survey(
+            f"D\tsrc\nD\tsrc/main\nD\tsrc/main/java\nD\tsrc/main/java/pipeline\nF\t1\t{size}\t{JAVA}",
+            root=ROOT, complete=True).rstrip("\n") + f"\n{wsview.SURVEY_CLOSE}\n")
+        represent_inbound([{"role": "assistant", "tool_calls": [tc]},
+                           {"role": "tool", "tool_call_id": "e1", "content": body}], workspace_root=ROOT)
+        assert (view.read(JAVA) == post) is kept

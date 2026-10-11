@@ -841,6 +841,31 @@ class View:
         """A command that could have changed the workspace ran; the survey is now behind the disk."""
         self._ran_a_mutator = True
 
+    def note_edited(self, path, old: str, new: str) -> bool:
+        """An edit landed whose replacement cria knows exactly: keep the held body CURRENT.
+
+        Applied only when cria holds a trusted body and ``old`` occurs in it exactly once — the same
+        single exact match the edit executor takes first. Anything else (no body, stale body, no or
+        several matches, a flexible-tier landing) returns False and the caller falls back to
+        ``note_changed``: never a guess. The size is recorded like a write's; the next survey that
+        carries the file's real size is the check on the reconstruction."""
+        rel = self.rel(path)
+        if rel is None or not old or rel not in self._bodies or rel in self._stale:
+            return False
+        body = self._bodies[rel]
+        o = old.encode("utf-8", "replace")
+        if body.count(o) != 1:
+            return False
+        raw = body.replace(o, new.encode("utf-8", "replace"), 1)
+        self._bodies[rel] = raw
+        self._body_generation.pop(rel, None)
+        self._body_confirmed.pop(rel, None)
+        self._cache_candidates.pop(rel, None)
+        prev = self._files.get(rel)
+        self._files[rel] = (len(raw), prev[1] if prev else time.time())
+        _remember_body(self._sess, self.root, rel, raw, None)
+        return True
+
     def note_changed(self, path) -> None:
         """An edit landed. cria knows the file changed and does NOT know what it now holds, which
         is a different thing from knowing nothing at all: existence survives, the body does not."""

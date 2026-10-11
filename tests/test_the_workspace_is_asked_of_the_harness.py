@@ -285,8 +285,11 @@ class TheConversationIsEvidenceTooTests(unittest.TestCase):
         self.assertEqual(view.read("/ws/a.py"), "x = 1\n")
         self.assertIs(view.isfile("/ws/a.py"), True)
 
-    def test_an_edit_proves_the_file_changed_and_NOT_what_it_now_holds(self):
-        msgs = self._history("write_file", {"path": "a.py", "content": "x = 1\n"},
+    def test_an_edit_cria_cannot_replay_exactly_proves_only_that_the_file_changed(self):
+        """An edit whose old_string is not ONE exact match in the held body (here: two) is never guessed
+        at — the body is unknown, the file is still known to be there. (An exactly-replayable edit keeps
+        the body current: see test_a_whole_file_write_that_would_gut_a_read_file_is_held.)"""
+        msgs = self._history("write_file", {"path": "a.py", "content": "x = 1\ny = 1\n"},
                              writeproxy._WROTE)
         msgs += self._history("edit_file", {"path": "a.py", "old_string": "1", "new_string": "2"},
                               writeproxy._WROTE)
@@ -294,6 +297,14 @@ class TheConversationIsEvidenceTooTests(unittest.TestCase):
         view = self._run(msgs)
         self.assertIsNone(view.read("/ws/a.py"))          # cria does not know the new bytes
         self.assertIs(view.isfile("/ws/a.py"), True)      # it does still know the file is there
+
+    def test_an_exactly_replayable_edit_keeps_the_body_current(self):
+        msgs = self._history("write_file", {"path": "a.py", "content": "x = 1\n"},
+                             writeproxy._WROTE)
+        msgs += self._history("edit_file", {"path": "a.py", "old_string": "1", "new_string": "2"},
+                              writeproxy._WROTE)
+        msgs[2]["tool_calls"][0]["id"] = msgs[3]["tool_call_id"] = "c2"
+        self.assertEqual(self._run(msgs).read("/ws/a.py"), "x = 2\n")
 
     def test_a_survey_in_the_history_is_folded_in_and_taken_out(self):
         ws = _ws(**{"real.py": "print(1)\n"})

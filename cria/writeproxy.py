@@ -2103,6 +2103,7 @@ def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | Non
     view = wsview.current()
     written: dict[str, str] = {}      # tool_call_id -> whole content the write carried
     edited: set[str] = set()          # tool_call_id of an edit (content becomes unknown on success)
+    edit_pairs: dict[str, tuple[str, str]] = {}  # tool_call_id -> the exact (old_string, new_string)
     read_whole: dict[str, str] = {}   # tool_call_id -> path of an UNRANGED read (result is the file)
     for m in messages:
         role = m.get("role")
@@ -2131,6 +2132,8 @@ def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | Non
                             write_paths[tc.get("id")] = _tool_path(p) or ""
                             if orig["name"] in _EDIT_NAMES:
                                 edited.add(tc.get("id"))
+                                if isinstance(p.get("old_string"), str) and isinstance(p.get("new_string"), str):
+                                    edit_pairs[tc.get("id")] = (p["old_string"], p["new_string"])
                             else:
                                 body_arg = next((p[k] for k in ("content", "file_text", "text", "body")
                                                  if isinstance(p.get(k), str)), None)
@@ -2163,6 +2166,13 @@ def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | Non
             # anything else looks at the result, so no downstream check ever sees a byte the model
             # did not ask for, and fold what it says into the view.
             content, survey = wsview.strip_survey(content)
+            # A LANDED EDIT CRIA KNOWS EXACTLY KEEPS THE HELD BODY CURRENT. Applied BEFORE this
+            # result's own survey: that survey reports the post-edit size, which would otherwise drop
+            # the pre-edit body as stale before the edit could be applied to it — and the survey is
+            # then the ground-truth check on the reconstruction (a size that disagrees drops it).
+            edit_applied = (tid in edit_pairs and bool(write_paths.get(tid)) and tid not in failed_ids
+                            and any(ln.strip() == _WROTE for ln in content.splitlines())
+                            and view.note_edited(write_paths[tid], *edit_pairs[tid]))
             if survey:
                 # Same as the gate's copy: a rejected survey is the one failure `wsview` cannot show
                 # from the outside, and both readers used to drop the answer on the floor (#12).
@@ -2193,7 +2203,7 @@ def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | Non
                     and any(ln.strip() == _WROTE for ln in content.splitlines()):
                 if tid in written:
                     view.note_written(write_paths[tid], written[tid])
-                elif tid in edited:
+                elif tid in edited and not edit_applied:
                     view.note_changed(write_paths[tid])
             elif preserve_eof:
                 # A REFUSAL, FAILED READ OR CUT RESULT IS NOT THE FILE. The write path requires proof the call
