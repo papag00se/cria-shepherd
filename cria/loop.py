@@ -3104,7 +3104,7 @@ class Loop:
 
         WHEN TO ASK is structural and deterministic (`shrink_measure`): the file exists, cria holds its
         current text (a read or the coder's own write — an unknown file is silence, #11b), and the
-        candidate would leave less than half of that file's lines in place. WHAT IT IS is the same closed
+        candidate would REMOVE at least half of that file's non-blank lines (whatever its own length). WHAT IT IS is the same closed
         question the pasted-file recovery puts (`WHOLE_FILE` / `OTHER`, `whole_file_ruling`), because
         a fragment sent as a whole-file write and a fragment pasted in chat are one confusion (phi4 A4:
         a 190-character `<dependencies>` excerpt replaced the 28-line pom.xml it had read; A3: a 22-line
@@ -3118,7 +3118,8 @@ class Loop:
         legitimate shrinking rewrites (and held 14 of 14 runs of the fragments, A3/A4 included). For such a
         model a drastic shrink of a file the coder has seen is therefore effectively HELD until it uses
         `edit_file`, sends content that keeps more of the file, or uses the shell. Accepted trade: the
-        variants that let rewrites through also let the A3 stub through. Detector rate: 1.4% of big-file writes.
+        variants that let rewrites through also let the A3 stub through. Detector rate (removes >= half the lines): 8.6% of big-file writes (102 of 1,182), ~85 of them honest rewrites
+        (stub replaced, doc rewritten) that this model's judge will hold too — see docs/heuristic-assists.md H2.
         THE HOLD IS BOUND TO THE BYTES MEASURED. The text above comes from the view, which a coder's own
         shell command can leave behind the disk; the check therefore returns those bytes with the hold, and
         the lowered command refuses only while the file on disk still equals them (otherwise it writes, as
@@ -3166,6 +3167,10 @@ class Loop:
             held = prompts.fill(
                 labels["held"], fact=fact, removed=m["removed_at_least"], lines=m["current_lines"],
                 line=removed[0], quoted=removed[1])
+            if m["openers"]:
+                held += " " + prompts.fill(
+                    labels["openers"], shown=len(m["openers"]), total=m["openers_total"],
+                    listing="; ".join(f"line {no}: `{line}`" for no, line in m["openers"]))
             if edit_tool:
                 held += " " + prompts.fill(labels["edit_on_menu"], tool=f"`{edit_tool}`")
             return {"text": held, "bytes": raw}
@@ -6676,38 +6681,52 @@ def _ran_a_command_naming(messages: list[dict], rel: str, view=None) -> bool:
 
 
 # WHEN TO ASK, never a verdict (principle 8): a whole-file write is put to the judge only when the file
-# is big enough to have structure (SHRINK_MIN_LINES non-blank lines) and the candidate is at most half
-# its length AND keeps less than half of its distinct lines. Measured on 1,156 corpus writes to a file
-# whose text was known: 16 (1.4%) qualify, 10 of them honest rewrites the judge must let through.
+# is big enough to have structure (SHRINK_MIN_LINES non-blank lines) and the write REMOVES at least half
+# of those lines — whatever the candidate's own length. The first detector (candidate <= half the file AND
+# repeats < half its distinct lines) missed phi4 A9: a 69-line rewrite of a 114-non-blank-line Importer.java
+# removed 97 of its lines (summarize, Summary, totals, main) and the candidate was longer than half. What
+# matters is what is LOST, not how long what replaces it is. Measured on 1,182 corpus writes over a file
+# whose text was known: 102 (8.6%) remove >= half the lines (20 under the old detector), vs 126 for the
+# distinct-lines variant, whose extra hits are long additive rewrites that lose a minority of the file.
 SHRINK_MIN_LINES = 8
+SHRINK_OPENERS_MAX = 12
 
 
 def shrink_measure(current: str, candidate: str) -> dict | None:
-    """The measured facts of a whole-file write over a known file, or None when it does not shrink it
-    past the detector. Lines are compared stripped, blank lines ignored."""
+    """The measured facts of a whole-file write over a known file, or None when it does not remove at
+    least half of the file's lines. Lines are compared stripped, blank lines ignored.
+
+    ``removed_at_least`` is a MULTISET difference: a line the candidate has once does not cover the file's
+    three copies of it, so the lines no candidate line can be matched to are a TRUE lower bound on what the
+    write removes. ``openers`` are the removed lines that open a nested block — the next non-blank line of
+    the file is indented deeper — shallowest first (then file order), at most SHRINK_OPENERS_MAX, returned in
+    file order as ``(line number, text)``. That is indentation, not vocabulary: a definition, a class or a
+    loop header is an opener in any brace or whitespace language, a closing brace or a statement never is,
+    and the first removed lines (package, imports, headers) say nothing about what is lost."""
     cur = [l.strip() for l in current.splitlines() if l.strip()]
     cand = [l.strip() for l in candidate.splitlines() if l.strip()]
-    if len(cur) < SHRINK_MIN_LINES or len(cand) * 2 > len(cur):
+    if len(cur) < SHRINK_MIN_LINES:
         return None
-    distinct, kept_set = set(cur), set(cand)
-    kept = len(distinct & kept_set)
-    if kept * 2 >= len(distinct):
-        return None
-    # MULTISET difference: a line the candidate has once does not cover the file's three copies of it, so
-    # the lines no candidate line can be matched to are a TRUE lower bound on what the write removes.
-    left, first = Counter(cand), None
-    removed = 0
-    for no, raw in enumerate(current.splitlines(), 1):
+    left = Counter(cand)
+    body = [(no, raw) for no, raw in enumerate(current.splitlines(), 1) if raw.strip()]
+    removed, first, openers = 0, None, []
+    for i, (no, raw) in enumerate(body):
         line = raw.strip()
-        if not line:
-            continue
         if left[line] > 0:
             left[line] -= 1
             continue
         removed += 1
         first = first or (no, line)
+        indent = len(raw) - len(raw.lstrip())
+        if i + 1 < len(body) and len(body[i + 1][1]) - len(body[i + 1][1].lstrip()) > indent:
+            openers.append((indent, no, line))
+    if removed * 2 < len(cur):
+        return None
+    distinct, kept = set(cur), len(set(cur) & set(cand))
+    shown = sorted(sorted(openers)[:SHRINK_OPENERS_MAX], key=lambda o: o[1])
     return {"current_lines": len(cur), "distinct": len(distinct), "cand_lines": len(cand), "kept": kept,
-            "removed_at_least": removed, "first_removed": first}
+            "removed_at_least": removed, "first_removed": first,
+            "openers": [(no, line) for _i, no, line in shown], "openers_total": len(openers)}
 
 
 def whole_file_ruling(answer: str) -> str:

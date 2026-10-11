@@ -1,0 +1,150 @@
+#!/usr/bin/env node
+
+/**
+ * Ada Handle CLI Resolver
+ * 
+ * Resolves an Ada Handle and displays the holder's address and handle count.
+ * 
+ * Usage: node lookup.js <handle> [--json]
+ * 
+ * Examples:
+ *   node lookup.js goose
+ *   node lookup.js goose --json
+ *   node lookup.js --help
+ */
+
+const fetch = require('node-fetch');
+
+// Parse command line arguments
+function parseArgs() {
+  const args = process.argv.slice(2);
+  const options = {
+    handle: null,
+    json: false,
+    help: false
+  };
+
+  for (let i = 0; i < args.length; i++) {
+    if (args[i] === '--help' || args[i] === '-h') {
+      options.help = true;
+    } else if (args[i] === '--json') {
+      options.json = true;
+    } else if (!args[i].startsWith('-')) {
+      options.handle = args[i];
+    }
+  }
+
+  return options;
+}
+
+// Print help message
+function printHelp() {
+  console.log(`
+Ada Handle CLI Resolver
+
+Usage: node lookup.js <handle> [--json]
+
+Options:
+  --json, -j    Output result as JSON
+  --help, -h    Show this help message
+
+Examples:
+  node lookup.js goose
+  node lookup.js goose --json
+  node lookup.js --help
+
+Description:
+  Resolves an Ada Handle and displays the holder's address
+  and the number of handles that holder owns.
+`);
+}
+
+// Print error and exit with non-zero code
+function exitError(message, code = 1) {
+  console.error(`Error: ${message}`);
+  process.exit(code);
+}
+
+// Print success output
+function printResult(handle, holderAddress, handleCount, json = false) {
+  if (json) {
+    console.log(JSON.stringify({
+      handle: handle,
+      holder_address: holderAddress,
+      handle_count: handleCount
+    }, null, 2));
+  } else {
+    console.log(`Holder address: ${holderAddress}`);
+    console.log(`Handles owned: ${handleCount}`);
+  }
+}
+
+// Main function
+async function main() {
+  const options = parseArgs();
+
+  // Show help if requested
+  if (options.help) {
+    printHelp();
+    process.exit(0);
+  }
+
+  // Require a handle argument
+  if (!options.handle) {
+    exitError('No handle specified. Usage: node lookup.js <handle> [--json]');
+  }
+
+  // Validate handle format (basic check for .handle domain)
+  if (!options.handle.includes('.')) {
+    exitError('Invalid handle format. Handle should contain a dot (e.g., goose.handle)');
+  }
+
+  // Step 1: Resolve the handle to get holder address
+  const handleUrl = `https://api.handle.me/handles/${encodeURIComponent(options.handle)}`;
+  
+  try {
+    const handleResponse = await fetch(handleUrl);
+    
+    if (!handleResponse.ok) {
+      const errorText = await handleResponse.text();
+      exitError(`Failed to resolve handle "${options.handle}": ${handleResponse.status} ${errorText}`);
+    }
+
+    const handleData = await handleResponse.json();
+
+    // Check if handle exists
+    if (!handleData.name) {
+      exitError(`Handle "${options.handle}" not found`);
+    }
+
+    // Get holder address
+    const holderAddress = handleData.holder;
+    
+    if (!holderAddress) {
+      exitError(`Handle "${options.handle}" has no holder`);
+    }
+
+    // Step 2: Get holder information (number of handles)
+    const holderUrl = `https://api.handle.me/holders/${encodeURIComponent(holderAddress)}`;
+    
+    const holderResponse = await fetch(holderUrl);
+    
+    if (!holderResponse.ok) {
+      const errorText = await holderResponse.text();
+      exitError(`Failed to fetch holder information: ${holderResponse.status} ${errorText}`);
+    }
+
+    const holderData = await holderResponse.json();
+
+    // Get handle count
+    const handleCount = holderData.total_handles || 0;
+
+    // Output result
+    printResult(options.handle, holderAddress, handleCount, options.json);
+
+  } catch (error) {
+    exitError(`Request failed: ${error.message}`, 1);
+  }
+}
+
+main();

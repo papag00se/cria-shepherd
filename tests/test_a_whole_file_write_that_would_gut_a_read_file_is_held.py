@@ -44,6 +44,9 @@ def _write_call(comp, path_suffix):
 
 FRAGMENT = _write_call(A4, "pom.xml")
 STUB = _write_call(A3, "Importer.java")
+A9 = json.loads((HERE / "fixtures/phi4_java_a9/0010-reply.json").read_text())
+A9_REWRITE = _write_call(A9, "Importer.java")      # 69 non-blank lines over the 114-line seed: summarize/Summary/main gone
+CORPUS = HERE / "fixtures/h2_corpus"
 
 
 @pytest.fixture
@@ -350,3 +353,66 @@ def test_a_survey_riding_the_edit_result_does_not_drop_the_followed_body(view, t
         represent_inbound([{"role": "assistant", "tool_calls": [tc]},
                            {"role": "tool", "tool_call_id": "e1", "content": body}], workspace_root=ROOT)
         assert (view.read(JAVA) == post) is kept
+
+
+# ---- cycle 12 (phi4 A9): WHEN TO ASK is what the write REMOVES, not how long the candidate is -------------
+
+def test_a9_the_removal_trigger_fires_on_a_candidate_longer_than_half_the_file():
+    m = loop.shrink_measure(SEED_JAVA, A9_REWRITE)
+    assert (m["current_lines"], m["cand_lines"], m["removed_at_least"], m["kept"]) == (114, 69, 97, 2)
+    assert m["cand_lines"] * 2 > m["current_lines"]                     # the old detector's blind spot
+    listed = [line for _no, line in m["openers"]]
+    assert any(l.startswith("public static Summary summarize(") for l in listed)
+    assert any(l.startswith("public static final class Summary") for l in listed)
+    assert any(l.startswith("public static void main(") for l in listed)
+    assert [no for no, _l in m["openers"]] == sorted(no for no, _l in m["openers"])   # file order
+
+
+def test_a9_call_0010_is_held_and_the_facts_name_the_removed_definitions(view, tmp_path):
+    _seed(tmp_path)
+    judge = _Judge("OTHER")
+    check, _ = _check(judge)
+    _, cmd = _lower(JAVA, A9_REWRITE, check)
+    out = _run(cmd, tmp_path).stdout
+    assert (tmp_path / JAVA).read_text() == SEED_JAVA
+    assert out.startswith("⟦ctx:denied⟧") and "This write_file call was not run" in out
+    assert "would remove at least 97 of the file's 114 non-blank lines" in out
+    assert "line 91: `public static Summary summarize(String path) throws Exception {`" in out
+    assert "line 119: `public static void main(String[] args) throws Exception {`" in out
+    assert "`edit_file` is on this tool menu" in out
+    assert len(judge.prompts) == 1                                      # the judge was asked, not bypassed
+
+
+def test_removed_lines_that_open_no_block_add_no_listing():
+    text = "\n".join(f"line {i}" for i in range(10))
+    m = loop.shrink_measure(text, "line 0\n")
+    assert m["openers"] == [] and m["removed_at_least"] == 9
+
+
+def test_openers_are_the_shallowest_first_and_bounded():
+    text = "top:\n" + "".join(f"  mid{i}:\n    leaf{i}\n" for i in range(14)) + "  last: 1\n"
+    m = loop.shrink_measure(text, "unrelated\n")
+    assert m["openers"][0] == (1, "top:") and len(m["openers"]) == loop.SHRINK_OPENERS_MAX
+    assert m["openers_total"] == 15
+
+
+@pytest.mark.parametrize("name", ["lookup.js", "Gemfile"])
+def test_corpus_legitimate_rewrites_are_put_to_the_judge_and_pass_on_whole_file(view, tmp_path, name):
+    """A 19-line stub replaced by a 119-line CLI, a 10-line Gemfile tidied to 6: honest rewrites the
+    removal detector asks about; a WHOLE_FILE ruling lets them run."""
+    cur, new = (CORPUS / f"{name}.current").read_text(), (CORPUS / f"{name}.rewrite").read_text()
+    (tmp_path / name).write_text(cur)
+    view.note_read(name, cur)
+    view.note_written(name, cur)
+    judge = _Judge("WHOLE_FILE")
+    check, _ = _check(judge)
+    _, cmd = _lower(name, new, check)
+    assert len(judge.prompts) == 1 and not _held(cmd, tmp_path)
+    assert (tmp_path / name).read_text() == new
+
+
+def test_small_edits_and_additive_rewrites_are_untouched():
+    cur = "".join(f"line {i}\n" for i in range(30))
+    assert loop.shrink_measure(cur, cur.replace("line 3\n", "line three\n")) is None
+    assert loop.shrink_measure(cur, cur + "".join(f"more {i}\n" for i in range(200))) is None   # grows, loses nothing
+    assert loop.shrink_measure("a\nb\nc\n", "x\n") is None                                     # < SHRINK_MIN_LINES
