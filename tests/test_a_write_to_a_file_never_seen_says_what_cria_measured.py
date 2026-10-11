@@ -350,3 +350,96 @@ def test_the_pasted_file_recovery_refusal_reaches_the_nudge(view):
         assert lp._unexecuted_nudge_text(sess) == loop.prompts.load("unexecuted_write_nudge")
     finally:
         t.doCleanups()
+
+
+# ── H1 review B1: the answer is a call that DID NOT RUN, structurally, for every "did it land?" owner ─────
+
+def _a3_history(view, tmp_path):
+    """CALL 0011's two unread writes, lowered, run by bash, and re-presented as the coder's own calls."""
+    from cria.writeproxy import represent_inbound
+    (tmp_path / "src/main/java/pipeline").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "pom.xml").write_text(SEED_POM)
+    (tmp_path / JAVA).write_text(SEED_JAVA)
+    comp = json.loads(json.dumps(A3))
+    translate_outbound(comp, _CMD_SHELL, injected={"write_file"}, workspace_root=ROOT, unread_target=_check(view))
+    msgs = []
+    for tc in comp["choices"][0]["message"]["tool_calls"]:
+        cmd = json.loads(tc["function"]["arguments"])["cmd"]
+        if original_call(cmd) is None or json.loads(original_call(cmd)["arguments"]).get("path") not in ("pom.xml", JAVA):
+            continue
+        out = _run(cmd, tmp_path).stdout
+        env = f"Chunk ID: ab\nWall time: 0.0 seconds\nProcess exited with code 0\nOriginal token count: 9\nOutput:\n{out}"
+        msgs += [{"role": "assistant", "tool_calls": [tc]}, {"role": "tool", "tool_call_id": tc["id"], "content": env}]
+    return represent_inbound(msgs)
+
+
+def _ids(msgs):
+    return {json.loads(tc["function"]["arguments"]).get("path"): tc["id"]
+            for m in msgs if m.get("role") == "assistant" for tc in m["tool_calls"]}
+
+
+def test_the_answer_carries_the_did_not_run_mark_and_the_file(view, tmp_path):
+    from cria import denial
+    msgs = _a3_history(view, tmp_path)
+    res = [m["content"] for m in msgs if m["role"] == "tool"]
+    assert len(res) == 2
+    for text in res:
+        assert denial.is_denied(text)
+        assert denial.read_instead_payload(text) in (SEED_POM, SEED_JAVA)     # …and the bytes survive intact
+    assert set(loop._extract_reads(msgs)) == {"pom.xml", JAVA}
+
+
+def test_the_never_run_write_is_not_a_written_file(view, tmp_path):
+    from cria import contextfloor
+    msgs = _a3_history(view, tmp_path)
+    assert loop._extract_writes(msgs) == {}                       # placeholder size must not override the read
+    assert contextfloor._modified_files(msgs) == []               # "written / still on disk" is false
+
+
+def test_a_later_real_write_does_not_drop_the_read_that_answered_the_first(view, tmp_path):
+    from cria import focustrim
+    msgs = _a3_history(view, tmp_path)
+    ids = _ids(msgs)
+    big = "<project>" + "<!-- real -->" * 60 + "</project>"
+    msgs += [{"role": "assistant", "tool_calls": [{"id": "w2", "type": "function", "function": {
+                "name": "write_file", "arguments": json.dumps({"path": "pom.xml", "content": big})}}]},
+             {"role": "tool", "tool_call_id": "w2", "content": "Wrote pom.xml"}]
+    out, dropped = focustrim._drop_superseded_writes(msgs)
+    assert dropped == 0
+    assert any(m.get("tool_call_id") == ids["pom.xml"] and SEED_POM in m["content"] for m in out)
+    assert ids["pom.xml"] in {tc["id"] for m in out if m.get("tool_calls") for tc in m["tool_calls"]}
+
+
+def test_the_refused_payload_is_collapsed_not_left_verbatim(view, tmp_path):
+    from cria import writeproxy
+    msgs = _a3_history(view, tmp_path)
+    assert writeproxy._failed_edit_ids(msgs) == set(_ids(msgs).values())
+    original = [json.loads(tc["function"]["arguments"])["content"]
+                for tc in A3["choices"][0]["message"]["tool_calls"]
+                if tc["function"]["name"] == "write_file"
+                and json.loads(tc["function"]["arguments"])["path"] in ("pom.xml", JAVA)]
+    assert len(original) == 2
+    flat = json.dumps(msgs)
+    for body in original:
+        assert json.dumps(body)[1:-1][:200] not in flat            # the invented content is not kept verbatim
+
+
+def test_the_judge_sees_the_write_labelled_not_run_with_the_file_beneath(view, tmp_path):
+    msgs = _a3_history(view, tmp_path)
+    log = loop._work_log(msgs)
+    assert loop.prompts.load("work_log_denied") in log
+    assert SEED_POM.strip().splitlines()[1] in log                # the result's content is not deleted
+
+
+def test_the_read_instead_answer_is_never_squashed_as_a_failure(view, tmp_path):
+    from cria import focustrim
+    msgs = _a3_history(view, tmp_path)
+    # three more answered writes make this the stale-failure shape _squash_failures collapses
+    extra = []
+    for i in range(4):
+        extra += [{"role": "assistant", "tool_calls": [{"id": f"x{i}", "type": "function", "function": {
+                       "name": "write_file", "arguments": json.dumps({"path": "pom.xml", "content": f"v{i}"})}}]},
+                  {"role": "tool", "tool_call_id": f"x{i}", "content": msgs[1]["content"]}]
+    out, _rep = focustrim._squash_failures(msgs + extra)
+    kept = [m["content"] for m in out if m.get("role") == "tool"]
+    assert any(SEED_POM in c for c in kept[:1])                   # the first answer's bytes are still there

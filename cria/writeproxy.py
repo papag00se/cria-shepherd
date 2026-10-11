@@ -956,7 +956,11 @@ def _read_in_place_of_write(path: str, fact: str) -> str:
     and carries no read marker, so nothing is recorded as seen until a read has actually come back."""
     q = _qbash(path)
     labels = prompts.load_map("write_unread_target")
-    read = prompts.fill(labels["read"], fact=fact)
+    # MARKED AS A CALL THAT DID NOT RUN, because the write did not: every reader that asks "did this
+    # write land?" (`_extract_writes`, contextfloor, focustrim's supersede rule, `_failed_edit_ids`) asks
+    # `denial.is_denied`. The read marker rides inside the same text, and the readers that want the FILE
+    # (`_extract_reads`, `represent_inbound`) look for it before they look at the denial.
+    read = denial.mark(prompts.fill(labels["read"], fact=fact))
     not_read = denial.mark(prompts.fill(labels["not_read"], fact=fact))
     return (f'if [ -f {q} ] && [ -r {q} ] && [ "$(wc -c < {q} 2>/dev/null || echo 0)" -le {READ_INLINE_MAX} ]; '
             f"then printf %s {_qbash(read)}; cat {q}; "
