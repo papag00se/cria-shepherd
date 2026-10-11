@@ -71,7 +71,9 @@ class OneOwnerTests(unittest.TestCase):
                    if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
                    and n.func.id == "_refusal_command")
         # +3: generated cleanup refusal on write/edit, plus stale reviewed-edit refusal.
-        self.assertEqual(calls, 13)
+        # +1 (G4): a whole-file write naming an existing file the coder never read — the refusal is
+        # the tool result the coder reads (`write_unread_target`), through this one owner.
+        self.assertEqual(calls, 14)
 
     @staticmethod
     def _lower_fetch(result):

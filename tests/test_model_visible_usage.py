@@ -172,10 +172,14 @@ def test_a_gate_transport_turn_with_no_upstream_call_reports_the_model_visible_s
         result = _post_responses(h, _inbound("7cc1bf39"), stream)
         reported = result["usage"]["input_tokens"]
         assert 8000 <= reported < TRIGGER   # the incident reported 14,568 here
-        # The server's body has been through the tool menu's own focus (9 tools, not Codex's 10), so
-        # compare against the offline framing with a tolerance of that one difference (<= 3%).
+        # The server's body has been through cria's tool menu (focus drops Codex's firehose, advertise
+        # adds cria's own write/edit tools), so the offline framing over Codex's raw menu is only an
+        # approximation: within 10%. It used to be within 3%, but only because the coder system message
+        # carried the tool-menu hint TWICE then (~450 tokens, the same size as the menu difference, in
+        # the opposite direction); `test_the_tool_menu_is_in_the_system_prompt_once` fixed the doubling
+        # and the real menu difference (8,088 reported vs 8,697 offline, 7%) is now what is measured.
         offline = _loop().visible_context_tokens(_chat("7cc1bf39"), "sid:x")
-        assert abs(reported - offline) <= offline * 0.03
+        assert abs(reported - offline) <= offline * 0.10
         assert result["usage"]["output_tokens"] == 0
         assert "usage.context_reported" in h.kinds()
     finally:
