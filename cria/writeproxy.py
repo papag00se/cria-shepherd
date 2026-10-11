@@ -736,6 +736,19 @@ ECHO_CONTEXT = 3
 ECHO_MAX_BYTES = 3000
 ECHO_WIRE_MAX_BYTES = content_reduce_mod.INLINE_RESULT_MAX_BYTES
 EDIT_VIEW = "\u27e6ctx:editview\u27e7"
+# A LANDED whole-file write that removed most of a pre-existing file prints its measured facts on ONE line
+# after the confirmation, behind this marker; `represent_inbound` re-renders the result as the confirmation
+# and then the facts (it replaces the raw result wholesale, so an unmarked line would be lost).
+REMOVAL_FACTS = "\u27e6ctx:removal\u27e7"
+
+
+def removal_facts(content: str) -> str:
+    """The removal facts a landed write printed (marker stripped), or "" — read off the raw result."""
+    for ln in content.splitlines():
+        ln = ln.strip()
+        if ln.startswith(REMOVAL_FACTS):
+            return ln[len(REMOVAL_FACTS):].strip()
+    return ""
 _ECHO_DEF = r'''def _echo(res):
     a0,a1,flex=_pos
     L=res.split(chr(10))
@@ -1652,7 +1665,7 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
                             if held.get("land"):
                                 # NOT A HOLD: the write runs and its result carries what it removed — only
                                 # when it LANDED (rc 0) and only for the bytes the facts were measured on.
-                                facts = f"printf %s {_qbash(held['text'])}"
+                                facts = f"printf '%s\\n' {_qbash(REMOVAL_FACTS + held['text'])}"
                                 run = (f"{cmd}\n_rc=$?\n"
                                        f"if [ $_rc -eq 0 ]; then {facts}; fi\n(exit $_rc)")
                                 cmd = f"if python3 -c {_qbash(same)}; then\n{run}\nelse\n{cmd}\nfi"
@@ -2328,7 +2341,9 @@ def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | Non
             if tid in strip_ids:                          # read/nav result → drop the shell envelope
                 out.append({**m, "content": _strip_exec_envelope(content, preserve_eof=preserve_eof)})
             elif tid in write_paths and any(ln.strip() == _WROTE for ln in content.splitlines()):  # write/edit SUCCESS
-                out.append({**m, "content": render_edit_echo(content, write_paths[tid])})
+                rendered = render_edit_echo(content, write_paths[tid])
+                facts = removal_facts(content)
+                out.append({**m, "content": f"{rendered}\n{facts}" if facts else rendered})
             elif tid in write_paths:                      # write/edit FAILURE → strip the shell envelope,
                 # then hand a structured edit-fail fact-report to the ONE edit-recovery owner, which
                 # composes the single monotonic directive keyed on this file's failure history so far

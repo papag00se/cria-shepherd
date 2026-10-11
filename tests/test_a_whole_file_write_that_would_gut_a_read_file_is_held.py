@@ -505,3 +505,37 @@ def test_the_first_survey_files_leave_out_a_file_the_coders_landed_write_created
             {"role": "tool", "tool_call_id": "w1", "content": "⟦ctx:wrote⟧"}]
     loop._note_first_survey_files(sess, ROOT, msgs)
     assert "pom.xml" not in sess.first_survey_files and JAVA in sess.first_survey_files
+
+
+@pytest.mark.parametrize("envelope", [False, True])
+def test_a9_removal_facts_reach_the_coder_through_represent_inbound(view, tmp_path, envelope):
+    """Review R1: `represent_inbound` replaces a landed write's whole result with the confirmation, so the
+    facts must be re-rendered there — raw and inside the harness exec envelope — or the coder never sees them."""
+    from cria.writeproxy import represent_inbound
+    _seed(tmp_path)
+    check, _ = _check(_Judge("OTHER"))
+    comp, cmd = _lower(JAVA, A9_REWRITE, check)
+    out = _run(cmd, tmp_path)
+    assert out.returncode == 0 and (tmp_path / JAVA).read_text() == A9_REWRITE
+    raw = out.stdout + out.stderr
+    if envelope:
+        raw = f"Chunk ID: abc123\nWall time: 0.0000 seconds\nProcess exited with code 0\nOutput:\n{raw}"
+    hist = [{"role": "assistant", "tool_calls": comp["choices"][0]["message"]["tool_calls"]},
+            {"role": "tool", "tool_call_id": "c1", "content": raw}]
+    seen = represent_inbound(hist, workspace_root=ROOT)[-1]["content"]
+    assert seen.startswith(f"Wrote {JAVA}") or "Wrote" in seen.splitlines()[0]
+    assert "removed at least 97 of the file's 114 non-blank lines" in seen
+    assert "public static Summary summarize(String path) throws Exception {" in seen
+    assert "public static void main(String[] args) throws Exception {" in seen
+    assert "⟦ctx:" not in seen and "cria" not in seen.lower()
+
+
+def test_a_write_without_removal_facts_is_the_plain_confirmation(view, tmp_path):
+    from cria.writeproxy import represent_inbound
+    (tmp_path / "pom.xml").write_text(SEED_POM)
+    check, _ = _check(_Judge("OTHER"))
+    comp, cmd = _lower("pom.xml", SEED_POM.replace("</project>", "<!-- x -->\n</project>"), check)
+    raw = _run(cmd, tmp_path).stdout
+    hist = [{"role": "assistant", "tool_calls": comp["choices"][0]["message"]["tool_calls"]},
+            {"role": "tool", "tool_call_id": "c1", "content": raw}]
+    assert "removed" not in represent_inbound(hist, workspace_root=ROOT)[-1]["content"]
