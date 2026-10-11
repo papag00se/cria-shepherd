@@ -3070,7 +3070,7 @@ class Loop:
             sess = self._store.get(sess_key)
             if sess is None:
                 return ""
-            return unread_target_fact(sess, wsview.current(root), path, messages)
+            return unread_target_fact(sess, wsview.current(root), path, messages, record=True)
         return check
 
     def _unexecuted_nudge_text(self, sess: PlanSession) -> str:
@@ -6420,7 +6420,39 @@ def _coder_has_seen(view, rel: str, sess, messages: list[dict]) -> bool:
     return any(view.rel(p) == rel for p in seen)
 
 
-def unread_target_fact(sess, view, path: str, messages: list[dict]) -> str:
+def _shell_commands_with_results(messages: list[dict]):
+    """``(command text, result text)`` for each shell-family call (a ``cmd``/``command`` argument) whose
+    result was returned and was not a refusal — a command the coder actually RAN."""
+    from . import denial
+    calls: dict = {}
+    for m in messages or []:
+        if not isinstance(m, dict):
+            continue
+        for tc in m.get("tool_calls") or []:
+            fn = tc.get("function") or {}
+            args = _args_of(fn.get("arguments") or "")
+            cmd = args.get("cmd") if args.get("cmd") is not None else args.get("command")
+            if isinstance(cmd, list):
+                cmd = " ".join(str(x) for x in cmd)
+            if isinstance(cmd, str) and tc.get("id") and "___CRIA_" not in cmd:
+                calls[tc["id"]] = cmd
+        tid = m.get("tool_call_id") or m.get("call_id")
+        if tid in calls:
+            c = m.get("content") if m.get("content") is not None else m.get("output")
+            if isinstance(c, str) and c.strip() and not denial.is_denied(c):
+                yield calls[tid], c
+
+
+def _command_names_path(command: str, rel: str) -> bool:
+    """Does ``command`` name ``rel`` as a whole path (relative, or as the tail of an absolute one)?"""
+    return re.search(rf"(?<![\w.-]){re.escape(rel)}(?![\w/-]|\.\w)", command) is not None
+
+
+def _ran_a_command_naming(messages: list[dict], rel: str) -> bool:
+    return any(_command_names_path(cmd, rel) for cmd, _res in _shell_commands_with_results(messages))
+
+
+def unread_target_fact(sess, view, path: str, messages: list[dict], *, record: bool = False) -> str:
     """What cria MEASURED about a file a write names, or "" — never an instruction.
 
     The workspace view must PROVE the file exists (three-valued: an unanswered survey is silence, not
@@ -6436,6 +6468,17 @@ def unread_target_fact(sess, view, path: str, messages: list[dict]) -> str:
         return ""
     if _coder_has_seen(view, rel, sess, messages):
         return ""
+    # A SHELL COMMAND THAT NAMES THE FILE MAY HAVE READ IT (`cat pom.xml`): cria cannot tell a read
+    # from any other use of a path, so it does not claim the coder never looked (#5b, #11b).
+    if _ran_a_command_naming(messages, rel):
+        return ""
+    if record:
+        # ONCE PER (SESSION, PATH): a hold that outlived its first sentence would trap a coder that
+        # means the write. The second attempt passes.
+        held = sess.__dict__.setdefault("unread_target_held", set()) if hasattr(sess, "__dict__") else set()
+        if rel in held:
+            return ""
+        held.add(rel)
     labels = prompts.load_map("unread_target_fact")
     size = view.size(rel)
     return prompts.fill(labels["sized" if size is not None else "unsized"], path=rel, size=size)

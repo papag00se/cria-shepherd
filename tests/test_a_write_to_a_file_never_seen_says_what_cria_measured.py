@@ -109,7 +109,7 @@ def test_the_next_coder_prompt_says_which_call_did_not_run_and_what_exists(view)
     assert "write_file" in nudge and "`pom.xml`" in nudge
     assert "it was not run" in nudge and "nothing happened" in nudge
     assert "a code block comes before the call" in nudge               # the rule that stopped it
-    assert "pom.xml already exists on disk (980 bytes) and no read of it has been recorded this session" in nudge
+    assert "pom.xml already exists on disk (980 bytes) and no read of it has been recorded this session, by a read tool or by a shell command naming it" in nudge
     assert "cria" not in nudge.lower().replace("⟦ctx:denied⟧", "")      # #17
     assert {"role": "assistant", "content": REAL["content"]} in coder.bodies[1]["messages"]   # what it refers to
 
@@ -140,8 +140,10 @@ def test_the_placeholder_write_is_refused_with_the_measured_fact_and_nothing_is_
     translate_outbound(comp, _CMD_SHELL, injected={"write_file"}, workspace_root=ROOT,
                        unread_target=_check(view))
     cmd = _cmd(comp)
-    assert "pom.xml already exists on disk (980 bytes) and no read of it has been recorded this session" in cmd
+    assert "pom.xml already exists on disk (980 bytes) and no read of it has been recorded this session, by a read tool or by a shell command naming it" in cmd
     assert "This write_file call was not run, so nothing was written and the file is unchanged." in cmd
+    assert "Once a read of it is recorded this no longer applies" in cmd     # what changes the fact
+    assert "the same write sent again is not held" in cmd
     assert "write_bytes" not in cmd and PLACEHOLDER not in cmd
     assert "⟦ctx:denied⟧" in cmd                                         # the one refusal owner marks it
 
@@ -150,7 +152,61 @@ def test_any_content_is_refused_not_a_spelling_of_one(view):
     for content in ("<project/>", "your_updated_pom_xml_content_here", "x" * 4000):
         comp = _call("write_file", {"path": "pom.xml", "content": content})
         translate_outbound(comp, _CMD_SHELL, injected={"write_file"}, workspace_root=ROOT,
-                           unread_target=_check(view))
+                           unread_target=_check(view))     # a fresh session each time: the first attempt
+        assert "write_bytes" not in _cmd(comp)
+
+
+def test_the_hold_is_made_once_per_path_and_the_second_attempt_passes(view):
+    check = _check(view)
+    first = _call("write_file", {"path": "pom.xml", "content": PLACEHOLDER})
+    translate_outbound(first, _CMD_SHELL, injected={"write_file"}, workspace_root=ROOT, unread_target=check)
+    assert "write_bytes" not in _cmd(first) and "already exists on disk" in _cmd(first)
+    again = _call("write_file", {"path": "pom.xml", "content": PLACEHOLDER})
+    translate_outbound(again, _CMD_SHELL, injected={"write_file"}, workspace_root=ROOT, unread_target=check)
+    assert "write_bytes" in _cmd(again)                        # held once, never trapped
+    # …and ./pom.xml / the absolute spelling is the SAME path (normalised through the view)
+    abs_again = _call("write_file", {"path": f"{ROOT}/pom.xml", "content": "<project/>"})
+    translate_outbound(abs_again, _CMD_SHELL, injected={"write_file"}, workspace_root=ROOT, unread_target=check)
+    assert "write_bytes" in _cmd(abs_again)
+
+
+def test_the_hold_is_per_path(view):
+    check = _check(view)
+    translate_outbound(_call("write_file", {"path": "pom.xml", "content": "x"}), _CMD_SHELL,
+                       injected={"write_file"}, workspace_root=ROOT, unread_target=check)
+    other = _call("write_file", {"path": JAVA, "content": "class A {}"})
+    translate_outbound(other, _CMD_SHELL, injected={"write_file"}, workspace_root=ROOT, unread_target=check)
+    assert "write_bytes" not in _cmd(other) and f"{JAVA} already exists" in _cmd(other)
+
+
+def _shell_read(command, result="<project>\n</project>", call_id="s1"):
+    return [{"role": "assistant", "tool_calls": [{"id": call_id, "type": "function", "function": {
+                "name": "exec_command", "arguments": json.dumps({"cmd": command})}}]},
+            {"role": "tool", "tool_call_id": call_id, "content": result}]
+
+
+def test_a_shell_command_naming_the_file_may_have_read_it_so_no_hold(view):
+    for command in ("cat pom.xml", f"sed -n 1,40p {ROOT}/pom.xml", "head -50 ./pom.xml && echo done"):
+        comp = _call("write_file", {"path": "pom.xml", "content": "<project/>"})
+        translate_outbound(comp, _CMD_SHELL, injected={"write_file"}, workspace_root=ROOT,
+                           unread_target=_check(view, messages=_shell_read(command)))
+        assert "write_bytes" in _cmd(comp), command
+
+
+def test_a_shell_command_naming_a_different_file_is_not_a_read_of_this_one(view):
+    for command in ("cat pom.xml.bak", "cat my-pom.xml", "ls -la", "mvn -q compile"):
+        comp = _call("write_file", {"path": "pom.xml", "content": "<project/>"})
+        translate_outbound(comp, _CMD_SHELL, injected={"write_file"}, workspace_root=ROOT,
+                           unread_target=_check(view, messages=_shell_read(command)))
+        assert "write_bytes" not in _cmd(comp), command
+
+
+def test_a_refused_or_empty_shell_result_is_not_a_read(view):
+    from cria import denial
+    for result in (denial.mark("that command cannot run here"), "   "):
+        comp = _call("write_file", {"path": "pom.xml", "content": "<project/>"})
+        translate_outbound(comp, _CMD_SHELL, injected={"write_file"}, workspace_root=ROOT,
+                           unread_target=_check(view, messages=_shell_read("cat pom.xml", result)))
         assert "write_bytes" not in _cmd(comp)
 
 
