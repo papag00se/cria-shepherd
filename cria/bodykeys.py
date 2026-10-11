@@ -59,6 +59,11 @@ COMPLETION_REMEDIATION = "cria_completion_remediation"
 #: model ever re-reads them (principle 17: the model never sees the token "cria").
 NOTES = "cria_notes"
 
+#: A reply held a fenced call object that massage REFUSED to promote; carries {reason, tool, path} so the
+#: loop can tell the coder what did not run (a refusal nobody sees regenerates byte-identically).
+#: Popped by the loop where the turn is read; stripped from any completion that reaches the server.
+FENCED_REFUSED = "cria_fenced_refused"
+
 #: The rumination guard aborted this turn; carries what it saw. Read by the loop to skip a steer that
 #: would otherwise be authored from a truncated thought.
 RUMINATION = "cria_rumination"
@@ -66,4 +71,4 @@ RUMINATION = "cria_rumination"
 #: Every key above. The wire strips this set wholesale, so adding a key here is all it takes to keep
 #: it off the API — the thing five scattered literals could not guarantee.
 ALL = (MERGE_TURNS, OUTPUT_RESERVE, LOST_CALL, PINNED_TASK, CONTEXT_REFIT_NO_CHANGE,
-       CALLER_INSTRUCTIONS, COMPLETION_REMEDIATION, NOTES, RUMINATION)
+       CALLER_INSTRUCTIONS, COMPLETION_REMEDIATION, NOTES, RUMINATION, FENCED_REFUSED)

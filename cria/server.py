@@ -1068,6 +1068,7 @@ class CriaHandler(BaseHTTPRequestHandler):
         under the flag a fired guard is always visible; with the flag off, all of it is stripped."""
         ic = self.server.cfg.indicators
         notes = completion.pop(bodykeys.NOTES, None) or []
+        completion.pop(bodykeys.FENCED_REFUSED, None)   # cria-internal; the loop consumes it where it matters
         if ic.enabled and ic.assists:
             for note in reversed(notes):  # each note becomes its own ⟦cria⟧ line, ahead of the content
                 _prepend_content_line(completion, f"{MARKER}{note}")
@@ -1198,6 +1199,7 @@ class CriaHandler(BaseHTTPRequestHandler):
         self._synthetic: set[str] = set()
         self._native_search = None
         self._brave_key = None
+        self._unread_target = None
         # LEVEL 2 — SIMPLE_TOOLS. Below this rung cria alters no toolset: the harness's own tools go
         # up exactly as they arrived, nothing is lowered to shell, nothing is re-presented, and the
         # menu is not curated. ONE owner for the whole tool layer, both call sites, so a rung cannot
@@ -1253,6 +1255,12 @@ class CriaHandler(BaseHTTPRequestHandler):
             # spec the model needs to re-read) can be re-fetched instead of blocked forever.
             fk, sq = _visible_web_calls(body.get("messages", []))
             webfetch.set_visible(sess_key, fk, sq)
+            # The files the coder has read or written, as of THIS request, so the write lowering can
+            # refuse a whole-file replacement of an existing file it has never seen (None when cria is
+            # not engaged enough to keep that record — a guess would be a false fact).
+            self._unread_target = (self.server.loop.unread_target_check(
+                sess_key, body.get("messages", []), self._workspace_root)
+                if self.server.loop is not None else None)
         # Tool-menu FOCUS: curate the harness's menu to the coding essentials (drop the goal/MCP/
         # connector firehose), then a terse per-tool cheat-sheet for the curated set. AFTER advertise,
         # so cria's write_file survives the curation.
@@ -1270,7 +1278,8 @@ class CriaHandler(BaseHTTPRequestHandler):
                                brave_key=getattr(self, "_brave_key", None),
                                native_search=getattr(self, "_native_search", None), session=sess_key,
                                workspace_root=getattr(self, "_workspace_root", None),
-                               external_dir_permission=self.server.cfg.safety.external_dir_permission)
+                               external_dir_permission=self.server.cfg.safety.external_dir_permission,
+                               unread_target=getattr(self, "_unread_target", None))
         return completion
 
     def _focus_trim(self, framed: dict, rlog) -> tuple[dict, bool]:

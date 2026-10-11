@@ -1,0 +1,8 @@
+# The nudge after a reply whose call cria did NOT run because it arrived as a fenced block (prompts.load_map).
+# Facts about the reply and about cria's own rule — never a tool, argument or content to choose.
+lead = Your last reply held a call to {{TOOL}}{{AT}} written as a fenced block of text, and it was not run — nothing happened and no result came back. Why it was not run: {{REASON}}.
+at =  for {{PATH}}
+prefix_fence = a code block comes before the call in the same reply, and that block is not the call's own content
+nested = the call sits inside a larger quoted block rather than standing as its own block
+off_menu = {{TOOL}} is not one of this turn's tools
+inadmissible = its arguments do not match the argument schema of {{TOOL}}

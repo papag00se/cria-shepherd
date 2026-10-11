@@ -1023,15 +1023,19 @@ def _fenced_envelope_call(content: str, tools) -> tuple[list[dict], str, dict, s
     if first is None:
         return [], content, {}, None
     fm, (name, args) = first
+    # WHAT THE REFUSAL IS ABOUT rides with it: the loop cannot tell the coder which call did not run
+    # from a bare reason (a refusal nobody sees regenerates the same reply byte for byte).
+    about = {"tool": name, "path": next((v for k, v in args.items()
+                                         if k in PATH_KEYS and isinstance(v, str)), "")}
     if drafts and not _echoes_a_draft(args, drafts):
-        return [], content, {}, "prefix_fence"
+        return [], content, about, "prefix_fence"
     if _is_quoted(content, fm.start()):
-        return [], content, {}, "nested"
+        return [], content, about, "nested"
     props = set((schemas.get(name) or {}).get("properties") or {})
     if name not in schemas:
-        return [], content, {}, "off_menu"
+        return [], content, about, "off_menu"
     if not set(args) <= props or not _menu_admits(name, args, schemas):
-        return [], content, {}, "inadmissible"
+        return [], content, about, "inadmissible"
     later = sum(1 for b in blocks if b.start() > fm.start() and _fenced_envelope(b.group(2)) is not None)
     fields = {"later_envelopes": later, "dropped_chars": len(content) - fm.start()}
     return [_toolcall(name, args)], content[:fm.start()].rstrip(), fields, None
@@ -1279,6 +1283,11 @@ def recover_leaked_tool_calls(completion: dict, tools=None, rlog=None) -> dict:
                 why, calls = "length", []
             if why:
                 _log(rlog, "massage.fenced_call_refused", reason=why, chars=len(content))
+                if why != "length" and fields.get("tool"):
+                    # …and the coder hears of it (the loop pops this where it reads the turn).
+                    completion[bodykeys.FENCED_REFUSED] = {"reason": why, "tool": fields["tool"],
+                                                           "path": fields.get("path", "")}
+                fields = {}
             if calls:
                 event = "massage.fenced_call_recovered"
         if calls:

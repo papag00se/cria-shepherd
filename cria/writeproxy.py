@@ -1342,7 +1342,7 @@ def _survey_due(session: str | None, name: str) -> bool:
 def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: set[str] | None = None,
                        brave_key: str | None = None, native_search: str | None = None,
                        session: str | None = None, workspace_root: str | None = None,
-                       external_dir_permission: str = "write") -> dict:
+                       external_dir_permission: str = "write", unread_target=None) -> dict:
     """Lower cria's synthetic tool calls to shell commands the harness runs, each stamped with the
     stateless re-presentation sentinel. Only lowers a tool cria INJECTED (a harness-native tool of
     the same name is the harness's to run). ``web_search`` routes to ``native_search`` when the
@@ -1477,6 +1477,16 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
                         if rlog is not None:
                             rlog.emit("writeproxy.write_fused_content", tool=name,
                                       path=str(path))
+                    elif (unread := unread_target(str(path)) if unread_target is not None else ""):
+                        # A WHOLE-FILE REPLACEMENT OF A FILE THE CODER HAS NEVER SEEN. The content is
+                        # then not a revision of anything it read — it is invention under a real
+                        # file's name (phi4 A2: pom.xml, 980 bytes, never shown; the coder's write
+                        # carried `<content_of_pom.xml_…>`). Refused through the one refusal owner, so
+                        # the coder gets a tool RESULT for its call that says what cria measured —
+                        # `unread` is the fact, and nothing here names a tool or content to choose.
+                        cmd = _refusal_command(prompts.render("write_unread_target", fact=unread))
+                        if rlog is not None:
+                            rlog.emit("writeproxy.write_unread_target", tool=name, path=str(path))
                     else:
                         # NO SECOND TRIM HERE. The fused-call tail is cut once, for every tool's
                         # every string argument, at `massage.strip_debris_from_args` — which runs on
