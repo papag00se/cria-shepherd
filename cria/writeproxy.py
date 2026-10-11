@@ -2122,7 +2122,16 @@ def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | Non
                 # marker is the file as the harness read it — a whole read, EOF byte included.
                 if not note_harness_cuts([m]) and (exit_code is None or exit_code.group(1) == "0"):
                     view.note_read(write_paths[tid], _strip_exec_envelope(payload, preserve_eof=True))
-                out.append({**m, "content": _strip_exec_envelope(content, preserve_eof=True)})
+                stripped = _strip_exec_envelope(content, preserve_eof=True)
+                # THE REJECTED CANDIDATE STAYS. This answer is denied, so `_collapse_rejected_payload`
+                # took the coder's own large payload out of its call; the lossless copy rides here, between
+                # cria's facts and the marker, so what follows the marker is still only the file's bytes.
+                note = rejected_notes_by_id.get(tid, "")
+                if note:
+                    facts, marker, rest = stripped.partition(denial.READ_INSTEAD_MARKER + "\n")
+                    if marker:
+                        stripped = f"{facts}{note}\n\n{marker}{rest}"
+                out.append({**m, "content": stripped})
                 continue
             if tid in write_paths and write_paths[tid] and tid not in failed_ids \
                     and any(ln.strip() == _WROTE for ln in content.splitlines()):

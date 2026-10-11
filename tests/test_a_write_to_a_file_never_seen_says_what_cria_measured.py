@@ -419,9 +419,15 @@ def test_the_refused_payload_is_collapsed_not_left_verbatim(view, tmp_path):
                 if tc["function"]["name"] == "write_file"
                 and json.loads(tc["function"]["arguments"])["path"] in ("pom.xml", JAVA)]
     assert len(original) == 2
-    flat = json.dumps(msgs)
-    for body in original:
-        assert json.dumps(body)[1:-1][:200] not in flat            # the invented content is not kept verbatim
+    from cria import writeproxy
+    results = " ".join(m["content"] for m in msgs if m["role"] == "tool")
+    calls = [json.loads(tc["function"]["arguments"]) for m in msgs if m["role"] == "assistant"
+             for tc in m["tool_calls"]]
+    for args, body in zip(calls, original):
+        if len(body) > writeproxy._REJECTED_PAYLOAD_CHARS:        # out of the argument slot, kept once as a note
+            assert "content" not in args and results.count(body) == 1
+        else:                                                     # small payloads were never collapsed
+            assert args["content"] == body
 
 
 def test_the_judge_sees_the_write_labelled_not_run_with_the_file_beneath(view, tmp_path):
@@ -443,3 +449,25 @@ def test_the_read_instead_answer_is_never_squashed_as_a_failure(view, tmp_path):
     out, _rep = focustrim._squash_failures(msgs + extra)
     kept = [m["content"] for m in out if m.get("role") == "tool"]
     assert any(SEED_POM in c for c in kept[:1])                   # the first answer's bytes are still there
+
+
+def test_a_large_rejected_payload_is_kept_once_in_the_answer_and_the_file_count_is_true(view, tmp_path):
+    """H1 re-review R1: the denied answer collapses the payload out of the call; its lossless copy must
+    ride in the result — before the marker, so the read still sees only the file's bytes."""
+    from cria import writeproxy
+    from cria.writeproxy import represent_inbound
+    (tmp_path / "pom.xml").write_text(SEED_POM)
+    big = "<project>\n" + "".join(f"  <!-- invented line {i} -->\n" for i in range(120)) + "</project>\n"
+    assert len(big) > writeproxy._REJECTED_PAYLOAD_CHARS
+    comp = _call("write_file", {"path": "pom.xml", "content": big})
+    translate_outbound(comp, _CMD_SHELL, injected={"write_file"}, workspace_root=ROOT, unread_target=_check(view))
+    tc = comp["choices"][0]["message"]["tool_calls"][0]
+    out = _run(_cmd(comp), tmp_path).stdout
+    env = f"Chunk ID: ab\nWall time: 0.0 seconds\nProcess exited with code 0\nOriginal token count: 9\nOutput:\n{out}"
+    msgs = represent_inbound([{"role": "assistant", "tool_calls": [tc]},
+                              {"role": "tool", "tool_call_id": "c1", "content": env}])
+    assert "content" not in json.loads(msgs[0]["tool_calls"][0]["function"]["arguments"])
+    assert msgs[1]["content"].count(big) == 1                     # the payload survives exactly, once
+    from cria import denial
+    assert denial.read_instead_payload(msgs[1]["content"]) == SEED_POM
+    assert loop._extract_reads(msgs)["pom.xml"][1] == f"{SEED_POM.count(chr(10)) + 1} lines"
