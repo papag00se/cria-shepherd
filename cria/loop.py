@@ -6567,6 +6567,9 @@ def _coder_has_seen(view, rel: str, sess, messages: list[dict]) -> bool:
     seen = _extract_whole_reads(messages or [], view)
     seen |= set(_extract_writes(messages or []))
     seen |= set(getattr(sess, "written_files", None) or {})
+    # A WHOLE TEXT HANDED TO THE CODER THIS TURN (the ⟦ctx:facts⟧ anchor's restored block) is the whole
+    # read the hold asks for: the exact current bytes, in the conversation the coder is answering.
+    seen |= set(getattr(sess, "restored_current", None) or {})
     return any(view.rel(p) == rel for p in seen)
 
 
@@ -9428,7 +9431,8 @@ def _read_ground_truth(sess, messages: list[dict]) -> str:
     for ev in events:
         if ev[1] not in done:
             _apply_ledger_event(seen, ev, key)
-    if not seen:
+    restored = _restored_file_text(sess, messages or [], seen, key)
+    if not seen and not restored:
         return ""
     labels = prompts.load_map("fetched_facts_sections")
     # ABSENCE, MEASURED — NEVER PRESENCE. The ledger is durable: it outlives the messages it was built
@@ -9444,7 +9448,94 @@ def _read_ground_truth(sess, messages: list[dict]) -> str:
                       for p, (_n, size) in sorted(seen.items()))
     rest = 0
     more = prompts.fill(labels["read_more"], count=rest) if rest else ""
-    return "\n\n" + prompts.fill(labels["read_header"], files=lines, more=more)
+    ledger = "\n\n" + prompts.fill(labels["read_header"], files=lines, more=more) if seen else ""
+    return ledger + restored
+
+
+def _restored_file_text(sess, messages: list[dict], ledger: dict, key) -> str:
+    """The CURRENT text of the files this session read or wrote whose text is no longer in
+    ``messages`` — the block the ⟦ctx:facts⟧ anchor carries after a context loss, or "".
+
+    THE GAP IT CLOSES. A harness compaction folds the history, and the ledger above keeps only the
+    knowledge that the coder LOOKED. Measured on phi4 / Java A4, A6, A7 (every captured coder call):
+    45 of 100 edit_file/write_file calls named a file whose ledger line said "no read result for it is
+    in this conversation" (A4 24/51, A6 17/29, A7 4/18) — so the old_string was a guess, or the file
+    was rewritten whole from memory (A7 0022: compile error at Importer.java:25, no text of it in the
+    prompt, edit anchored on an invented top of file). Meanwhile every judge prompt carried the same
+    file's full text from the same workspace view (`judge_files`).
+
+    WHICH FILES — the session's own ledger (reads and landed writes), never a keyword or a task name —
+    MINUS the ones whose whole text, or whose own whole write, is already in the outgoing messages.
+    WHAT BYTES — the view's trusted current body (a survey, the coder's own write or a landed exact
+    edit), never a model's account of the file. If the view holds none the demand is queued so the next
+    harness-executed survey brings it (cria never opens the path itself, #23c) and nothing is claimed.
+
+    TRUTHFUL UNDER STALENESS (#11b). A command that could have changed files has run since the view was
+    last fed: the body may be behind the disk, so nothing is delivered and a fresh body is requested.
+
+    SIZE. Each file is bounded by the whole-read limit (a file over it is NAMED, not clipped — any clip
+    is an undetectable lie), and the block as a whole by one read's worth, newest file first, so a
+    16K window is never handed a corpus. What does not fit is named in the block, not dropped silently.
+    The files delivered are recorded on the session: a whole text handed to the coder IS a whole read
+    for `_coder_has_seen`, the same bytes a read-instead answer would hand it a turn later."""
+    root = getattr(sess, "workspace_root", None)
+    out, delivered = "", {}
+    view = wsview.current(root) if root else None
+    if view is not None and getattr(view, "surveyed", False):    # an unsurveyed view holds no bytes to deliver
+        candidates = {key(p) for p in ledger} | {key(p) for p in (getattr(sess, "written_files", None) or {})}
+        candidates -= {key(p) for p in _extract_whole_reads(messages, view)}
+        candidates -= {key(path) for _idx, _tid, path in _write_events_paths(messages)}
+        out, delivered = _render_restored(view, sorted(candidates))
+    if sess is not None:
+        sess.restored_current = delivered     # rebuilt every turn: only what THIS turn's anchor carries
+    return out
+
+
+def _write_events_paths(messages: list[dict]):
+    """``(position, id, path)`` of every landed write in ``messages`` — whose whole text IS there."""
+    for idx, tid, path, _n, _label in _write_events(messages):
+        yield idx, tid, path
+
+
+def _render_restored(view, rels: list[str]) -> tuple[str, dict]:
+    if not rels:
+        return "", {}
+    spill = groundtruth._SPILL_REL
+    todo = []
+    for rel in rels:
+        if rel.startswith(spill) or view.isfile(rel) is not True:
+            continue
+        todo.append(rel)
+    if not todo:
+        return "", {}
+    if view.may_have_changed:                       # the body may be behind the disk: claim nothing, ask afresh
+        for rel in todo:
+            view.request_current_body(rel)
+        return "", {}
+    mtime = {view.rel(e.path): (e.mtime or 0) for e in (view.files() or [])}
+    todo.sort(key=lambda r: (-(mtime.get(r) or 0), r))     # newest first, like the workspace listing
+    limit = writeproxy.READ_INLINE_MAX
+    labels = prompts.load_map("fetched_facts_sections")
+    shown, omitted, taken, restored = [], [], 0, {}
+    for rel in todo:
+        raw = view.read_bytes(rel)                  # a miss queues the demand for the next survey
+        if raw is None:
+            continue
+        text = raw.decode("utf-8", "replace")
+        if groundtruth.content_reduce_mod.looks_binary(text):
+            continue
+        if len(raw) > limit or taken + len(raw) > limit:
+            omitted.append(f"{rel} ({len(raw)} bytes)")
+            continue
+        taken += len(raw)
+        shown.append(prompts.fill(labels["restore_file"], path=rel, body=text))
+        restored[rel] = hashlib.sha1(raw).hexdigest()
+    if not shown and not omitted:
+        return "", {}
+    parts = [labels["restore_header"].rstrip()] + shown
+    if omitted:
+        parts.append(prompts.fill(labels["restore_omitted"], paths=", ".join(omitted), limit=limit))
+    return "\n\n" + "\n".join(parts), restored
 
 
 # NO CAP on the read ledger. It was 20 names out of an ALPHABETICALLY sorted list, so which files

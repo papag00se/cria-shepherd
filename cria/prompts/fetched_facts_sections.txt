@@ -104,3 +104,11 @@ anchor_tail_fetches = \nThis is your real fetch record for this session and it p
 # lines" under the file's own path and the ledger presented that as the file. Walked on the sub-40
 # pass, feed-pipeline-java x nemotron-elastic: the coder acted on it at call 0070.
 read_range = lines {{RANGE}} only — {{SIZE}}
+# FILES THE CODER WORKED ON WHOSE TEXT IS NO LONGER IN THE CONVERSATION. The ledger above says you
+# looked; after the harness folded the history the text itself is gone, and an edit or a rewrite is then
+# composed from memory. The bytes below are the file as the workspace view holds it — the harness's own
+# report from the last survey, read or write, with no command that could have changed the workspace run
+# since. Said as exactly that (#5b, #11b); never as a summary and never an instruction.
+restore_header = CURRENT TEXT OF FILES YOU READ OR WROTE EARLIER, NO LONGER IN THIS CONVERSATION — the exact bytes of each file as the workspace holds it now (taken from the workspace itself, not remembered or summarized; no command that could change files has run since it was last looked at). Anchor any edit on this text, not on memory:
+restore_file = ----- {{PATH}} -----\n{{BODY}}
+restore_omitted = NOT SHOWN HERE — {{PATHS}}. Each is larger than one read returns, or would pass the {{LIMIT}} bytes this block carries; read_file it (in line ranges if it is large) or grep for what you need.
