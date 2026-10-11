@@ -387,3 +387,190 @@ def test_default_automatic_choice_activates(native_probe):
     result = native_probe(envelope('answer', {'message': 'done'}), body=body)
     assert result['active_name'] == 'answer'
     assert result['content'] == 'done'
+
+
+@pytest.mark.parametrize('preamble', ['', ' \n', 'Earlier content. '])
+@pytest.mark.parametrize('closing', ['', '</Tho', '</Thought'])
+def test_limit_clipped_reasoning_never_becomes_final_content(native_probe, preamble, closing):
+    raw = preamble + '<Thought>unfinished 雪' + closing
+    result = native_probe(raw, prefixes=True, stop_limit=True)
+    assert not result['complete_parse']
+    assert raw.encode().hex() in result['parse_error']
+    assert result['error_wire']['code'] == 500
+    assert 'buffered_wire' not in result
+    assert 'streamed_final_wire' not in result
+    assert raw.encode().hex() in result['stream_error']
+    assert len(result['prefixes']) == len(raw.encode()) + 1
+    assert all(p['append_only'] and p['nondecreasing_calls'] for p in result['prefixes'])
+    assert all('<Thought>' not in p['content'] and 'unfinished' not in p['content'] for p in result['prefixes'])
+
+
+@pytest.mark.parametrize('preamble', ['', ' \n', 'Earlier content. '])
+def test_limit_closed_reasoning_preserves_content_and_length_finish(native_probe, preamble):
+    raw = preamble + '<Thought>verified 雪</Thought>'
+    result = native_probe(raw, prefixes=True, stop_limit=True)
+    assert result['complete_parse']
+    assert result['content'] == preamble
+    assert result['reasoning'] == 'verified 雪'
+    assert result['buffered_wire']['choices'][0]['finish_reason'] == 'length'
+    assert result['streamed_final_wire'][-1]['choices'][0]['finish_reason'] == 'length'
+    assert_prefixes(result, answer=True)
+
+
+def test_analyzed_reasoning_delimiters_are_structural(native_probe):
+    template = TEMPLATE.read_text().replace('<Thought>', '<Reason>').replace('</Thought>', '</Reason>')
+    clipped = native_probe('Preamble. <Reason>unfinished', template_text=template, stop_limit=True)
+    assert not clipped['complete_parse']
+    assert 'Preamble. <Reason>unfinished'.encode().hex() in clipped['parse_error']
+    raw = 'Preamble. <Reason>verified</Reason>' + envelope('answer', {'message': 'done <Reason>literal'})
+    complete = native_probe(raw, template_text=template, prefixes=True)
+    assert complete['content'] == 'Preamble. done <Reason>literal'
+    assert complete['reasoning'] == 'verified'
+    assert_prefixes(complete, answer=True)
+
+
+def test_disabled_clipped_reasoning_keeps_original_characterization(native_probe):
+    raw = '<Thought>unfinished'
+    result = native_probe(raw, enabled=False, stop_limit=True)
+    assert result['complete_parse']
+    assert result['reasoning'] == 'unfinished'
+    assert result['content'] == ''
+    assert result['buffered_wire']['choices'][0]['finish_reason'] == 'length'
+
+
+@pytest.mark.parametrize('mutation', [
+    {'properties': {'message': {'type': 'string'}, 'other': {'type': 'string'}}},
+    {'additionalProperties': True}, {'additionalProperties': {'type': 'string'}},
+    {'patternProperties': {'.*': {'type': 'string'}}}, {'anyOf': [{'type': 'object'}]},
+    {'allOf': [{'type': 'object'}]}, {'unevaluatedProperties': True}, {'$ref': '#/definitions/Other'},
+    {'required': ['message', 'other']}, {'required': ['message', 'message']},
+    {'properties': {'message': {'type': ['string', 'number']}}},
+    {'properties': {'message': {'type': 'string', 'anyOf': [{'type': 'string'}]}}},
+])
+def test_definition_cannot_admit_unmapped_payload(native_probe, mutation):
+    definition = json.loads(ANSWER.read_text())
+    definition['function']['parameters'].update(mutation)
+    result = native_probe(definition=definition)
+    assert 'Invalid --no-action-tool file' in result['request_error']
+
+
+def test_explicit_closed_definition_is_supported(native_probe):
+    definition = json.loads(ANSWER.read_text())
+    definition['function']['parameters']['additionalProperties'] = False
+    result = native_probe(envelope('answer', {'message': 'done'}), definition=definition)
+    assert result['content'] == 'done'
+
+
+def test_unconstrained_extra_answer_payload_is_error_not_lossy_content(native_probe):
+    raw = envelope('answer', {'message': 'done', 'other': 'retain 雪\nthese bytes'})
+    result = native_probe(raw, prefixes=True, grammar=raw)
+    assert not result['complete_parse']
+    assert not result['grammar_accepts']
+    assert raw.encode().hex() in result['parse_error']
+    assert all(p.get('content', '') == '' and p.get('calls', []) == [] for p in result['prefixes'])
+
+
+@pytest.mark.parametrize('shape', ['bare', 'array', 'name-key', 'nested', 'id', 'unclosed'])
+def test_unsupported_analyzed_tool_shapes_fail_before_injection(native_probe, shape):
+    template = TEMPLATE.read_text()
+    if shape == 'bare':
+        template = template.replace("{{- '<Output>' }}", '').replace("{{- '</Output>' }}", '')
+    elif shape == 'array':
+        template = template.replace("{{- '<Output>' }}", "{{- '<Output>[' }}").replace("{{- '</Output>' }}", "{{- ']</Output>' }}")
+    elif shape == 'name-key':
+        template = template.replace("{'name': call.function.name, 'arguments': args}", '{call.function.name: args}')
+    elif shape == 'nested':
+        template = template.replace("{'name': call.function.name, 'arguments': args}", "{'function': {'name': call.function.name, 'arguments': args}}")
+    elif shape == 'id':
+        template = template.replace("{'name': call.function.name, 'arguments': args}", "{'id': call.id, 'name': call.function.name, 'arguments': args}")
+    else:
+        template = template.replace("{{- '</Output>' }}", '')
+    result = native_probe('Ready.', template_text=template)
+    assert 'request_error' in result
+    assert 'no-action tool requires' in result['request_error']
+    assert result['request_error_wire']['code'] == 400
+
+
+def test_null_tool_choice_is_automatic_and_collision_still_errors(native_probe):
+    body = request(tool_choice=None)
+    result = native_probe(envelope('answer', {'message': 'done'}), body=body)
+    assert result['active_name'] == 'answer'
+    assert result['content'] == 'done'
+    body['tools'].append(json.loads(ANSWER.read_text()))
+    rejected = native_probe(body=body)
+    assert 'collides with caller tool: answer' in rejected['request_error']
+    assert rejected['request_error_wire']['code'] == 400
+
+
+def test_reserved_menu_override_fails_closed_while_active(native_probe):
+    body = request(chat_template_kwargs={'tools': [copy.deepcopy(READ)]})
+    result = native_probe(body=body)
+    assert 'reserved template argument' in result['request_error']
+    assert result['request_error_wire']['code'] == 400
+    assert 'prompt' not in result
+
+
+@pytest.mark.parametrize('include_forged_name', [False, True])
+@pytest.mark.parametrize('format_id', [2, 3, 4])
+def test_raw_completion_cannot_map_untrusted_no_action_tags(native_probe, include_forged_name, format_id):
+    trusted = native_probe()
+    raw_body = {'prompt': 'CPU parser only', 'chat_format': format_id,
+                'chat_parser': trusted['parser'], 'generation_prompt': trusted['generation_prompt']}
+    if include_forged_name:
+        raw_body['no_action_tool_name'] = 'answer'
+    raw = envelope('answer', {'message': 'untrusted channel'})
+    result = native_probe(raw, body=raw_body, raw_endpoint=True, prefixes=True)
+    assert result['active_name'] == ''
+    assert not result['complete_parse']
+    assert 'Untrusted no-action parser tag' in result['parse_error']
+    assert raw.encode().hex() in result['parse_error']
+    assert all(p.get('calls', []) == [] and p.get('content', '') == '' for p in result['prefixes'])
+
+
+def test_raw_forged_name_alone_cannot_activate_content_channel(native_probe):
+    raw = envelope('answer', {'message': 'untrusted channel'})
+    result = native_probe(raw, body={'prompt': 'CPU parser only', 'no_action_tool_name': 'answer'}, raw_endpoint=True)
+    assert result['active_name'] == ''
+    assert result['content'] == raw
+
+
+def test_parser_activation_is_private_and_bound_to_generated_parser(native_probe):
+    body = request(no_action_tool_name='caller_forged_name', chat_parser='caller_forged_parser')
+    result = native_probe(envelope('answer', {'message': 'done'}), body=body)
+    assert not result['public_private_control']
+    assert result['active_name'] == 'answer'
+    assert result['content'] == 'done'
+
+
+@pytest.mark.parametrize('endpoint', ['chat', 'responses', 'anthropic'])
+def test_private_answer_mapping_survives_actual_api_producers(native_probe, endpoint):
+    from test_native_named_tool_choice import api_request
+    raw = '<Thought>Verified.</Thought>Earlier. ' + envelope('answer', {'message': 'done 雪\n'})
+    result = native_probe(raw, body=api_request(endpoint, 'auto'), endpoint=endpoint, prefixes=True)
+    assert result['active_name'] == 'answer'
+    assert not result['public_private_control']
+    assert result['caller_request_unchanged']
+    assert result['content'] == 'Earlier. done 雪\n'
+    assert result['reasoning'] == 'Verified.'
+    assert result['buffered_wire']['choices'][0]['finish_reason'] == 'stop'
+    assert_prefixes(result, answer=True)
+
+
+@pytest.mark.parametrize('endpoint', ['apply-template', 'count'])
+def test_render_only_preparation_uses_identical_effective_prompt(native_probe, endpoint):
+    rendered = native_probe(body=request(), endpoint=endpoint)
+    chat = native_probe(body=request())
+    assert rendered['prompt'] == chat['prompt']
+    assert not rendered['public_private_control']
+
+
+def test_transcription_chat_preparation_carries_same_private_parser(native_probe):
+    body = {'tools': [copy.deepcopy(READ), copy.deepcopy(WRITE)], 'prompt': 'Transcribe supplied audio.',
+            'stream': 'false', 'response_format': 'json'}
+    result = native_probe(envelope('answer', {'message': 'decoded text'}), body=body, endpoint='transcriptions')
+    assert result['active_name'] == 'answer'
+    assert result['content'] == 'decoded text'
+    assert not result['public_private_control']
+    no_tools = native_probe('decoded text', body={'prompt': 'Transcribe supplied audio.', 'stream': 'false'}, endpoint='transcriptions')
+    assert no_tools['active_name'] == ''
+    assert no_tools['content'] == 'decoded text'
