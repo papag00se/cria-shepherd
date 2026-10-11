@@ -1488,6 +1488,7 @@ def _negative_diagnosis_nudge(obj: dict, *, task: str, action_log: str = "", che
         return suppress("unknown evidence source")
     if not task_quote or task_quote not in (task or ""):
         return suppress("task quote is not exact")
+    retyped = False
     # THE LABEL IS THE JUDGE'S CLAIM; ABSENCE IS CRIA'S FACT. A verdict that cites `workspace_absence` as
     # its evidence, over a subject that is a whole token of the EXACT task quote, and that the workspace
     # view proves ABSENT, is a missing file whatever kind it chose. Walked on the A1 run (capture
@@ -1503,7 +1504,7 @@ def _negative_diagnosis_nudge(obj: dict, *, task: str, action_log: str = "", che
         if rlog is not None:
             rlog.emit("loop.negative_diagnosis_canonicalised", level="info", phase=phase,
                       was=kind, now="missing_file", subject=subject)
-        kind, evidence_quote = "missing_file", ""
+        kind, evidence_quote, retyped = "missing_file", "", True
     # MISSING_FILE ONLY. The claim "the task asked for this file and it is not there" is about a
     # PATH, so the task had better name that path — that check stays.
     #
@@ -1547,9 +1548,13 @@ def _negative_diagnosis_nudge(obj: dict, *, task: str, action_log: str = "", che
         if rlog is not None:
             rlog.emit("loop.negative_diagnosis_supported", level="info", phase=phase,
                       diagnosis_kind=kind, evidence_source=source)
+        # A diagnosis the judge itself typed `missing_file` keeps that type (and so the "create it" remediation
+        # downstream). One cria RE-typed from an absence fact only says the named file is not there: it does not
+        # establish that the file is a DELIVERABLE (a task can name an INPUT that is absent), so it carries a
+        # kind no remediation site acts on.
         return VerdictNudge(prompts.render(
             "negative_diagnosis", task_quote=task_quote, source=source, evidence=evidence),
-            task_quote, diagnosis_kind=kind, subject=rel or subject)
+            task_quote, diagnosis_kind=("absent_named_file" if retyped else kind), subject=rel or subject)
 
     if kind == "missing_content" and source != "workspace_file":
         return suppress("missing-content source contract")
@@ -3099,16 +3104,21 @@ class Loop:
         current = view.read(rel) if exists else None
         if current is not None and "".join(current.split()) == "".join(content.split()):
             return refuse("unchanged")
+        # AN EXISTING FILE THE CODER NEVER READ is not rewritten from a paste: the block is then not a
+        # revision of anything the coder saw, it is invention under a real file's name (live replay: a
+        # `lib/shipping.rb` class the coder had never opened was judged a whole file). Reads and the
+        # coder's own earlier writes both count as having seen it.
+        if exists and not _coder_has_seen(view, rel, sess, body.get("messages", [])):
+            return refuse("unread_existing_file")
         key = (rel, hashlib.sha1(content.encode("utf-8", "replace")).hexdigest())
         verdict = sess.text_write_judged.get(key)
         if verdict is None:
-            if current is not None:
-                fact = (f"It exists and currently holds {len(current.splitlines())} lines; "
-                        f"the block has {len(lines)} lines.")
-            elif exists:
-                fact = f"It exists ({view.size(rel)} bytes; its text is not known); the block has {len(lines)} lines."
-            else:
-                fact = "It does not exist yet (the task names it)."
+            facts = prompts.load_map("text_write_facts")
+            block_bytes = len(content.encode("utf-8", "replace"))
+            size = view.size(rel) if exists else None
+            fact = prompts.fill(
+                facts["new_file"] if not exists else facts["exists_sized"] if size is not None else facts["exists_unsized"],
+                bytes=size, block_bytes=block_bytes)
             ordinal = 1 + next(i for i, b in enumerate(massage.fenced_file_blocks(text)) if b["start"] == block["start"])
             answer = ask_closed(
                 self._ctx.reasoner_chat, self._ctx.reasoner_role,
@@ -3117,7 +3127,10 @@ class Loop:
                     lines=sum(1 for l in lines if l.strip()), binding=block["binding"], reply=text),
                 rlog, phase="text-write", max_tokens=JUDGE_MAX_TOKENS, retry_off=False)
             verdict = answer.strip().strip("`").upper()
-            sess.text_write_judged[key] = verdict
+            if verdict in ("WHOLE_FILE", "OTHER"):
+                # Only a RULING is remembered. An empty or malformed answer (a timeout, a half answer)
+                # settles nothing, and caching it would silence this file's block for the whole session.
+                sess.text_write_judged[key] = verdict
             rlog.emit("loop.text_write_judged", path=rel, verdict=verdict[:40], exists=exists)
         if verdict != "WHOLE_FILE":
             return refuse("judged_other" if verdict == "OTHER" else "judge_unanswered")
@@ -6294,24 +6307,34 @@ def _resolve_named_file(view, name: str, task: str):
         return "names_a_directory"
     if "/" in rel and view.isfile(rel) is True:
         return rel, True                     # a qualified path that exists IS the file
-    # A bare name must be unique over the listing — `Importer.java` at the root AND under src/ is two
-    # files, and the model's words do not say which.
+    # EVERYTHING ELSE needs the whole tree: a bare name is unique only over a COMPLETE, UNFOLDED listing
+    # (a folded directory is listed as a count and might hold a second `Importer.java`), a suffix match
+    # likewise, and "no such file" — the new-file branch — is only a fact when nothing is hidden. A
+    # qualified name on a partial listing is refused for the same reason.
+    if not view.complete or view.folded:
+        return "listing_incomplete"
     listed = [r for r in (view.rel(e.path) for e in (view.files() or [])) if r]
     hits = [r for r in listed if r == rel or r.endswith("/" + rel)]
     if len(hits) > 1:
         return "ambiguous_path"
     if len(hits) == 1:
-        if not view.complete and "/" not in rel:
-            return "listing_incomplete"      # a folded directory might hold a second match
         return hits[0], True
-    if not view.complete:
-        return "listing_incomplete"
-    if name not in (task or ""):
+    # A NEW file: the task itself must name this very path as a whole token (`REVIEW.md` is not named by
+    # a task that says `docs/REVIEW.md`; the same test F7 uses for a task-named subject).
+    if not _subject_is_exact_in_quote(rel, task or ""):
         return "unnamed_new_file"
     parent = posixpath.dirname(rel)
     if parent and view.isdir(parent) is not True:
         return "unknown_parent"
     return rel, False
+
+
+def _coder_has_seen(view, rel: str, sess, messages: list[dict]) -> bool:
+    """Has the coder READ (or itself WROTE) this workspace file in the conversation or the session ledger?"""
+    seen = set(getattr(sess, "read_files", None) or {})
+    seen |= set(_extract_reads(messages or []))
+    seen |= set(_extract_writes(messages or []))
+    return any(view.rel(p) == rel for p in seen)
 
 
 def _note_survey_baseline(sess, root) -> None:
@@ -6341,7 +6364,7 @@ def _measured_gap_facts(sess, reply: str) -> str:
     root = getattr(sess, "workspace_root", None)
     base = getattr(sess, "survey_baseline", None)
     view = wsview.current(root) if root else None
-    if base and view is not None and view.surveyed and view.complete and not view.folded:
+    if base and view is not None and view.observation_fingerprint is not None:
         now = {r: (e.size, e.mtime) for e in view.files() or [] if (r := view.rel(e.path))}
         same, moved = [], []
         for path in sorted(getattr(sess, "read_files", None) or {}):

@@ -51,7 +51,8 @@ class MeasuredGapFactsTests(unittest.TestCase):
         self.assertIn("  pom.xml (980 bytes)", out)
         self.assertIn("unchanged on disk", out)
         self.assertIn("fenced code block(s) (xml, java, markdown, plaintext;", out)
-        self.assertIn("no tool call", out)
+        self.assertIn("no file was written or edited by that message", out)
+        self.assertNotIn("no tool call", out)      # a task_complete done HAS a tool call; the fact says only what is measured
         self.assertNotIn("cria", out.lower())                                       # invisible (#17)
         for order in ("write", "call write_file", "edit "):                          # facts, not a directive
             self.assertNotIn(f"you should {order}", out)
@@ -75,6 +76,17 @@ class MeasuredGapFactsTests(unittest.TestCase):
         self.bind(_view())
         loop._note_survey_baseline(s, ROOT)
         self.bind(_view(complete=False))                                  # baseline exists, listing now partial
+        self.assertEqual(loop._unnamed_gap(s, ""), prompts.load("done_no_named_gap"))
+
+    def test_a_listing_a_mutator_has_overtaken_is_not_a_current_fact(self):
+        """Same freshness rule as the F7 observer: after a command that may have changed the tree, "unchanged
+        on disk now" is not something the stale listing can state."""
+        s = self.sess()
+        v = _view()
+        self.bind(v)
+        loop._note_survey_baseline(s, ROOT)
+        self.assertIn("unchanged on disk", loop._unnamed_gap(s, ""))
+        v.note_a_mutator_ran()
         self.assertEqual(loop._unnamed_gap(s, ""), prompts.load("done_no_named_gap"))
 
     def test_no_fences_and_no_baseline_leaves_the_constant_exactly(self):

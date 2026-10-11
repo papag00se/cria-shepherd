@@ -3,4 +3,4 @@
 header = Observed just now (facts, not instructions):
 unchanged = - These files you read are unchanged on disk (same size and modification time) since the first complete listing of this workspace in this session:\n{{FILES}}
 changed = - These files you read have changed on disk since that listing:\n{{FILES}}
-reply = - Your last message contained {{COUNT}} fenced code block(s) ({{LANGS}}; {{LINES}} non-blank lines in all) and no tool call: nothing in that message wrote or edited a file.
+reply = - Your last message contained {{COUNT}} fenced code block(s) ({{LANGS}}; {{LINES}} non-blank lines in all); no file was written or edited by that message.

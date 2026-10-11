@@ -42,7 +42,10 @@ class CanonicaliseTests(unittest.TestCase):
     def test_the_a1_verdict_becomes_a_deterministic_missing_file(self):
         _bind(self, f"F\t1\t980\tpom.xml")
         out, rlog = self.ruling(_verdict())
-        self.assertEqual((out.diagnosis_kind, out.subject), ("missing_file", "REVIEW.md"))
+        # Re-typed by cria from an absence fact: it says the named file is not there, and carries a kind
+        # NO remediation site acts on (a task can name an INPUT that is absent — no "create it" order).
+        self.assertEqual((out.diagnosis_kind, out.subject), ("absent_named_file", "REVIEW.md"))
+        self.assertIn("not present", out)
         self.assertIn(QUOTE, out)
         self.assertIn("loop.negative_diagnosis_canonicalised", rlog.kinds())
         self.assertNotIn("loop.negative_diagnosis_suppressed", rlog.kinds())
@@ -51,7 +54,7 @@ class CanonicaliseTests(unittest.TestCase):
         _bind(self, "F\t1\t980\tpom.xml")
         for kind in ("unverified_requirement", "other", "failed_check"):
             with self.subTest(kind):
-                self.assertEqual(self.ruling(_verdict(kind=kind))[0].diagnosis_kind, "missing_file")
+                self.assertEqual(self.ruling(_verdict(kind=kind))[0].diagnosis_kind, "absent_named_file")
 
     def test_a_present_file_stays_suppressed(self):
         _bind(self, "F\t1\t980\tpom.xml\nF\t1\t12\tREVIEW.md")
@@ -80,6 +83,26 @@ class CanonicaliseTests(unittest.TestCase):
         _bind(self, "F\t1\t980\tpom.xml")
         out, _ = self.ruling(_verdict(source="workspace_file", evidence_quote="<project>"))
         self.assertEqual(out, "")
+
+
+    def test_a_judge_typed_missing_file_keeps_its_type(self):
+        """Only the RE-typed diagnosis is demoted; one the judge itself called missing_file is unchanged."""
+        _bind(self, "F\t1\t980\tpom.xml")
+        self.assertEqual(self.ruling(_verdict(kind="missing_file"))[0].diagnosis_kind, "missing_file")
+
+    def test_a_retyped_absence_delivers_no_create_order(self):
+        """Driven through the periodic delivery site: a RE-typed absence (a task can name an absent INPUT)
+        reaches the coder as a neutral gap; the judge-typed missing_file still gets the 'Create X now' order."""
+        from tests.test_a_gap_the_disk_can_settle_is_not_an_opinion import _drive
+        retyped = loop.VerdictNudge("The task-named file data/feed.csv is not present.", "q",
+                                    diagnosis_kind="absent_named_file", subject="data/feed.csv")
+        typed = loop.VerdictNudge("The task-named file data/feed.csv is not present.", "q",
+                                  diagnosis_kind="missing_file", subject="data/feed.csv")
+        sess, _, _ = _drive(retyped)
+        self.assertIn("not present", sess.nudge_reason)
+        self.assertNotIn("Create data/feed.csv now", sess.nudge_reason)
+        sess, _, _ = _drive(typed)
+        self.assertIn("Create data/feed.csv now", sess.nudge_reason)
 
 
 class PlanOffObserverTests(unittest.TestCase):

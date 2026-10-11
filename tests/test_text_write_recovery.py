@@ -52,7 +52,7 @@ class TextWriteTests(unittest.TestCase):
         self.assertTrue(wsview.apply_survey(self.view, survey(tree, root=ROOT, complete=complete)))
 
     def turn(self, content, tools, finish="stop", judge="WHOLE_FILE", reasoner=True, messages=None, task=TASK,
-             sess=None):
+             sess=None, read=True):
         asked = []
 
         def judge_chat(body, rlog):
@@ -67,6 +67,8 @@ class TextWriteTests(unittest.TestCase):
         if not reasoner:
             lp._ctx.reasoner_chat = None
         sess = sess or _synth()
+        if read:
+            sess.read_files = {f"{ROOT}/{JAVA}": (4543, "4543 bytes"), f"{ROOT}/lookup.js": (1, "")}
         sess.plan.task = task
         sess.workspace_root = ROOT
         log = _Log()
@@ -196,6 +198,75 @@ class TextWriteTests(unittest.TestCase):
             "type": "object", "properties": {"path": {"type": "string"}, "content": {"type": "string"},
                                              "mode": {"type": "string"}}, "required": ["path", "content"]}}}]
         self.refused_unasked(content, menu, None, finish=fin)
+
+    # ------------------------------------------------------------------ review round: V2 question, unread gate, resolver
+    def test_the_question_carries_measured_sizes_and_asks_how_the_block_is_presented(self):
+        content, tools, fin = _reply("a1_0022")
+        _, _, asked, _, _ = self.turn(content, tools, fin, judge="OTHER")
+        q = asked[0]
+        self.assertIn("It exists and is 4543 bytes on disk; the block is ", q)
+        self.assertNotIn("its text is not known", q)
+        self.assertIn("PRESENTS", q)
+        self.assertNotIn("When in doubt", q)                 # the shipped question demanded proof nobody could give
+
+    def test_an_existing_file_the_coder_never_read_is_not_rewritten_from_a_paste(self):
+        """Live replay: a `lib/shipping.rb` class the coder had never opened was judged a whole file."""
+        content, tools, fin = _reply("a1_0022")
+        self.refused_unasked(content, tools, "unread_existing_file", finish=fin, read=False)
+
+    def test_a_file_the_coder_read_or_wrote_in_the_conversation_counts_as_seen(self):
+        content, tools, fin = _reply("a1_0022")
+        path = f"{ROOT}/{JAVA}"
+        read = [{"role": "assistant", "content": None, "tool_calls": [{"id": "r1", "type": "function", "function": {
+                    "name": "read_file", "arguments": json.dumps({"path": path})}}]},
+                {"role": "tool", "tool_call_id": "r1", "content": "package pipeline;\n" * 20}]
+        _, calls, asked, _, _ = self.turn(content, tools, fin, read=False, messages=read)
+        self.assertEqual(len(asked), 1)
+        self.assertEqual([c[0] for c in calls], ["write_file"])
+        wrote = [{"role": "assistant", "content": None, "tool_calls": [{"id": "w1", "type": "function", "function": {
+                    "name": "write_file", "arguments": json.dumps({"path": path, "content": "x\n" * 30})}}]},
+                 {"role": "tool", "tool_call_id": "w1", "content": "Wrote it"}]
+        _, calls, _, _, _ = self.turn(content, tools, fin, read=False, messages=wrote)
+        self.assertEqual([c[0] for c in calls], ["write_file"])
+
+    def test_an_empty_or_failed_judge_answer_is_not_remembered(self):
+        content, tools, fin = _reply("a1_0022")
+        sess = _synth()
+        _, _, first, _, sess = self.turn(content, tools, fin, judge="", sess=sess)
+        _, calls, second, _, _ = self.turn(content, tools, fin, judge="WHOLE_FILE", sess=sess)
+        self.assertEqual((len(first), len(second)), (1, 1))        # asked again, and the real answer lands
+        self.assertEqual([c[0] for c in calls], ["write_file"])
+
+    def test_a_folded_directory_makes_a_bare_name_and_a_new_file_unprovable(self):
+        """A REAL survey record `X\t<count>\t<dir>`: the directory is listed as a count, `complete` stays 1,
+        and its interior is unknown — it may hold a second Importer.java, or the file the task names."""
+        content, tools, fin = _reply("a1_0022")
+        self.set_tree(f"D\tsrc\nD\tvendor\nX\t900\tvendor\nF\t1\t4543\tsrc/{JAVA.split('src/')[1]}\nF\t1\t980\tpom.xml")
+        self.assertTrue(self.view.complete)
+        self.assertEqual(self.view.folded, ["vendor"])
+        self.refused_unasked(content, tools, "listing_incomplete", finish=fin)
+        body = "\n".join(f"line {i} of the review" for i in range(14))
+        new = f"### Step 4: Add `REVIEW.md`\n\n```markdown\n{body}\n```\n"
+        self.refused_unasked(new, tools, "listing_incomplete")
+
+    def test_a_qualified_name_that_does_not_exist_is_refused_on_an_incomplete_listing(self):
+        body = "\n".join(f"line {i}" for i in range(14))
+        content = f"Create `docs/REVIEW.md`:\n\n```markdown\n{body}\n```\n"
+        _, tools, _ = _reply("a1_0022")
+        self.set_tree("D\tdocs\nF\t1\t980\tpom.xml", complete=False)
+        self.refused_unasked(content, tools, "listing_incomplete", task=TASK + " Also docs/REVIEW.md.")
+
+    def test_the_task_must_name_the_new_file_by_its_whole_path(self):
+        body = "\n".join(f"line {i} of the review" for i in range(14))
+        _, tools, _ = _reply("a1_0022")
+        task = "Fix the importer. Add `docs/REVIEW.md` describing the risks."
+        self.set_tree("D\tdocs\nF\t1\t980\tpom.xml")
+        # the model wrote the bare name; the task names only docs/REVIEW.md → not the named deliverable
+        self.refused_unasked(f"### Add `REVIEW.md`\n\n```markdown\n{body}\n```\n", tools, "unnamed_new_file", task=task)
+        # the model wrote the very path the task names → accepted
+        ch, calls, _, _, _ = self.turn(f"### Add `docs/REVIEW.md`\n\n```markdown\n{body}\n```\n", tools, task=task)
+        self.assertEqual([c[0] for c in calls], ["write_file"])
+        self.assertEqual(calls[0][1]["path"], f"{ROOT}/docs/REVIEW.md")
 
     def test_a_native_call_is_untouched_and_the_judge_is_never_asked(self):
         _, tools, _ = _reply("a1_0022")

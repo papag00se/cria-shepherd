@@ -1,0 +1,4 @@
+# The WORKSPACE FACT line of text_write_judge_user (prompts.load_map). Measured sizes only — no verdict words.
+exists_sized = It exists and is {{BYTES}} bytes on disk; the block is {{BLOCK_BYTES}} bytes.
+exists_unsized = It exists (its size is not known); the block is {{BLOCK_BYTES}} bytes.
+new_file = It does not exist yet (the task names it); the block is {{BLOCK_BYTES}} bytes.
