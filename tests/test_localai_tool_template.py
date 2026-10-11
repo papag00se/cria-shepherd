@@ -52,16 +52,22 @@ def native_probe(tmp_path_factory):
     completed = subprocess.run(compile_command, capture_output=True, text=True)
     assert completed.returncode == 0, completed.stderr
 
-    def parse(text='', *, parallel=False, body=None, enabled=True, prefixes=False, grammar=None, definition=None):
+    def parse(text='', *, parallel=False, body=None, enabled=True, prefixes=False, grammar=None, definition=None,
+              template_text=None, raw_endpoint=False, stop_limit=False, endpoint='chat'):
         answer_path = ANSWER
         if definition is not None:
             answer_path = directory / 'custom-tool.json'
             answer_path.write_text(json.dumps(definition, ensure_ascii=False))
+        template_path = TEMPLATE
+        if template_text is not None:
+            template_path = directory / 'custom-template.jinja'
+            template_path.write_text(template_text)
         case = {'request': body if body is not None else request(parallel_tool_calls=parallel),
-                'output': text, 'prefixes': prefixes}
+                'output': text, 'prefixes': prefixes, 'raw_endpoint': raw_endpoint,
+                'stop_limit': stop_limit, 'endpoint': endpoint}
         if grammar is not None:
             case['grammar_output'] = grammar
-        completed = subprocess.run([str(binary), str(TEMPLATE), str(answer_path) if enabled else '-'],
+        completed = subprocess.run([str(binary), str(template_path), str(answer_path) if enabled else '-'],
                                    input=json.dumps(case, ensure_ascii=False), capture_output=True, text=True,
                                    env={**os.environ, 'LD_LIBRARY_PATH': str(library)})
         assert completed.returncode == 0, completed.stderr
@@ -80,6 +86,7 @@ def assert_prefixes(result, *, answer=False):
         assert 'error' not in prefix, prefix
         assert prefix['append_only']
         assert prefix['nondecreasing_calls']
+        assert all(event['choices'][0]['finish_reason'] is None for event in prefix['partial_wire'])
         for delta in prefix['argument_deltas']:
             arguments[delta['index']] = arguments.get(delta['index'], '') + delta['hex']
         for index, call in enumerate(prefix['calls']):
@@ -231,7 +238,7 @@ def test_active_collision_fails_closed(native_probe):
     assert 'prompt' not in result
 
 
-@pytest.mark.parametrize('choice', ['required', 'none', {'type': 'function', 'function': {'name': 'answer'}}])
+@pytest.mark.parametrize('choice', ['required', 'none'])
 def test_inactive_choices_preserve_caller_answer_ownership(native_probe, choice):
     body = request(tools=[json.loads(ANSWER.read_text())], tool_choice=choice)
     raw = envelope('answer', {'message': 'caller owned'})
@@ -239,7 +246,7 @@ def test_inactive_choices_preserve_caller_answer_ownership(native_probe, choice)
     for key in ('prompt', 'grammar', 'parser', 'grammar_triggers'):
         assert on[key] == off[key]
     assert on['active_name'] == ''
-    if choice == 'required' or isinstance(choice, dict):
+    if choice == 'required':
         assert calls(on) == [{'name': 'answer', 'arguments': {'message': 'caller owned'}}]
         assert on['content'] == ''
     else:
@@ -355,7 +362,7 @@ def test_error_evidence_preserves_nul_bytes(native_probe):
     assert raw.encode().hex() in result['parse_error']
 
 
-def test_named_choice_keeps_existing_menu_even_with_multiple_tools(native_probe):
+def test_named_choice_preserves_selected_call_and_optin_exclusion(native_probe):
     body = request(tool_choice={'type': 'function', 'function': {'name': 'read_file'}})
     raw = envelope('read_file', {'path': 'notes.txt'})
     on, off = native_probe(raw, body=body), native_probe(raw, body=body, enabled=False)

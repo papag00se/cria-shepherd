@@ -1,8 +1,11 @@
 // CPU-only exercise of the matching private server, template engine and parser.
 #include "arg.h"
 #include "chat.h"
+#include "chat-auto-parser.h"
+#include "chat-peg-parser.h"
 #include "llama-grammar.h"
 #include "server-common.h"
+#include "server-chat.h"
 #include "server-schema.h"
 #include "server-task.h"
 #include <fstream>
@@ -43,6 +46,14 @@ static bool grammar_accepts(const std::string & grammar_text, const std::string 
     return false;
 }
 
+// Compile the same differential fixture against V1 JSON preparation and V2 typed preparation.
+static common_json prepared_data(const common_json & result) { return result; }
+template <typename T> static common_json prepared_data(const T & result) { return result.params; }
+static void prepared_apply(const common_json &, common_chat_parser_params &) {}
+template <typename T> static void prepared_apply(const T & result, common_chat_parser_params & target) {
+    result.apply_chat_parser(target);
+}
+
 int main(int argc, char ** argv) {
     common_json out = common_json::object();
     try {
@@ -63,24 +74,45 @@ int main(int argc, char ** argv) {
         options.no_action_tool = base.no_action_tool;
         options.tmpls = common_chat_templates_init(nullptr, read_file_text(argv[1]), "<|endoftext|>", "<|im_end|>");
         auto body = test.at("request");
+        const auto endpoint = test.value("endpoint", "chat");
+        if (endpoint == "responses") { body = server_chat_convert_responses_to_chatcmpl(body); }
+        if (endpoint == "anthropic") { body = server_chat_convert_anthropic_to_oai(body); }
+        if (endpoint == "transcriptions") {
+            std::map<std::string, uploaded_file> uploads;
+            uploads["file"].data = {0};
+            std::vector<raw_buffer> audio_files;
+            body = convert_transcriptions_to_chatcmpl(body, options.tmpls.get(), uploads, audio_files);
+        }
         auto original_body = body;
+        out["converted_request"] = original_body;
         std::vector<raw_buffer> files;
-        auto native = oaicompat_chat_params_parse(body, options, files);
+        using prepared_type = decltype(oaicompat_chat_params_parse(body, options, files));
+        std::optional<prepared_type> prepared;
+        common_json native;
+        if (test.value("raw_endpoint", false)) { native = body; }
+        else { prepared = oaicompat_chat_params_parse(body, options, files); native = prepared_data(*prepared); }
+        out["generation_prompt"] = native.value("generation_prompt", "");
+        out["public_private_control"] = native.contains("no_action_tool_name");
+        out["caller_request_unchanged"] = body == original_body;
+        out["caller_request_after"] = body;
         out["caller_menu_unchanged"] = body.value("tools", common_json()) == original_body.value("tools", common_json());
         out["prompt"] = native.at("prompt");
         out["grammar"] = native.value("grammar", "");
-        out["parser"] = native.at("chat_parser");
-        out["active_name"] = native.value("no_action_tool_name", "");
+        out["parser"] = native.value("chat_parser", "");
         out["grammar_lazy"] = native.value("grammar_lazy", false);
-        out["grammar_triggers"] = native.at("grammar_triggers");
+        out["grammar_triggers"] = native.value("grammar_triggers", common_json::array());
         // Token metadata requires a model vocabulary; parser tests use bytes only.
         for (const auto * key : {"message_delimiters", "preserved_tokens", "grammar_triggers",
                                 "reasoning_budget_start_tag", "reasoning_budget_end_tags", "reasoning_budget_message"}) {
             native.erase(key);
         }
         auto params = server_schema::eval_llama_cmpl_schema(nullptr, base, {}, native);
+        if (prepared) { prepared_apply(*prepared, params.chat_parser_params); }
+        out["active_name"] = params.chat_parser_params.no_action_tool_name;
         if (test.contains("grammar_output") && !out.at("grammar").get<std::string>().empty()) {
-            out["grammar_accepts"] = grammar_accepts(out.at("grammar"), test.at("grammar_output"));
+            const auto grammar_input = native.value("grammar_lazy", false) ? test.at("grammar_output").get<std::string>() :
+                native.value("generation_prompt", "") + test.at("grammar_output").get<std::string>();
+            out["grammar_accepts"] = grammar_accepts(out.at("grammar"), grammar_input);
         }
         const auto raw = test.value("output", "");
         out["raw"] = raw;
@@ -93,7 +125,7 @@ int main(int argc, char ** argv) {
             out["complete_parse"] = true;
             out["ids"] = buffered.generated_tool_call_ids;
             server_task_result_cmpl_final final;
-            final.stop = STOP_TYPE_EOS;
+            final.stop = test.value("stop_limit", false) ? STOP_TYPE_LIMIT : STOP_TYPE_EOS;
             final.oaicompat_msg = msg;
             final.oaicompat_msg_diffs = diffs;
             out["buffered_wire"] = final.to_json_oaicompat_chat();
@@ -101,6 +133,7 @@ int main(int argc, char ** argv) {
         } catch (const std::exception & error) {
             out["complete_parse"] = false;
             out["parse_error"] = error.what();
+            out["error_wire"] = format_error_response(error.what(), ERROR_TYPE_SERVER);
         }
         if (test.value("prefixes", false)) {
             task_result_state streamed(params.chat_parser_params);
@@ -110,7 +143,12 @@ int main(int argc, char ** argv) {
                 common_json prefix = {{"bytes", i}};
                 try {
                     auto previous = streamed.chat_msg;
-                    auto msg = streamed.update_chat_msg(i == 0 ? "" : raw.substr(i - 1, 1), true, diffs);
+                    server_task_result_cmpl_partial chunk;
+                    chunk.n_decoded = i;
+                    chunk.content = i == 0 ? "" : raw.substr(i - 1, 1);
+                    chunk.update(streamed);
+                    auto msg = streamed.chat_msg;
+                    diffs = chunk.oaicompat_msg_diffs;
                     // Exercise the native differ independently as well as the server's actual path.
                     auto checked = common_chat_msg_diff::compute_diffs(previous, msg);
                     std::string content_delta;
@@ -125,10 +163,9 @@ int main(int argc, char ** argv) {
                     }
                     auto parsed_message = message_json(msg);
                     for (const auto & item : parsed_message.items()) { prefix[item.key()] = item.value(); }
-                    server_task_result_cmpl_final chunk;
-                    chunk.oaicompat_msg = msg;
-                    chunk.oaicompat_msg_diffs = checked;
-                    for (const auto & event : chunk.to_json_oaicompat_chat_stream()) {
+                    auto partial_wire = chunk.to_json_oaicompat_chat();
+                    prefix["partial_wire"] = partial_wire;
+                    for (const auto & event : partial_wire) {
                         wire.push_back(event.at("choices").at(0).at("delta"));
                     }
                     prefix["deltas"] = wire;
@@ -150,13 +187,19 @@ int main(int argc, char ** argv) {
                     auto msg = streamed.update_chat_msg("", false, diffs);
                     out["streamed"] = message_json(msg);
                     server_task_result_cmpl_final final;
-                    final.stop = STOP_TYPE_EOS;
+                    final.stop = test.value("stop_limit", false) ? STOP_TYPE_LIMIT : STOP_TYPE_EOS;
                     final.oaicompat_msg = msg;
                     final.oaicompat_msg_diffs = diffs;
                     out["streamed_final_wire"] = final.to_json_oaicompat_chat_stream();
                 } catch (const std::exception & error) { out["stream_error"] = error.what(); }
             }
         }
+    } catch (const std::invalid_argument & error) {
+        out["request_error"] = error.what();
+        out["request_error_wire"] = format_error_response(error.what(), ERROR_TYPE_INVALID_REQUEST);
+    } catch (const common_json_error & error) {
+        out["request_error"] = error.what();
+        out["request_error_wire"] = format_error_response(error.what(), ERROR_TYPE_INVALID_REQUEST);
     } catch (const std::exception & error) { out["request_error"] = error.what(); }
     std::cout << out.dump_safe() << '\n';
 }

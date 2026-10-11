@@ -1,0 +1,103 @@
+--- a/tools/server/server-common.cpp
++++ b/tools/server/server-common.cpp
+@@ -1275,1 +1275,19 @@
+-    auto tool_choice = json_value(body, "tool_choice", std::string("auto"));
++    auto requested_choice = json_value(body, "tool_choice", json());
++    std::string tool_choice = "auto";
++    std::string named_tool;
++    if (requested_choice.is_object()) {
++        if (requested_choice.size() != 2 || requested_choice.value("type", "") != "function" ||
++            !requested_choice.contains("function") || !requested_choice.at("function").is_object() ||
++            requested_choice.at("function").size() != 1 || !requested_choice.at("function").contains("name") ||
++            !requested_choice.at("function").at("name").is_string() ||
++            requested_choice.at("function").at("name").get<std::string>().empty()) {
++            throw std::invalid_argument("named tool_choice must be exactly type:function and function:{name:string}");
++        }
++        named_tool = requested_choice.at("function").at("name").get<std::string>();
++        tool_choice = "required";
++    } else if (!requested_choice.is_null()) {
++        if (!requested_choice.is_string()) {
++            throw std::invalid_argument("tool_choice must be auto, required, none or a named function object");
++        }
++        tool_choice = requested_choice.get<std::string>();
++    }
+@@ -1357,1 +1375,11 @@
+-    inputs.tools                  = common_chat_tools_parse_oaicompat(tools);
++    inputs.tools                  = common_chat_tools_parse_oaicompat(tools);
++    if (!named_tool.empty()) {
++        std::vector<common_chat_tool> selected;
++        for (const auto & tool : inputs.tools) {
++            if (tool.name == named_tool) { selected.push_back(tool); }
++        }
++        if (selected.size() != 1) {
++            throw std::invalid_argument("named tool_choice must name exactly one caller tool: " + named_tool);
++        }
++        inputs.tools = std::move(selected);
++    }
+@@ -1398,1 +1426,4 @@
+-    inputs.chat_template_kwargs = opt.chat_template_kwargs;
++    inputs.chat_template_kwargs = opt.chat_template_kwargs;
++    if (!named_tool.empty() && (inputs.chat_template_kwargs.count("tools") || chat_template_kwargs_object.contains("tools"))) {
++        throw std::invalid_argument("tools is a reserved template argument for named tool_choice");
++    }
+--- a/tools/server/server-chat.cpp
++++ b/tools/server/server-chat.cpp
+@@ -306,6 +306,15 @@
+         chatcmpl_body.erase("reasoning");
+     }
+
++    if (response_body.contains("tool_choice") && response_body.at("tool_choice").is_object()) {
++        const auto & choice = response_body.at("tool_choice");
++        if (choice.size() != 2 || choice.value("type", "") != "function" || !choice.contains("name") ||
++            !choice.at("name").is_string() || choice.at("name").get<std::string>().empty()) {
++            throw std::invalid_argument("Responses named tool_choice must be exactly type:function and name:string");
++        }
++        chatcmpl_body["tool_choice"] = {{"type", "function"}, {"function", {{"name", choice.at("name")}}}};
++    }
++
+     return chatcmpl_body;
+ }
+
+@@ -566,13 +575,38 @@
+
+     // Convert tool_choice
+     if (body.contains("tool_choice")) {
+-        const json & tc = body.at("tool_choice");
+-        if (tc.is_object()) {
+-            std::string type = json_value(tc, "type", std::string());
++        const json & choice = body.at("tool_choice");
++        if (choice.is_null()) {
++            oai_body["tool_choice"] = nullptr;
++        } else {
++            if (!choice.is_object() || !choice.contains("type") || !choice.at("type").is_string()) {
++                throw std::invalid_argument("Anthropic tool_choice must be an object with type:auto, any, none or tool");
++            }
++            const auto type = choice.at("type").get<std::string>();
++            for (const auto & item : choice.items()) {
++                if (item.key() != "type" && item.key() != "disable_parallel_tool_use" && !(type == "tool" && item.key() == "name")) {
++                    throw std::invalid_argument("Unsupported Anthropic tool_choice field: " + item.key());
++                }
++            }
++            if (choice.contains("disable_parallel_tool_use")) {
++                if (!choice.at("disable_parallel_tool_use").is_boolean()) {
++                    throw std::invalid_argument("disable_parallel_tool_use must be boolean");
++                }
++                oai_body["parallel_tool_calls"] = !choice.at("disable_parallel_tool_use").get<bool>();
++            }
+             if (type == "auto") {
+                 oai_body["tool_choice"] = "auto";
+-            } else if (type == "any" || type == "tool") {
++            } else if (type == "any") {
+                 oai_body["tool_choice"] = "required";
++            } else if (type == "none") {
++                oai_body["tool_choice"] = "none";
++            } else if (type == "tool") {
++                if (!choice.contains("name") || !choice.at("name").is_string() || choice.at("name").get<std::string>().empty()) {
++                    throw std::invalid_argument("Anthropic named tool_choice requires name:string");
++                }
++                oai_body["tool_choice"] = {{"type", "function"}, {"function", {{"name", choice.at("name")}}}};
++            } else {
++                throw std::invalid_argument("Unsupported Anthropic tool_choice type: " + type);
+             }
+         }
+     }
