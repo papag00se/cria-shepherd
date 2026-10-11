@@ -164,3 +164,33 @@ def retained_results_truth(messages: list[dict]) -> list[dict]:
             out = list(messages)
         out[i] = {**m, "content": c[:at] + section + (("\n" + rest) if rest else "")}
     return out if out is not None else messages
+
+
+# The ⟦ctx:current⟧ block of restored file text (`loop._restored_text_message`) and the ledger label that
+# points at it (`fetched_facts_sections.read_restored`).  modelview cannot import loop; a test pins the literal.
+RESTORED_MARKER = "⟦ctx:current⟧"
+
+
+def settle_restored_text(messages: list[dict]) -> tuple[list[dict], dict]:
+    """``(messages, {rel: sha1})`` — what the restored-file-text block delivered in THIS body.
+
+    The block is added before the floor, which may reduce it to a stand-in or drop it; the ledger line
+    that said "its current text is below" and the whole-read credit for the write hold were both decided
+    before that. A claim about the body must be made of the body that is sent (#24), so it is settled here,
+    after the floor: a surviving block (the message still carries its ``bodykeys.RESTORED_FILES`` hint)
+    delivers exactly what it offered; otherwise nothing was delivered, and every ledger line that said
+    otherwise says the plain absence again. Identity when no block was ever offered."""
+    from . import bodykeys
+    delivered: dict = {}
+    for m in messages:
+        hint = m.get(bodykeys.RESTORED_FILES) if isinstance(m, dict) else None
+        if isinstance(hint, dict):
+            delivered.update(hint.get("offered") or {})
+    labels = prompts.load_map("fetched_facts_sections")
+    below, absent = labels["read_restored"], labels["read_out_of_view"]
+    if delivered or not any(isinstance(m, dict) and isinstance(m.get("content"), str)
+                            and m.get("role") == "user" and below in m["content"] for m in messages):
+        return messages, delivered
+    return [({**m, "content": m["content"].replace(below, absent)}
+             if isinstance(m, dict) and m.get("role") == "user" and isinstance(m.get("content"), str)
+             and below in m["content"] else m) for m in messages], delivered

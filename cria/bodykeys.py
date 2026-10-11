@@ -66,6 +66,12 @@ CALLER_SPAN = "cria_caller_span"
 #: wire-visible provenance for the suspended plan cursor; it must never reach the model server.
 COMPLETION_REMEDIATION = "cria_completion_remediation"
 
+#: On the restored-file-text message the coder frame adds (``loop._restored_text_message``): ``{"offered":
+#: {rel: sha1}}`` — the files whose current text that message carries.  The wire reads it AFTER the floor
+#: (``modelview.settle_restored_text``): a message that survived is delivery, one the floor reduced or dropped
+#: is not, and only delivery counts as a whole read.  Stripped from the message at the wire.
+RESTORED_FILES = "cria_restored_files"
+
 # --- response-body hints: cria's own annotations on a completion --------------------------------
 
 #: Human-facing notes cria attaches to a completion for the operator's display, stripped before the
@@ -84,4 +90,4 @@ RUMINATION = "cria_rumination"
 #: Every key above. The wire strips this set wholesale, so adding a key here is all it takes to keep
 #: it off the API — the thing five scattered literals could not guarantee.
 ALL = (MERGE_TURNS, OUTPUT_RESERVE, LOST_CALL, PINNED_TASK, CONTEXT_REFIT_NO_CHANGE,
-       CALLER_INSTRUCTIONS, CALLER_PERSONA, CALLER_SPAN, COMPLETION_REMEDIATION, NOTES, RUMINATION, FENCED_REFUSED)
+       CALLER_INSTRUCTIONS, CALLER_PERSONA, CALLER_SPAN, RESTORED_FILES, COMPLETION_REMEDIATION, NOTES, RUMINATION, FENCED_REFUSED)
