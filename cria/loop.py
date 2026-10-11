@@ -49,7 +49,7 @@ from pathlib import Path
 
 from .upstream import UpstreamProtocolError
 from . import bodykeys, generation, modelview, wsview
-from . import callcapture, dedup, denial, editrecovery, execcheck, focustrim, groundtruth, indicators, massage, participation, probediscovery, probegate, probeparse, proberun, prompts, reasoning, selfcompact, shellshape, toolmenu, urlgrounding, verifytools, webfetch
+from . import argfacts, callcapture, dedup, denial, editrecovery, execcheck, focustrim, groundtruth, indicators, massage, participation, probediscovery, probegate, probeparse, proberun, prompts, reasoning, selfcompact, shellshape, toolmenu, urlgrounding, verifytools, webfetch
 from .upstream import CallerContextRetryNoChange, ContextRefitNoChange
 from .classify import JUDGE_MAX_TOKENS, _task_key, latest_user_text
 from . import jsontext, planner, refusalledger, writeproxy
@@ -1678,6 +1678,36 @@ def _cria_measured_facts(sess) -> str:
     return "\n\n".join(part for part in (offline, observed) if part)
 
 
+def _exact_form_blocks_completion(task: str, evidence: str, reasoner_chat, reasoner_role, rlog) -> str:
+    """The coder-facing text that blocks an approval, or "" when it may stand.
+
+    The broad satisfaction verdict is one JSON object whose first field is the verdict, so a weak
+    judge commits to ``satisfied`` before it has compared anything.  C13-C: it approved a 29-byte
+    file for a task that required 30 (a final line break), with the task, the write and the read all
+    intact in its prompt, three of three replays and again with exact counts appended.  Deterministic
+    code GATHERS the counts of what the coder sent (:mod:`cria.argfacts`); ONE focused question asks
+    whether the task states an exact requirement those counts contradict, requirement quoted before
+    the verdict.  Only a ``contradicted: false`` lets the approval stand: an unreadable answer fails
+    CLOSED, like every other approve-path brake.  What the coder is told is cria's own measurement,
+    never the judge's words.  No counts (no call carried a string) means nothing to ask."""
+    facts = argfacts.extract(evidence)
+    if not facts:
+        return ""
+    answer = ask_closed(reasoner_chat, reasoner_role,
+                        prompts.render("exact_form_requirement", task=task, facts=facts), rlog,
+                        phase="exact-form-requirement", retry_off=False)
+    obj = extract_json_object(reasoner_role.clean_content(answer) if reasoner_role is not None else answer)
+    verdict = obj.get("contradicted") if isinstance(obj, dict) else None
+    if rlog is not None:
+        rlog.emit("loop.exact_form_requirement",
+                  contradicted=verdict if isinstance(verdict, bool) else "unknown")
+    if verdict is False:
+        return ""
+    if verdict is True:
+        return prompts.render("exact_form_unmet", facts=facts)
+    return prompts.load("unverified_step")
+
+
 def _test_participation_blocks_completion(task: str, report, reasoner_chat, reasoner_role, rlog,
                                           *, workspace_root: str = "") -> bool:
     """Whether a task-required test remains unverified by this gate event.
@@ -2165,6 +2195,10 @@ def judge_satisfaction(task: str, evidence: str, reasoner_chat, reasoner_role, r
                 task, getattr(sess, "last_gate_participation", None), reasoner_chat, reasoner_role, rlog,
                 workspace_root=workspace_root):
             return False, prompts.load("required_test_unverified"), ""
+        if satisfied:
+            blocked = _exact_form_blocks_completion(task, evidence, reasoner_chat, reasoner_role, rlog)
+            if blocked:
+                return False, blocked, ""
         if satisfied and workspace_root:
             # The approve-path brake (see _confirm_completion): "satisfied" must be consistent with
             # the FRESH on-disk listing and with its own stated reason (m6 ended a run with no README
@@ -5768,7 +5802,7 @@ def _rewrite_summary_text(messages: list[dict], root_text: str) -> str:
 
 
 def _work_log(messages: list[dict], *, keep_checks: bool = False, rlog=None,
-              gate_plan=None) -> str:
+              gate_plan=None, calls_out: list | None = None) -> str:
     """A log of the coder's REAL actions — the tool calls it made (file writes, commands)
     and what they returned — for the completion compaction. cria's own plan-file writes and probe
     runs are stripped so the summary reflects the actual work, not the orchestration scaffolding.
@@ -5834,6 +5868,8 @@ def _work_log(messages: list[dict], *, keep_checks: bool = False, rlog=None,
                 frame_mark = mark if mark and ("\n" in args or "\r" in args) else ""
                 suffix_mark = "" if frame_mark else mark
                 lines.append(f"$ {fn.get('name')}{frame_mark} {args}{suffix_mark}")
+                if calls_out is not None:
+                    calls_out.append((str(fn.get("name")), args))
         elif role == "tool":
             c = str(m.get("content") or "")
             if c and not _is_cria_scaffolding(c, keep_checks=keep_checks):
@@ -5893,8 +5929,16 @@ def _satisfaction_evidence(messages: list[dict], rlog=None, gate_plan=None,
     # measured 73.7KB slot (0183-satisfaction, run 0729T224807); the judge holds read_file/list_dir
     # to drill past the disclosed elision, and the doom loop (fail closed -> re-nudge -> grow) is
     # the same mechanism the critic bound was shipped for.
-    log = _dedup_evidence(_work_log(messages, keep_checks=True, rlog=rlog, gate_plan=gate_plan),
+    logged_calls: list = []
+    log = _dedup_evidence(_work_log(messages, keep_checks=True, rlog=rlog, gate_plan=gate_plan,
+                                    calls_out=logged_calls),
                           rlog=rlog, chat_fn=chat_fn, role=role)
+    # EXACT COUNTS OF WHAT THE CODER SENT, appended after the (possibly deduplicated) log: the
+    # escaped-JSON layout hides the byte-level shape of a value (a missing final line break) from the
+    # judge. Gathered deterministically from the call arguments only — never from tool results.
+    measured = argfacts.render(logged_calls)
+    if measured:
+        log = f"{log}\n\n{measured}"
     # The marker must START the message, and the message must not be an ASSISTANT turn. cria authors
     # these blocks as user/system turns; matching a bare substring in ANY role meant a coder that merely
     # parroted "⟦ctx:rollup⟧" — a marker it reads in its own context every turn — got its own claim

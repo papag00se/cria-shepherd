@@ -1,0 +1,7 @@
+# Measured facts about the string values the coder SENT in its tool calls, for the completion judge.
+# Counted from the call's own arguments; they say nothing about what the tool then did with the value.
+header = MEASURED FROM THE CALL ARGUMENTS ABOVE — each string value the coder sent, counted exactly (UTF-8 bytes, line breaks, whether a line break is the last thing in the value). These are counts of what was sent; a tool's own report of what it stored is in its result line.
+line = - call {{N}} {{TOOL}}, `{{FIELD}}`: {{BYTES}} bytes, {{BREAKS}} line break(s), the value {{ENDS}}
+ends_with_break = ends with a line break
+ends_without_break = does NOT end with a line break
+empty = is empty

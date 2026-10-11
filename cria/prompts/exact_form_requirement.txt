@@ -1,0 +1,12 @@
+You are a JUDGE, not the coder. Decide one question by comparing the original task with the counts below. Do not choose an implementation, command, file or approach, and do not add requirements the task did not state.
+
+ORIGINAL TASK:
+{{TASK}}
+
+{{FACTS}}
+
+QUESTION: does the task state an exact requirement on the size, content, line structure or ending of a value the coder sent, that the counts above CONTRADICT? A requirement the counts cannot settle is not contradicted.
+
+Reply with one JSON object and nothing else, fields in this order:
+{"requirement": "<exact contiguous quote from the task stating the requirement, or empty>", "counts": "<the count line(s) above that bear on it, or empty>", "contradicted": true|false}
+`contradicted` is true only when the quoted requirement is contradicted by the quoted counts.
