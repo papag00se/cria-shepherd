@@ -3070,7 +3070,7 @@ class Loop:
             sess = self._store.get(sess_key)
             if sess is None:
                 return ""
-            return unread_target_fact(sess, wsview.current(root), path, messages, record=True)
+            return unread_target_fact(sess, wsview.current(root), path, messages)
         return check
 
     def _unexecuted_nudge_text(self, sess: PlanSession) -> str:
@@ -6452,7 +6452,7 @@ def _ran_a_command_naming(messages: list[dict], rel: str) -> bool:
     return any(_command_names_path(cmd, rel) for cmd, _res in _shell_commands_with_results(messages))
 
 
-def unread_target_fact(sess, view, path: str, messages: list[dict], *, record: bool = False) -> str:
+def unread_target_fact(sess, view, path: str, messages: list[dict]) -> str:
     """What cria MEASURED about a file a write names, or "" — never an instruction.
 
     The workspace view must PROVE the file exists (three-valued: an unanswered survey is silence, not
@@ -6472,13 +6472,6 @@ def unread_target_fact(sess, view, path: str, messages: list[dict], *, record: b
     # from any other use of a path, so it does not claim the coder never looked (#5b, #11b).
     if _ran_a_command_naming(messages, rel):
         return ""
-    if record:
-        # ONCE PER (SESSION, PATH): a hold that outlived its first sentence would trap a coder that
-        # means the write. The second attempt passes.
-        held = sess.__dict__.setdefault("unread_target_held", set()) if hasattr(sess, "__dict__") else set()
-        if rel in held:
-            return ""
-        held.add(rel)
     labels = prompts.load_map("unread_target_fact")
     size = view.size(rel)
     return prompts.fill(labels["sized" if size is not None else "unsized"], path=rel, size=size)
@@ -8786,6 +8779,7 @@ def _extract_reads(messages: list[dict]) -> dict:
     file it came out of."""
     from . import denial
     calls: dict = {}
+    answered_by_read: set = set()
     out: dict = {}
     for m in messages or []:
         if not isinstance(m, dict):
@@ -8797,10 +8791,20 @@ def _extract_reads(messages: list[dict]) -> dict:
                 p = _path_of_args(fn.get("arguments") or "")
                 if p:
                     calls[tc["id"]] = (p, args.get("start_line"), args.get("end_line"))
+            elif fn.get("name") in writeproxy_names and tc.get("id") \
+                    and (p := _path_of_args(fn.get("arguments") or "")):
+                calls.setdefault(tc["id"], (p, None, None))   # only a read-instead result counts (below)
+                answered_by_read.add(tc["id"])
         tid = m.get("tool_call_id") or m.get("call_id")
         if tid in calls:
             c = m.get("content") if m.get("content") is not None else m.get("output")
-            if not isinstance(c, str) or not c.strip() or denial.is_denied(c):
+            if tid in answered_by_read:
+                # A write_file the coder sent for a file it never read, ANSWERED with that file (H1):
+                # the result is a whole read of the path. Any other result of a write is not a read.
+                c = denial.read_instead_payload(c) if isinstance(c, str) else None
+                if not c:
+                    continue
+            elif not isinstance(c, str) or not c.strip() or denial.is_denied(c):
                 continue
             path, start, end = calls[tid]
             raw = c.encode("utf-8", "replace")

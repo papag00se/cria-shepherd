@@ -946,6 +946,23 @@ def _read_command(args: dict) -> str | None:
             f"then {steer}; else cat {q}; fi")
 
 
+def _read_in_place_of_write(path: str, fact: str) -> str:
+    """The command that answers a ``write_file`` for an unread existing file with that file.
+
+    Whole file when it fits one read: the measured ``fact``, the call-not-run statement, a marker line
+    (:data:`denial.READ_INSTEAD_MARKER`) and then ``cat`` — the bytes unaltered. A file over
+    :data:`READ_INLINE_MAX` (or unreadable) falls to the ordinary whole-read owner, whose steer to
+    read it in ranges is the lossless paging path; the result then states the call was not run
+    and carries no read marker, so nothing is recorded as seen until a read has actually come back."""
+    q = _qbash(path)
+    labels = prompts.load_map("write_unread_target")
+    read = prompts.fill(labels["read"], fact=fact)
+    not_read = denial.mark(prompts.fill(labels["not_read"], fact=fact))
+    return (f'if [ -f {q} ] && [ -r {q} ] && [ "$(wc -c < {q} 2>/dev/null || echo 0)" -le {READ_INLINE_MAX} ]; '
+            f"then printf %s {_qbash(read)}; cat {q}; "
+            f"else printf %s {_qbash(not_read)}; {_read_command({'path': path})}; fi")
+
+
 def _list_command(args: dict) -> str:
     path = args.get("path") or args.get("dir") or args.get("directory") or "."
     q = _qbash(path)
@@ -1386,6 +1403,7 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
                 if rlog is not None:
                     rlog.emit("writeproxy.spill_command_redirect", tool=name)
             cmd = None
+            read_in_place = False
             # MALFORMED FUSED CALL: the model leaked tool-call marker tokens into the command (two calls
             # fused / broken quoting). It can't be reconstructed and would die in bash as a cryptic EOF —
             # refuse it with guidance to send ONE clean call, so the turn teaches instead of just failing.
@@ -1478,13 +1496,14 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
                             rlog.emit("writeproxy.write_fused_content", tool=name,
                                       path=str(path))
                     elif (unread := unread_target(str(path)) if unread_target is not None else ""):
-                        # A WHOLE-FILE REPLACEMENT OF A FILE THE CODER HAS NEVER SEEN. The content is
-                        # then not a revision of anything it read — it is invention under a real
-                        # file's name (phi4 A2: pom.xml, 980 bytes, never shown; the coder's write
-                        # carried `<content_of_pom.xml_…>`). Refused through the one refusal owner, so
-                        # the coder gets a tool RESULT for its call that says what cria measured —
-                        # `unread` is the fact, and nothing here names a tool or content to choose.
-                        cmd = _refusal_command(prompts.render("write_unread_target", fact=unread))
+                        # A WHOLE-FILE REPLACEMENT OF A FILE THE CODER HAS NEVER SEEN is invention under
+                        # a real file's name (phi4 A2 pom.xml; A3 pom.xml + Importer.java, which, once a
+                        # refusal had been said once, were then overwritten). The coder's call is ANSWERED
+                        # with the file: the harness runs a read of the path the coder named, so the
+                        # result carries ground truth and records a read — the hold lifts exactly when
+                        # the file has been seen, not on a count. cria composes no content.
+                        cmd = _read_in_place_of_write(str(path), unread)
+                        read_in_place = True
                         if rlog is not None:
                             rlog.emit("writeproxy.write_unread_target", tool=name, path=str(path))
                     else:
@@ -1580,7 +1599,10 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
                 # output cap would cut the CODER's content to pay for cria's instrumentation.
                 # `represent_inbound` strips it back out, so the model sees its own call's result
                 # and nothing else.
-                if name in _SURVEYABLE and _survey_due(session, name):
+                # A read answering a write carries no survey: its result is the file, up to the same
+                # byte limit a read has, and the ride-along must never push the coder's content past
+                # what a harness keeps.
+                if name in _SURVEYABLE and not read_in_place and _survey_due(session, name):
                     # BUDGETED for this one-result ride-along. The completion gate no longer shares
                     # this arithmetic: it carries the survey and probe evidence in checked pages.
                     # Riding along without one is how cria's instrumentation came to push a result
@@ -2091,6 +2113,13 @@ def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | Non
             preserve_eof = (tid in read_whole and not denial.is_denied(content)
                             and (exit_code is None or exit_code.group(1) == "0")
                             and not note_harness_cuts([m]))
+            if tid in write_paths and (payload := denial.read_instead_payload(content)) is not None:
+                # A write_file answered with the file (see _read_in_place_of_write): what follows the
+                # marker is the file as the harness read it — a whole read, EOF byte included.
+                if not note_harness_cuts([m]) and (exit_code is None or exit_code.group(1) == "0"):
+                    view.note_read(write_paths[tid], _strip_exec_envelope(payload, preserve_eof=True))
+                out.append({**m, "content": _strip_exec_envelope(content, preserve_eof=True)})
+                continue
             if tid in write_paths and write_paths[tid] and tid not in failed_ids \
                     and any(ln.strip() == _WROTE for ln in content.splitlines()):
                 if tid in written:

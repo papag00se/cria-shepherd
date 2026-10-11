@@ -1,1 +1,6 @@
-{{FACT}} This write_file call was not run, so nothing was written and the file is unchanged. Once a read of it is recorded this no longer applies, and the hold is made once for this path: the same write sent again is not held.
+# A whole-file write_file naming an existing file the coder has not read (prompts.load_map). The coder's
+# call is answered with the file itself. `read` = the file's own bytes follow, as the harness read them;
+# `not_read` = the read could not be returned whole (the refusal that follows says why). A fact, never an
+# instruction. The marker line is the record that this result IS a read of the path (loop._extract_reads).
+read = {{FACT}} This write_file call was not run, so nothing was written and the file is unchanged. Its current content, exactly as read just now, follows.\n⟦ctx:read-instead⟧\n
+not_read = {{FACT}} This write_file call was not run, so nothing was written and the file is unchanged.\n

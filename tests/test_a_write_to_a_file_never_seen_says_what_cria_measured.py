@@ -19,7 +19,7 @@ from pathlib import Path
 import pytest
 
 from cria import bodykeys, loop, massage, wsview
-from cria.writeproxy import translate_outbound
+from cria.writeproxy import original_call, translate_outbound
 from tests.test_loop import _Recorder, _Rlog, _ctx, _single_loop, _synth
 from tests.wsfixture import survey
 
@@ -135,48 +135,120 @@ def _check(view, **seen):
     return lp.unread_target_check("sid:g4", seen.get("messages", []), ROOT)
 
 
-def test_the_placeholder_write_is_refused_with_the_measured_fact_and_nothing_is_lowered(view):
-    comp = _call("write_file", {"path": "pom.xml", "content": PLACEHOLDER})
+def _run(cmd, cwd):
+    import subprocess
+    return subprocess.run(["bash", "-c", cmd], cwd=cwd, capture_output=True, text=True)
+
+
+A3 = json.loads((Path(__file__).parent / "fixtures" / "phi4_java_a3" / "0011-reply.json").read_text())
+SEED_POM = "<project>\n  <modelVersion>4.0.0</modelVersion>\n  <artifactId>pipeline</artifactId>\n</project>\n"
+SEED_JAVA = "package pipeline;\n\npublic class Importer {\n    public Summary summarize() { return null; }\n}\n"
+
+
+def test_the_a3_unread_writes_are_answered_with_the_files_and_nothing_is_written(view, tmp_path):
+    """CALL 0011: real write_file calls for pom.xml and Importer.java, files never read."""
+    (tmp_path / "src/main/java/pipeline").mkdir(parents=True)
+    (tmp_path / "pom.xml").write_text(SEED_POM)
+    (tmp_path / JAVA).write_text(SEED_JAVA)
+    comp = json.loads(json.dumps(A3))
     translate_outbound(comp, _CMD_SHELL, injected={"write_file"}, workspace_root=ROOT,
                        unread_target=_check(view))
-    cmd = _cmd(comp)
-    assert "pom.xml already exists on disk (980 bytes) and no read of it has been recorded this session, by a read tool or by a shell command naming it" in cmd
-    assert "This write_file call was not run, so nothing was written and the file is unchanged." in cmd
-    assert "Once a read of it is recorded this no longer applies" in cmd     # what changes the fact
-    assert "the same write sent again is not held" in cmd
-    assert "write_bytes" not in cmd and PLACEHOLDER not in cmd
-    assert "⟦ctx:denied⟧" in cmd                                         # the one refusal owner marks it
+    by_path = {}
+    for tc in comp["choices"][0]["message"]["tool_calls"]:
+        cmd = json.loads(tc["function"]["arguments"])["cmd"]
+        orig = original_call(cmd)
+        if orig is None:
+            continue                                                    # the coder's own exec_command
+        path = json.loads(orig["arguments"]).get("path")
+        by_path[path] = (tc, cmd)
+    assert "write_bytes" in by_path["REVIEW.md"][1]                      # a new file is written as before
+    for path, seed in (("pom.xml", SEED_POM), (JAVA, SEED_JAVA)):
+        tc, cmd = by_path[path]
+        assert "write_bytes" not in cmd and "survey" not in cmd.lower().split("printf")[0]
+        out = _run(cmd, tmp_path)
+        assert out.returncode == 0
+        assert (tmp_path / path).read_text() == seed                    # not written
+        assert f"{path} already exists on disk" in out.stdout
+        assert "This write_file call was not run" in out.stdout and "unchanged" in out.stdout
+        head, _, payload = out.stdout.partition("⟦ctx:read-instead⟧\n")
+        assert payload == seed                                          # the file, byte for byte
+        # a later write_file for this path in the history is no longer held: it is a recorded read
+        msgs = [{"role": "assistant", "tool_calls": [{"id": "w1", "type": "function", "function": {
+                    "name": "write_file", "arguments": json.dumps({"path": path, "content": "x"})}}]},
+                {"role": "tool", "tool_call_id": "w1", "content": out.stdout}]
+        assert path in loop._extract_reads(msgs)
+        sess = _synth()
+        lp = _single_loop(lambda b, r: b"{}", workspace_root=ROOT)
+        lp._store.put("sid:g4", sess)
+        assert lp.unread_target_check("sid:g4", msgs, ROOT)(path) == ""
+        again = _call("write_file", {"path": path, "content": "class A {}"})
+        translate_outbound(again, _CMD_SHELL, injected={"write_file"}, workspace_root=ROOT,
+                           unread_target=lp.unread_target_check("sid:g4", msgs, ROOT))
+        assert "write_bytes" in _cmd(again)
 
 
-def test_any_content_is_refused_not_a_spelling_of_one(view):
+def test_the_repeat_write_with_no_read_in_history_is_answered_again_never_passed(view):
+    """The once-per-path pass (84c81ced) destroyed the seed files in A3: the hold lifts only on a read."""
+    check = _check(view)
+    for _ in range(3):
+        comp = _call("write_file", {"path": "pom.xml", "content": PLACEHOLDER})
+        translate_outbound(comp, _CMD_SHELL, injected={"write_file"}, workspace_root=ROOT, unread_target=check)
+        assert "write_bytes" not in _cmd(comp) and "cat " in _cmd(comp)
+
+
+def test_the_answer_is_represented_as_the_coders_write_call_and_records_the_read(view, tmp_path):
+    from cria.writeproxy import represent_inbound
+    (tmp_path / "pom.xml").write_text(SEED_POM)
+    comp = _call("write_file", {"path": "pom.xml", "content": PLACEHOLDER})
+    translate_outbound(comp, _CMD_SHELL, injected={"write_file"}, workspace_root=ROOT, unread_target=_check(view))
+    tc = comp["choices"][0]["message"]["tool_calls"][0]
+    out = _run(_cmd(comp), tmp_path).stdout
+    envelope = f"Chunk ID: ab\nWall time: 0.0 seconds\nProcess exited with code 0\nOriginal token count: 9\nOutput:\n{out}"
+    msgs = represent_inbound([{"role": "assistant", "tool_calls": [tc]},
+                              {"role": "tool", "tool_call_id": "c1", "content": envelope}])
+    assert msgs[0]["tool_calls"][0]["function"]["name"] == "write_file"
+    assert msgs[1]["content"] == out and msgs[1]["content"].endswith(SEED_POM)
+    assert "Chunk ID" not in msgs[1]["content"]
+    assert "pom.xml" in loop._extract_reads(msgs)
+
+
+def test_an_oversize_file_is_not_dumped_and_records_no_read(view, tmp_path):
+    from cria import writeproxy
+    (tmp_path / "pom.xml").write_text("<a/>\n" * (writeproxy.READ_INLINE_MAX // 5 + 10))
+    comp = _call("write_file", {"path": "pom.xml", "content": PLACEHOLDER})
+    translate_outbound(comp, _CMD_SHELL, injected={"write_file"}, workspace_root=ROOT, unread_target=_check(view))
+    out = _run(_cmd(comp), tmp_path).stdout
+    assert "This write_file call was not run" in out and "⟦ctx:read-instead⟧" not in out
+    assert out.count("<a/>") == 0                                       # paged through the read owner's steer
+    msgs = [{"role": "assistant", "tool_calls": [{"id": "w1", "type": "function", "function": {
+                "name": "write_file", "arguments": json.dumps({"path": "pom.xml", "content": "x"})}}]},
+            {"role": "tool", "tool_call_id": "w1", "content": out}]
+    assert loop._extract_reads(msgs) == {}
+
+
+def test_a_write_the_harness_ran_is_not_recorded_as_a_read(view):
+    msgs = [{"role": "assistant", "tool_calls": [{"id": "w1", "type": "function", "function": {
+                "name": "write_file", "arguments": json.dumps({"path": "pom.xml", "content": "x"})}}]},
+            {"role": "tool", "tool_call_id": "w1", "content": "Wrote pom.xml"}]
+    assert loop._extract_reads(msgs) == {}
+
+
+def test_any_content_is_answered_not_a_spelling_of_one(view):
     for content in ("<project/>", "your_updated_pom_xml_content_here", "x" * 4000):
         comp = _call("write_file", {"path": "pom.xml", "content": content})
         translate_outbound(comp, _CMD_SHELL, injected={"write_file"}, workspace_root=ROOT,
-                           unread_target=_check(view))     # a fresh session each time: the first attempt
-        assert "write_bytes" not in _cmd(comp)
-
-
-def test_the_hold_is_made_once_per_path_and_the_second_attempt_passes(view):
-    check = _check(view)
-    first = _call("write_file", {"path": "pom.xml", "content": PLACEHOLDER})
-    translate_outbound(first, _CMD_SHELL, injected={"write_file"}, workspace_root=ROOT, unread_target=check)
-    assert "write_bytes" not in _cmd(first) and "already exists on disk" in _cmd(first)
-    again = _call("write_file", {"path": "pom.xml", "content": PLACEHOLDER})
-    translate_outbound(again, _CMD_SHELL, injected={"write_file"}, workspace_root=ROOT, unread_target=check)
-    assert "write_bytes" in _cmd(again)                        # held once, never trapped
-    # …and ./pom.xml / the absolute spelling is the SAME path (normalised through the view)
-    abs_again = _call("write_file", {"path": f"{ROOT}/pom.xml", "content": "<project/>"})
-    translate_outbound(abs_again, _CMD_SHELL, injected={"write_file"}, workspace_root=ROOT, unread_target=check)
-    assert "write_bytes" in _cmd(abs_again)
+                           unread_target=_check(view))
+        assert "write_bytes" not in _cmd(comp) and content not in _cmd(comp)
 
 
 def test_the_hold_is_per_path(view):
     check = _check(view)
-    translate_outbound(_call("write_file", {"path": "pom.xml", "content": "x"}), _CMD_SHELL,
-                       injected={"write_file"}, workspace_root=ROOT, unread_target=check)
     other = _call("write_file", {"path": JAVA, "content": "class A {}"})
     translate_outbound(other, _CMD_SHELL, injected={"write_file"}, workspace_root=ROOT, unread_target=check)
     assert "write_bytes" not in _cmd(other) and f"{JAVA} already exists" in _cmd(other)
+    fresh = _call("write_file", {"path": "NEW.md", "content": "n"})
+    translate_outbound(fresh, _CMD_SHELL, injected={"write_file"}, workspace_root=ROOT, unread_target=check)
+    assert "write_bytes" in _cmd(fresh)
 
 
 def _shell_read(command, result="<project>\n</project>", call_id="s1"):

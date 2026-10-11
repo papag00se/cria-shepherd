@@ -41,6 +41,19 @@ from __future__ import annotations
 # the same channel and the same shape as every other context marker in that stream.
 DENIED_MARKER = "⟦ctx:denied⟧"
 
+# A write_file the coder named for a file it never read is answered with that file's bytes. The marker
+# sits on its own line between cria's fact and the file's content: it is how a reader of the history
+# knows the result of a WRITE call is a READ of the path (H1). Absent when the read could not be returned.
+READ_INSTEAD_MARKER = "⟦ctx:read-instead⟧"
+
+
+def read_instead_payload(text: str) -> str | None:
+    """The file content following :data:`READ_INSTEAD_MARKER`'s line, or None when ``text`` has no marker."""
+    if not text or READ_INSTEAD_MARKER not in text:
+        return None
+    _head, _, rest = text.partition(READ_INSTEAD_MARKER + "\n")
+    return rest if _ else None
+
 
 def mark(text: str) -> str:
     """``text`` prefixed with :data:`DENIED_MARKER` — idempotent, so a refusal that is composed of

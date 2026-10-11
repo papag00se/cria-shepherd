@@ -71,9 +71,10 @@ class OneOwnerTests(unittest.TestCase):
                    if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
                    and n.func.id == "_refusal_command")
         # +3: generated cleanup refusal on write/edit, plus stale reviewed-edit refusal.
-        # +1 (G4): a whole-file write naming an existing file the coder never read — the refusal is
-        # the tool result the coder reads (`write_unread_target`), through this one owner.
-        self.assertEqual(calls, 14)
+        # G4 added +1 for a whole-file write naming an unread existing file; H1 REPLACED it with an
+        # answer that is the file itself (`_read_in_place_of_write`, outside this function's source —
+        # like the read-path guards above, it rides the read owner, not a refusal exit).
+        self.assertEqual(calls, 13)
 
     @staticmethod
     def _lower_fetch(result):
