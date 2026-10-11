@@ -15,6 +15,9 @@ All patches target llama.cpp revision
    JSON, including its name, description and required `message:string` schema.
    It contains no model identity or model-facing description.
 
+4. `8345-generation-stop.patch` is the separate V4 stop/error-boundary unit,
+   applied after the unchanged V3 no-action artifact. See [generation-stop.md](generation-stop.md).
+
 These are private deployment artifacts. No upstream checkout, commit, push or
 PR is part of their development.
 
@@ -96,37 +99,39 @@ From the cria checkout, export pinned source into a **new private directory**.
 The following commands assume the directories do not already exist:
 
 ```sh
-mkdir /tmp/phi4-no-action-source-v3
+mkdir /tmp/phi4-no-action-source-v4
 git -C ~/src/llama.cpp-cuda archive 8345f333951c661d166b00e6f9362e553768f292 \
-  | tar -x -C /tmp/phi4-no-action-source-v3
-patch -d /tmp/phi4-no-action-source-v3 -p1 \
+  | tar -x -C /tmp/phi4-no-action-source-v4
+patch -d /tmp/phi4-no-action-source-v4 -p1 \
   < scripts/backend-patches/8345-serial-tool-call.patch
-patch --fuzz=0 -d /tmp/phi4-no-action-source-v3 -p1 \
+patch --fuzz=0 -d /tmp/phi4-no-action-source-v4 -p1 \
   < scripts/backend-patches/8345-named-tool-choice.patch
-patch --fuzz=0 -d /tmp/phi4-no-action-source-v3 -p1 \
+patch --fuzz=0 -d /tmp/phi4-no-action-source-v4 -p1 \
   < scripts/backend-patches/8345-no-action-tool.patch
-cmake -S /tmp/phi4-no-action-source-v3 -B /tmp/phi4-no-action-build-v3 \
+patch --fuzz=0 -d /tmp/phi4-no-action-source-v4 -p1 \
+  < scripts/backend-patches/8345-generation-stop.patch
+cmake -S /tmp/phi4-no-action-source-v4 -B /tmp/phi4-no-action-build-v4 \
   -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON -DCMAKE_BUILD_RPATH_USE_ORIGIN=ON \
   -DGGML_CUDA=OFF -DGGML_NATIVE=OFF -DLLAMA_CURL=OFF \
   -DLLAMA_BUILD_TESTS=ON -DLLAMA_BUILD_SERVER=ON
-cmake --build /tmp/phi4-no-action-build-v3 --target llama-server \
+cmake --build /tmp/phi4-no-action-build-v4 --target llama-server \
   test-chat-auto-parser test-chat-template test-chat-peg-parser -j 8
-cd /tmp/phi4-no-action-source-v3
-/tmp/phi4-no-action-build-v3/bin/test-chat-auto-parser
-/tmp/phi4-no-action-build-v3/bin/test-chat-template
-/tmp/phi4-no-action-build-v3/bin/test-chat-peg-parser
+cd /tmp/phi4-no-action-source-v4
+/tmp/phi4-no-action-build-v4/bin/test-chat-auto-parser
+/tmp/phi4-no-action-build-v4/bin/test-chat-template
+/tmp/phi4-no-action-build-v4/bin/test-chat-peg-parser
 ```
 
 From the cria checkout:
 
 ```sh
-LOCALAI_PROBE_SOURCE=/tmp/phi4-no-action-source-v3 \
-LOCALAI_PROBE_LIBRARY=/tmp/phi4-no-action-build-v3/bin \
+LOCALAI_PROBE_SOURCE=/tmp/phi4-no-action-source-v4 \
+LOCALAI_PROBE_LIBRARY=/tmp/phi4-no-action-build-v4/bin \
   python -m pytest -q tests/test_localai_tool_template.py \
     tests/test_native_named_tool_choice.py tests/test_native_no_action_v3.py \
-    tests/test_native_protocol_error_propagation.py
-LOCALAI_PROBE_SOURCE=/tmp/phi4-no-action-source-v3 \
-LOCALAI_PROBE_LIBRARY=/tmp/phi4-no-action-build-v3/bin \
+    tests/test_native_protocol_error_propagation.py tests/test_native_generation_stop.py
+LOCALAI_PROBE_SOURCE=/tmp/phi4-no-action-source-v4 \
+LOCALAI_PROBE_LIBRARY=/tmp/phi4-no-action-build-v4/bin \
   python -m pytest
 ```
 
@@ -188,9 +193,15 @@ the parent validation directory. Parent must verify real execution, exact file
 bytes, final delivery, truthful checks and runtime/GPU restrictions before
 issuing readiness.
 
-## Existing error/retry boundary
+V4 adds authoritative stop facts, buffered withholding and a frozen native stream
+terminal state, plus the separately committed harness action boundary. V1–V3
+sources/builds/candidates/receipts remain frozen. Full V4 CPU source/build/probe
+receipts are under `~/.cria/validation/localai-phi4-install/no-action-native-v4/`.
+See [generation-stop.md](generation-stop.md) for V4 behavior and transport policy.
 
-A length-clipped reasoning block or action now produces a native protocol error,
+## Historical V3 error/retry boundary
+
+In V3, a length-clipped reasoning block or action produced a native protocol error,
 not a successful partial final/action. Native buffered error formatting reports
 500; an established stream terminates with an error event. The existing watched
 stream client discards partial call/content bytes and re-asks once buffered. A
@@ -200,9 +211,9 @@ and does not retry it as a transient timeout. The upstream error then propagates
 responses. No new retry policy was added, and automatic continued work is not
 claimed. Parent must verify actual error propagation during live validation.
 
-The authoritative native `STOP_TYPE_LIMIT` event currently reaches the same
+In V3 the authoritative native `STOP_TYPE_LIMIT` event reached the same
 strict final parse as a malformed completed reply. Its 500 is therefore
-classified as unavailable by existing cria handling. Parent is separately
-reviewing truthful length-stop semantics before any recovery decision. This
-V3 unit changes neither stop handling nor retries and makes no campaign readiness
-claim.
+classified as unavailable by existing cria handling. V4 now preserves that authoritative event and separates incomplete LIMIT replies
+from typed malformed completion errors. The generic V3 transport characterization
+remains covered; typed V4 errors bypass buffered re-ask and availability
+classification. Neither unit makes a campaign readiness claim.

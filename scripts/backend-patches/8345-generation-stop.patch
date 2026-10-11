@@ -1,0 +1,444 @@
+--- a/common/chat.h
++++ b/common/chat.h
+@@ -17,6 +17,18 @@
+ #include <vector>
+
+ using chat_template_caps = jinja::caps;
++
++#define COMMON_CHAT_HAS_PROTOCOL_EVIDENCE 1
++
++struct common_chat_protocol_error : std::runtime_error {
++    std::string reason;
++    std::string raw;
++    common_json generation_evidence = common_json::object();
++
++    common_chat_protocol_error(const std::string & reason, const std::string & raw, const std::string & message)
++        : std::runtime_error(message), reason(reason), raw(raw) {}
++    common_json response_error() const;
++};
+
+ struct common_chat_templates;
+
+--- a/common/chat.cpp
++++ b/common/chat.cpp
+@@ -1500,7 +1500,7 @@
+     return common_chat_peg_parse(params.parser, input, is_partial, params);
+ }
+
+-static std::runtime_error common_chat_protocol_error(const std::string & reason, const std::string & raw) {
++static common_chat_protocol_error make_protocol_error(const std::string & reason, const std::string & raw) {
+     static const char hex[] = "0123456789abcdef";
+     std::string evidence = reason + "; raw bytes (hex): ";
+     for (unsigned char byte : raw) {
+@@ -1509,7 +1509,18 @@
+     }
+     // Hex retains every byte, including NUL and invalid UTF-8. The JSON text is for inspection.
+     evidence += "\nraw text (JSON): " + json(raw).dump_safe();
+-    return std::runtime_error(evidence);
++    return common_chat_protocol_error(reason, raw, evidence);
++}
++
++common_json common_chat_protocol_error::response_error() const {
++    auto evidence = generation_evidence;
++    static const char hex[] = "0123456789abcdef";
++    std::string bytes;
++    for (unsigned char byte : raw) { bytes += hex[byte >> 4]; bytes += hex[byte & 15]; }
++    evidence["parser_input_hex"] = bytes;
++    if (!evidence.contains("raw_hex")) { evidence["raw_hex"] = bytes; }
++    return {{"code", 500}, {"type", "invalid_model_output_error"}, {"message", what()},
++            {"reason", reason}, {"generation_evidence", evidence}};
+ }
+
+ common_chat_msg common_chat_peg_parse(const common_peg_arena &          src_parser,
+@@ -1542,7 +1553,7 @@
+     if (!params.no_action_tool_name.empty() &&
+         (result.fail() || (result.success() && result.end != effective_input.size()) ||
+          (!is_partial && !result.success()))) {
+-        throw common_chat_protocol_error("Invalid no-action protocol output", input);
++        throw make_protocol_error("Invalid no-action protocol output", input);
+     }
+
+     auto map_result = [&]() {
+@@ -1571,7 +1582,7 @@
+             mapper->from_ast(ctx.ast, result);
+         } catch (const std::exception & error) {
+             if (!params.no_action_tool_name.empty() || untrusted_no_action_tag) {
+-                throw common_chat_protocol_error(error.what(), input);
++                throw make_protocol_error(error.what(), input);
+             }
+             throw;
+         }
+--- a/tools/server/server-task.h
++++ b/tools/server/server-task.h
+@@ -48,6 +48,13 @@
+     STOP_TYPE_LIMIT,
+ };
+
++enum server_stop_cause {
++    STOP_CAUSE_UNKNOWN, STOP_CAUSE_EOS, STOP_CAUSE_WORD, STOP_CAUSE_CONTEXT_CAPACITY,
++    STOP_CAUSE_OUTPUT_BUDGET, STOP_CAUSE_TIME, STOP_CAUSE_INDENTATION,
++};
++
++server_stop_cause server_stop_cause_from_string(const std::string & cause);
++
+ struct task_params {
+     bool stream          = false;
+     bool include_usage   = false;
+@@ -351,6 +358,13 @@
+
+ struct server_task_result_cmpl_final : server_task_result {
+     std::string content;
++    std::optional<std::string> protocol_input;
++    std::string raw_generated_text;
++    server_stop_cause stop_cause = STOP_CAUSE_UNKNOWN;
++    bool context_shifted = false;
++    bool message_withheld = false;
++    bool has_parsed_message = false;
++    json generation_evidence = json::object();
+     llama_tokens tokens;
+
+     bool stream;
+@@ -394,14 +408,7 @@
+
+     virtual json to_json() override;
+
+-    virtual void update(task_result_state & state) override {
+-        is_updated = true;
+-        oaicompat_msg = state.update_chat_msg(content, false, oaicompat_msg_diffs);
+-
+-        oai_resp_id = state.oai_resp_id;
+-        oai_resp_reasoning_id = state.oai_resp_reasoning_id;
+-        oai_resp_message_id = state.oai_resp_message_id;
+-    }
++    virtual void update(task_result_state & state) override;
+
+     json to_json_non_oaicompat();
+
+@@ -425,6 +432,7 @@
+ };
+
+ struct server_task_result_cmpl_partial : server_task_result {
++    bool protocol_enabled = false;
+     std::string  content;
+     llama_tokens tokens;
+
+--- a/tools/server/server-task.cpp
++++ b/tools/server/server-task.cpp
+@@ -171,7 +171,7 @@
+         generated_text,
+         is_partial,
+         chat_parser_params);
+-    if (!new_msg.empty()) {
++    if (!new_msg.empty() || !chat_parser_params.no_action_tool_name.empty()) {
+         new_msg.set_tool_call_ids(generated_tool_call_ids, gen_tool_call_id);
+         chat_msg = new_msg;
+         auto all_diffs = common_chat_msg_diff::compute_diffs(msg_prv_copy, chat_msg);
+@@ -257,6 +257,84 @@
+     }
+ }
+
++static std::string stop_cause_to_str(server_stop_cause cause) {
++    switch (cause) {
++        case STOP_CAUSE_EOS: return "eos";
++        case STOP_CAUSE_WORD: return "word";
++        case STOP_CAUSE_CONTEXT_CAPACITY: return "context_capacity";
++        case STOP_CAUSE_OUTPUT_BUDGET: return "output_budget";
++        case STOP_CAUSE_TIME: return "time";
++        case STOP_CAUSE_INDENTATION: return "indentation";
++        default: return "unknown";
++    }
++}
++
++server_stop_cause server_stop_cause_from_string(const std::string & cause) {
++    for (auto value : {STOP_CAUSE_EOS, STOP_CAUSE_WORD, STOP_CAUSE_CONTEXT_CAPACITY,
++                       STOP_CAUSE_OUTPUT_BUDGET, STOP_CAUSE_TIME, STOP_CAUSE_INDENTATION}) {
++        if (cause == stop_cause_to_str(value)) { return value; }
++    }
++    return STOP_CAUSE_UNKNOWN;
++}
++
++static std::string protocol_hex(const std::string & raw) {
++    static const char hex[] = "0123456789abcdef";
++    std::string bytes;
++    for (unsigned char byte : raw) { bytes += hex[byte >> 4]; bytes += hex[byte & 15]; }
++    return bytes;
++}
++
++void server_task_result_cmpl_final::update(task_result_state & state) {
++    is_updated = true;
++    oai_resp_id = state.oai_resp_id;
++    oai_resp_reasoning_id = state.oai_resp_reasoning_id;
++    oai_resp_message_id = state.oai_resp_message_id;
++    if (state.chat_parser_params.no_action_tool_name.empty()) {
++        oaicompat_msg = state.update_chat_msg(content, false, oaicompat_msg_diffs);
++        return;
++    }
++    const std::string input = protocol_input.value_or(state.generated_text + content);
++    has_parsed_message = true;
++    generation_evidence = {{"stop_type", stop_type_to_str(stop)}, {"stop_cause", stop_cause_to_str(stop_cause)},
++                           {"context_shifted", context_shifted}, {"truncated", truncated},
++                           {"content_is_non_action", true}};
++    try {
++        if (stop == STOP_TYPE_LIMIT) {
++            generation_evidence["raw_hex"] = protocol_hex(raw_generated_text.empty() ? input : raw_generated_text);
++            generation_evidence["parser_input_hex"] = protocol_hex(input);
++            auto parsed = common_chat_parse(input, true, state.chat_parser_params);
++            auto prefixes = json::array();
++            for (const auto & call : parsed.tool_calls) {
++                prefixes.push_back({{"name", call.name}, {"arguments", call.arguments},
++                                    {"arguments_hex", protocol_hex(call.arguments)}});
++            }
++            generation_evidence["call_prefixes"] = prefixes;
++            generation_evidence["incomplete"] = true;
++            message_withheld = true;
++            if (stream) {
++                // The final event cannot revise a prefix already published by partial results.
++                oaicompat_msg = state.chat_msg;
++                oaicompat_msg_diffs.clear();
++            } else {
++                parsed.role = "assistant";
++                parsed.tool_calls.clear();
++                oaicompat_msg = parsed;
++            }
++        } else {
++            if (input.compare(0, state.generated_text.size(), state.generated_text) != 0) {
++                throw common_chat_protocol_error("Published prefix differs from final parser input", input,
++                                                "Published prefix differs from final parser input");
++            }
++            oaicompat_msg = state.update_chat_msg(input.substr(state.generated_text.size()), false, oaicompat_msg_diffs);
++        }
++    } catch (common_chat_protocol_error & error) {
++        generation_evidence["raw_hex"] = protocol_hex(raw_generated_text.empty() ? input : raw_generated_text);
++        generation_evidence["parser_input_hex"] = protocol_hex(input);
++        error.generation_evidence = generation_evidence;
++        throw;
++    }
++}
++
+ //
+ // completion_token_output
+ //
+@@ -414,7 +492,7 @@
+ json server_task_result_cmpl_final::to_json_oaicompat_chat() {
+     std::string finish_reason = "length";
+     common_chat_msg msg;
+-    if (!oaicompat_msg.empty()) {
++    if (has_parsed_message || !oaicompat_msg.empty()) {
+         msg = oaicompat_msg;
+     } else {
+         msg.role = "assistant";
+@@ -447,6 +525,8 @@
+         {"usage",              usage_json_oaicompat()},
+         {"id", oaicompat_cmpl_id}
+     };
++
++    if (!generation_evidence.empty()) { res["generation_evidence"] = generation_evidence; }
+
+     // extra fields for debugging purposes
+     if (verbose) {
+@@ -499,6 +579,8 @@
+         {"object",             "chat.completion.chunk"},
+     });
+
++    if (!generation_evidence.empty()) { deltas.back()["generation_evidence"] = generation_evidence; }
++
+     if (include_usage) {
+         // OpenAI API spec for chat.completion.chunks specifies an empty `choices` array for the last chunk when including usage
+         // https://platform.openai.com/docs/api-reference/chat_streaming/streaming#chat_streaming/streaming-choices
+@@ -527,7 +609,7 @@
+
+ json server_task_result_cmpl_final::to_json_oaicompat_resp() {
+     common_chat_msg msg;
+-    if (!oaicompat_msg.empty()) {
++    if (has_parsed_message || !oaicompat_msg.empty()) {
+         msg = oaicompat_msg;
+     } else {
+         msg.role = "assistant";
+@@ -593,6 +675,12 @@
+         }},
+     };
+
++    if (!generation_evidence.empty()) { res["generation_evidence"] = generation_evidence; }
++    if (message_withheld) {
++        res["status"] = "incomplete";
++        res["incomplete_details"] = {{"reason", "generation_limit"}};
++        for (auto & item : res["output"]) { item["status"] = "incomplete"; }
++    }
+     return res;
+ }
+
+@@ -710,6 +798,20 @@
+         server_sent_events.back().at("data")["timings"] = stats.to_json();
+     }
+
++    if (!generation_evidence.empty()) {
++        auto & response = server_sent_events.back()["data"]["response"];
++        response["generation_evidence"] = generation_evidence;
++        if (message_withheld) {
++            response["status"] = "incomplete";
++            response["incomplete_details"] = {{"reason", "generation_limit"}};
++            for (auto & item : response["output"]) { item["status"] = "incomplete"; }
++            auto terminal = server_sent_events.back();
++            terminal["event"] = "response.incomplete";
++            terminal["data"]["type"] = "response.incomplete";
++            server_sent_events.clear();
++            server_sent_events.push_back(std::move(terminal));
++        }
++    }
+     return server_sent_events;
+ }
+
+@@ -737,7 +839,7 @@
+     json content_blocks = json::array();
+
+     common_chat_msg msg;
+-    if (!oaicompat_msg.empty()) {
++    if (has_parsed_message || !oaicompat_msg.empty()) {
+         msg = oaicompat_msg;
+     } else {
+         msg.role = "assistant";
+@@ -987,6 +1089,7 @@
+ //
+ void server_task_result_cmpl_partial::update(task_result_state & state) {
+     is_updated = true;
++    protocol_enabled = !state.chat_parser_params.no_action_tool_name.empty();
+     if (is_begin) {
+         return; // begin marker only flushes headers, skip parsing
+     }
+@@ -1160,6 +1263,9 @@
+         }
+     }
+
++    if (protocol_enabled) {
++        for (auto & delta : deltas) { delta["generation_evidence"] = {{"content_is_non_action", true}}; }
++    }
+     return deltas;
+ }
+
+--- a/tools/server/server-context.cpp
++++ b/tools/server/server-context.cpp
+@@ -375,6 +375,10 @@
+     int64_t t_print_last = 0;
+     int32_t n_gen_last = 0;
+
++    server_stop_cause stop_cause = STOP_CAUSE_UNKNOWN;
++    bool context_shifted = false;
++    std::string raw_generated_text;
++
+     void reset() {
+         SLT_DBG(*this, "%s", "\n");
+
+@@ -382,6 +386,9 @@
+
+         last_nl_pos    = 0;
+         generated_text = "";
++        raw_generated_text.clear();
++        stop_cause = STOP_CAUSE_UNKNOWN;
++        context_shifted = false;
+         has_new_line   = false;
+         truncated      = false;
+         stop           = STOP_TYPE_NONE;
+@@ -623,6 +630,7 @@
+             if (pos != std::string::npos && (stop_pos == std::string::npos || pos < stop_pos)) {
+                 if (is_full_stop) {
+                     stop           = STOP_TYPE_WORD;
++                    stop_cause     = STOP_CAUSE_WORD;
+                     stopping_word  = word;
+                     has_next_token = false;
+                 }
+@@ -1970,6 +1978,9 @@
+         slot.sampled = result.tok;
+
+         slot.generated_text += token_str;
++        if (!slot.task->params.chat_parser_params.no_action_tool_name.empty()) {
++            slot.raw_generated_text += token_str;
++        }
+         if (slot.task->params.return_tokens) {
+             slot.generated_tokens.push_back(result.tok);
+         }
+@@ -2020,6 +2031,7 @@
+         if (!params_base.ctx_shift && slot.prompt.n_tokens() + 1 >= slot.n_ctx) {
+             slot.truncated      = true;
+             slot.stop           = STOP_TYPE_LIMIT;
++            slot.stop_cause     = STOP_CAUSE_CONTEXT_CAPACITY;
+             slot.has_next_token = false;
+
+             SLT_DBG(slot, "stopped due to running out of context capacity, prompt.n_tokens() = %d, task.n_tokens = %d, n_gen = %d, n_ctx = %d\n",
+@@ -2029,6 +2041,7 @@
+         // check the limits
+         if (slot.stats.n_gen > 0 && slot.has_next_token && !slot.has_budget()) {
+             slot.stop           = STOP_TYPE_LIMIT;
++            slot.stop_cause     = STOP_CAUSE_OUTPUT_BUDGET;
+             slot.has_next_token = false;
+
+             SLT_DBG(slot, "stopped by limit, n_gen = %d, n_predict = %d\n", (int) slot.stats.n_gen, slot.task->params.n_predict);
+@@ -2050,6 +2063,7 @@
+
+                     if (pos < slot.generated_text.size() && n_indent < slot.task->params.n_indent) {
+                         slot.stop           = STOP_TYPE_LIMIT;
++                        slot.stop_cause     = STOP_CAUSE_INDENTATION;
+                         slot.has_next_token = false;
+
+                         // cut the last line
+@@ -2077,6 +2091,7 @@
+             // if we have seen a new line, we stop after a certain time limit, but only upon another new line
+             if (slot.task->params.t_max_predict_ms > 0 && slot.stats.t_gen_ms() > slot.task->params.t_max_predict_ms) {
+                 slot.stop           = STOP_TYPE_LIMIT;
++                slot.stop_cause     = STOP_CAUSE_TIME;
+                 slot.has_next_token = false;
+
+                 SLT_DBG(slot, "stopped by time limit, n_gen = %d, t_max_predict_ms = %d ms\n", (int) slot.stats.n_gen, (int) slot.task->params.t_max_predict_ms);
+@@ -2085,6 +2100,7 @@
+
+         if (llama_vocab_is_eog(vocab, result.tok)) {
+             slot.stop           = STOP_TYPE_EOS;
++            slot.stop_cause     = STOP_CAUSE_EOS;
+             slot.has_next_token = false;
+
+             SLT_DBG(slot, "%s", "stopped by EOS\n");
+@@ -2231,6 +2247,13 @@
+         // keep copy of last generated text for debugging purposes
+         if (slots_debug) {
+             slot.debug_generated_text = slot.generated_text;
++        }
++
++        if (!slot.task->params.chat_parser_params.no_action_tool_name.empty()) {
++            res->protocol_input = slot.generated_text;
++            res->raw_generated_text = slot.raw_generated_text;
++            res->stop_cause = slot.stop_cause;
++            res->context_shifted = slot.context_shifted;
+         }
+
+         // in stream mode, content and tokens are already in last partial chunk
+@@ -3172,6 +3195,7 @@
+                 }
+
+                 slot.truncated = true;
++                slot.context_shifted = true;
+             }
+         });
+
+@@ -4865,6 +4889,9 @@
+                 // has next data, continue
+                 return true;
+
++            } catch (const common_chat_protocol_error & e) {
++                output = format_error(res_type, e.response_error());
++                return false;
+             } catch (const std::exception & e) {
+                 json error_json = format_error_response(e.what(), ERROR_TYPE_SERVER);
+                 output = format_error(res_type, error_json);
+--- a/tools/server/server.cpp
++++ b/tools/server/server.cpp
+@@ -58,6 +58,11 @@
+         error_type error;
+         try {
+             return func(req);
++        } catch (const common_chat_protocol_error & e) {
++            auto res = std::make_unique<server_http_res>();
++            res->status = 500;
++            res->data = safe_json_to_str({{"error", e.response_error()}});
++            return res;
+         } catch (const std::invalid_argument & e) {
+             // treat invalid_argument as invalid request (400)
+             error = ERROR_TYPE_INVALID_REQUEST;

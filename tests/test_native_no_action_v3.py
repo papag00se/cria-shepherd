@@ -45,13 +45,13 @@ def test_framing_before_closed_reasoning_and_exact_answer(native_probe, prefill,
 @pytest.mark.parametrize('prefill', [False, True])
 @pytest.mark.parametrize('preamble', ['', '\n', ' \t\r\n', 'Literal preamble. '])
 @pytest.mark.parametrize('closing', ['', '</Tho', '</Thought'])
-def test_truncated_reasoning_keeps_structural_rejection(native_probe, prefill, preamble, closing):
+def test_limit_reasoning_keeps_structural_channel_separation(native_probe, prefill, preamble, closing):
     raw = ('' if prefill else preamble + '<Thought>') + 'unfinished 雪' + closing
-    result = native_probe(raw, template_text=reasoning_template(prefill, preamble), prefixes=True, stop_limit=True)
-    assert not result['complete_parse']
-    assert raw.encode().hex() in result['parse_error']
-    assert raw.encode().hex() in result['stream_error']
-    assert 'buffered_wire' not in result and 'streamed_final_wire' not in result
+    result = native_probe(raw, template_text=reasoning_template(prefill, preamble), prefixes=True, stop_limit=True, final_owner=True)
+    assert result['complete_parse']
+    assert result['buffered_wire']['generation_evidence']['raw_hex'] == raw.encode().hex()
+    assert result['buffered_wire']['choices'][0]['finish_reason'] == 'length'
+    assert result['streamed_final_wire'][-1]['choices'][0]['finish_reason'] == 'length'
     expected_preamble = preamble if not prefill and preamble.strip() else ''
     for prefix in result['prefixes']:
         assert prefix['append_only'] and prefix['nondecreasing_calls']

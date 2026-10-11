@@ -64,7 +64,7 @@ def native_probe(tmp_path_factory):
     case_index = 0
 
     def parse(text='', *, parallel=False, body=None, enabled=True, prefixes=False, grammar=None, definition=None,
-              template_text=None, raw_endpoint=False, stop_limit=False, endpoint='chat'):
+              template_text=None, raw_endpoint=False, stop_limit=False, endpoint='chat', **native_case):
         nonlocal case_index
         answer_path = ANSWER
         if definition is not None:
@@ -77,6 +77,7 @@ def native_probe(tmp_path_factory):
         case = {'request': body if body is not None else request(parallel_tool_calls=parallel),
                 'output': text, 'prefixes': prefixes, 'raw_endpoint': raw_endpoint,
                 'stop_limit': stop_limit, 'endpoint': endpoint}
+        case.update(native_case)
         if grammar is not None:
             case['grammar_output'] = grammar
         completed = subprocess.run([str(binary), str(template_path), str(answer_path) if enabled else '-'],
@@ -413,18 +414,20 @@ def test_default_automatic_choice_activates(native_probe):
 @pytest.mark.parametrize('preamble', ['', ' \n', 'Earlier content. '])
 @pytest.mark.parametrize('closing', ['', '</Tho', '</Thought'])
 def test_limit_clipped_reasoning_never_becomes_final_content(native_probe, preamble, closing):
+    # V2/V3 treated LIMIT as completed input and threw; final ownership now preserves
+    # an incomplete turn and its raw bytes without converting reasoning into prose.
     raw = preamble + '<Thought>unfinished 雪' + closing
-    result = native_probe(raw, prefixes=True, stop_limit=True)
-    assert not result['complete_parse']
-    assert raw.encode().hex() in result['parse_error']
-    assert result['error_wire']['code'] == 500
-    assert 'buffered_wire' not in result
-    assert 'streamed_final_wire' not in result
-    assert raw.encode().hex() in result['stream_error']
+    result = native_probe(raw, prefixes=True, stop_limit=True, final_owner=True)
+    assert result['complete_parse']
+    assert result['content'] == (preamble if preamble.strip() else '')
+    assert result['reasoning'].startswith('unfinished 雪')
+    assert result['calls'] == []
+    assert result['buffered_wire']['choices'][0]['finish_reason'] == 'length'
+    assert result['buffered_wire']['generation_evidence']['raw_hex'] == raw.encode().hex()
+    assert result['streamed_final_wire'][-1]['choices'][0]['finish_reason'] == 'length'
     assert len(result['prefixes']) == len(raw.encode()) + 1
     assert all(p['append_only'] and p['nondecreasing_calls'] for p in result['prefixes'])
     assert all('<Thought>' not in p['content'] and 'unfinished' not in p['content'] for p in result['prefixes'])
-
 
 @pytest.mark.parametrize('preamble', ['', ' \n', 'Earlier content. '])
 def test_limit_closed_reasoning_preserves_content_and_length_finish(native_probe, preamble):

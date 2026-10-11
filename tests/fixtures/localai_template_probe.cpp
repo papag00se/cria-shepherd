@@ -54,6 +54,31 @@ template <typename T> static void prepared_apply(const T & result, common_chat_p
     result.apply_chat_parser(target);
 }
 
+static server_task_result_cmpl_final final_result(const common_json & test, const std::string & raw, bool stream) {
+    server_task_result_cmpl_final result{};
+    result.stream = stream;
+    result.stop = test.value("stop", test.value("stop_limit", false) ? "limit" : "eos") == "limit" ? STOP_TYPE_LIMIT :
+                  test.value("stop", "eos") == "word" ? STOP_TYPE_WORD : STOP_TYPE_EOS;
+    result.content = stream ? "" : raw;
+#ifdef COMMON_CHAT_HAS_PROTOCOL_EVIDENCE
+    result.protocol_input = raw;
+    result.raw_generated_text = test.value("raw_sampled", raw);
+    result.stop_cause = server_stop_cause_from_string(test.value("cause", "unknown"));
+    result.context_shifted = test.value("context_shifted", false);
+    result.truncated = test.value("truncated", false);
+#endif
+    return result;
+}
+
+static common_json error_json(const std::exception & error) {
+#ifdef COMMON_CHAT_HAS_PROTOCOL_EVIDENCE
+    if (auto protocol = dynamic_cast<const common_chat_protocol_error *>(&error)) {
+        return protocol->response_error();
+    }
+#endif
+    return format_error_response(error.what(), ERROR_TYPE_SERVER);
+}
+
 int main(int argc, char ** argv) {
     common_json out = common_json::object();
     try {
@@ -114,32 +139,47 @@ int main(int argc, char ** argv) {
                 native.value("generation_prompt", "") + test.at("grammar_output").get<std::string>();
             out["grammar_accepts"] = grammar_accepts(out.at("grammar"), grammar_input);
         }
-        const auto raw = test.value("output", "");
+        std::string raw = test.value("output", "");
+        if (test.contains("output_hex")) {
+            const auto bytes = test.at("output_hex").get<std::string>();
+            raw.clear();
+            for (size_t i = 0; i < bytes.size(); i += 2) {
+                raw += char(std::stoul(bytes.substr(i, 2), nullptr, 16));
+            }
+        }
+        out["raw_hex"] = hex_bytes(raw);
         out["raw"] = raw;
         task_result_state buffered(params.chat_parser_params);
         std::vector<common_chat_msg_diff> diffs;
         try {
-            auto msg = buffered.update_chat_msg(raw, false, diffs);
+            auto final = final_result(test, raw, false);
+            common_chat_msg msg;
+            if (test.value("final_owner", false)) {
+                final.update(buffered);
+                msg = final.oaicompat_msg;
+            } else { msg = buffered.update_chat_msg(raw, false, diffs); }
             auto parsed_message = message_json(msg);
             for (const auto & item : parsed_message.items()) { out[item.key()] = item.value(); }
             out["complete_parse"] = true;
             out["ids"] = buffered.generated_tool_call_ids;
-            server_task_result_cmpl_final final;
-            final.stop = test.value("stop_limit", false) ? STOP_TYPE_LIMIT : STOP_TYPE_EOS;
-            final.oaicompat_msg = msg;
-            final.oaicompat_msg_diffs = diffs;
+            if (!test.value("final_owner", false)) {
+                final.oaicompat_msg = msg;
+                final.oaicompat_msg_diffs = diffs;
+            }
             out["buffered_wire"] = final.to_json_oaicompat_chat();
+            out["buffered_responses_wire"] = final.to_json_oaicompat_resp();
             out["stream_final_wire"] = final.to_json_oaicompat_chat_stream();
         } catch (const std::exception & error) {
             out["complete_parse"] = false;
             out["parse_error"] = error.what();
-            out["error_wire"] = format_error_response(error.what(), ERROR_TYPE_SERVER);
+            out["error_wire"] = error_json(error);
         }
         if (test.value("prefixes", false)) {
             task_result_state streamed(params.chat_parser_params);
             common_json prefixes = common_json::array();
             bool failed = false;
-            for (size_t i = 0; i <= raw.size(); ++i) {
+            const size_t published = test.value("published_bytes", raw.size());
+            for (size_t i = 0; i <= published; ++i) {
                 common_json prefix = {{"bytes", i}};
                 try {
                     auto previous = streamed.chat_msg;
@@ -184,14 +224,22 @@ int main(int argc, char ** argv) {
             out["prefixes"] = prefixes;
             if (!failed) {
                 try {
-                    auto msg = streamed.update_chat_msg("", false, diffs);
+                    auto final = final_result(test, raw, true);
+                    common_chat_msg msg;
+                    if (test.value("final_owner", false)) {
+                        final.update(streamed);
+                        msg = final.oaicompat_msg;
+                    } else { msg = streamed.update_chat_msg("", false, diffs); }
                     out["streamed"] = message_json(msg);
-                    server_task_result_cmpl_final final;
-                    final.stop = test.value("stop_limit", false) ? STOP_TYPE_LIMIT : STOP_TYPE_EOS;
-                    final.oaicompat_msg = msg;
-                    final.oaicompat_msg_diffs = diffs;
+                    if (!test.value("final_owner", false)) {
+                        final.oaicompat_msg = msg;
+                        final.oaicompat_msg_diffs = diffs;
+                    }
                     out["streamed_final_wire"] = final.to_json_oaicompat_chat_stream();
-                } catch (const std::exception & error) { out["stream_error"] = error.what(); }
+                    out["streamed_final_responses_wire"] = final.to_json_oaicompat_resp_stream();
+                } catch (const std::exception & error) {
+                    out["stream_error"] = error.what(); out["stream_error_wire"] = error_json(error);
+                }
             }
         }
     } catch (const std::invalid_argument & error) {
