@@ -6300,7 +6300,7 @@ def _frame_for_item(messages: list[dict], item: str, summary: str, idx: int, tot
         # so turning the planner off is a fair 'coder without a planner', not a bare passthrough.
         system = (prompts.load("coder_system") + caller_block + (f"\n\n{hint}" if hint else "")
                   + (f"\n\n{done_block.rstrip()}" if prior_work else ""))
-        out: list[dict] = [{"role": "system", "content": system}]
+        out: list[dict] = [{"role": "system", "content": system, **_caller_span_hint(caller)}]
         for m in messages:
             if m.get("role") in ("system", "developer"):
                 continue  # harness agent boilerplate → replaced by cria's coder_system above
@@ -6321,7 +6321,8 @@ def _frame_for_item(messages: list[dict], item: str, summary: str, idx: int, tot
               else _item_prompt(item, summary, idx, total, workspace_root, gate_red))
     hint_block = f"{hint}\n\n" if hint else ""
     out: list[dict] = [{"role": "system",
-                        "content": prompts.load("coder_system") + caller_block + "\n\n" + hint_block + done_block + prompt}]
+                        "content": prompts.load("coder_system") + caller_block + "\n\n" + hint_block + done_block + prompt,
+                        **_caller_span_hint(caller)}]
     acked = False
     for m in messages:
         if m.get("role") in ("system", "developer"):
@@ -6339,6 +6340,13 @@ def _frame_for_item(messages: list[dict], item: str, summary: str, idx: int, tot
 
 # A file-looking token in a step's text: `test_resolve_handle.py`, src/main.go, "README.md".
 _STEP_ARTIFACT = groundtruth._STEP_ARTIFACT   # defined one level down; see the note there
+
+
+def _caller_span_hint(caller: str) -> dict:
+    """The boundary of the harness's own instructions inside the coder system message, carried for the
+    context floor (principle 24): it may reduce exactly this span, labelled, before it folds any
+    conversation turn. Empty when the caller sent none."""
+    return {bodykeys.CALLER_SPAN: caller} if caller else {}
 
 
 def step_artifacts_on_disk(step: str, root: str | None) -> list[str]:

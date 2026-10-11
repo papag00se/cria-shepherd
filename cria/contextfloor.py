@@ -144,6 +144,7 @@ class FloorReport:
     turns_dropped: int = 0
     protected_dropped: int = 0  # lever 5: turns dropped INSIDE the protected span (last resort)
     orphans_removed: int = 0
+    caller_reduced: int = 0     # lever 2b: harness-instruction spans swapped for a labelled stand-in
     over_budget: bool = False  # even after every lever the request still won't fit — surfaced loudly
     fields: dict = field(default_factory=dict)
 
@@ -157,6 +158,7 @@ class FloorReport:
             "outputs_reduced": self.outputs_reduced, "turns_dropped": self.turns_dropped,
             "protected_dropped": self.protected_dropped,
             "orphans_removed": self.orphans_removed, "over_budget": self.over_budget,
+            **({"caller_reduced": self.caller_reduced} if self.caller_reduced else {}),
         }
 
 
@@ -299,6 +301,8 @@ def fit(messages: list[dict], tools, *, window: int, reserve: int,
     fits_at_start = rep.msg_tokens_before <= msg_budget and not rep.tools_compressed
     work = list(messages)
     if rep.msg_tokens_before > msg_budget:
+        # --- Lever 2b: the harness's own standing instructions go BEFORE any conversation evidence.
+        work, rep.caller_reduced = _reduce_caller_spans(work)
         # --- Lever 3: reduce the bulkiest tool OUTPUTS before deleting any turn. ---
         work, rep.outputs_reduced = _reduce_tool_outputs(work, msg_budget)
         # --- Lever 4: drop oldest droppable turns until it fits. ---
@@ -329,6 +333,37 @@ def fit(messages: list[dict], tools, *, window: int, reserve: int,
     # tail alone exceed the window), surface it rather than pretend.
     rep.over_budget = over
     return work, tools, rep
+
+
+def _reduce_caller_spans(messages: list[dict]) -> tuple[list[dict], int]:
+    """Swap each system message's CALLER SPAN — the calling harness's own instructions, whose exact
+    text the message's author carried in ``bodykeys.CALLER_SPAN`` — for a labelled stand-in.
+
+    WHY FIRST. The span rides in the system message, which the floor protects, so under pressure it was
+    kept whole while the conversation's own evidence was folded: phi4 A5 (Codex persona + skills, 19.4 KB
+    ~4.8k of 16,384 tokens) lost 26 turns, the Importer/pom read results became first-line stubs, and the
+    coder — told by its record that it had already read them — never read them again. What the model
+    DID this session outranks what the harness said about itself before the session began. cria's own
+    system text, the tool hint and the task are not in the span and stay protected.
+
+    Boundary is carried, not guessed (#24); a span the message no longer contains is left alone. The
+    reduction is labelled with the reason (#5, #22) and never silent. Whole span or nothing: a clipped
+    instruction block would be a different, truncated instruction (#5b)."""
+    out, n = messages, 0
+    for i, m in enumerate(messages):
+        span = m.get(bodykeys.CALLER_SPAN) if isinstance(m, dict) else None
+        c = m.get("content") if isinstance(m, dict) else None
+        if not (m.get("role") in ("system", "developer") and isinstance(span, str) and span
+                and isinstance(c, str) and span in c):
+            continue
+        note = prompts.render("caller_instructions_reduced", chars=f"{len(span):,}").strip()
+        if est_tokens(note) >= est_tokens(span):
+            continue                      # a stand-in must save something
+        if out is messages:
+            out = list(messages)
+        out[i] = {**m, "content": c.replace(span, note, 1)}
+        n += 1
+    return out, n
 
 
 def _compress_tools(tools, budget_est: int) -> tuple[list, int, int]:

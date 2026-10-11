@@ -49,6 +49,12 @@ CONTEXT_REFIT_NO_CHANGE = "cria_context_refit_no_change"
 #: Kept through proxy/framing, then stripped from the message object at the wire.
 CALLER_INSTRUCTIONS = "cria_caller_instructions"
 
+#: On a system message: the EXACT substring of its content that is the calling harness's own
+#: instructions (the part ``CALLER_INSTRUCTIONS`` folded in).  It is a boundary carried by the author
+#: of the message, so the context floor can reduce that span — and only that span — under window
+#: pressure, before it deletes any conversation evidence.  Consumed (and stripped) at the wire.
+CALLER_SPAN = "cria_caller_span"
+
 #: A typed missing-file completion remediation owns this coder body.  The loop uses it only as
 #: wire-visible provenance for the suspended plan cursor; it must never reach the model server.
 COMPLETION_REMEDIATION = "cria_completion_remediation"
@@ -71,4 +77,4 @@ RUMINATION = "cria_rumination"
 #: Every key above. The wire strips this set wholesale, so adding a key here is all it takes to keep
 #: it off the API — the thing five scattered literals could not guarantee.
 ALL = (MERGE_TURNS, OUTPUT_RESERVE, LOST_CALL, PINNED_TASK, CONTEXT_REFIT_NO_CHANGE,
-       CALLER_INSTRUCTIONS, COMPLETION_REMEDIATION, NOTES, RUMINATION, FENCED_REFUSED)
+       CALLER_INSTRUCTIONS, CALLER_SPAN, COMPLETION_REMEDIATION, NOTES, RUMINATION, FENCED_REFUSED)

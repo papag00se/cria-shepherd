@@ -489,7 +489,8 @@ class Upstream:
             out.pop(_k, None)
         # Caller-instruction provenance is a cria message hint, never an upstream API field.
         if isinstance(out.get("messages"), list):
-            out["messages"] = [{k: v for k, v in m.items() if k != bodykeys.CALLER_INSTRUCTIONS}
+            out["messages"] = [{k: v for k, v in m.items()
+                                if k not in (bodykeys.CALLER_INSTRUCTIONS, bodykeys.CALLER_SPAN)}
                                if isinstance(m, dict) else m for m in out["messages"]]
         sent_estimate = contextfloor.est_total(out.get("messages"), out.get("tools"))
         # The pre-frame observer never rides in ``out``.  It is correlated here, after every wire
