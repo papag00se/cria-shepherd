@@ -1,0 +1,11 @@
+{
+ "source": "capture 20261011T005747-01a129f7 CALL 0019: first edit_file of the reply (old_string empty, whole pom in new_string)",
+ "tool_call": {
+  "id": "pPvI9mFojR2zcvb5KcWvOZ1yZkhl9hA2",
+  "type": "function",
+  "function": {
+   "name": "edit_file",
+   "arguments": "{\"path\": \"pom.xml\", \"old_string\": \"\", \"new_string\": \"<project xmlns=\\\"http://maven.apache.org/POM/4.0.0\\\"\\n         xmlns:xsi=\\\"http://www.w3.org/2001/XMLSchema-instance\\\"\\n         xsi:schemaLocation=\\\"http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd\\\">\\n    <modelVersion>4.0.0</modelVersion>\\n    <groupId>com.example</groupId>\\n    <artifactId>supplier-feed-importer</artifactId>\\n    <version>1.0-SNAPSHOT</version>\\n\\n    <dependencies>\\n        <dependency>\\n            <groupId>org.apache.commons</groupId>\\n            <artifactId>commons-csv</artifactId>\\n            <version>1.9.0</version>\\n        </dependency>\\n    </dependencies>\\n</project>\"}"
+  }
+ }
+}

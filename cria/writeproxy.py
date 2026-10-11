@@ -1573,6 +1573,16 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
                         cmd = _refusal_command(prompts.load("edit_missing_new_string"))
                         if rlog is not None:
                             rlog.emit("writeproxy.edit_missing_arg", tool=name, arg="new_string")
+                    elif args.get("old_string") == "":
+                        # AN EMPTY old_string IS NOT A PLACE. It "matched" len(file)+1 boundaries, so the
+                        # edit report said "matches 191 places — add surrounding lines" about a snippet
+                        # with no lines to add to (phi4 A4 0024/0026/0027: a whole-file intent sent through
+                        # the edit tool, four times). It names no text, so the call is refused here — as a
+                        # call that did not run, so no edit-failure or rewrite counter hears of it. cria
+                        # authors nothing: no content is chosen and the file is untouched.
+                        cmd = _refusal_command(prompts.load("edit_empty_old_string"))
+                        if rlog is not None:
+                            rlog.emit("writeproxy.edit_empty_old_string", tool=name, path=str(path))
                     else:
                         old, new = str(args.get("old_string") or ""), str(args.get("new_string") or "")
                         cmd = _edit_command(str(path), old, new)
