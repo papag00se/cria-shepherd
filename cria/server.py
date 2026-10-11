@@ -736,7 +736,14 @@ def _harden_compaction_reply(comp: dict, body: dict, provider, server, rlog, ses
     # direction is an irrelevant fact, never a deletion and never a falsehood (#2).
     if text and inventory:
         text = _briefing_disk_truth(text, inventory, rlog)
-    facts = "\n\n".join(t for t in (facts, inventory, checks) if t)
+    # WHEN NO MODEL PROSE SURVIVED, THE NEXT WINDOW STILL GETS WHAT THE TOOLS DID. A21/A10: 29 of 29
+    # handoffs were rejected and every later window held only a file listing. The rejected prose is
+    # the part that fabricates progress; the record of calls and their confirmed outcomes is the part
+    # cria owns (`selfcompact.work_ledger` — cria's own templates over structured fields, so it carries
+    # no instruction and no claim beyond what a tool confirmed).
+    ledger = (selfcompact.work_ledger(_compaction_messages(body.get("messages", [])))
+              if not text else "")
+    facts = "\n\n".join(t for t in (facts, inventory, ledger, checks) if t)
     # Rewrite when there is anything to append OR when the reply's own prose was DROPPED above —
     # otherwise a dropped summary silently survives as the untouched original content.
     if facts or text != _text_of(comp).strip():

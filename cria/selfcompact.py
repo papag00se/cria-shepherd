@@ -28,8 +28,8 @@ import json
 import re
 from dataclasses import dataclass
 
-from . import jsontext, probegate, prompts, toolargs
-from .content_reduce import est_tokens
+from . import jsontext, probegate, prompts, toolargs, writeproxy
+from .content_reduce import clip, est_tokens
 
 # Tunables in TOKENS. TRIGGER is operator-tunable via [context] trigger_compaction; the rest are
 # code constants (they don't vary by environment).
@@ -883,6 +883,71 @@ def stub_old_write_args(msgs: list[dict]) -> list[dict]:
     return [m if (i == last_write or not m.get("tool_calls"))
             else _stub_write_args(m, landed, i, last_by_path)
             for i, m in enumerate(msgs)]
+
+
+_LEDGER_EXEC_ARGS = ("cmd", "command")
+_LEDGER_CMD_CAP = 300
+
+
+_LEDGER_COUNT = re.compile(r"^(- .*?)(?: \(x(\d+)\))?$")
+
+
+def _ledger_head() -> str:
+    return prompts.render("compaction_work_ledger", lines="").strip()
+
+
+def work_ledger(msgs: list[dict]) -> str:
+    """A deterministic record of what the coder's tools DID in ``msgs`` — "" when nothing qualifies.
+
+    The harness handshake discards a model-written briefing whenever a focused validator rejects it
+    (a forward plan, a narrowed scope), and the next window then had only a workspace listing. The
+    briefing writer is the part that fabricates progress; this is the part cria owns. Each line is
+    cria's own template over structured fields — the tool name, the target path, the command string
+    the coder issued, and whether the paired result CONFIRMED the write (`write_landed`) — never a
+    sentence lifted from a tool's output, so it cannot carry an instruction and cannot claim more
+    than the tool confirmed. It says nothing about the task (the harness keeps the task in the
+    window) and nothing about what to do next.
+
+    A ledger an EARLIER handoff carried is read back out of the history (it rides there as the
+    harness's own summary turn) and merged in front, identical lines counted — otherwise every
+    compaction would forget everything before the previous one, the exact loss this exists to stop."""
+    head = _ledger_head()
+    counts: dict[str, int] = {}
+
+    def add(line: str, n: int = 1) -> None:
+        counts[line] = counts.get(line, 0) + n
+
+    for m in msgs:  # carried-forward ledgers, oldest first
+        t = _text(m) if isinstance(m, dict) and not m.get("tool_calls") else ""
+        if head in t:
+            for raw in t.split(head, 1)[1].lstrip("\n").splitlines():
+                hit = _LEDGER_COUNT.match(raw.strip())
+                if not hit:
+                    break
+                add(hit.group(1), int(hit.group(2) or 1))
+    landed = _write_outcomes(msgs)
+    for m in msgs:
+        if not isinstance(m, dict):
+            continue
+        for tc in (m.get("tool_calls") or []):
+            fn = (tc or {}).get("function") or {}
+            path = toolargs.write_path(tc)
+            if path:
+                outcome = landed.get(tc.get("id"))
+                state = {True: "confirmed written", False: "NOT written (the tool refused or failed it)",
+                         None: "no result recorded"}[outcome]
+                add(f"- {fn.get('name')} {path}: {state}")
+                continue
+            args = toolargs.parse_args(fn.get("arguments"))
+            cmd = next((str(args[k]) for k in _LEDGER_EXEC_ARGS if args.get(k)), "")
+            if cmd and not writeproxy.is_crias_own(cmd):  # cria's own gate/lowering is not the coder's act
+                cmd = cmd.strip()
+                cmd = clip(cmd, _LEDGER_CMD_CAP, f" [command continues; {len(cmd)} characters in all]")
+                add("- ran: " + cmd.replace("\n", " \u23ce "))
+    if not counts:
+        return ""
+    lines = "\n".join(f"{k} (x{n})" if n > 1 else k for k, n in counts.items())
+    return prompts.render("compaction_work_ledger", lines=lines)
 
 
 def compact(messages: list[dict], summarize, state: CompactState, *,

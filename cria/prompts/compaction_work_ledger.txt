@@ -1,0 +1,2 @@
+WHAT THE TOOLS DID IN THE EARLIER TURNS (derived from the recorded tool calls and their results — a record of events, not a claim about whether the work is correct):
+{{LINES}}
