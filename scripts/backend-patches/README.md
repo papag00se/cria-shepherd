@@ -68,8 +68,13 @@ prepared state. Wider generic format support is not claimed.
 Reasoning delimiters come from the analyzer. A mandatory reasoning alternative
 and a content parser that stops at those delimiters prevent an unfinished block
 from falling back to final prose, including whitespace/preamble and incomplete
-closing prefixes. Closed reasoning and earlier content remain lossless. Tests use
-the actual STOP_TYPE_LIMIT/length response formatting and actual partial result
+closing prefixes. The upstream framing-space parser consumes whitespace before
+the first reasoning block; it never becomes assistant content or moves behind reasoning in rendered
+history. Nonwhitespace preambles remain content, and decoded message text retains
+all whitespace inside its JSON string. Both generation-prefill variants, closed
+and truncated reasoning, and real calls are covered. Closed reasoning and earlier
+content remain lossless. Tests use the actual STOP_TYPE_LIMIT/length response
+formatting and actual partial result
 class for every prefix; the adapter is not changed to compensate.
 
 For phi4, the definition is
@@ -91,36 +96,37 @@ From the cria checkout, export pinned source into a **new private directory**.
 The following commands assume the directories do not already exist:
 
 ```sh
-mkdir /tmp/phi4-no-action-source-v2
+mkdir /tmp/phi4-no-action-source-v3
 git -C ~/src/llama.cpp-cuda archive 8345f333951c661d166b00e6f9362e553768f292 \
-  | tar -x -C /tmp/phi4-no-action-source-v2
-patch -d /tmp/phi4-no-action-source-v2 -p1 \
+  | tar -x -C /tmp/phi4-no-action-source-v3
+patch -d /tmp/phi4-no-action-source-v3 -p1 \
   < scripts/backend-patches/8345-serial-tool-call.patch
-patch --fuzz=0 -d /tmp/phi4-no-action-source-v2 -p1 \
+patch --fuzz=0 -d /tmp/phi4-no-action-source-v3 -p1 \
   < scripts/backend-patches/8345-named-tool-choice.patch
-patch --fuzz=0 -d /tmp/phi4-no-action-source-v2 -p1 \
+patch --fuzz=0 -d /tmp/phi4-no-action-source-v3 -p1 \
   < scripts/backend-patches/8345-no-action-tool.patch
-cmake -S /tmp/phi4-no-action-source-v2 -B /tmp/phi4-no-action-build-v2 \
+cmake -S /tmp/phi4-no-action-source-v3 -B /tmp/phi4-no-action-build-v3 \
   -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=ON -DCMAKE_BUILD_RPATH_USE_ORIGIN=ON \
   -DGGML_CUDA=OFF -DGGML_NATIVE=OFF -DLLAMA_CURL=OFF \
   -DLLAMA_BUILD_TESTS=ON -DLLAMA_BUILD_SERVER=ON
-cmake --build /tmp/phi4-no-action-build-v2 --target llama-server \
+cmake --build /tmp/phi4-no-action-build-v3 --target llama-server \
   test-chat-auto-parser test-chat-template test-chat-peg-parser -j 8
-cd /tmp/phi4-no-action-source-v2
-/tmp/phi4-no-action-build-v2/bin/test-chat-auto-parser
-/tmp/phi4-no-action-build-v2/bin/test-chat-template
-/tmp/phi4-no-action-build-v2/bin/test-chat-peg-parser
+cd /tmp/phi4-no-action-source-v3
+/tmp/phi4-no-action-build-v3/bin/test-chat-auto-parser
+/tmp/phi4-no-action-build-v3/bin/test-chat-template
+/tmp/phi4-no-action-build-v3/bin/test-chat-peg-parser
 ```
 
 From the cria checkout:
 
 ```sh
-LOCALAI_PROBE_SOURCE=/tmp/phi4-no-action-source-v2 \
-LOCALAI_PROBE_LIBRARY=/tmp/phi4-no-action-build-v2/bin \
+LOCALAI_PROBE_SOURCE=/tmp/phi4-no-action-source-v3 \
+LOCALAI_PROBE_LIBRARY=/tmp/phi4-no-action-build-v3/bin \
   python -m pytest -q tests/test_localai_tool_template.py \
-    tests/test_native_named_tool_choice.py tests/test_native_protocol_error_propagation.py
-LOCALAI_PROBE_SOURCE=/tmp/phi4-no-action-source-v2 \
-LOCALAI_PROBE_LIBRARY=/tmp/phi4-no-action-build-v2/bin \
+    tests/test_native_named_tool_choice.py tests/test_native_no_action_v3.py \
+    tests/test_native_protocol_error_propagation.py
+LOCALAI_PROBE_SOURCE=/tmp/phi4-no-action-source-v3 \
+LOCALAI_PROBE_LIBRARY=/tmp/phi4-no-action-build-v3/bin \
   python -m pytest
 ```
 
@@ -131,6 +137,14 @@ server request preparation, parser-parameter transfer, result state, native
 weights and uses no inference, network or GPU. Vocabulary-dependent metadata is
 excluded from schema evaluation because these tests operate on bytes; the
 rendered grammar is independently evaluated by the native grammar engine.
+Set `LOCALAI_PROBE_RECEIPTS` to a new directory to retain every native case,
+template, definition, complete response, stderr and matching probe executable.
+The separate mapper-error fixture compares actual exception class and message
+against ordinary direct mapping, for both final and partial parses. Disabled
+ordinary mapper errors propagate unchanged. Active errors and untrusted private
+tags retain complete raw-byte evidence; the decision uses detected tag state,
+never error-message matching.
+
 Every byte prefix exercises native diffs, append-only content, nondecreasing
 real calls and zero synthetic answer deltas. Pinned serial-only golden fixtures
 also compare disabled rendering, grammar and parser bytes.
@@ -165,8 +179,10 @@ second variable, and cria has no wire rewrite or regex fallback for this path.
 is not coding usefulness or truthful completion. No inference, benchmark replay,
 campaign resume, service restart, config change or merge was performed for this
 unit. Full build/source/probe/test receipts are under
-`~/.cria/validation/localai-phi4-install/no-action-native-v2/`. V1 source, build,
-receipts and the parent hybrid remain frozen. The original raw
+`~/.cria/validation/localai-phi4-install/no-action-native-v3/`. V1 and V2 sources,
+builds, receipts and parent runtime candidates remain frozen. V3 changes only
+framing whitespace and mapper error identity; the independent named patch,
+adapter, definition and menu golden bytes remain unchanged. The original raw
 controls, rejected prototype and prior installation state remain preserved in
 the parent validation directory. Parent must verify real execution, exact file
 bytes, final delivery, truthful checks and runtime/GPU restrictions before
@@ -183,3 +199,10 @@ and does not retry it as a transient timeout. The upstream error then propagates
 `tests/test_native_protocol_error_propagation.py` proves this with fake upstream
 responses. No new retry policy was added, and automatic continued work is not
 claimed. Parent must verify actual error propagation during live validation.
+
+The authoritative native `STOP_TYPE_LIMIT` event currently reaches the same
+strict final parse as a malformed completed reply. Its 500 is therefore
+classified as unavailable by existing cria handling. Parent is separately
+reviewing truthful length-stop semantics before any recovery decision. This
+V3 unit changes neither stop handling nor retries and makes no campaign readiness
+claim.

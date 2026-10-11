@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import shutil
 import subprocess
+import tempfile
 
 import pytest
 
@@ -51,9 +52,20 @@ def native_probe(tmp_path_factory):
         '-lllama', '-lggml', '-lggml-base', '-o', str(binary)]
     completed = subprocess.run(compile_command, capture_output=True, text=True)
     assert completed.returncode == 0, completed.stderr
+    receipts = None
+    if os.environ.get('LOCALAI_PROBE_RECEIPTS'):
+        parent = Path(os.environ['LOCALAI_PROBE_RECEIPTS'])
+        parent.mkdir(parents=True, exist_ok=True)
+        receipts = Path(tempfile.mkdtemp(prefix='native-', dir=parent))
+        (receipts / 'compile-command.json').write_text(json.dumps(compile_command, indent=2))
+        (receipts / 'compile.stdout').write_text(completed.stdout)
+        (receipts / 'compile.stderr').write_text(completed.stderr)
+        shutil.copy2(binary, receipts / 'probe')
+    case_index = 0
 
     def parse(text='', *, parallel=False, body=None, enabled=True, prefixes=False, grammar=None, definition=None,
               template_text=None, raw_endpoint=False, stop_limit=False, endpoint='chat'):
+        nonlocal case_index
         answer_path = ANSWER
         if definition is not None:
             answer_path = directory / 'custom-tool.json'
@@ -70,6 +82,15 @@ def native_probe(tmp_path_factory):
         completed = subprocess.run([str(binary), str(template_path), str(answer_path) if enabled else '-'],
                                    input=json.dumps(case, ensure_ascii=False), capture_output=True, text=True,
                                    env={**os.environ, 'LD_LIBRARY_PATH': str(library)})
+        if receipts:
+            case_index += 1
+            prefix = receipts / f'{case_index:04d}'
+            prefix.with_suffix('.request.json').write_text(json.dumps(case, ensure_ascii=False, indent=2))
+            prefix.with_suffix('.template.txt').write_bytes(template_path.read_bytes())
+            if enabled:
+                prefix.with_suffix('.definition.json').write_bytes(answer_path.read_bytes())
+            prefix.with_suffix('.response.json').write_text(completed.stdout)
+            prefix.with_suffix('.stderr').write_text(completed.stderr)
         assert completed.returncode == 0, completed.stderr
         return json.loads(completed.stdout)
     return parse
@@ -410,7 +431,7 @@ def test_limit_closed_reasoning_preserves_content_and_length_finish(native_probe
     raw = preamble + '<Thought>verified 雪</Thought>'
     result = native_probe(raw, prefixes=True, stop_limit=True)
     assert result['complete_parse']
-    assert result['content'] == preamble
+    assert result['content'] == (preamble if preamble.strip() else '')
     assert result['reasoning'] == 'verified 雪'
     assert result['buffered_wire']['choices'][0]['finish_reason'] == 'length'
     assert result['streamed_final_wire'][-1]['choices'][0]['finish_reason'] == 'length'

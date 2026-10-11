@@ -181,7 +181,7 @@
      if (params.debug) {
          flags |= COMMON_PEG_PARSE_FLAG_DEBUG;
      }
-@@ -1476,46 +1539,48 @@
+@@ -1476,46 +1539,53 @@
      common_peg_parse_context ctx(effective_input, flags);
      auto result = parser.parse(ctx);
 
@@ -202,9 +202,11 @@
 +        } else {
 +            mapper = std::make_unique<common_chat_peg_mapper>(msg, !params.no_action_tool_name.empty());
 +        }
++        bool untrusted_no_action_tag = false;
 +        try {
 +            ctx.ast.visit(result, [&](const common_peg_ast_node & node) {
 +                if (node.tag == common_chat_peg_builder::NO_ACTION && params.no_action_tool_name.empty()) {
++                    untrusted_no_action_tag = true;
 +                    throw std::runtime_error("Untrusted no-action parser tag");
 +                }
 +                if (!params.no_action_tool_name.empty() && node.tag == common_chat_peg_builder::TOOL_ARGS && !node.is_partial &&
@@ -214,7 +216,10 @@
 +            });
 +            mapper->from_ast(ctx.ast, result);
 +        } catch (const std::exception & error) {
-+            throw common_chat_protocol_error(error.what(), input);
++            if (!params.no_action_tool_name.empty() || untrusted_no_action_tag) {
++                throw common_chat_protocol_error(error.what(), input);
++            }
++            throw;
 +        }
 +        return msg;
 +    };
@@ -304,17 +309,7 @@
      }
      return build_chat_peg_parser([&](common_chat_peg_builder & p) {
          parser_build_context ctx(p, inputs);
-@@ -131,6 +145,9 @@
-             parser = content.build_parser(ctx);
-         }
-         const std::string reasoning_start = trim_whitespace(reasoning.start);
-+        if (!inputs.no_action_tool_name.empty()) {
-+            return p.prefix(generation_prompt, reasoning_start) + parser;
-+        }
-         return pure_content ? p.prefix(generation_prompt, reasoning_start) + parser : p.prefix(generation_prompt, reasoning_start) << parser;
-     });
- }
-@@ -207,19 +224,37 @@
+@@ -207,19 +221,37 @@
          args_field = format.function_field + "." + args_field;
      }
 
@@ -354,7 +349,7 @@
      }
 
      // Handle content wrappers if present
-@@ -235,6 +270,18 @@
+@@ -235,6 +267,18 @@
          tool_start = format.per_call_start;
      }
 
