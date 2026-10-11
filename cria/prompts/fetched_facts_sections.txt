@@ -114,4 +114,4 @@ restore_file = ----- {{PATH}} -----\n{{BODY}}
 restore_omitted = NOT SHOWN HERE — {{PATHS}}. Each is larger than one read returns, or would pass the {{LIMIT}} bytes this block carries; read_file it (in line ranges if it is large) or grep for what you need.
 # The ledger entry of a file whose text rides in that block THIS turn. Settled at the wire after the floor
 # (modelview.settle_restored_text): if the block did not survive, the line says the plain absence again.
-read_restored =  — its current text is below
+read_restored =  — its current text is in the ⟦ctx:current⟧ block
