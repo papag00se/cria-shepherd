@@ -148,6 +148,21 @@ def _tail_start(messages: list[dict], head_end: int, budget_tokens: int) -> int:
 _EDIT_MARK = "⟦ctx:edit⟧"
 
 
+def edit_note_headline(text: str) -> str:
+    """The one-line form of an edit-recovery note whose body is NOT being carried: its first line, minus
+    the sentence that introduces that body ("Here is its EXACT current content on disk…:", "Here is the
+    file's real text where it should be:"), plus a statement that the text is not reproduced. A note
+    must never claim content that is not attached to it — phi4 A4 CALLs 0099/0115/0119 carried the
+    promise with nothing after it, and the coder was left holding an instruction to "produce the
+    corrected FULL file" from text it had been told was above (#5b)."""
+    head = next((ln.strip() for ln in text.lstrip().splitlines() if ln.strip()), "")
+    sentences = re.split(r"(?<=[.!?])\s+", head)
+    if sentences and sentences[-1].endswith(":"):
+        # the sentence that promises the body goes, and the absence is said
+        return " ".join(sentences[:-1] + [prompts.load("edit_note_body_omitted").strip()])
+    return head                          # a note that promised no body needs no disclaimer
+
+
 def msg_digest(m: dict) -> str:
     """A compact one-line rendering of a message for a summarization transcript: its text plus any
     tool call as ``name(args…)``. Shared by both paths so the rollup input is built the same way."""
@@ -155,7 +170,7 @@ def msg_digest(m: dict) -> str:
     t = _text(m)
     if t.strip():
         if t.lstrip().startswith(_EDIT_MARK):
-            t = t.lstrip().splitlines()[0]  # headline only — see _EDIT_MARK above
+            t = edit_note_headline(t)  # headline only, without the promise of a body — see _EDIT_MARK above
         parts.append(t)
     for tc in m.get("tool_calls") or []:
         fn = tc.get("function") or {}

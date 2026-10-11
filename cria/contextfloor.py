@@ -37,7 +37,7 @@ import re
 from dataclasses import dataclass, field
 
 from . import bodykeys
-from . import denial, editrecovery, prompts, toolargs
+from . import denial, editrecovery, prompts, selfcompact, toolargs
 from .content_reduce import content_reduce, digest_reduce, est_tokens
 
 # The synthesized state note that REPLACES dropped turns (spirit of trim/state_extract): instead of
@@ -186,6 +186,8 @@ def _turn_stub(m: dict, text: str) -> str:
     if "\n" in text:
         # A real first line exists — the writer's own sentence boundary, not a cap.
         first = next((ln.strip() for ln in text.splitlines() if ln.strip()), "")
+        if first.startswith(editrecovery.EDIT_MARK):
+            first = selfcompact.edit_note_headline(text)   # never quote a promise of a body that is not here
         return f"{mark}[{role}] {first}" if first else ""
     # ONE UNBROKEN BLOB has no first line to quote, and quoting part of it would be the very cut
     # this stub exists to avoid. Say what it WAS instead — kind and size are facts about the turn,
