@@ -39,7 +39,7 @@ def _units(msgs):
 def test_the_incident_body_carried_the_diagnostic_many_times_and_now_carries_it_a_few():
     fx = _fx("0042")
     before = _text(fx["messages"]).count(DIAG)
-    shown = modelview.wire_messages(fx["messages"])
+    shown = modelview.fold_evidence(fx["messages"])
     after = _text(shown).count(DIAG)
     assert before == 24            # the supervisor-verified figure
     assert after <= 10 and after < before / 2
@@ -48,23 +48,25 @@ def test_the_incident_body_carried_the_diagnostic_many_times_and_now_carries_it_
 def test_the_incident_window_shrinks_by_a_fifth():
     fx = _fx("0042")
     before = contextfloor.est_total(fx["messages"], fx["tools"])
-    after = modelview.visible_tokens(fx["messages"], fx["tools"])
+    after = modelview.visible_tokens(fx["messages"], fx["tools"], fold=True)
     assert after <= before * 0.82
     # …and the usage the harness is told is the same smaller number the wire carries (#24)
-    assert after == contextfloor.est_total(modelview.wire_messages(fx["messages"]), fx["tools"])
+    assert after == contextfloor.est_total(modelview.fold_evidence(modelview.wire_messages(fx["messages"])), fx["tools"])
+    # L0-L2 report the unfolded size (no context surgery there)
+    assert modelview.visible_tokens(fx["messages"], fx["tools"]) == before
 
 
 def test_nothing_is_lost_every_distinct_line_still_in_the_body():
     for n in ("0042", "0043"):
         fx = _fx(n)
-        shown = modelview.wire_messages(fx["messages"])
+        shown = modelview.fold_evidence(fx["messages"])
         missing = {u for u in _units(fx["messages"]) if u not in _units(shown)}
         assert missing == set()
 
 
 def test_the_trailing_steer_is_the_whole_copy_and_the_continuation_points_at_it():
     fx = _fx("0042")
-    shown = modelview.wire_messages(fx["messages"])
+    shown = modelview.fold_evidence(fx["messages"])
     steer = [m for m in shown if str(m.get("content")).startswith("⟦ctx:steer⟧ not done yet")][0]
     orig = [m for m in fx["messages"] if str(m.get("content")).startswith("⟦ctx:steer⟧ not done yet")][0]
     assert "[GROUND TRUTH — the repo's own checks fail]" in steer["content"]
@@ -79,7 +81,7 @@ def test_the_trailing_steer_is_the_whole_copy_and_the_continuation_points_at_it(
 def test_the_tool_result_form_of_the_checks_carrier_folds_the_same_way():
     fx = _fx("0043")                                             # the checks result is a `tool` message
     assert any(m["role"] == "tool" for m in fx["messages"])
-    shown = modelview.wire_messages(fx["messages"])
+    shown = modelview.fold_evidence(fx["messages"])
     assert _text(shown).count(DIAG) < _text(fx["messages"]).count(DIAG) / 2
     assert [m["role"] for m in shown] == [m["role"] for m in fx["messages"]]   # roles / pairing intact
     assert [m.get("tool_call_id") for m in shown] == [m.get("tool_call_id") for m in fx["messages"]]
@@ -87,7 +89,7 @@ def test_the_tool_result_form_of_the_checks_carrier_folds_the_same_way():
 
 def test_the_task_the_assistant_and_the_system_are_never_rewritten():
     fx = _fx("0042")
-    shown = modelview.wire_messages(fx["messages"])
+    shown = modelview.fold_evidence(fx["messages"])
     for a, b in zip(fx["messages"], shown):
         if not str(a.get("content")).startswith(modelview.EVIDENCE_CARRIERS):
             assert a == b
@@ -96,7 +98,7 @@ def test_the_task_the_assistant_and_the_system_are_never_rewritten():
 def test_a_body_with_no_repeated_evidence_is_the_same_list():
     msgs = [{"role": "user", "content": "the task " * 200},
             {"role": "user", "content": "⟦ctx:steer⟧ " + "one failure line that is long enough. " * 3}]
-    assert modelview.wire_messages(msgs) is msgs
+    assert modelview.fold_evidence(msgs) is msgs
 
 
 def test_a_short_shared_run_is_not_folded():

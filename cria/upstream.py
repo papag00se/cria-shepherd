@@ -420,9 +420,21 @@ class Upstream:
                 reserve = contextfloor.reserve_for(body)  # reads cria_output_reserve (stripped below)
                 tools_in = body.get("tools")
                 safety = safety_override if safety_override is not None else tokenratio.observed(body.get("model"))
-                msgs, tools, rep = contextfloor.fit(
-                    msgs, tools_in, window=window, reserve=reserve, safety=safety,
-                    pinned_task=str(body.get(bodykeys.PINNED_TASK) or ""))
+                pinned = str(body.get(bodykeys.PINNED_TASK) or "")
+                # THE ONE-COPY FOLD (modelview.fold_evidence) NEVER RUNS BEFORE THE FLOOR DECIDES
+                # WHAT SURVIVES. A pointer says "the full copy is further down"; the floor may drop
+                # or shrink that copy (an unprotected ⟦ctx:checks⟧ result is a lever-3/4 candidate
+                # while the protected continuation that points at it is kept) and the pointer would
+                # outlive its target. So: size the body folded — that is what lets it fit WITHOUT
+                # trimming — and if the floor touched anything, discard that and fit the UNFOLDED
+                # conversation instead; the fold is applied once more below, over whatever survived.
+                trial = modelview.fold_evidence(msgs) if self._context_fixes else msgs
+                fitted, tools, rep = contextfloor.fit(
+                    trial, tools_in, window=window, reserve=reserve, safety=safety, pinned_task=pinned)
+                if trial is not msgs and fitted != trial:      # the floor removed or shrank a message
+                    fitted, tools, rep = contextfloor.fit(
+                        msgs, tools_in, window=window, reserve=reserve, safety=safety, pinned_task=pinned)
+                msgs = fitted
                 if rep.applied or rep.over_budget:
                     lvl = "warning" if rep.over_budget else "info"
                     rlog.emit("context.floor", reshape="floor-trim", level=lvl, safety=round(safety, 2),
@@ -444,7 +456,10 @@ class Upstream:
                 rlog.emit("context.deorphaned", reshape="deorphan", count=deorphaned, level="info")
             # The continuation's list of retained paired tool results is made true of THIS body now
             # that the floor and the orphan repair have settled what it holds (modelview, #24).
-            msgs = modelview.retained_results_truth(msgs)
+            if self._context_fixes:       # L0-L2 send what they were given (no context surgery)
+                msgs = modelview.retained_results_truth(msgs)
+                # Last, over what survived: every pointer's full copy is in `msgs` by construction.
+                msgs = modelview.fold_evidence(msgs)
             # C44 R1 (review 9eaadebe): THE WIRE INVARIANT. `indicators.PROSE_DROPPED_MARKER` must
             # never reach a model (#17: no literal "cria"-family token; #24: a wire invariant belongs
             # at the wire). `loop.reframe_compaction` and `server._strip_and_reframe_inbound` are the

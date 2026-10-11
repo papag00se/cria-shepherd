@@ -44,21 +44,30 @@ def wire_messages(messages: list[dict]) -> list[dict]:
     evidence is returned as is.
     `Upstream._prep` applies exactly this before the floor, and the usage report measures exactly this.
 
-    ONE COPY OF THE CHECK EVIDENCE. Whatever the check carriers above repeat — the same failure block
-    in the continuation and in the steer, the governance paragraph in all three, a build tool's own
-    error list printed again under its failure banner — is shown once (the newest copy) and a pointer
-    stands where each earlier copy sat. Byte-exact and lossless (`dedup.fold_repeated_runs`); identity
-    when nothing repeats, so every other body is byte-identical."""
+    The one-copy fold is a SEPARATE step (:func:`fold_evidence`) because it may only run once the floor
+    has decided what survives (see `Upstream._prep`)."""
     if probegate.gate_call_ids(messages):
         messages = probegate.clean_gate_results(messages, linked_only=True)
-    messages, _ = dedup.fold_repeated_runs(
-        messages, prompts.load("repeated_message_note").strip(), prefixes=EVIDENCE_CARRIERS)
     return messages
 
 
-def visible_tokens(messages: list[dict], tools) -> int:
-    """Pre-floor chars/4 size of ``messages`` + ``tools`` as the model would be shown them."""
-    return contextfloor.est_total(wire_messages(messages), tools)
+def fold_evidence(messages: list[dict]) -> list[dict]:
+    """ONE COPY OF THE CHECK EVIDENCE. Whatever the check carriers above repeat — the same failure
+    block in the continuation and in the steer, the governance paragraph in all three, a build tool's
+    own error list printed again under its failure banner — is shown once (the newest copy) and a
+    pointer stands where each earlier copy sat. Byte-exact and lossless (`dedup.fold_repeated_runs`);
+    identity when nothing repeats. Context surgery: callers run it at CONTEXT_FIXES and above only,
+    and never BEFORE the floor — a pointer must not outlive the copy it points at."""
+    out, _ = dedup.fold_repeated_runs(
+        messages, prompts.load("repeated_message_note").strip(), prefixes=EVIDENCE_CARRIERS)
+    return out
+
+
+def visible_tokens(messages: list[dict], tools, *, fold: bool = False) -> int:
+    """Pre-floor chars/4 size of ``messages`` + ``tools`` as the model would be shown them. ``fold``
+    is the engagement gate's answer (CONTEXT_FIXES and above), so the number is the wire's."""
+    shown = wire_messages(messages)
+    return contextfloor.est_total(fold_evidence(shown) if fold else shown, tools)
 
 
 # The continuation names, at the moment it is rendered, the paired tool results the harness handed

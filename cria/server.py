@@ -1524,7 +1524,8 @@ class CriaHandler(BaseHTTPRequestHandler):
         if self._engages_loop(sess_key, classification):
             # The model-visible size is taken BEFORE the drive (a finished session drops its state)
             # and from the same framing the coder prompt is built from — see Loop.visible_context_tokens.
-            visible = server.loop.visible_context_tokens(body, sess_key)
+            visible = server.loop.visible_context_tokens(
+                body, sess_key, fold=bool(server.cfg.routing.context_fixes))
             completion = server.loop.drive(body, sess_key, classification, rlog)
             if completion is not None:
                 out = self._finalize(self._translate_out(completion, sess_key, rlog), sess_key, rlog)
@@ -1565,8 +1566,9 @@ class CriaHandler(BaseHTTPRequestHandler):
             # inbound history), not the summary prompt cria rebuilt it into; every other proxied
             # turn as the body the model was shown (post focus-trim), pre-floor.
             shown = body if (self.server.cfg.routing.context_fixes and compaction) else pbody
-            _report_context_usage(out, modelview.visible_tokens(shown.get("messages") or [],
-                                                                shown.get("tools")), rlog)
+            _report_context_usage(out, modelview.visible_tokens(
+                shown.get("messages") or [], shown.get("tools"),
+                fold=bool(self.server.cfg.routing.context_fixes)), rlog)
         return out, indic
 
     def _respond_buffered(self, body: dict, rlog) -> None:

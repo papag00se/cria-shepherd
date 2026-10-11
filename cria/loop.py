@@ -2689,7 +2689,7 @@ class Loop:
         reaches the loop's structural rewrite detection instead of being proxied blind."""
         return self._store.knows(key)
 
-    def visible_context_tokens(self, body: dict, session_key: str) -> int:
+    def visible_context_tokens(self, body: dict, session_key: str, *, fold: bool = False) -> int:
         """Pre-floor size of the conversation the CODER would be shown for this request — the number
         the server reports to the harness as usage (`server._report_context_usage`).
 
@@ -2716,7 +2716,7 @@ class Loop:
             workspace_root=getattr(sess, "workspace_root", None),
             gate_red=bool(getattr(sess, "last_gate_red", False)),
             suppress_plan_cursor=bool(getattr(sess, "replan_uncovered", False)))
-        return modelview.visible_tokens(framed, body.get("tools"))
+        return modelview.visible_tokens(framed, body.get("tools"), fold=fold)
 
     def _plan_for(self, messages: list[dict], rlog, session_key: str = "", **frame) -> tuple[Plan | None, planner.PlanOutcome]:
         """Plan with outcome owned by this drive, not the shared Planner instance.
