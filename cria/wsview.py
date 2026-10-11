@@ -1383,7 +1383,7 @@ def survey_command(sess: str = "", *, cd: str = "", budget: int | None = None,
     shared budget — passes what is left, and the survey folds to fit instead of being cut in transit.
     Omitted, the survey takes :data:`TREE_MAX_BYTES`, which is one ordinary tool result's worth.
 
-    ``helper`` (N1): a shell expression naming an installed harness-side helper file that holds
+    ``helper`` (N1/B1): shell words that run an installed harness-side helper through a verifying loader; it holds
     :func:`survey_helper_program` (the gate writes it once per session). The block then carries only
     that name and the per-call values, not the program. A helper that is not there prints no survey —
     the same "no tree arrived" the caller already treats as nothing learned (``apply_survey`` refuses
@@ -1399,7 +1399,7 @@ def survey_command(sess: str = "", *, cd: str = "", budget: int | None = None,
                              "progs": list(progs), "outside": list(outside)})
         return (f"{SURVEY_CMD_OPEN}\n"
                 "__cria_sv_ec=$?\n"
-                f"{{ {prefix}if [ -f {helper} ]; then python3 {helper} survey {_q(params)}; fi\n"
+                f"{{ {prefix}{helper} survey {_q(params)}\n"
                 "} 2>/dev/null\n"
                 "( exit $__cria_sv_ec )\n"
                 f"{SURVEY_CMD_CLOSE}")

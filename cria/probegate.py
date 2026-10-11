@@ -219,6 +219,30 @@ def _helper_name() -> str:
     return ".cria-helper-" + hashlib.sha256(_helper_source().encode("utf-8")).hexdigest()[:16] + ".py"
 
 
+def _helper_digest() -> str:
+    return hashlib.sha256(_helper_source().encode("utf-8")).hexdigest()
+
+
+def _helper_loader(*, verify_only: bool = False) -> str:
+    """The verifying loader every helper invocation goes through (a ``python3 -c`` program).
+
+    B1: the helper's path is predictable and its directory shared, so a file there is NOT trusted
+    because it exists. The loader reads the bytes ONCE, compares their full SHA-256 with the digest
+    cria composed in, and executes those same bytes (no check-then-run window). A missing, unreadable
+    or different file exits 3 having run nothing of it. ``verify_only`` stops after the check (the
+    install leg's "is the right program already there?"). No single quote, so it rides in one
+    shell-quoted argument."""
+    return ("import hashlib,sys\n"
+            "p=sys.argv[1]\n"
+            'try: s=open(p,"rb").read()\n'
+            "except OSError: sys.exit(3)\n"
+            f'if hashlib.sha256(s).hexdigest()!="{_helper_digest()}": sys.exit(3)\n'
+            + ("" if verify_only else 'sys.argv=sys.argv[1:]\nexec(compile(s,p,"exec"))\n'))
+
+
+HELPER_BAD_EXIT = 3
+
+
 def helper_path_expr() -> str:
     """The shell expression for the helper's path. ``${TMPDIR:-/tmp}`` is the HARNESS's own value
     (#23c: cria composes, the harness resolves) — the same directory the spool lives in, which is the
@@ -226,14 +250,23 @@ def helper_path_expr() -> str:
     return f'"${{TMPDIR:-/tmp}}/{_helper_name()}"'
 
 
+def helper_runner() -> str:
+    """Shell words that run the helper THROUGH the verifying loader: append the mode and its args."""
+    return f'python3 -c {shlex.quote(_helper_loader())} {helper_path_expr()}'
+
+
 def _helper_install_leg() -> str:
-    """Write the helper into the harness temp dir unless it is already there. Idempotent, atomic
+    """Make the harness hold the helper, unless the file there already verifies. Idempotent, atomic
     (write beside it, then ``os.replace`` — a reader never sees half a program; not ``mv``, a verb the
-    harness sandbox has not been shown to allow), never an ``rm``. The file is
-    cria's own invariant code, named by the hash of its text, so "exists" means "is this program"."""
+    harness sandbox has not been shown to allow), never an ``rm``.
+
+    "Already there" means its bytes hash to cria's digest (B1), not that the path exists: a wrong,
+    planted or truncated file is OVERWRITTEN by the same atomic replace. cria's own invariant code,
+    named by the hash of its text."""
     h = helper_path_expr()
     beside = f'"${{TMPDIR:-/tmp}}/{_helper_name()}.$$"'
-    return (f'if [ ! -f {h} ]; then\n'
+    check = f'python3 -c {shlex.quote(_helper_loader(verify_only=True))} {h}'
+    return (f'if ! {check} 2>/dev/null; then\n'
             f'cat > {beside} <<\'{_HELPER_HEREDOC}\'\n'
             f'{_helper_source()}{_HELPER_HEREDOC}\n'
             # Only a COMPLETE write earns the final name (a full disk must not leave half a program
@@ -244,14 +277,14 @@ def _helper_install_leg() -> str:
 
 
 def _helper_reader_call(path_arg: str, offset: int, transport_id: str, wait_s: float) -> str:
-    """Run the helper's page reader, or say — in a typed envelope cria fails closed on — that the
-    helper is not there. Never silent: a vanished helper must not look like a check that is "running"."""
-    h = helper_path_expr()
+    """Run the helper's page reader through the verifying loader, or say — in a typed envelope cria
+    fails closed on — that the helper is missing or is not cria's program. Never silent: a vanished
+    or substituted helper must not look like a check that is "running" or, worse, finished."""
     gone = (f"printf '%s\\n{HELPER_GONE_FIELD}\\t1\\n%s\\n' "
             f"{shlex.quote(_transport_marker(transport_id))} "
             f"{shlex.quote(_transport_marker(transport_id, end=True))}")
-    return (f'if [ -f {h} ]; then python3 {h} reader {path_arg} {offset} {transport_id} {wait_s!r}; '
-            f'else {gone}; fi')
+    return (f'{helper_runner()} reader {path_arg} {offset} {transport_id} {wait_s!r}; '
+            f'if [ $? -eq {HELPER_BAD_EXIT} ]; then {gone}; fi')
 
 
 def _transport_reader(path_arg: str, offset: int, transport_id: str, *,
@@ -884,7 +917,7 @@ def plan_gate(workspace: str, session: str = "", rlog=None, *,
     # The survey rides inside the same lossless spool. It keeps its own structural tree bound (a
     # folded directory is explicit UNKNOWN), but it no longer competes with probe bytes for one
     # harness result and therefore needs no per-gate byte arithmetic.
-    parts.append(wsview.survey_command(session, cd=workspace, helper=helper_path_expr()))
+    parts.append(wsview.survey_command(session, cd=workspace, helper=helper_runner()))
     # STATE IT NOW, while cria still knows. A probe the coder could retype is one line of argv; a
     # manifest check cria composed is a multi-line inline program. The distinction is free here and
     # unrecoverable downstream — see GATE_SENTINEL.

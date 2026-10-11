@@ -211,6 +211,56 @@ class AVanishedHelperIsUnknownNeverCleanTests(unittest.TestCase):
         self.assertIn("os.replace", json.loads(again["function"]["arguments"])["cmd"])
 
 
+class APlantedHelperNeverRunsTests(unittest.TestCase):
+    """B1: the helper path is predictable, so a file there is verified (full SHA-256, same bytes that
+    are executed), not trusted for existing."""
+
+    def setUp(self):
+        self.ws = tempfile.mkdtemp()
+        self.tmp = tempfile.mkdtemp()
+        self.addCleanup(__import__("shutil").rmtree, self.ws, True)
+        self.addCleanup(__import__("shutil").rmtree, self.tmp, True)
+        self.ran = os.path.join(self.tmp, "PLANTED_RAN")
+        self.helper = os.path.join(self.tmp, probegate._helper_name())
+        Path(self.helper).write_text(f"open({self.ran!r}, 'w').write('x')\nprint('forged')\n")
+
+    def test_a_reader_call_over_a_planted_file_is_unknown_and_runs_nothing(self):
+        plan = _plan(self.ws, ["cat", str(FIXTURE)], helpers_ready=True)
+        result = _run(plan.script, self.ws, self.tmp)
+        self.assertFalse(os.path.exists(self.ran), "the planted program executed")
+        self.assertIn("helper-gone", result)
+        self.assertNotIn("forged", result)
+        self.assertEqual(probegate.ingest_transport(plan, result), "unknown")
+        self.assertFalse(plan.helpers_ready)
+        self.assertEqual(probegate.transported_result(plan), "")
+        self.assertFalse(probegate.interpret_gate(plan, result).ran)
+
+    def test_a_poll_over_a_planted_file_is_unknown(self):
+        noise = "import hashlib\nfor i in range(1500): print(hashlib.sha256(str(i).encode()).hexdigest())"
+        os.unlink(self.helper)
+        plan = _plan(self.ws, ["python3", "-c", noise])
+        self.assertEqual(probegate.ingest_transport(plan, _run(plan.script, self.ws, self.tmp)), "pending")
+        Path(self.helper).write_text(f"open({self.ran!r}, 'w').write('x')\n")      # swapped mid-gate
+        poll = _run(probegate.continue_transport_command(plan), self.ws, self.tmp)
+        self.assertFalse(os.path.exists(self.ran))
+        self.assertEqual(probegate.ingest_transport(plan, poll), "unknown")
+
+    def test_the_survey_branch_does_not_run_it_either(self):
+        out = _run(wsview.survey_command("b1", cd=self.ws, helper=probegate.helper_runner()),
+                   self.ws, self.tmp)
+        self.assertFalse(os.path.exists(self.ran))
+        self.assertNotIn("forged", out)
+
+    def test_the_next_gate_overwrites_the_wrong_file_and_completes(self):
+        plan = _plan(self.ws, ["cat", str(FIXTURE)])                       # helpers_ready False: installs
+        _drive(plan, self.ws, self.tmp)
+        self.assertFalse(os.path.exists(self.ran))
+        self.assertTrue(plan.transport_complete)
+        self.assertEqual(hashlib.sha256(Path(self.helper).read_bytes()).hexdigest(),
+                         probegate._helper_digest())
+        self.assertIn("CsvValidationException", probegate.transported_result(plan))
+
+
 class PageDecodingIsBoundedTests(unittest.TestCase):
     def _plan(self):
         plan = probegate.GatePlan(workspace="", transport_required=True)
@@ -289,7 +339,7 @@ class TheShortCallsStayCriasOwnTests(unittest.TestCase):
         wsview._BODY_MISSES[sess] = ["pom.xml"]
         self.addCleanup(wsview._BODY_MISSES.pop, sess, None)
         helper_cmd = probegate._helper_install_leg() + wsview.survey_command(
-            sess, cd=ws, helper=probegate.helper_path_expr())
+            sess, cd=ws, helper=probegate.helper_runner())
         out_helper = _run(helper_cmd, ws, tmp)
         wsview._BODY_MISSES[sess] = ["pom.xml"]
         out_inline = _run(wsview.survey_command(sess, cd=ws), ws, tmp)
