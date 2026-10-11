@@ -45,8 +45,9 @@ import hashlib
 import json
 import os
 import posixpath
-import time
 import re
+import time
+import zlib
 from dataclasses import dataclass
 
 # --------------------------------------------------------------------------- wire format
@@ -55,6 +56,9 @@ from dataclasses import dataclass
 # to SURVEY_CLOSE is cria's, never the model's, and is stripped before the result is represented.
 SURVEY_OPEN = "___CRIA_SURVEY___"
 SURVEY_CLOSE = "___CRIA_SURVEY_END___"
+# First line inside a survey block whose body travels packed (zlib, see `_SURVEY_PY`): the marker, the
+# length and the sha256 of the text it unpacks to. `strip_survey` unpacks it; nothing else ever sees it.
+SURVEY_PACKED = "___CRIA_SURVEY_Z___"
 # Marker bracketing the survey inside the COMMAND cria composed, so the same plumbing-strip that
 # hides the gate's own scaffolding from the model hides this too. The model never authored either.
 SURVEY_CMD_OPEN = "# ___CRIA_SURVEY_CMD___"
@@ -1198,7 +1202,9 @@ def clear_pending(sess: str, bodies: list[str], progs: list[str], outside: list[
 
 _SURVEY_PY = r'''
 import base64, os, sys
-W = sys.stdout.write
+PIECES = []
+W = PIECES.append
+PACK = {pack}
 TREE_MAX, TREE_BYTES, FOLD_AT, PRUNE = {tree_max}, {tree_bytes}, {fold_at}, {prune!r}
 BLOB_FILES, BLOB_BYTES, BLOB_FILE = {blob_files}, {blob_bytes}, {blob_file}
 WANT = {want!r}
@@ -1297,7 +1303,7 @@ for rel in WANT:
         W("!%s\t%d\n" % (base64.b64encode(rel.encode()).decode(), sz))
         continue
     W("@%s\n" % base64.b64encode(rel.encode()).decode())
-    W(base64.b64encode(raw).decode() + "\n")
+    W(raw)
     bspent += len(raw)
     taken += 1
 W("{sec}outside{suf}\n")
@@ -1333,6 +1339,25 @@ W("{sec}done{suf}\n")
 W("entries\t%d\n" % nrec)
 W("complete\t%d\n" % complete)
 W("{close}\n")
+# THE ANSWER LEAVES HERE, ONCE. The text below is what this program has always printed (a body is its
+# base64 line). When PACK is set the same answer may travel as `{zopen} <bytes> <sha256>` + ONE base64
+# line of a zlib stream in which each body is its RAW bytes (`\0<n>\n<raw>\n`) instead of base64 text,
+# because zlib cannot shrink base64 text much and shrinks the bytes it came from 3x. The header carries
+# the length and sha256 of the unpacked text so the reader proves the round trip; nothing that fails
+# to shrink, or cannot be packed here, is packed - it prints exactly the text above.
+LEGACY = "".join(p if isinstance(p, str) else base64.b64encode(p).decode() + "\n" for p in PIECES)
+if PACK:
+    try:
+        import hashlib, zlib
+        lb = LEGACY.encode()
+        packed = base64.b64encode(zlib.compress(b"".join(
+            p.encode() if isinstance(p, str) else b"\0%d\n" % len(p) + p + b"\n" for p in PIECES), 9)).decode()
+        frame = "{open}\n{zopen} %d %s\n%s\n{close}\n" % (len(lb), hashlib.sha256(lb).hexdigest(), packed)
+        if len(frame) < len(LEGACY):
+            LEGACY = frame
+    except Exception:
+        pass
+sys.stdout.write(LEGACY)
 '''
 
 _HEREDOC = "__CRIA_SV_PY__"
@@ -1361,13 +1386,13 @@ def survey_helper_program() -> str:
         tree_max=TREE_MAX_ENTRIES, tree_bytes=p("tree_bytes"), fold_at=FOLD_AT,
         drain_max=FOLD_DRAIN_MAX, prune=_Param(f"set({sorted(PRUNE_DIRS)!r})"),
         blob_files=BLOB_FILES_MAX, blob_bytes=BLOB_BYTES_MAX, blob_file=BLOB_FILE_MAX,
-        want=p("want"), progs=p("progs"), outside=p("outside"),
-        open=SURVEY_OPEN, close=SURVEY_CLOSE, sec=_SEC_PREFIX, suf=_SEC_SUFFIX)
+        want=p("want"), progs=p("progs"), outside=p("outside"), pack=_Param("0"),
+        open=SURVEY_OPEN, close=SURVEY_CLOSE, zopen=SURVEY_PACKED, sec=_SEC_PREFIX, suf=_SEC_SUFFIX)
     return "import json\nPARAMS = json.loads(sys.argv[2])\n" + body.strip("\n") + "\n"
 
 
 def survey_command(sess: str = "", *, cd: str = "", budget: int | None = None,
-                   helper: str = "") -> str:
+                   helper: str = "", pack: bool = False) -> str:
     """One shell block the HARNESS runs to answer everything the view could not.
 
     ``python3`` is not a new dependency: cria's lowered ``write_file`` has always been a
@@ -1388,6 +1413,11 @@ def survey_command(sess: str = "", *, cd: str = "", budget: int | None = None,
     that name and the per-call values, not the program. A helper that is not there prints no survey —
     the same "no tree arrived" the caller already treats as nothing learned (``apply_survey`` refuses
     it); the gate's own transport reader reports the missing helper as UNKNOWN.
+
+    ``pack`` (N2): the answer may travel zlib-packed (``SURVEY_PACKED``), verified by length and sha256
+    on arrival (:func:`strip_survey`). For a survey riding home on a lowered tool result, whose every
+    byte the harness counts toward its own compaction trigger though the model never sees it. The gate
+    does not ask (its pages are already packed as a whole); the helper program never packs.
     """
     bodies, progs, outside = pending(sess)
     bodies, progs, outside = bodies[:BLOB_FILES_MAX], progs[:PROG_MAX], outside[:OUTSIDE_MAX]
@@ -1408,8 +1438,8 @@ def survey_command(sess: str = "", *, cd: str = "", budget: int | None = None,
         fold_at=FOLD_AT,
         drain_max=FOLD_DRAIN_MAX, prune=set(PRUNE_DIRS),
         blob_files=BLOB_FILES_MAX, blob_bytes=BLOB_BYTES_MAX, blob_file=BLOB_FILE_MAX,
-        want=list(bodies), progs=list(progs), outside=list(outside),
-        open=SURVEY_OPEN, close=SURVEY_CLOSE, sec=_SEC_PREFIX, suf=_SEC_SUFFIX)
+        want=list(bodies), progs=list(progs), outside=list(outside), pack=1 if pack else 0,
+        open=SURVEY_OPEN, close=SURVEY_CLOSE, zopen=SURVEY_PACKED, sec=_SEC_PREFIX, suf=_SEC_SUFFIX)
     return (f"{SURVEY_CMD_OPEN}\n"
             "__cria_sv_ec=$?\n"
             f"{{ {prefix}python3 - <<'{_HEREDOC}'\n{body}\n{_HEREDOC}\n}} 2>/dev/null\n"
@@ -1429,6 +1459,42 @@ _BLOCK = re.compile(re.escape(SURVEY_OPEN) + r"\n(.*?\n" + re.escape(SURVEY_CLOS
                     re.S)
 
 
+def _unpack(group: str) -> str:
+    """One captured survey block, as the text the program would have printed unpacked.
+
+    A packed block is accepted only if it inflates, its length and sha256 match the header, and it
+    ends in the close marker. Anything else (cut in transit, corrupted, a record we cannot read) is
+    handed back STILL PACKED: it holds no tree section, so ``apply_survey`` refuses it and the view
+    stays UNKNOWN. A survey that does not verify never becomes a smaller one that passes."""
+    head, _, rest = group.partition("\n")
+    parts = head.split()
+    if len(parts) != 3 or parts[0] != SURVEY_PACKED:
+        return group
+    try:
+        n, want = int(parts[1]), parts[2]
+        body = base64.b64decode(rest.split("\n", 1)[0].encode("ascii"), validate=True)
+        raw, out, i = zlib.decompress(body), [], 0
+        while i < len(raw):
+            if raw[i] == 0:
+                j = raw.index(b"\n", i)
+                size = int(raw[i + 1:j])
+                if raw[j + 1 + size:j + 2 + size] != b"\n":
+                    return group
+                out.append(base64.b64encode(raw[j + 1:j + 1 + size]).decode() + "\n")
+                i = j + 2 + size
+            else:
+                j = raw.index(b"\n", i)
+                out.append(raw[i:j + 1].decode())
+                i = j + 1
+        text = "".join(out)
+    except (ValueError, zlib.error, UnicodeError):
+        return group
+    enc = text.encode()
+    if len(enc) != n or hashlib.sha256(enc).hexdigest() != want or not text.startswith(SURVEY_OPEN + "\n"):
+        return group
+    return text[len(SURVEY_OPEN) + 1:]
+
+
 def strip_survey(text: str) -> tuple[str, str]:
     """``(what the model may see, the survey text)``. The survey is cria's own instrumentation
     riding on the model's own call; showing it would be showing the model a command it never
@@ -1438,7 +1504,7 @@ def strip_survey(text: str) -> tuple[str, str]:
     found: list[str] = []
 
     def take(m):
-        found.append(m.group(1))
+        found.append(_unpack(m.group(1)))
         return ""
 
     visible = _BLOCK.sub(take, text).replace("\n\n\n", "\n\n")

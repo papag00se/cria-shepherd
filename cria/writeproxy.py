@@ -643,6 +643,16 @@ def _fail(mode,**kw):
     _r=_b(kw)
     if len('{editfail}')+len(_r)>{cap}:
         kw.pop('current',None); _r=_b(kw)
+    # The report is plumbing the harness keeps and counts; the coder reads cria's decoding of it. Packed
+    # only when that is smaller; the drop-`current` decision above is made on the UNPACKED size, so what
+    # the coder is shown never depends on whether zlib was there.
+    try:
+        import zlib
+        _z='{zprefix}'+base64.b64encode(zlib.compress(json.dumps(kw).encode(),9)).decode()
+        if len(_z)<len(_r):
+            _r=_z
+    except Exception:
+        pass
     sys.exit('{editfail}'+_r)
 if old==new:
     _fail('identical')
@@ -725,6 +735,7 @@ else:
 def _edit_command(path: str, old: str, new: str) -> str:
     py = (_VALIDATE_FN + _EDIT_PY).format(path=_b64(path), old=_b64(old), new=_b64(new),
                                           wrote=_WROTE, editfail=editrecovery.EDITFAIL,
+                                          zprefix=editrecovery.PACKED_PREFIX,
                                           cap=content_reduce_mod.INLINE_RESULT_MAX_BYTES)
     return f"python3 - <<'{_HD_PY}'\n{py}{_HD_PY}"
 
@@ -1436,7 +1447,7 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
                     room = (content_reduce_mod.INLINE_RESULT_MAX_BYTES - _RIDE_ALONG_HOST_RESERVE
                             - _RIDE_ALONG_COMMAND_RESERVE - len(reason))
                     if room >= wsview.TREE_MIN_BYTES:
-                        ride = wsview.survey_command(session or "", cd=workspace_root or "", budget=room)
+                        ride = wsview.survey_command(session or "", cd=workspace_root or "", budget=room, pack=True)
                     elif rlog is not None:
                         rlog.emit("wsview.survey_not_carried", level="info", left=room, carrier=name)
                 cmd = _refusal_command(reason, ride)
@@ -1656,7 +1667,7 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
                     room = (content_reduce_mod.INLINE_RESULT_MAX_BYTES
                             - _RIDE_ALONG_HOST_RESERVE - _RIDE_ALONG_COMMAND_RESERVE)
                     if room >= wsview.TREE_MIN_BYTES:
-                        cmd = (f"{cmd}\n{wsview.survey_command(session or '', cd=workspace_root or '', budget=room)}")
+                        cmd = (f"{cmd}\n{wsview.survey_command(session or '', cd=workspace_root or '', budget=room, pack=True)}")
                     elif rlog is not None:
                         rlog.emit("wsview.survey_not_carried", level="info", left=room,
                                   need=wsview.TREE_MIN_BYTES)

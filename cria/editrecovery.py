@@ -23,16 +23,38 @@ from __future__ import annotations
 import base64
 import json
 import os
+import zlib
 
 from . import prompts
 
 # Heredoc → cria: a structured edit-FAILURE fact-report (base64 JSON follows the marker).
 EDITFAIL = "⟦ctx:editfail⟧"
+# A report may travel as ``PACKED_PREFIX`` + base64(zlib(json)) instead of base64(json). '.' is not in the
+# base64 alphabet, so the two cannot be confused; zlib's own checksum rejects a corrupted stream.
+PACKED_PREFIX = "z."
 # cria → model: the composed directive. Carries the file's basename so this module can COUNT how many
 # times it has already steered edits on that file (the escalation clock), statelessly from history.
 EDIT_MARK = "⟦ctx:edit⟧"
 # Surgical guidance for this many failures on a file; on the next one, COMMIT to the whole-file rewrite.
 ESCALATE_AFTER = 3
+
+
+def decode_report(token: str) -> dict:
+    """The fact-report inside one ``⟦ctx:editfail⟧`` token, packed or not. Raises ``ValueError`` (which
+    ``JSONDecodeError`` and ``UnicodeDecodeError`` are) for anything that is not a whole report, so a
+    cut or corrupted one is reported as unreadable — never half-decoded."""
+    token = token.strip()
+    try:
+        if token.startswith(PACKED_PREFIX):
+            raw = zlib.decompress(base64.b64decode(token[len(PACKED_PREFIX):].split()[0].encode("ascii"), validate=True))
+        else:
+            raw = base64.b64decode(token.encode("ascii"))
+        fail = json.loads(raw.decode("utf-8"))
+    except zlib.error as e:
+        raise ValueError(str(e)) from e
+    if not isinstance(fail, dict):
+        raise ValueError("report is not an object")
+    return fail
 
 
 def _tag(path: str) -> str:
@@ -220,8 +242,8 @@ def recover(content: str, prior_msgs: list, rlog=None) -> str:
     # simply belongs ABOVE the directive rather than in front of a prefix test.
     head, rest = content[:i], content[i + len(EDITFAIL):]
     try:
-        fail = json.loads(base64.b64decode(rest.strip()).decode("utf-8"))
-    except (ValueError, json.JSONDecodeError):
+        fail = decode_report(rest)
+    except ValueError:
         # A REPORT THAT WAS REALLY CUT STILL MUST NOT SHIP AS BASE64. Returning `content` unchanged
         # is what leaked the blob for ten calls; the marker proves an edit_file failed, so cria can
         # always say that much in words even when it can no longer say which line (#5, #5b).
@@ -266,10 +288,10 @@ def summarize(content: str) -> str:
     b64 = rest.split(None, 1)[0] if rest.strip() else ""   # the report is one whitespace-free token
     tail = rest[len(b64):]
     try:
-        fail = json.loads(base64.b64decode(b64).decode("utf-8"))
+        fail = decode_report(b64)
         path = os.path.basename(fail.get("path") or "a file")
         note = f"[edit_file on {path} did not apply (mode={fail.get('mode') or 'miss'}); cria gave the coder the exact fix]"
-    except (ValueError, json.JSONDecodeError):
+    except ValueError:
         note = "[edit_file did not apply; cria gave the coder the fix]"
     return content[:i] + note + tail
 
