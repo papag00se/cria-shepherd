@@ -121,6 +121,20 @@ class TextWriteTests(unittest.TestCase):
                 self.assertEqual(calls, [])
                 self.assertEqual(log.get("loop.text_write_refused")["reason"], "judge_unanswered")
 
+    def test_a_ruling_followed_by_its_explanation_is_a_ruling(self):
+        """Live: phi4 answers `WHOLE_FILE` and then a paragraph. The first word is the ruling (as for the
+        other closed questions); a different first word is not one."""
+        content, tools, fin = _reply("a1_0022")
+        for answer in ("WHOLE_FILE\n\nThe assistant presents the block as the complete file.",
+                       "`WHOLE_FILE`\n\nBecause it is.", "WHOLE_FILE."):
+            with self.subTest(answer[:20]):
+                _, calls, _, _, _ = self.turn(content, tools, fin, judge=answer)
+                self.assertEqual([c[0] for c in calls], ["write_file"])
+        for answer in ("The block is WHOLE_FILE", "OTHER\n\nnot WHOLE_FILE", "Not WHOLE_FILE"):
+            with self.subTest(answer[:20]):
+                _, calls, _, _, _ = self.turn(content, tools, fin, judge=answer)
+                self.assertEqual(calls, [])
+
     def test_the_verdict_is_asked_once_per_pasted_file(self):
         content, tools, fin = _reply("a1_0022")
         sess = _synth()

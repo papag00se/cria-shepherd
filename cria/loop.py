@@ -3126,7 +3126,13 @@ class Loop:
                     "text_write_judge_user", path=rel, fact=fact, ordinal=ordinal, lang=block["lang"] or "none",
                     lines=sum(1 for l in lines if l.strip()), binding=block["binding"], reply=text),
                 rlog, phase="text-write", max_tokens=JUDGE_MAX_TOKENS, retry_off=False)
-            verdict = answer.strip().strip("`").upper()
+            # The ruling is the answer's FIRST word, exactly (the convention `confirm_applies` and the
+            # negative-diagnosis support question already use): phi4 answers `WHOLE_FILE` and then explains
+            # itself in a paragraph, and demanding a bare reply would refuse a clear positive for its
+            # politeness. `WHOLE_FILE_MAYBE`, `NOT_WHOLE_FILE` and prose that merely mentions the word
+            # have a different first word and are no ruling.
+            head = answer.upper().split()[0].strip(".,:;`*\"'") if answer.split() else ""
+            verdict = head if head in ("WHOLE_FILE", "OTHER") else answer.strip().upper()[:40]
             if verdict in ("WHOLE_FILE", "OTHER"):
                 # Only a RULING is remembered. An empty or malformed answer (a timeout, a half answer)
                 # settles nothing, and caching it would silence this file's block for the whole session.
