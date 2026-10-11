@@ -428,6 +428,9 @@ class PlanSession(GuardState):
     # (path, sha1 of the block) of every pasted file the text-write judge has ruled on, and its answer —
     # a temperature-0 model re-pastes the same file every turn, and a settled question is not re-asked.
     text_write_judged: dict = field(default_factory=dict)
+    # {workspace-relative path: (size, mtime)} of the FIRST complete survey this session received — the
+    # baseline a later "unchanged on disk" fact is measured against. None until one lands.
+    survey_baseline: dict = None
     thrash_replanned: bool = False  # the tool-call-thrash re-derive fired once this STEP (anti-churn bound)
     verify_replanned: bool = False  # the verify-fail re-derive fired once this STEP (anti-churn bound)
     leg0_nudged: bool = False  # the no-tools nudge fired once this step (bounds in-process recursion)
@@ -2970,6 +2973,7 @@ class Loop:
         _ws = getattr(sess, "workspace_root", None) or _extract_cwd(body.get("messages", []))
         if _ws:
             framed["messages"] = _ground_coder_view(framed.get("messages", []), _ws)
+            _note_survey_baseline(sess, _ws)
         _add_completion_tool(framed)  # advertise the explicit-done tool for THIS coder call
         rlog.phase = f"coder-s{step}"  # label the call capture with the role + step
         coder = massage.apply(_parse_completion(self._ctx.coder_chat(framed, rlog)), framed.get("tools"), rlog)
@@ -5105,7 +5109,7 @@ class Loop:
             messages=body.get("messages", []), sess=sess)
         _record_satisfaction(sess, satisfied, reason)
         rlog.emit("loop.done_critic", plan_off=True, satisfied=satisfied)
-        return "" if satisfied else (reason or prompts.load("done_no_named_gap"))
+        return "" if satisfied else (reason or _unnamed_gap(sess, sess.pending_done))
 
     def _reasoned_reanchor(self, body: dict, rlog, workspace_root: str = "") -> str:
         """A REASONED continuation after a harness compaction (parity with the loop's re-plan from the
@@ -6266,6 +6270,59 @@ def _resolve_named_file(view, name: str, task: str):
     if parent and view.isdir(parent) is not True:
         return "unknown_parent"
     return rel, False
+
+
+def _note_survey_baseline(sess, root) -> None:
+    """Remember the first COMPLETE survey's file sizes and mtimes, once per session. An incomplete or
+    folded listing is no baseline: a later "unchanged" would be measured against a partial picture."""
+    if getattr(sess, "survey_baseline", None) is not None or not root:
+        return
+    view = wsview.current(root)
+    if not view.surveyed or not view.complete or view.folded:
+        return
+    sess.survey_baseline = {r: (e.size, e.mtime) for e in view.files() or []
+                            if (r := view.rel(e.path))}
+
+
+def _measured_gap_facts(sess, reply: str) -> str:
+    """What cria MEASURED about a session whose completion check named no gap — never what to do.
+
+    The constant `done_no_named_gap` says nothing the coder can act on, and a call-less coder that is
+    handed the same bytes every cycle answers with the same bytes (A1: twelve cycles, one steer). Two
+    observations are cria's own and are true now: (1) which of the files the coder READ are byte-for-
+    byte unchanged on disk (size and mtime) since the first complete listing, and which changed — from
+    the workspace view, so it abstains (says nothing) when no complete baseline or current listing
+    exists (#11b); (2) whether the last reply carried fenced code and no call, from the same parse the
+    `unexecuted_write` nudge uses. No file, tool or action is named as a thing to do (#2, #5b)."""
+    labels = prompts.load_map("done_measured_facts")
+    lines = []
+    root = getattr(sess, "workspace_root", None)
+    base = getattr(sess, "survey_baseline", None)
+    view = wsview.current(root) if root else None
+    if base and view is not None and view.surveyed and view.complete and not view.folded:
+        now = {r: (e.size, e.mtime) for e in view.files() or [] if (r := view.rel(e.path))}
+        same, moved = [], []
+        for path in sorted(getattr(sess, "read_files", None) or {}):
+            rel = view.rel(path)
+            if rel in base and rel in now:
+                (same if now[rel] == base[rel] else moved).append(f"  {rel} ({now[rel][0]} bytes)")
+        if same:
+            lines.append(prompts.fill(labels["unchanged"], files="\n".join(same)))
+        if moved:
+            lines.append(prompts.fill(labels["changed"], files="\n".join(moved)))
+    blocks = massage.fenced_file_blocks(reply or "")
+    if blocks:
+        langs = ", ".join(dict.fromkeys(b["lang"] or "untagged" for b in blocks))
+        lines.append(prompts.fill(labels["reply"], count=len(blocks), langs=langs,
+                                  lines=sum(1 for b in blocks for l in b["lines"] if l.strip())))
+    return (labels["header"] + "\n" + "\n".join(lines)) if lines else ""
+
+
+def _unnamed_gap(sess, reply: str) -> str:
+    """`done_no_named_gap`, plus the facts cria measured (see :func:`_measured_gap_facts`)."""
+    facts = _measured_gap_facts(sess, reply)
+    base = prompts.load("done_no_named_gap")
+    return f"{base}\n\n{facts}" if facts else base
 
 
 def _is_reading_step(sess, item) -> bool:

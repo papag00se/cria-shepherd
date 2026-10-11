@@ -1,0 +1,6 @@
+# Section texts of the measured-facts block appended to done_no_named_gap when the completion check named no gap
+# (prompts.load_map). Facts only — each states something observed; none names a file or a tool to use.
+header = Observed just now (facts, not instructions):
+unchanged = - These files you read are unchanged on disk (same size and modification time) since the first complete listing of this workspace in this session:\n{{FILES}}
+changed = - These files you read have changed on disk since that listing:\n{{FILES}}
+reply = - Your last message contained {{COUNT}} fenced code block(s) ({{LANGS}}; {{LINES}} non-blank lines in all) and no tool call: nothing in that message wrote or edited a file.
