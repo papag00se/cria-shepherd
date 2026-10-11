@@ -44,3 +44,14 @@ def test_a_non_empty_old_string_is_still_an_edit(tmp_path):
         "name": "edit_file", "arguments": json.dumps({"path": str(tmp_path / "a.txt"), "old_string": "world", "new_string": "there"})}})
     _run(cmd, tmp_path)
     assert (tmp_path / "a.txt").read_text() == "hello there\n"
+
+
+def test_a_write_tool_is_named_only_when_it_is_on_the_menu(tmp_path):
+    def text(injected):
+        comp = {"choices": [{"message": {"tool_calls": [json.loads(json.dumps(TC))]}}]}
+        translate_outbound(comp, _SHELL, injected=injected, workspace_root="/ws")
+        out = _run(json.loads(comp["choices"][0]["message"]["tool_calls"][0]["function"]["arguments"])["cmd"], tmp_path)
+        return out.stdout + out.stderr
+    assert "send `write_file` with the complete content" in text({"edit_file", "write_file"})
+    neutral = text({"edit_file"})
+    assert "write_file" not in neutral and "Nothing was changed" in neutral

@@ -115,3 +115,10 @@ def test_a_self_resolving_report_in_the_batch_is_not_swallowed():
     out.append({"role": "tool", "tool_call_id": "a", "content": editrecovery.recover(_report(), out)})
     text = editrecovery.recover(_report("identical"), out)
     assert "identical" in text and "did not apply either" not in text
+
+
+def test_the_escalation_event_is_emitted_once_per_batch():
+    out, log = [{"role": "assistant", "tool_calls": [{"id": f"b{k}"} for k in range(9)]}], _Rlog()
+    for k in range(9):
+        out.append({"role": "tool", "tool_call_id": f"b{k}", "content": editrecovery.recover(_report(), out, log)})
+    assert log.events.count("editrecovery.escalated") == 1

@@ -1580,7 +1580,10 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
                         # the edit tool, four times). It names no text, so the call is refused here — as a
                         # call that did not run, so no edit-failure or rewrite counter hears of it. cria
                         # authors nothing: no content is chosen and the file is untouched.
-                        cmd = _refusal_command(prompts.load("edit_empty_old_string"))
+                        whole = sorted(injected & _WRITE_NAMES)   # name a write tool only when it is certainly on the menu
+                        cmd = _refusal_command(prompts.load("edit_empty_old_string") + (
+                            " " + prompts.fill(prompts.load("edit_empty_old_string_write"), tool=f"`{whole[0]}`")
+                            if whole else ""))
                         if rlog is not None:
                             rlog.emit("writeproxy.edit_empty_old_string", tool=name, path=str(path))
                     else:

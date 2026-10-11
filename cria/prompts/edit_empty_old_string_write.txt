@@ -1,0 +1,1 @@
+To replace the whole file, send {{TOOL}} with the complete content instead.

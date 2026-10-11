@@ -243,7 +243,7 @@ def recover(content: str, prior_msgs: list, rlog=None) -> str:
     # count clock does (a high prior on identical still emits, unchanged).
     self_resolving = ("phantom", "would_break", "multi", "multi_flex")
     escalates = (prior + 1 >= ESCALATE_AFTER) or (not grounded and fail.get("mode") != "identical")
-    if rlog is not None and escalates and fail.get("mode") not in self_resolving:
+    if rlog is not None and escalates and not in_batch and fail.get("mode") not in self_resolving:  # once per turn
         rlog.emit("editrecovery.escalated", path=os.path.basename(path),
                   fails=prior + 1, blind=not grounded)
     if in_batch and fail.get("mode") not in ("identical", "phantom", "would_break", "multi", "multi_flex") \
