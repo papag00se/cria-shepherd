@@ -472,6 +472,15 @@ class Upstream:
             # serialization \u2014 unconditional, independent of engagement level, so no missed call
             # site anywhere upstream can put it on the wire.
             msgs = indicators.strip_prose_dropped_marker(msgs)
+            # WHAT THE FILE-TEXT BLOCK'S CLAIMS ARE TRUE OF, settled on the body actually sent: a block the
+            # floor reduced or dropped is no delivery, so it earns no whole-read credit and the ledger no
+            # longer says "its current text is below". Read back by the loop from `rlog` (#24).
+            msgs, on_wire = modelview.settle_restored_text(msgs)
+            if rlog is not None:
+                try:
+                    rlog.restored_on_wire = on_wire
+                except AttributeError:
+                    pass
             msgs = _merge_consecutive_assistant(msgs)
             # THE LAST message transform, and last is the point. A template that enforces strict
             # user/assistant alternation ({user,tool} vs {assistant}) rejects the body outright, and
@@ -496,7 +505,7 @@ class Upstream:
         if isinstance(out.get("messages"), list):
             out["messages"] = [{k: v for k, v in m.items()
                                 if k not in (bodykeys.CALLER_INSTRUCTIONS, bodykeys.CALLER_PERSONA,
-                                             bodykeys.CALLER_SPAN)}
+                                             bodykeys.CALLER_SPAN, bodykeys.RESTORED_FILES)}
                                if isinstance(m, dict) else m for m in out["messages"]]
         sent_estimate = contextfloor.est_total(out.get("messages"), out.get("tools"))
         # The pre-frame observer never rides in ``out``.  It is correlated here, after every wire

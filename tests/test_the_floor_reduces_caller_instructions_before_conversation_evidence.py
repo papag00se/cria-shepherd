@@ -136,7 +136,8 @@ def test_the_do_not_reread_rule_holds_only_while_the_result_is_visible():
     from cria import prompts
     line = next(l for l in prompts.load("coder_system").splitlines() if "already read a file" in l)
     assert "do not read or run the same thing again" in line     # kept: repeat reads of visible text
-    assert "still in this conversation" in line and "no longer here" in line and "read it again" in line
+    assert "still in this conversation" in line and "any more" in line and "read it again" in line
+    assert "neither the result nor the file's current text is here" in line    # R1: the restored text counts as a copy
 
 
 def test_the_stand_in_makes_no_claim_about_the_conversation_when_turns_are_also_folded():

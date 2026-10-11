@@ -1,0 +1,1 @@
+⟦ctx:current⟧ The current text of these files was here and was removed to fit the window: {{PATHS}}. It is not in this conversation any more; nothing else was changed. read_file a file (in line ranges if it is large) before editing it — do not edit from memory.

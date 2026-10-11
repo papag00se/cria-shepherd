@@ -46,6 +46,9 @@ _COMPACTED_MARK = "⟦ctx:compacted⟧"
 # Tags a tool result the floor REDUCED in place. content_reduce is lossy, so the model must be
 # able to tell a shortened result from a verbatim one.
 _REDUCED_MARK = "⟦ctx:reduced⟧"
+# The message-level hint `bodykeys.RESTORED_FILES` names the restored-file-text block (a literal here for
+# the same reason as _PROTECT_MARKERS: contextfloor imports no sibling; a test asserts it is in sync).
+_RESTORED_HINT = "cria_restored_files"
 # The stand-in note preserves a content_reduce()d digest of each dropped turn — not just the filenames
 # it modified — so a dropped test-failure/error output survives as a SUMMARY rather than vanishing. The
 # digests together occupy at most this share of the message budget (split across the dropped turns, each
@@ -144,6 +147,7 @@ class FloorReport:
     turns_dropped: int = 0
     protected_dropped: int = 0  # lever 5: turns dropped INSIDE the protected span (last resort)
     orphans_removed: int = 0
+    restored_reduced: int = 0   # lever 2c: the restored file-text block swapped for a labelled stand-in
     caller_reduced: int = 0     # lever 2b: harness-instruction spans swapped for a labelled stand-in
     over_budget: bool = False  # even after every lever the request still won't fit — surfaced loudly
     fields: dict = field(default_factory=dict)
@@ -159,7 +163,33 @@ class FloorReport:
             "protected_dropped": self.protected_dropped,
             "orphans_removed": self.orphans_removed, "over_budget": self.over_budget,
             **({"caller_reduced": self.caller_reduced} if self.caller_reduced else {}),
+            **({"restored_reduced": self.restored_reduced} if self.restored_reduced else {}),
         }
+
+
+def _is_restored_text(m: dict) -> bool:
+    """The coder frame's restored-file-text block — reducible evidence, carried by a cria-internal hint."""
+    return isinstance(m, dict) and bool(m.get(_RESTORED_HINT))
+
+
+def _reduce_restored_text(messages: list[dict], msg_budget: int) -> tuple[list[dict], int]:
+    """Swap the restored-file-text block for a LABELLED stand-in that names the files, when the
+    conversation is over budget — before any tool output is shortened or any turn is dropped. The block is
+    derived from the workspace and re-derivable by one read, so it is the cheapest evidence to shed; the
+    stand-in says what was removed and how to get it back. The stand-in carries no hint, so the wire's
+    settle step sees no delivery."""
+    if _msgs_tokens(messages) <= msg_budget:
+        return messages, 0
+    out, n = [], 0
+    for m in messages:
+        if _is_restored_text(m):
+            paths = ", ".join(sorted((m.get(_RESTORED_HINT) or {}).get("offered") or {}))
+            out.append({k: v for k, v in m.items() if k != _RESTORED_HINT}
+                       | {"content": prompts.render("restore_reduced", paths=paths).strip()})
+            n += 1
+        else:
+            out.append(m)
+    return out, n
 
 
 def _stub_reserve(dropped_msgs: list, before: int) -> int:
@@ -303,6 +333,8 @@ def fit(messages: list[dict], tools, *, window: int, reserve: int,
     if rep.msg_tokens_before > msg_budget:
         # --- Lever 2b: the harness's own standing instructions go BEFORE any conversation evidence.
         work, rep.caller_reduced = _reduce_caller_spans(work)
+        # --- Lever 2c: cria's own restored file text, derived and re-derivable, before any evidence.
+        work, rep.restored_reduced = _reduce_restored_text(work, msg_budget)
         # --- Lever 3: reduce the bulkiest tool OUTPUTS before deleting any turn. ---
         work, rep.outputs_reduced = _reduce_tool_outputs(work, msg_budget)
         # --- Lever 4: drop oldest droppable turns until it fits. ---
@@ -539,6 +571,10 @@ def _input_core(messages: list[dict], pinned_task: str) -> list[dict]:
     keep = {i for i, m in enumerate(messages)
             if (i <= task_at and m.get("role") == "user") or i >= tail or i == last_user
             or m.get("role") in ("system", "developer") or _has_protect_marker(m)}
+    # Reducible evidence is not the irreducible live input the reply room must yield to: counting the
+    # restored file text here shrank the reply reserve by the block's size (reviewed on phi4 post-compaction
+    # bodies: 1.7-2.3K tokens of room fell to 167-759).
+    keep -= {i for i, m in enumerate(messages) if _is_restored_text(m)}
     ids = {messages[i].get("tool_call_id") for i in keep if messages[i].get("role") == "tool"}
     keep.update(i for i, m in enumerate(messages)
                 if any(tc.get("id") in ids for tc in m.get("tool_calls") or []))

@@ -3027,7 +3027,11 @@ class Loop:
             _note_survey_baseline(sess, _ws)
         _add_completion_tool(framed)  # advertise the explicit-done tool for THIS coder call
         rlog.phase = f"coder-s{step}"  # label the call capture with the role + step
+        sess.restored_current = {}      # credit is earned per call, from what the wire says it delivered
         coder = massage.apply(_parse_completion(self._ctx.coder_chat(framed, rlog)), framed.get("tools"), rlog)
+        # The restored-file-text block earns the whole-read credit only if it survived the floor into the
+        # body that was SENT (`modelview.settle_restored_text` reports it on `rlog`).
+        sess.restored_current = dict(getattr(rlog, "restored_on_wire", None) or {})
         # BEFORE `_normalize_completion`: a turn that holds ANY call (a task_complete included) is not a
         # turn that pasted a file instead of writing it, and this must run ahead of every guard below so
         # a recovered write is tracked like a native one (truncation, write-streak, refusals).
@@ -3583,7 +3587,10 @@ class Loop:
                                workspace_root=sess.workspace_root,
                                gate_red=bool(getattr(sess, "last_gate_red", False)),
                                remediation=remediation)
-        facts = _fetched_facts_anchor(sess, body.get("messages", []))  # durable fetch ledger → the coder keeps the real endpoints it
+        restore, offered = _restored_text_message(sess, body.get("messages", []))
+        if restore is not None:              # its own reducible message — never inside the protected anchor
+            msgs = _insert_after_system(msgs, restore)
+        facts = _fetched_facts_anchor(sess, body.get("messages", []), offered)  # durable fetch ledger → the coder keeps the real endpoints it
         if facts is not None:                # already fetched past a HARNESS compaction (re-injected from
             msgs = _insert_after_system(msgs, facts)  # cria's own memory), so it stops re-fetching to rediscover
             msgs = _elide_ledger_copies(msgs, sess, rlog)  # the anchor is the ONE copy — duplicates collapse
@@ -5169,7 +5176,8 @@ class Loop:
         # came back, for the 25 prompts to the end of the run, while the reasoner kept being given
         # them. cria held those facts in its own memory the whole time and re-injected them on one
         # path only.
-        facts = _fetched_facts_anchor(sess, framed.get("messages", []))
+        restore, offered = _restored_text_message(sess, framed.get("messages", []))
+        facts = _fetched_facts_anchor(sess, framed.get("messages", []), offered)
         extra = []
         if rewritten:  # first turn after a harness compaction → re-orient (a REASONED continuation).
             extra.append({"role": "user", "content": prompts.render(
@@ -5187,7 +5195,9 @@ class Loop:
             # Current fetched/disk facts belong after the historical rollup and rejected drafts. The
             # old after-system insertion made stale chronology the final authority a small model read.
             base = _elide_ledger_copies(framed["messages"], sess, rlog)
-            framed = {**framed, "messages": base + [facts]}
+            framed = {**framed, "messages": base + ([restore] if restore is not None else []) + [facts]}
+        elif restore is not None:
+            framed = {**framed, "messages": framed["messages"] + [restore]}
         if self._ctx.coder_role is not None:  # the coder role's sampling/reasoning from cria.toml
             self._ctx.coder_role.apply(framed)
         if self._ctx.focus_trim:  # focus the OUTBOUND view (logged, not bannered — routine housekeeping)
@@ -9405,10 +9415,18 @@ def _track_read_files(sess, messages: list[dict]) -> None:
     if getattr(sess, "read_ledger_seen", None) is None:
         sess.read_ledger_seen = set()
     key = _ledger_key(sess)
+    if getattr(sess, "file_touch", None) is None:
+        sess.file_touch = {}                          # rel -> sequence of the last read / write / landed edit
+    touched = [(ev[0], ev[1], ev[3]) for ev in _file_events(messages)]
+    touched += [(i, ("e", t), p) for i, t, p in _edit_events(messages)]
+    for _pos, tid, path in sorted(touched, key=lambda e: e[0]):
+        if tid not in sess.read_ledger_seen:
+            sess.file_touch[key(path)] = 1 + max(sess.file_touch.values(), default=0)
     for ev in _file_events(messages):
         if ev[1] not in sess.read_ledger_seen:        # each event folds in once, so order is real time
             sess.read_ledger_seen.add(ev[1])
             _apply_ledger_event(sess.read_files, ev, key)
+    sess.read_ledger_seen.update(t for _p, t, _x in touched)
     # A file the coder WROTE is one it has seen, and its own write may be compacted away long before it
     # is rewritten — so the record is durable like the reads (`_coder_has_seen`).
     if getattr(sess, "written_files", None) is None:
@@ -9416,12 +9434,10 @@ def _track_read_files(sess, messages: list[dict]) -> None:
     sess.written_files.update(_extract_writes(messages))
 
 
-def _read_ground_truth(sess, messages: list[dict]) -> str:
-    """The workspace files the coder has already read — paths and sizes, never contents.
-
-    Contents are not repeated: they are on disk, one call away, and re-stating them here would put a
-    copy of the workspace in every prompt. What the coder loses at compaction is not the bytes, it is
-    the KNOWLEDGE THAT IT HAS ALREADY LOOKED — and that is one line per file."""
+def _ledger_state(sess, messages: list[dict]):
+    """``(ledger, events, key)`` — the session's durable read/write ledger with this window's not-yet-folded
+    events applied on top (path -> (nbytes, label)), the events themselves, and the path key. One reading of
+    "what has this session read or written", shared by the ⟦ctx:facts⟧ ledger and the restored-text block."""
     seen = dict(getattr(sess, "read_files", None) or {})
     key = _ledger_key(sess)
     done = getattr(sess, "read_ledger_seen", None) or set()
@@ -9431,8 +9447,18 @@ def _read_ground_truth(sess, messages: list[dict]) -> str:
     for ev in events:
         if ev[1] not in done:
             _apply_ledger_event(seen, ev, key)
-    restored = _restored_file_text(sess, messages or [], seen, key)
-    if not seen and not restored:
+    return seen, events, key
+
+
+def _read_ground_truth(sess, messages: list[dict], restored: dict | None = None) -> str:
+    """The workspace files the coder has already read — paths and sizes, never contents.
+
+    Contents are not repeated here: what the coder loses at compaction is the KNOWLEDGE THAT IT HAS ALREADY
+    LOOKED, and that is one line per file. The text of a file the coder no longer holds rides in its own
+    message (:func:`_restored_text_message`); an entry whose text rides there THIS turn (``restored``) says
+    so, and the wire takes that back if the floor shed the block (``modelview.settle_restored_text``)."""
+    seen, events, key = _ledger_state(sess, messages)
+    if not seen:
         return ""
     labels = prompts.load_map("fetched_facts_sections")
     # ABSENCE, MEASURED — NEVER PRESENCE. The ledger is durable: it outlives the messages it was built
@@ -9442,27 +9468,28 @@ def _read_ground_truth(sess, messages: list[dict]) -> str:
     # messages this anchor is built for. That claim survives the floor (the floor only removes
     # messages); the opposite one — "its result IS here" — would be true only before it, and an
     # anchor is built before the floor, so it is never said (#5b). The wording names no action.
+    # The one presence claim ("its current text is below") is made of a block the wire re-checks.
     live = {key(ev[3]) for ev in events if ev[2] == "read"}
-    out_of_view = labels["read_out_of_view"]
-    lines = "\n".join(f"- {p} ({size}){'' if p in live else out_of_view}"
-                      for p, (_n, size) in sorted(seen.items()))
+    note = {p: (labels["read_restored"] if p in (restored or {}) else
+                "" if p in live else labels["read_out_of_view"]) for p in seen}
+    lines = "\n".join(f"- {p} ({size}){note[p]}" for p, (_n, size) in sorted(seen.items()))
     rest = 0
     more = prompts.fill(labels["read_more"], count=rest) if rest else ""
-    ledger = "\n\n" + prompts.fill(labels["read_header"], files=lines, more=more) if seen else ""
-    return ledger + restored
+    return "\n\n" + prompts.fill(labels["read_header"], files=lines, more=more)
 
 
-def _restored_file_text(sess, messages: list[dict], ledger: dict, key) -> str:
-    """The CURRENT text of the files this session read or wrote whose text is no longer in
-    ``messages`` — the block the ⟦ctx:facts⟧ anchor carries after a context loss, or "".
+def _restored_text_message(sess, messages: list[dict]) -> tuple[dict | None, dict]:
+    """``(message, offered)`` — the coder-frame message carrying the CURRENT text of the files this session
+    read or wrote whose text is no longer in ``messages``, and ``{rel: sha1}`` of what it carries; or
+    ``(None, {})``.
 
-    THE GAP IT CLOSES. A harness compaction folds the history, and the ledger above keeps only the
-    knowledge that the coder LOOKED. Measured on phi4 / Java A4, A6, A7 (every captured coder call):
-    45 of 100 edit_file/write_file calls named a file whose ledger line said "no read result for it is
-    in this conversation" (A4 24/51, A6 17/29, A7 4/18) — so the old_string was a guess, or the file
-    was rewritten whole from memory (A7 0022: compile error at Importer.java:25, no text of it in the
-    prompt, edit anchored on an invented top of file). Meanwhile every judge prompt carried the same
-    file's full text from the same workspace view (`judge_files`).
+    THE GAP IT CLOSES. A harness compaction folds the history, and the ledger keeps only the knowledge
+    that the coder LOOKED. Measured on phi4 / Java A4, A6, A7 (every captured coder call): 45 of 100
+    edit_file/write_file calls named a file whose ledger line said "no read result for it is in this
+    conversation" (A4 24/51, A6 17/29, A7 4/18) — so the old_string was a guess, or the file was rewritten
+    whole from memory (A7 0022: compile error at Importer.java:25, no text of it in the prompt, edit
+    anchored on an invented top of file). Every judge prompt of the same run carried the same file's full
+    text from the same workspace view (`judge_files`).
 
     WHICH FILES — the session's own ledger (reads and landed writes), never a keyword or a task name —
     MINUS the ones whose whole text, or whose own whole write, is already in the outgoing messages.
@@ -9473,22 +9500,31 @@ def _restored_file_text(sess, messages: list[dict], ledger: dict, key) -> str:
     TRUTHFUL UNDER STALENESS (#11b). A command that could have changed files has run since the view was
     last fed: the body may be behind the disk, so nothing is delivered and a fresh body is requested.
 
+    REDUCIBLE, NOT PROTECTED. It is its OWN unprotected message (never part of the ⟦ctx:facts⟧ anchor, which
+    the floor keeps whole): under window pressure the floor swaps it for a labelled stand-in naming the
+    files BEFORE it shortens a tool result or drops a turn, and the irreducible-input measure that sizes the
+    reply room does not count it (reviewed on real post-compaction bodies: reserve 1.7-2.3K fell to
+    167-759 tokens while the block rode inside the anchor).
+
     SIZE. Each file is bounded by the whole-read limit (a file over it is NAMED, not clipped — any clip
-    is an undetectable lie), and the block as a whole by one read's worth, newest file first, so a
-    16K window is never handed a corpus. What does not fit is named in the block, not dropped silently.
-    The files delivered are recorded on the session: a whole text handed to the coder IS a whole read
-    for `_coder_has_seen`, the same bytes a read-instead answer would hand it a turn later."""
+    is an undetectable lie), and the block as a whole by one read's worth, most recently touched first, so
+    a 16K window is never handed a corpus. What does not fit is named in the block, never dropped silently.
+
+    CREDIT is not decided here. Whether the text REACHED the model is a fact about the wire body, settled
+    after the floor (`modelview.settle_restored_text`) and read back in `_coder_turn`; `_coder_has_seen`
+    counts only that."""
     root = getattr(sess, "workspace_root", None)
-    out, delivered = "", {}
     view = wsview.current(root) if root else None
-    if view is not None and getattr(view, "surveyed", False):    # an unsurveyed view holds no bytes to deliver
-        candidates = {key(p) for p in ledger} | {key(p) for p in (getattr(sess, "written_files", None) or {})}
-        candidates -= {key(p) for p in _extract_whole_reads(messages, view)}
-        candidates -= {key(path) for _idx, _tid, path in _write_events_paths(messages)}
-        out, delivered = _render_restored(view, sorted(candidates))
-    if sess is not None:
-        sess.restored_current = delivered     # rebuilt every turn: only what THIS turn's anchor carries
-    return out
+    if view is None or not getattr(view, "surveyed", False):    # an unsurveyed view holds no bytes to deliver
+        return None, {}
+    ledger, _events, key = _ledger_state(sess, messages)
+    candidates = {key(p) for p in ledger} | {key(p) for p in (getattr(sess, "written_files", None) or {})}
+    candidates -= {key(p) for p in _extract_whole_reads(messages, view)}
+    candidates -= {key(path) for _idx, _tid, path in _write_events_paths(messages)}
+    text, offered = _render_restored(view, sorted(candidates), getattr(sess, "file_touch", None) or {})
+    if not offered and not text:
+        return None, {}
+    return {"role": "user", "content": text, bodykeys.RESTORED_FILES: {"offered": dict(offered)}}, offered
 
 
 def _write_events_paths(messages: list[dict]):
@@ -9497,23 +9533,40 @@ def _write_events_paths(messages: list[dict]):
         yield idx, tid, path
 
 
-def _render_restored(view, rels: list[str]) -> tuple[str, dict]:
+def _edit_events(messages: list[dict]):
+    """``(position, id, path)`` of every edit that LANDED in ``messages``."""
+    calls: dict = {}
+    for idx, m in enumerate(messages or []):
+        if not isinstance(m, dict):
+            continue
+        for tc in m.get("tool_calls") or []:
+            fn = tc.get("function") or {}
+            if fn.get("name") in writeproxy._EDIT_NAMES and tc.get("id"):
+                if path := _path_of_args(fn.get("arguments") or ""):
+                    calls[tc["id"]] = path
+        tid = m.get("tool_call_id") or m.get("call_id")
+        if tid in calls:
+            res = m.get("content") if m.get("content") is not None else m.get("output")
+            if isinstance(res, str) and selfcompact.write_landed(res) and not denial.is_denied(res):
+                yield idx, tid, calls[tid]
+
+
+def _render_restored(view, rels: list[str], touch: dict) -> tuple[str, dict]:
     if not rels:
         return "", {}
     spill = groundtruth._SPILL_REL
-    todo = []
-    for rel in rels:
-        if rel.startswith(spill) or view.isfile(rel) is not True:
-            continue
-        todo.append(rel)
+    todo = [rel for rel in rels if not rel.startswith(spill) and view.isfile(rel) is True]
     if not todo:
         return "", {}
     if view.may_have_changed:                       # the body may be behind the disk: claim nothing, ask afresh
         for rel in todo:
             view.request_current_body(rel)
         return "", {}
+    # MOST RECENTLY TOUCHED FIRST, by the session's own record of its reads, writes and landed edits — the
+    # view's mtime keeps the survey's value across an edit (it is what the next survey is checked against),
+    # so it cannot say which file the coder worked on last.
     mtime = {view.rel(e.path): (e.mtime or 0) for e in (view.files() or [])}
-    todo.sort(key=lambda r: (-(mtime.get(r) or 0), r))     # newest first, like the workspace listing
+    todo.sort(key=lambda r: (-touch.get(r, 0), -(mtime.get(r) or 0), r))
     limit = writeproxy.READ_INLINE_MAX
     labels = prompts.load_map("fetched_facts_sections")
     shown, omitted, taken, restored = [], [], 0, {}
@@ -9535,7 +9588,7 @@ def _render_restored(view, rels: list[str]) -> tuple[str, dict]:
     parts = [labels["restore_header"].rstrip()] + shown
     if omitted:
         parts.append(prompts.fill(labels["restore_omitted"], paths=", ".join(omitted), limit=limit))
-    return "\n\n" + "\n".join(parts), restored
+    return "\n".join(parts), restored
 
 
 # NO CAP on the read ledger. It was 20 names out of an ALPHABETICALLY sorted list, so which files
@@ -9545,7 +9598,7 @@ def _render_restored(view, rels: list[str]) -> tuple[str, dict]:
 _READ_LEDGER_CAP = None
 
 
-def _fetched_facts_anchor(sess, messages: list[dict] | None = None) -> dict | None:
+def _fetched_facts_anchor(sess, messages: list[dict] | None = None, restored: dict | None = None) -> dict | None:
     """A ⟦ctx:facts⟧ anchor carrying cria's DURABLE fetch ledger (url→status→endpoints), re-injected into
     the coder's OUTBOUND view every turn there are facts — so the coder KEEPS the real endpoints/fields it
     already fetched even after the HARNESS compacts the raw tool result out of its OWN history. cria's own
@@ -9572,7 +9625,7 @@ def _fetched_facts_anchor(sess, messages: list[dict] | None = None) -> dict | No
                                  absent_out=absent)
     # …AND THE HALF OF ITS RESEARCH THAT LIVES ON DISK. The fetch ledger survives compaction and the
     # reads did not, so a compacted coder kept its web history and lost every file it had opened.
-    ledger = (ledger + _read_ground_truth(sess, messages or [])).strip("\n")
+    ledger = (ledger + _read_ground_truth(sess, messages or [], restored)).strip("\n")
     if not ledger.strip():
         return None
     # THE TAIL IS ABOUT FETCHES, so it goes only where a fetch is. With the read ledger appended to
