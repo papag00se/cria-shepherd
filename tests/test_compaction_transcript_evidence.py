@@ -79,3 +79,18 @@ def test_a_gate_call_whose_result_is_present_is_left_to_the_cleaner():
     ids = {tc["id"] for m in kept for tc in m.get("tool_calls") or []}
     assert next(iter(gate_ids)) in ids
     assert len(ids) == 1                       # only that one: the unanswered siblings are gone
+
+
+def test_an_empty_coder_tool_result_is_evidence_and_still_renders():
+    """Review of d37f8b32: a quiet command's empty result is a real `tool: ` line, not a blank turn."""
+    msgs = [
+        {"role": "user", "content": "task"},
+        {"role": "assistant", "content": "", "tool_calls": [
+            {"id": "c1", "type": "function", "function": {"name": "shell",
+                                                          "arguments": json.dumps({"cmd": "touch a.txt"})}}]},
+        {"role": "tool", "tool_call_id": "c1", "content": ""},
+        {"role": "assistant", "content": "done"},
+        {"role": "assistant", "content": ""},
+    ]
+    assert selfcompact.compaction_request_parts(msgs) == [
+        "user: task", 'assistant: shell({"cmd": "touch a.txt"})', "tool: ", "assistant: done"]

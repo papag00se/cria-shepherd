@@ -406,10 +406,16 @@ def compaction_evidence_messages(messages: list[dict], gate_plan=None) -> list[d
     own digest: ``serialize`` always prefixes ``role: ``, so testing the rendered line could never fire
     and a blanked ⟦cria⟧ status turn (``strip_history`` leaves ``{"role": "assistant", "content": ""}``)
     rode into the evidence as ``assistant: `` six times in a row (phi4 / feed-pipeline-java CALL 0006).
-    The real turn order is untouched; only a turn with no content and no call is absent."""
+    The real turn order is untouched; only a NON-tool turn with no content and no call is absent.
+    An EMPTY TOOL RESULT is evidence, not a blank turn: a quiet command (`touch a.txt`) really
+    returned nothing, and removing the line would leave its call looking unanswered (#5b)."""
     cleaned = stub_old_write_args(probegate.clean_gate_results(
         _drop_unanswered_gate_calls(messages), gate_plan))
-    return [m for m in cleaned if msg_digest(m).strip()]
+    return [m for m in cleaned if msg_digest(m).strip() or _is_tool_result(m)]
+
+
+def _is_tool_result(m: dict) -> bool:
+    return isinstance(m, dict) and (m.get("role") == "tool" or m.get("type") == "function_call_output")
 
 
 def compaction_request_parts(messages: list[dict], files_list: str = "", gate_plan=None,

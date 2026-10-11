@@ -77,6 +77,11 @@ At L1-L5 cria does not forward native usage; it reports `input_tokens` = the PRE
 - **Not in it:** per-turn steers/facts a coder call appends after framing, and (planner ON only) the
   step prompt. The size is taken before cria's own self-compaction and before `contextfloor.fit`.
 
+- **L1/L2** (no loop, no floor): the proxied body as the model receives it (`modelview.visible_tokens`
+  of the post-focus-trim body), still a chars/4 estimate and unchanged from before for bodies without a
+  stamped gate call. The floor/refit statements below apply to L3-L5 only; at L1/L2 the server's own
+  answer settles window fit, as it always did.
+
 Why: a harness compacts when the reported size crosses its trigger. Counting gate plumbing made
 phi4 (16,384 window; Codex trigger `int(16384*.85)=13,926`) compact 11-48 times per L5 cell — 31 of 31
 over-trigger reports followed by a Codex compaction in `feed-pipeline-java_phi4_codex_poff_1791646575`
