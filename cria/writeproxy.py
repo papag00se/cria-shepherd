@@ -946,11 +946,11 @@ def _read_command(args: dict) -> str | None:
             f"then {steer}; else cat {q}; fi")
 
 
-def _held_shrinking_write(check, path: str, content: str, edit_names: set) -> str:
-    """The hold text for a whole-file write the shrink check refuses, or "" (no check, or it may run)."""
+def _held_shrinking_write(check, path: str, content: str, edit_names: set) -> dict | None:
+    """``{"text", "bytes"}`` for a whole-file write the shrink check holds, or None (no check / may run)."""
     if check is None:
-        return ""
-    return check(path, content, sorted(edit_names)[0] if edit_names else "") or ""
+        return None
+    return check(path, content, sorted(edit_names)[0] if edit_names else "")
 
 
 def _read_in_place_of_write(path: str, fact: str) -> str:
@@ -1518,16 +1518,6 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
                         read_in_place = True
                         if rlog is not None:
                             rlog.emit("writeproxy.write_unread_target", tool=name, path=str(path))
-                    elif (held := _held_shrinking_write(shrink_check, str(path), _repair_double_escaped(str(body)),
-                                                        injected & _EDIT_NAMES)):
-                        # A WHOLE-FILE WRITE THAT WOULD LEAVE LESS THAN HALF OF A FILE THE CODER HAS SEEN,
-                        # and that the judge did not rule the file's complete content (phi4 A4: a 190-char
-                        # `<dependencies>` excerpt over the 28-line pom.xml; A3: a 22-line stub over the
-                        # 129-line Importer.java). The call is not run; the coder's result carries the
-                        # measured facts, and its rejected payload rides after them (`_rejected_payload_note`).
-                        cmd = _refusal_command(held)
-                        if rlog is not None:
-                            rlog.emit("writeproxy.write_shrink_held", tool=name, path=str(path))
                     else:
                         # NO SECOND TRIM HERE. The fused-call tail is cut once, for every tool's
                         # every string argument, at `massage.strip_debris_from_args` — which runs on
@@ -1539,6 +1529,24 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
                                                        workspace_root, rlog, permission=external_dir_permission)
                         cmd = (_refusal_command(refusal) if refusal
                                else _write_command(str(path), candidate))
+                        # A WHOLE-FILE WRITE THAT WOULD LEAVE LESS THAN HALF OF A FILE THE CODER HAS SEEN,
+                        # and that the judge did not rule the file's complete content (phi4 A4: a 190-char
+                        # `<dependencies>` excerpt over the 28-line pom.xml; A3: a 13-line stub over the
+                        # 129-line Importer.java). The hold is bound to the BYTES it was measured on: the
+                        # lowered command refuses only while the file still equals them (the coder's own
+                        # shell may have rewritten it since the view last saw it); otherwise the ordinary
+                        # command runs below. The rejected payload rides after the facts
+                        # (`_rejected_payload_note`).
+                        held = _held_shrinking_write(shrink_check, str(path), candidate, injected & _EDIT_NAMES)
+                        if held:
+                            same = ("import base64,pathlib,sys; "
+                                    "p=pathlib.Path(base64.b64decode(" + repr(_b64(str(path))) + ").decode()); "
+                                    "sys.exit(0 if p.is_file() and p.read_bytes()==base64.b64decode("
+                                    + repr(base64.b64encode(held["bytes"]).decode("ascii")) + ") else 1)")
+                            cmd = (f"if python3 -c {_qbash(same)}; then\n{_refusal_command(held['text'])}\n"
+                                   f"else\n{cmd}\nfi")
+                            if rlog is not None:
+                                rlog.emit("writeproxy.write_shrink_held", tool=name, path=str(path))
             elif name in _EDIT_NAMES and name in injected:
                 path = _tool_path(args)
                 if not path or args.get("old_string") is None:

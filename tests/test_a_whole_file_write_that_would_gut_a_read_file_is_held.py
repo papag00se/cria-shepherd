@@ -98,6 +98,18 @@ def _run(cmd, cwd):
     return subprocess.run(["bash", "-c", cmd], cwd=cwd, capture_output=True, text=True)
 
 
+def _held(cmd, cwd):
+    """Run the lowered command on disk: True when it refused (and so left the file alone)."""
+    out = _run(cmd, cwd)
+    return out.returncode != 0 and out.stdout.startswith("⟦ctx:denied⟧") and "ctx:wrote" not in out.stdout
+
+
+def _seed(tmp_path):
+    (tmp_path / "src/main/java/pipeline").mkdir(parents=True)
+    (tmp_path / "pom.xml").write_text(SEED_POM)
+    (tmp_path / JAVA).write_text(SEED_JAVA)
+
+
 def test_the_measured_trigger_on_the_incident_payloads():
     assert loop.shrink_measure(SEED_POM, FRAGMENT)["kept"] == 0
     m = loop.shrink_measure(SEED_JAVA, STUB)
@@ -110,20 +122,26 @@ def test_the_a4_pom_fragment_is_held_with_facts_and_nothing_is_written(view, tmp
     judge = _Judge("OTHER")
     check, _ = _check(judge)
     _, cmd = _lower("pom.xml", FRAGMENT, check)
-    assert "write_bytes" not in cmd
     out = _run(cmd, tmp_path)
     assert out.returncode != 0
     assert (tmp_path / "pom.xml").read_text() == SEED_POM
     text = out.stdout
     assert text.startswith("⟦ctx:denied⟧")                                   # marked did-not-run (H1 B1)
-    assert "pom.xml exists on disk: 980 bytes, 25 non-blank lines" in text
-    assert "190 bytes, 7 non-blank lines, and repeats 0 of the file's 25 non-blank lines" in text
+    assert "pom.xml exists on disk: 980 bytes, 25 non-blank lines, 25 of them distinct" in text
+    assert "190 bytes, 7 non-blank lines, and repeats 0 of the file's 25 distinct non-blank lines" in text
     assert "This write_file call was not run, so nothing was written and the file is unchanged" in text
-    assert "would remove 25 lines of the current file, the first being line 1: `<?xml" in text
+    assert "would remove at least 25 of the file's 25 non-blank lines, the first being line 1: `<?xml" in text
     assert "`edit_file` is on this tool menu" in text
     assert "cria" not in text.lower().replace("⟦ctx:denied⟧", "")
     assert "<artifactId>commons-csv</artifactId>" in judge.prompts[0]        # the judge saw the candidate
     assert "980 bytes" in judge.prompts[0]                                    # and the measured facts
+
+
+def test_the_measure_uses_true_units_not_distinct_lines_as_totals():
+    current = "a\nb\n" + "x\n" * 8
+    m = loop.shrink_measure(current, "x\nx\n")
+    assert (m["current_lines"], m["distinct"], m["kept"], m["removed_at_least"]) == (10, 3, 1, 8)
+    assert m["first_removed"] == (1, "a")
 
 
 def test_the_edit_tool_is_named_only_when_the_menu_has_it(view, tmp_path):
@@ -141,11 +159,17 @@ def test_the_a3_importer_stub_is_held(view, tmp_path):
     out = _run(cmd, tmp_path).stdout
     assert (tmp_path / JAVA).read_text() == SEED_JAVA
     assert "This write_file call was not run" in out and "Importer.java exists on disk" in out
+    # B2: true units. 114 non-blank lines, 90 distinct; the stub repeats 4 of the 90 DISTINCT lines, and the
+    # multiset difference puts the removal at no fewer than 109 lines (the distinct count would say 86).
+    assert "114 non-blank lines, 90 of them distinct" in out
+    assert "repeats 4 of the file's 90 distinct non-blank lines" in out
+    assert "would remove at least 109 of the file's 114 non-blank lines, the first being line 3: `import java.io.BufferedReader;`" in out
 
 
-def test_a_legitimate_full_rewrite_proceeds_and_is_asked_once(view):
+def test_a_legitimate_full_rewrite_proceeds_and_is_asked_once(view, tmp_path):
     """Corpus example (a Dockerfile 21 -> 9 lines, an honest rewrite): the judge says WHOLE_FILE."""
     dockerfile = "\n".join(f"RUN step{i}" for i in range(21)) + "\n"
+    (tmp_path / "Dockerfile").write_text(dockerfile)
     view.note_read("Dockerfile", dockerfile)
     view.note_written("Dockerfile", dockerfile)
     rewrite = "FROM node:18-slim\nWORKDIR /app\nCOPY lookup.js .\nCMD [\"node\", \"lookup.js\"]\n" + "# x\nRUN a\nRUN b\nRUN c\nRUN d\n"
@@ -153,7 +177,8 @@ def test_a_legitimate_full_rewrite_proceeds_and_is_asked_once(view):
     check, _ = _check(judge)
     for _i in range(2):
         _, cmd = _lower("Dockerfile", rewrite, check)
-        assert "write_bytes" in cmd
+        assert not _held(cmd, tmp_path)
+        assert (tmp_path / "Dockerfile").read_text() == rewrite
     assert len(judge.prompts) == 1                                            # the positive ruling is remembered
 
 
@@ -179,15 +204,38 @@ def test_no_reasoner_or_assists_off_means_no_check(view):
     assert lp.shrinking_write_check("sid:h2", [], ROOT, _Log()) is None
 
 
-def test_an_unanswered_judge_holds_and_an_identical_repeat_passes_the_moment_it_says_whole_file(view):
+def test_an_unanswered_judge_holds_and_an_identical_repeat_is_asked_again(view, tmp_path):
+    """A hold is never remembered, so the repeat passes if the judge ever says WHOLE_FILE. It does NOT
+    pass on a count: at temperature 0 a false OTHER holds identical content for as long as it repeats
+    (the coder's ways out are edit_file, a shell command, or different content)."""
+    _seed(tmp_path)
     judge = _Judge("", "", "WHOLE_FILE")
     check, _ = _check(judge)
     for _i in range(2):
         _, cmd = _lower("pom.xml", FRAGMENT, check)
-        assert "write_bytes" not in cmd                                        # undecidable -> not destroyed
+        assert _held(cmd, tmp_path)                                            # undecidable -> not destroyed
+        assert (tmp_path / "pom.xml").read_text() == SEED_POM
     _, cmd = _lower("pom.xml", FRAGMENT, check)
-    assert "write_bytes" in cmd                                                # no trap: asked again, then allowed
+    assert not _held(cmd, tmp_path) and (tmp_path / "pom.xml").read_text() == FRAGMENT
     assert len(judge.prompts) == 3
+
+
+def test_a_file_the_coders_own_shell_rewrote_is_not_held_on_the_stale_view(view, tmp_path):
+    """B1: the view still holds the 25-line POM, but a shell command has since rewritten the file. The
+    hold is bound to the bytes measured, so the lowered command writes (as before this assist) instead of
+    refusing with facts about a file that is gone."""
+    _seed(tmp_path)
+    view.note_a_mutator_ran()
+    check, _ = _check(_Judge("OTHER"))
+    _, cmd = _lower("pom.xml", FRAGMENT, check)
+    (tmp_path / "pom.xml").write_text("<project/>\n")                           # the coder's own rewrite
+    out = _run(cmd, tmp_path)
+    assert not _held(cmd, tmp_path) and "ctx:wrote" in out.stdout
+    assert (tmp_path / "pom.xml").read_text() == FRAGMENT
+    (tmp_path / "pom.xml").write_text(SEED_POM)                                 # disk == measured bytes
+    assert _held(cmd, tmp_path) and (tmp_path / "pom.xml").read_text() == SEED_POM
+    (tmp_path / "pom.xml").unlink()                                             # removed since: nothing to gut
+    assert not _held(cmd, tmp_path)
 
 
 def test_a_held_answer_keeps_the_rejected_payload_and_marks_the_call_denied(view, tmp_path):

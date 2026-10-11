@@ -1,6 +1,6 @@
 # Facts of a whole-file write_file that would replace most of an existing file (prompts.load_map). Measured
 # line counts only — no verdict words. `measured` is the judge's fact AND the head of the coder's result;
 # `held` is the coder's result when the write was not run; `edit_on_menu` is a fact about this tool menu.
-measured = {{PATH}} exists on disk: {{BYTES}} bytes, {{LINES}} non-blank lines. This write_file content is {{CAND_BYTES}} bytes, {{CAND_LINES}} non-blank lines, and repeats {{KEPT}} of the file's {{LINES}} non-blank lines.
-held = {{FACT}} This write_file call was not run, so nothing was written and the file is unchanged: writing it would remove {{REMOVED}} lines of the current file, the first being line {{LINE}}: `{{QUOTED}}`. A write_file call replaces the whole file with its content.
+measured = {{PATH}} exists on disk: {{BYTES}} bytes, {{LINES}} non-blank lines, {{DISTINCT}} of them distinct. This write_file content is {{CAND_BYTES}} bytes, {{CAND_LINES}} non-blank lines, and repeats {{KEPT}} of the file's {{DISTINCT}} distinct non-blank lines.
+held = {{FACT}} This write_file call was not run, so nothing was written and the file is unchanged: writing it would remove at least {{REMOVED}} of the file's {{LINES}} non-blank lines, the first being line {{LINE}}: `{{QUOTED}}`. A write_file call replaces the whole file with its content.
 edit_on_menu = {{TOOL}} is on this tool menu and changes part of a file, leaving the rest of it as it is.

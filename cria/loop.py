@@ -31,6 +31,7 @@ from __future__ import annotations
 import copy
 import difflib
 import hashlib
+from collections import Counter
 import inspect
 import json
 import os
@@ -3087,31 +3088,41 @@ class Loop:
         a fragment sent as a whole-file write and a fragment pasted in chat are one confusion (phi4 A4:
         a 190-character `<dependencies>` excerpt replaced the 28-line pom.xml it had read; A3: a 22-line
         stub replaced the 129-line Importer.java). Anything but a clear WHOLE_FILE holds the write —
-        failing toward NOT destroying — and an identical repeat is asked again, never remembered as held,
-        so it passes the moment the judge says WHOLE_FILE; `edit_file` and a full file are never gated."""
+        failing toward NOT destroying. A hold is NOT remembered: an identical repeat is asked again, so
+        it passes if the judge ever says WHOLE_FILE — but the judge runs at temperature 0, so a false
+        `OTHER` holds the identical content indefinitely. The coder's ways out are `edit_file`, a shell
+        command, or different content (a full file that keeps most of the current one is never asked).
+
+        THE HOLD IS BOUND TO THE BYTES MEASURED. The text above comes from the view, which a coder's own
+        shell command can leave behind the disk; the check therefore returns those bytes with the hold, and
+        the lowered command refuses only while the file on disk still equals them (otherwise it writes, as
+        before this assist existed — never a hold or a fact about bytes that are gone)."""
         if not self._ctx.assists or not root or self._ctx.reasoner_chat is None or self._ctx.reasoner_role is None:
             return None
 
-        def check(path: str, content: str, edit_tool: str = "") -> str:
+        def check(path: str, content: str, edit_tool: str = "") -> dict | None:
+            """``{"text", "bytes"}`` — the hold and the exact file bytes it was measured on — or None."""
             sess = self._store.get(sess_key)
             view = wsview.current(root)
             if sess is None or not path or not getattr(view, "surveyed", False):
-                return ""
+                return None
             rel = view.rel(path)
             if not rel or view.isfile(rel) is not True:
-                return ""
-            current = view.read(rel)
-            if current is None:
-                return ""
+                return None
+            raw = view.read_bytes(rel)
+            if raw is None:
+                return None
+            current = raw.decode("utf-8", "replace")
             m = shrink_measure(current, content)
             if m is None:
-                return ""
+                return None
             key = (rel, hashlib.sha1(content.encode("utf-8", "replace")).hexdigest())
             if sess.shrink_write_judged.get(key) == "WHOLE_FILE":
-                return ""
+                return None
             labels = prompts.load_map("write_shrink_facts")
             fact = prompts.fill(labels["measured"], path=rel, bytes=len(current.encode("utf-8", "replace")),
-                                lines=m["current_lines"], cand_bytes=len(content.encode("utf-8", "replace")),
+                                lines=m["current_lines"], distinct=m["distinct"],
+                                cand_bytes=len(content.encode("utf-8", "replace")),
                                 cand_lines=m["cand_lines"], kept=m["kept"])
             answer = ask_closed(
                 self._ctx.reasoner_chat, self._ctx.reasoner_role,
@@ -3120,16 +3131,18 @@ class Loop:
                 rlog, phase="write-shrink", max_tokens=JUDGE_MAX_TOKENS, retry_off=False)
             verdict = whole_file_ruling(answer)
             rlog.emit("loop.write_shrink_judged", path=rel, verdict=verdict[:40], current_lines=m["current_lines"],
-                      cand_lines=m["cand_lines"], kept=m["kept"])
+                      cand_lines=m["cand_lines"], distinct=m["distinct"], kept=m["kept"],
+                      removed_at_least=m["removed_at_least"])
             if verdict == "WHOLE_FILE":
                 sess.shrink_write_judged[key] = verdict
-                return ""
+                return None
             removed = m["first_removed"]
             held = prompts.fill(
-                labels["held"], fact=fact, removed=m["removed"], line=removed[0], quoted=removed[1])
+                labels["held"], fact=fact, removed=m["removed_at_least"], lines=m["current_lines"],
+                line=removed[0], quoted=removed[1])
             if edit_tool:
                 held += " " + prompts.fill(labels["edit_on_menu"], tool=f"`{edit_tool}`")
-            return held
+            return {"text": held, "bytes": raw}
         return check
 
     def _unexecuted_nudge_text(self, sess: PlanSession) -> str:
@@ -6528,10 +6541,21 @@ def shrink_measure(current: str, candidate: str) -> dict | None:
     kept = len(distinct & kept_set)
     if kept * 2 >= len(distinct):
         return None
-    gone = [(i, l) for i, l in enumerate(
-        (l.strip() for l in current.splitlines()), 1) if l and l not in kept_set]
-    return {"current_lines": len(cur), "cand_lines": len(cand), "kept": kept,
-            "removed": len(gone), "first_removed": gone[0]}
+    # MULTISET difference: a line the candidate has once does not cover the file's three copies of it, so
+    # the lines no candidate line can be matched to are a TRUE lower bound on what the write removes.
+    left, first = Counter(cand), None
+    removed = 0
+    for no, raw in enumerate(current.splitlines(), 1):
+        line = raw.strip()
+        if not line:
+            continue
+        if left[line] > 0:
+            left[line] -= 1
+            continue
+        removed += 1
+        first = first or (no, line)
+    return {"current_lines": len(cur), "distinct": len(distinct), "cand_lines": len(cand), "kept": kept,
+            "removed_at_least": removed, "first_removed": first}
 
 
 def whole_file_ruling(answer: str) -> str:
