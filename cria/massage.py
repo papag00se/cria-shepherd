@@ -883,6 +883,104 @@ def _call_syntax_calls(content: str, tools) -> tuple[list[dict], str]:
     return calls, "" if _skip_between_calls(rest, 0) == len(rest) else rest
 
 
+# ------------------------------------------- a call written as a FENCED JSON ENVELOPE in `content`
+#
+# MEASURED 2026-10-11 over every capture in ~/.cria/calls — 44,234 coder/proxy replies, 9,770 with no
+# tool_calls: 196 hold a ``` fence whose body is exactly one `{"name": …, "arguments": {…}}` object.
+# ALL 196 are phi4 (13 sessions); the other ten mapped models, ~31.6K replies, hold none. The
+# 2026-08-03 measurement above (pre-phi4) found no such shape, which is why `_call_syntax_calls`
+# can say "a reply that opens ``` is a displayed example". For a model that writes its calls this way
+# that is no longer true, and no text steer converts it (replay: 0/6 re-prompts, 0/14 with the
+# harness persona removed) — so the recovery is deterministic, in the same owner as the others.
+#
+# READING THEM (#23b): of 19 read in full, the first call was the model's real next action in every
+# one of the leading-envelope replies ("**Preamble:** I'm going to read…", then the fence, then
+# "[Waiting for tool result...]"). What FOLLOWS the first call is another matter: later calls are
+# conditioned on results the model never saw, and some replies invent a whole session — a fenced
+# `list_dir`, "**Tool Result**: {"files": […]}", a `write_file pom.xml` built on that fake read,
+# "Tests run: 10, Failures: 0", "Final Summary", `task_complete`. "The first JSON envelope" alone would
+# have run that `write_file`; so the rule is not "the first envelope" but a LEADER rule.
+#
+# THE GATES, every one a refusal (a refusal is exactly today's behaviour — the turn is lost):
+#   1. the turn is already lost (caller) and was not cut at the output cap (`finish_reason`).
+#   2. the fence body is exactly ONE brace-complete JSON object, keys ⊆ {name, arguments|parameters},
+#      `arguments` an object. A string `arguments` is refused: placing it would be guessing.
+#   3. the name is on THIS request's menu, every key is a declared property, every `required` key is
+#      present and non-null (:func:`_menu_admits`) — the call-syntax gate, not a second weaker one.
+#   4. LEADER: the envelope's fence is not nested (an even number of ``` precede it) and no other
+#      fenced block precedes it, except text-tagged ones (`plaintext`/`text`/untagged — the model's own
+#      "Preamble" echo, 35 of the 123 admitted). Nothing the model wrote as code, a trajectory or a
+#      result sits before the call. This refuses the fabricated sessions, draft-then-write replies
+#      (those belong to the unexecuted-write nudge), a tool-schema echo, and a patch in a ```json fence.
+#      The text-tag set is a bound, stated as one.
+#
+# ONLY THE FIRST call is forwarded, and `content` keeps the prose BEFORE the fence, verbatim. From the
+# fence on nothing is forwarded: the later calls, "[Waiting for tool result…]", fabricated results.
+# That is the stop the model failed to emit — a native call ends generation at the call — not a clip
+# of evidence (#5): the tail is un-executed continuation, and forwarding it would put invented facts
+# beside the REAL result of the same call (#5b). It is disclosed, not silent: the event carries
+# `dropped_chars` and `later_envelopes`.
+#
+# WHICH WAY IT FAILS: toward more work. It only ADDS a call to a call-less turn, never edits the
+# reasoning, and a recovered `task_complete` (0 first envelopes in 196) meets the same completion gate
+# as any call. Measured: of the 196, 46 are off the menu (cria had narrowed it), 27 fail the leader
+# rule, 123 are admitted — 87 read_file, 20 list_dir, 14 write_file, 2 exec_command.
+_FENCED_BLOCK = re.compile(r"```([A-Za-z0-9_+-]*)[ \t]*\r?\n(.*?)```", re.S)
+_TEXT_FENCE_TAGS = ("", "plaintext", "text")
+
+
+def _fenced_envelope(body: str):
+    """``(name, args)`` if ``body`` is exactly one `{name, arguments|parameters}` object, else None."""
+    body = body.strip()
+    if not body.startswith("{"):
+        return None
+    try:
+        obj = jsontext.loads(body)
+    except ValueError:
+        return None
+    if not isinstance(obj, dict) or not isinstance(obj.get("name"), str):
+        return None
+    keys = set(obj) - {"name"}
+    if len(keys) != 1 or not keys <= {"arguments", "parameters"}:
+        return None
+    args = obj[next(iter(keys))]
+    return (obj["name"], args) if isinstance(args, dict) else None
+
+
+def _fenced_envelope_call(content: str, tools) -> tuple[list[dict], str, dict, str | None]:
+    """``(calls, content to keep, event fields, refusal reason)`` — see the block comment above.
+
+    ``([], content, {}, reason)`` on a refusal; ``reason`` is None when the reply holds no fenced
+    envelope at all (silence over noise: nothing to explain)."""
+    schemas = _menu_schemas(tools)
+    if not schemas:
+        return [], content, {}, None
+    blocks = list(_FENCED_BLOCK.finditer(content))
+    first = None
+    for fm in blocks:
+        env = _fenced_envelope(fm.group(2))
+        if env is not None:
+            first = (fm, env)
+            break
+        if fm.group(1) not in _TEXT_FENCE_TAGS:
+            if any(_fenced_envelope(b.group(2)) is not None for b in blocks):
+                return [], content, {}, "prefix_fence"
+            return [], content, {}, None
+    if first is None:
+        return [], content, {}, None
+    fm, (name, args) = first
+    if _is_quoted(content, fm.start()):
+        return [], content, {}, "nested"
+    props = set((schemas.get(name) or {}).get("properties") or {})
+    if name not in schemas:
+        return [], content, {}, "off_menu"
+    if not set(args) <= props or not _menu_admits(name, args, schemas):
+        return [], content, {}, "inadmissible"
+    later = sum(1 for b in blocks if b.start() > fm.start() and _fenced_envelope(b.group(2)) is not None)
+    fields = {"later_envelopes": later, "dropped_chars": len(content) - fm.start()}
+    return [_toolcall(name, args)], content[:fm.start()].rstrip(), fields, None
+
+
 def content_text(content) -> str:
     """The TEXT of an assistant/user ``content`` field, whatever shape it arrived in.
 
@@ -953,6 +1051,7 @@ def recover_leaked_tool_calls(completion: dict, tools=None, rlog=None) -> dict:
             continue
         calls: list[dict] = []
         cleaned = content
+        fields: dict = {}   # extra event fields of the recovery that fired (the fenced envelope's drop count)
         if "<" not in content:
             # No angle-bracket dialect. The call may still be here as JSON DATA — the same leak,
             # a different envelope. Content is dropped whole (the call replaces it): a model that
@@ -988,12 +1087,22 @@ def recover_leaked_tool_calls(completion: dict, tools=None, rlog=None) -> dict:
                      calls=[c["function"]["name"] for c in calls], chars=len(content))
                 continue
             event = "massage.call_syntax_recovered"
+        if not calls:
+            # Third form, same chain: a call fenced as a JSON envelope. See the block comment on
+            # :func:`_fenced_envelope_call`. The cap-cut refusal is the same gate as above.
+            calls, cleaned, fields, why = _fenced_envelope_call(content, tools)
+            if calls and choice.get("finish_reason") == "length":
+                why, calls = "length", []
+            if why:
+                _log(rlog, "massage.fenced_call_refused", reason=why, chars=len(content))
+            if calls:
+                event = "massage.fenced_call_recovered"
         if calls:
             msg["tool_calls"] = calls
             msg["content"] = cleaned or None
             if choice.get("finish_reason") in (None, "stop"):
                 choice["finish_reason"] = "tool_calls"
-            _log(rlog, event, reshape="massage", calls=[c["function"]["name"] for c in calls])
+            _log(rlog, event, reshape="massage", calls=[c["function"]["name"] for c in calls], **fields)
     return recover_reasoning_tool_calls(completion, tools, rlog)
 
 
