@@ -21,6 +21,7 @@ from . import bodykeys
 from . import jsontext
 from .jsontext import extract_json_object
 from .shelltool import find_shell_tool, shell_args
+from .toolargs import PATH_KEYS, WHOLE_FILE_WRITES
 from .toolargs import parse_args as _parse_tool_args, tool_path as _tool_path
 from .writeproxy import _decode_backslash_escapes, _read_command as _wp_read_command
 from .writeproxy import trim_fused_tail
@@ -222,6 +223,13 @@ def apply(completion: dict, tools=None, rlog=None, *, tool_call_fixes: bool | No
     if not (_TOOL_CALL_FIXES if tool_call_fixes is None else tool_call_fixes):
         return completion
     completion = recover_leaked_tool_calls(completion, tools, rlog)  # text → real tool_calls
+    return _repair_calls(completion, tools, rlog)
+
+
+def _repair_calls(completion: dict, tools=None, rlog=None) -> dict:
+    """Every pass of :func:`apply` AFTER the recovery of a call out of text — shared with
+    :func:`promote_call`, so a call recovered later (by the loop, which holds the judge and the
+    workspace view the recovery needs) meets exactly the passes a native one does."""
     completion = strip_debris_from_args(completion, rlog)  # fused-call tail off EVERY string arg
     completion = normalize_tool_names(completion, tools, rlog)  # EditFile/edit-file → edit_file (case/sep)
     completion = repair_tool_args(completion, rlog)  # fenced / raw-newline args → clean JSON
@@ -929,22 +937,69 @@ _FENCED_BLOCK = re.compile(r"```([A-Za-z0-9_+-]*)[ \t]*\r?\n(.*?)```", re.S)
 _TEXT_FENCE_TAGS = ("", "plaintext", "text")
 
 
+def _envelope_pair(obj):
+    """``(name, args)`` if ``obj`` is a two-key object holding exactly one STRING and exactly one
+    OBJECT — the string is the tool name, the object its arguments — else None.
+
+    NO KEY NAMES. phi4 spells the same call `{name, arguments}` (678 fenced objects),
+    `{action, parameters}` (16), `{tool_call, arguments}` (6), `{action, args}` (4) and
+    `{action, arguments}` (3), and a list of key names would be retuned for each spelling it has not
+    yet used (principle 20). The SHAPE is the invariant: one string (what to call) and one object
+    (with what). Whether that string names a tool is the MENU's question and is asked afterwards by
+    :func:`_fenced_envelope_call`, exactly as for the original `{name, arguments}` form — so a
+    two-key object that is merely data (`{"description": "…", "parameters": {…}}`) parses here and is
+    refused there as ``off_menu``. Three or more keys never parse: a tool-schema echo
+    (`name`+`description`+`parameters`) and a `package.json` are not calls."""
+    if not isinstance(obj, dict) or len(obj) != 2:
+        return None
+    strs = [k for k, v in obj.items() if isinstance(v, str)]
+    objs = [k for k, v in obj.items() if isinstance(v, dict)]
+    if len(strs) != 1 or len(objs) != 1:
+        return None
+    return obj[strs[0]], obj[objs[0]]
+
+
 def _fenced_envelope(body: str):
-    """``(name, args)`` if ``body`` is exactly one `{name, arguments|parameters}` object, else None."""
+    """``(name, args)`` if ``body`` is exactly one call object (see :func:`_envelope_pair`), else None.
+
+    No unwrapping: `{tool_call: {name, arguments}}` and `{tool_calls: […]}` are recovered earlier in the
+    chain by :func:`_envelope_calls` (checked against the corpus: it recovers both, the batch whole)."""
     body = body.strip()
     if not body.startswith("{"):
         return None
     try:
-        obj = jsontext.loads(body)
+        return _envelope_pair(jsontext.loads(body))
     except ValueError:
         return None
-    if not isinstance(obj, dict) or not isinstance(obj.get("name"), str):
-        return None
-    keys = set(obj) - {"name"}
-    if len(keys) != 1 or not keys <= {"arguments", "parameters"}:
-        return None
-    args = obj[next(iter(keys))]
-    return (obj["name"], args) if isinstance(args, dict) else None
+
+
+_ECHO_FLOOR = 80   # normalised characters; the same floor `loop._fence_is_self_quote` uses
+
+
+def _echoes_a_draft(args: dict, drafts: list[str]) -> bool:
+    """Is a code fence before the call merely the DRAFT of the call's own payload?
+
+    The leader rule (gate 4) refuses a call that follows code the model wrote, because that code may
+    be a fabricated trajectory. One shape of "code before the call" is not that: the model drafts a
+    file in a fence and then WRITES it, the write's string argument being the very text above it —
+    measured on the nudge reply of the A1 run (capture 20261010T212733 call 0015: a ```java class,
+    then a `write_file` whose `content` is that class, whitespace aside). That is an IDENTITY, not a
+    judgment: whitespace-normalised equality of one string argument with one preceding fence, over a
+    floor so a two-token overlap cannot qualify (`loop._fence_is_self_quote`'s own comparison).
+
+    A fabricated session cannot pass as one: its writes are built on invented results, and a fence
+    that holds a JSON object (a result, a schema echo, an earlier call) refuses the whole reply
+    here — a draft is code, and an object is not code the model is about to save. Every refusal is
+    today's behaviour."""
+    if any(d.lstrip().startswith("{") for d in drafts):
+        return False
+    normed = {"".join(d.split()) for d in drafts}
+    for v in args.values():
+        if isinstance(v, str):
+            n = "".join(v.split())
+            if len(n) >= _ECHO_FLOOR and n in normed:
+                return True
+    return False
 
 
 def _fenced_envelope_call(content: str, tools) -> tuple[list[dict], str, dict, str | None]:
@@ -957,18 +1012,19 @@ def _fenced_envelope_call(content: str, tools) -> tuple[list[dict], str, dict, s
         return [], content, {}, None
     blocks = list(_FENCED_BLOCK.finditer(content))
     first = None
+    drafts: list[str] = []   # the code fences that precede the first envelope
     for fm in blocks:
         env = _fenced_envelope(fm.group(2))
         if env is not None:
             first = (fm, env)
             break
         if fm.group(1) not in _TEXT_FENCE_TAGS:
-            if any(_fenced_envelope(b.group(2)) is not None for b in blocks):
-                return [], content, {}, "prefix_fence"
-            return [], content, {}, None
+            drafts.append(fm.group(2))
     if first is None:
         return [], content, {}, None
     fm, (name, args) = first
+    if drafts and not _echoes_a_draft(args, drafts):
+        return [], content, {}, "prefix_fence"
     if _is_quoted(content, fm.start()):
         return [], content, {}, "nested"
     props = set((schemas.get(name) or {}).get("properties") or {})
@@ -979,6 +1035,134 @@ def _fenced_envelope_call(content: str, tools) -> tuple[list[dict], str, dict, s
     later = sum(1 for b in blocks if b.start() > fm.start() and _fenced_envelope(b.group(2)) is not None)
     fields = {"later_envelopes": later, "dropped_chars": len(content) - fm.start()}
     return [_toolcall(name, args)], content[:fm.start()].rstrip(), fields, None
+
+
+# ------------------------------------------------- a file typed into chat instead of written
+#
+# phi4 has no native tool calling (its GGUF template has none; the fleet serves a hand-written Hermes
+# one) and the fleet's own verification recorded that it cannot reliably emit a tool call whose
+# ARGUMENT holds newlines — a write_file of a multi-line file. So it writes the file in chat:
+# "2. **Refactor `Importer.java`**:" and a ```java fence holding a complete class (live capture
+# 20261010T212733 calls 0022-0032), no tool call, finish stop. The loop's `unexecuted_write` nudge
+# (max 2) cannot convert that — text steers do not change phi4's formatting — so the file never
+# reaches the disk. THE NUDGE ASKS THE MODEL TO RE-EMIT WHAT IT ALREADY WROTE; this recovers it.
+#
+# This module holds only the DETERMINISTIC half — parsing the reply into fenced blocks and the path
+# the model's own preceding line binds to each. Resolving that path against the workspace and the
+# one judgment that cannot be made by structure (is the block the COMPLETE file, or an excerpt?)
+# need the workspace view and a reasoner, so they live in `loop.Loop._recover_text_write`, the
+# shared coder-turn core. Why not here, in the per-completion chain: `apply` has no judge, and a
+# keyword/overlap rule for "whole file vs fragment" is exactly the semantic-in-code that principle 8
+# forbids (the same reply holds a 5-line `<dependency>` excerpt for pom.xml and a 100-line class).
+
+def fenced_file_blocks(content: str) -> list[dict]:
+    """The TOP-LEVEL fenced blocks of ``content`` in order, each with the one line that precedes it.
+
+    Depth-aware, like `loop.unexecuted_write`: a pasted README is a ```markdown block holding
+    ```bash blocks, and a regex pairing fences reads the inner closing fence as the outer close.
+    Each entry: ``lang``, ``lines`` (the body, verbatim), ``closed`` (False for a fence the reply ends
+    inside — a cut-off file is never whole), ``start`` (char offset of the opening line), and
+    ``binding`` (the nearest non-blank line before the fence that lies after the previous block, or
+    None). Nothing is clipped, nothing interpreted."""
+    lines = content.splitlines(keepends=True)
+    offsets, pos = [], 0
+    for ln in lines:
+        offsets.append(pos)
+        pos += len(ln)
+    out: list[dict] = []
+    depth = 0
+    cur: dict | None = None
+    prev_end = -1
+    for i, raw in enumerate(lines):
+        t = raw.strip()
+        if t.startswith("```"):
+            tag = t[3:].strip()
+            if tag or depth == 0:                     # an opening fence (a tag always opens)
+                if depth == 0:
+                    j = i - 1
+                    while j > prev_end and not lines[j].strip():
+                        j -= 1
+                    cur = {"lang": tag.split()[0] if tag else "", "lines": [], "closed": False,
+                           "start": offsets[i], "binding": lines[j].strip() if j > prev_end else None}
+                else:
+                    cur["lines"].append(raw.rstrip("\r\n"))
+                depth += 1
+            else:                                      # bare ``` with something open → closing
+                depth -= 1
+                if depth == 0:
+                    cur["closed"] = True
+                    out.append(cur)
+                    cur, prev_end = None, i
+                else:
+                    cur["lines"].append(raw.rstrip("\r\n"))
+        elif depth > 0:
+            cur["lines"].append(raw.rstrip("\r\n"))
+    if depth > 0 and cur is not None:
+        out.append(cur)
+    return out
+
+
+_PATH_TOKEN = re.compile(r"(?<![\w./\\-])((?:[\w.\-]+/)*[\w\-]+(?:\.[\w\-]+)*\.[A-Za-z][A-Za-z0-9]{0,9})(?![\w/])")
+_URL = re.compile(r"[A-Za-z][A-Za-z0-9+.-]*://\S+")
+
+
+def binding_paths(line: str) -> list[str]:
+    """The DISTINCT path-shaped tokens a binding line names — backticked ones when it has any (the
+    model marked them as names), else bare ones. A token is a dotted name ending in a letter
+    extension: `Importer.java`, `src/main/pom.xml`; not a version (`1.9.0`), a URL, or a sentence's
+    full stop. Whether a token IS a file is the workspace's question, not this one's."""
+    line = _URL.sub(" ", line or "")
+    ticked = [m for span in re.findall(r"`([^`]+)`", line) for m in _PATH_TOKEN.findall(span)]
+    found = ticked or _PATH_TOKEN.findall(re.sub(r"[*_`]", " ", line))
+    return list(dict.fromkeys(found))
+
+
+def has_call_envelope(content: str) -> bool:
+    """Does the reply carry a fenced call object anywhere? Such a reply has already expressed its
+    actions as calls — the fenced-envelope recovery's domain, which refused it — and is not a reply
+    that merely forgot to call."""
+    return any(_fenced_envelope("\n".join(b["lines"])) is not None for b in fenced_file_blocks(content))
+
+
+def whole_file_write_call(tools, path: str, content: str) -> dict | None:
+    """A ``write_file``-family call for THIS request's menu, or None when the menu has no tool that
+    takes exactly a path and a text. The tool is the menu's own (a name in
+    `toolargs.WHOLE_FILE_WRITES`), and its argument names come from its own schema: required keys
+    must be exactly one path alias and one other string property — anything else (a `command`
+    discriminator, an `overwrite` flag) is a tool whose call cria would be guessing at."""
+    schemas = _menu_schemas(tools)
+    for name in WHOLE_FILE_WRITES:
+        schema = schemas.get(name)
+        if not schema:
+            continue
+        props = schema.get("properties") or {}
+        req = schema.get("required")
+        if not isinstance(req, list) or len(req) != 2 or not all(r in props for r in req):
+            continue
+        path_key = next((k for k in PATH_KEYS if k in req), None)
+        text_key = next((k for k in req if k != path_key), None)
+        if path_key is None or text_key is None or text_key in PATH_KEYS:
+            continue
+        if any((props[k] or {}).get("type") != "string" for k in req):
+            continue
+        if set(props) - set(req):
+            continue                                   # optional extras: not a plain path+text write
+        return _toolcall(name, {path_key: path, text_key: content})
+    return None
+
+
+def promote_call(completion: dict, call: dict, keep: str, tools, rlog=None, **fields) -> dict:
+    """Make ``call`` THE tool call of the first choice, with ``keep`` as its content, then run the
+    repairs a native call of the same name would have met in :func:`apply` — a recovered call is
+    held to the same lowering and normalisation as a native one, never exempt from it."""
+    choice = completion["choices"][0]
+    msg = choice["message"]
+    msg["tool_calls"] = [call]
+    msg["content"] = keep or None
+    if choice.get("finish_reason") in (None, "stop"):
+        choice["finish_reason"] = "tool_calls"
+    _log(rlog, "massage.text_write_recovered", reshape="massage", calls=[call["function"]["name"]], **fields)
+    return _repair_calls(completion, tools, rlog)
 
 
 def content_text(content) -> str:

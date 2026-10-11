@@ -34,6 +34,7 @@ import hashlib
 import inspect
 import json
 import os
+import posixpath
 import fnmatch
 import re
 import threading
@@ -424,6 +425,9 @@ class PlanSession(GuardState):
     critic_fails: int = 0
     step_tool_calls: int = 0  # coder tool calls forwarded THIS step (the changed-anything leg)
     unexecuted_nudges: int = 0  # bounded pushes for a turn that PASTED the file instead of writing it
+    # (path, sha1 of the block) of every pasted file the text-write judge has ruled on, and its answer —
+    # a temperature-0 model re-pastes the same file every turn, and a settled question is not re-asked.
+    text_write_judged: dict = field(default_factory=dict)
     thrash_replanned: bool = False  # the tool-call-thrash re-derive fired once this STEP (anti-churn bound)
     verify_replanned: bool = False  # the verify-fail re-derive fired once this STEP (anti-churn bound)
     leg0_nudged: bool = False  # the no-tools nudge fired once this step (bounds in-process recursion)
@@ -2969,6 +2973,10 @@ class Loop:
         _add_completion_tool(framed)  # advertise the explicit-done tool for THIS coder call
         rlog.phase = f"coder-s{step}"  # label the call capture with the role + step
         coder = massage.apply(_parse_completion(self._ctx.coder_chat(framed, rlog)), framed.get("tools"), rlog)
+        # BEFORE `_normalize_completion`: a turn that holds ANY call (a task_complete included) is not a
+        # turn that pasted a file instead of writing it, and this must run ahead of every guard below so
+        # a recovered write is tracked like a native one (truncation, write-streak, refusals).
+        coder = self._recover_text_write(sess, coder, framed, body, rlog)
         coder = _normalize_completion(coder, rlog)  # a task_complete call → step 'done' (or dropped)
         coder = guard_rumination(coder, framed, self._ctx.coder_chat, rlog, step=step,
                                  phase=f"coder-s{step}", coder_role=self._ctx.coder_role)
@@ -2997,6 +3005,106 @@ class Loop:
                                      messages=body.get("messages"))
                 guard_track_write_streak(sess, coder, rlog, step=step, messages=framed.get("messages"))
         return coder
+
+    # -------------------------------------------------- a file typed into chat → the write it should have been
+
+    def _recover_text_write(self, sess: PlanSession, comp: dict, framed: dict, body: dict, rlog) -> dict:
+        """A call-less turn that PASTED a whole file under the file's name becomes that file's write.
+
+        phi4 cannot reliably emit a tool call whose argument holds newlines (the fleet's own
+        verification recorded the native write_file failures), so it writes the file in chat — and the
+        `unexecuted_write` nudge, which asks it to send the same content as a call, has never got a call
+        out of it (A1 run, calls 0022-0038: four replies, one class, no write). This takes the model's
+        OWN text and re-shapes it into the call it meant: principle 2 allows nothing more — cria
+        writes no code, picks no file, invents no change.
+
+        WHY HERE, AND NOT IN THE MASSAGE CHAIN. Two facts are needed that `massage.apply` does not have:
+        the workspace view (to resolve the model's words to ONE real path) and a judge (to settle
+        whether the fenced block is the WHOLE file or an excerpt — the same reply carries a 5-line
+        `<dependency>` snippet for pom.xml and a 100-line class, and a length/overlap rule for that
+        is the semantic-in-code principle 8 forbids). `_coder_turn` is the shared core of both drivers
+        and runs the guards after it, so the write is held to everything a native one is
+        (`massage.promote_call` replays the lowering passes).
+
+        EVERY GATE IS A REFUSAL, and a refusal is exactly today's behaviour (the nudge). In order:
+        a reasoner exists; the turn holds no call, was not cut at the cap, and is not a reading step;
+        the reply holds no fenced call object (its actions are already expressed as calls — the
+        fenced-envelope recovery refused them, and a second reading would contradict it); the FIRST
+        eligible block is closed, at least `UNEXECUTED_WRITE_LINES` long (what the nudge already calls
+        "a file, not a snippet"), and the line directly above it names exactly one path; that path is
+        ONE file in the workspace view (exact, else a unique suffix/basename match over a complete
+        listing) — or a new file whose name the TASK itself contains; the block is neither a quote of
+        something the coder was shown nor already the file's content; and the judge answers the
+        exact positive token. Only that one block is promoted; the tail (further blocks, invented
+        results, a completion claim) is not forwarded and is counted in the event."""
+        if self._ctx.reasoner_chat is None or self._ctx.reasoner_role is None:
+            return comp
+        choice = (comp.get("choices") or [None])[0]
+        msg = (choice or {}).get("message")
+        if not isinstance(msg, dict) or msg.get("tool_calls") or choice.get("finish_reason") not in (None, "stop"):
+            return comp
+        text = _completion_text(comp)
+        if "```" not in text or _is_reading_step(sess, sess.plan.current()):
+            return comp
+        tools = framed.get("tools")
+        if massage.whole_file_write_call(tools, "x", "y") is None or massage.has_call_envelope(text):
+            return comp
+        block = next((b for b in massage.fenced_file_blocks(text)
+                      if b["closed"] and b["binding"]
+                      and sum(1 for l in b["lines"] if l.strip()) >= UNEXECUTED_WRITE_LINES), None)
+        if block is None:
+            return comp
+        names = massage.binding_paths(block["binding"])
+        if len(names) != 1:
+            return comp   # no name, or two — the model did not bind this block to one file
+
+        def refuse(why: str, **f) -> dict:
+            rlog.emit("loop.text_write_refused", reason=why, path=names[0], **f)
+            return comp
+
+        root = getattr(sess, "workspace_root", None) or _extract_cwd(body.get("messages", []))
+        view = wsview.current(root) if root else None
+        if view is None or not view.surveyed:
+            return refuse("workspace_unsurveyed")
+        task = getattr(sess.plan, "task", "") or _history_root(body.get("messages", []))[0]
+        target = _resolve_named_file(view, names[0], task)
+        if isinstance(target, str):
+            return refuse(target)
+        rel, exists = target
+        lines = block["lines"]
+        content = "\n".join(lines) + "\n"
+        injected = ["".join(t.split()) for t in _injected_fence_texts(sess, body.get("messages", [])) if t.strip()]
+        if fence_is_self_quote(lines, injected):
+            return refuse("quote_of_shown_text")
+        current = view.read(rel) if exists else None
+        if current is not None and "".join(current.split()) == "".join(content.split()):
+            return refuse("unchanged")
+        key = (rel, hashlib.sha1(content.encode("utf-8", "replace")).hexdigest())
+        verdict = sess.text_write_judged.get(key)
+        if verdict is None:
+            if current is not None:
+                fact = (f"It exists and currently holds {len(current.splitlines())} lines; "
+                        f"the block has {len(lines)} lines.")
+            elif exists:
+                fact = f"It exists ({view.size(rel)} bytes; its text is not known); the block has {len(lines)} lines."
+            else:
+                fact = "It does not exist yet (the task names it)."
+            ordinal = 1 + next(i for i, b in enumerate(massage.fenced_file_blocks(text)) if b["start"] == block["start"])
+            answer = ask_closed(
+                self._ctx.reasoner_chat, self._ctx.reasoner_role,
+                prompts.load("text_write_judge") + "\n\n" + prompts.render(
+                    "text_write_judge_user", path=rel, fact=fact, ordinal=ordinal, lang=block["lang"] or "none",
+                    lines=sum(1 for l in lines if l.strip()), binding=block["binding"], reply=text),
+                rlog, phase="text-write", max_tokens=JUDGE_MAX_TOKENS, retry_off=False)
+            verdict = answer.strip().strip("`").upper()
+            sess.text_write_judged[key] = verdict
+            rlog.emit("loop.text_write_judged", path=rel, verdict=verdict[:40], exists=exists)
+        if verdict != "WHOLE_FILE":
+            return refuse("judged_other" if verdict == "OTHER" else "judge_unanswered")
+        call = massage.whole_file_write_call(tools, view.abs(rel), content)
+        keep = text[:block["start"]].rstrip()
+        return massage.promote_call(comp, call, keep, tools, rlog, path=rel, exists=exists,
+                                    block_lines=len(lines), dropped_chars=len(text) - len(keep))
 
     def _work(self, sess: PlanSession, key: str, body: dict, rlog, rewritten: bool = False) -> dict:
         # Persist the harness's workspace cwd on the SESSION: a fresh <cwd> updates it, a turn without one
@@ -6125,6 +6233,41 @@ def _injected_fence_texts(sess, messages: list[dict] | None = None) -> list[str]
     return out
 
 
+def _resolve_named_file(view, name: str, task: str):
+    """``(workspace-relative path, exists)`` for a file name the model WROTE, or the refusal reason.
+
+    ONE file or nothing — the model's words are never turned into a guess: an exact path wins; else a
+    suffix match over the listing, which must be unique and which is only trusted when the listing is
+    complete (a folded directory might hold a second `Importer.java`). A name that matches nothing is
+    a NEW file only when the task itself contains it verbatim — the operator's own words name the
+    deliverable, so cria is not choosing a location — and its parent directory is known to exist."""
+    rel = view.rel(name)
+    if rel is None or not rel:
+        return "outside_workspace"
+    if view.isdir(rel) is True:
+        return "names_a_directory"
+    if "/" in rel and view.isfile(rel) is True:
+        return rel, True                     # a qualified path that exists IS the file
+    # A bare name must be unique over the listing — `Importer.java` at the root AND under src/ is two
+    # files, and the model's words do not say which.
+    listed = [r for r in (view.rel(e.path) for e in (view.files() or [])) if r]
+    hits = [r for r in listed if r == rel or r.endswith("/" + rel)]
+    if len(hits) > 1:
+        return "ambiguous_path"
+    if len(hits) == 1:
+        if not view.complete and "/" not in rel:
+            return "listing_incomplete"      # a folded directory might hold a second match
+        return hits[0], True
+    if not view.complete:
+        return "listing_incomplete"
+    if name not in (task or ""):
+        return "unnamed_new_file"
+    parent = posixpath.dirname(rel)
+    if parent and view.isdir(parent) is not True:
+        return "unknown_parent"
+    return rel, False
+
+
 def _is_reading_step(sess, item) -> bool:
     """Is the step in flight the plan-off READING step — the one that produces no files?
 
@@ -6133,6 +6276,20 @@ def _is_reading_step(sess, item) -> bool:
     2026-08-04); it just had no name, so no other seat could ask."""
     return bool(getattr(sess, "plan_off", False) and item is not None
                 and item.text != getattr(sess.plan, "task", None))
+
+
+def fence_is_self_quote(fence_lines: list[str], injected_norm: list[str]) -> bool:
+    """A fence the coder copied out of what it was SHOWN is not an unsaved file. Walked on
+    mellum2 1786196176 calls 0013/0020: two research summaries quoted the ⟦ctx⟧ response-shape
+    block (the ```ts schema cria itself injected), the nudge fired both times — "your last
+    message contained the file's contents as text" — and the coder, told to persist a file it
+    never drafted, tried to overwrite the read-only spec spill. cria HOLDS every string it
+    injected, so identity is a comparison, not a judgment: whitespace-normalized containment,
+    with a floor so a two-token overlap cannot exempt a real file. ``injected_norm`` is the
+    whitespace-stripped haystack. ONE owner: `unexecuted_write` (the nudge) and the text-write
+    recovery (`Loop._recover_text_write`) must agree on what a quote is."""
+    blob = "".join("".join(l.split()) for l in fence_lines)
+    return len(blob) >= 80 and any(blob in inj for inj in injected_norm)
 
 
 def unexecuted_write(content: str, injected=None) -> bool:
@@ -6164,15 +6321,7 @@ def unexecuted_write(content: str, injected=None) -> bool:
     injected_norm = ["".join(t.split()) for t in (injected or []) if t and t.strip()]
 
     def _is_self_quote(fence_lines: list[str]) -> bool:
-        # A fence the coder copied out of cria's own prompt is not an unsaved file. Walked on
-        # mellum2 1786196176 calls 0013/0020: two research summaries quoted the ⟦ctx⟧ response-shape
-        # block (the ```ts schema cria itself injected), the nudge fired both times — "your last
-        # message contained the file's contents as text" — and the coder, told to persist a file it
-        # never drafted, tried to overwrite the read-only spec spill. cria HOLDS every string it
-        # injected, so identity is a comparison, not a judgment: whitespace-normalized containment,
-        # with a floor so a two-token overlap cannot exempt a real file.
-        blob = "".join("".join(l.split()) for l in fence_lines)
-        return len(blob) >= 80 and any(blob in inj for inj in injected_norm)
+        return fence_is_self_quote(fence_lines, injected_norm)
 
     depth, run, fence = 0, 0, []
     for line in body.splitlines():

@@ -1,0 +1,13 @@
+FILE NAMED BY THE ASSISTANT:
+{{PATH}}
+
+WORKSPACE FACT ABOUT THAT FILE:
+{{FACT}}
+
+THE BLOCK UNDER QUESTION is fenced block number {{ORDINAL}} of the reply below (language tag `{{LANG}}`, {{LINES}} non-blank lines). The line directly above it reads:
+{{BINDING}}
+
+THE ASSISTANT'S WHOLE REPLY:
+{{REPLY}}
+
+Return exactly `WHOLE_FILE` or `OTHER`.

@@ -120,15 +120,18 @@ class RefusedTests(unittest.TestCase):
         self.refused("feed_java_0093_fabricated_session", "prefix_fence")
         self.refused("feed_java_0180_fabricated_session", "prefix_fence")
 
-    def test_drafts_then_writes_are_left_to_the_unexecuted_write_path(self):
+    def test_drafts_then_writes_are_refused_unless_the_write_echoes_a_draft(self):
+        """rust 0019: six drafts, then writes that are NOT any one of them. (shipping_rb 0003, a draft
+        the write repeats verbatim, was a refusal until the identity rule — see test_text_actions.)"""
         self.refused("rust_0019_drafts_then_writes", "prefix_fence")
-        self.refused("shipping_rb_0003_draft_then_write", "prefix_fence")
 
     def test_a_tool_schema_echo_and_drafts_are_refused(self):
         self.refused("node_0003_schema_echo_and_drafts", "prefix_fence")
 
     def test_a_patch_in_a_json_fence_is_refused(self):
-        self.refused("cart_go_0154_patch_fence", "prefix_fence")
+        # The patch fence IS echoed by the apply_patch envelope (identity), so the leader rule no
+        # longer decides this reply; the narrowed menu does — apply_patch is not on it.
+        self.refused("cart_go_0154_patch_fence", "off_menu")
 
     def test_a_name_the_narrowed_menu_does_not_carry_is_refused(self):
         self.refused("orders_py_0201_offmenu_narrowed_menu", "off_menu")
