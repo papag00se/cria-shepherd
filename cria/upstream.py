@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Iterator
 
 from . import bodykeys
-from . import (callcapture, config, contextfloor, failover, indicators, massage, probegate,
+from . import (callcapture, config, contextfloor, failover, indicators, massage, modelview,
                reasoning, rumination, tokenratio)
 
 # Sentinel for "window not yet resolved" (distinct from None = "no window / skip floor").
@@ -388,8 +388,7 @@ class Upstream:
             # A stamped gate call is cria-authored provenance, not marker-shaped text guessed from
             # history. Clean only those linked calls/results at the final coder-bound wire boundary;
             # a body without one remains byte-identical.
-            if probegate.gate_call_ids(msgs):
-                msgs = probegate.clean_gate_results(msgs, linked_only=True)
+            msgs = modelview.wire_messages(msgs)
             window = self._resolve_window(rlog)
             # A GUESSED WINDOW MAY NOT TRIM. `_resolve_window` returns `_FALLBACK_WINDOW` when
             # /props could not be read — an invented number, and the abort guard below already

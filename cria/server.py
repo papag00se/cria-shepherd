@@ -22,7 +22,7 @@ from dataclasses import replace
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from . import bodykeys
-from . import (callcapture, compat, focustrim, groundtruth, massage, probegate, prompts,
+from . import (callcapture, compat, focustrim, groundtruth, massage, modelview, probegate, prompts,
                responses, rumination, selfcompact)
 from .classify import Classifier
 from . import content_reduce
@@ -1018,9 +1018,9 @@ class CriaHandler(BaseHTTPRequestHandler):
         self._setup_translation(body, session_key(self.headers, body.get("messages", [])), rlog)
 
 
-        # Honest token accounting for the connected harness (see _report_context_usage): the size
-        # of the context IT sent, not cria's internal call usages. cria fits it to the window itself.
-        self._ctx_tokens = _incoming_ctx_tokens(body, rlog)
+        # Observation only (logs `ctx.estimate`): what the harness SENT. The usage reported back is
+        # the MODEL-VISIBLE size, computed where the response path is known (see _report_context_usage).
+        _incoming_ctx_tokens(body, rlog)
         stream = bool(body.get("stream"))
         rlog.emit(
             "request.recv",
@@ -1513,10 +1513,13 @@ class CriaHandler(BaseHTTPRequestHandler):
         # continues (a mid-plan tool result / continuation classifies as non-task, and gating on that
         # would abandon the work: "stopped after a command"); classification only gates STARTING.
         if self._engages_loop(sess_key, classification):
+            # The model-visible size is taken BEFORE the drive (a finished session drops its state)
+            # and from the same framing the coder prompt is built from — see Loop.visible_context_tokens.
+            visible = server.loop.visible_context_tokens(body, sess_key)
             completion = server.loop.drive(body, sess_key, classification, rlog)
             if completion is not None:
                 out = self._finalize(self._translate_out(completion, sess_key, rlog), sess_key, rlog)
-                _report_context_usage(out, getattr(self, "_ctx_tokens", 0), rlog)
+                _report_context_usage(out, visible, rlog)
                 return out, None  # loop path carries no indicator
         provider, indic = self._route(body, classification, rlog, compaction)
         rlog.phase = "proxy"
@@ -1549,7 +1552,12 @@ class CriaHandler(BaseHTTPRequestHandler):
         # L0 forwards the backend's measured usage; chars/4 is observation, not accounting.
         # The harness uses this count to compact before the next request fills the native window.
         if server.cfg.routing.engagement_level != config.PURE_PROXY:
-            _report_context_usage(out, getattr(self, "_ctx_tokens", 0), rlog)
+            # A harness COMPACTION request is reported as the conversation being compacted (the
+            # inbound history), not the summary prompt cria rebuilt it into; every other proxied
+            # turn as the body the model was shown (post focus-trim), pre-floor.
+            shown = body if (self.server.cfg.routing.context_fixes and compaction) else pbody
+            _report_context_usage(out, modelview.visible_tokens(shown.get("messages") or [],
+                                                                shown.get("tools")), rlog)
         return out, indic
 
     def _respond_buffered(self, body: dict, rlog) -> None:
@@ -1618,7 +1626,7 @@ class CriaHandler(BaseHTTPRequestHandler):
         # outbound lowering reads — without this the exact-repeat gate is dead on the Responses path.
         self._setup_translation(body, sess_key, rlog)
 
-        self._ctx_tokens = _incoming_ctx_tokens(body, rlog)  # honest token accounting for the harness
+        _incoming_ctx_tokens(body, rlog)  # observation only; reported usage is model-visible (see _produce_completion)
         stream = bool(rbody.get("stream"))
         # Definitive tool attribution (harness-vs-us): what the harness SENT (raw inbound, pre-convert)
         # + its tool TYPES (catches a non-`function` type our converter would drop) vs what SURVIVES
@@ -1804,13 +1812,11 @@ class CriaHandler(BaseHTTPRequestHandler):
 
 
 def _incoming_ctx_tokens(body: dict, rlog=None) -> int:
-    """Estimate the token size of the whole INCOMING request — the harness's conversation PLUS
-    the tools schema (fixed per-request overhead). Reported back as usage (see
-    _report_context_usage) so ANY connected harness sees honest token accounting for the context
-    it sent — not the size of whichever internal cria call produced a given completion. Purely
-    accounting/observability: cria guarantees the request fits the model window itself, in the
-    context floor (`contextfloor.fit`, applied at the upstream call), so overflow no longer
-    depends on the harness reacting to this number. Logs the msg-vs-tools breakdown."""
+    """Observation only: chars/4 of the whole INCOMING request (the harness's conversation PLUS the
+    tools schema), logged as `ctx.estimate`. This is NOT what is reported to the harness — it counts
+    cria's own completion-gate plumbing, which the model never sees, and omits cria's own coder
+    prompt, which it does. Reported usage is the model-visible size (`modelview.visible_tokens`;
+    `Loop.visible_context_tokens` on the loop path). Logs the msg-vs-tools breakdown."""
     msg = 0
     for m in body.get("messages") or []:
         c = m.get("content")
@@ -1836,10 +1842,13 @@ def _incoming_ctx_tokens(body: dict, rlog=None) -> int:
 
 
 def _report_context_usage(completion: dict, ctx_tokens: int, rlog) -> None:
-    """Report honest token accounting to whatever harness is connected: set input_tokens to the
-    size of the context IT sent (ctx_tokens), not whichever internal cria call produced this
-    completion. Harness-agnostic — a truthful gauge for any client's display/limits. cria does
-    NOT rely on the harness acting on it; the context floor keeps the request under the window."""
+    """Report token accounting to the connected harness at L1-L5 (L0 forwards the backend's native
+    usage instead): set input_tokens to ``ctx_tokens`` — the PRE-FLOOR size of the conversation the
+    MODEL is shown for this session (`modelview`), not the whole inbound request and not whichever
+    internal cria call produced this completion. cria's gate plumbing and ⟦cria⟧ status text are
+    not in it, so they cannot make a harness compact; when the real conversation outgrows the window
+    the number does, and the harness keeps its own compaction policy. Window fit never depends on the
+    harness reacting: the context floor (+ the measured final-wire refit) owns it at the upstream call."""
     if ctx_tokens <= 0:
         return
     u = completion.get("usage") or {}

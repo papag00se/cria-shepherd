@@ -365,6 +365,53 @@ def _program_output(text: str) -> str:
     return _ENVELOPE.sub("", text or "").strip()
 
 
+def _drop_unanswered_gate_calls(messages: list[dict]) -> list[dict]:
+    """Remove cria's OWN gate calls whose result is not in ``messages``.
+
+    A gate survey/launch/poll is cria's plumbing, stamped with the ``⟦ctx:gate⟧`` provenance sentinel
+    at composition time (``probegate.gate_call_ids``) — the coder never authored it. Both compaction
+    callers filter ``_ANCHOR_MARKERS`` (``___CRIA_GATE_`` among them) out of the writer's input BEFORE
+    this module sees it, so the raw RESULT is gone while the CALL survived. ``clean_gate_results`` can
+    only drop a call together with a result it can see, so the call reached the briefing writer — and
+    the validators — as ``assistant: exec_command({"cmd": "mvn -q compile\\nmvn test"…})`` with no
+    output: an action the coder never took, and a result nobody can find (#5b). The deterministic gate
+    verdict, when cria holds one, is already given to the writer as labelled evidence (``checks_input``);
+    when it holds none, saying nothing is true.
+
+    A gate call whose result IS present is left for ``clean_gate_results`` to render as the cleaned
+    verdict, exactly as before. Calls are removed by id; an assistant turn left with nothing is kept
+    for the caller's empty-turn rule."""
+    gate_ids = probegate.gate_call_ids(messages)
+    if not gate_ids:
+        return messages
+    answered = {m.get("tool_call_id") or m.get("call_id") for m in messages
+                if isinstance(m, dict) and (m.get("role") == "tool" or m.get("type") == "function_call_output")}
+    drop = {i for i in gate_ids if i not in answered}
+    if not drop:
+        return messages
+    out = []
+    for m in messages:
+        calls = m.get("tool_calls") if isinstance(m, dict) else None
+        if calls and any(c.get("id") in drop for c in calls):
+            m = {**m, "tool_calls": [c for c in calls if c.get("id") not in drop]}
+        out.append(m)
+    return out
+
+
+def compaction_evidence_messages(messages: list[dict], gate_plan=None) -> list[dict]:
+    """The turns a compaction writer or validator may read — ONE owner for every transcript render.
+
+    Cleaned of cria's gate plumbing (see :func:`_drop_unanswered_gate_calls`), superseded write bodies
+    stubbed, and every turn that renders to NOTHING removed. The emptiness test is on the message's
+    own digest: ``serialize`` always prefixes ``role: ``, so testing the rendered line could never fire
+    and a blanked ⟦cria⟧ status turn (``strip_history`` leaves ``{"role": "assistant", "content": ""}``)
+    rode into the evidence as ``assistant: `` six times in a row (phi4 / feed-pipeline-java CALL 0006).
+    The real turn order is untouched; only a turn with no content and no call is absent."""
+    cleaned = stub_old_write_args(probegate.clean_gate_results(
+        _drop_unanswered_gate_calls(messages), gate_plan))
+    return [m for m in cleaned if msg_digest(m).strip()]
+
+
 def compaction_request_parts(messages: list[dict], files_list: str = "", gate_plan=None,
                              checks: str = "", checks_age: int = 0) -> list[str]:
     """Independently reducible evidence blocks for a compaction call.
@@ -374,14 +421,10 @@ def compaction_request_parts(messages: list[dict], files_list: str = "", gate_pl
     Preserve the same text and order, but carry each historical turn and each authoritative fact as
     its own block.  ``loop.summarize`` and the harness compaction path put these blocks between a
     small protected introduction and the final protected ask; the one context-floor owner can then
-    fit them losslessly-first and label any reduction it must make.
+    fit them losslessly-first and label any reduction it must make.  The same blocks are the
+    validators' transcript, so writer and judge read one rendering.
     """
-    cleaned = stub_old_write_args(probegate.clean_gate_results(messages, gate_plan))
-    parts = []
-    for message in cleaned:
-        rendered = serialize([message])
-        if rendered.strip():
-            parts.append(rendered)
+    parts = [serialize([m]) for m in compaction_evidence_messages(messages, gate_plan)]
     if files_list.strip():
         parts.append(files_list.strip())
     known = checks_input(checks, checks_age)
@@ -486,7 +529,7 @@ def compaction_request(messages: list[dict], files_list: str = "", gate_plan=Non
     # disagree about whether their argument is already rendered (#23, one owner).
     known_text = checks_input(checks, checks_age)
     known = f"\n\n{known_text}" if known_text else ""
-    return (serialize(stub_old_write_args(probegate.clean_gate_results(messages, gate_plan)))
+    return (serialize(compaction_evidence_messages(messages, gate_plan))
             + disk + known + "\n\n" + prompts.load("compact_closing_ask"))
 
 

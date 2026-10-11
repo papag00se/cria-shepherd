@@ -45,7 +45,7 @@ from datetime import datetime, timezone
 from enum import Enum, auto
 from pathlib import Path
 
-from . import bodykeys, wsview
+from . import bodykeys, modelview, wsview
 from . import callcapture, dedup, denial, editrecovery, execcheck, focustrim, groundtruth, indicators, massage, participation, probediscovery, probegate, probeparse, proberun, prompts, reasoning, selfcompact, shellshape, toolmenu, urlgrounding, verifytools, webfetch
 from .upstream import CallerContextRetryNoChange, ContextRefitNoChange
 from .classify import JUDGE_MAX_TOKENS, _task_key, latest_user_text
@@ -2650,6 +2650,35 @@ class Loop:
         post-compaction continuation (whose summary text classifies as anything at all) still
         reaches the loop's structural rewrite detection instead of being proxied blind."""
         return self._store.knows(key)
+
+    def visible_context_tokens(self, body: dict, session_key: str) -> int:
+        """Pre-floor size of the conversation the CODER would be shown for this request — the number
+        the server reports to the harness as usage (`server._report_context_usage`).
+
+        It is built by the coder's own framing, `_frame_for_item` in the plan-off raw-task form, so
+        the report cannot drift from the prompt: cria's coder system prompt + tool hint + the
+        harness's caller instructions are IN; the harness agent prompt, cria's gate survey/launch/
+        poll plumbing and its results (`probegate.clean_gate_results`) and blanked ⟦cria⟧ status
+        turns are OUT. Sized by `modelview.visible_tokens`, the floor's own pre-fit estimate.
+
+        Valid on every turn, including gate-transport turns that make no upstream call (the size
+        depends only on the request's messages and the session's gate plan). It is measured BEFORE
+        the drive, so it is the conversation the model would need — before `contextfloor.fit`
+        trims and before the driver's own self-compaction — and the per-turn steer/facts that a
+        coder call appends are not in it. With the planner ON the step prompt is not counted either
+        (planner is off by default; a step prompt is a few hundred bytes)."""
+        sess = self._store.get(session_key)
+        bootstrap = getattr(self._store, "get_bootstrap", lambda _key: None)(session_key)
+        gate_plan = (getattr(sess, "gate_plan", None) if sess is not None
+                     else getattr(bootstrap, "gate_plan", None))
+        framed = _frame_for_item(
+            body.get("messages", []), "", getattr(sess, "summary", "") or "", 1, 1,
+            prior_work=getattr(sess, "prior_work", "") or "", tools=body.get("tools"),
+            synthetic=True, gate_plan=gate_plan,
+            workspace_root=getattr(sess, "workspace_root", None),
+            gate_red=bool(getattr(sess, "last_gate_red", False)),
+            suppress_plan_cursor=bool(getattr(sess, "replan_uncovered", False)))
+        return modelview.visible_tokens(framed, body.get("tools"))
 
     def _plan_for(self, messages: list[dict], rlog, session_key: str = "", **frame) -> tuple[Plan | None, planner.PlanOutcome]:
         """Plan with outcome owned by this drive, not the shared Planner instance.

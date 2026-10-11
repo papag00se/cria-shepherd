@@ -55,6 +55,43 @@ default (`bytes/10000`), not accidentally widen it to a context-sized token budg
 CPU-only default-parity and dense-burst regressions are documented in the
 [restoration evidence](audits/2026-10-08-l0-codex-default-output-restoration.md).
 
+## What L1-L5 report: the model-visible context, pre-floor
+
+At L1-L5 cria does not forward native usage; it reports `input_tokens` = the PRE-FLOOR size
+(chars/4 of messages + tool schema, the context floor's own estimate) of the conversation the
+**model** is shown for this session — not the whole inbound request. One owner, `cria/modelview.py`:
+
+- **Loop turns** (coder, gate survey/launch/poll, transport pages, completion checks; Chat and
+  Responses, stream and buffered): `Loop.visible_context_tokens`, which sizes the exact framing the
+  coder prompt is built from (`_frame_for_item`, plan-off form) before the drive. Gate-transport
+  turns make no upstream call and get the same number from the same request messages.
+- **Proxied turns, including a harness compaction request**: `modelview.visible_tokens` of the body
+  the model is shown (post focus-trim), or, for a compaction request, of the conversation being
+  compacted (not the summary prompt cria rebuilds it into).
+- **Out of the number:** cria's completion-gate plumbing and results that `clean_gate_results`
+  removes (survey/launch/poll arguments, base64 pages), blanked `⟦cria⟧` status turns, and the
+  harness's own agent prompt. **In:** cria's coder system prompt, the Responses `instructions`
+  (folded into it), the tool hint, the cleaned gate verdicts, and the tool schema.
+- **Not multiplied by `tokenratio`** — that is the floor's conservative safety factor (rise fast, ~1.6 on
+  tiny judge calls), not a calibrated estimate; phi4's coder frames measure 1.02x chars/4.
+- **Not in it:** per-turn steers/facts a coder call appends after framing, and (planner ON only) the
+  step prompt. The size is taken before cria's own self-compaction and before `contextfloor.fit`.
+
+Why: a harness compacts when the reported size crosses its trigger. Counting gate plumbing made
+phi4 (16,384 window; Codex trigger `int(16384*.85)=13,926`) compact 11-48 times per L5 cell — 31 of 31
+over-trigger reports followed by a Codex compaction in `feed-pipeline-java_phi4_codex_poff_1791646575`
+— while the model never read more than ~10.5K tokens; each compaction erased the coder's real
+history. Real work still compacts: a genuinely large conversation reports large, and the harness's
+configured trigger/reserve are unchanged.
+
+Why this cannot repeat the under-reporting incidents (`docs/goals/compaction-live-report.md` runs 3-4;
+L0 Ornith HTTP400, above): both had no floor in effect. At L3-L5 `contextfloor.fit` plus the measured
+final-wire refit (`Upstream._prep`) fit the wire to the window whatever the harness is told, and the
+reported number is the pre-floor model-visible size, so it only under-counts cria-authored additions
+of a few hundred bytes. L0 is untouched (native usage, above). Chat-Completions **streaming** reports
+no cria usage at all (upstream's own usage, if any, passes through); that is unchanged.
+Tests: `tests/test_model_visible_usage.py` (real captured Codex requests).
+
 ## Incomplete tool history must remain renderable
 
 A native `length` finish can leave a second tool call with an unfinished JSON argument.
