@@ -104,14 +104,26 @@ anchor_tail_fetches = \nThis is your real fetch record for this session and it p
 # lines" under the file's own path and the ledger presented that as the file. Walked on the sub-40
 # pass, feed-pipeline-java x nemotron-elastic: the coder acted on it at call 0070.
 read_range = lines {{RANGE}} only — {{SIZE}}
+# A line count is a fact about the file WHEN IT WAS READ. When the workspace's own size for the file no longer
+# matches what that read returned, the count is not carried as if it were current (phi4 A10: "127 lines" for a
+# file the coder's edits had grown to 243): it is dated, and replaced by a fresh count when the body is held.
+read_changed = {{THEN}} when you last read it — the file has changed since
+read_changed_now = {{NOW}} lines now — {{THEN}} when you last read it, so the file has changed since
 # FILES THE CODER WORKED ON WHOSE TEXT IS NO LONGER IN THE CONVERSATION. The ledger above says you
 # looked; after the harness folded the history the text itself is gone, and an edit or a rewrite is then
 # composed from memory. The block below is its own message (⟦ctx:current⟧) so the floor can shed it, with a
 # label, before it deletes anything the coder said or saw. The bytes are the workspace's own report; what
 # the workspace last reported is all that can be backed, so that is all the header says (#5b, #11b).
 restore_header = ⟦ctx:current⟧ CURRENT TEXT OF FILES YOU READ OR WROTE EARLIER, NO LONGER IN THIS CONVERSATION — each file exactly as the workspace last reported it (taken from the workspace, not remembered or summarized). Anchor any edit on this text, not on memory:
+# The same block when NO text rides in it (every file named below is too large or has no current body): the
+# header above promises text, so it is not said.
+restore_header_bare = ⟦ctx:current⟧ FILES YOU READ OR WROTE EARLIER, WHOSE TEXT IS NO LONGER IN THIS CONVERSATION AND IS NOT CARRIED HERE:
 restore_file = ----- {{PATH}} -----\n{{BODY}}
 restore_omitted = NOT SHOWN HERE — {{PATHS}}. Each is larger than one read returns, or would pass the {{LIMIT}} bytes this block carries; read_file it (in line ranges if it is large) or grep for what you need.
+# A file whose text COULD NOT ride in that block this turn: the workspace holds no current body for it (an edit
+# moved it past the last survey) or a command that may have changed files ran since. It is NAMED, never left
+# out silently — the coder that is told nothing re-plans from memory (phi4 A10: ~45 text-only turns).
+restore_unavailable = NOT AVAILABLE HERE — {{PATHS}}. No current text of these is held right now; read_file each one (in line ranges if it is large) before editing it — do not edit from memory.
 # The ledger entry of a file whose text rides in that block THIS turn. Settled at the wire after the floor
 # (modelview.settle_restored_text): if the block did not survive, the line says the plain absence again.
 read_restored =  — its current text is in the ⟦ctx:current⟧ block

@@ -110,7 +110,11 @@ class RestoredTextTests(unittest.TestCase):
         v.note_a_mutator_ran()
         self.bind(v)
         restore, facts = _anchor(self.sess())
-        self.assertIsNone(restore)
+        # No text is carried (the body may be behind the disk) — but the block still NAMES the files as having
+        # no current copy, so the coder is told to read them instead of being left silent (phi4 A10).
+        self.assertNotIn("package pipeline;", restore["content"])
+        self.assertEqual(restore[bodykeys.RESTORED_FILES]["offered"], {})
+        self.assertIn("NOT AVAILABLE HERE — pom.xml, src/main/java/pipeline/Importer.java", restore["content"])
         self.assertIn("no read result for it is in this conversation", facts)      # the ledger is unchanged
         bodies, _progs, _out = wsview.pending("restore")
         self.assertIn(JAVA, bodies)                                              # the harness is asked, not cria

@@ -167,6 +167,21 @@ class FloorReport:
         }
 
 
+# The ⟦ctx:current⟧ marker (literal: contextfloor imports no loop/modelview; a test pins it). The stand-in this
+# floor writes starts with it and carries no hint.
+_RESTORED_MARK = "⟦ctx:current⟧"
+
+
+def _is_restored_stand_in(m: dict) -> bool:
+    """The labelled stand-in lever 2c left where the restored text was. It is ~60 tokens and the ONLY thing
+    telling the coder it holds no copy of the file — the ledger line beside it was settled to plain absence
+    because the text did not ride. It was an unprotected middle message, so `_drop_oldest` shed it as the
+    oldest droppable turn (phi4 A10, calls 0095, 0103-0105, 0112-0181: `restored_reduced: 1` and no
+    ⟦ctx:current⟧ in the body sent)."""
+    return (isinstance(m, dict) and m.get("role") == "user" and not _is_restored_text(m)
+            and isinstance(m.get("content"), str) and m["content"].startswith(_RESTORED_MARK))
+
+
 def _is_restored_text(m: dict) -> bool:
     """The coder frame's restored-file-text block — reducible evidence, carried by a cria-internal hint."""
     return isinstance(m, dict) and bool(m.get(_RESTORED_HINT))
@@ -183,7 +198,8 @@ def _reduce_restored_text(messages: list[dict], msg_budget: int) -> tuple[list[d
     out, n = [], 0
     for m in messages:
         if _is_restored_text(m):
-            paths = ", ".join(sorted((m.get(_RESTORED_HINT) or {}).get("offered") or {}))
+            hint = m.get(_RESTORED_HINT) or {}
+            paths = ", ".join(sorted(hint.get("named") or hint.get("offered") or {}))
             out.append({k: v for k, v in m.items() if k != _RESTORED_HINT}
                        | {"content": prompts.render("restore_reduced", paths=paths).strip()})
             n += 1
@@ -648,7 +664,7 @@ def _protected_mask(messages: list[dict], pinned_task: str = "") -> list[bool]:
             prot[i] = True
         if last_user >= 0 and i >= active:
             prot[i] = True
-        if _has_protect_marker(m):  # the briefing / gate anchor — don't drop it from under a reference
+        if _has_protect_marker(m) or _is_restored_stand_in(m):  # the briefing / gate anchor / "no copy" label
             prot[i] = True
     # PAIR protection (M18): a MARKER-protected tool RESULT and its issuing assistant tool_call are a
     # UNIT. A gate result whose shell command carries the marker, but whose assistant call does not, would

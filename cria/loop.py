@@ -9593,10 +9593,41 @@ def _read_ground_truth(sess, messages: list[dict], restored: dict | None = None)
     live = {key(ev[3]) for ev in events if ev[2] == "read"}
     note = {p: (labels["read_restored"] if p in (restored or {}) else
                 "" if p in live else labels["read_out_of_view"]) for p in seen}
-    lines = "\n".join(f"- {p} ({size}){note[p]}" for p, (_n, size) in sorted(seen.items()))
+    view = _surveyed_view(sess)
+    lines = "\n".join(f"- {p} ({_dated_count(view, p, n, size, labels)}){note[p]}"
+                      for p, (n, size) in sorted(seen.items()))
     rest = 0
     more = prompts.fill(labels["read_more"], count=rest) if rest else ""
     return "\n\n" + prompts.fill(labels["read_header"], files=lines, more=more)
+
+
+def _surveyed_view(sess):
+    root = getattr(sess, "workspace_root", None)
+    view = wsview.current(root) if root else None
+    return view if view is not None and getattr(view, "surveyed", False) else None
+
+
+_WHOLE_COUNT = re.compile(r"\d+ lines")
+
+
+def _dated_count(view, rel: str, nbytes: int, label: str, labels: dict) -> str:
+    """The ledger's size for ``rel`` made true of the workspace NOW. A line count is a fact about the file when
+    it was read or written; edits that landed since never refresh it (phi4 A10: "127 lines" beside a ⟦ctx:files⟧
+    listing of 9,123 B — the file had 243 lines). The workspace's own size for the file (the number the listing
+    prints) is compared with the bytes that reading returned; when they differ the count is DATED, and replaced
+    by a measured one when the view holds the current body. A reading of a window, or a workspace nothing is known
+    of, is left as it is (it claims nothing about the whole file / nothing can contradict it). A 1-byte gap is the
+    read tool's stripped trailing newline, never a change (`_read_label`)."""
+    if view is None or not _WHOLE_COUNT.fullmatch(label):
+        return label
+    size = view.size(rel)
+    if size is None or abs(size - nbytes) <= 1:
+        return label
+    raw = None if view.may_have_changed else view.read_bytes(rel)
+    if raw is not None and len(raw) == size:
+        return prompts.fill(labels["read_changed_now"], now=len(raw.decode("utf-8", "replace").splitlines()),
+                            then=label)
+    return prompts.fill(labels["read_changed"], then=label)
 
 
 def _restored_text_message(sess, messages: list[dict]) -> tuple[dict | None, dict]:
@@ -9642,10 +9673,13 @@ def _restored_text_message(sess, messages: list[dict]) -> tuple[dict | None, dic
     candidates = {key(p) for p in ledger} | {key(p) for p in (getattr(sess, "written_files", None) or {})}
     candidates -= {key(p) for p in _extract_whole_reads(messages, view)}
     candidates -= {key(path) for _idx, _tid, path in _write_events_paths(messages)}
-    text, offered = _render_restored(view, sorted(candidates), getattr(sess, "file_touch", None) or {})
+    text, offered, named = _render_restored(view, sorted(candidates), getattr(sess, "file_touch", None) or {})
     if not offered and not text:
         return None, {}
-    return {"role": "user", "content": text, bodykeys.RESTORED_FILES: {"offered": dict(offered)}}, offered
+    # ``named`` is every file the block speaks of (text shown, not shown, not available): what the floor's
+    # stand-in must still name when it swaps the text away, so the coder is never told nothing.
+    return ({"role": "user", "content": text,
+             bodykeys.RESTORED_FILES: {"offered": dict(offered), "named": sorted(named)}}, offered)
 
 
 def _plan_off_tail(base: list[dict], restore: dict | None, facts: dict) -> list[dict]:
@@ -9679,17 +9713,22 @@ def _edit_events(messages: list[dict]):
                 yield idx, tid, calls[tid]
 
 
-def _render_restored(view, rels: list[str], touch: dict) -> tuple[str, dict]:
+def _render_restored(view, rels: list[str], touch: dict) -> tuple[str, dict, list[str]]:
+    """``(text, {rel: sha1 of the text carried}, [every rel the text speaks of])``. A file whose text cannot be
+    carried — the view holds no body for it, or a command that may have changed files ran since, so the body
+    may be behind the disk — is NAMED as not available (and its body asked for afresh), never left out: the
+    block is how the coder learns it holds no copy and must read the file (phi4 A10)."""
     if not rels:
-        return "", {}
+        return "", {}, []
     spill = groundtruth._SPILL_REL
     todo = [rel for rel in rels if not rel.startswith(spill) and view.isfile(rel) is True]
     if not todo:
-        return "", {}
+        return "", {}, []
+    unavailable: list[str] = []
     if view.may_have_changed:                       # the body may be behind the disk: claim nothing, ask afresh
         for rel in todo:
             view.request_current_body(rel)
-        return "", {}
+        unavailable, todo = list(todo), []
     # MOST RECENTLY TOUCHED FIRST, by the session's own record of its reads, writes and landed edits — the
     # view's mtime keeps the survey's value across an edit (it is what the next survey is checked against),
     # so it cannot say which file the coder worked on last.
@@ -9697,26 +9736,30 @@ def _render_restored(view, rels: list[str], touch: dict) -> tuple[str, dict]:
     todo.sort(key=lambda r: (-touch.get(r, 0), -(mtime.get(r) or 0), r))
     limit = writeproxy.READ_INLINE_MAX
     labels = prompts.load_map("fetched_facts_sections")
-    shown, omitted, taken, restored = [], [], 0, {}
+    shown, omitted, omitted_rels, taken, restored = [], [], [], 0, {}
     for rel in todo:
         raw = view.read_bytes(rel)                  # a miss queues the demand for the next survey
         if raw is None:
+            unavailable.append(rel)
             continue
         text = raw.decode("utf-8", "replace")
         if groundtruth.content_reduce_mod.looks_binary(text):
             continue
         if len(raw) > limit or taken + len(raw) > limit:
             omitted.append(f"{rel} ({len(raw)} bytes)")
+            omitted_rels.append(rel)
             continue
         taken += len(raw)
         shown.append(prompts.fill(labels["restore_file"], path=rel, body=text))
         restored[rel] = hashlib.sha1(raw).hexdigest()
-    if not shown and not omitted:
-        return "", {}
-    parts = [labels["restore_header"].rstrip()] + shown
+    if not shown and not omitted and not unavailable:
+        return "", {}, []
+    parts = [labels["restore_header" if shown else "restore_header_bare"].rstrip()] + shown
     if omitted:
         parts.append(prompts.fill(labels["restore_omitted"], paths=", ".join(omitted), limit=limit))
-    return "\n".join(parts), restored
+    if unavailable:
+        parts.append(prompts.fill(labels["restore_unavailable"], paths=", ".join(unavailable)))
+    return "\n".join(parts), restored, list(restored) + omitted_rels + unavailable
 
 
 # NO CAP on the read ledger. It was 20 names out of an ALPHABETICALLY sorted list, so which files

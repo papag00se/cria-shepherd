@@ -1,0 +1,243 @@
+import java.util.concurrent.atomic.AtomicInteger;
+package pipeline;
+
+public class Importer {
+
+    import java.io.BufferedReader;
+    import java.io.IOException;
+    import java.nio.file.Files;
+    import java.nio.file.Path;
+    import java.util.*;
+    import java.util.concurrent.*;
+    import org.apache.commons.csv.CSVFormat;
+    import org.apache.commons.csv.CSVParser;
+    import org.apache.commons.csv.CSVRecord;
+
+    // Existing class content goes here
+}
+
+public final class Importer {
+    public static final boolean WORKERS_ENABLED = true;
+    public static final int NUM_WORKERS = Runtime.getRuntime().availableProcessors();
+
+    static Map<String, Double> totals = new ConcurrentHashMap<>();
+    static AtomicInteger rowCount = new AtomicInteger(0);
+    static Map<String, Integer> skippedRows = new ConcurrentHashMap<>();
+
+    public static final class Summary {
+        public final int skus;
+        public final int rows;
+        public final Map<String, Double> totals;
+        public final Map<String, Integer> skippedRows;
+
+        public Summary(int skus, int rows, Map<String, Double> totals, Map<String, Integer> skippedRows) {
+            this.skus = skus;
+            this.rows = rows;
+            this.totals = totals;
+            this.skippedRows = skippedRows;
+        }
+    }
+
+    static List<String> knownSkus(List<Map<String, String>> rows) {
+        Set<String> seen = new HashSet<>();
+        for (Map<String, String> r : rows) {
+            seen.add(r.get("sku"));
+        }
+        return new ArrayList<>(seen);
+    }
+
+    static void accumulate(Map<String, String> row) {
+        String sku = row.get("sku");
+        try {
+            String quantityStr = row.get("quantity");
+            String priceStr = row.get("unit_price").replace("$", "");
+
+            if (quantityStr == null || priceStr == null || quantityStr.isEmpty() || priceStr.isEmpty()) {
+                skippedRows.merge("missing_or_blank", 1, Integer::sum);
+                return;
+            }
+
+            double quantity = Double.parseDouble(quantityStr);
+            double price = Double.parseDouble(priceStr);
+            double value = quantity * price;
+
+            totals.merge(sku, value, Double::sum);
+            rowCount.incrementAndGet();
+        } catch (NumberFormatException e) {
+            skippedRows.merge("malformed_number", 1, Integer::sum);
+        }
+    }
+
+    static void worker(List<Map<String, String>> rows) {
+        for (Map<String, String> row : rows) {
+            accumulate(row);
+        }
+    }
+
+    public static List<Map<String, String>> load(String path) throws IOException {
+        List<Map<String, String>> out = new ArrayList<>();
+        try (BufferedReader br = Files.newBufferedReader(Path.of(path))) {
+            CSVParser parser = new CSVParser(br, CSVFormat.DEFAULT.withFirstRecordAsHeader().withIgnoreHeaderCase().withTrim());
+            for (CSVRecord record : parser) {
+                Map<String, String> row = new HashMap<>();
+                record.toMap().forEach(row::put);
+                out.add(row);
+            }
+        }
+        return out;
+    }
+
+    public static Summary summarize(String path) throws Exception {
+        totals.clear();
+        rowCount.set(0);
+        skippedRows.clear();
+        List<Map<String, String>> rows = load(path);
+        List<String> skus = knownSkus(rows);
+
+        if (WORKERS_ENABLED) {
+            ForkJoinPool pool = new ForkJoinPool(NUM_WORKERS);
+            int chunk = Math.max(1, rows.size() / NUM_WORKERS);
+            List<Callable<Void>> tasks = new ArrayList<>();
+            for (int i = 0; i < rows.size(); i += chunk) {
+                List<Map<String, String>> slice = rows.subList(i, Math.min(i + chunk, rows.size()));
+                tasks.add(() -> {
+                    worker(slice);
+                    return null;
+                });
+            }
+            pool.invokeAll(tasks);
+            pool.shutdown();
+        } else {
+            worker(rows);
+        }
+
+        return new Summary(skus.size(), rowCount.get(), totals, skippedRows);
+    }
+
+    public static void main(String[] args) throws Exception {
+        String path = args.length > 0 ? args[0] : Path.of("data", "feed.csv").toString();
+        Summary result = summarize(path);
+        System.out.printf("Imported %d rows covering %d SKUs%n", result.rows, result.skus);
+        List<String> keys = new ArrayList<>(result.totals.keySet());
+        Collections.sort(keys);
+        for (String sku : keys) {
+            System.out.printf("  %s: %.2f%n", sku, result.totals.get(sku));
+        }
+        System.out.println("Skipped rows:");
+        for (Map.Entry<String, Integer> entry : result.skippedRows.entrySet()) {
+            System.out.printf("  %s: %d%n", entry.getKey(), entry.getValue());
+        }
+    }
+
+    public static final boolean WORKERS_ENABLED = true;
+    public static final int NUM_WORKERS = Runtime.getRuntime().availableProcessors();
+
+    static Map<String, Double> totals = new ConcurrentHashMap<>();
+    static AtomicInteger rowCount = new AtomicInteger(0);
+    static Map<String, Integer> skippedRows = new ConcurrentHashMap<>();
+
+    public static final class Summary {
+        public final int skus;
+        public final int rows;
+        public final Map<String, Double> totals;
+        public final Map<String, Integer> skippedRows;
+
+        public Summary(int skus, int rows, Map<String, Double> totals, Map<String, Integer> skippedRows) {
+            this.skus = skus;
+            this.rows = rows;
+            this.totals = totals;
+            this.skippedRows = skippedRows;
+        }
+    }
+
+    static List<String> knownSkus(List<Map<String, String>> rows) {
+        Set<String> seen = new HashSet<>();
+        for (Map<String, String> r : rows) {
+            seen.add(r.get("sku"));
+        }
+        return new ArrayList<>(seen);
+    }
+
+    static void accumulate(Map<String, String> row) {
+        String sku = row.get("sku");
+        try {
+            String quantityStr = row.get("quantity");
+            String priceStr = row.get("unit_price").replace("$", "");
+
+            if (quantityStr == null || priceStr == null || quantityStr.isEmpty() || priceStr.isEmpty()) {
+                skippedRows.merge("missing_or_blank", 1, Integer::sum);
+                return;
+            }
+
+            double quantity = Double.parseDouble(quantityStr);
+            double price = Double.parseDouble(priceStr);
+            double value = quantity * price;
+
+            totals.merge(sku, value, Double::sum);
+            rowCount.incrementAndGet();
+        } catch (NumberFormatException e) {
+            skippedRows.merge("malformed_number", 1, Integer::sum);
+        }
+    }
+
+    static void worker(List<Map<String, String>> rows) {
+        for (Map<String, String> row : rows) {
+            accumulate(row);
+        }
+    }
+
+    public static List<Map<String, String>> load(String path) throws IOException {
+        List<Map<String, String>> out = new ArrayList<>();
+        try (BufferedReader br = Files.newBufferedReader(Path.of(path))) {
+            CSVParser parser = new CSVParser(br, CSVFormat.DEFAULT.withFirstRecordAsHeader().withIgnoreHeaderCase().withTrim());
+            for (CSVRecord record : parser) {
+                Map<String, String> row = new HashMap<>();
+                record.toMap().forEach(row::put);
+                out.add(row);
+            }
+        }
+        return out;
+    }
+
+    public static Summary summarize(String path) throws Exception {
+        totals.clear();
+        rowCount.set(0);
+        skippedRows.clear();
+        List<Map<String, String>> rows = load(path);
+        List<String> skus = knownSkus(rows);
+
+        if (WORKERS_ENABLED) {
+            ForkJoinPool pool = new ForkJoinPool(NUM_WORKERS);
+            int chunk = Math.max(1, rows.size() / NUM_WORKERS);
+            List<Callable<Void>> tasks = new ArrayList<>();
+            for (int i = 0; i < rows.size(); i += chunk) {
+                List<Map<String, String>> slice = rows.subList(i, Math.min(i + chunk, rows.size()));
+                tasks.add(() -> {
+                    worker(slice);
+                    return null;
+                });
+            }
+            pool.invokeAll(tasks);
+            pool.shutdown();
+        } else {
+            worker(rows);
+        }
+
+        return new Summary(skus.size(), rowCount.get(), totals, skippedRows);
+    }
+
+    public static void main(String[] args) throws Exception {
+        String path = args.length > 0 ? args[0] : Path.of("data", "feed.csv").toString();
+        Summary result = summarize(path);
+        System.out.printf("Imported %d rows covering %d SKUs%n", result.rows, result.skus);
+        List<String> keys = new ArrayList<>(result.totals.keySet());
+        Collections.sort(keys);
+        for (String sku : keys) {
+            System.out.printf("  %s: %.2f%n", sku, result.totals.get(sku));
+        }
+        System.out.println("Skipped rows:");
+        for (Map.Entry<String, Integer> entry : result.skippedRows.entrySet()) {
+            System.out.printf("  %s: %d%n", entry.getKey(), entry.getValue());
+        }
+    }
+}
