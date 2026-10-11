@@ -373,7 +373,12 @@ def _last_checks_note(server, sess_key: str) -> str:
     since = _gate_age(server, sess_key)
     stale = (prompts.fill(prompts.load("checks_note_staleness"), calls=str(since))
              if since >= _CHECKS_STALE_AFTER else "")
-    age = (f"{since} of your calls ago" if since else "just now")
+    # Anchored to the HANDOFF, never to "now": this text is baked into the briefing the harness keeps
+    # in its history, so a "N calls ago" would stay N for every later call while the truth moved on
+    # (A6 walk seg-11/18/19: "You have run 8 of your own commands since" repeated unchanged). Said
+    # as of the moment it was written, it stays true however long it is carried (#5b).
+    age = (f"{since} of your calls before this handoff was written" if since
+           else "when this handoff was written")
     loop = getattr(server, "loop", None)
     newer = newer_own_run(loop._store.get(sess_key)) if loop is not None else ""
     return prompts.fill(prompts.load("checks_note"), age=age, flag=flag, staleness=stale + newer)

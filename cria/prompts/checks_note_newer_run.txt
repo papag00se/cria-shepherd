@@ -1,2 +1,2 @@
 
-Since that check, you ran {{COMMANDS}} yourself ({{AGO}}){{EXIT}}. That run is NEWER than this block, so wherever it differs from what is listed above, it is the current state and this block is not.
+Before this handoff was written, after that check, you ran {{COMMANDS}} yourself ({{AGO}}){{EXIT}}. That run is NEWER than this block, so wherever it differs from what is listed above, it is the current state and this block is not.

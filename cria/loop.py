@@ -8510,7 +8510,8 @@ def newer_own_run(sess) -> str:
     ago = max(0, getattr(sess, "action_seq", 0) - seq)
     return prompts.fill(prompts.load("checks_note_newer_run"),
                         commands=", ".join(f"`{c}`" for c in cmds),
-                        ago=f"{ago} of your calls ago" if ago else "your latest call",
+                        ago=(f"{ago} of your calls before this handoff" if ago
+                             else "your latest call before this handoff"),
                         exit=f", and that run exited with code {code}" if code is not None else "")
 
 
