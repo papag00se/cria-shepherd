@@ -6514,7 +6514,7 @@ def _coder_has_seen(view, rel: str, sess, messages: list[dict]) -> bool:
     in the window (phi4 A4 0047: `pom.xml` lines 1-8 of 29, then a whole-file overwrite; seg-10: the
     ledger said "read" over a window with no text in it). The durable read ledger is therefore not
     consulted here — it still serves the ⟦ctx:facts⟧ listing, where "you looked once" is the fact."""
-    seen = _extract_whole_reads(messages or [])
+    seen = _extract_whole_reads(messages or [], view)
     seen |= set(_extract_writes(messages or []))
     seen |= set(getattr(sess, "written_files", None) or {})
     return any(view.rel(p) == rel for p in seen)
@@ -9064,23 +9064,90 @@ def _read_results(messages: list[dict]):
             yield (*calls[tid], c)
 
 
-def _is_whole_read(start, end, text: str) -> bool:
-    """Did this read return the WHOLE file? No window asked for; or a window that opens at line 1 and
-    stopped short of the lines it asked for (it ran into the end of the file). A window that merely
-    ends where it was told to says nothing about what lies beyond it — an 8-line prefix of a 29-line
-    pom.xml is not the file (phi4 A4 0047, then overwritten whole)."""
+_NUMBERED = re.compile(r"(\d+): ")
+
+
+def _read_span(start, end, text: str):
+    """``(first, last, reached_end)`` — the file lines one read result carries, or None when it carries
+    none. No window asked for: the whole file (line 1 to the end). A window is read off its own line
+    numbers (`N: text`); it reached the end of the file when it asked for no end line, or came back
+    short of the lines it asked for. An 8-line prefix of a 29-line pom.xml reached nothing (phi4 A4
+    0047, then overwritten whole)."""
     if not (start or end):
-        return True
-    if start not in (None, 0, 1) or not text.startswith("1: "):
-        return False
-    if not end:
-        return True                                # `start_line=1` alone reads to the end
-    return len(text.rstrip("\n").split("\n")) < end
+        return (1, None, True)
+    first = _NUMBERED.match(text)
+    if first is None:
+        return None
+    n = len(text.rstrip("\n").split("\n"))
+    a = int(first.group(1))
+    return (a, a + n - 1, not end or n < end - a + 1)
 
 
-def _extract_whole_reads(messages: list[dict]) -> set:
-    """Paths whose WHOLE text a read result in ``messages`` still carries (see :func:`_is_whole_read`)."""
-    return {p for p, start, end, c in _read_results(messages) if _is_whole_read(start, end, c)}
+def _refused_line_counts(messages: list[dict]) -> dict:
+    """``path -> lines`` from cria's own over-size refusals still in ``messages`` (`large_read_steer`: "X is N
+    lines, which is larger than can be returned in one read"), for a read — or a write answered with one.
+    The regex is cut from that prompt's own words, so the two cannot drift."""
+    from . import denial
+    tpl = prompts.load("large_read_steer")
+    mid, _, rest = tpl.partition("{{PATH}}")[2].partition("{{LINES}}")
+    pat = re.compile(re.escape(mid) + r"(\d+)" + re.escape(rest.split("{{")[0]))
+    calls: dict = {}
+    out: dict = {}
+    for m in messages or []:
+        if not isinstance(m, dict):
+            continue
+        for tc in m.get("tool_calls") or []:
+            fn = tc.get("function") or {}
+            if fn.get("name") in _READ_TOOL_NAMES or fn.get("name") in writeproxy_names:
+                if tc.get("id") and (p := _path_of_args(fn.get("arguments") or "")):
+                    calls[tc["id"]] = p
+        tid = m.get("tool_call_id") or m.get("call_id")
+        c = m.get("content") if m.get("content") is not None else m.get("output")
+        if tid in calls and isinstance(c, str) and denial.is_denied(c) and (hit := pat.search(c)):
+            out[calls[tid]] = int(hit.group(1))
+    return out
+
+
+def _extract_whole_reads(messages: list[dict], view=None) -> set:
+    """Paths whose WHOLE text the read results still in ``messages`` carry: one read of no window, or
+    windows that together cover line 1 to the end of the file. The end is known when a window came back
+    short of its request, from cria's own over-size refusal ("N lines"), or from the workspace ``view``'s
+    own copy of the file. A file over one read's
+    byte limit can only be read this way — the refusal tells the coder to read it in line ranges — so a
+    rule that credited only a single read would hold its rewrite forever. Paths are keyed by
+    ``view.rel`` when a view is given, so an absolute and a relative spelling of one file merge."""
+    key = (lambda p: view.rel(p) or p) if view is not None else (lambda p: p)
+    whole: set = set()
+    spans: dict = {}
+    lines_of = {key(p): n for p, n in _refused_line_counts(messages).items()}
+    for path, start, end, c in _read_results(messages):
+        span = _read_span(start, end, c)
+        if span is None:
+            continue
+        k = key(path)
+        if span[1] is None:
+            whole.add(k)
+            continue
+        entry = spans.setdefault(k, {"spans": [], "eof": False})
+        entry["spans"].append((span[0], span[1]))
+        entry["eof"] = entry["eof"] or span[2]
+    for k, entry in spans.items():
+        covered = 0
+        for a, b in sorted(entry["spans"]):
+            if a > covered + 1:
+                break
+            covered = max(covered, b)
+        else:
+            known = lines_of.get(k) or (_line_count(view, k) if view is not None else 10 ** 9)
+            if covered and (entry["eof"] or known <= covered):
+                whole.add(k)
+    return whole
+
+
+def _line_count(view, rel: str) -> int:
+    """Lines in the view's own copy of ``rel`` (as `sed -n` numbers them); a huge number when it holds none."""
+    raw = view.read_bytes(rel)
+    return len(raw.decode("utf-8", "replace").splitlines()) if raw is not None else 10 ** 9
 
 
 def _args_of(args) -> dict:

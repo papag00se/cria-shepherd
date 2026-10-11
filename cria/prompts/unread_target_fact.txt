@@ -2,5 +2,5 @@
 # workspace view proves the file exists and this conversation holds no read of its WHOLE text (a window
 # of it, a read whose result was compacted away, or a command that merely names it is not one) and no
 # whole write of it by the coder.
-sized = {{PATH}} already exists on disk ({{SIZE}} bytes) and no read of its whole text is in this conversation (a line range, a command that only names it, or a result no longer here is not one), and the coder has not written it whole.
-unsized = {{PATH}} already exists on disk and no read of its whole text is in this conversation (a line range, a command that only names it, or a result no longer here is not one), and the coder has not written it whole.
+sized = {{PATH}} already exists on disk ({{SIZE}} bytes) and no read of its whole text is in this conversation (read it whole, or in line ranges that together run from line 1 to the end; a command that only names it, or a result no longer here, does not count), and you have not written it whole.
+unsized = {{PATH}} already exists on disk and no read of its whole text is in this conversation (read it whole, or in line ranges that together run from line 1 to the end; a command that only names it, or a result no longer here, does not count), and you have not written it whole.

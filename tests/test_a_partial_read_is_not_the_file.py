@@ -4,6 +4,7 @@ with an invented pom (the hold never fired). Only a WHOLE read whose text is in 
 coder's own whole write, lifts the hold; a shell command lifts it only when it is a plain `cat` of the file.
 """
 import json
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -96,7 +97,90 @@ def test_only_a_plain_cat_of_the_file_is_a_shell_read(command, whole):
     assert loop._prints_whole_file(command, "pom.xml") is whole
 
 
-def test_extract_whole_reads_ignores_refused_and_empty_results():
-    from cria import denial
-    assert loop._extract_whole_reads(_read(body=denial.mark("too large"))) == set()
-    assert loop._extract_whole_reads(_read(body="  ")) == set()
+# ── a file over one read's byte limit can only be read in ranges ────────────────────────────────
+
+def _big_file(tmp_path, lines=200):
+    from cria import writeproxy
+    body = "".join(f"line {i:03d} " + "x" * 80 + "\n" for i in range(1, lines + 1))
+    assert len(body) > writeproxy.READ_INLINE_MAX * 1.5
+    (tmp_path / "Big.java").write_text(body)
+    return len(body)
+
+
+def _run_read(tmp_path, **args):
+    """The REAL lowered read command, run in a shell — its output is what the coder's result holds."""
+    from cria import writeproxy
+    out = subprocess.run(["bash", "-c", writeproxy._read_command({"path": "Big.java", **args})],
+                         cwd=tmp_path, capture_output=True, text=True)
+    return out.stdout + out.stderr
+
+
+def _exchange(tmp_path, n, **args):
+    return [{"role": "assistant", "tool_calls": [{"id": f"b{n}", "type": "function", "function": {
+                "name": "read_file", "arguments": json.dumps({"path": "Big.java", **args})}}]},
+            {"role": "tool", "tool_call_id": f"b{n}", "content": _run_read(tmp_path, **args)}]
+
+
+def _big_view(size):
+    v = wsview.View(ROOT, "k1-big")
+    assert wsview.apply_survey(v, survey(f"F\t1\t{size}\tBig.java", root=ROOT, complete=True))
+    return v
+
+
+def _held(view, messages):
+    sess = _synth()
+    lp = _single_loop(lambda b, r: b"{}", workspace_root=ROOT)
+    lp._store.put("k1", sess)
+    return lp.unread_target_check("k1", messages, ROOT)("Big.java")
+
+
+def test_a_big_file_read_in_ranges_to_the_end_is_read(tmp_path):
+    """Reviewer repro: a 200-line file over the byte limit; the whole read is refused ("N lines … read a line
+    range"), then 1-90, 91-180, 181-200 — every window REAL output of the lowered command."""
+    size = _big_file(tmp_path)
+    view = _big_view(size)
+    token = wsview.bind(view)
+    try:
+        refused = _exchange(tmp_path, 0)
+        assert "200 lines" in refused[1]["content"]                       # the real refusal
+        assert _held(view, refused)                                       # a refused read is not a read
+        wins = [m for n, (a, b) in enumerate([(1, 90), (91, 180)], 1)
+                for m in _exchange(tmp_path, n, start_line=a, end_line=b)]
+        assert _held(view, refused + wins)                                # 1-180 of 200: not yet
+        last = _exchange(tmp_path, 3, start_line=181, end_line=200)
+        assert _held(view, wins + last) != ""                             # no refusal in view, end unknown…
+        assert _held(view, refused + wins + last) == ""                   # …with it, 1..200 covers the file
+    finally:
+        wsview.unbind(token)
+
+
+def test_a_window_that_runs_short_of_its_request_proves_the_end(tmp_path):
+    view = _big_view(_big_file(tmp_path))
+    token = wsview.bind(view)
+    try:
+        msgs = [m for n, (a, b) in enumerate([(1, 90), (91, 180), (181, 250)], 1)
+                for m in _exchange(tmp_path, n, start_line=a, end_line=b)]
+        assert _held(view, msgs) == ""
+    finally:
+        wsview.unbind(token)
+
+
+def test_a_gap_or_a_missing_start_leaves_the_hold(tmp_path):
+    view = _big_view(_big_file(tmp_path))
+    token = wsview.bind(view)
+    try:
+        gap = [m for n, (a, b) in enumerate([(1, 90), (100, 250)], 1)
+               for m in _exchange(tmp_path, n, start_line=a, end_line=b)]
+        assert _held(view, gap)
+        no_start = [m for n, (a, b) in enumerate([(5, 100), (101, 250)], 1)
+                    for m in _exchange(tmp_path, n, start_line=a, end_line=b)]
+        assert _held(view, no_start)
+    finally:
+        wsview.unbind(token)
+
+
+def test_the_fact_does_not_say_a_range_is_no_read_while_the_steer_says_to_read_a_range():
+    from cria import prompts
+    text = prompts.load_map("unread_target_fact")["sized"]
+    assert "line ranges that together run from line 1 to the end" in text
+    assert "a line range, " not in text and "the coder has not" not in text
