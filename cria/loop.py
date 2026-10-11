@@ -231,6 +231,7 @@ class GuardState:
     # fired with `writes: 5`, and the steer told the coder "you have rewritten cart.go repeatedly".
     # `denial.is_denied` already answers this from the prior turn's results (#12, #5b).
     recent_write_ids: list = None
+    spin_recheck: str = ""      # a path whose same-turn batch may reach the wheel-spin count once its results are known
     spin_path: str = ""  # the file whose windowed rewrite count tripped wheel-spinning
     spin_probe_due: bool = False  # wheel-spinning tripped → run the gate before the next coder turn
     spin_probe: bool = False  # the in-flight gate is a spin probe (insert results, don't judge)
@@ -7353,6 +7354,21 @@ def _refused_call_ids(messages: list) -> set:
     return out
 
 
+def _unlanded_call_ids(messages: list) -> set:
+    """Tool call ids of writes/edits that did NOT change the file: cria's own refusals, and the edits that
+    did not apply (the edit-recovery directive, `editrecovery.EDIT_MARK`, or its raw report). A write that
+    never reached disk is not a rewrite, whoever refused it (phi4 A4 CALL 0039: nine refused edits read as
+    "rewritten at least 5 times" while the file was byte-identical)."""
+    out = _refused_call_ids(messages)
+    for m in messages or []:
+        if isinstance(m, dict) and m.get("role") == "tool":
+            body = str(m.get("content") or "")
+            cid = m.get("tool_call_id") or m.get("call_id")
+            if cid and (editrecovery.EDIT_MARK in body or editrecovery.EDITFAIL in body):
+                out.add(cid)
+    return out
+
+
 def guard_track_write_streak(gs: GuardState, coder: dict, rlog, *, step=None, messages=None) -> None:
     """Wheel-spinning detection, WINDOWED (operator, 2026-07-12): the same file written
     WHEEL_SPIN_WRITES times — ANY content — within the last WRITE_WINDOW forwarded tool
@@ -7369,7 +7385,7 @@ def guard_track_write_streak(gs: GuardState, coder: dict, rlog, *, step=None, me
     # TAKE BACK THE ONES THAT NEVER RAN. This window is filled from the OUTBOUND completion, so at
     # the time a write is recorded cria does not yet know whether it will refuse it. It knows one
     # turn later, from the marked result — so the correction happens here, before this turn accrues.
-    refused = _refused_call_ids(messages or [])
+    refused = _unlanded_call_ids(messages or [])
     if refused:
         kept_w, kept_i = [], []
         for path, cid in zip(gs.recent_writes, gs.recent_write_ids):
@@ -7381,6 +7397,36 @@ def guard_track_write_streak(gs: GuardState, coder: dict, rlog, *, step=None, me
             rlog.emit("loop.write_streak_corrected", level="info",
                       dropped=len(gs.recent_writes) - len(kept_w))
         gs.recent_writes, gs.recent_write_ids = kept_w, kept_i
+    def trip(path: str) -> None:
+        gs.spin_probe_due = True
+        gs.spin_path = path
+        # flush the write window (one intervention at a time — a pending redirect's
+        # gate would otherwise be hijacked and its reasoner-authored nudge
+        # overwritten by the spin renudge)
+        gs.recent_writes, gs.recent_write_ids = [], []
+        gs.spin_recheck = ""
+        rlog.emit("loop.wheel_spinning", steer="wheel-spin", step=step, path=path,
+                  writes=WHEEL_SPIN_WRITES)
+
+    def armed(path) -> bool:
+        return (path is not None
+                and not gs.spin_probe_due and not gs.spin_probe
+                and not gs.redirect_due and not gs.redirect_probe
+                # Don't flag a rewrite cria ITSELF ordered: when edit-recovery has escalated this file
+                # to a whole-file rewrite, its compliance rewrites are sanctioned. Once that guidance
+                # scrolls out of the recent window (the model moved on to pure rewriting), the spin
+                # re-arms and the reasoned wheel-spin can diagnose the real bug.
+                and not editrecovery.rewrite_sanctioned(messages or [], path))
+
+    # A BATCH WHOSE RESULTS WERE NOT YET KNOWN. The calls of one turn are recorded before cria knows which
+    # of them landed, so N edits to one file in a single turn count ONCE toward the threshold when they are
+    # sent (below) and are judged on what landed at the next turn, here, after the correction above.
+    pending = gs.spin_recheck or ""
+    if pending:
+        gs.spin_recheck = ""
+        if gs.recent_writes.count(pending) >= WHEEL_SPIN_WRITES and armed(pending):
+            trip(pending)
+    this_turn: dict = {}
     for ch in coder.get("choices", []):
         for tc in (ch.get("message") or {}).get("tool_calls") or []:
             if (gs.redirect_due or gs.redirect_probe
@@ -7395,23 +7441,14 @@ def guard_track_write_streak(gs: GuardState, coder: dict, rlog, *, step=None, me
             gs.recent_write_ids.append(tc.get("id"))
             del gs.recent_writes[:-WRITE_WINDOW]
             del gs.recent_write_ids[:-WRITE_WINDOW]
-            if (path is not None
-                    and gs.recent_writes.count(path) >= WHEEL_SPIN_WRITES
-                    and not gs.spin_probe_due and not gs.spin_probe
-                    and not gs.redirect_due and not gs.redirect_probe
-                    # Don't flag a rewrite cria ITSELF ordered: when edit-recovery has escalated this file
-                    # to a whole-file rewrite, its compliance rewrites are sanctioned. Once that guidance
-                    # scrolls out of the recent window (the model moved on to pure rewriting), the spin
-                    # re-arms and the reasoned wheel-spin can diagnose the real bug.
-                    and not editrecovery.rewrite_sanctioned(messages or [], path)):
-                gs.spin_probe_due = True
-                gs.spin_path = path
-                # flush the write window (one intervention at a time — a pending redirect's
-                # gate would otherwise be hijacked and its reasoner-authored nudge
-                # overwritten by the spin renudge)
-                gs.recent_writes, gs.recent_write_ids = [], []
-                rlog.emit("loop.wheel_spinning", steer="wheel-spin", step=step, path=path,
-                          writes=WHEEL_SPIN_WRITES)
+            if path is not None:
+                this_turn[path] = this_turn.get(path, 0) + 1
+                # earlier turns' writes (resolved) + one for this turn's batch
+                counted = gs.recent_writes.count(path) - (this_turn[path] - 1)
+                if counted >= WHEEL_SPIN_WRITES and armed(path):
+                    trip(path)
+                elif this_turn[path] > 1 and gs.recent_writes.count(path) >= WHEEL_SPIN_WRITES:
+                    gs.spin_recheck = path
 
 
 def guard_intervene(gs: GuardState, body: dict, rlog, *, step=None, workspace_root=None) -> dict | None:

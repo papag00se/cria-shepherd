@@ -104,6 +104,19 @@ def _prior_edit_steers(prior_msgs: list, path: str) -> int:
                if isinstance(m, dict) and tag in str(m.get("content") or ""))
 
 
+def _steer_counts(prior_msgs: list, path: str) -> tuple[int, int]:
+    """``(steers from EARLIER turns, steers already given in THIS turn's results)`` for ``path`` since its
+    last successful write. A turn is the run of messages after the last assistant message."""
+    tag = _tag(path)
+    start = _wrote_since(prior_msgs, path)
+    turn = max((i for i, m in enumerate(prior_msgs) if isinstance(m, dict) and m.get("role") == "assistant"),
+               default=-1) + 1
+    hit = lambda seq, also="": sum(1 for m in seq if isinstance(m, dict) and tag in str(m.get("content") or "")
+                                   and also in str(m.get("content") or ""))
+    # in this turn only the COMMITTED directive (`escalate*`, which says STOP) is what a follower refers to
+    return hit(prior_msgs[start:turn]), hit(prior_msgs[max(start, turn):], "STOP editing it.")
+
+
 def compose(fail: dict, prior: int, grounded: bool = True) -> str:
     """The ONE directive for an edit failure, given the file's prior edit-steer count. Monotonic:
     surgical first, then a single committed whole-file-rewrite escalation. When ``grounded`` is False
@@ -213,7 +226,11 @@ def recover(content: str, prior_msgs: list, rlog=None) -> str:
         # always say that much in words even when it can no longer say which line (#5, #5b).
         return head + prompts.load("editfail_unreadable")
     path = fail.get("path") or ""
-    prior = _prior_edit_steers(prior_msgs, path)
+    # ONE BATCH IS ONE ATTEMPT. A turn of N edits to the same file is answered with N results at once; the
+    # coder cannot act on the first before it has sent the last. Counting each result against the ones
+    # before it ran the escalation clock "failed 1… 9 times — STOP editing" inside a single turn (phi4 A4
+    # CALL 0034: nine refused Importer.java edits). Prior failures are the ones from EARLIER turns.
+    prior, in_batch = _steer_counts(prior_msgs, path)
     grounded = _is_grounded_in(prior_msgs, path)
     # TELEMETRY (provenance audit 2026-08-04): the whole-file escalation had no event at all — its
     # window-fill cost on dense models (both gemma4 0/4s compacted mid-run under forced rewrites)
@@ -228,6 +245,11 @@ def recover(content: str, prior_msgs: list, rlog=None) -> str:
     if rlog is not None and escalates and fail.get("mode") not in self_resolving:
         rlog.emit("editrecovery.escalated", path=os.path.basename(path),
                   fails=prior + 1, blind=not grounded)
+    if in_batch and fail.get("mode") not in ("identical", "phantom", "would_break", "multi", "multi_flex") \
+            and (prior + 1 >= ESCALATE_AFTER or not grounded):
+        # The first of this turn's failed edits to the file already carried the committed directive (with
+        # the file's text); said once, not once per edit.
+        return head + _tag(path) + prompts.fill(prompts.load_map("editfail_reports")["batch_repeat"], path=os.path.basename(path))
     return head + compose(fail, prior, grounded)
 
 

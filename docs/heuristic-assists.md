@@ -5,7 +5,7 @@ A terse index of the assists cria **actually implements** today, in five familie
 ## Nudges — directives/refusals the model sees
 
 - **Repetition guard** — same tool + args 3× in-window → run the repo's checks, then a grounded reasoner redirect (canned fallback).
-- **Wheel-spin guard** — same file rewritten 5× in-window → probe + steer.
+- **Wheel-spin guard** — same file rewritten 5× in-window → probe + steer. Only writes that LANDED count: a refusal or an edit that did not apply (`⟦ctx:edit⟧` result) is taken back at the next turn, and the N calls of one turn count once when sent and are judged on what landed at the next acting turn (`GuardState.spin_recheck`) — phi4 A4: nine refused edits in one reply read as "rewritten 5 times". The edit-failure escalation ("failed N times — STOP editing") likewise counts earlier TURNS only; later failures to one file inside the same turn say they did not apply and refer to the first.
 - **Rumination guard** — a mid-generation self-doubt spiral OR reasoning over the token budget → abort the stream and re-prompt.
 - **Output-truncation guard** — a `write_file` cut off at the output-token cap → refuse the partial, steer to incremental `edit_file`.
 - **No-tools (LEG0) nudge** — a no-tool-call "done"/prose turn → act-first nudge (once per step), then the gate.

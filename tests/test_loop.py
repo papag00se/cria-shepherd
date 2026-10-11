@@ -2729,11 +2729,11 @@ class RefusalRedirectTests(unittest.TestCase):
 
 
 
-    def test_parallel_identical_writes_now_reach_the_spin_guard(self):
-        # One completion carrying 5 IDENTICAL write_file calls (parallel tool calls are real). The
-        # retired repetition trigger claimed this shape first and consumed the evidence, so the
-        # wheel-spin guard — whose threshold this exactly meets — never saw it. With that trigger
-        # gone there is one intervention, and it is the right one.
+    def test_parallel_identical_writes_are_judged_on_what_landed_next_turn(self):
+        # One completion carrying 5 IDENTICAL write_file calls (parallel tool calls are real). K3: cria does
+        # not know when it records them which landed, so the batch counts once when sent; the wheel-spin guard
+        # judges it at the next turn (tests/test_a_batch_of_refused_edits_is_not_a_rewrite_streak.py runs both
+        # outcomes). It is still ONE intervention, and not a refusal.
         ws = self._ws()
         tc = {"type": "function", "function": {"name": "write_file",
               "arguments": json.dumps({"path": "h.py", "content": "same"})}}
@@ -2743,10 +2743,8 @@ class RefusalRedirectTests(unittest.TestCase):
         loop = Loop(_ctx(coder, _Scripted([_verdict()]), _plan(1), workspace_root=ws))
         rlog = _Rlog()
         loop.drive(_body(), "k", _Classification(), rlog)
-        self.assertIn("loop.wheel_spinning", rlog.kinds())
+        self.assertNotIn("loop.wheel_spinning", rlog.kinds())  # results unknown: counted once
         self.assertNotIn("loop.refusals", rlog.kinds())      # cria refused nothing here
-        loop.drive(_body(), "k", _Classification(), rlog)
-        self.assertIn("loop.spin_probe", rlog.kinds())
 
     def test_compliance_write_after_redirect_does_not_trip_spin(self):
         # guard_track_write_streak runs AFTER guard_track_refusals on the SAME completion — without
