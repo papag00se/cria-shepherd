@@ -1,7 +1,8 @@
 # Facts of a whole-file write_file that would replace most of an existing file (prompts.load_map). Measured
 # line counts only — no verdict words. `measured` is the judge's fact AND the head of the coder's result;
-# `held` is the coder's result when the write was not run; `openers` follows it when removed lines open indented blocks; `edit_on_menu` is a fact about this tool menu.
+# `held` is the coder's result when the write was not run; `openers` is the list of removed block openers (added to `held` and to `removed_landed`); `removed_landed` is the fact appended to a LANDED write that removed at least half of a pre-existing file; `edit_on_menu` is a fact about this tool menu.
 measured = {{PATH}} exists on disk: {{BYTES}} bytes, {{LINES}} non-blank lines, {{DISTINCT}} of them distinct. This write_file content is {{CAND_BYTES}} bytes, {{CAND_LINES}} non-blank lines, and repeats {{KEPT}} of the file's {{DISTINCT}} distinct non-blank lines.
 held = {{FACT}} This write_file call was not run, so nothing was written and the file is unchanged: writing it would remove at least {{REMOVED}} of the file's {{LINES}} non-blank lines, the first being line {{LINE}}: `{{QUOTED}}`. A write_file call replaces the whole file with its content.
-openers = Of the removed lines, {{SHOWN}} of the {{TOTAL}} that open an indented block (shallowest first, shown in file order): {{LISTING}}.
+openers = The {{SHOWN}} least-indented removed lines that open a block (of {{TOTAL}} such lines), in file order: {{LISTING}}.
+removed_landed = This write_file call ran. It replaced {{PATH}} ({{LINES}} non-blank lines) with content of {{CAND_LINES}} non-blank lines, and removed at least {{REMOVED}} of the file's {{LINES}} non-blank lines.
 edit_on_menu = {{TOOL}} is on this tool menu and changes part of a file, leaving the rest of it as it is.

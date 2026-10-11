@@ -964,7 +964,8 @@ def _read_command(args: dict) -> str | None:
 
 
 def _held_shrinking_write(check, path: str, content: str, edit_names: set) -> dict | None:
-    """``{"text", "bytes"}`` for a whole-file write the shrink check holds, or None (no check / may run)."""
+    """``{"text", "bytes"}`` for a whole-file write the shrink check holds — or ``{..., "land": True}`` when the
+    write runs and ``text`` is facts for its result — or None (no check / may run untouched)."""
     if check is None:
         return None
     return check(path, content, sorted(edit_names)[0] if edit_names else "")
@@ -1560,10 +1561,20 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
                                     "p=pathlib.Path(base64.b64decode(" + repr(_b64(str(path))) + ").decode()); "
                                     "sys.exit(0 if p.is_file() and p.read_bytes()==base64.b64decode("
                                     + repr(base64.b64encode(held["bytes"]).decode("ascii")) + ") else 1)")
-                            cmd = (f"if python3 -c {_qbash(same)}; then\n{_refusal_command(held['text'])}\n"
-                                   f"else\n{cmd}\nfi")
-                            if rlog is not None:
-                                rlog.emit("writeproxy.write_shrink_held", tool=name, path=str(path))
+                            if held.get("land"):
+                                # NOT A HOLD: the write runs and its result carries what it removed — only
+                                # when it LANDED (rc 0) and only for the bytes the facts were measured on.
+                                facts = f"printf %s {_qbash(held['text'])}"
+                                run = (f"{cmd}\n_rc=$?\n"
+                                       f"if [ $_rc -eq 0 ]; then {facts}; fi\n(exit $_rc)")
+                                cmd = f"if python3 -c {_qbash(same)}; then\n{run}\nelse\n{cmd}\nfi"
+                                if rlog is not None:
+                                    rlog.emit("writeproxy.write_removal_facts", tool=name, path=str(path))
+                            else:
+                                cmd = (f"if python3 -c {_qbash(same)}; then\n{_refusal_command(held['text'])}\n"
+                                       f"else\n{cmd}\nfi")
+                                if rlog is not None:
+                                    rlog.emit("writeproxy.write_shrink_held", tool=name, path=str(path))
             elif name in _EDIT_NAMES and name in injected:
                 path = _tool_path(args)
                 if not path or args.get("old_string") is None:

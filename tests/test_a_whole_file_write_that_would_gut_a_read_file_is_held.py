@@ -86,7 +86,7 @@ def _check(judge, messages=(), created=(), baseline=True):
     sess = _synth()
     if baseline:
         v = wsview.current(ROOT)
-        sess.survey_baseline = {r: (e.size, e.mtime) for e in v.files() if (r := v.rel(e.path)) not in created}
+        sess.first_survey_files = {r for e in v.files() if (r := v.rel(e.path)) not in created}
     lp = _single_loop(lambda b, r: b"{}", reasoner_chat=judge, reasoner_role=Role(name="r", backend="local"),
                       workspace_root=ROOT)
     lp._store.put("sid:h2", sess)
@@ -103,6 +103,11 @@ def _lower(path, content, check, injected=("write_file", "edit_file")):
 
 def _run(cmd, cwd):
     return subprocess.run(["bash", "-c", cmd], cwd=cwd, capture_output=True, text=True)
+
+
+def _wrote_without_facts(stdout: str) -> bool:
+    """Landed, and nothing of the removal facts after it (a pending survey may ride the result — global state)."""
+    return stdout.startswith("⟦ctx:wrote⟧") and "removed at least" not in stdout
 
 
 def _held(cmd, cwd):
@@ -372,19 +377,32 @@ def test_a9_the_removal_trigger_fires_on_a_candidate_longer_than_half_the_file()
     assert [no for no, _l in m["openers"]] == sorted(no for no, _l in m["openers"])   # file order
 
 
-def test_a9_call_0010_is_held_and_the_facts_name_the_removed_definitions(view, tmp_path):
+def test_a9_call_0010_lands_and_its_result_lists_what_it_removed(view, tmp_path):
+    """Cycle 12 review B1: the A9 candidate IS a whole file, so no hold and no judge — the write lands and
+    the result carries the measured removal facts (never a directive)."""
     _seed(tmp_path)
     judge = _Judge("OTHER")
     check, _ = _check(judge)
     _, cmd = _lower(JAVA, A9_REWRITE, check)
-    out = _run(cmd, tmp_path).stdout
-    assert (tmp_path / JAVA).read_text() == SEED_JAVA
-    assert out.startswith("⟦ctx:denied⟧") and "This write_file call was not run" in out
-    assert "would remove at least 97 of the file's 114 non-blank lines" in out
-    assert "line 91: `public static Summary summarize(String path) throws Exception {`" in out
-    assert "line 119: `public static void main(String[] args) throws Exception {`" in out
-    assert "`edit_file` is on this tool menu" in out
-    assert len(judge.prompts) == 1                                      # the judge was asked, not bypassed
+    out = _run(cmd, tmp_path)
+    assert out.returncode == 0 and (tmp_path / JAVA).read_text() == A9_REWRITE
+    lines = out.stdout.splitlines()
+    assert lines[0] == "⟦ctx:wrote⟧"                                     # still recognised as a landed write
+    text = out.stdout
+    assert "removed at least 97 of the file's 114 non-blank lines" in text
+    assert "least-indented removed lines that open a block" in text
+    assert "line 91: `public static Summary summarize(String path) throws Exception {`" in text
+    assert "line 119: `public static void main(String[] args) throws Exception {`" in text
+    assert "denied" not in text and judge.prompts == []                  # not held, not asked
+
+
+def test_the_removal_facts_are_dropped_when_the_file_changed_since_measured(view, tmp_path):
+    _seed(tmp_path)
+    check, _ = _check(_Judge("OTHER"))
+    _, cmd = _lower(JAVA, A9_REWRITE, check)
+    (tmp_path / JAVA).write_text(SEED_JAVA + "// edited by the coder's shell\n")
+    out = _run(cmd, tmp_path)
+    assert _wrote_without_facts(out.stdout) and (tmp_path / JAVA).read_text() == A9_REWRITE
 
 
 def test_removed_lines_that_open_no_block_add_no_listing():
@@ -401,18 +419,19 @@ def test_openers_are_the_shallowest_first_and_bounded():
 
 
 @pytest.mark.parametrize("name", ["lookup.js", "Gemfile"])
-def test_corpus_legitimate_rewrites_are_put_to_the_judge_and_pass_on_whole_file(view, tmp_path, name):
-    """A 19-line stub replaced by a 119-line CLI, a 10-line Gemfile tidied to 6: honest rewrites the
-    removal detector asks about; a WHOLE_FILE ruling lets them run."""
+def test_corpus_legitimate_rewrites_land_with_facts_and_are_never_asked(view, tmp_path, name):
+    """A 19-line stub replaced by a 119-line CLI, a 10-line Gemfile tidied to 6: honest rewrites. They are
+    not fragments, so they are neither asked nor held; they land and say what they removed."""
     cur, new = (CORPUS / f"{name}.current").read_text(), (CORPUS / f"{name}.rewrite").read_text()
     (tmp_path / name).write_text(cur)
     view.note_read(name, cur)
     view.note_written(name, cur)
-    judge = _Judge("WHOLE_FILE")
+    judge = _Judge("OTHER")
     check, _ = _check(judge)
     _, cmd = _lower(name, new, check)
-    assert len(judge.prompts) == 1 and not _held(cmd, tmp_path)
-    assert (tmp_path / name).read_text() == new
+    out = _run(cmd, tmp_path)
+    assert judge.prompts == [] and out.returncode == 0 and (tmp_path / name).read_text() == new
+    assert out.stdout.startswith("⟦ctx:wrote⟧") and "removed at least" in out.stdout
 
 
 def test_small_edits_and_additive_rewrites_are_untouched():
@@ -422,35 +441,67 @@ def test_small_edits_and_additive_rewrites_are_untouched():
     assert loop.shrink_measure("a\nb\nc\n", "x\n") is None                                     # < SHRINK_MIN_LINES
 
 
-def test_a_file_the_coder_created_this_session_is_rewritten_whole_without_a_hold(view, tmp_path):
-    """Cycle 12: REVIEW.md is a task deliverable the coder wrote itself; rewriting it in full is normal
-    (13 corpus hits). Principle 2 protects progress the coder did not make."""
+def test_a_file_the_coder_created_this_session_is_rewritten_whole_without_facts(view, tmp_path):
+    """Cycle 12: REVIEW.md is a deliverable the coder wrote itself; rewriting it in full is normal (13 corpus
+    hits). Principle 2 protects progress the coder did not make."""
     review = "".join(f"## finding {i}\ndetail {i}\n" for i in range(10))
     (tmp_path / "REVIEW.md").write_text(review)
     view.note_written("REVIEW.md", review)
-    rewrite = "# Review\nall new\n"
-    judge = _Judge("OTHER")
-    check, _ = _check(judge, created={"REVIEW.md"})
+    rewrite = "".join(f"# new {i}\nbody {i}\n" for i in range(11))        # not a fragment, removes every old line
+    check, _ = _check(_Judge("OTHER"), created={"REVIEW.md"})
     _, cmd = _lower("REVIEW.md", rewrite, check)
-    assert judge.prompts == [] and "write_bytes" in cmd
-    # the same write over a file that WAS in the first survey is asked about (and held on OTHER)
-    check, _ = _check(_Judge("OTHER"))
+    out = _run(cmd, tmp_path)
+    assert _wrote_without_facts(out.stdout) and (tmp_path / "REVIEW.md").read_text() == rewrite
+    (tmp_path / "REVIEW.md").write_text(review)
+    check, _ = _check(_Judge("OTHER"))                                     # same write, file in the first survey
     _, cmd = _lower("REVIEW.md", rewrite, check)
+    assert "removed at least" in _run(cmd, tmp_path).stdout
+
+
+def test_a_fragment_over_a_created_file_is_still_held(view, tmp_path):
+    """The exemption belongs to the removal class only; the fragment question is about the content."""
+    (tmp_path / "pom.xml").write_text(SEED_POM)
+    check, _ = _check(_Judge("OTHER"), created={"pom.xml"})
+    _, cmd = _lower("pom.xml", FRAGMENT, check)
     assert _held(cmd, tmp_path)
 
 
-def test_no_complete_survey_baseline_is_silence(view):
+def test_a_folded_survey_still_holds_the_a4_fragment_and_records_its_listed_files(tmp_path):
+    """Review B2: the fragment hold does not depend on a complete, unfolded survey, and a listed file is
+    recorded as present even in a folded/incomplete first survey."""
+    v = wsview.View(ROOT, "h2f")
+    assert wsview.apply_survey(v, survey(
+        f"D\tsrc\nX\t900\tsrc/big\nF\t1\t980\tpom.xml", root=ROOT, complete=False))
+    v.note_read("pom.xml", SEED_POM)
+    token = wsview.bind(v)
+    try:
+        assert v.folded and not v.complete
+        (tmp_path / "pom.xml").write_text(SEED_POM)
+        sess = _synth()
+        loop._note_survey_baseline(sess, ROOT)
+        assert sess.survey_baseline is None                               # no complete baseline …
+        loop._note_first_survey_files(sess, ROOT)
+        assert sess.first_survey_files == {"pom.xml"}                     # … but the listed file is recorded
+        check, _ = _check(_Judge("OTHER"), baseline=False)
+        _, cmd = _lower("pom.xml", FRAGMENT, check)
+        assert _held(cmd, tmp_path)
+    finally:
+        wsview.unbind(token)
+
+
+def test_no_first_survey_means_no_removal_facts(view, tmp_path):
+    _seed(tmp_path)
     judge = _Judge("OTHER")
     check, _ = _check(judge, baseline=False)
     _, cmd = _lower(JAVA, A9_REWRITE, check)
-    assert judge.prompts == [] and "write_bytes" in cmd
+    out = _run(cmd, tmp_path)
+    assert _wrote_without_facts(out.stdout) and judge.prompts == []
 
 
-def test_the_baseline_leaves_out_a_file_the_coders_landed_write_created_before_the_survey_rode_back(view):
-    from tests.test_loop import _synth as synth
-    sess = synth()
+def test_the_first_survey_files_leave_out_a_file_the_coders_landed_write_created_before_the_survey_rode_back(view):
+    sess = _synth()
     msgs = [{"role": "assistant", "content": None, "tool_calls": [{"id": "w1", "type": "function", "function": {
                 "name": "write_file", "arguments": json.dumps({"path": f"{ROOT}/pom.xml", "content": "x\n"})}}]},
             {"role": "tool", "tool_call_id": "w1", "content": "⟦ctx:wrote⟧"}]
-    loop._note_survey_baseline(sess, ROOT, msgs)
-    assert "pom.xml" not in sess.survey_baseline and JAVA in sess.survey_baseline
+    loop._note_first_survey_files(sess, ROOT, msgs)
+    assert "pom.xml" not in sess.first_survey_files and JAVA in sess.first_survey_files

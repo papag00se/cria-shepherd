@@ -444,6 +444,9 @@ class PlanSession(GuardState):
     # {workspace-relative path: (size, mtime)} of the FIRST complete survey this session received — the
     # baseline a later "unchanged on disk" fact is measured against. None until one lands.
     survey_baseline: dict = None
+    # {rel} the FIRST survey listed (folded/incomplete included), minus files the coder's own landed write
+    # created before it rode back — what `shrinking_write_check` treats as pre-existing. None until one lands.
+    first_survey_files: set = None
     thrash_replanned: bool = False  # the tool-call-thrash re-derive fired once this STEP (anti-churn bound)
     verify_replanned: bool = False  # the verify-fail re-derive fired once this STEP (anti-churn bound)
     leg0_nudged: bool = False  # the no-tools nudge fired once this step (bounds in-process recursion)
@@ -3024,7 +3027,8 @@ class Loop:
         _ws = getattr(sess, "workspace_root", None) or _extract_cwd(body.get("messages", []))
         if _ws:
             framed["messages"] = _ground_coder_view(framed.get("messages", []), _ws)
-            _note_survey_baseline(sess, _ws, body.get("messages", []))
+            _note_survey_baseline(sess, _ws)
+            _note_first_survey_files(sess, _ws, body.get("messages", []))
         _add_completion_tool(framed)  # advertise the explicit-done tool for THIS coder call
         rlog.phase = f"coder-s{step}"  # label the call capture with the role + step
         sess.restored_current = {}      # credit is earned per call, from what the wire says it delivered
@@ -3102,25 +3106,33 @@ class Loop:
         """``(path, content, edit_tool) -> held text`` for the write lowering, or None when this session
         cannot ask (assists off, no workspace, no reasoner). The text is "" when the write may proceed.
 
-        WHEN TO ASK is structural and deterministic (`shrink_measure`): the file exists, cria holds its
-        current text (a read or the coder's own write — an unknown file is silence, #11b), and the
-        candidate would REMOVE at least half of that file's non-blank lines (whatever its own length), and the file
-        existed in the session's first complete survey (`Session.survey_baseline` — not a file the coder created). WHAT IT IS is the same closed
-        question the pasted-file recovery puts (`WHOLE_FILE` / `OTHER`, `whole_file_ruling`), because
-        a fragment sent as a whole-file write and a fragment pasted in chat are one confusion (phi4 A4:
-        a 190-character `<dependencies>` excerpt replaced the 28-line pom.xml it had read; A3: a 22-line
-        stub replaced the 129-line Importer.java). Anything but a clear WHOLE_FILE holds the write —
-        failing toward NOT destroying. A hold is NOT remembered: an identical repeat is asked again, so
-        it passes if the judge ever says WHOLE_FILE — but the judge runs at temperature 0, so a false
-        `OTHER` holds the identical content indefinitely. The coder's ways out are `edit_file`, a shell
-        command, or different content (a full file that keeps most of the current one is never asked).
+        TWO CLASSES, both structural and deterministic (`shrink_measure`), over a file that exists:
+
+        * FRAGMENT (candidate has at most half the file's non-blank lines AND repeats under half its distinct
+          lines) — HELD unless the judge rules the content the file's complete content. WHAT IT IS is the
+          same closed question the pasted-file recovery puts (`WHOLE_FILE` / `OTHER`, `whole_file_ruling`),
+          because a fragment sent as a whole-file write and a fragment pasted in chat are one confusion (phi4
+          A4: a 190-character `<dependencies>` excerpt replaced the 28-line pom.xml it had read; A3: a stub
+          replaced the 129-line Importer.java). Anything but a clear WHOLE_FILE holds the write — failing
+          toward NOT destroying. A hold is NOT remembered: an identical repeat is asked again, and the judge
+          runs at temperature 0, so a false `OTHER` holds the identical content indefinitely. Needs no
+          baseline: the fragment question is about the content, whoever made the file.
+        * REMOVAL (the write removes at least half the file's non-blank lines but the candidate is longer
+          than half the file — phi4 A9: a 69-line rewrite of the 114-line Importer.java lost `summarize`,
+          `Summary`, `totals`, `main`) — NEVER held and never asked: the candidate IS a whole file, so the
+          closed question's honest answer is WHOLE_FILE and a line threshold must not make that semantic call
+          (principle 8). The write LANDS and the check returns the measured facts for the writeproxy to
+          append to the write's own result (``"land": True``): how many lines it removed and the
+          least-indented removed lines that open a block, so the coder can see what it deleted. Only for a
+          file in `first_survey_files` (existed before the coder touched anything; principle 2 protects
+          progress the coder did not make — a deliverable it created, e.g. REVIEW.md, is rewritten freely).
 
         MEASURED ON phi4 (2026-10-11, temperature 0): the judge answered `OTHER` on 22 of 22 runs of 11
         legitimate shrinking rewrites (and held 14 of 14 runs of the fragments, A3/A4 included). For such a
         model a drastic shrink of a file the coder has seen is therefore effectively HELD until it uses
         `edit_file`, sends content that keeps more of the file, or uses the shell. Accepted trade: the
-        variants that let rewrites through also let the A3 stub through. Detector rate (removes >= half the lines): 8.6% of big-file writes (102 of 1,182), ~85 of them honest rewrites
-        (stub replaced, doc rewritten) that this model's judge will hold too — see docs/heuristic-assists.md H2.
+        variants that let rewrites through also let the A3 stub through. Only the FRAGMENT class is held; the removal class
+        (4.1% of corpus big-file writes) is facts on a landed write — see docs/heuristic-assists.md H2.
         THE HOLD IS BOUND TO THE BYTES MEASURED. The text above comes from the view, which a coder's own
         shell command can leave behind the disk; the check therefore returns those bytes with the hold, and
         the lowered command refuses only while the file on disk still equals them (otherwise it writes, as
@@ -3129,19 +3141,14 @@ class Loop:
             return None
 
         def check(path: str, content: str, edit_tool: str = "") -> dict | None:
-            """``{"text", "bytes"}`` — the hold and the exact file bytes it was measured on — or None."""
+            """``{"text", "bytes"}`` (a hold) or ``{"text", "bytes", "land": True}`` (facts for the landed write's
+            result) — with the exact file bytes measured — or None."""
             sess = self._store.get(sess_key)
             view = wsview.current(root)
             if sess is None or not path or not getattr(view, "surveyed", False):
                 return None
             rel = view.rel(path)
             if not rel or view.isfile(rel) is not True:
-                return None
-            # PROGRESS THE CODER DID NOT MAKE (principle 2): only a file that existed in the session's first
-            # complete survey is protected. A deliverable the coder created itself (REVIEW.md) is rewritten
-            # whole as a matter of course; no baseline yet = nothing proves it pre-existed = silence.
-            base = getattr(sess, "survey_baseline", None)
-            if base is None or rel not in base:
                 return None
             raw = view.read_bytes(rel)
             if raw is None:
@@ -3150,10 +3157,22 @@ class Loop:
             m = shrink_measure(current, content)
             if m is None:
                 return None
+            labels = prompts.load_map("write_shrink_facts")
+            if not m["fragment"]:
+                # PROGRESS THE CODER DID NOT MAKE (principle 2): only a file that existed before the coder
+                # touched anything gets the removal facts; no first survey yet = nothing proves it = silence.
+                if rel not in (getattr(sess, "first_survey_files", None) or ()):
+                    return None
+                text = prompts.fill(labels["removed_landed"], path=rel, removed=m["removed_at_least"],
+                                    lines=m["current_lines"], cand_lines=m["cand_lines"])
+                if m["openers"]:
+                    text += " " + _openers_fact(labels, m)
+                rlog.emit("loop.write_removal_facts", path=rel, current_lines=m["current_lines"],
+                          cand_lines=m["cand_lines"], removed_at_least=m["removed_at_least"])
+                return {"text": text, "bytes": raw, "land": True}
             key = (rel, hashlib.sha1(content.encode("utf-8", "replace")).hexdigest())
             if sess.shrink_write_judged.get(key) == "WHOLE_FILE":
                 return None
-            labels = prompts.load_map("write_shrink_facts")
             fact = prompts.fill(labels["measured"], path=rel, bytes=len(current.encode("utf-8", "replace")),
                                 lines=m["current_lines"], distinct=m["distinct"],
                                 cand_bytes=len(content.encode("utf-8", "replace")),
@@ -3175,9 +3194,7 @@ class Loop:
                 labels["held"], fact=fact, removed=m["removed_at_least"], lines=m["current_lines"],
                 line=removed[0], quoted=removed[1])
             if m["openers"]:
-                held += " " + prompts.fill(
-                    labels["openers"], shown=len(m["openers"]), total=m["openers_total"],
-                    listing="; ".join(f"line {no}: `{line}`" for no, line in m["openers"]))
+                held += " " + _openers_fact(labels, m)
             if edit_tool:
                 held += " " + prompts.fill(labels["edit_on_menu"], tool=f"`{edit_tool}`")
             return {"text": held, "bytes": raw}
@@ -6687,21 +6704,21 @@ def _ran_a_command_naming(messages: list[dict], rel: str, view=None) -> bool:
     return any(_prints_whole_file(cmd, rel, view) for cmd, _res in _shell_commands_with_results(messages))
 
 
-# WHEN TO ASK, never a verdict (principle 8): a whole-file write is put to the judge only when the file
-# is big enough to have structure (SHRINK_MIN_LINES non-blank lines) and the write REMOVES at least half
-# of those lines — whatever the candidate's own length. The first detector (candidate <= half the file AND
-# repeats < half its distinct lines) missed phi4 A9: a 69-line rewrite of a 114-non-blank-line Importer.java
-# removed 97 of its lines (summarize, Summary, totals, main) and the candidate was longer than half. What
-# matters is what is LOST, not how long what replaces it is. Measured on 1,182 corpus writes over a file
-# whose text was known: 102 (8.6%) remove >= half the lines (20 under the old detector), vs 126 for the
-# distinct-lines variant, whose extra hits are long additive rewrites that lose a minority of the file.
+# WHEN TO ASK / WHAT TO SAY, never a verdict (principle 8). A whole-file write over a file of at least
+# SHRINK_MIN_LINES non-blank lines is measured two ways. FRAGMENT: the candidate has at most half the file's
+# lines and repeats under half its distinct lines — the class put to the judge and held (16 of 1,156 corpus
+# writes, 1.4%). REMOVAL: it removes at least half the file's lines whatever the candidate's length — phi4 A9,
+# a 69-line rewrite of the 114-line Importer.java that lost summarize/Summary/totals/main — which is only
+# reported, as facts on the landed write: a line threshold cannot say whether a whole file is wanted.
+# Measured on 1,182 corpus writes: 102 (8.6%) remove >= half the lines; 49 (4.1%) once files the coder
+# created are exempt (the distinct-lines variant fires on 126, its extras long additive rewrites).
 SHRINK_MIN_LINES = 8
 SHRINK_OPENERS_MAX = 12
 
 
 def shrink_measure(current: str, candidate: str) -> dict | None:
-    """The measured facts of a whole-file write over a known file, or None when it does not remove at
-    least half of the file's lines. Lines are compared stripped, blank lines ignored.
+    """The measured facts of a whole-file write over a known file, or None when it is neither a FRAGMENT
+    (``fragment`` True) nor a removal of at least half the file's lines. Lines are compared stripped, blank lines ignored.
 
     ``removed_at_least`` is a MULTISET difference: a line the candidate has once does not cover the file's
     three copies of it, so the lines no candidate line can be matched to are a TRUE lower bound on what the
@@ -6727,13 +6744,20 @@ def shrink_measure(current: str, candidate: str) -> dict | None:
         indent = len(raw) - len(raw.lstrip())
         if i + 1 < len(body) and len(body[i + 1][1]) - len(body[i + 1][1].lstrip()) > indent:
             openers.append((indent, no, line))
-    if removed * 2 < len(cur):
-        return None
     distinct, kept = set(cur), len(set(cur) & set(cand))
+    fragment = len(cand) * 2 <= len(cur) and kept * 2 < len(distinct)
+    if removed * 2 < len(cur) and not fragment:
+        return None
     shown = sorted(sorted(openers)[:SHRINK_OPENERS_MAX], key=lambda o: o[1])
     return {"current_lines": len(cur), "distinct": len(distinct), "cand_lines": len(cand), "kept": kept,
-            "removed_at_least": removed, "first_removed": first,
+            "removed_at_least": removed, "first_removed": first, "fragment": fragment,
             "openers": [(no, line) for _i, no, line in shown], "openers_total": len(openers)}
+
+
+def _openers_fact(labels: dict, m: dict) -> str:
+    """The measured list of removed block openers, as the `openers` template says it."""
+    return prompts.fill(labels["openers"], shown=len(m["openers"]), total=m["openers_total"],
+                        listing="; ".join(f"line {no}: `{line}`" for no, line in m["openers"]))
 
 
 def whole_file_ruling(answer: str) -> str:
@@ -6770,22 +6794,33 @@ def unread_target_fact(sess, view, path: str, messages: list[dict]) -> str:
     return prompts.fill(labels["sized" if size is not None else "unsized"], path=rel, size=size)
 
 
-def _note_survey_baseline(sess, root, messages=()) -> None:
+def _note_survey_baseline(sess, root) -> None:
     """Remember the first COMPLETE survey's file sizes and mtimes, once per session. An incomplete or
-    folded listing is no baseline: a later "unchanged" would be measured against a partial picture.
-
-    A file the coder's own landed `write_file` created BEFORE that survey rode back is not in it: the
-    first survey usually arrives on the result of the coder's first command, so a file that command wrote
-    is in the listing without having been there at the start (`shrinking_write_check` reads this
-    baseline as "existed before the coder touched anything")."""
+    folded listing is no baseline: a later "unchanged" would be measured against a partial picture."""
     if getattr(sess, "survey_baseline", None) is not None or not root:
         return
     view = wsview.current(root)
     if not view.surveyed or not view.complete or view.folded:
         return
-    own = {r for p in _extract_writes(list(messages)) if (r := view.rel(p))}
     sess.survey_baseline = {r: (e.size, e.mtime) for e in view.files() or []
-                            if (r := view.rel(e.path)) and r not in own}
+                            if (r := view.rel(e.path))}
+
+
+def _note_first_survey_files(sess, root, messages=()) -> None:
+    """Remember, once per session, the files the FIRST survey that landed LISTED — folded or incomplete
+    included, because a listed file is proven present (a partial listing only fails to prove absence).
+
+    A file a landed coder `write_file` created before that survey rode back is left out: the first
+    survey usually arrives on the result of the coder's first command, so the file that command wrote is in
+    the listing without having been there at the start. `shrinking_write_check` reads this as "existed
+    before the coder touched anything" — the progress it protects is not the coder's own."""
+    if getattr(sess, "first_survey_files", None) is not None or not root:
+        return
+    view = wsview.current(root)
+    if not view.surveyed:
+        return
+    own = {r for p in _extract_writes(list(messages)) if (r := view.rel(p))}
+    sess.first_survey_files = {r for e in view.files() or [] if (r := view.rel(e.path)) and r not in own}
 
 
 def _measured_gap_facts(sess, reply: str) -> str:
