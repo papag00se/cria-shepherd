@@ -135,6 +135,9 @@ CONTINUATION_MARKER = "⟦ctx:continuation⟧"   # leads cria's compaction refra
 # path — the loop instead re-plans from the summary) lives in prompts/reanchor.txt. Seed incident: a
 # compacted model treated its OWN earlier work as a previous agent's and duplicated a file under a
 # different dir; the note re-orients it to inspect before creating.
+# Both `compaction_reframe_dropped*` templates say this in their first sentence (a test pins it): the
+# continuation then holds NO model-authored prose, only re-derived ground truth.
+_DROPPED_PROSE_LEAD = "the handoff summary from that turn did not survive"
 # ONE FOLDER PER RUN (operator direction 2026-07-11): everything cria produces for a session —
 # call captures, reasoning files, the plan mirror, the critic's verify dumps — lands under
 # <runs_dir>/<session>/, keyed by the SAME session id the captures use. No more tying a
@@ -5379,6 +5382,21 @@ class Loop:
                         if m.get("role") == "user"
                         and CONTINUATION_MARKER in _content_text(m.get("content"))), "")
         if self._ctx.reasoner_role is None or not summary.strip():
+            return canned
+        # NO MODEL PROSE SURVIVED → THERE IS NOTHING TO ORIENT FROM THAT THE CODER DOES NOT ALREADY HOLD.
+        # When the briefing was rejected, the continuation message carries only cria's re-derived ground
+        # truth (workspace listing + the repo's own check output), verbatim, in its own carrier — and this
+        # seat was handed exactly that and asked to "state what has been built / what remains". All it
+        # can do is PARAPHRASE THE CHECKER, and a paraphrase is a second voice speaking over the tool
+        # (principles 2, 5b): phi4/Java A6 call 0164 turned javac's "class, interface, enum, or record
+        # expected" into "missing declarations … ensure Importer.java contains the appropriate
+        # declarations", the coder obeyed (call 0165) and wrapped the file in an extra class; A2 turned a
+        # type error into "change long to int or vice versa". Measured over every phi4/Java capture, 34
+        # of 34 firings of this seat were this shape; most carried a repair plan the checker never
+        # stated. The canned re-anchor says the only true thing (inspect before creating; do not
+        # recreate) and the checker's own words reach the coder untouched.
+        if _DROPPED_PROSE_LEAD in summary:
+            rlog.emit("loop.reanchor_skipped_no_prose", level="info")
             return canned
         # …AND THE DISK. The sibling seat — the self-compaction briefing writer — was given this
         # exact fix, and its comment says why: "This inventory was already gathered on the line
