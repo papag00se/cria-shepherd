@@ -12278,7 +12278,7 @@ def guard_rumination(coder: dict, body: dict, coder_chat, rlog, *, step=None, ph
         # message-prefill is gated on no-tools), never a message rewrite.
         if coder_role is not None and getattr(coder_role, "reasoning", None) not in (None, "off"):
             retry_body["chat_template_kwargs"] = dict(retry_body.get("chat_template_kwargs") or {})
-            reasoning.apply_reasoning(retry_body, "off", coder_role.think_protocol)
+            reasoning.apply_reasoning(retry_body, "off", coder_role.think_protocol, rlog)
             rlog.emit("loop.rumination_reasoning_off", attempt=attempt, guard=which,
                       protocol=coder_role.think_protocol)
         coder = massage.apply(
