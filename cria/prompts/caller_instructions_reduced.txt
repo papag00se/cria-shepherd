@@ -1,1 +1,1 @@
-⟦ctx:reduced⟧ The calling application's own standing instructions (about {{CHARS}} characters) were left out of this request to leave room for the files you read and the command results below. Everything else in this message, and the whole conversation, is unchanged.
+⟦ctx:reduced⟧ The calling application's own standing instructions (about {{CHARS}} characters) were left out of this request to make room for the conversation. The rest of this message is unchanged.

@@ -122,3 +122,18 @@ def test_the_do_not_reread_rule_holds_only_while_the_result_is_visible():
     line = next(l for l in prompts.load("coder_system").splitlines() if "already read a file" in l)
     assert "do not read or run the same thing again" in line     # kept: repeat reads of visible text
     assert "still in this conversation" in line and "no longer here" in line and "read it again" in line
+
+
+def test_the_stand_in_makes_no_claim_about_the_conversation_when_turns_are_also_folded():
+    """Review 8a30b92b: the note said the whole conversation was unchanged and that room was left for
+    'the files you read' — false when the floor ALSO dropped turns in the same request."""
+    msgs, tools = _body()
+    big = {"role": "tool", "tool_call_id": "c1", "content": "row,sku,qty\n" * 3200}
+    msgs = [msgs[0], msgs[1], _call(1, "read_file", {"path": "data/feed.csv"}), big] + msgs[2:]
+    out, _, rep = cf.fit(msgs, tools, window=WINDOW, reserve=4096, safety=1.0, pinned_task=FIX["task"])
+    assert rep.caller_reduced == 1 and rep.turns_dropped > 0          # the review's repro
+    system = out[0]["content"]
+    note = system[system.index("⟦ctx:reduced⟧"):].split("\n")[0]
+    assert "conversation" in note and "whole conversation" not in note and "files you read" not in note
+    assert "unchanged" in note and "rest of this message" in note     # it speaks of its own message only
+    assert any("⟦ctx:compacted⟧" in cf._msg_text(m) for m in out)      # the folding is announced by its own note
