@@ -245,7 +245,8 @@ run();
         plan = probegate.plan_gate(root, "gate")
         candidate = next(c for c in plan.candidates if c.kind is probediscovery.ProbeKind.Test)
         self.assertEqual(candidate.test_source_paths, (root + "/" + path,))
-        self.assertIn("WANT = ['tests/lookup.test.cjs']", plan.script)
+        # N1: the survey's per-call questions are its JSON argument, not text formatted into a program.
+        self.assertIn('"want": ["tests/lookup.test.cjs"]', plan.script)
 
         returned_survey = survey(
             f"F\t2\t{len(source)}\t{path}",

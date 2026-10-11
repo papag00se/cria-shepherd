@@ -281,10 +281,10 @@ class RealShellDetachmentTests(unittest.TestCase):
         )
         with mock.patch.object(probegate.proberun, "select_completion_probes",
                                return_value=[candidate]):
-            plan = probegate.plan_gate(self._ws)
-        # Shrink the poll wait so the test doesn't need to wait out the real GATE_POLL_WAIT_S.
-        plan.script = plan.script.replace(f"time.monotonic() + {probegate.GATE_POLL_WAIT_S!r}",
-                                          f"time.monotonic() + {poll_wait_s!r}")
+            # Shrink the poll wait so the test doesn't need to wait out the real GATE_POLL_WAIT_S.
+            # (N1: the wait is an ARGUMENT of the helper call, no longer text inside a program that
+            # could be string-patched — plan_gate's own knob is the honest way to set it.)
+            plan = probegate.plan_gate(self._ws, poll_wait_s=poll_wait_s)
         return plan
 
     def test_launch_returns_promptly_and_a_later_read_sees_running_then_complete(self):
@@ -855,7 +855,8 @@ class PollWaitFromToolSchemaTests(unittest.TestCase):
             call = loop.guard_gate_op(gs, body, mock.Mock(), workspace_root=ws)
         self.assertIsNotNone(call)
         self.assertEqual(gs.gate_plan.transport_poll_wait_s, probegate.GATE_POLL_WAIT_LONG_S)
-        self.assertIn(f"time.monotonic() + {probegate.GATE_POLL_WAIT_LONG_S!r}", gs.gate_plan.script)
+        # N1: the wait is an ARGUMENT of the helper's reader call, not text baked into a program.
+        self.assertIn(f"{gs.gate_plan.transport_id} {probegate.GATE_POLL_WAIT_LONG_S!r}", gs.gate_plan.script)
 
     def test_a_tool_without_the_field_keeps_the_short_default(self):
         with tempfile.TemporaryDirectory() as ws:
@@ -864,8 +865,9 @@ class PollWaitFromToolSchemaTests(unittest.TestCase):
             call = loop.guard_gate_op(gs, body, mock.Mock(), workspace_root=ws)
         self.assertIsNotNone(call)
         self.assertEqual(gs.gate_plan.transport_poll_wait_s, probegate.GATE_POLL_WAIT_S)
-        self.assertIn(f"time.monotonic() + {probegate.GATE_POLL_WAIT_S!r}", gs.gate_plan.script)
-        self.assertNotIn(f"time.monotonic() + {probegate.GATE_POLL_WAIT_LONG_S!r}", gs.gate_plan.script)
+        tid = gs.gate_plan.transport_id
+        self.assertIn(f"{tid} {probegate.GATE_POLL_WAIT_S!r}", gs.gate_plan.script)
+        self.assertNotIn(f"{tid} {probegate.GATE_POLL_WAIT_LONG_S!r}", gs.gate_plan.script)
 
     def test_continuation_reads_reuse_the_wait_the_plan_learned(self):
         with tempfile.TemporaryDirectory() as ws:
@@ -875,7 +877,7 @@ class PollWaitFromToolSchemaTests(unittest.TestCase):
         plan = gs.gate_plan
         probegate.ingest_transport(plan, _running_envelope(plan))
         cmd = probegate.continue_transport_command(plan)
-        self.assertIn(f"time.monotonic() + {probegate.GATE_POLL_WAIT_LONG_S!r}", cmd)
+        self.assertIn(f"{plan.transport_id} {probegate.GATE_POLL_WAIT_LONG_S!r}", cmd)
 
     def test_poll_calls_also_get_the_schema_time_budget(self):
         """`with_time_budget` must apply to poll calls too, not only the launch."""

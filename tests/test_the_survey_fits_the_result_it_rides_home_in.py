@@ -104,9 +104,11 @@ class TheSurveyRidesInsideTheLosslessSpoolTests(unittest.TestCase):
 
     def test_the_survey_is_written_before_the_transport_reader_runs(self):
         plan = probegate.plan_gate(_tree(20))
-        self.assertIn(wsview.SURVEY_OPEN, plan.script)
-        self.assertLess(plan.script.index(wsview.SURVEY_OPEN),
-                        plan.script.index(probegate.TRANSPORT_PREFIX))
+        # N1: the survey leg (inside the detached block) still precedes the reader CALL; the program
+        # text itself now lives in the helper, so the reader call is located by its invocation.
+        self.assertIn(wsview.SURVEY_CMD_OPEN, plan.script)
+        self.assertLess(plan.script.index(wsview.SURVEY_CMD_OPEN),
+                        plan.script.index(" reader \"$__cria_gate_file\" 0 "))
 
 
 if __name__ == "__main__":

@@ -357,6 +357,9 @@ class GuardState:
     # ``gate_fresh`` so an already-surveyed project with no applicable probe keeps the bounded
     # attempted-gate exit, and a harness with no shell keeps its existing no-gate exit.
     gate_replan_required: bool = False
+    # N1: the harness holds this session's gate helper program (written by an earlier gate's launch),
+    # so later gate calls name it instead of carrying it. Copied from the live plan after every page.
+    gate_helpers_ready: bool = False
     leg0_nudged: bool = False  # the no-tools act-first nudge fired once this session
     # NB: there is deliberately NO search-escape state here. cria used to SUBSTITUTE a web_fetch for a
     # search-looping coder's own web_search (streak/volume counters, a convention URL, a domain-root
@@ -7186,7 +7189,8 @@ def guard_gate_op(gs: GuardState, body: dict, rlog, *, workspace_root=None) -> d
         poll_wait_s = (probegate.GATE_POLL_WAIT_LONG_S if tool_declares_time_budget(tool)
                       else probegate.GATE_POLL_WAIT_S)
         plan = probegate.plan_gate(root, getattr(gs, "web_session", "") or "", rlog,
-                                   poll_wait_s=poll_wait_s)
+                                   poll_wait_s=poll_wait_s,
+                                   helpers_ready=gs.gate_helpers_ready)
     except OSError as e:  # unreadable workspace → no gate; the caller still fails open
         rlog.emit("loop.gate_error", level="warn", error=str(e))
         gs.gate_plan = None
@@ -7271,6 +7275,7 @@ def guard_gate_transport(gs: GuardState, body: dict, rlog, *, call_id: str = "")
         return None
     raw = _read_tool_result(body.get("messages", []), call_id or gs.probe_call_id)
     state = probegate.ingest_transport(plan, raw)
+    gs.gate_helpers_ready = plan.helpers_ready
     if state not in ("pending", "running"):
         if state == "unknown":
             rlog.emit("gate.transport_unknown", level="warn", reason=plan.transport_error,

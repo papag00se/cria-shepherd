@@ -28,6 +28,7 @@ never become a clean gate.
 from __future__ import annotations
 
 import base64
+import functools
 import hashlib
 import json
 import os
@@ -35,6 +36,7 @@ import re
 import secrets
 import shlex
 import time
+import zlib
 from collections import OrderedDict
 from dataclasses import dataclass, field
 
@@ -70,6 +72,11 @@ COMPLETION_PROBE_TIMEOUT_S = 240.0
 # encode to 8,000 characters, leaving room for the harness envelope under the observed ~9–10 KiB
 # result boundary. This is a TRANSPORT page size, not an evidence budget: every page is requested.
 TRANSPORT_CHUNK_BYTES = 6_000
+# N1: a page's WIRE payload stays bounded by TRANSPORT_CHUNK_BYTES, but when the harness's python3 has
+# zlib the page carries as many RAW spool bytes as compress into that bound (offset/total/sha256 are
+# always over the raw bytes — compression is invisible to every integrity check). This caps how much
+# raw one page may decompress to, so a hostile/garbled page cannot balloon cria's memory.
+TRANSPORT_RAW_PAGE_MAX = 65_536
 TRANSPORT_PREFIX = "___CRIA_GATE_TRANSPORT_"
 TRANSPORT_SUFFIX = "___"
 TRANSPORT_END_PREFIX = "___CRIA_GATE_TRANSPORT_END_"
@@ -118,9 +125,137 @@ def _transport_marker(transport_id: str, *, end: bool = False) -> str:
     prefix = TRANSPORT_END_PREFIX if end else TRANSPORT_PREFIX
     return f"{prefix}{transport_id}{TRANSPORT_SUFFIX}"
 
+# --------------------------------------------------------------------------- harness-side helper (N1)
+HELPER_GONE_FIELD = "helper-gone"
+_HELPER_HEREDOC = "__CRIA_GATE_HELPER_PY__"
+
+
+def _helper_reader_program() -> str:
+    """The page reader as the helper's ``reader`` mode. argv: ``reader PATH OFFSET TRANSPORT_ID WAIT_S``.
+
+    Behaviour is the reader this replaced (typed ``gone`` / ``running`` / page / ``error`` envelopes,
+    never deletes anything) plus ONE addition: when the harness's python3 has zlib, a page carries the
+    RAW bytes that compress into :data:`TRANSPORT_CHUNK_BYTES` (up to :data:`TRANSPORT_RAW_PAGE_MAX`)
+    and says so with an ``enc`` field; without zlib it is the old raw page (``enc raw``). ``offset``,
+    ``total`` and ``sha256`` are over the raw spool either way, and the next offset is the raw bytes
+    delivered, so cria's offset/hash/total checks are unchanged."""
+    return f'''if sys.argv[1] == "reader":
+    import base64, hashlib, os, time
+    try:
+        import zlib
+    except ImportError:
+        zlib = None
+    path, offset, tid, wait_s = sys.argv[2], int(sys.argv[3]), sys.argv[4], float(sys.argv[5])
+    opening = {TRANSPORT_PREFIX!r} + tid + {TRANSPORT_SUFFIX!r}
+    closing = {TRANSPORT_END_PREFIX!r} + tid + {TRANSPORT_SUFFIX!r}
+    done_path = path + ".done"
+    deadline = time.monotonic() + wait_s
+    while not os.path.exists(done_path) and os.path.exists(path) and time.monotonic() < deadline:
+        time.sleep(0.2)
+    if not os.path.exists(path):
+        print(opening)
+        print("gone\\t1")
+        print(closing)
+        sys.exit(0)
+    if not os.path.exists(done_path):
+        try:
+            started = os.path.getctime(path)
+            elapsed = max(0.0, time.time() - started)
+        except OSError:
+            elapsed = 0.0
+        print(opening)
+        print("path\\t" + base64.b64encode(path.encode()).decode())
+        print("running\\t" + str(round(elapsed, 1)))
+        print(closing)
+        sys.exit(0)
+    try:
+        total = os.path.getsize(path)
+        if offset < 0 or offset > total:
+            raise ValueError("offset outside spool")
+        digest = hashlib.sha256()
+        with open(path, "rb") as source:
+            for block in iter(lambda: source.read(65536), b""):
+                digest.update(block)
+            source.seek(offset)
+            window = source.read({TRANSPORT_RAW_PAGE_MAX})
+        chunk, wire, enc = window[:{TRANSPORT_CHUNK_BYTES}], None, "raw"
+        if zlib is not None:
+            n = len(window)
+            while True:
+                packed = zlib.compress(window[:n], 6)
+                if len(packed) <= {TRANSPORT_CHUNK_BYTES} or n <= 1:
+                    break
+                n = max(1, min(n - 1, int(n * {TRANSPORT_CHUNK_BYTES} / len(packed) * 0.9)))
+            if len(packed) <= {TRANSPORT_CHUNK_BYTES}:
+                chunk, wire, enc = window[:n], packed, "zlib"
+        print(opening)
+        print("path\\t" + base64.b64encode(path.encode()).decode())
+        print("offset\\t" + str(offset))
+        print("total\\t" + str(total))
+        print("sha256\\t" + digest.hexdigest())
+        print("enc\\t" + enc)
+        print("data\\t" + base64.b64encode(chunk if wire is None else wire).decode())
+        print(closing)
+    except Exception as exc:
+        print(opening)
+        print("error\\t" + base64.b64encode(str(exc).encode()).decode())
+        print(closing)
+    sys.exit(0)
+'''
+
+
+@functools.lru_cache(maxsize=1)
+def _helper_source() -> str:
+    """The ONE harness-side program: ``reader`` (page transport) and ``survey`` (workspace survey).
+
+    Pure function of cria's own constants — no session, path or probe in it — so its text, and the
+    content hash its file is named by, are identical in every call and every process. A cria change
+    that alters either program changes the name, so a stale helper can never answer for new code."""
+    return ("import sys\n" + _helper_reader_program() + 'if sys.argv[1] != "survey":\n    sys.exit(2)\n'
+            + wsview.survey_helper_program())
+
+
+def _helper_name() -> str:
+    return ".cria-helper-" + hashlib.sha256(_helper_source().encode("utf-8")).hexdigest()[:16] + ".py"
+
+
+def helper_path_expr() -> str:
+    """The shell expression for the helper's path. ``${TMPDIR:-/tmp}`` is the HARNESS's own value
+    (#23c: cria composes, the harness resolves) — the same directory the spool lives in, which is the
+    one place the sandbox lets a gate write."""
+    return f'"${{TMPDIR:-/tmp}}/{_helper_name()}"'
+
+
+def _helper_install_leg() -> str:
+    """Write the helper into the harness temp dir unless it is already there. Idempotent, atomic
+    (write beside it, then ``os.replace`` — a reader never sees half a program; not ``mv``, a verb the
+    harness sandbox has not been shown to allow), never an ``rm``. The file is
+    cria's own invariant code, named by the hash of its text, so "exists" means "is this program"."""
+    h = helper_path_expr()
+    beside = f'"${{TMPDIR:-/tmp}}/{_helper_name()}.$$"'
+    return (f'if [ ! -f {h} ]; then\n'
+            f'cat > {beside} <<\'{_HELPER_HEREDOC}\'\n'
+            f'{_helper_source()}{_HELPER_HEREDOC}\n'
+            # Only a COMPLETE write earns the final name (a full disk must not leave half a program
+            # under the name that means "this program"); `$?` here is the `cat`'s own status.
+            f'[ $? -eq 0 ] && python3 -c "import os, sys; os.replace(sys.argv[1], sys.argv[2])" '
+            f'{beside} {h}\n'
+            'fi\n')
+
+
+def _helper_reader_call(path_arg: str, offset: int, transport_id: str, wait_s: float) -> str:
+    """Run the helper's page reader, or say — in a typed envelope cria fails closed on — that the
+    helper is not there. Never silent: a vanished helper must not look like a check that is "running"."""
+    h = helper_path_expr()
+    gone = (f"printf '%s\\n{HELPER_GONE_FIELD}\\t1\\n%s\\n' "
+            f"{shlex.quote(_transport_marker(transport_id))} "
+            f"{shlex.quote(_transport_marker(transport_id, end=True))}")
+    return (f'if [ -f {h} ]; then python3 {h} reader {path_arg} {offset} {transport_id} {wait_s!r}; '
+            f'else {gone}; fi')
+
 
 def _transport_reader(path_arg: str, offset: int, transport_id: str, *,
-                      wait_s: float = GATE_POLL_WAIT_S) -> str:
+                      wait_s: float = GATE_POLL_WAIT_S, helper_ready: bool = False) -> str:
     """Harness-side page reader. ``path_arg`` is a shell expression or quoted path.
 
     Waits up to ``wait_s`` for the sibling ``.done`` marker the detached probe block writes when it
@@ -160,56 +295,18 @@ def _transport_reader(path_arg: str, offset: int, transport_id: str, *,
 
     The final page is read into the helper's memory; a cut result still shows a missing close/count/
     hash and reports UNKNOWN, and never interprets the prefix as a complete check.
+
+    N1 — THE PROGRAM IS NOT IN THE CALL. The reader (≈1.6 KB) and the workspace survey (≈4.8 KB) are
+    invariant text that used to ride, whole, in the ARGUMENTS of every gate launch and every poll —
+    harness history the model never reads, counted by the harness against its own compaction trigger
+    (phi4 A6: 18 compactions in 30 min). They are now written ONCE into the harness's own temp dir as
+    a content-addressed helper (:func:`_helper_install_leg`) and every later call just names it. This
+    function is the whole reader call: the install leg (skipped once the session knows the helper is
+    there) plus the invocation. A helper that has since vanished answers with a typed ``helper-gone``
+    envelope, which :func:`ingest_transport` makes terminal UNKNOWN — never clean.
     """
-    program = f'''import base64, hashlib, os, sys, time
-path = sys.argv[1]
-offset = int(sys.argv[2])
-opening = {_transport_marker(transport_id)!r}
-closing = {_transport_marker(transport_id, end=True)!r}
-done_path = path + ".done"
-deadline = time.monotonic() + {wait_s!r}
-while not os.path.exists(done_path) and os.path.exists(path) and time.monotonic() < deadline:
-    time.sleep(0.2)
-if not os.path.exists(path):
-    print(opening)
-    print("gone\\t1")
-    print(closing)
-    sys.exit(0)
-if not os.path.exists(done_path):
-    try:
-        started = os.path.getctime(path)
-        elapsed = max(0.0, time.time() - started)
-    except OSError:
-        elapsed = 0.0
-    print(opening)
-    print("path\\t" + base64.b64encode(path.encode()).decode())
-    print("running\\t" + str(round(elapsed, 1)))
-    print(closing)
-    sys.exit(0)
-try:
-    total = os.path.getsize(path)
-    if offset < 0 or offset > total:
-        raise ValueError("offset outside spool")
-    digest = hashlib.sha256()
-    with open(path, "rb") as source:
-        for block in iter(lambda: source.read(65536), b""):
-            digest.update(block)
-        source.seek(offset)
-        chunk = source.read({TRANSPORT_CHUNK_BYTES})
-    print(opening)
-    print("path\\t" + base64.b64encode(path.encode()).decode())
-    print("offset\\t" + str(offset))
-    print("total\\t" + str(total))
-    print("sha256\\t" + digest.hexdigest())
-    print("data\\t" + base64.b64encode(chunk).decode())
-    print(closing)
-except Exception as exc:
-    print(opening)
-    print("error\\t" + base64.b64encode(str(exc).encode()).decode())
-    print(closing)
-'''
-    return (f"python3 - {path_arg} {offset} <<'{_TRANSPORT_HEREDOC}'\n"
-            f"{program}{_TRANSPORT_HEREDOC}")
+    return (_helper_install_leg() if not helper_ready else "") + _helper_reader_call(
+        path_arg, offset, transport_id, wait_s)
 
 
 def _gate_launch_guard(spool_arg: str, cmd_arg: str, parts: list[str]) -> list[str]:
@@ -343,6 +440,12 @@ class GatePlan:
     # when it declares an ms-unit time-budget field, else GATE_POLL_WAIT_S) and reused by every
     # continuation read of this same plan so a mid-transport tool swap can never silently change it.
     transport_poll_wait_s: float = GATE_POLL_WAIT_S
+    # N1: does the harness already hold this session's helper program (see :func:`_helper_install_leg`)?
+    # Set at compose time from the session's own knowledge, turned True by any real envelope a helper
+    # call answered with (it ran, so it is there), and False by a typed ``helper-gone`` reply. The
+    # caller copies it back to the session after every ingest, so the NEXT gate re-installs a vanished
+    # helper while THIS gate is terminal UNKNOWN.
+    helpers_ready: bool = False
     # THE OFFLINE FACT THIS PLAN'S LAST CLEAN GATE PRODUCED, so a reader that is not the coder can
     # have it. `_offline_fact` is one sentence cria owns outright — the suite passed, and it passed
     # again with the network taken away — and it reached the coder in 20 prompts of L5
@@ -412,6 +515,28 @@ def _retry_or_deadline(plan: GatePlan, now: float | None) -> str:
         return fail_transport(
             plan, "the check exceeded its own composed timeout budget while still running")
     return "running"
+
+
+def _decode_page_data(data: str, enc: str) -> bytes:
+    """One page's raw spool bytes from its ``data`` field. ``enc`` is ``raw`` (the original shape: at
+    most TRANSPORT_CHUNK_BYTES) or ``zlib`` (compressed to at most TRANSPORT_CHUNK_BYTES, expanding to
+    at most TRANSPORT_RAW_PAGE_MAX). Anything else, or a stream that is not exactly one complete
+    zlib stream within the bound, is a ValueError — the page is then terminal UNKNOWN."""
+    wire = base64.b64decode(data, validate=True)
+    if len(wire) > TRANSPORT_CHUNK_BYTES:
+        raise ValueError("page payload exceeds the transport bound")
+    if enc == "raw":
+        return wire
+    if enc != "zlib":
+        raise ValueError("unknown page encoding")
+    try:
+        inflater = zlib.decompressobj()
+        raw = inflater.decompress(wire, TRANSPORT_RAW_PAGE_MAX + 1)
+    except zlib.error as exc:
+        raise ValueError("page payload is not valid zlib") from exc
+    if not inflater.eof or inflater.unused_data or inflater.unconsumed_tail or len(raw) > TRANSPORT_RAW_PAGE_MAX:
+        raise ValueError("page payload is not exactly one bounded zlib stream")
+    return raw
 
 
 def ingest_transport(plan: GatePlan, result_text: str, *, now: float | None = None) -> str:
@@ -485,6 +610,13 @@ def ingest_transport(plan: GatePlan, result_text: str, *, now: float | None = No
         if not sep or key in fields:
             return fail_transport(plan, "transport page contains malformed or duplicate fields")
         fields[key] = value
+    if set(fields) == {HELPER_GONE_FIELD}:
+        # N1: the helper file this call was composed to run is not on the harness. The reader never ran,
+        # so nothing is known about the check — terminal UNKNOWN (#13), never clean. The plan stops
+        # claiming the helper exists so the session's next gate writes it again.
+        plan.helpers_ready = False
+        return fail_transport(plan, "the gate's harness-side helper program is gone — the check "
+                                    "cannot be read")
     if set(fields) == {"gone"}:
         # Reviewer 6510f2dd follow-up: the reader itself found NO spool at all — distinct from
         # "not finished yet" (which always carries `running`+`path`). Genuinely missing can only mean
@@ -516,6 +648,7 @@ def ingest_transport(plan: GatePlan, result_text: str, *, now: float | None = No
         if plan.transport_path and running_path != plan.transport_path:
             return fail_transport(plan, "transport spool changed between pages")
         plan.transport_path = running_path
+        plan.helpers_ready = True
         plan.transport_openerless_streak = 0
         return _retry_or_deadline(plan, now)
     if "error" in fields:
@@ -524,15 +657,17 @@ def ingest_transport(plan: GatePlan, result_text: str, *, now: float | None = No
         except Exception:  # noqa: BLE001 — an unreadable error is still a transport failure
             detail = "harness-side page reader failed"
         return fail_transport(plan, detail)
-    if set(fields) != {"path", "offset", "total", "sha256", "data"}:
+    if set(fields) not in ({"path", "offset", "total", "sha256", "data"},
+                           {"path", "offset", "total", "sha256", "data", "enc"}):
         return fail_transport(plan, "transport page is missing required fields")
     # A REAL page envelope arrived — the poll channel works, whatever this page's own contents
     # turn out to validate to below. Reset the openerless streak here, not only on eventual success.
     plan.transport_openerless_streak = 0
+    plan.helpers_ready = True
     try:
         path = base64.b64decode(fields["path"], validate=True).decode("utf-8")
         offset, total = int(fields["offset"]), int(fields["total"])
-        chunk = base64.b64decode(fields["data"], validate=True)
+        chunk = _decode_page_data(fields["data"], fields.get("enc", "raw"))
     except (ValueError, UnicodeError):
         return fail_transport(plan, "transport page contains undecodable fields")
     digest = fields["sha256"].lower()
@@ -542,7 +677,7 @@ def ingest_transport(plan: GatePlan, result_text: str, *, now: float | None = No
     expected_name = f".cria-gate-{plan.transport_id}."
     if not os.path.basename(path).startswith(expected_name):
         return fail_transport(plan, "transport page named an unexpected spool")
-    if offset != len(plan.transport_data) or total < 0 or len(chunk) > TRANSPORT_CHUNK_BYTES:
+    if offset != len(plan.transport_data) or total < 0 or len(chunk) > TRANSPORT_RAW_PAGE_MAX:
         return fail_transport(plan, "transport page offset, total, or chunk size is inconsistent")
     if plan.transport_path and path != plan.transport_path:
         return fail_transport(plan, "transport spool changed between pages")
@@ -598,7 +733,8 @@ def continue_transport_command(plan: GatePlan) -> str:
     return "\n".join([
         _gate_sentinel([]),
         _transport_reader(shlex.quote(plan.transport_path), len(plan.transport_data),
-                          plan.transport_id, wait_s=plan.transport_poll_wait_s),
+                          plan.transport_id, wait_s=plan.transport_poll_wait_s,
+                          helper_ready=plan.helpers_ready),
     ])
 
 
@@ -637,7 +773,7 @@ def _checks_ran_elsewhere(workspace: str, candidates: list) -> str:
 
 
 def plan_gate(workspace: str, session: str = "", rlog=None, *,
-              poll_wait_s: float = GATE_POLL_WAIT_S) -> GatePlan:
+              poll_wait_s: float = GATE_POLL_WAIT_S, helpers_ready: bool = False) -> GatePlan:
     """Inspect the workspace read-only and compose the gate script.
 
     Selection is re-run on EVERY gate (like upstream's ``discover`` per gate run):
@@ -659,6 +795,7 @@ def plan_gate(workspace: str, session: str = "", rlog=None, *,
         surveyed_before=bool(wsview.current(workspace or None).surveyed),
         transport_required=True,
         transport_poll_wait_s=poll_wait_s,
+        helpers_ready=helpers_ready,
     )
     if workspace:
         plan.candidates = proberun.select_completion_probes(workspace)
@@ -747,7 +884,7 @@ def plan_gate(workspace: str, session: str = "", rlog=None, *,
     # The survey rides inside the same lossless spool. It keeps its own structural tree bound (a
     # folded directory is explicit UNKNOWN), but it no longer competes with probe bytes for one
     # harness result and therefore needs no per-gate byte arithmetic.
-    parts.append(wsview.survey_command(session, cd=workspace))
+    parts.append(wsview.survey_command(session, cd=workspace, helper=helper_path_expr()))
     # STATE IT NOW, while cria still knows. A probe the coder could retype is one line of argv; a
     # manifest check cria composed is a multi-line inline program. The distinction is free here and
     # unrecoverable downstream — see GATE_SENTINEL.
@@ -769,9 +906,10 @@ def plan_gate(workspace: str, session: str = "", rlog=None, *,
         _gate_sentinel(retypable),
         f"__cria_gate_file={spool}",
         f"__cria_gate_cmd={cmd_file}",
+        # N1: the helper must exist BEFORE the detached block starts (its survey leg runs it).
+        *([] if plan.helpers_ready else [_helper_install_leg().rstrip("\n")]),
         *_gate_launch_guard('"$__cria_gate_file"', '"$__cria_gate_cmd"', parts),
-        _transport_reader('"$__cria_gate_file"', 0, plan.transport_id,
-                          wait_s=plan.transport_poll_wait_s),
+        _helper_reader_call('"$__cria_gate_file"', 0, plan.transport_id, plan.transport_poll_wait_s),
     ])
     return plan
 

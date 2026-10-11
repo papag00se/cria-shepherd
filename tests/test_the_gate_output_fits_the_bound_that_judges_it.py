@@ -27,9 +27,12 @@ class _Rlog:
 
 def candidate(workspace: str) -> ProbeCandidate:
     program = (
-        "import sys\n"
+        "import hashlib, sys\n"
         "for i in range(900):\n"
-        " print(f'noise-{i:04d}-' + 'x' * 40)\n"
+        # Incompressible on purpose (N1): pages now carry as many raw bytes as zlib packs into the
+        # wire bound, so repeated filler would fit one page and these multi-page protocol tests
+        # (offsets, reorder, per-page loop) would no longer exercise multiple pages.
+        " print(f'noise-{i:04d}-' + hashlib.sha256(str(i).encode()).hexdigest())\n"
         " if i == 450: print('src/middle.py:73: MIDDLE_FAILURE')\n"
         "print('FINAL_TALLY: 1 failed')\n"
         "sys.exit(1)\n"
@@ -91,13 +94,17 @@ class CompleteEvidenceCrossesAsynchronousTurnsTests(unittest.TestCase):
             # lost-and-repolled final page must be able to re-read the SAME bytes), so the spool and
             # its .done marker persist — queued for the NEXT gate composed for this workspace to
             # reclaim, never an `rm`, never a glob.
+            # N1: besides the per-gate spool pair, the temp dir holds the ONE content-addressed helper
+            # program (shared by every gate of every session of this cria build, never per-gate), which
+            # is deliberately not part of the queued per-gate cleanup.
+            helper = probegate._helper_name()
             self.assertEqual(sorted(os.listdir(spooldir)),
                              sorted([os.path.basename(plan.transport_path),
-                                     os.path.basename(plan.transport_path) + ".done"]))
+                                     os.path.basename(plan.transport_path) + ".done", helper]))
             cleanup = probegate.spool_cleanup_command(workspace)
             self.assertTrue(cleanup)
             run(cleanup, workspace, spooldir)
-            self.assertEqual(os.listdir(spooldir), [])
+            self.assertEqual(os.listdir(spooldir), [helper])
 
     def test_the_loop_requests_each_next_page_through_the_harness_shell(self):
         from cria.loop import GuardState, guard_gate_transport

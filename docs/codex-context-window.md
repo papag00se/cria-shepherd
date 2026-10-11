@@ -50,7 +50,13 @@ The real pinned-harness regression proves proactive compaction on native usage a
 non-retrying terminal on overflow, through L0 and a fake backend without GPU inference.
 None of this enables cria's context floor or any new assist. Faithful preceding usage is
 necessary, not sufficient: Codex estimates new tool results locally before the next native
-measurement. The capability catalog must preserve the pinned client's actual output-budget
+measurement. Measured on the phi4 / Java captures (A4/A5/A6), that local estimate is chars/4 of the
+`function_call_output` items appended since the last report — a compaction followed every request where
+reported usage plus those outputs reached the trigger, and call *arguments* were not part of it. At L4+
+the outputs cria itself causes (gate transport pages, the survey riding lowered tool results) therefore
+count against the harness's trigger even though the model never reads them; see
+[the N1 measurement](audits/2026-10-11-n1-gate-plumbing-measurement.md).
+The capability catalog must preserve the pinned client's actual output-budget
 default (`bytes/10000`), not accidentally widen it to a context-sized token budget. The
 CPU-only default-parity and dense-burst regressions are documented in the
 [restoration evidence](audits/2026-10-08-l0-codex-default-output-restoration.md).

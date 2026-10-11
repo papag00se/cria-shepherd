@@ -1,0 +1,83 @@
+Picked up JAVA_TOOL_OPTIONS: "-Dmaven.repo.local=/home/user/.cria/suite-installs/suite-feed-pipeline-java_phi4_codex_poff_1791714320-od2e4eai/m2/repository" "-Djava.io.tmpdir=/home/user/.cria/suite-installs/suite-feed-pipeline-java_phi4_codex_poff_1791714320-od2e4eai/java-tmp"
+[ERROR] COMPILATION ERROR : 
+[ERROR] /home/user/suite-runs/suite-feed-pipeline-java_phi4_codex_poff_1791714320-od2e4eai/src/main/java/pipeline/Importer.java:[83,18] cannot find symbol
+  symbol:   class CsvValidationException
+  location: class pipeline.Importer
+[ERROR] /home/user/suite-runs/suite-feed-pipeline-java_phi4_codex_poff_1791714320-od2e4eai/src/main/java/pipeline/Importer.java:[85,57] cannot find symbol
+  symbol:   variable Arrays
+  location: class pipeline.Importer
+[ERROR] Failed to execute goal org.apache.maven.plugins:maven-compiler-plugin:3.13.0:compile (default-compile) on project feed-importer: Compilation failure: Compilation failure: 
+[ERROR] /home/user/suite-runs/suite-feed-pipeline-java_phi4_codex_poff_1791714320-od2e4eai/src/main/java/pipeline/Importer.java:[83,18] cannot find symbol
+[ERROR]   symbol:   class CsvValidationException
+[ERROR]   location: class pipeline.Importer
+[ERROR] /home/user/suite-runs/suite-feed-pipeline-java_phi4_codex_poff_1791714320-od2e4eai/src/main/java/pipeline/Importer.java:[85,57] cannot find symbol
+[ERROR]   symbol:   variable Arrays
+[ERROR]   location: class pipeline.Importer
+[ERROR] -> [Help 1]
+[ERROR] 
+[ERROR] To see the full stack trace of the errors, re-run Maven with the -e switch.
+[ERROR] Re-run Maven using the -X switch to enable full debug logging.
+[ERROR] 
+[ERROR] For more information about the errors and possible solutions, please read the following articles:
+[ERROR] [Help 1] http://cwiki.apache.org/confluence/display/MAVEN/MojoFailureException
+
+EXIT:1
+___CRIA_GATE_probe-2___
+Picked up JAVA_TOOL_OPTIONS: "-Dmaven.repo.local=/home/user/.cria/suite-installs/suite-feed-pipeline-java_phi4_codex_poff_1791714320-od2e4eai/m2/repository" "-Djava.io.tmpdir=/home/user/.cria/suite-installs/suite-feed-pipeline-java_phi4_codex_poff_1791714320-od2e4eai/java-tmp"
+[INFO] Scanning for projects...
+[WARNING] 
+[WARNING] Some problems were encountered while building the effective model for com.example:feed-importer:jar:1.0
+[WARNING] 'dependencies.dependency.(groupId:artifactId:type:classifier)' must be unique: com.opencsv:opencsv:jar -> duplicate declaration of version 5.6 @ line 25, column 15
+[WARNING] 
+[WARNING] It is highly recommended to fix these problems because they threaten the stability of your build.
+[WARNING] 
+[WARNING] For this reason, future Maven versions might no longer support building such malformed projects.
+[WARNING] 
+[INFO] 
+[INFO] ---------------------< com.example:feed-importer >----------------------
+[INFO] Building feed-importer 1.0
+[INFO]   from pom.xml
+[INFO] --------------------------------[ jar ]---------------------------------
+[INFO] 
+[INFO] --- resources:3.4.0:resources (default-resources) @ feed-importer ---
+[INFO] skip non existing resourceDirectory /home/user/suite-runs/suite-feed-pipeline-java_phi4_codex_poff_1791714320-od2e4eai/src/main/resources
+[INFO] 
+[INFO] --- compiler:3.13.0:compile (default-compile) @ feed-importer ---
+[INFO] Recompiling the module because of changed source code.
+[INFO] Compiling 1 source file with javac [debug release 21] to target/classes
+[INFO] -------------------------------------------------------------
+[ERROR] COMPILATION ERROR : 
+[INFO] -------------------------------------------------------------
+[ERROR] /home/user/suite-runs/suite-feed-pipeline-java_phi4_codex_poff_1791714320-od2e4eai/src/main/java/pipeline/Importer.java:[83,18] cannot find symbol
+  symbol:   class CsvValidationException
+  location: class pipeline.Importer
+[ERROR] /home/user/suite-runs/suite-feed-pipeline-java_phi4_codex_poff_1791714320-od2e4eai/src/main/java/pipeline/Importer.java:[85,57] cannot find symbol
+  symbol:   variable Arrays
+  location: class pipeline.Importer
+[INFO] 2 errors 
+[INFO] -------------------------------------------------------------
+[INFO] ------------------------------------------------------------------------
+[INFO] BUILD FAILURE
+[INFO] ------------------------------------------------------------------------
+[INFO] Total time:  0.397 s
+[INFO] Finished at: 2026-10-11T03:34:52-07:00
+[INFO] ------------------------------------------------------------------------
+[ERROR] Failed to execute goal org.apache.maven.plugins:maven-compiler-plugin:3.13.0:compile (default-compile) on project feed-importer: Compilation failure: Compilation failure: 
+[ERROR] /home/user/suite-runs/suite-feed-pipeline-java_phi4_codex_poff_1791714320-od2e4eai/src/main/java/pipeline/Importer.java:[83,18] cannot find symbol
+[ERROR]   symbol:   class CsvValidationException
+[ERROR]   location: class pipeline.Importer
+[ERROR] /home/user/suite-runs/suite-feed-pipeline-java_phi4_codex_poff_1791714320-od2e4eai/src/main/java/pipeline/Importer.java:[85,57] cannot find symbol
+[ERROR]   symbol:   variable Arrays
+[ERROR]   location: class pipeline.Importer
+[ERROR] -> [Help 1]
+[ERROR] 
+[ERROR] To see the full stack trace of the errors, re-run Maven with the -e switch.
+[ERROR] Re-run Maven using the -X switch to enable full debug logging.
+[ERROR] 
+[ERROR] For more information about the errors and possible solutions, please read the following articles:
+[ERROR] [Help 1] http://cwiki.apache.org/confluence/display/MAVEN/MojoFailureException
+
+EXIT:1
+___CRIA_GATE_offline___
+___CRIA_GATE_litter___
+

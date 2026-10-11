@@ -158,7 +158,10 @@ class PlannerSurveyBootstrapTests(unittest.TestCase):
             self.assertIsNotNone(started)
             # The ordinary first-step gate may carry its own survey, but it has no body demand:
             # C5 did not compose a separate planner survey carrier for this answered unknown.
-            self.assertIn("WANT = []", json.dumps(started))
+            # N1: the survey's questions are the JSON argument of its helper call.
+            script = json.loads(started["choices"][0]["message"]["tool_calls"][0]
+                                ["function"]["arguments"])["command"][-1]
+            self.assertIn('"want": []', script)
             self.assertNotIn("loop.planner_survey_deferred", [event[0][0] for event in rlog.events])
             self.assertEqual(len(provider.bodies), 3)
             tool_results = [m["content"] for m in provider.bodies[1]["messages"]

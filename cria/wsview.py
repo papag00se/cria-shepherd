@@ -42,6 +42,7 @@ from __future__ import annotations
 import base64
 import contextvars
 import hashlib
+import json
 import os
 import posixpath
 import time
@@ -1337,7 +1338,36 @@ W("{close}\n")
 _HEREDOC = "__CRIA_SV_PY__"
 
 
-def survey_command(sess: str = "", *, cd: str = "", budget: int | None = None) -> str:
+class _Param(str):
+    """A name that renders as itself under both ``{x}`` and ``{x!r}``, so the survey template can be
+    formatted with an EXPRESSION where it is normally formatted with a literal."""
+
+    def __repr__(self) -> str:
+        return str(self)
+
+    def __format__(self, spec: str) -> str:
+        return str(self)
+
+
+def survey_helper_program() -> str:
+    """The survey as an invariant program that reads its few per-call values from ``sys.argv[2]``
+    (JSON: ``tree_bytes``, ``want``, ``progs``, ``outside``) instead of having them formatted in.
+
+    N1: byte-identical every time it is rendered (the bound lists are sorted), so the gate can write it
+    to the harness ONCE and invoke it by path — it used to be re-sent, 4.8 KB at a time, in every
+    gate call. Everything the survey ASKS and reports is unchanged; only where its text lives moved."""
+    p = lambda key: _Param(f"PARAMS[{key!r}]")  # noqa: E731
+    body = _SURVEY_PY.format(
+        tree_max=TREE_MAX_ENTRIES, tree_bytes=p("tree_bytes"), fold_at=FOLD_AT,
+        drain_max=FOLD_DRAIN_MAX, prune=_Param(f"set({sorted(PRUNE_DIRS)!r})"),
+        blob_files=BLOB_FILES_MAX, blob_bytes=BLOB_BYTES_MAX, blob_file=BLOB_FILE_MAX,
+        want=p("want"), progs=p("progs"), outside=p("outside"),
+        open=SURVEY_OPEN, close=SURVEY_CLOSE, sec=_SEC_PREFIX, suf=_SEC_SUFFIX)
+    return "import json\nPARAMS = json.loads(sys.argv[2])\n" + body.strip("\n") + "\n"
+
+
+def survey_command(sess: str = "", *, cd: str = "", budget: int | None = None,
+                   helper: str = "") -> str:
     """One shell block the HARNESS runs to answer everything the view could not.
 
     ``python3`` is not a new dependency: cria's lowered ``write_file`` has always been a
@@ -1352,18 +1382,34 @@ def survey_command(sess: str = "", *, cd: str = "", budget: int | None = None) -
     already spending most of the result on something else — the gate, whose probe sections divide a
     shared budget — passes what is left, and the survey folds to fit instead of being cut in transit.
     Omitted, the survey takes :data:`TREE_MAX_BYTES`, which is one ordinary tool result's worth.
+
+    ``helper`` (N1): a shell expression naming an installed harness-side helper file that holds
+    :func:`survey_helper_program` (the gate writes it once per session). The block then carries only
+    that name and the per-call values, not the program. A helper that is not there prints no survey —
+    the same "no tree arrived" the caller already treats as nothing learned (``apply_survey`` refuses
+    it); the gate's own transport reader reports the missing helper as UNKNOWN.
     """
     bodies, progs, outside = pending(sess)
     bodies, progs, outside = bodies[:BLOB_FILES_MAX], progs[:PROG_MAX], outside[:OUTSIDE_MAX]
     clear_pending(sess, bodies, progs, outside)
+    prefix = f"cd {_q(cd)} 2>/dev/null; " if cd else ""
+    tree_bytes = max(int(budget), TREE_MIN_BYTES) if budget else TREE_MAX_BYTES
+    if helper:
+        params = json.dumps({"tree_bytes": tree_bytes, "want": list(bodies),
+                             "progs": list(progs), "outside": list(outside)})
+        return (f"{SURVEY_CMD_OPEN}\n"
+                "__cria_sv_ec=$?\n"
+                f"{{ {prefix}if [ -f {helper} ]; then python3 {helper} survey {_q(params)}; fi\n"
+                "} 2>/dev/null\n"
+                "( exit $__cria_sv_ec )\n"
+                f"{SURVEY_CMD_CLOSE}")
     body = _SURVEY_PY.format(
-        tree_max=TREE_MAX_ENTRIES, tree_bytes=max(int(budget), TREE_MIN_BYTES) if budget else TREE_MAX_BYTES,
+        tree_max=TREE_MAX_ENTRIES, tree_bytes=tree_bytes,
         fold_at=FOLD_AT,
         drain_max=FOLD_DRAIN_MAX, prune=set(PRUNE_DIRS),
         blob_files=BLOB_FILES_MAX, blob_bytes=BLOB_BYTES_MAX, blob_file=BLOB_FILE_MAX,
         want=list(bodies), progs=list(progs), outside=list(outside),
         open=SURVEY_OPEN, close=SURVEY_CLOSE, sec=_SEC_PREFIX, suf=_SEC_SUFFIX)
-    prefix = f"cd {_q(cd)} 2>/dev/null; " if cd else ""
     return (f"{SURVEY_CMD_OPEN}\n"
             "__cria_sv_ec=$?\n"
             f"{{ {prefix}python3 - <<'{_HEREDOC}'\n{body}\n{_HEREDOC}\n}} 2>/dev/null\n"
