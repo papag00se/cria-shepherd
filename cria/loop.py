@@ -453,6 +453,13 @@ class PlanSession(GuardState):
     # cria cannot know whether a newer command contradicts a finding — but it does know how old the
     # finding is, and saying so is the difference between a fact and an implication (#5b, #12).
     last_gate_seq: int = 0
+    # The coder's OWN runs of a command the last gate also ran, as ``(action_seq, [commands], exit code
+    # or None)``, newest last — durable, because the result that proves them is compacted away long
+    # before the carried check block is. A block that says "the build fails" is stale the moment the
+    # coder's own build says otherwise (phi4 A4 CALLs 0092/0104/0230: a pre-fix failure carried through
+    # three compactions after later runs had shown different errors, then success). See `newer_own_run`.
+    own_check_runs: list = None
+    own_check_seen: set = None
     # Did the last completion gate actually RUN? `guard_gate_verdict` returns None for BOTH a green
     # gate and a gate that could not run, so its callers could not tell them apart and two of the
     # three hardcoded "The repo's automated checks pass". Measured: that wording shipped 80 times,
@@ -3042,6 +3049,7 @@ class Loop:
             _track_fetched_pages(sess, body.get("messages", []))  # durable fetch facts for later steers
             _track_refused_names(sess, body.get("messages", []))  # …and coordinates the toolchain refused
             _track_read_files(sess, body.get("messages", []))     # …and the files it opened on disk
+            _track_own_checks(sess, body.get("messages", []))     # …and its own re-runs of the gate's checks
             if _has_tool_calls(coder):  # the coder ACTED → track it for the refusal/spin guards
                 guard_track_refusals(sess, coder, rlog, step=step,
                                      messages=body.get("messages"))
@@ -6524,6 +6532,12 @@ def _coder_has_seen(view, rel: str, sess, messages: list[dict]) -> bool:
 def _shell_commands_with_results(messages: list[dict]):
     """``(command text, result text)`` for each shell-family call (a ``cmd``/``command`` argument) whose
     result was returned and was not a refusal — a command the coder actually RAN."""
+    for _tid, cmd, res in _shell_runs(messages):
+        yield cmd, res
+
+
+def _shell_runs(messages: list[dict]):
+    """:func:`_shell_commands_with_results` with the tool-call id in front."""
     from . import denial
     calls: dict = {}
     for m in messages or []:
@@ -6541,7 +6555,7 @@ def _shell_commands_with_results(messages: list[dict]):
         if tid in calls:
             c = m.get("content") if m.get("content") is not None else m.get("output")
             if isinstance(c, str) and c.strip() and not denial.is_denied(c):
-                yield calls[tid], c
+                yield tid, calls[tid], c
 
 
 def _command_names_path(command: str, rel: str) -> bool:
@@ -8409,6 +8423,53 @@ def _checks_already_visible(body: dict, checks: str) -> bool:
         if isinstance(c, str) and needle and needle in c:
             return True
     return False
+
+
+def _gate_commands(flag: str) -> list[str]:
+    """The ``$ command`` heads a gate block names — read from the block cria itself composed."""
+    return [m.group(1).strip() for m in re.finditer(r"(?m)^\$ (.+?)(?: — |$)", flag or "")]
+
+
+def _track_own_checks(sess, messages: list[dict]) -> None:
+    """Remember the coder's OWN runs of the commands the last gate ran, with when and how they ended.
+
+    Every shell run is marked seen the first time it is met, whether or not a gate block exists yet, so
+    a run from before a gate is never mistaken for one after it. cria's own replay of the checks
+    (``⟦ctx:checks⟧``) is not the coder's run."""
+    if sess is None:
+        return
+    if getattr(sess, "own_check_seen", None) is None:
+        sess.own_check_seen = set()
+    if getattr(sess, "own_check_runs", None) is None:
+        sess.own_check_runs = []
+    heads = _gate_commands(getattr(sess, "last_gate_flag", ""))
+    for tid, cmd, res in _shell_runs(messages):
+        if tid in sess.own_check_seen:
+            continue
+        sess.own_check_seen.add(tid)
+        if not heads or "⟦ctx:checks⟧" in res or getattr(sess, "action_seq", 0) <= getattr(sess, "last_gate_seq", 0):
+            continue
+        segments = {x.strip() for x in re.split(r"[\n;]|&&", cmd)}
+        named = [h for h in heads if h in segments]
+        if named:
+            m = selfcompact._EXIT.search(res)
+            sess.own_check_runs.append((sess.action_seq, named, int(m.group(1)) if m else None))
+
+
+def newer_own_run(sess) -> str:
+    """The carried check block's age against the coder's own LATER evidence: "" when the coder has not
+    re-run any of those commands since the gate, else one fact naming the newest such run — which
+    commands, how many calls ago, and how it ended when the harness said. cria states that the run is
+    newer and where to find it; it never restates the run's output in its own words."""
+    runs = [r for r in (getattr(sess, "own_check_runs", None) or []) if r[0] > getattr(sess, "last_gate_seq", 0)]
+    if sess is None or not runs:
+        return ""
+    seq, cmds, code = runs[-1]
+    ago = max(0, getattr(sess, "action_seq", 0) - seq)
+    return prompts.fill(prompts.load("checks_note_newer_run"),
+                        commands=", ".join(f"`{c}`" for c in cmds),
+                        ago=f"{ago} of your calls ago" if ago else "your latest call",
+                        exit=f", and it exited with code {code}" if code is not None else "")
 
 
 def gate_age(sess) -> int:

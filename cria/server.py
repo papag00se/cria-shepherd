@@ -45,6 +45,7 @@ from .loop import (
     ask_closed,
     completion_to_sse,
     gate_age,
+    newer_own_run,
     reframe_compaction,
     strip_prose_dropped_marker,
     validate_compaction_briefing,
@@ -373,7 +374,9 @@ def _last_checks_note(server, sess_key: str) -> str:
     stale = (prompts.fill(prompts.load("checks_note_staleness"), calls=str(since))
              if since >= _CHECKS_STALE_AFTER else "")
     age = (f"{since} of your calls ago" if since else "just now")
-    return prompts.fill(prompts.load("checks_note"), age=age, flag=flag, staleness=stale)
+    loop = getattr(server, "loop", None)
+    newer = newer_own_run(loop._store.get(sess_key)) if loop is not None else ""
+    return prompts.fill(prompts.load("checks_note"), age=age, flag=flag, staleness=stale + newer)
 
 
 # How many of the coder's own forwarded calls may pass before the check block stops presenting
