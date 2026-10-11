@@ -1,0 +1,32 @@
+{# LocalAI Phi-4 v0.3: Phi chat tokens; LocalAI's tool introduction and Thought/Output dialect.
+   Tool results are user messages, matching glaive-unsloth-localai training examples.
+   No fabricated examples or extra answer tool. Native llama.cpp derives its parser from history. #}
+{%- if tools %}
+{{- '<|im_start|>system<|im_sep|>\nYou are an AI assistant that executes function calls, and these are the tools at your disposal:\n' }}
+{%- for tool in tools %}
+{{- tool | tojson }}
+{{- '\n' }}
+{%- endfor %}
+{{- 'When calling a tool, emit its JSON object with name and arguments inside <Output> and </Output>. If you include reasoning, place it inside <Thought> and </Thought> before the output. Do not invent tool results. When no tool is needed, reply with ordinary text.\n<|im_end|>\n' }}
+{%- endif %}
+{%- for message in messages %}
+{%- if message.role == 'tool' %}
+{{- '<|im_start|>user<|im_sep|>\n' + message.content + '<|im_end|>\n' }}
+{%- elif message.role == 'assistant' %}
+{{- '<|im_start|>assistant<|im_sep|>\n' }}
+{%- if message.reasoning_content %}
+{{- '<Thought>' + message.reasoning_content + '</Thought>\n' }}
+{%- endif %}
+{%- if message.content %}{{- message.content }}{%- endif %}
+{%- for call in message.tool_calls %}
+{%- if call.function.arguments is string %}{%- set args = call.function.arguments | fromjson %}
+{%- else %}{%- set args = call.function.arguments %}{%- endif %}
+{{- '<Output>' }}{{- {'name': call.function.name, 'arguments': args} | tojson }}{{- '</Output>' }}
+{%- endfor %}
+{{- '<|im_end|>\n' }}
+{%- elif message.role == 'system' or message.role == 'developer' or message.role == 'user' %}
+{{- '<|im_start|>' + ('system' if message.role == 'developer' else message.role) + '<|im_sep|>\n' + message.content + '<|im_end|>\n' }}
+{%- else %}{{- raise_exception('Unsupported message role') }}
+{%- endif %}
+{%- endfor %}
+{%- if add_generation_prompt %}{{- '<|im_start|>assistant<|im_sep|>\n' }}{%- endif %}

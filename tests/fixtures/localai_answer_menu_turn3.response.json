@@ -1,0 +1,49 @@
+{
+  "choices": [
+    {
+      "finish_reason": "tool_calls",
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "",
+        "reasoning_content": "\nThe `read_file` function has returned the content of `probe.txt`. Now, I need to compare this content with the requested content to determine if they match.\n\nThe requested content is:\n```\nsnow 雪\n\"quoted\"\nbackslash \\\n```\n\nThe read content is:\n```\nsnow 雪\n\"quoted\"\nbackslash \\\n```\n\nBoth the requested content and the read content are identical, including the special characters and the final newline. Therefore, the content matches the requested content.\n\n",
+        "tool_calls": [
+          {
+            "type": "function",
+            "function": {
+              "name": "answer",
+              "arguments": "{\"message\": \"The content of probe.txt matches the requested content.\"}"
+            },
+            "id": "spnYKIj31O6wPwUYp4ZwL29544QiMFQH"
+          }
+        ]
+      }
+    }
+  ],
+  "created": 1791741620,
+  "model": "phi4",
+  "system_fingerprint": "b0-unknown",
+  "object": "chat.completion",
+  "usage": {
+    "completion_tokens": 137,
+    "prompt_tokens": 710,
+    "total_tokens": 847,
+    "prompt_tokens_details": {
+      "cached_tokens": 152
+    }
+  },
+  "id": "chatcmpl-vdC2J3y0guC2rdKPYuc3uh7KOlr90Khb",
+  "timings": {
+    "cache_n": 152,
+    "prompt_n": 558,
+    "prompt_ms": 255.737,
+    "prompt_per_token_ms": 0.4583100358422939,
+    "prompt_per_second": 2181.9290912148026,
+    "predicted_n": 137,
+    "predicted_ms": 1513.968,
+    "predicted_per_token_ms": 11.132117647058823,
+    "predicted_per_second": 89.83016814093824,
+    "draft_n": 128,
+    "draft_n_accepted": 41
+  }
+}

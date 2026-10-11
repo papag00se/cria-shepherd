@@ -1,0 +1,362 @@
+[
+  {
+    "request": {
+      "messages": [
+        {
+          "role": "system",
+          "content": "Keep this exact caller instruction."
+        },
+        {
+          "role": "user",
+          "content": "Read notes.txt."
+        }
+      ],
+      "tools": [
+        {
+          "type": "function",
+          "function": {
+            "name": "read_file",
+            "description": "Read a file",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "path"
+              ]
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "write_file",
+            "description": "Write a file",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string"
+                },
+                "content": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "path",
+                "content"
+              ]
+            }
+          }
+        }
+      ],
+      "tool_choice": "auto",
+      "parallel_tool_calls": false,
+      "stream": false
+    },
+    "result": {
+      "prompt": "<|im_start|>system<|im_sep|>\nYou are an AI assistant that executes function calls, and these are the tools at your disposal:\n{\"type\": \"function\", \"function\": {\"name\": \"read_file\", \"description\": \"Read a file\", \"parameters\": {\"type\": \"object\", \"properties\": {\"path\": {\"type\": \"string\"}}, \"required\": [\"path\"]}}}\n{\"type\": \"function\", \"function\": {\"name\": \"write_file\", \"description\": \"Write a file\", \"parameters\": {\"type\": \"object\", \"properties\": {\"path\": {\"type\": \"string\"}, \"content\": {\"type\": \"string\"}}, \"required\": [\"path\", \"content\"]}}}\nWhen calling a tool, emit its JSON object with name and arguments inside <Output> and </Output>. If you include reasoning, place it inside <Thought> and </Thought> before the output. Do not invent tool results. When no tool is needed, reply with ordinary text.\n<|im_end|>\n<|im_start|>system<|im_sep|>\nKeep this exact caller instruction.<|im_end|>\n<|im_start|>user<|im_sep|>\nRead notes.txt.<|im_end|>\n<|im_start|>assistant<|im_sep|>\n",
+      "grammar": "char ::= [^\"\\\\\\x7F\\x00-\\x1F] | [\\\\] ([\"\\\\bfnrt] | \"u\" [0-9a-fA-F]{4})\njson-array ::= \"[\" space (\"]\" | json-value (space \",\" space json-value)* space \"]\")\njson-bool ::= \"true\" | \"false\"\njson-null ::= \"null\"\njson-number ::= \"-\"? (\"0\" | [1-9] [0-9]*) (\".\" [0-9]+)? ((\"e\" | \"E\") [+-]? [0-9]+)?\njson-object ::= \"{\" space (\"}\" | json-string space \":\" space json-value (space \",\" space json-string space \":\" space json-value)* space \"}\")\njson-string ::= \"\\\"\" ( [^\"\\\\] | \"\\\\\" ( [\"\\\\/ bfnrt] | \"u\" [0-9a-fA-F]{4} ) )* \"\\\"\"\njson-value ::= json-object | json-array | json-string | json-number | json-bool | json-null\nroot ::= tool-call | tool-calls\nspace ::= | \" \" | \"\\n\"{1,2} [ \\t]{0,20}\nstring ::= \"\\\"\" char* \"\\\"\"\ntool-call ::= \"<Output>\" space (tool-read-file | tool-write-file) space \"</Output>\"\ntool-calls ::= tool-call? space\ntool-read-file ::= \"{\" space \"\\\"name\\\"\" space \":\" space (\"\\\"\" \"read_file\" \"\\\"\") space \",\" space \"\\\"arguments\\\"\" space \":\" space tool-read-file-schema space \"}\"\ntool-read-file-schema ::= \"{\" space tool-read-file-schema-path-kv space \"}\"\ntool-read-file-schema-path-kv ::= \"\\\"path\\\"\" space \":\" space string\ntool-write-file ::= \"{\" space \"\\\"name\\\"\" space \":\" space (\"\\\"\" \"write_file\" \"\\\"\") space \",\" space \"\\\"arguments\\\"\" space \":\" space tool-write-file-schema space \"}\"\ntool-write-file-schema ::= \"{\" space tool-write-file-schema-path-kv \",\" space tool-write-file-schema-content-kv space \"}\"\ntool-write-file-schema-content-kv ::= \"\\\"content\\\"\" space \":\" space string\ntool-write-file-schema-path-kv ::= \"\\\"path\\\"\" space \":\" space string\n",
+      "parser": "{\"parsers\":[{\"type\":\"epsilon\"},{\"type\":\"epsilon\"},{\"type\":\"literal\",\"literal\":\"</Thought>\"},{\"type\":\"sequence\",\"children\":[1,2]},{\"type\":\"literal\",\"literal\":\"\\n\"},{\"type\":\"repetition\",\"child\":4,\"min_count\":0,\"max_count\":1},{\"type\":\"sequence\",\"children\":[1,2,5]},{\"type\":\"until\",\"delimiters\":[\"</Thought>\"]},{\"type\":\"tag\",\"child\":7,\"tag\":\"reasoning\"},{\"type\":\"epsilon\"},{\"type\":\"literal\",\"literal\":\"<Thought>\"},{\"type\":\"sequence\",\"children\":[9,10]},{\"type\":\"sequence\",\"children\":[9,10,8]},{\"type\":\"sequence\",\"children\":[9,10,8,1,2,5]},{\"type\":\"repetition\",\"child\":13,\"min_count\":0,\"max_count\":1},{\"type\":\"epsilon\"},{\"type\":\"epsilon\"},{\"type\":\"epsilon\"},{\"type\":\"choice\",\"children\":[]},{\"type\":\"literal\",\"literal\":\"\\\"name\\\"\"},{\"type\":\"literal\",\"literal\":\"\\\"arguments\\\"\"},{\"type\":\"literal\",\"literal\":\"\\\"\"},{\"type\":\"literal\",\"literal\":\"read_file\"},{\"type\":\"tag\",\"child\":22,\"tag\":\"tool-name\"},{\"type\":\"atomic\",\"child\":23},{\"type\":\"literal\",\"literal\":\"\\\"\"},{\"type\":\"sequence\",\"children\":[25,24]},{\"type\":\"sequence\",\"children\":[25,24,21]},{\"type\":\"atomic\",\"child\":27},{\"type\":\"space\"},{\"type\":\"literal\",\"literal\":\":\"},{\"type\":\"space\"},{\"type\":\"sequence\",\"children\":[19,31]},{\"type\":\"sequence\",\"children\":[19,31,30]},{\"type\":\"sequence\",\"children\":[19,31,30,29]},{\"type\":\"sequence\",\"children\":[19,31,30,29,28]},{\"type\":\"any\"},{\"type\":\"rule\",\"name\":\"json-value\",\"child\":36,\"trigger\":false},{\"type\":\"any\"},{\"type\":\"rule\",\"name\":\"json-object\",\"child\":38,\"trigger\":false},{\"type\":\"space\"},{\"type\":\"any\"},{\"type\":\"rule\",\"name\":\"json-string\",\"child\":41,\"trigger\":false},{\"type\":\"literal\",\"literal\":\"\\\"\"},{\"type\":\"string\",\"delimiter\":\"\\\"\"},{\"type\":\"literal\",\"literal\":\"\\\"\"},{\"type\":\"sequence\",\"children\":[43,44,45]},{\"type\":\"rule\",\"name\":\"json-string\",\"child\":46,\"trigger\":false},{\"type\":\"ref\",\"name\":\"json-string\"},{\"type\":\"literal\",\"literal\":\":\"},{\"type\":\"ref\",\"name\":\"json-value\"},{\"type\":\"sequence\",\"children\":[47,40,49,40,120]},{\"type\":\"literal\",\"literal\":\",\"},{\"type\":\"sequence\",\"children\":[40,52,40,47,40,49,40,120]},{\"type\":\"repetition\",\"child\":53,\"min_count\":0,\"max_count\":-1},{\"type\":\"sequence\",\"children\":[47,40,49,40,120,54]},{\"type\":\"literal\",\"literal\":\"{\"},{\"type\":\"literal\",\"literal\":\"}\"},{\"type\":\"literal\",\"literal\":\"}\"},{\"type\":\"sequence\",\"children\":[47,40,49,40,120,54,40,58]},{\"type\":\"choice\",\"children\":[57,59]},{\"type\":\"sequence\",\"children\":[56,40,60]},{\"type\":\"rule\",\"name\":\"json-object\",\"child\":61,\"trigger\":false},{\"type\":\"ref\",\"name\":\"json-object\"},{\"type\":\"any\"},{\"type\":\"rule\",\"name\":\"json-array\",\"child\":64,\"trigger\":false},{\"type\":\"space\"},{\"type\":\"ref\",\"name\":\"json-value\"},{\"type\":\"literal\",\"literal\":\",\"},{\"type\":\"ref\",\"name\":\"json-value\"},{\"type\":\"sequence\",\"children\":[66,68,66,120]},{\"type\":\"repetition\",\"child\":70,\"min_count\":0,\"max_count\":-1},{\"type\":\"sequence\",\"children\":[120,71]},{\"type\":\"literal\",\"literal\":\"[\"},{\"type\":\"literal\",\"literal\":\"]\"},{\"type\":\"literal\",\"literal\":\"]\"},{\"type\":\"sequence\",\"children\":[120,71,66,75]},{\"type\":\"choice\",\"children\":[74,76]},{\"type\":\"sequence\",\"children\":[73,66,77]},{\"type\":\"rule\",\"name\":\"json-array\",\"child\":78,\"trigger\":false},{\"type\":\"ref\",\"name\":\"json-array\"},{\"type\":\"ref\",\"name\":\"json-string\"},{\"type\":\"any\"},{\"type\":\"rule\",\"name\":\"json-number\",\"child\":82,\"trigger\":false},{\"type\":\"chars\",\"pattern\":\"[1-9]\",\"ranges\":[{\"start\":49,\"end\":57}],\"negated\":false,\"min_count\":1,\"max_count\":1},{\"type\":\"chars\",\"pattern\":\"[0-9]\",\"ranges\":[{\"start\":48,\"end\":57}],\"negated\":false,\"min_count\":1,\"max_count\":-1},{\"type\":\"literal\",\"literal\":\"0\"},{\"type\":\"chars\",\"pattern\":\"[0-9]\",\"ranges\":[{\"start\":48,\"end\":57}],\"negated\":false,\"min_count\":0,\"max_count\":-1},{\"type\":\"sequence\",\"children\":[84,87]},{\"type\":\"choice\",\"children\":[86,88]},{\"type\":\"literal\",\"literal\":\".\"},{\"type\":\"sequence\",\"children\":[90,85]},{\"type\":\"literal\",\"literal\":\"e\"},{\"type\":\"literal\",\"literal\":\"E\"},{\"type\":\"choice\",\"children\":[92,93]},{\"type\":\"chars\",\"pattern\":\"[+-]\",\"ranges\":[{\"start\":43,\"end\":43},{\"start\":45,\"end\":45}],\"negated\":false,\"min_count\":1,\"max_count\":1},{\"type\":\"repetition\",\"child\":95,\"min_count\":0,\"max_count\":1},{\"type\":\"sequence\",\"children\":[94,96,85]},{\"type\":\"chars\",\"pattern\":\"[0-9.eE+-]\",\"ranges\":[{\"start\":48,\"end\":57},{\"start\":46,\"end\":46},{\"start\":101,\"end\":101},{\"start\":69,\"end\":69},{\"start\":43,\"end\":43},{\"start\":45,\"end\":45}],\"negated\":false,\"min_count\":1,\"max_count\":1},{\"type\":\"not\",\"child\":98},{\"type\":\"literal\",\"literal\":\"-\"},{\"type\":\"repetition\",\"child\":100,\"min_count\":0,\"max_count\":1},{\"type\":\"repetition\",\"child\":91,\"min_count\":0,\"max_count\":1},{\"type\":\"repetition\",\"child\":97,\"min_count\":0,\"max_count\":1},{\"type\":\"sequence\",\"children\":[101,89,102,103,99]},{\"type\":\"rule\",\"name\":\"json-number\",\"child\":104,\"trigger\":false},{\"type\":\"ref\",\"name\":\"json-number\"},{\"type\":\"any\"},{\"type\":\"rule\",\"name\":\"json-bool\",\"child\":107,\"trigger\":false},{\"type\":\"literal\",\"literal\":\"true\"},{\"type\":\"literal\",\"literal\":\"false\"},{\"type\":\"choice\",\"children\":[109,110]},{\"type\":\"rule\",\"name\":\"json-bool\",\"child\":111,\"trigger\":false},{\"type\":\"ref\",\"name\":\"json-bool\"},{\"type\":\"any\"},{\"type\":\"rule\",\"name\":\"json-null\",\"child\":114,\"trigger\":false},{\"type\":\"literal\",\"literal\":\"null\"},{\"type\":\"rule\",\"name\":\"json-null\",\"child\":116,\"trigger\":false},{\"type\":\"ref\",\"name\":\"json-null\"},{\"type\":\"choice\",\"children\":[62,79,47,105,112,117]},{\"type\":\"rule\",\"name\":\"json-value\",\"child\":119,\"trigger\":false},{\"type\":\"ref\",\"name\":\"json-value\"},{\"type\":\"schema\",\"child\":120,\"name\":\"tool-read_file-schema\",\"raw\":false},{\"type\":\"tag\",\"child\":122,\"tag\":\"tool-args\"},{\"type\":\"space\"},{\"type\":\"literal\",\"literal\":\":\"},{\"type\":\"space\"},{\"type\":\"sequence\",\"children\":[20,126]},{\"type\":\"sequence\",\"children\":[20,126,125]},{\"type\":\"sequence\",\"children\":[20,126,125,124]},{\"type\":\"sequence\",\"children\":[20,126,125,124,123]},{\"type\":\"epsilon\"},{\"type\":\"epsilon\"},{\"type\":\"epsilon\"},{\"type\":\"space\"},{\"type\":\"literal\",\"literal\":\"{\"},{\"type\":\"tag\",\"child\":135,\"tag\":\"tool-open\"},{\"type\":\"atomic\",\"child\":136},{\"type\":\"sequence\",\"children\":[137,134]},{\"type\":\"sequence\",\"children\":[137,134,133]},{\"type\":\"sequence\",\"children\":[137,134,133,19,31,30,29,28]},{\"type\":\"space\"},{\"type\":\"literal\",\"literal\":\",\"},{\"type\":\"space\"},{\"type\":\"sequence\",\"children\":[137,134,133,19,31,30,29,28,143]},{\"type\":\"sequence\",\"children\":[137,134,133,19,31,30,29,28,143,142]},{\"type\":\"sequence\",\"children\":[137,134,133,19,31,30,29,28,143,142,141]},{\"type\":\"sequence\",\"children\":[137,134,133,19,31,30,29,28,143,142,141,20,126,125,124,123]},{\"type\":\"literal\",\"literal\":\"}\"},{\"type\":\"tag\",\"child\":148,\"tag\":\"tool-close\"},{\"type\":\"atomic\",\"child\":149},{\"type\":\"space\"},{\"type\":\"sequence\",\"children\":[137,134,133,19,31,30,29,28,143,142,141,20,126,125,124,123,151]},{\"type\":\"sequence\",\"children\":[137,134,133,19,31,30,29,28,143,142,141,20,126,125,124,123,151,150]},{\"type\":\"tag\",\"child\":153,\"tag\":\"tool\"},{\"type\":\"rule\",\"name\":\"tool-read-file\",\"child\":154,\"trigger\":false},{\"type\":\"ref\",\"name\":\"tool-read-file\"},{\"type\":\"choice\",\"children\":[155]},{\"type\":\"literal\",\"literal\":\"\\\"\"},{\"type\":\"literal\",\"literal\":\"write_file\"},{\"type\":\"tag\",\"child\":159,\"tag\":\"tool-name\"},{\"type\":\"atomic\",\"child\":160},{\"type\":\"literal\",\"literal\":\"\\\"\"},{\"type\":\"sequence\",\"children\":[162,161]},{\"type\":\"sequence\",\"children\":[162,161,158]},{\"type\":\"atomic\",\"child\":164},{\"type\":\"space\"},{\"type\":\"literal\",\"literal\":\":\"},{\"type\":\"space\"},{\"type\":\"sequence\",\"children\":[19,168]},{\"type\":\"sequence\",\"children\":[19,168,167]},{\"type\":\"sequence\",\"children\":[19,168,167,166]},{\"type\":\"sequence\",\"children\":[19,168,167,166,165]},{\"type\":\"ref\",\"name\":\"json-value\"},{\"type\":\"schema\",\"child\":120,\"name\":\"tool-write_file-schema\",\"raw\":false},{\"type\":\"tag\",\"child\":174,\"tag\":\"tool-args\"},{\"type\":\"space\"},{\"type\":\"literal\",\"literal\":\":\"},{\"type\":\"space\"},{\"type\":\"sequence\",\"children\":[20,178]},{\"type\":\"sequence\",\"children\":[20,178,177]},{\"type\":\"sequence\",\"children\":[20,178,177,176]},{\"type\":\"sequence\",\"children\":[20,178,177,176,175]},{\"type\":\"epsilon\"},{\"type\":\"epsilon\"},{\"type\":\"epsilon\"},{\"type\":\"space\"},{\"type\":\"literal\",\"literal\":\"{\"},{\"type\":\"tag\",\"child\":187,\"tag\":\"tool-open\"},{\"type\":\"atomic\",\"child\":188},{\"type\":\"sequence\",\"children\":[189,186]},{\"type\":\"sequence\",\"children\":[189,186,185]},{\"type\":\"sequence\",\"children\":[189,186,185,19,168,167,166,165]},{\"type\":\"space\"},{\"type\":\"literal\",\"literal\":\",\"},{\"type\":\"space\"},{\"type\":\"sequence\",\"children\":[189,186,185,19,168,167,166,165,195]},{\"type\":\"sequence\",\"children\":[189,186,185,19,168,167,166,165,195,194]},{\"type\":\"sequence\",\"children\":[189,186,185,19,168,167,166,165,195,194,193]},{\"type\":\"sequence\",\"children\":[189,186,185,19,168,167,166,165,195,194,193,20,178,177,176,175]},{\"type\":\"literal\",\"literal\":\"}\"},{\"type\":\"tag\",\"child\":200,\"tag\":\"tool-close\"},{\"type\":\"atomic\",\"child\":201},{\"type\":\"space\"},{\"type\":\"sequence\",\"children\":[189,186,185,19,168,167,166,165,195,194,193,20,178,177,176,175,203]},{\"type\":\"sequence\",\"children\":[189,186,185,19,168,167,166,165,195,194,193,20,178,177,176,175,203,202]},{\"type\":\"tag\",\"child\":205,\"tag\":\"tool\"},{\"type\":\"rule\",\"name\":\"tool-write-file\",\"child\":206,\"trigger\":false},{\"type\":\"ref\",\"name\":\"tool-write-file\"},{\"type\":\"choice\",\"children\":[155,207]},{\"type\":\"literal\",\"literal\":\"</Output>\"},{\"type\":\"space\"},{\"type\":\"space\"},{\"type\":\"literal\",\"literal\":\"<Output>\"},{\"type\":\"sequence\",\"children\":[213,212]},{\"type\":\"sequence\",\"children\":[213,212,209]},{\"type\":\"sequence\",\"children\":[213,212,209,211]},{\"type\":\"sequence\",\"children\":[213,212,209,211,210]},{\"type\":\"rule\",\"name\":\"tool-call\",\"child\":217,\"trigger\":true},{\"type\":\"ref\",\"name\":\"tool-call\"},{\"type\":\"repetition\",\"child\":218,\"min_count\":0,\"max_count\":1},{\"type\":\"space\"},{\"type\":\"sequence\",\"children\":[220,221]},{\"type\":\"rule\",\"name\":\"tool-calls\",\"child\":222,\"trigger\":true},{\"type\":\"ref\",\"name\":\"tool-calls\"},{\"type\":\"end\"},{\"type\":\"until\",\"delimiters\":[\"<Output>\"]},{\"type\":\"tag\",\"child\":226,\"tag\":\"content\"},{\"type\":\"repetition\",\"child\":227,\"min_count\":0,\"max_count\":1},{\"type\":\"sequence\",\"children\":[14,228]},{\"type\":\"sequence\",\"children\":[14,228,223]},{\"type\":\"sequence\",\"children\":[14,228,223,225]},{\"type\":\"literal\",\"literal\":\"<|im_start|>assistant<|im_sep|>\\n\"},{\"type\":\"space\"},{\"type\":\"sequence\",\"children\":[232,233,14,228,223,225]}],\"rules\":{\"tool-calls\":223,\"tool-read-file\":155,\"tool-call\":218,\"json-null\":117,\"json-bool\":112,\"json-number\":105,\"json-string\":47,\"tool-write-file\":207,\"json-array\":79,\"json-object\":62,\"json-value\":120},\"root\":234}",
+      "grammar_lazy": true
+    }
+  },
+  {
+    "request": {
+      "messages": [
+        {
+          "role": "system",
+          "content": "Keep this exact caller instruction."
+        },
+        {
+          "role": "user",
+          "content": "Read notes.txt."
+        }
+      ],
+      "tools": [],
+      "tool_choice": "auto",
+      "parallel_tool_calls": false,
+      "stream": false
+    },
+    "result": {
+      "prompt": "<|im_start|>system<|im_sep|>\nKeep this exact caller instruction.<|im_end|>\n<|im_start|>user<|im_sep|>\nRead notes.txt.<|im_end|>\n<|im_start|>assistant<|im_sep|>\n",
+      "grammar": "",
+      "parser": "{\"parsers\":[{\"type\":\"epsilon\"},{\"type\":\"epsilon\"},{\"type\":\"literal\",\"literal\":\"</Thought>\"},{\"type\":\"sequence\",\"children\":[1,2]},{\"type\":\"literal\",\"literal\":\"\\n\"},{\"type\":\"repetition\",\"child\":4,\"min_count\":0,\"max_count\":1},{\"type\":\"sequence\",\"children\":[1,2,5]},{\"type\":\"until\",\"delimiters\":[\"</Thought>\"]},{\"type\":\"tag\",\"child\":7,\"tag\":\"reasoning\"},{\"type\":\"epsilon\"},{\"type\":\"literal\",\"literal\":\"<Thought>\"},{\"type\":\"sequence\",\"children\":[9,10]},{\"type\":\"sequence\",\"children\":[9,10,8]},{\"type\":\"sequence\",\"children\":[9,10,8,1,2,5]},{\"type\":\"repetition\",\"child\":13,\"min_count\":0,\"max_count\":1},{\"type\":\"epsilon\"},{\"type\":\"end\"},{\"type\":\"until\",\"delimiters\":[]},{\"type\":\"tag\",\"child\":17,\"tag\":\"content\"},{\"type\":\"sequence\",\"children\":[14,18]},{\"type\":\"sequence\",\"children\":[14,18,16]},{\"type\":\"literal\",\"literal\":\"<|im_start|>assistant<|im_sep|>\\n\"},{\"type\":\"space\"},{\"type\":\"sequence\",\"children\":[21,22,14,18,16]}],\"rules\":{},\"root\":23}",
+      "grammar_lazy": false
+    }
+  },
+  {
+    "request": {
+      "messages": [
+        {
+          "role": "system",
+          "content": "Keep this exact caller instruction."
+        },
+        {
+          "role": "user",
+          "content": "Read notes.txt."
+        }
+      ],
+      "tools": [
+        {
+          "type": "function",
+          "function": {
+            "name": "read_file",
+            "description": "Read a file",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "path"
+              ]
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "write_file",
+            "description": "Write a file",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string"
+                },
+                "content": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "path",
+                "content"
+              ]
+            }
+          }
+        }
+      ],
+      "tool_choice": "required",
+      "parallel_tool_calls": false,
+      "stream": false
+    },
+    "result": {
+      "prompt": "<|im_start|>system<|im_sep|>\nYou are an AI assistant that executes function calls, and these are the tools at your disposal:\n{\"type\": \"function\", \"function\": {\"name\": \"read_file\", \"description\": \"Read a file\", \"parameters\": {\"type\": \"object\", \"properties\": {\"path\": {\"type\": \"string\"}}, \"required\": [\"path\"]}}}\n{\"type\": \"function\", \"function\": {\"name\": \"write_file\", \"description\": \"Write a file\", \"parameters\": {\"type\": \"object\", \"properties\": {\"path\": {\"type\": \"string\"}, \"content\": {\"type\": \"string\"}}, \"required\": [\"path\", \"content\"]}}}\nWhen calling a tool, emit its JSON object with name and arguments inside <Output> and </Output>. If you include reasoning, place it inside <Thought> and </Thought> before the output. Do not invent tool results. When no tool is needed, reply with ordinary text.\n<|im_end|>\n<|im_start|>system<|im_sep|>\nKeep this exact caller instruction.<|im_end|>\n<|im_start|>user<|im_sep|>\nRead notes.txt.<|im_end|>\n<|im_start|>assistant<|im_sep|>\n",
+      "grammar": "char ::= [^\"\\\\\\x7F\\x00-\\x1F] | [\\\\] ([\"\\\\bfnrt] | \"u\" [0-9a-fA-F]{4})\njson-array ::= \"[\" space (\"]\" | json-value (space \",\" space json-value)* space \"]\")\njson-bool ::= \"true\" | \"false\"\njson-null ::= \"null\"\njson-number ::= \"-\"? (\"0\" | [1-9] [0-9]*) (\".\" [0-9]+)? ((\"e\" | \"E\") [+-]? [0-9]+)?\njson-object ::= \"{\" space (\"}\" | json-string space \":\" space json-value (space \",\" space json-string space \":\" space json-value)* space \"}\")\njson-string ::= \"\\\"\" ( [^\"\\\\] | \"\\\\\" ( [\"\\\\/ bfnrt] | \"u\" [0-9a-fA-F]{4} ) )* \"\\\"\"\njson-value ::= json-object | json-array | json-string | json-number | json-bool | json-null\nroot ::= \"<|im_start|>assistant<|im_sep|>\\n\" space (\"<Thought>\" until-7 \"</Thought>\" \"\\n\"?)? until-225? tool-calls\nspace ::= | \" \" | \"\\n\"{1,2} [ \\t]{0,20}\nstring ::= \"\\\"\" char* \"\\\"\"\ntool-call ::= \"<Output>\" space (tool-read-file | tool-write-file) space \"</Output>\"\ntool-calls ::= tool-call space\ntool-read-file ::= \"{\" space \"\\\"name\\\"\" space \":\" space (\"\\\"\" \"read_file\" \"\\\"\") space \",\" space \"\\\"arguments\\\"\" space \":\" space tool-read-file-schema space \"}\"\ntool-read-file-schema ::= \"{\" space tool-read-file-schema-path-kv space \"}\"\ntool-read-file-schema-path-kv ::= \"\\\"path\\\"\" space \":\" space string\ntool-write-file ::= \"{\" space \"\\\"name\\\"\" space \":\" space (\"\\\"\" \"write_file\" \"\\\"\") space \",\" space \"\\\"arguments\\\"\" space \":\" space tool-write-file-schema space \"}\"\ntool-write-file-schema ::= \"{\" space tool-write-file-schema-path-kv \",\" space tool-write-file-schema-content-kv space \"}\"\ntool-write-file-schema-content-kv ::= \"\\\"content\\\"\" space \":\" space string\ntool-write-file-schema-path-kv ::= \"\\\"path\\\"\" space \":\" space string\nuntil-225 ::= | [<] until-225-01 | [^<] until-225\nuntil-225-01 ::= | [<] until-225-01 | [O] until-225-02 | [^<O] until-225\nuntil-225-02 ::= | [<] until-225-01 | [u] until-225-03 | [^<u] until-225\nuntil-225-03 ::= | [<] until-225-01 | [t] until-225-04 | [^<t] until-225\nuntil-225-04 ::= | [<] until-225-01 | [p] until-225-05 | [^<p] until-225\nuntil-225-05 ::= | [<] until-225-01 | [u] until-225-06 | [^<u] until-225\nuntil-225-06 ::= | [<] until-225-01 | [t] until-225-07 | [^<t] until-225\nuntil-225-07 ::= | [<] until-225-01 | [^<>] until-225\nuntil-7 ::= | [<] until-7-01 | [^<] until-7\nuntil-7-01 ::= | [<] until-7-01 | [/] until-7-02 | [^/<] until-7\nuntil-7-02 ::= | [<] until-7-01 | [T] until-7-03 | [^<T] until-7\nuntil-7-03 ::= | [<] until-7-01 | [h] until-7-04 | [^<h] until-7\nuntil-7-04 ::= | [<] until-7-01 | [o] until-7-05 | [^<o] until-7\nuntil-7-05 ::= | [<] until-7-01 | [u] until-7-06 | [^<u] until-7\nuntil-7-06 ::= | [<] until-7-01 | [g] until-7-07 | [^<g] until-7\nuntil-7-07 ::= | [<] until-7-01 | [h] until-7-08 | [^<h] until-7\nuntil-7-08 ::= | [<] until-7-01 | [t] until-7-09 | [^<t] until-7\nuntil-7-09 ::= | [<] until-7-01 | [^<>] until-7\n",
+      "parser": "{\"parsers\":[{\"type\":\"epsilon\"},{\"type\":\"epsilon\"},{\"type\":\"literal\",\"literal\":\"</Thought>\"},{\"type\":\"sequence\",\"children\":[1,2]},{\"type\":\"literal\",\"literal\":\"\\n\"},{\"type\":\"repetition\",\"child\":4,\"min_count\":0,\"max_count\":1},{\"type\":\"sequence\",\"children\":[1,2,5]},{\"type\":\"until\",\"delimiters\":[\"</Thought>\"]},{\"type\":\"tag\",\"child\":7,\"tag\":\"reasoning\"},{\"type\":\"epsilon\"},{\"type\":\"literal\",\"literal\":\"<Thought>\"},{\"type\":\"sequence\",\"children\":[9,10]},{\"type\":\"sequence\",\"children\":[9,10,8]},{\"type\":\"sequence\",\"children\":[9,10,8,1,2,5]},{\"type\":\"repetition\",\"child\":13,\"min_count\":0,\"max_count\":1},{\"type\":\"epsilon\"},{\"type\":\"epsilon\"},{\"type\":\"epsilon\"},{\"type\":\"choice\",\"children\":[]},{\"type\":\"literal\",\"literal\":\"\\\"name\\\"\"},{\"type\":\"literal\",\"literal\":\"\\\"arguments\\\"\"},{\"type\":\"literal\",\"literal\":\"\\\"\"},{\"type\":\"literal\",\"literal\":\"read_file\"},{\"type\":\"tag\",\"child\":22,\"tag\":\"tool-name\"},{\"type\":\"atomic\",\"child\":23},{\"type\":\"literal\",\"literal\":\"\\\"\"},{\"type\":\"sequence\",\"children\":[25,24]},{\"type\":\"sequence\",\"children\":[25,24,21]},{\"type\":\"atomic\",\"child\":27},{\"type\":\"space\"},{\"type\":\"literal\",\"literal\":\":\"},{\"type\":\"space\"},{\"type\":\"sequence\",\"children\":[19,31]},{\"type\":\"sequence\",\"children\":[19,31,30]},{\"type\":\"sequence\",\"children\":[19,31,30,29]},{\"type\":\"sequence\",\"children\":[19,31,30,29,28]},{\"type\":\"any\"},{\"type\":\"rule\",\"name\":\"json-value\",\"child\":36,\"trigger\":false},{\"type\":\"any\"},{\"type\":\"rule\",\"name\":\"json-object\",\"child\":38,\"trigger\":false},{\"type\":\"space\"},{\"type\":\"any\"},{\"type\":\"rule\",\"name\":\"json-string\",\"child\":41,\"trigger\":false},{\"type\":\"literal\",\"literal\":\"\\\"\"},{\"type\":\"string\",\"delimiter\":\"\\\"\"},{\"type\":\"literal\",\"literal\":\"\\\"\"},{\"type\":\"sequence\",\"children\":[43,44,45]},{\"type\":\"rule\",\"name\":\"json-string\",\"child\":46,\"trigger\":false},{\"type\":\"ref\",\"name\":\"json-string\"},{\"type\":\"literal\",\"literal\":\":\"},{\"type\":\"ref\",\"name\":\"json-value\"},{\"type\":\"sequence\",\"children\":[47,40,49,40,120]},{\"type\":\"literal\",\"literal\":\",\"},{\"type\":\"sequence\",\"children\":[40,52,40,47,40,49,40,120]},{\"type\":\"repetition\",\"child\":53,\"min_count\":0,\"max_count\":-1},{\"type\":\"sequence\",\"children\":[47,40,49,40,120,54]},{\"type\":\"literal\",\"literal\":\"{\"},{\"type\":\"literal\",\"literal\":\"}\"},{\"type\":\"literal\",\"literal\":\"}\"},{\"type\":\"sequence\",\"children\":[47,40,49,40,120,54,40,58]},{\"type\":\"choice\",\"children\":[57,59]},{\"type\":\"sequence\",\"children\":[56,40,60]},{\"type\":\"rule\",\"name\":\"json-object\",\"child\":61,\"trigger\":false},{\"type\":\"ref\",\"name\":\"json-object\"},{\"type\":\"any\"},{\"type\":\"rule\",\"name\":\"json-array\",\"child\":64,\"trigger\":false},{\"type\":\"space\"},{\"type\":\"ref\",\"name\":\"json-value\"},{\"type\":\"literal\",\"literal\":\",\"},{\"type\":\"ref\",\"name\":\"json-value\"},{\"type\":\"sequence\",\"children\":[66,68,66,120]},{\"type\":\"repetition\",\"child\":70,\"min_count\":0,\"max_count\":-1},{\"type\":\"sequence\",\"children\":[120,71]},{\"type\":\"literal\",\"literal\":\"[\"},{\"type\":\"literal\",\"literal\":\"]\"},{\"type\":\"literal\",\"literal\":\"]\"},{\"type\":\"sequence\",\"children\":[120,71,66,75]},{\"type\":\"choice\",\"children\":[74,76]},{\"type\":\"sequence\",\"children\":[73,66,77]},{\"type\":\"rule\",\"name\":\"json-array\",\"child\":78,\"trigger\":false},{\"type\":\"ref\",\"name\":\"json-array\"},{\"type\":\"ref\",\"name\":\"json-string\"},{\"type\":\"any\"},{\"type\":\"rule\",\"name\":\"json-number\",\"child\":82,\"trigger\":false},{\"type\":\"chars\",\"pattern\":\"[1-9]\",\"ranges\":[{\"start\":49,\"end\":57}],\"negated\":false,\"min_count\":1,\"max_count\":1},{\"type\":\"chars\",\"pattern\":\"[0-9]\",\"ranges\":[{\"start\":48,\"end\":57}],\"negated\":false,\"min_count\":1,\"max_count\":-1},{\"type\":\"literal\",\"literal\":\"0\"},{\"type\":\"chars\",\"pattern\":\"[0-9]\",\"ranges\":[{\"start\":48,\"end\":57}],\"negated\":false,\"min_count\":0,\"max_count\":-1},{\"type\":\"sequence\",\"children\":[84,87]},{\"type\":\"choice\",\"children\":[86,88]},{\"type\":\"literal\",\"literal\":\".\"},{\"type\":\"sequence\",\"children\":[90,85]},{\"type\":\"literal\",\"literal\":\"e\"},{\"type\":\"literal\",\"literal\":\"E\"},{\"type\":\"choice\",\"children\":[92,93]},{\"type\":\"chars\",\"pattern\":\"[+-]\",\"ranges\":[{\"start\":43,\"end\":43},{\"start\":45,\"end\":45}],\"negated\":false,\"min_count\":1,\"max_count\":1},{\"type\":\"repetition\",\"child\":95,\"min_count\":0,\"max_count\":1},{\"type\":\"sequence\",\"children\":[94,96,85]},{\"type\":\"chars\",\"pattern\":\"[0-9.eE+-]\",\"ranges\":[{\"start\":48,\"end\":57},{\"start\":46,\"end\":46},{\"start\":101,\"end\":101},{\"start\":69,\"end\":69},{\"start\":43,\"end\":43},{\"start\":45,\"end\":45}],\"negated\":false,\"min_count\":1,\"max_count\":1},{\"type\":\"not\",\"child\":98},{\"type\":\"literal\",\"literal\":\"-\"},{\"type\":\"repetition\",\"child\":100,\"min_count\":0,\"max_count\":1},{\"type\":\"repetition\",\"child\":91,\"min_count\":0,\"max_count\":1},{\"type\":\"repetition\",\"child\":97,\"min_count\":0,\"max_count\":1},{\"type\":\"sequence\",\"children\":[101,89,102,103,99]},{\"type\":\"rule\",\"name\":\"json-number\",\"child\":104,\"trigger\":false},{\"type\":\"ref\",\"name\":\"json-number\"},{\"type\":\"any\"},{\"type\":\"rule\",\"name\":\"json-bool\",\"child\":107,\"trigger\":false},{\"type\":\"literal\",\"literal\":\"true\"},{\"type\":\"literal\",\"literal\":\"false\"},{\"type\":\"choice\",\"children\":[109,110]},{\"type\":\"rule\",\"name\":\"json-bool\",\"child\":111,\"trigger\":false},{\"type\":\"ref\",\"name\":\"json-bool\"},{\"type\":\"any\"},{\"type\":\"rule\",\"name\":\"json-null\",\"child\":114,\"trigger\":false},{\"type\":\"literal\",\"literal\":\"null\"},{\"type\":\"rule\",\"name\":\"json-null\",\"child\":116,\"trigger\":false},{\"type\":\"ref\",\"name\":\"json-null\"},{\"type\":\"choice\",\"children\":[62,79,47,105,112,117]},{\"type\":\"rule\",\"name\":\"json-value\",\"child\":119,\"trigger\":false},{\"type\":\"ref\",\"name\":\"json-value\"},{\"type\":\"schema\",\"child\":120,\"name\":\"tool-read_file-schema\",\"raw\":false},{\"type\":\"tag\",\"child\":122,\"tag\":\"tool-args\"},{\"type\":\"space\"},{\"type\":\"literal\",\"literal\":\":\"},{\"type\":\"space\"},{\"type\":\"sequence\",\"children\":[20,126]},{\"type\":\"sequence\",\"children\":[20,126,125]},{\"type\":\"sequence\",\"children\":[20,126,125,124]},{\"type\":\"sequence\",\"children\":[20,126,125,124,123]},{\"type\":\"epsilon\"},{\"type\":\"epsilon\"},{\"type\":\"epsilon\"},{\"type\":\"space\"},{\"type\":\"literal\",\"literal\":\"{\"},{\"type\":\"tag\",\"child\":135,\"tag\":\"tool-open\"},{\"type\":\"atomic\",\"child\":136},{\"type\":\"sequence\",\"children\":[137,134]},{\"type\":\"sequence\",\"children\":[137,134,133]},{\"type\":\"sequence\",\"children\":[137,134,133,19,31,30,29,28]},{\"type\":\"space\"},{\"type\":\"literal\",\"literal\":\",\"},{\"type\":\"space\"},{\"type\":\"sequence\",\"children\":[137,134,133,19,31,30,29,28,143]},{\"type\":\"sequence\",\"children\":[137,134,133,19,31,30,29,28,143,142]},{\"type\":\"sequence\",\"children\":[137,134,133,19,31,30,29,28,143,142,141]},{\"type\":\"sequence\",\"children\":[137,134,133,19,31,30,29,28,143,142,141,20,126,125,124,123]},{\"type\":\"literal\",\"literal\":\"}\"},{\"type\":\"tag\",\"child\":148,\"tag\":\"tool-close\"},{\"type\":\"atomic\",\"child\":149},{\"type\":\"space\"},{\"type\":\"sequence\",\"children\":[137,134,133,19,31,30,29,28,143,142,141,20,126,125,124,123,151]},{\"type\":\"sequence\",\"children\":[137,134,133,19,31,30,29,28,143,142,141,20,126,125,124,123,151,150]},{\"type\":\"tag\",\"child\":153,\"tag\":\"tool\"},{\"type\":\"rule\",\"name\":\"tool-read-file\",\"child\":154,\"trigger\":false},{\"type\":\"ref\",\"name\":\"tool-read-file\"},{\"type\":\"choice\",\"children\":[155]},{\"type\":\"literal\",\"literal\":\"\\\"\"},{\"type\":\"literal\",\"literal\":\"write_file\"},{\"type\":\"tag\",\"child\":159,\"tag\":\"tool-name\"},{\"type\":\"atomic\",\"child\":160},{\"type\":\"literal\",\"literal\":\"\\\"\"},{\"type\":\"sequence\",\"children\":[162,161]},{\"type\":\"sequence\",\"children\":[162,161,158]},{\"type\":\"atomic\",\"child\":164},{\"type\":\"space\"},{\"type\":\"literal\",\"literal\":\":\"},{\"type\":\"space\"},{\"type\":\"sequence\",\"children\":[19,168]},{\"type\":\"sequence\",\"children\":[19,168,167]},{\"type\":\"sequence\",\"children\":[19,168,167,166]},{\"type\":\"sequence\",\"children\":[19,168,167,166,165]},{\"type\":\"ref\",\"name\":\"json-value\"},{\"type\":\"schema\",\"child\":120,\"name\":\"tool-write_file-schema\",\"raw\":false},{\"type\":\"tag\",\"child\":174,\"tag\":\"tool-args\"},{\"type\":\"space\"},{\"type\":\"literal\",\"literal\":\":\"},{\"type\":\"space\"},{\"type\":\"sequence\",\"children\":[20,178]},{\"type\":\"sequence\",\"children\":[20,178,177]},{\"type\":\"sequence\",\"children\":[20,178,177,176]},{\"type\":\"sequence\",\"children\":[20,178,177,176,175]},{\"type\":\"epsilon\"},{\"type\":\"epsilon\"},{\"type\":\"epsilon\"},{\"type\":\"space\"},{\"type\":\"literal\",\"literal\":\"{\"},{\"type\":\"tag\",\"child\":187,\"tag\":\"tool-open\"},{\"type\":\"atomic\",\"child\":188},{\"type\":\"sequence\",\"children\":[189,186]},{\"type\":\"sequence\",\"children\":[189,186,185]},{\"type\":\"sequence\",\"children\":[189,186,185,19,168,167,166,165]},{\"type\":\"space\"},{\"type\":\"literal\",\"literal\":\",\"},{\"type\":\"space\"},{\"type\":\"sequence\",\"children\":[189,186,185,19,168,167,166,165,195]},{\"type\":\"sequence\",\"children\":[189,186,185,19,168,167,166,165,195,194]},{\"type\":\"sequence\",\"children\":[189,186,185,19,168,167,166,165,195,194,193]},{\"type\":\"sequence\",\"children\":[189,186,185,19,168,167,166,165,195,194,193,20,178,177,176,175]},{\"type\":\"literal\",\"literal\":\"}\"},{\"type\":\"tag\",\"child\":200,\"tag\":\"tool-close\"},{\"type\":\"atomic\",\"child\":201},{\"type\":\"space\"},{\"type\":\"sequence\",\"children\":[189,186,185,19,168,167,166,165,195,194,193,20,178,177,176,175,203]},{\"type\":\"sequence\",\"children\":[189,186,185,19,168,167,166,165,195,194,193,20,178,177,176,175,203,202]},{\"type\":\"tag\",\"child\":205,\"tag\":\"tool\"},{\"type\":\"rule\",\"name\":\"tool-write-file\",\"child\":206,\"trigger\":false},{\"type\":\"ref\",\"name\":\"tool-write-file\"},{\"type\":\"choice\",\"children\":[155,207]},{\"type\":\"literal\",\"literal\":\"</Output>\"},{\"type\":\"space\"},{\"type\":\"space\"},{\"type\":\"literal\",\"literal\":\"<Output>\"},{\"type\":\"sequence\",\"children\":[213,212]},{\"type\":\"sequence\",\"children\":[213,212,209]},{\"type\":\"sequence\",\"children\":[213,212,209,211]},{\"type\":\"sequence\",\"children\":[213,212,209,211,210]},{\"type\":\"rule\",\"name\":\"tool-call\",\"child\":217,\"trigger\":true},{\"type\":\"ref\",\"name\":\"tool-call\"},{\"type\":\"space\"},{\"type\":\"sequence\",\"children\":[218,220]},{\"type\":\"rule\",\"name\":\"tool-calls\",\"child\":221,\"trigger\":true},{\"type\":\"ref\",\"name\":\"tool-calls\"},{\"type\":\"end\"},{\"type\":\"until\",\"delimiters\":[\"<Output>\"]},{\"type\":\"tag\",\"child\":225,\"tag\":\"content\"},{\"type\":\"repetition\",\"child\":226,\"min_count\":0,\"max_count\":1},{\"type\":\"sequence\",\"children\":[14,227]},{\"type\":\"sequence\",\"children\":[14,227,222]},{\"type\":\"sequence\",\"children\":[14,227,222,224]},{\"type\":\"literal\",\"literal\":\"<|im_start|>assistant<|im_sep|>\\n\"},{\"type\":\"space\"},{\"type\":\"sequence\",\"children\":[231,232,14,227,222,224]}],\"rules\":{\"tool-calls\":222,\"tool-read-file\":155,\"tool-call\":218,\"json-null\":117,\"json-bool\":112,\"json-number\":105,\"json-string\":47,\"tool-write-file\":207,\"json-array\":79,\"json-object\":62,\"json-value\":120},\"root\":233}",
+      "grammar_lazy": false
+    }
+  },
+  {
+    "request": {
+      "messages": [
+        {
+          "role": "system",
+          "content": "Keep this exact caller instruction."
+        },
+        {
+          "role": "user",
+          "content": "Read notes.txt."
+        }
+      ],
+      "tools": [
+        {
+          "type": "function",
+          "function": {
+            "name": "read_file",
+            "description": "Read a file",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "path"
+              ]
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "write_file",
+            "description": "Write a file",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string"
+                },
+                "content": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "path",
+                "content"
+              ]
+            }
+          }
+        }
+      ],
+      "tool_choice": "none",
+      "parallel_tool_calls": false,
+      "stream": false
+    },
+    "result": {
+      "prompt": "<|im_start|>system<|im_sep|>\nYou are an AI assistant that executes function calls, and these are the tools at your disposal:\n{\"type\": \"function\", \"function\": {\"name\": \"read_file\", \"description\": \"Read a file\", \"parameters\": {\"type\": \"object\", \"properties\": {\"path\": {\"type\": \"string\"}}, \"required\": [\"path\"]}}}\n{\"type\": \"function\", \"function\": {\"name\": \"write_file\", \"description\": \"Write a file\", \"parameters\": {\"type\": \"object\", \"properties\": {\"path\": {\"type\": \"string\"}, \"content\": {\"type\": \"string\"}}, \"required\": [\"path\", \"content\"]}}}\nWhen calling a tool, emit its JSON object with name and arguments inside <Output> and </Output>. If you include reasoning, place it inside <Thought> and </Thought> before the output. Do not invent tool results. When no tool is needed, reply with ordinary text.\n<|im_end|>\n<|im_start|>system<|im_sep|>\nKeep this exact caller instruction.<|im_end|>\n<|im_start|>user<|im_sep|>\nRead notes.txt.<|im_end|>\n<|im_start|>assistant<|im_sep|>\n",
+      "grammar": "",
+      "parser": "{\"parsers\":[{\"type\":\"epsilon\"},{\"type\":\"epsilon\"},{\"type\":\"literal\",\"literal\":\"</Thought>\"},{\"type\":\"sequence\",\"children\":[1,2]},{\"type\":\"literal\",\"literal\":\"\\n\"},{\"type\":\"repetition\",\"child\":4,\"min_count\":0,\"max_count\":1},{\"type\":\"sequence\",\"children\":[1,2,5]},{\"type\":\"until\",\"delimiters\":[\"</Thought>\"]},{\"type\":\"tag\",\"child\":7,\"tag\":\"reasoning\"},{\"type\":\"epsilon\"},{\"type\":\"literal\",\"literal\":\"<Thought>\"},{\"type\":\"sequence\",\"children\":[9,10]},{\"type\":\"sequence\",\"children\":[9,10,8]},{\"type\":\"sequence\",\"children\":[9,10,8,1,2,5]},{\"type\":\"repetition\",\"child\":13,\"min_count\":0,\"max_count\":1},{\"type\":\"epsilon\"},{\"type\":\"end\"},{\"type\":\"until\",\"delimiters\":[]},{\"type\":\"tag\",\"child\":17,\"tag\":\"content\"},{\"type\":\"sequence\",\"children\":[14,18]},{\"type\":\"sequence\",\"children\":[14,18,16]},{\"type\":\"literal\",\"literal\":\"<|im_start|>assistant<|im_sep|>\\n\"},{\"type\":\"space\"},{\"type\":\"sequence\",\"children\":[21,22,14,18,16]}],\"rules\":{},\"root\":23}",
+      "grammar_lazy": false
+    }
+  },
+  {
+    "request": {
+      "messages": [
+        {
+          "role": "system",
+          "content": "Keep this exact caller instruction."
+        },
+        {
+          "role": "user",
+          "content": "Read notes.txt."
+        }
+      ],
+      "tools": [
+        {
+          "type": "function",
+          "function": {
+            "name": "read_file",
+            "description": "Read a file",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "path"
+              ]
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "write_file",
+            "description": "Write a file",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string"
+                },
+                "content": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "path",
+                "content"
+              ]
+            }
+          }
+        }
+      ],
+      "tool_choice": "auto",
+      "parallel_tool_calls": false,
+      "stream": false,
+      "response_format": {
+        "type": "json_object"
+      }
+    },
+    "result": {
+      "prompt": "<|im_start|>system<|im_sep|>\nYou are an AI assistant that executes function calls, and these are the tools at your disposal:\n{\"type\": \"function\", \"function\": {\"name\": \"read_file\", \"description\": \"Read a file\", \"parameters\": {\"type\": \"object\", \"properties\": {\"path\": {\"type\": \"string\"}}, \"required\": [\"path\"]}}}\n{\"type\": \"function\", \"function\": {\"name\": \"write_file\", \"description\": \"Write a file\", \"parameters\": {\"type\": \"object\", \"properties\": {\"path\": {\"type\": \"string\"}, \"content\": {\"type\": \"string\"}}, \"required\": [\"path\", \"content\"]}}}\nWhen calling a tool, emit its JSON object with name and arguments inside <Output> and </Output>. If you include reasoning, place it inside <Thought> and </Thought> before the output. Do not invent tool results. When no tool is needed, reply with ordinary text.\n<|im_end|>\n<|im_start|>system<|im_sep|>\nKeep this exact caller instruction.<|im_end|>\n<|im_start|>user<|im_sep|>\nRead notes.txt.<|im_end|>\n<|im_start|>assistant<|im_sep|>\n",
+      "grammar": "array ::= \"[\" space ( value (\",\" space value)* )? space \"]\"\nboolean ::= (\"true\" | \"false\")\nchar ::= [^\"\\\\\\x7F\\x00-\\x1F] | [\\\\] ([\"\\\\bfnrt] | \"u\" [0-9a-fA-F]{4})\ndecimal-part ::= [0-9]{1,16}\nintegral-part ::= [0] | [1-9] [0-9]{0,15}\njson-array ::= \"[\" space (\"]\" | json-value (space \",\" space json-value)* space \"]\")\njson-bool ::= \"true\" | \"false\"\njson-null ::= \"null\"\njson-number ::= \"-\"? (\"0\" | [1-9] [0-9]*) (\".\" [0-9]+)? ((\"e\" | \"E\") [+-]? [0-9]+)?\njson-object ::= \"{\" space (\"}\" | json-string space \":\" space json-value (space \",\" space json-string space \":\" space json-value)* space \"}\")\njson-string ::= \"\\\"\" ( [^\"\\\\] | \"\\\\\" ( [\"\\\\/ bfnrt] | \"u\" [0-9a-fA-F]{4} ) )* \"\\\"\"\njson-value ::= json-object | json-array | json-string | json-number | json-bool | json-null\nnull ::= \"null\"\nnumber ::= (\"-\"? integral-part) (\".\" decimal-part)? ([eE] [-+]? integral-part)?\nobject ::= \"{\" space ( string \":\" space value (\",\" space string \":\" space value)* )? space \"}\"\nresponse-format ::= response-format-schema\nresponse-format-schema ::= object\nroot ::= \"<|im_start|>assistant<|im_sep|>\\n\" space (\"<Thought>\" until-7 \"</Thought>\" \"\\n\"?)? space (\"```json\" space response-format space \"```\" | space response-format space)\nspace ::= | \" \" | \"\\n\"{1,2} [ \\t]{0,20}\nstring ::= \"\\\"\" char* \"\\\"\"\nuntil-7 ::= | [<] until-7-01 | [^<] until-7\nuntil-7-01 ::= | [<] until-7-01 | [/] until-7-02 | [^/<] until-7\nuntil-7-02 ::= | [<] until-7-01 | [T] until-7-03 | [^<T] until-7\nuntil-7-03 ::= | [<] until-7-01 | [h] until-7-04 | [^<h] until-7\nuntil-7-04 ::= | [<] until-7-01 | [o] until-7-05 | [^<o] until-7\nuntil-7-05 ::= | [<] until-7-01 | [u] until-7-06 | [^<u] until-7\nuntil-7-06 ::= | [<] until-7-01 | [g] until-7-07 | [^<g] until-7\nuntil-7-07 ::= | [<] until-7-01 | [h] until-7-08 | [^<h] until-7\nuntil-7-08 ::= | [<] until-7-01 | [t] until-7-09 | [^<t] until-7\nuntil-7-09 ::= | [<] until-7-01 | [^<>] until-7\nvalue ::= object | array | string | number | boolean | null\n",
+      "parser": "{\"parsers\":[{\"type\":\"epsilon\"},{\"type\":\"epsilon\"},{\"type\":\"literal\",\"literal\":\"</Thought>\"},{\"type\":\"sequence\",\"children\":[1,2]},{\"type\":\"literal\",\"literal\":\"\\n\"},{\"type\":\"repetition\",\"child\":4,\"min_count\":0,\"max_count\":1},{\"type\":\"sequence\",\"children\":[1,2,5]},{\"type\":\"until\",\"delimiters\":[\"</Thought>\"]},{\"type\":\"tag\",\"child\":7,\"tag\":\"reasoning\"},{\"type\":\"epsilon\"},{\"type\":\"literal\",\"literal\":\"<Thought>\"},{\"type\":\"sequence\",\"children\":[9,10]},{\"type\":\"sequence\",\"children\":[9,10,8]},{\"type\":\"sequence\",\"children\":[9,10,8,1,2,5]},{\"type\":\"repetition\",\"child\":13,\"min_count\":0,\"max_count\":1},{\"type\":\"epsilon\"},{\"type\":\"any\"},{\"type\":\"rule\",\"name\":\"json-value\",\"child\":16,\"trigger\":false},{\"type\":\"any\"},{\"type\":\"rule\",\"name\":\"json-object\",\"child\":18,\"trigger\":false},{\"type\":\"space\"},{\"type\":\"any\"},{\"type\":\"rule\",\"name\":\"json-string\",\"child\":21,\"trigger\":false},{\"type\":\"literal\",\"literal\":\"\\\"\"},{\"type\":\"string\",\"delimiter\":\"\\\"\"},{\"type\":\"literal\",\"literal\":\"\\\"\"},{\"type\":\"sequence\",\"children\":[23,24,25]},{\"type\":\"rule\",\"name\":\"json-string\",\"child\":26,\"trigger\":false},{\"type\":\"ref\",\"name\":\"json-string\"},{\"type\":\"literal\",\"literal\":\":\"},{\"type\":\"ref\",\"name\":\"json-value\"},{\"type\":\"sequence\",\"children\":[27,20,29,20,100]},{\"type\":\"literal\",\"literal\":\",\"},{\"type\":\"sequence\",\"children\":[20,32,20,27,20,29,20,100]},{\"type\":\"repetition\",\"child\":33,\"min_count\":0,\"max_count\":-1},{\"type\":\"sequence\",\"children\":[27,20,29,20,100,34]},{\"type\":\"literal\",\"literal\":\"{\"},{\"type\":\"literal\",\"literal\":\"}\"},{\"type\":\"literal\",\"literal\":\"}\"},{\"type\":\"sequence\",\"children\":[27,20,29,20,100,34,20,38]},{\"type\":\"choice\",\"children\":[37,39]},{\"type\":\"sequence\",\"children\":[36,20,40]},{\"type\":\"rule\",\"name\":\"json-object\",\"child\":41,\"trigger\":false},{\"type\":\"ref\",\"name\":\"json-object\"},{\"type\":\"any\"},{\"type\":\"rule\",\"name\":\"json-array\",\"child\":44,\"trigger\":false},{\"type\":\"space\"},{\"type\":\"ref\",\"name\":\"json-value\"},{\"type\":\"literal\",\"literal\":\",\"},{\"type\":\"ref\",\"name\":\"json-value\"},{\"type\":\"sequence\",\"children\":[46,48,46,100]},{\"type\":\"repetition\",\"child\":50,\"min_count\":0,\"max_count\":-1},{\"type\":\"sequence\",\"children\":[100,51]},{\"type\":\"literal\",\"literal\":\"[\"},{\"type\":\"literal\",\"literal\":\"]\"},{\"type\":\"literal\",\"literal\":\"]\"},{\"type\":\"sequence\",\"children\":[100,51,46,55]},{\"type\":\"choice\",\"children\":[54,56]},{\"type\":\"sequence\",\"children\":[53,46,57]},{\"type\":\"rule\",\"name\":\"json-array\",\"child\":58,\"trigger\":false},{\"type\":\"ref\",\"name\":\"json-array\"},{\"type\":\"ref\",\"name\":\"json-string\"},{\"type\":\"any\"},{\"type\":\"rule\",\"name\":\"json-number\",\"child\":62,\"trigger\":false},{\"type\":\"chars\",\"pattern\":\"[1-9]\",\"ranges\":[{\"start\":49,\"end\":57}],\"negated\":false,\"min_count\":1,\"max_count\":1},{\"type\":\"chars\",\"pattern\":\"[0-9]\",\"ranges\":[{\"start\":48,\"end\":57}],\"negated\":false,\"min_count\":1,\"max_count\":-1},{\"type\":\"literal\",\"literal\":\"0\"},{\"type\":\"chars\",\"pattern\":\"[0-9]\",\"ranges\":[{\"start\":48,\"end\":57}],\"negated\":false,\"min_count\":0,\"max_count\":-1},{\"type\":\"sequence\",\"children\":[64,67]},{\"type\":\"choice\",\"children\":[66,68]},{\"type\":\"literal\",\"literal\":\".\"},{\"type\":\"sequence\",\"children\":[70,65]},{\"type\":\"literal\",\"literal\":\"e\"},{\"type\":\"literal\",\"literal\":\"E\"},{\"type\":\"choice\",\"children\":[72,73]},{\"type\":\"chars\",\"pattern\":\"[+-]\",\"ranges\":[{\"start\":43,\"end\":43},{\"start\":45,\"end\":45}],\"negated\":false,\"min_count\":1,\"max_count\":1},{\"type\":\"repetition\",\"child\":75,\"min_count\":0,\"max_count\":1},{\"type\":\"sequence\",\"children\":[74,76,65]},{\"type\":\"chars\",\"pattern\":\"[0-9.eE+-]\",\"ranges\":[{\"start\":48,\"end\":57},{\"start\":46,\"end\":46},{\"start\":101,\"end\":101},{\"start\":69,\"end\":69},{\"start\":43,\"end\":43},{\"start\":45,\"end\":45}],\"negated\":false,\"min_count\":1,\"max_count\":1},{\"type\":\"not\",\"child\":78},{\"type\":\"literal\",\"literal\":\"-\"},{\"type\":\"repetition\",\"child\":80,\"min_count\":0,\"max_count\":1},{\"type\":\"repetition\",\"child\":71,\"min_count\":0,\"max_count\":1},{\"type\":\"repetition\",\"child\":77,\"min_count\":0,\"max_count\":1},{\"type\":\"sequence\",\"children\":[81,69,82,83,79]},{\"type\":\"rule\",\"name\":\"json-number\",\"child\":84,\"trigger\":false},{\"type\":\"ref\",\"name\":\"json-number\"},{\"type\":\"any\"},{\"type\":\"rule\",\"name\":\"json-bool\",\"child\":87,\"trigger\":false},{\"type\":\"literal\",\"literal\":\"true\"},{\"type\":\"literal\",\"literal\":\"false\"},{\"type\":\"choice\",\"children\":[89,90]},{\"type\":\"rule\",\"name\":\"json-bool\",\"child\":91,\"trigger\":false},{\"type\":\"ref\",\"name\":\"json-bool\"},{\"type\":\"any\"},{\"type\":\"rule\",\"name\":\"json-null\",\"child\":94,\"trigger\":false},{\"type\":\"literal\",\"literal\":\"null\"},{\"type\":\"rule\",\"name\":\"json-null\",\"child\":96,\"trigger\":false},{\"type\":\"ref\",\"name\":\"json-null\"},{\"type\":\"choice\",\"children\":[42,59,27,85,92,97]},{\"type\":\"rule\",\"name\":\"json-value\",\"child\":99,\"trigger\":false},{\"type\":\"ref\",\"name\":\"json-value\"},{\"type\":\"schema\",\"child\":100,\"name\":\"response-format-schema\",\"raw\":false},{\"type\":\"tag\",\"child\":102,\"tag\":\"content\"},{\"type\":\"rule\",\"name\":\"response-format\",\"child\":103,\"trigger\":false},{\"type\":\"ref\",\"name\":\"response-format\"},{\"type\":\"end\"},{\"type\":\"literal\",\"literal\":\"```\"},{\"type\":\"space\"},{\"type\":\"space\"},{\"type\":\"literal\",\"literal\":\"```json\"},{\"type\":\"sequence\",\"children\":[110,109]},{\"type\":\"sequence\",\"children\":[110,109,104]},{\"type\":\"sequence\",\"children\":[110,109,104,108]},{\"type\":\"sequence\",\"children\":[110,109,104,108,107]},{\"type\":\"space\"},{\"type\":\"space\"},{\"type\":\"sequence\",\"children\":[116,104]},{\"type\":\"sequence\",\"children\":[116,104,115]},{\"type\":\"choice\",\"children\":[114,118]},{\"type\":\"space\"},{\"type\":\"sequence\",\"children\":[14,120]},{\"type\":\"sequence\",\"children\":[14,120,119]},{\"type\":\"sequence\",\"children\":[14,120,119,106]},{\"type\":\"literal\",\"literal\":\"<|im_start|>assistant<|im_sep|>\\n\"},{\"type\":\"space\"},{\"type\":\"sequence\",\"children\":[124,125,14,120,119,106]}],\"rules\":{\"response-format\":104,\"json-null\":97,\"json-bool\":92,\"json-number\":85,\"json-string\":27,\"json-array\":59,\"json-object\":42,\"json-value\":100},\"root\":126}",
+      "grammar_lazy": false
+    }
+  },
+  {
+    "request": {
+      "messages": [
+        {
+          "role": "system",
+          "content": "Keep this exact caller instruction."
+        },
+        {
+          "role": "user",
+          "content": "Read notes.txt."
+        }
+      ],
+      "tools": [
+        {
+          "type": "function",
+          "function": {
+            "name": "read_file",
+            "description": "Read a file",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "path"
+              ]
+            }
+          }
+        },
+        {
+          "type": "function",
+          "function": {
+            "name": "write_file",
+            "description": "Write a file",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string"
+                },
+                "content": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "path",
+                "content"
+              ]
+            }
+          }
+        }
+      ],
+      "tool_choice": "auto",
+      "parallel_tool_calls": false,
+      "stream": false,
+      "response_format": {
+        "type": "json_schema",
+        "json_schema": {
+          "schema": {
+            "type": "object"
+          }
+        }
+      }
+    },
+    "result": {
+      "prompt": "<|im_start|>system<|im_sep|>\nYou are an AI assistant that executes function calls, and these are the tools at your disposal:\n{\"type\": \"function\", \"function\": {\"name\": \"read_file\", \"description\": \"Read a file\", \"parameters\": {\"type\": \"object\", \"properties\": {\"path\": {\"type\": \"string\"}}, \"required\": [\"path\"]}}}\n{\"type\": \"function\", \"function\": {\"name\": \"write_file\", \"description\": \"Write a file\", \"parameters\": {\"type\": \"object\", \"properties\": {\"path\": {\"type\": \"string\"}, \"content\": {\"type\": \"string\"}}, \"required\": [\"path\", \"content\"]}}}\nWhen calling a tool, emit its JSON object with name and arguments inside <Output> and </Output>. If you include reasoning, place it inside <Thought> and </Thought> before the output. Do not invent tool results. When no tool is needed, reply with ordinary text.\n<|im_end|>\n<|im_start|>system<|im_sep|>\nKeep this exact caller instruction.<|im_end|>\n<|im_start|>user<|im_sep|>\nRead notes.txt.<|im_end|>\n<|im_start|>assistant<|im_sep|>\n",
+      "grammar": "array ::= \"[\" space ( value (\",\" space value)* )? space \"]\"\nboolean ::= (\"true\" | \"false\")\nchar ::= [^\"\\\\\\x7F\\x00-\\x1F] | [\\\\] ([\"\\\\bfnrt] | \"u\" [0-9a-fA-F]{4})\ndecimal-part ::= [0-9]{1,16}\nintegral-part ::= [0] | [1-9] [0-9]{0,15}\njson-array ::= \"[\" space (\"]\" | json-value (space \",\" space json-value)* space \"]\")\njson-bool ::= \"true\" | \"false\"\njson-null ::= \"null\"\njson-number ::= \"-\"? (\"0\" | [1-9] [0-9]*) (\".\" [0-9]+)? ((\"e\" | \"E\") [+-]? [0-9]+)?\njson-object ::= \"{\" space (\"}\" | json-string space \":\" space json-value (space \",\" space json-string space \":\" space json-value)* space \"}\")\njson-string ::= \"\\\"\" ( [^\"\\\\] | \"\\\\\" ( [\"\\\\/ bfnrt] | \"u\" [0-9a-fA-F]{4} ) )* \"\\\"\"\njson-value ::= json-object | json-array | json-string | json-number | json-bool | json-null\nnull ::= \"null\"\nnumber ::= (\"-\"? integral-part) (\".\" decimal-part)? ([eE] [-+]? integral-part)?\nobject ::= \"{\" space ( string \":\" space value (\",\" space string \":\" space value)* )? space \"}\"\nresponse-format ::= response-format-schema\nresponse-format-schema ::= object\nroot ::= \"<|im_start|>assistant<|im_sep|>\\n\" space (\"<Thought>\" until-7 \"</Thought>\" \"\\n\"?)? space (\"```json\" space response-format space \"```\" | space response-format space)\nspace ::= | \" \" | \"\\n\"{1,2} [ \\t]{0,20}\nstring ::= \"\\\"\" char* \"\\\"\"\nuntil-7 ::= | [<] until-7-01 | [^<] until-7\nuntil-7-01 ::= | [<] until-7-01 | [/] until-7-02 | [^/<] until-7\nuntil-7-02 ::= | [<] until-7-01 | [T] until-7-03 | [^<T] until-7\nuntil-7-03 ::= | [<] until-7-01 | [h] until-7-04 | [^<h] until-7\nuntil-7-04 ::= | [<] until-7-01 | [o] until-7-05 | [^<o] until-7\nuntil-7-05 ::= | [<] until-7-01 | [u] until-7-06 | [^<u] until-7\nuntil-7-06 ::= | [<] until-7-01 | [g] until-7-07 | [^<g] until-7\nuntil-7-07 ::= | [<] until-7-01 | [h] until-7-08 | [^<h] until-7\nuntil-7-08 ::= | [<] until-7-01 | [t] until-7-09 | [^<t] until-7\nuntil-7-09 ::= | [<] until-7-01 | [^<>] until-7\nvalue ::= object | array | string | number | boolean | null\n",
+      "parser": "{\"parsers\":[{\"type\":\"epsilon\"},{\"type\":\"epsilon\"},{\"type\":\"literal\",\"literal\":\"</Thought>\"},{\"type\":\"sequence\",\"children\":[1,2]},{\"type\":\"literal\",\"literal\":\"\\n\"},{\"type\":\"repetition\",\"child\":4,\"min_count\":0,\"max_count\":1},{\"type\":\"sequence\",\"children\":[1,2,5]},{\"type\":\"until\",\"delimiters\":[\"</Thought>\"]},{\"type\":\"tag\",\"child\":7,\"tag\":\"reasoning\"},{\"type\":\"epsilon\"},{\"type\":\"literal\",\"literal\":\"<Thought>\"},{\"type\":\"sequence\",\"children\":[9,10]},{\"type\":\"sequence\",\"children\":[9,10,8]},{\"type\":\"sequence\",\"children\":[9,10,8,1,2,5]},{\"type\":\"repetition\",\"child\":13,\"min_count\":0,\"max_count\":1},{\"type\":\"epsilon\"},{\"type\":\"any\"},{\"type\":\"rule\",\"name\":\"json-value\",\"child\":16,\"trigger\":false},{\"type\":\"any\"},{\"type\":\"rule\",\"name\":\"json-object\",\"child\":18,\"trigger\":false},{\"type\":\"space\"},{\"type\":\"any\"},{\"type\":\"rule\",\"name\":\"json-string\",\"child\":21,\"trigger\":false},{\"type\":\"literal\",\"literal\":\"\\\"\"},{\"type\":\"string\",\"delimiter\":\"\\\"\"},{\"type\":\"literal\",\"literal\":\"\\\"\"},{\"type\":\"sequence\",\"children\":[23,24,25]},{\"type\":\"rule\",\"name\":\"json-string\",\"child\":26,\"trigger\":false},{\"type\":\"ref\",\"name\":\"json-string\"},{\"type\":\"literal\",\"literal\":\":\"},{\"type\":\"ref\",\"name\":\"json-value\"},{\"type\":\"sequence\",\"children\":[27,20,29,20,100]},{\"type\":\"literal\",\"literal\":\",\"},{\"type\":\"sequence\",\"children\":[20,32,20,27,20,29,20,100]},{\"type\":\"repetition\",\"child\":33,\"min_count\":0,\"max_count\":-1},{\"type\":\"sequence\",\"children\":[27,20,29,20,100,34]},{\"type\":\"literal\",\"literal\":\"{\"},{\"type\":\"literal\",\"literal\":\"}\"},{\"type\":\"literal\",\"literal\":\"}\"},{\"type\":\"sequence\",\"children\":[27,20,29,20,100,34,20,38]},{\"type\":\"choice\",\"children\":[37,39]},{\"type\":\"sequence\",\"children\":[36,20,40]},{\"type\":\"rule\",\"name\":\"json-object\",\"child\":41,\"trigger\":false},{\"type\":\"ref\",\"name\":\"json-object\"},{\"type\":\"any\"},{\"type\":\"rule\",\"name\":\"json-array\",\"child\":44,\"trigger\":false},{\"type\":\"space\"},{\"type\":\"ref\",\"name\":\"json-value\"},{\"type\":\"literal\",\"literal\":\",\"},{\"type\":\"ref\",\"name\":\"json-value\"},{\"type\":\"sequence\",\"children\":[46,48,46,100]},{\"type\":\"repetition\",\"child\":50,\"min_count\":0,\"max_count\":-1},{\"type\":\"sequence\",\"children\":[100,51]},{\"type\":\"literal\",\"literal\":\"[\"},{\"type\":\"literal\",\"literal\":\"]\"},{\"type\":\"literal\",\"literal\":\"]\"},{\"type\":\"sequence\",\"children\":[100,51,46,55]},{\"type\":\"choice\",\"children\":[54,56]},{\"type\":\"sequence\",\"children\":[53,46,57]},{\"type\":\"rule\",\"name\":\"json-array\",\"child\":58,\"trigger\":false},{\"type\":\"ref\",\"name\":\"json-array\"},{\"type\":\"ref\",\"name\":\"json-string\"},{\"type\":\"any\"},{\"type\":\"rule\",\"name\":\"json-number\",\"child\":62,\"trigger\":false},{\"type\":\"chars\",\"pattern\":\"[1-9]\",\"ranges\":[{\"start\":49,\"end\":57}],\"negated\":false,\"min_count\":1,\"max_count\":1},{\"type\":\"chars\",\"pattern\":\"[0-9]\",\"ranges\":[{\"start\":48,\"end\":57}],\"negated\":false,\"min_count\":1,\"max_count\":-1},{\"type\":\"literal\",\"literal\":\"0\"},{\"type\":\"chars\",\"pattern\":\"[0-9]\",\"ranges\":[{\"start\":48,\"end\":57}],\"negated\":false,\"min_count\":0,\"max_count\":-1},{\"type\":\"sequence\",\"children\":[64,67]},{\"type\":\"choice\",\"children\":[66,68]},{\"type\":\"literal\",\"literal\":\".\"},{\"type\":\"sequence\",\"children\":[70,65]},{\"type\":\"literal\",\"literal\":\"e\"},{\"type\":\"literal\",\"literal\":\"E\"},{\"type\":\"choice\",\"children\":[72,73]},{\"type\":\"chars\",\"pattern\":\"[+-]\",\"ranges\":[{\"start\":43,\"end\":43},{\"start\":45,\"end\":45}],\"negated\":false,\"min_count\":1,\"max_count\":1},{\"type\":\"repetition\",\"child\":75,\"min_count\":0,\"max_count\":1},{\"type\":\"sequence\",\"children\":[74,76,65]},{\"type\":\"chars\",\"pattern\":\"[0-9.eE+-]\",\"ranges\":[{\"start\":48,\"end\":57},{\"start\":46,\"end\":46},{\"start\":101,\"end\":101},{\"start\":69,\"end\":69},{\"start\":43,\"end\":43},{\"start\":45,\"end\":45}],\"negated\":false,\"min_count\":1,\"max_count\":1},{\"type\":\"not\",\"child\":78},{\"type\":\"literal\",\"literal\":\"-\"},{\"type\":\"repetition\",\"child\":80,\"min_count\":0,\"max_count\":1},{\"type\":\"repetition\",\"child\":71,\"min_count\":0,\"max_count\":1},{\"type\":\"repetition\",\"child\":77,\"min_count\":0,\"max_count\":1},{\"type\":\"sequence\",\"children\":[81,69,82,83,79]},{\"type\":\"rule\",\"name\":\"json-number\",\"child\":84,\"trigger\":false},{\"type\":\"ref\",\"name\":\"json-number\"},{\"type\":\"any\"},{\"type\":\"rule\",\"name\":\"json-bool\",\"child\":87,\"trigger\":false},{\"type\":\"literal\",\"literal\":\"true\"},{\"type\":\"literal\",\"literal\":\"false\"},{\"type\":\"choice\",\"children\":[89,90]},{\"type\":\"rule\",\"name\":\"json-bool\",\"child\":91,\"trigger\":false},{\"type\":\"ref\",\"name\":\"json-bool\"},{\"type\":\"any\"},{\"type\":\"rule\",\"name\":\"json-null\",\"child\":94,\"trigger\":false},{\"type\":\"literal\",\"literal\":\"null\"},{\"type\":\"rule\",\"name\":\"json-null\",\"child\":96,\"trigger\":false},{\"type\":\"ref\",\"name\":\"json-null\"},{\"type\":\"choice\",\"children\":[42,59,27,85,92,97]},{\"type\":\"rule\",\"name\":\"json-value\",\"child\":99,\"trigger\":false},{\"type\":\"ref\",\"name\":\"json-value\"},{\"type\":\"schema\",\"child\":100,\"name\":\"response-format-schema\",\"raw\":false},{\"type\":\"tag\",\"child\":102,\"tag\":\"content\"},{\"type\":\"rule\",\"name\":\"response-format\",\"child\":103,\"trigger\":false},{\"type\":\"ref\",\"name\":\"response-format\"},{\"type\":\"end\"},{\"type\":\"literal\",\"literal\":\"```\"},{\"type\":\"space\"},{\"type\":\"space\"},{\"type\":\"literal\",\"literal\":\"```json\"},{\"type\":\"sequence\",\"children\":[110,109]},{\"type\":\"sequence\",\"children\":[110,109,104]},{\"type\":\"sequence\",\"children\":[110,109,104,108]},{\"type\":\"sequence\",\"children\":[110,109,104,108,107]},{\"type\":\"space\"},{\"type\":\"space\"},{\"type\":\"sequence\",\"children\":[116,104]},{\"type\":\"sequence\",\"children\":[116,104,115]},{\"type\":\"choice\",\"children\":[114,118]},{\"type\":\"space\"},{\"type\":\"sequence\",\"children\":[14,120]},{\"type\":\"sequence\",\"children\":[14,120,119]},{\"type\":\"sequence\",\"children\":[14,120,119,106]},{\"type\":\"literal\",\"literal\":\"<|im_start|>assistant<|im_sep|>\\n\"},{\"type\":\"space\"},{\"type\":\"sequence\",\"children\":[124,125,14,120,119,106]}],\"rules\":{\"response-format\":104,\"json-null\":97,\"json-bool\":92,\"json-number\":85,\"json-string\":27,\"json-array\":59,\"json-object\":42,\"json-value\":100},\"root\":126}",
+      "grammar_lazy": false
+    }
+  }
+]

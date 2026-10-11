@@ -1,0 +1,19 @@
+{
+  "type": "function",
+  "function": {
+    "name": "answer",
+    "description": "use this action to answer without performing any action",
+    "parameters": {
+      "type": "object",
+      "properties": {
+        "message": {
+          "type": "string",
+          "description": "The message to reply the user with"
+        }
+      },
+      "required": [
+        "message"
+      ]
+    }
+  }
+}

@@ -1,0 +1,422 @@
+--- a/common/arg.cpp
++++ b/common/arg.cpp
+@@ -3781,6 +3781,14 @@
+         }
+     ).set_examples({LLAMA_EXAMPLE_COMPLETION, LLAMA_EXAMPLE_CLI, LLAMA_EXAMPLE_SERVER}).set_env("LLAMA_ARG_CHAT_TEMPLATE_FILE"));
+     add_opt(common_arg(
++        {"--no-action-tool"}, "FILE",
++        "load a backend-owned JSON function with required message:string for automatic tool choice (default: disabled)",
++        [](common_params & params, const std::string & value) {
++            params.no_action_tool = read_file(value);
++            common_chat_no_action_tool_parse(params.no_action_tool);
++        }
++    ).set_examples({LLAMA_EXAMPLE_SERVER}));
++    add_opt(common_arg(
+         {"--skip-chat-parsing"},
+         {"--no-skip-chat-parsing"},
+         string_format(
+--- a/common/common.h
++++ b/common/common.h
+@@ -639,6 +639,7 @@
+
+     std::string public_path   = "";                                                                         // NOLINT
+     std::string api_prefix    = "";                                                                         // NOLINT
++    std::string no_action_tool; // Complete JSON tool definition; empty disables the protocol.
+     std::string chat_template = "";                                                                         // NOLINT
+     std::vector<std::string> hostnames = {"127.0.0.1"};
+     bool use_jinja = true;                                                                                  // NOLINT
+--- a/common/chat.h
++++ b/common/chat.h
+@@ -254,6 +254,7 @@
+     common_chat_continuation              continue_final_message = COMMON_CHAT_CONTINUATION_NONE;
+     bool                                  use_jinja              = true;
+     // Parameters below only supported when use_jinja is true
++    std::string                           no_action_tool;
+     std::vector<common_chat_tool>         tools;
+     common_chat_tool_choice               tool_choice         = COMMON_CHAT_TOOL_CHOICE_AUTO;
+     bool                                  parallel_tool_calls = false;
+@@ -278,6 +279,7 @@
+     std::vector<common_grammar_trigger> grammar_triggers;
+     std::vector<std::string>            preserved_tokens;
+     std::vector<std::string>            additional_stops;
++    std::string                         no_action_tool_name;
+     std::string                         parser;
+     common_chat_msg_delimiters          message_delimiters;
+ };
+@@ -293,12 +295,14 @@
+     bool                    parse_tool_calls     = true;
+     bool                    is_continuation      = false;
+     bool                    echo                 = false;  // Include assistant prefilled msg in output
++    std::string             no_action_tool_name;
+     bool                    debug                = false;  // Enable debug output for PEG parser
+     common_peg_arena        parser               = {};
+     common_chat_parser_params() = default;
+     common_chat_parser_params(const common_chat_params & chat_params) {
+         format  = chat_params.format;
+         generation_prompt = chat_params.generation_prompt;
++        no_action_tool_name = chat_params.no_action_tool_name;
+     }
+ };
+
+@@ -340,6 +344,9 @@
+ common_chat_msg common_chat_parse(const std::string & input, bool is_partial, const common_chat_parser_params & params);
+ common_chat_msg common_chat_peg_parse(const common_peg_arena & src_parser, const std::string & input, bool is_partial, const common_chat_parser_params & params);
+
++// Validate the backend-owned no-action definition. Its required message is assistant content.
++common_json common_chat_no_action_tool_parse(const std::string & definition);
++
+ // used by arg and server
+ const char *            common_reasoning_format_name(common_reasoning_format format);
+ common_reasoning_format common_reasoning_format_from_name(const std::string & format);
+--- a/common/chat.cpp
++++ b/common/chat.cpp
+@@ -341,6 +341,22 @@
+     std::unique_ptr<common_chat_template> template_default;  // always set (defaults to chatml)
+     std::unique_ptr<common_chat_template> template_tool_use;
+ };
++
++json common_chat_no_action_tool_parse(const std::string & definition) {
++    auto tool = json::parse(definition);
++    auto parsed = common_chat_tools_parse_oaicompat(json::array({tool}));
++    const auto & function = tool.at("function");
++    const auto & schema = function.at("parameters");
++    if (parsed.at(0).name.empty() || !function.at("description").is_string() ||
++        schema.value("type", "") != "object" || !schema.contains("properties") ||
++        !schema.at("properties").contains("message") ||
++        schema.at("properties").at("message").value("type", "") != "string" ||
++        !schema.contains("required") || !schema.at("required").is_array() ||
++        std::find(schema.at("required").begin(), schema.at("required").end(), "message") == schema.at("required").end()) {
++        throw std::invalid_argument("no-action tool must define a nonempty name, description and required message:string");
++    }
++    return tool;
++}
+
+ common_chat_tool_choice common_chat_tool_choice_parse_oaicompat(const std::string & tool_choice) {
+     if (tool_choice == "auto") {
+@@ -1232,6 +1248,20 @@
+                                                             const struct common_chat_templates_inputs & inputs) {
+     autoparser::generation_params params;
+     params.tools = common_chat_tools_to_json_oaicompat(inputs.tools);
++    if (!inputs.no_action_tool.empty() && inputs.tool_choice == COMMON_CHAT_TOOL_CHOICE_AUTO &&
++        !inputs.tools.empty() && inputs.json_schema.empty()) {
++        auto tool = common_chat_no_action_tool_parse(inputs.no_action_tool);
++        params.no_action_tool_name = tool.at("function").at("name").get<std::string>();
++        for (const auto & caller_tool : inputs.tools) {
++            if (caller_tool.name == params.no_action_tool_name) {
++                throw std::invalid_argument("no-action tool name collides with caller tool: " + caller_tool.name);
++            }
++        }
++        if (inputs.force_pure_content) {
++            throw std::invalid_argument("no-action tool requires native chat parsing");
++        }
++        params.tools.push_back(std::move(tool));
++    }
+     const auto & tmpl =
+         params.tools.is_array() && tmpls->template_tool_use ? *tmpls->template_tool_use : *tmpls->template_default;
+     const auto & src             = tmpl.source();
+@@ -1334,8 +1364,10 @@
+         return data;
+     }
+
+-    if (auto result = common_chat_try_specialized_template(tmpl, src, params)) {
+-        return *result;
++    if (params.no_action_tool_name.empty()) {
++        if (auto result = common_chat_try_specialized_template(tmpl, src, params)) {
++            return *result;
++        }
+     }
+
+     try {
+@@ -1440,6 +1472,10 @@
+ common_chat_params common_chat_templates_apply(const struct common_chat_templates *        tmpls,
+                                                const struct common_chat_templates_inputs & inputs) {
+     GGML_ASSERT(tmpls != nullptr);
++    if (!inputs.use_jinja && !inputs.no_action_tool.empty() && !inputs.tools.empty() &&
++        inputs.tool_choice == COMMON_CHAT_TOOL_CHOICE_AUTO && inputs.json_schema.empty()) {
++        throw std::invalid_argument("no-action tool requires --jinja");
++    }
+     return inputs.use_jinja ? common_chat_templates_apply_jinja(tmpls, inputs) :
+                               common_chat_templates_apply_legacy(tmpls, inputs);
+ }
+@@ -1448,6 +1484,18 @@
+                                   bool                              is_partial,
+                                   const common_chat_parser_params & params) {
+     return common_chat_peg_parse(params.parser, input, is_partial, params);
++}
++
++static std::runtime_error common_chat_protocol_error(const std::string & reason, const std::string & raw) {
++    static const char hex[] = "0123456789abcdef";
++    std::string evidence = reason + "; raw bytes (hex): ";
++    for (unsigned char byte : raw) {
++        evidence += hex[byte >> 4];
++        evidence += hex[byte & 15];
++    }
++    // Hex retains every byte, including NUL and invalid UTF-8. The JSON text is for inspection.
++    evidence += "\nraw text (JSON): " + json(raw).dump_safe();
++    return std::runtime_error(evidence);
+ }
+
+ common_chat_msg common_chat_peg_parse(const common_peg_arena &          src_parser,
+@@ -1468,13 +1516,20 @@
+
+     //LOG_DBG("Parsing PEG input with format %s: %s\n", common_chat_format_name(params.format), effective_input.c_str());
+
+-    common_peg_parse_flags flags = COMMON_PEG_PARSE_FLAG_LENIENT;
++    common_peg_parse_flags flags = is_partial || params.no_action_tool_name.empty() ?
++        COMMON_PEG_PARSE_FLAG_LENIENT : COMMON_PEG_PARSE_FLAG_NONE;
+     if (params.debug) {
+         flags |= COMMON_PEG_PARSE_FLAG_DEBUG;
+     }
+
+     common_peg_parse_context ctx(effective_input, flags);
+     auto result = parser.parse(ctx);
++
++    if (!params.no_action_tool_name.empty() &&
++        (result.fail() || (result.success() && result.end != effective_input.size()) ||
++         (!is_partial && !result.success()))) {
++        throw common_chat_protocol_error("Invalid no-action protocol output", input);
++    }
+
+     if (result.fail()) {
+         // During partial parsing, return partial results if any AST nodes were captured
+@@ -1515,7 +1570,22 @@
+     } else {
+         mapper = std::make_unique<common_chat_peg_mapper>(msg);
+     }
+-    mapper->from_ast(ctx.ast, result);
++    try {
++        if (!params.no_action_tool_name.empty()) {
++            ctx.ast.visit(result, [](const common_peg_ast_node & node) {
++                if (node.tag == common_chat_peg_builder::TOOL_ARGS && !node.is_partial &&
++                    !json::parse(std::string(node.text)).is_object()) {
++                    throw std::runtime_error("Tool arguments must be a JSON object");
++                }
++            });
++        }
++        mapper->from_ast(ctx.ast, result);
++    } catch (const std::exception & error) {
++        if (!params.no_action_tool_name.empty()) {
++            throw common_chat_protocol_error(error.what(), input);
++        }
++        throw;
++    }
+
+     if (ctx.is_debug()) {
+         fprintf(stderr, "\nAST for %s parse:\n%s\n", is_partial ? "partial" : "full", ctx.ast.dump().c_str());
+--- a/common/chat-auto-parser.h
++++ b/common/chat-auto-parser.h
+@@ -54,6 +54,7 @@
+ struct generation_params {
+     json                                  messages;
+     json                                  tools;
++    std::string                           no_action_tool_name;
+     common_chat_tool_choice               tool_choice = COMMON_CHAT_TOOL_CHOICE_AUTO;
+     json                                  json_schema;
+     bool                                  parallel_tool_calls = true;
+--- a/common/chat-auto-parser-generator.cpp
++++ b/common/chat-auto-parser-generator.cpp
+@@ -36,6 +36,7 @@
+     data.prompt            = common_chat_template_direct_apply(tmpl, inputs);
+     data.generation_prompt = common_chat_template_generation_prompt(tmpl, inputs);
+     data.format            = COMMON_CHAT_FORMAT_PEG_NATIVE;
++    data.no_action_tool_name = inputs.no_action_tool_name;
+     data.preserved_tokens  = autoparser.preserved_tokens;
+     data.additional_stops.insert(data.additional_stops.end(),
+         autoparser.additional_stops.begin(), autoparser.additional_stops.end());
+@@ -99,6 +100,10 @@
+ common_peg_arena autoparser::build_parser(const generation_params & inputs, const std::string & generation_prompt) const {
+     if (!analysis_complete) {
+         throw std::invalid_argument("Cannot call build_parser on autoparser without performing analysis first, call analyze_template(...)");
++    }
++    if (!inputs.no_action_tool_name.empty() &&
++        (tools.format.mode != tool_format::JSON_NATIVE || !jinja_caps.supports_tools || !jinja_caps.supports_tool_calls)) {
++        throw std::invalid_argument("no-action tool requires a native JSON tool template");
+     }
+     return build_chat_peg_parser([&](common_chat_peg_builder & p) {
+         parser_build_context ctx(p, inputs);
+@@ -207,19 +212,37 @@
+         args_field = format.function_field + "." + args_field;
+     }
+
++    json action_tools = inputs.tools;
++    json answer_tools = json::array();
++    if (!inputs.no_action_tool_name.empty()) {
++        action_tools = json::array();
++        for (const auto & tool : inputs.tools) {
++            (tool.at("function").at("name") == inputs.no_action_tool_name ? answer_tools : action_tools).push_back(tool);
++        }
++    }
+     auto tools_parser = p.eps();
+     if (format.section_start.empty() && !format.per_call_start.empty()) {
+         auto single_tool_parser = p.standard_json_tools(
+-            format.per_call_start, format.per_call_end, inputs.tools, inputs.parallel_tool_calls,
++            format.per_call_start, format.per_call_end, action_tools, inputs.parallel_tool_calls,
+             inputs.tool_choice == COMMON_CHAT_TOOL_CHOICE_REQUIRED, name_field, args_field, format.tools_array_wrapped,
+             format.fun_name_is_key, format.id_field, format.gen_id_field, format.parameter_order, format.openai_wrapper_trigger);
+         tools_parser = p.trigger_rule("tool-calls", inputs.parallel_tool_calls ?
+             p.one_or_more(single_tool_parser + p.space()) : single_tool_parser + p.space());
+     } else {
+         tools_parser = p.standard_json_tools(
+-            format.section_start, format.section_end, inputs.tools, inputs.parallel_tool_calls,
++            format.section_start, format.section_end, action_tools, inputs.parallel_tool_calls,
+             inputs.tool_choice == COMMON_CHAT_TOOL_CHOICE_REQUIRED, name_field, args_field, format.tools_array_wrapped,
+             format.fun_name_is_key, format.id_field, format.gen_id_field, format.parameter_order, format.openai_wrapper_trigger);
++    }
++
++    if (!answer_tools.empty()) {
++        auto answer_parser = p.standard_json_tools(
++            format.section_start.empty() ? format.per_call_start : format.section_start,
++            format.section_start.empty() ? format.per_call_end : format.section_end,
++            answer_tools, false, true, name_field, args_field, format.tools_array_wrapped,
++            format.fun_name_is_key, format.id_field, format.gen_id_field, format.parameter_order,
++            format.openai_wrapper_trigger, "no-action-call");
++        tools_parser = p.choice({p.atomic(p.tag(common_chat_peg_builder::NO_ACTION, answer_parser)) + p.space(), tools_parser});
+     }
+
+     // Handle content wrappers if present
+--- a/common/chat-peg-parser.h
++++ b/common/chat-peg-parser.h
+@@ -18,6 +18,7 @@
+     virtual void from_ast(const common_peg_ast_arena & arena, const common_peg_parse_result & result);
+     virtual void map(const common_peg_ast_node & node);
+   protected:
++    void visit(const common_peg_ast_arena & arena, common_peg_ast_id id);
+     virtual std::string normalize_container_value(const std::string & input);
+   private:
+       // Tool call handling state
+@@ -63,6 +64,7 @@
+     static constexpr const char * REASONING_BLOCK = "reasoning-block";
+     static constexpr const char * REASONING       = "reasoning";
+     static constexpr const char * CONTENT         = "content";
++    static constexpr const char * NO_ACTION       = "no-action";
+
+     // Tag constants
+     static constexpr const char * TOOL           = "tool";
+@@ -138,7 +140,8 @@
+                                           const std::string &              call_id_key = "",
+                                           const std::string &              gen_call_id_key = "",
+                                           const std::vector<std::string> & parameters_order = {},
+-                                          bool                             accept_openai_wrapper = false);
++                                          bool                             accept_openai_wrapper = false,
++                                          const std::string &              section_rule = "tool-call");
+
+     // Legacy-compatible helper for building XML/tagged style tool calls
+     // Used by tests and manual parsers
+--- a/common/chat-peg-parser.cpp
++++ b/common/chat-peg-parser.cpp
+@@ -283,7 +283,9 @@
+
+ void common_chat_peg_mapper::from_ast(const common_peg_ast_arena &    arena,
+                                       const common_peg_parse_result & parse_result_arg) {
+-    arena.visit(parse_result_arg, [this](const common_peg_ast_node & node) { map(node); });
++    for (auto id : parse_result_arg.nodes) {
++        visit(arena, id);
++    }
+     // Flush any pending tool call that was started but never got a name
+     // This happens during partial parsing when the tool call is incomplete
+     if (pending_tool_call.has_value() && !pending_tool_call->name.empty()) {
+@@ -309,6 +311,30 @@
+         if (all_whitespace) {
+             result.reasoning_content.clear();
+         }
++    }
++}
++
++void common_chat_peg_mapper::visit(const common_peg_ast_arena & arena, common_peg_ast_id id) {
++    const auto & node = arena.get(id);
++    if (node.tag == common_chat_peg_builder::NO_ACTION) {
++        auto args_id = arena.find_by_tag(node, common_chat_peg_builder::TOOL_ARGS, 64);
++        if (node.is_partial || args_id == COMMON_PEG_INVALID_AST_ID) {
++            throw std::runtime_error("Incomplete no-action payload");
++        }
++        const auto & args = arena.get(args_id);
++        auto value = ordered_json::parse(std::string(args.text));
++        if (args.is_partial || !value.is_object() || !value.contains("message") || !value.at("message").is_string()) {
++            throw std::runtime_error("no-action payload requires message:string");
++        }
++        if (!result.tool_calls.empty()) {
++            throw std::runtime_error("Mixed no-action and action output");
++        }
++        result.content += value.at("message").get<std::string>();
++        return;
++    }
++    map(node);
++    for (auto child : node.children) {
++        visit(arena, child);
+     }
+ }
+
+@@ -916,7 +942,8 @@
+                                                        const std::string &              call_id_key,
+                                                        const std::string &              gen_call_id_key,
+                                                        const std::vector<std::string> & parameters_order,
+-                                                       bool                             accept_openai_wrapper) {
++                                                       bool                             accept_openai_wrapper,
++                                                       const std::string &              section_rule) {
+     if (!tools.is_array() || tools.empty()) {
+         return eps();
+     }
+@@ -949,7 +976,7 @@
+     }
+
+     auto section =
+-        trigger_rule("tool-call", literal(section_start) + space() + tool_calls + space() + literal(section_end));
++        trigger_rule(section_rule, literal(section_start) + space() + tool_calls + space() + literal(section_end));
+
+     return force_tool_calls ? section : optional(section);
+ }
+--- a/tools/server/server-common.h
++++ b/tools/server/server-common.h
+@@ -348,6 +348,7 @@
+     std::string reasoning_budget_message;
+     std::string media_path;
+     bool force_pure_content = false;
++    std::string no_action_tool;
+ };
+
+ // used by /completions endpoint
+--- a/tools/server/server-common.cpp
++++ b/tools/server/server-common.cpp
+@@ -1355,6 +1355,7 @@
+     common_chat_templates_inputs inputs;
+     inputs.messages               = common_chat_msgs_parse_oaicompat(messages);
+     inputs.tools                  = common_chat_tools_parse_oaicompat(tools);
++    inputs.no_action_tool         = !body.contains("tool_choice") || body.at("tool_choice") == "auto" ? opt.no_action_tool : "";
+     inputs.tool_choice            = common_chat_tool_choice_parse_oaicompat(tool_choice);
+     inputs.json_schema            = json_schema.is_null() ? "" : json_schema.dump();
+     inputs.grammar                = grammar;
+@@ -1441,6 +1442,7 @@
+     llama_params["grammar_triggers"]  = grammar_triggers;
+     llama_params["preserved_tokens"]  = chat_params.preserved_tokens;
+     llama_params["generation_prompt"] = chat_params.generation_prompt;
++    llama_params["no_action_tool_name"] = chat_params.no_action_tool_name;
+     for (const auto & stop : chat_params.additional_stops) {
+         llama_params["stop"].push_back(stop);
+     }
+--- a/tools/server/server-context.cpp
++++ b/tools/server/server-context.cpp
+@@ -1619,7 +1619,8 @@
+                 /* reasoning_budget      */ params_base.sampling.reasoning_budget_tokens,
+                 /* reasoning_budget_msg  */ params_base.sampling.reasoning_budget_message,
+                 /* media_path            */ params_base.media_path,
+-                /* force_pure_content    */ params_base.force_pure_content_parser
++                /* force_pure_content    */ params_base.force_pure_content_parser,
++                /* no_action_tool        */ params_base.no_action_tool
+             };
+
+             {
+--- a/tools/server/server-schema.cpp
++++ b/tools/server/server-schema.cpp
+@@ -317,6 +317,12 @@
+
+     add((new field_bool("parse_tool_calls", params.chat_parser_params.parse_tool_calls))
+         ->set_desc("Whether to parse tool calls from the generated output"));
++
++    add((new field_str("no_action_tool_name"))
++        ->set_desc("Backend-owned no-action tool name")
++        ->set_handler([&](field_eval_context & ctx, const json & data) {
++            ctx.params.chat_parser_params.no_action_tool_name = data.at("no_action_tool_name").get<std::string>();
++        }));
+
+     add((new field_str("chat_parser"))
+         ->set_desc("Chat parser configuration string")
