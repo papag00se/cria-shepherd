@@ -430,6 +430,7 @@ class PlanSession(GuardState):
     # (path, sha1 of the block) of every pasted file the text-write judge has ruled on, and its answer —
     # a temperature-0 model re-pastes the same file every turn, and a settled question is not re-asked.
     text_write_judged: dict = field(default_factory=dict)
+    pasted_block_other: bool = False   # the pasted-file judge ruled THIS reply's block `OTHER` (not a whole file)
     # (path, sha1 of the content) of every native whole-file write_file that REPLACES most of a file the
     # judge ruled WHOLE_FILE for (`Loop.shrinking_write_check`). Only that positive ruling is remembered.
     shrink_write_judged: dict = field(default_factory=dict)
@@ -3151,10 +3152,27 @@ class Loop:
             return {"text": held, "bytes": raw}
         return check
 
-    def _unexecuted_nudge_text(self, sess: PlanSession) -> str:
-        """`unexecuted_write_nudge`, plus the measured fact the pasted-file recovery refused on (a file
-        that exists and was never read) — consumed once."""
-        base = prompts.load("unexecuted_write_nudge")
+    def _pasted_file_unsaved(self, sess: PlanSession, reply: str, body: dict) -> bool:
+        """Is this call-less reply a file pasted instead of written — the question the nudge answers?
+
+        `unexecuted_write` is the structural test (a code block of file length). The pasted-file recovery
+        has already put the one question that settles WHAT the block is, to a judge, when the model bound it
+        to a file; a block it ruled `OTHER` is a fragment, an excerpt or a plan's pseudo-code, and telling
+        the coder "the file's contents … send them again as a write" about it is a false claim that
+        induced a fabricated whole-file overwrite (phi4 A4 0079→0080: an 18-line REVIEW.md draft and a
+        5-line `<dependency>` excerpt, answered by a pom.xml write). No ruling, no suppression."""
+        ruled_other, sess.pasted_block_other = sess.pasted_block_other, False
+        return (not ruled_other
+                and unexecuted_write(reply, _injected_fence_texts(sess, body.get("messages", []))))
+
+    def _unexecuted_nudge_text(self, sess: PlanSession, reply: str = "") -> str:
+        """The unsaved-paste nudge, plus the measured fact the pasted-file recovery refused on (a file
+        that exists and was never read) — consumed once. It NAMES the file only when the model itself bound
+        the first file-length block to exactly one path (`massage.binding_paths`, the recovery's own
+        test); otherwise it says what is true — a block of code was sent as text — and claims no file."""
+        names = _pasted_block_paths(reply)
+        base = (prompts.fill(prompts.load("unexecuted_write_nudge_path"), path=f"`{names[0]}`")
+                if len(names) == 1 else prompts.load("unexecuted_write_nudge"))
         fact = getattr(sess, "unread_target_fact", "") or ""
         sess.unread_target_fact = ""
         return f"{base}\n\n{fact}" if fact else base
@@ -3190,6 +3208,7 @@ class Loop:
         something the coder was shown nor already the file's content; and the judge answers the
         exact positive token. Only that one block is promoted; the tail (further blocks, invented
         results, a completion claim) is not forwarded and is counted in the event."""
+        sess.pasted_block_other = False      # the ruling below belongs to THIS reply only
         if self._ctx.reasoner_chat is None or self._ctx.reasoner_role is None:
             return comp
         choice = (comp.get("choices") or [None])[0]
@@ -3270,6 +3289,7 @@ class Loop:
                 sess.text_write_judged[key] = verdict
             rlog.emit("loop.text_write_judged", path=rel, verdict=verdict[:40], exists=exists)
         if verdict != "WHOLE_FILE":
+            sess.pasted_block_other = verdict == "OTHER"     # a RULING: the nudge must not call it the file
             return refuse("judged_other" if verdict == "OTHER" else "judge_unanswered")
         call = massage.whole_file_write_call(tools, view.abs(rel), content)
         keep = text[:block["start"]].rstrip()
@@ -3646,8 +3666,7 @@ class Loop:
         # exactly the turns it earns its keep, where a model retypes a file it has just read. The
         # deterministic fact cria already holds is the better test (#8).
         if (not _is_reading_step(sess, sess.plan.current())
-                and unexecuted_write(_completion_text(coder),
-                                     _injected_fence_texts(sess, body.get("messages", [])))
+                and self._pasted_file_unsaved(sess, _completion_text(coder), body)
                 and sess.unexecuted_nudges < MAX_UNEXECUTED_NUDGES):
             sess.unexecuted_nudges += 1
             rlog.emit("loop.unexecuted_write", step=idx, attempt=sess.unexecuted_nudges)
@@ -3661,7 +3680,7 @@ class Loop:
             # end). Measured: the truncated replies are also the two largest ever carried
             # (15,044 and 33,638 est tokens), so skipping them removes the size risk with the lie.
             sess.nudge_reply = "" if massage.is_truncated(coder) else _completion_text(coder)
-            return self._renudge(sess, key, body, self._unexecuted_nudge_text(sess), rlog)
+            return self._renudge(sess, key, body, self._unexecuted_nudge_text(sess, _completion_text(coder)), rlog)
         if sess.step_tool_calls == 0 and not sess.leg0_nudged:
             sess.leg0_nudged = True  # once per step; a coder that STILL won't act falls to the gate
             sess.verify_fails += 1
@@ -5215,8 +5234,7 @@ class Loop:
                 return comp   # it acted once it knew what had not run
         # BEFORE reading this as "thinks it's done": a turn that pasted a whole file did not finish,
         # it failed to emit the call. Same check as the multi-step half — see unexecuted_write().
-        if (unexecuted_write(_completion_text(comp),
-                             _injected_fence_texts(sess, body.get("messages", [])))
+        if (self._pasted_file_unsaved(sess, _completion_text(comp), body)
                 and sess.unexecuted_nudges < MAX_UNEXECUTED_NUDGES):
             sess.unexecuted_nudges += 1
             rlog.emit("loop.unexecuted_write", plan_off=True, attempt=sess.unexecuted_nudges)
@@ -5228,7 +5246,7 @@ class Loop:
                        else [{"role": "assistant", "content": _completion_text(comp)}])
             conv = framed["messages"] + carried + [
                 {"role": "user", "content": prompts.render(
-                    "nudge", reason=self._unexecuted_nudge_text(sess))}]
+                    "nudge", reason=self._unexecuted_nudge_text(sess, _completion_text(comp)))}]
             comp = self._coder_turn(sess, {**framed, "messages": conv}, body, step=1, rlog=rlog)  # SHARED
             if _has_tool_calls(comp):
                 return comp  # it emitted the write after the nudge
@@ -6723,6 +6741,15 @@ def fence_is_self_quote(fence_lines: list[str], injected_norm: list[str]) -> boo
     recovery (`Loop._recover_text_write`) must agree on what a quote is."""
     blob = "".join("".join(l.split()) for l in fence_lines)
     return len(blob) >= 80 and any(blob in inj for inj in injected_norm)
+
+
+def _pasted_block_paths(reply: str) -> list[str]:
+    """The paths the model's own binding line names for the first file-length block of ``reply`` —
+    ``[]`` when there is no such block (a block with no line above it names nothing)."""
+    for b in massage.fenced_file_blocks(reply or ""):
+        if sum(1 for l in b["lines"] if l.strip()) >= UNEXECUTED_WRITE_LINES:
+            return massage.binding_paths(b["binding"]) if b["binding"] else []
+    return []
 
 
 def unexecuted_write(content: str, injected=None) -> bool:

@@ -361,7 +361,7 @@ def test_the_pasted_file_recovery_refusal_reaches_the_nudge(view):
         # … and the fact it refused on rides on the nudge that follows, once.
         lp = _single_loop(lambda b, r: b"{}", workspace_root=t.view.root)
         nudge = lp._unexecuted_nudge_text(sess)
-        assert "already exists on disk" in nudge and "no read of it has been recorded" in nudge
+        assert "already exists on disk" in nudge and "no read of its whole text is in this conversation" in nudge
         assert lp._unexecuted_nudge_text(sess) == loop.prompts.load("unexecuted_write_nudge")
     finally:
         t.doCleanups()

@@ -1,1 +1,1 @@
-your last message contained the file's contents as text, but no write tool call was made, so nothing reached the disk — send that same content again as a write tool call
+your last message contained a block of code as text, but no write tool call was made, so nothing in it reached the disk. Text in a message changes no file; if that block was meant to be a file, send it as a write tool call that names the file.
