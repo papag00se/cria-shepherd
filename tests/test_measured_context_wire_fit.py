@@ -17,8 +17,10 @@ def dense_body():
     return {'model': 'small', 'messages': [
         {'role': 'system', 'content': 'Write a factual briefing, not a plan.'},
         {'role': 'user', 'content': 'Earlier transcript follows.'},
-        *[{'role': 'user', 'content': 'tool: ' + ('00001: 4326.28\n' * 500)}
-          for _ in range(6)],
+        # DISTINCT payloads: the wire now folds byte-identical repeats (after the floor), and this
+        # test is about the measured refit of a body that genuinely does not fit.
+        *[{'role': 'user', 'content': f'tool {n}: ' + ('00001: 4326.28\n' * 500)}
+          for n in range(6)],
         {'role': 'user', 'content': 'A check exited 1: blank quantity.'},
         {'role': 'user', 'content': 'Write the briefing now.'}]}
 

@@ -416,6 +416,7 @@ class Upstream:
                 rlog.emit("context.floor_skipped", level="warn", why="window is a guess",
                           guess=window)
                 window = None
+            repeat_ptrs_in = modelview.repeat_pointers(msgs)
             if window:
                 reserve = contextfloor.reserve_for(body)  # reads cria_output_reserve (stripped below)
                 tools_in = body.get("tools")
@@ -459,7 +460,11 @@ class Upstream:
             if self._context_fixes:       # L0-L2 send what they were given (no context surgery)
                 msgs = modelview.retained_results_truth(msgs)
                 # Last, over what survived: every pointer's full copy is in `msgs` by construction.
-                msgs = modelview.fold_evidence(msgs)
+                msgs, _n = modelview.fold_repeats(msgs)
+                repeats = modelview.repeat_pointers(msgs) - repeat_ptrs_in
+                if repeats > 0:
+                    rlog.emit("context.repeat_dedup", reshape="dedup", folded=repeats)
+                msgs = modelview.fold_check_runs(msgs)
             # C44 R1 (review 9eaadebe): THE WIRE INVARIANT. `indicators.PROSE_DROPPED_MARKER` must
             # never reach a model (#17: no literal "cria"-family token; #24: a wire invariant belongs
             # at the wire). `loop.reframe_compaction` and `server._strip_and_reframe_inbound` are the

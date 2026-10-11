@@ -55,7 +55,7 @@ def test_a_later_own_run_of_the_gates_command_is_named_in_the_note():
     note = server._last_checks_note(_Server(s), "k")
     assert "`mvn -q compile`" in note and "`mvn test`" in note
     assert "NEWER than this block" in note and "exited with code 0" in note
-    assert "1 of your calls ago" in note
+    assert "1 of your calls before this handoff" in note
 
 
 def test_each_run_is_folded_once_and_a_run_from_before_the_gate_is_not_newer():

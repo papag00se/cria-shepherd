@@ -135,6 +135,9 @@ CONTINUATION_MARKER = "⟦ctx:continuation⟧"   # leads cria's compaction refra
 # path — the loop instead re-plans from the summary) lives in prompts/reanchor.txt. Seed incident: a
 # compacted model treated its OWN earlier work as a previous agent's and duplicated a file under a
 # different dir; the note re-orients it to inspect before creating.
+# Both `compaction_reframe_dropped*` templates say this in their first sentence (a test pins it): the
+# continuation then holds NO model-authored prose, only re-derived ground truth.
+_DROPPED_PROSE_LEAD = "the handoff summary from that turn did not survive"
 # ONE FOLDER PER RUN (operator direction 2026-07-11): everything cria produces for a session —
 # call captures, reasoning files, the plan mirror, the critic's verify dumps — lands under
 # <runs_dir>/<session>/, keyed by the SAME session id the captures use. No more tying a
@@ -5383,6 +5386,21 @@ class Loop:
                         and CONTINUATION_MARKER in _content_text(m.get("content"))), "")
         if self._ctx.reasoner_role is None or not summary.strip():
             return canned
+        # NO MODEL PROSE SURVIVED → THERE IS NOTHING TO ORIENT FROM THAT THE CODER DOES NOT ALREADY HOLD.
+        # When the briefing was rejected, the continuation message carries only cria's re-derived ground
+        # truth (workspace listing + the repo's own check output), verbatim, in its own carrier — and this
+        # seat was handed exactly that and asked to "state what has been built / what remains". All it
+        # can do is PARAPHRASE THE CHECKER, and a paraphrase is a second voice speaking over the tool
+        # (principles 2, 5b): phi4/Java A6 call 0164 turned javac's "class, interface, enum, or record
+        # expected" into "missing declarations … ensure Importer.java contains the appropriate
+        # declarations", the coder obeyed (call 0165) and wrapped the file in an extra class; A2 turned a
+        # type error into "change long to int or vice versa". Measured over every phi4/Java capture, 34
+        # of 34 firings of this seat were this shape; most carried a repair plan the checker never
+        # stated. The canned re-anchor says the only true thing (inspect before creating; do not
+        # recreate) and the checker's own words reach the coder untouched.
+        if _DROPPED_PROSE_LEAD in summary:
+            rlog.emit("loop.reanchor_skipped_no_prose", level="info")
+            return canned
         # …AND THE DISK. The sibling seat — the self-compaction briefing writer — was given this
         # exact fix, and its comment says why: "This inventory was already gathered on the line
         # below, but only to CORRECT the briefing after the fact. The writer never saw it and
@@ -8497,7 +8515,8 @@ def newer_own_run(sess) -> str:
     ago = max(0, getattr(sess, "action_seq", 0) - seq)
     return prompts.fill(prompts.load("checks_note_newer_run"),
                         commands=", ".join(f"`{c}`" for c in cmds),
-                        ago=f"{ago} of your calls ago" if ago else "your latest call",
+                        ago=(f"{ago} of your calls before this handoff" if ago
+                             else "your latest call before this handoff"),
                         exit=f", and that run exited with code {code}" if code is not None else "")
 
 
@@ -9492,8 +9511,7 @@ def _fetched_facts_anchor(sess, messages: list[dict] | None = None) -> dict | No
 # signal when the repeat is a refusal it kept re-earning". Protecting refusals from the fold would
 # ship the same 1,529-byte paragraph nine times instead (measured, 20260823T032555 prompt 0084:
 # 11.6 KB of a 79.2 KB prompt) while telling the reader exactly as much.
-_ANCHOR_MARKERS_FOR_DEDUP = (selfcompact.FACTS_MARKER, selfcompact.TASK_MARKER,
-                             selfcompact.SUMMARY_MARKER, BRIEFING_OPEN, CONTINUATION_MARKER)
+_ANCHOR_MARKERS_FOR_DEDUP = modelview.ANCHOR_MARKERS_FOR_DEDUP
 
 
 def _elide_ledger_copies(msgs: list[dict], sess, rlog=None) -> list[dict]:
@@ -9509,13 +9527,9 @@ def _elide_ledger_copies(msgs: list[dict], sess, rlog=None) -> list[dict]:
                                        skip_prefix=selfcompact.FACTS_MARKER)
     if n and rlog is not None:
         rlog.emit("context.ledger_dedup", reshape="dedup", excised=n)
-    # …and the same rule for whole messages the harness repeated verbatim, which the ledger units
-    # cannot reach: a file read twice, cria's own refusal re-earned, one page delivered twice.
-    # Measured at 13% of coder prompts and 2.2 MB. See dedup.fold_repeated_messages.
-    out, folded = dedup.fold_repeated_messages(
-        out, prompts.load("repeated_message_note").strip(), protect=_ANCHOR_MARKERS_FOR_DEDUP)
-    if folded and rlog is not None:
-        rlog.emit("context.repeat_dedup", reshape="dedup", folded=folded)
+    # Whole repeated messages are NOT folded here: that is a wire fold (`modelview.fold_repeats`,
+    # applied in `Upstream._prep` after the floor) — folded here, the floor could drop the surviving
+    # copy and leave a pointer to nothing.
     return out
 
 

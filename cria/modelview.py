@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import re
 
-from . import contextfloor, dedup, probegate, prompts
+from . import contextfloor, dedup, probegate, prompts, selfcompact
 
 # The messages that carry the repo's own check evidence into the model's view, each rendered by a
 # different owner: the compaction continuation freezes the gate's findings into the harness's history
@@ -51,7 +51,40 @@ def wire_messages(messages: list[dict]) -> list[dict]:
     return messages
 
 
+# An anchor block is the DESIGNATED single copy of its content: folding it into a pointer at a later
+# duplicate would move the content out of the protected head. `loop.BRIEFING_OPEN` is the one literal
+# mirrored here (modelview cannot import loop); `loop._ANCHOR_MARKERS_FOR_DEDUP` is this tuple and a
+# test pins the literal.
+BRIEFING_OPEN = "⟦ctx:briefing⟧"
+ANCHOR_MARKERS_FOR_DEDUP = (selfcompact.FACTS_MARKER, selfcompact.TASK_MARKER,
+                            selfcompact.SUMMARY_MARKER, BRIEFING_OPEN, CONTINUATION)
+
+
+def fold_repeats(messages: list[dict]) -> tuple[list[dict], int]:
+    """ONE COPY OF EACH BYTE-IDENTICAL user/tool PAYLOAD (newest wins; `dedup.fold_repeated_messages`).
+    It lives at the wire, after the floor, for the same reason `fold_check_runs` does: it ran at the loop
+    call site BEFORE the floor, the floor then dropped the surviving newest copy, and the pointer
+    ("read the full copy below") outlived its target (phi4/Java A6 call 0005: repeat_dedup folded 1 and
+    the same call's floor trimmed ~4k tokens; no copy was left). (#24: a pointer must never outlive its
+    target in the body actually sent.)"""
+    return dedup.fold_repeated_messages(
+        messages, prompts.load("repeated_message_note").strip(), protect=ANCHOR_MARKERS_FOR_DEDUP)
+
+
+def repeat_pointers(messages: list[dict]) -> int:
+    """How many whole-message repeat pointers ``messages`` carries (for reporting what a wire pass folded,
+    including a fold the floor's sizing trial already applied)."""
+    note = prompts.load("repeated_message_note").strip()
+    return sum(1 for m in messages if isinstance(m, dict) and m.get("content") == note)
+
+
 def fold_evidence(messages: list[dict]) -> list[dict]:
+    """Every wire-side fold: repeated payloads (`fold_repeats`) and the check carriers' runs
+    (`fold_check_runs`). The sizing form the floor trial and `visible_tokens` use."""
+    return fold_check_runs(fold_repeats(messages)[0])
+
+
+def fold_check_runs(messages: list[dict]) -> list[dict]:
     """ONE COPY OF THE CHECK EVIDENCE. Whatever the check carriers above repeat — the same failure
     block in the continuation and in the steer, the governance paragraph in all three, a build tool's
     own error list printed again under its failure banner — is shown once (the newest copy) and a
