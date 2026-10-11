@@ -9506,8 +9506,7 @@ def _fetched_facts_anchor(sess, messages: list[dict] | None = None) -> dict | No
 # signal when the repeat is a refusal it kept re-earning". Protecting refusals from the fold would
 # ship the same 1,529-byte paragraph nine times instead (measured, 20260823T032555 prompt 0084:
 # 11.6 KB of a 79.2 KB prompt) while telling the reader exactly as much.
-_ANCHOR_MARKERS_FOR_DEDUP = (selfcompact.FACTS_MARKER, selfcompact.TASK_MARKER,
-                             selfcompact.SUMMARY_MARKER, BRIEFING_OPEN, CONTINUATION_MARKER)
+_ANCHOR_MARKERS_FOR_DEDUP = modelview.ANCHOR_MARKERS_FOR_DEDUP
 
 
 def _elide_ledger_copies(msgs: list[dict], sess, rlog=None) -> list[dict]:
@@ -9523,13 +9522,9 @@ def _elide_ledger_copies(msgs: list[dict], sess, rlog=None) -> list[dict]:
                                        skip_prefix=selfcompact.FACTS_MARKER)
     if n and rlog is not None:
         rlog.emit("context.ledger_dedup", reshape="dedup", excised=n)
-    # …and the same rule for whole messages the harness repeated verbatim, which the ledger units
-    # cannot reach: a file read twice, cria's own refusal re-earned, one page delivered twice.
-    # Measured at 13% of coder prompts and 2.2 MB. See dedup.fold_repeated_messages.
-    out, folded = dedup.fold_repeated_messages(
-        out, prompts.load("repeated_message_note").strip(), protect=_ANCHOR_MARKERS_FOR_DEDUP)
-    if folded and rlog is not None:
-        rlog.emit("context.repeat_dedup", reshape="dedup", folded=folded)
+    # Whole repeated messages are NOT folded here: that is a wire fold (`modelview.fold_repeats`,
+    # applied in `Upstream._prep` after the floor) — folded here, the floor could drop the surviving
+    # copy and leave a pointer to nothing.
     return out
 
 
