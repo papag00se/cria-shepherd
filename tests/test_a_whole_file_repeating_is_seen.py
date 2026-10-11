@@ -109,6 +109,7 @@ class ItIsAffordableTests(unittest.TestCase):
         frag_len = 12
         frames = [{"choices": [{"index": 0, "delta": {"content": text[i:i + frag_len]}}]}
                  for i in range(0, len(text), frag_len)]
+        frames[-1]["choices"][0]["finish_reason"] = "stop"
         lines = [b"data: " + json.dumps(f).encode() + b"\n" for f in frames] + [b"data: [DONE]\n"]
 
         class _Resp:

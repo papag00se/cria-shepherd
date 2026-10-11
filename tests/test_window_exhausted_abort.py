@@ -70,7 +70,10 @@ def _sse(frames: int, *, shape: str = "args"):
         frag = f" word{i} "
         delta = ({"tool_calls": [{"index": 0, "function": {"arguments": frag}}]}
                  if shape == "args" else {"content": frag})
-        lines.append(b"data: " + json.dumps({"choices": [{"delta": delta}]}).encode() + b"\n")
+        choice = {"delta": delta}
+        if i == frames - 1:
+            choice["finish_reason"] = "tool_calls" if shape == "args" else "stop"
+        lines.append(b"data: " + json.dumps({"choices": [choice]}).encode() + b"\n")
     lines.append(b"data: [DONE]\n")
 
     class _Resp:

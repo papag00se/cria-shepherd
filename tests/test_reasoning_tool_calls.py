@@ -427,7 +427,8 @@ class NeverDoublesUpAndNeverOverwrites(unittest.TestCase):
         """`length` means the reply was cut at the output cap; the truncation guard owns that
         decision and must still see it."""
         comp = recover_reasoning_tool_calls(_reply(LFM2_VERBATIM, finish="length"), MENU, Rec())
-        self.assertTrue(_calls(comp))               # the call is still recovered ...
+        self.assertEqual(_calls(comp), [])         # incomplete reasoning cannot become an action
+        self.assertEqual(comp["choices"][0]["message"]["reasoning_content"], LFM2_VERBATIM)
         self.assertEqual(comp["choices"][0]["finish_reason"], "length")   # ... the verdict is not
 
 

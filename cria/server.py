@@ -59,13 +59,13 @@ from . import statusline
 from .toolmenu import add_cheatsheet, focus_tools
 from .turnstats import StatsStore
 from .upstream import Upstream, UpstreamError
-from . import wsview
+from . import wsview, generation
 from .writeproxy import advertise, native_search_name, needs_translation, redact_secrets, represent_inbound, translate_outbound
 
 
-def _error_sse(message: str) -> bytes:
+def _error_sse(message: str | dict) -> bytes:
     """Convey an error inside an already-open SSE stream (headers are 200 by then)."""
-    payload = {"error": {"message": message, "type": "upstream_error"}}
+    payload = {"error": message if isinstance(message, dict) else {"message": message, "type": "upstream_error"}}
     return b"data: " + json.dumps(payload).encode("utf-8") + b"\n\ndata: [DONE]\n\n"
 
 
@@ -1110,7 +1110,7 @@ class CriaHandler(BaseHTTPRequestHandler):
             for line in reversed(self._take_connect_lines(rlog)):
                 _prepend_content_line(completion, f"{MARKER}{line}")
         tool_turn = any((ch.get("message") or {}).get("tool_calls") for ch in completion.get("choices", []))
-        if not tool_turn and stats.calls >= 2:  # a text answer after real work → the turn ended
+        if not tool_turn and not generation.incomplete(completion) and stats.calls >= 2:  # a text answer after real work → the turn ended
             # Reset ONLY once the tally has actually been REPORTED. The reset used to be
             # unconditional while the summary was gated on visible output, so an EMPTY answer
             # (no tool calls, no content — which this path sees often) threw the counts away with
@@ -1285,6 +1285,7 @@ class CriaHandler(BaseHTTPRequestHandler):
         """Lower the model's synthetic-tool calls to shell, when translation is active for this
         request (set up in `_setup_translation`). ``sess_key`` enables webfetch's per-session
         fetch/search repeat + stop-guessing gates."""
+        completion = generation.safe_completion(completion)
         if self._shell_tool is not None:
             translate_outbound(completion, self._shell_tool, rlog, injected=getattr(self, "_synthetic", set()),
                                brave_key=getattr(self, "_brave_key", None),
@@ -1522,7 +1523,7 @@ class CriaHandler(BaseHTTPRequestHandler):
             yield from wrap_stream(stream, indic)
         except UpstreamError as e:
             rlog.emit("response.error", level="error", error=str(e))
-            yield _error_sse(str(e))
+            yield _error_sse(e.response_error if generation.is_generation_error(e.response_error) else str(e))
         except Exception as e:  # noqa: BLE001 — never die silently mid-stream (the g4 hole)
             rlog.emit("response.error", level="error", error=repr(e))
             yield _error_sse(f"cria internal error: {e}")
@@ -1567,7 +1568,7 @@ class CriaHandler(BaseHTTPRequestHandler):
             # caller surfaces a clean 502/failed and the client retries, instead of recording "done".
             raise UpstreamError("upstream returned a non-JSON 200 body: "
                                 + repr(content_reduce.clip(raw, 200))) from e
-        if not body.get("tools"):
+        if not body.get("tools") and not generation.incomplete(comp):
             # The HARNESS offered no tools (a compaction/summary, a question) — a tool-call answer
             # (native or a recovered dialect leak) is spurious. Coerce it back to text so an empty
             # or dialect-only "answer" recovers the summary from the model's reasoning.
@@ -1595,7 +1596,10 @@ class CriaHandler(BaseHTTPRequestHandler):
             comp, indic = self._produce_completion(body, rlog, session_key(self.headers, body.get("messages", [])))
         except UpstreamError as e:
             rlog.emit("response.error", level="error", error=str(e))
-            self._send_json(502, {"error": f"upstream error: {e}"})
+            if generation.is_generation_error(e.response_error):
+                self._send_json(e.code or (500 if generation.is_protocol_error(e.response_error) else 502), {"error": e.response_error})
+            else:
+                self._send_json(502, {"error": f"upstream error: {e}"})
             return
         except Exception as e:  # noqa: BLE001 — the fail-SILENT hole: any other exception killed the
             # handler thread with no response and no event (g4: FileNotFoundError on a prompt file

@@ -87,6 +87,14 @@ write steering may read the structured call prefix; reasoning/answer-only notice
 do not invent a cut call or a write. No new retry loop, reserve/refit, calibration,
 output cap or semantic exact-content assist is added.
 
+After those existing guards, the shared coder/public drive boundary transfers any
+still-incomplete result directly to the caller. Every completion judge/probe is
+bypassed, including nested coder calls. The original noncompleted status and full
+evidence return with the task pending, with no extra retry or counter change.
+An existing guard retry that yields a genuinely complete acting result proceeds
+normally. Human refusal notes also state incomplete/actions-withheld facts rather
+than inventing a cut call or a token-budget cause.
+
 The protected-input preflight still raises exactly
 `UpstreamError("Measured input cannot fit the context window without losing protected input")`
 with zero generation POSTs.

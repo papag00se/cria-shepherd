@@ -43,8 +43,8 @@ class Rlog:
         self.events.append((kind, kw))
 
 
-def sse(delta=None, usage=None):
-    payload = {"choices": [{"delta": delta or {}}]}
+def sse(delta=None, usage=None, finish=None):
+    payload = {"choices": [{"delta": delta or {}, "finish_reason": finish}]}
     if usage:
         payload["usage"] = usage
     return b"data: " + json.dumps(payload).encode() + b"\n"
@@ -148,13 +148,13 @@ class AnUnfinishedStreamIsStillLoggedTests(unittest.TestCase):
     def test_a_clean_stream_is_written_pure(self):
         """Unchanged: a complete block stays greppable and diffable with no header."""
         tmp, _ = self.drive_watched([sse({"reasoning_content": "a complete thought"}),
-                                     sse({"content": "answer"}, usage={"completion_tokens": 4}),
+                                     sse({"content": "answer"}, usage={"completion_tokens": 4}, finish="stop"),
                                      b"data: [DONE]\n"])
         self.assertEqual(files(tmp)[0].read_text(), "a complete thought")
 
     def test_it_is_written_exactly_once(self):
         tmp, rlog = self.drive_watched([sse({"reasoning_content": "one thought"}),
-                                        sse({"content": "x"}, usage={"completion_tokens": 2}),
+                                        sse({"content": "x"}, usage={"completion_tokens": 2}, finish="stop"),
                                         b"data: [DONE]\n"])
         self.assertEqual(len(files(tmp)), 1)
         self.assertEqual(len([k for k, _ in rlog.events if k == "coder.reasoning"]), 1)

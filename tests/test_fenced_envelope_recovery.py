@@ -140,7 +140,9 @@ class RefusedTests(unittest.TestCase):
     def test_a_reply_cut_at_the_output_cap_is_refused(self):
         ch, rec = _run("feed_java_0220_list_dir", finish="length")
         self.assertEqual(_calls(ch), [])
-        self.assertEqual(rec.fields("massage.fenced_call_refused")["reason"], "length")
+        self.assertEqual(ch["finish_reason"], "length")
+        self.assertEqual(ch["message"]["content"], FIX["replies"]["feed_java_0220_list_dir"]["content"])
+        self.assertNotIn("massage.fenced_call_recovered", rec.kinds())
 
     def test_a_nested_envelope_is_refused(self):
         env = '```json\n{"name": "list_dir", "arguments": {"path": "."}}\n```'

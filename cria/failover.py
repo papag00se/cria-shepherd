@@ -17,6 +17,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Callable, Optional, Sequence
 
+from . import generation
 
 class Failure(Enum):
     RATE_LIMIT = "rate_limit"            # F1: 429, retry-able
@@ -147,6 +148,8 @@ def run(chain_name: str, attempts: Sequence[Attempt], classify: Callable[[Except
         try:
             return cur.call()
         except Exception as e:  # noqa: BLE001 — classify decides what's retryable
+            if generation.is_protocol_error(getattr(e, "response_error", None)):
+                raise
             action = decide_action(classify(e), cur.role, chain_name, roles, attempt,
                                    behavior=behavior)
             if isinstance(action, RetrySame):

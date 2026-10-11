@@ -20,7 +20,7 @@ import json
 import uuid
 from collections.abc import Iterator
 
-from . import bodykeys, prompts
+from . import bodykeys, prompts, generation
 from .indicators import MARKER, THINK_FENCE
 
 
@@ -242,11 +242,6 @@ def failed_event(resp_id: str, message: str) -> bytes:
                   {"response": {"id": resp_id, "status": "failed", "error": {"message": message}}})
 
 
-# The model's reasoning can be a very long chain-of-thought; forward a generous but bounded slice
-# as the "thinking" preamble (Codex renders the reasoning summary), not the entire transcript.
-_REASONING_CAP = 8000
-
-
 def _reasoning_item(text: str, idx: int) -> tuple[list[bytes], dict]:
     """A Responses REASONING item — the model's 'thinking'. Emitted on BOTH reasoning channels:
 
@@ -388,13 +383,15 @@ def body_events(completion: dict, resp_id: str, model: str, banner: str | None =
     """Everything after `response.created`: the model's reasoning (its 'thinking', when present and
     enabled), an optional cria banner line, one message item (if any text), one function_call item
     per tool call, then `response.completed`."""
+    completion = generation.safe_completion(completion)
+    is_incomplete = generation.incomplete(completion)
     choice = (completion.get("choices") or [{}])[0]
     msg = choice.get("message") or {}
     out_items: list[dict] = list(extra_items or [])   # e.g. the closed live-status item at index 0
     idx = start_index
 
     reasoning = msg.get("reasoning_content")
-    reasoning = reasoning.strip()[:_REASONING_CAP] if isinstance(reasoning, str) and reasoning.strip() else ""
+    reasoning = reasoning if isinstance(reasoning, str) else ""
 
     # The model's REASONING first, on the NATIVE reasoning channel — Codex renders it as the live
     # 'thinking' preamble (transient). cria captures it (upstream assembles message.reasoning_content)
@@ -434,7 +431,14 @@ def body_events(completion: dict, resp_id: str, model: str, banner: str | None =
 
     resp = {"id": resp_id, "object": "response", "status": "completed", "model": model,
             "output": out_items, "usage": _map_usage(completion.get("usage"))}
-    yield _event("response.completed", {"response": resp})
+    if generation.EVIDENCE in completion:
+        resp[generation.EVIDENCE] = completion[generation.EVIDENCE]
+    if is_incomplete:
+        resp["status"] = "incomplete"
+        resp["incomplete_details"] = {"reason": generation.incomplete_reason(completion)}
+        for item in resp["output"]:
+            if item.get("type") != "reasoning": item["status"] = "incomplete"
+    yield _event("response.incomplete" if is_incomplete else "response.completed", {"response": resp})
 
 
 def to_responses_sse(completion: dict, model: str, resp_id: str | None = None, banner: str | None = None,
@@ -450,11 +454,13 @@ def to_responses_json(completion: dict, model: str, show_reasoning: bool = False
                       custom_tools: frozenset[str] = frozenset()) -> dict:
     """Non-streaming Responses object (stream:false). Mirrors ``body_events`` — including the
     ⟦cria⟧ lead (reasoning transcript + banner) — so the buffered and streaming paths agree."""
+    completion = generation.safe_completion(completion)
+    is_incomplete = generation.incomplete(completion)
     choice = (completion.get("choices") or [{}])[0]
     msg = choice.get("message") or {}
     out: list[dict] = []
     reasoning = msg.get("reasoning_content")
-    reasoning = reasoning.strip()[:_REASONING_CAP] if isinstance(reasoning, str) and reasoning.strip() else ""
+    reasoning = reasoning if isinstance(reasoning, str) else ""
     if show_reasoning and reasoning:
         out.append({"id": _new_id("rs"), "type": "reasoning",
                     "summary": [{"type": "summary_text", "text": reasoning}],
@@ -483,8 +489,15 @@ def to_responses_json(completion: dict, model: str, show_reasoning: bool = False
         out.append({"id": _new_id("fc"), "type": "function_call", "status": "completed",
                     "name": fn.get("name", ""), "call_id": tc.get("id") or _new_id("call"),
                     "arguments": _as_args_str(fn.get("arguments"))})
-    return {"id": _new_id("resp"), "object": "response", "status": "completed", "model": model,
-            "output": out, "usage": _map_usage(completion.get("usage"))}
+    result = {"id": _new_id("resp"), "object": "response", "status": "incomplete" if is_incomplete else "completed", "model": model,
+              "output": out, "usage": _map_usage(completion.get("usage"))}
+    if generation.EVIDENCE in completion:
+        result[generation.EVIDENCE] = completion[generation.EVIDENCE]
+    if is_incomplete:
+        result["incomplete_details"] = {"reason": generation.incomplete_reason(completion)}
+        for item in result["output"]:
+            if item.get("type") != "reasoning": item["status"] = "incomplete"
+    return result
 
 
 def _map_usage(u) -> dict:

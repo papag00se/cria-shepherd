@@ -36,8 +36,8 @@ class Rlog:
         self.events.append((kind, kw))
 
 
-def sse(delta=None, usage=None):
-    payload = {"choices": [{"delta": delta or {}}]}
+def sse(delta=None, usage=None, finish=None):
+    payload = {"choices": [{"delta": delta or {}, "finish_reason": finish}]}
     if usage:
         payload["usage"] = usage
     return b"data: " + json.dumps(payload).encode() + b"\n"
@@ -94,13 +94,13 @@ class ThePartialSurvivesADeathWithNoAftermathTests(unittest.TestCase):
     def test_a_clean_turn_leaves_only_the_real_file(self):
         """The partial is scaffolding; it must not survive a normal turn and be walked as evidence."""
         tmp = self.drive([sse({"reasoning_content": "a complete thought"}),
-                          sse({"content": "answer"}, usage={"completion_tokens": 4}),
+                          sse({"content": "answer"}, usage={"completion_tokens": 4}, finish="stop"),
                           b"data: [DONE]\n"])
         self.assertEqual(partials(tmp), [])
         self.assertEqual(finals(tmp)[0].read_text(), "a complete thought")
 
     def test_a_turn_with_no_reasoning_writes_no_partial(self):
-        tmp = self.drive([sse({"content": "hi"}, usage={"completion_tokens": 1}),
+        tmp = self.drive([sse({"content": "hi"}, usage={"completion_tokens": 1}, finish="stop"),
                           b"data: [DONE]\n"])
         self.assertEqual(partials(tmp), [])
 

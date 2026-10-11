@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Iterator
 
 from . import bodykeys
-from . import (callcapture, config, contextfloor, failover, indicators, massage, modelview,
+from . import (callcapture, config, contextfloor, failover, generation, indicators, massage, modelview,
                reasoning, rumination, tokenratio)
 
 # Sentinel for "window not yet resolved" (distinct from None = "no window / skip floor").
@@ -61,6 +61,11 @@ class UpstreamError(Exception):
         self.response_error = response_error or {"message": str(message)}
 
 
+class UpstreamProtocolError(UpstreamError):
+    """A typed malformed-generation response, never an availability/retry signal."""
+    code = 500
+
+
 def _http_error_body(err) -> bytes:
     """Retain the single-read rejection for both fitting and protocol translation."""
     if not hasattr(err, "response_body"):
@@ -74,6 +79,9 @@ def _http_error_body(err) -> bytes:
             error = dict(inner)
             if not isinstance(error.get("message"), str):
                 error["message"] = str(err)
+            if generation.is_protocol_error(error):
+                err.response_error = error
+                return err.response_body
             real, window = error.get("n_prompt_tokens"), error.get("n_ctx")
             if (err.code == 400 and type(real) is int and type(window) is int
                     and real > window > 0):
@@ -696,7 +704,8 @@ class Upstream:
                     safety_override = refit  # re-prep tighter against the server's real count, retry
                     continue
                 rlog.emit("upstream.error", level="error", url=self._chat_url, error=str(e))
-                err = UpstreamError(str(e), getattr(e, "response_error", None))
+                error_class = UpstreamProtocolError if generation.is_protocol_error(getattr(e, "response_error", None)) else UpstreamError
+                err = error_class(str(e), getattr(e, "response_error", None))
                 err.code = getattr(e, "code", None)  # carry the real HTTP status for classify_failure
                 raise err from e
 
@@ -842,6 +851,8 @@ class Upstream:
                     resp.close()
                 break
             except (UpstreamError, OSError) as e:  # OSError → socket read-timeout mid-response
+                if generation.is_protocol_error(getattr(e, "response_error", None)):
+                    raise
                 action = failover.decide_action(
                     failover.classify_failure(getattr(e, "code", None), str(e)),  # real 429/408 status, not None
                     "upstream", "upstream", ("upstream",), attempt)
@@ -890,7 +901,9 @@ class Upstream:
         finish: str | None = None
         usage: dict | None = None
         aborted: dict | None = None
-        stream_error: str | None = None
+        stream_error: str | dict | None = None
+        generation_evidence = {}
+        wire_raw = bytearray()
         watched_len = 0
         gen_tail = ""  # rolling tail of ALL generated chars (incl. tool-call args) for the degenerate-run backstop
         wide_tail = ""      # the same tail, 32 KB of it, for the strided wide-unit check
@@ -921,6 +934,7 @@ class Upstream:
         rlog.live_chars = 0
         try:
             for raw in resp:
+                wire_raw.extend(raw)
                 if not raw.startswith(b"data:"):
                     continue
                 payload = raw[5:].strip()
@@ -938,8 +952,9 @@ class Upstream:
                 # through a write_file; the identical request non-streamed returns it complete.)
                 if isinstance(obj.get("error"), (dict, str)):
                     err = obj["error"]
-                    stream_error = str(err.get("message") or err) if isinstance(err, dict) else str(err)
+                    stream_error = dict(err) if generation.is_protocol_error(err) else str(err.get("message") or err) if isinstance(err, dict) else str(err)
                     break
+                generation_evidence.update(obj.get(generation.EVIDENCE) or {})
                 chunks_seen += 1
                 for choice in obj.get("choices", []):
                     delta = choice.get("delta") or {}
@@ -1070,6 +1085,16 @@ class Upstream:
         finally:
             resp.close()
             rlog.live_t0 = None  # the ticker must never compute a rate from a finished call
+        if stream_error is not None and generation.is_protocol_error(stream_error):
+            self._save_reasoning(capture_path, "".join(reasoning), aborted, rlog,
+                                 ending=stream_error.get("reason") or stream_error.get("message"))
+            evidence = dict(stream_error.get(generation.EVIDENCE) or {})
+            evidence["wire_raw_hex"] = bytes(wire_raw).hex()
+            evidence["stream_prefix"] = {"content": "".join(content), "reasoning_content": "".join(reasoning),
+                                         "action_prefixes": tool_acc}
+            stream_error[generation.EVIDENCE] = evidence
+            callcapture.capture_response(capture_path, {"error": stream_error}, rlog)
+            raise UpstreamProtocolError(stream_error.get("message", ""), stream_error)
         if stream_error is not None:
             # …and before the buffered re-ask discards it. The model really did think this; the only
             # thing wrong with the turn is that its transport broke.
@@ -1084,8 +1109,24 @@ class Upstream:
                       dropped_tool_arg_chars=sum(len("".join(s["args"])) for s in tool_acc.values()),
                       dropped_content_chars=len("".join(content)))
             return self.chat({k: v for k, v in body.items() if k != "stream_options"}, rlog)
+        if finish is None and aborted is None:
+            message = "Upstream stream ended without a terminal generation status"
+            evidence = {**generation_evidence, "wire_raw_hex": bytes(wire_raw).hex(),
+                        "stream_prefix": {"content": "".join(content), "reasoning_content": "".join(reasoning),
+                                          "action_prefixes": tool_acc}}
+            error = {"type": generation.INCOMPLETE_STREAM_ERROR, "message": message, generation.EVIDENCE: evidence}
+            self._save_reasoning(capture_path, "".join(reasoning), aborted, rlog, ending=message)
+            callcapture.capture_response(capture_path, {"error": error}, rlog)
+            failure = UpstreamError(message, error)
+            failure.code = None
+            raise failure
         t_end = time.monotonic()
         completion = _assemble_completion(body.get("model"), content, reasoning, tool_acc, finish, usage, aborted)
+        if generation_evidence:
+            completion[generation.EVIDENCE] = generation_evidence
+        if aborted is not None:
+            completion.setdefault(generation.EVIDENCE, {})["wire_raw_hex"] = bytes(wire_raw).hex()
+        completion = generation.safe_completion(completion)
         tokens = (usage or {}).get("completion_tokens")
         tok_s = round(tokens / (t_end - (t_first or t0)), 1) if (tokens and t_end > (t_first or t0)) else None
         if tokens and t_end > (t_first or t0):

@@ -60,7 +60,10 @@ def _sse(frames, *, readable, clock):
     lines = []
     for i in range(frames):
         delta = {"content": f" w{i} "} if readable else {}
-        lines.append(b"data: " + json.dumps({"choices": [{"delta": delta}]}).encode() + b"\n")
+        choice = {"delta": delta}
+        if i == frames - 1:
+            choice["finish_reason"] = "stop"
+        lines.append(b"data: " + json.dumps({"choices": [choice]}).encode() + b"\n")
     lines.append(b'data: {"usage": {"completion_tokens": 43442}}\n')
     lines.append(b"data: [DONE]\n")
 

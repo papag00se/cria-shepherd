@@ -75,7 +75,13 @@ class TextWriteTests(unittest.TestCase):
         sess.plan.task = task
         sess.workspace_root = ROOT
         log = _Log()
-        comp = lp._coder_turn(sess, {"messages": [], "tools": tools}, {"messages": messages or []}, step=1, rlog=log)
+        if finish == "length":
+            with self.assertRaises(loop._IncompleteCoderTurn) as incomplete:
+                lp._coder_turn(sess, {"messages": [], "tools": tools}, {"messages": messages or []}, step=1, rlog=log)
+            comp = incomplete.exception.completion
+            self.assertEqual(comp["choices"][0]["finish_reason"], "length")
+        else:
+            comp = lp._coder_turn(sess, {"messages": [], "tools": tools}, {"messages": messages or []}, step=1, rlog=log)
         ch = comp["choices"][0]
         calls = [(c["function"]["name"], json.loads(c["function"]["arguments"]))
                  for c in ch["message"].get("tool_calls") or []]

@@ -17,7 +17,7 @@ import json
 import re
 import uuid
 
-from . import bodykeys
+from . import bodykeys, generation
 from . import jsontext
 from .jsontext import extract_json_object
 from .shelltool import find_shell_tool, shell_args
@@ -220,6 +220,10 @@ def apply(completion: dict, tools=None, rlog=None, *, tool_call_fixes: bool | No
     `massage.reasoning_call_recovered` — level 1's headline mechanism, running in the arm that is
     supposed to be without it. gemma4 never exposed it because it emits 6 of these in a whole
     campaign; qwen35 emits hundreds, which is exactly why the ladder runs more than one model."""
+    completion = generation.safe_completion(completion)
+    if not generation.may_recover(completion) and not any(
+            (ch.get("message") or {}).get("tool_calls") for ch in completion.get("choices", [])):
+        return completion
     if not (_TOOL_CALL_FIXES if tool_call_fixes is None else tool_call_fixes):
         return completion
     completion = recover_leaked_tool_calls(completion, tools, rlog)  # text → real tool_calls
@@ -272,6 +276,8 @@ def recover_reasoning_text(completion: dict, rlog=None) -> dict:
     the content it was never given, so on these turns it has been blind. Nothing here manufactures
     text: `turn_text` is the one owner for reading a model's words out of either channel
     (#19, #23), and it is asked only after the content is known to be empty."""
+    if not generation.may_recover(completion):
+        return completion
     for choice in completion.get("choices", []):
         if (choice.get("finish_reason") or "") != "stop":
             continue
@@ -1159,6 +1165,8 @@ def promote_call(completion: dict, call: dict, keep: str, tools, rlog=None, **fi
     """Make ``call`` THE tool call of the first choice, with ``keep`` as its content, then run the
     repairs a native call of the same name would have met in :func:`apply` — a recovered call is
     held to the same lowering and normalisation as a native one, never exempt from it."""
+    if not generation.may_recover(completion):
+        return completion
     choice = completion["choices"][0]
     msg = choice["message"]
     msg["tool_calls"] = [call]
@@ -1222,6 +1230,8 @@ def recover_leaked_tool_calls(completion: dict, tools=None, rlog=None) -> dict:
     REASONING channel — the one place llama.cpp's own parser never looks. Chained here rather
     than added to :func:`apply` so that every caller gets it from ONE owner, including
     ``planner.py``, which calls this function directly and not ``apply``."""
+    if not generation.may_recover(completion):
+        return completion
     for choice in completion.get("choices", []):
         msg = choice.get("message")
         if not isinstance(msg, dict):
@@ -1697,6 +1707,8 @@ def recover_reasoning_tool_calls(completion: dict, tools=None, rlog=None) -> dic
     re-create the deadlock one cycle later — a second, dumber repeat-detector in the massage layer,
     shadowing the real one (principle 4). The loop already owns "the same action, again"; this
     function's only job is to stop losing the action."""
+    if not generation.may_recover(completion):
+        return completion
     schemas = _menu_schemas(tools)
     if not schemas:
         return completion  # gate 4: no menu → nothing can be an action
@@ -2003,6 +2015,8 @@ def massage_stream(chunks, model: str, tools=None, rlog=None, post=None):
 
     ``post`` (optional) transforms the recovered completion before it's emitted —
     e.g. lowering a recovered write_file to shell (writeproxy)."""
+    chunks = generation.quarantine_stream(chunks)
+    evidence = {}
     content = ""
     emitted = 0
     captured = False
@@ -2012,6 +2026,18 @@ def massage_stream(chunks, model: str, tools=None, rlog=None, post=None):
     for raw in chunks:
         if raw.strip() == b"data: [DONE]":
             continue  # skip, don't break — let the upstream generator run to its finally
+        if raw.startswith(b"data:") and raw[5:].strip() != b"[DONE]":
+            try:
+                obj = json.loads(raw[5:])
+            except (ValueError, UnicodeDecodeError):
+                obj = {}
+            if isinstance(obj, dict):
+                evidence.update(obj.get(generation.EVIDENCE) or {})
+                if obj.get("error"):
+                    if len(content) > emitted:
+                        yield _sse({"content": content[emitted:]}, model)
+                    yield raw
+                    return
         choice = _choice(raw)
         if choice is None:
             if not captured:
@@ -2049,7 +2075,7 @@ def massage_stream(chunks, model: str, tools=None, rlog=None, post=None):
                 emitted = safe
 
     if captured:
-        completion = apply({"choices": [{"message": {"role": "assistant", "content": content}}]}, tools, rlog)
+        completion = apply({generation.EVIDENCE: evidence, "choices": [{"finish_reason": finish, "message": {"role": "assistant", "content": content}}]}, tools, rlog)
         if post is not None:
             completion = post(completion)
         msg = completion["choices"][0]["message"]
@@ -2058,11 +2084,15 @@ def massage_stream(chunks, model: str, tools=None, rlog=None, post=None):
             yield _sse({"content": cleaned[emitted:]}, model)
         for i, tc in enumerate(msg.get("tool_calls") or []):
             yield _sse({"tool_calls": [{"index": i, "id": tc.get("id"), "type": "function", "function": tc["function"]}]}, model)
-        finish = "tool_calls" if msg.get("tool_calls") else "stop"
+        finish = "length" if generation.incomplete(completion) else "tool_calls" if msg.get("tool_calls") else "stop"
     elif len(content) > emitted:
         yield _sse({"content": content[emitted:]}, model)  # the held-back tail
 
-    yield _sse({}, model, finish=("tool_calls" if saw_real_tool_call and not captured else finish))
+    terminal = _sse({}, model, finish=("length" if evidence.get("incomplete") or finish == "length" else "tool_calls" if saw_real_tool_call and not captured else finish))
+    if evidence:
+        obj = json.loads(terminal[5:]); obj[generation.EVIDENCE] = evidence
+        terminal = b"data: " + json.dumps(obj, ensure_ascii=False).encode() + b"\n\n"
+    yield terminal
     yield b"data: [DONE]\n\n"
 
 

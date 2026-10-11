@@ -179,7 +179,8 @@ class CallSyntaxRefusalTests(unittest.TestCase):
         rec = Rec()
         comp = recover_leaked_tool_calls(_reply(RUN_OF_FIVE_VERBATIM, finish="length"), MENU, rec)
         self.assertEqual(_calls(comp), [])
-        self.assertIn("massage.call_syntax_truncated", rec.kinds())
+        self.assertEqual(comp["choices"][0]["finish_reason"], "length")
+        self.assertEqual(comp["choices"][0]["message"]["content"], RUN_OF_FIVE_VERBATIM)
         # positive control: the identical bytes, not cut, recover all five
         self.assertEqual(len(_calls(recover_leaked_tool_calls(_reply(RUN_OF_FIVE_VERBATIM), MENU,
                                                               Rec()))), 5)

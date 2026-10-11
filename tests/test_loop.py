@@ -1127,7 +1127,8 @@ class GuardTests(unittest.TestCase):
         self.assertEqual(rec.calls, 3)                                        # capped at MAX_TRUNCATION_RETRIES
         self.assertIn("loop.truncated_dropped", rlog.kinds())
         self.assertFalse(out["choices"][0]["message"].get("tool_calls"))      # partial write NOT forwarded
-        self.assertNotEqual(out["choices"][0]["finish_reason"], "length")     # sentinel normalized
+        self.assertEqual(out["choices"][0]["finish_reason"], "length")       # never promote a refused limit stop
+        self.assertTrue(out["generation_evidence"]["incomplete"])
 
     def test_non_write_truncation_not_retried_as_write(self):
         # A truncation with no write path (e.g. cut-off reasoning) → don't apply the write steer,
@@ -3643,7 +3644,8 @@ class GuardNoteTests(unittest.TestCase):
             "finish_reason": "length"}]}
         out = guard_truncation(dict(trunc), {"messages": [], "tools": None},
                                lambda b, r: json.dumps(trunc).encode(), _Rlog())  # never recovers → refuse
-        self.assertIn("partial write refused", " ".join(out.get("cria_notes", [])))
+        self.assertIn("actions withheld", " ".join(out.get("cria_notes", [])))
+        self.assertEqual(out["choices"][0]["finish_reason"], "length")
 
 
 class DirectCompletionGateTests(unittest.TestCase):
@@ -5049,7 +5051,8 @@ class SelfCutRefusalWordingTests(unittest.TestCase):
             "finish_reason": "length"}], "usage": {"completion_tokens": 4096}}
         body = {"messages": [{"role": "user", "content": "write it"}], "tools": [_SHELL]}
         guard_truncation(capped, body, lambda b, r: json.dumps(capped), _Rlog(), step=1, phase="c")
-        self.assertIn("output limit", body["messages"][-1]["content"])
+        self.assertIn("incomplete terminal status", body["messages"][-1]["content"])
+        self.assertEqual(capped["choices"][0]["finish_reason"], "length")
 
 
 class CriticFixInventsARouteTests(unittest.TestCase):

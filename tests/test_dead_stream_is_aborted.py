@@ -111,6 +111,7 @@ class TheStreamLoopAborts(unittest.TestCase):
         """The case principle 6 protects: a legitimate huge write_file accumulates from delta one
         and must stream to completion untouched, however many frames it takes."""
         frags = [_arg_delta(f"line{i} = compute_value({i})\n") for i in range(rumination.DEAD_STREAM_CHUNKS * 3)]
+        frags[-1]["choices"][0]["finish_reason"] = "tool_calls"
         comp, rlog = _watched(frags)
         self.assertIsNone(rlog.first("rumination.abort"))
         self.assertEqual(comp["choices"][0]["finish_reason"], "tool_calls")

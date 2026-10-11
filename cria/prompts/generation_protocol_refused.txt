@@ -1,0 +1,1 @@
+⟦ctx:generation⟧ Reply {{ATTEMPT}} ended with a native protocol error. No action from that reply was run. The task is still pending. Continue from the actual tool results and send a complete reply using the available tools.

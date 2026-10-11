@@ -47,7 +47,8 @@ from datetime import datetime, timezone
 from enum import Enum, auto
 from pathlib import Path
 
-from . import bodykeys, modelview, wsview
+from .upstream import UpstreamProtocolError
+from . import bodykeys, generation, modelview, wsview
 from . import callcapture, dedup, denial, editrecovery, execcheck, focustrim, groundtruth, indicators, massage, participation, probediscovery, probegate, probeparse, proberun, prompts, reasoning, selfcompact, shellshape, toolmenu, urlgrounding, verifytools, webfetch
 from .upstream import CallerContextRetryNoChange, ContextRefitNoChange
 from .classify import JUDGE_MAX_TOKENS, _task_key, latest_user_text
@@ -434,6 +435,7 @@ class PlanSession(GuardState):
     critic_fails: int = 0
     step_tool_calls: int = 0  # coder tool calls forwarded THIS step (the changed-anything leg)
     unexecuted_nudges: int = 0  # bounded pushes for a turn that PASTED the file instead of writing it
+    generation_errors: list[dict] = field(default_factory=list)
     # (path, sha1 of the block) of every pasted file the text-write judge has ruled on, and its answer —
     # a temperature-0 model re-pastes the same file every turn, and a settled question is not re-asked.
     text_write_judged: dict = field(default_factory=dict)
@@ -2677,6 +2679,13 @@ class LoopContext:
     assists: bool = True
 
 
+class _IncompleteCoderTurn(Exception):
+    """Private result transfer after guards; incomplete output cannot enter a gate."""
+    def __init__(self, completion: dict):
+        super().__init__('Coder reply remains incomplete after existing guards')
+        self.completion = completion
+
+
 class Loop:
     def __init__(self, ctx: LoopContext, store: LoopStore | None = None) -> None:
         self._ctx = ctx
@@ -2774,9 +2783,23 @@ class Loop:
         """Return the completion (OpenAI dict) cria should send, or ``None`` to fall
         through to the normal proxy (not a plan-driven task)."""
         with self._session_lock(session_key):
-            out = self._drive_locked(body, session_key, classification, rlog)
-            self._store.persist(session_key)  # durable plan progress → restarts RESUME, not re-plan
+            try:
+                try:
+                    out = self._drive_locked(body, session_key, classification, rlog)
+                except UpstreamProtocolError as error:
+                    sess = self._store.get(session_key)
+                    if sess is None or not getattr(error, 'coder_turn', False):
+                        raise
+                    out = self._protocol_refused(sess, session_key, body, error, rlog)
+            except _IncompleteCoderTurn as result:
+                out = result.completion
+                rlog.emit('loop.generation_incomplete', evidence=out.get(generation.EVIDENCE, {}))
+            finally:
+                self._store.persist(session_key)
             if out is not None:
+                sess = self._store.get(session_key)
+                if sess is not None and sess.generation_errors:
+                    out.setdefault(generation.EVIDENCE, {})['prior_protocol_errors'] = list(sess.generation_errors)
                 # The loop's synthesized completions carry only object+choices; a plain
                 # /v1/chat/completions client (non-Codex) needs a well-formed envelope. Codex's
                 # Responses adapter rebuilds its own, so this is for the direct chat clients.
@@ -3005,6 +3028,16 @@ class Loop:
     # ------------------------------------------------------------------ work
 
     def _coder_turn(self, sess: PlanSession, framed: dict, body: dict, *, step: int, rlog) -> dict:
+        try:
+            completion = self._coder_turn_impl(sess, framed, body, step=step, rlog=rlog)
+            if generation.incomplete(completion):
+                raise _IncompleteCoderTurn(completion)
+            return completion
+        except UpstreamProtocolError as error:
+            error.coder_turn = True
+            raise
+
+    def _coder_turn_impl(self, sess: PlanSession, framed: dict, body: dict, *, step: int, rlog) -> dict:
         """ONE guarded coder call — the shared core of BOTH driver halves (``_work`` multi-item and
         ``_drive_single_item`` synthetic/plan-off), so a coder-turn guard can NEVER land in one and
         silently miss the other (the divergence that killed the search-escape on the live path). The
@@ -3256,6 +3289,8 @@ class Loop:
         something the coder was shown nor already the file's content; and the judge answers the
         exact positive token. Only that one block is promoted; the tail (further blocks, invented
         results, a completion claim) is not forwarded and is counted in the event."""
+        if not generation.may_recover(comp):
+            return comp
         sess.pasted_block_other = False      # the ruling below belongs to THIS reply only
         if self._ctx.reasoner_chat is None or self._ctx.reasoner_role is None:
             return comp
@@ -4345,6 +4380,16 @@ class Loop:
         self._persist_plan(sess.plan, rlog)  # refresh cria's own plan mirror; advance in-memory
         return self._work(sess, key, body, rlog)
 
+    def _protocol_refused(self, sess: PlanSession, key: str, body: dict, error, rlog) -> dict:
+        sess.generation_errors.append(error.response_error)
+        if sess.unexecuted_nudges >= MAX_UNEXECUTED_NUDGES:
+            rlog.emit('loop.protocol_refusal_bound', error=error.response_error)
+            raise error
+        sess.unexecuted_nudges += 1
+        rlog.emit('loop.protocol_refused', attempt=sess.unexecuted_nudges, error=error.response_error)
+        notice = prompts.render('generation_protocol_refused', attempt=sess.unexecuted_nudges)
+        return self._renudge(sess, key, body, notice, rlog)
+
     def _replan_tail(self, sess: PlanSession, body: dict, idx: int, rlog, *, trigger: str = REPLAN_TRIGGER_ADVANCE) -> None:
         """LIVING PLAN. A step just verified — hand a dedicated reasoner the real work done and let it
         re-derive the REMAINING (not-done) steps, replacing that tail. Completed steps are immutable
@@ -4448,7 +4493,12 @@ class Loop:
             reason = reason + "\n\n" + sess.oscillation_note
             sess.oscillation_note = ""
         sess.nudge_reason = reason
-        return self._work(sess, key, body, rlog)
+        try:
+            return self._work(sess, key, body, rlog)
+        except UpstreamProtocolError as error:
+            if not getattr(error, 'coder_turn', False):
+                raise
+            return self._protocol_refused(sess, key, body, error, rlog)
 
     def _renudge_or_replan(self, sess: PlanSession, key: str, body: dict, reason: str,
                            idx: int, rlog) -> dict:
@@ -5582,6 +5632,8 @@ def _session_to_dict(sess: PlanSession) -> dict:
         "summary": sess.summary,
         "prior_work": sess.prior_work,
         "verify_fails": sess.verify_fails,
+        "generation_errors": sess.generation_errors,
+        "generation_refusal_count": sess.unexecuted_nudges if sess.generation_errors else 0,
         # A negative satisfaction verdict is completion-critical session state. Persist it so a
         # restart cannot turn the same current evidence into a false completion.
         "latest_satisfaction": sess.latest_satisfaction,
@@ -5617,6 +5669,8 @@ def _session_from_dict(d) -> PlanSession | None:
         legacy = {str(name) for name in (d.get("refused_names") or [])}
         uncovered = tuple(str(item) for item in (d.get("replan_uncovered") or []) if item)
         return PlanSession(plan=plan, summary=str(d.get("summary", "")),
+                           generation_errors=list(d.get("generation_errors") or []),
+                           unexecuted_nudges=int(d.get("generation_refusal_count", 0)),
                            prior_work=str(d.get("prior_work", "")),
                            verify_fails=int(d.get("verify_fails", 0)),
                            latest_satisfaction=(d.get("latest_satisfaction")
@@ -12357,7 +12411,8 @@ def guard_truncation(coder: dict, body: dict, coder_chat, rlog, *, step=None, ph
             break  # not a mid-write truncation → the write steer doesn't apply; refuse below
         attempt += 1
         rlog.phase = f"{phase}-continue{attempt}"
-        remedy = (prompts.render("truncation_guard_selfcut", path=path) if selfcut else
+        remedy = (prompts.render("generation_withheld_write", path=path) if generation.incomplete(coder) else
+                  prompts.render("truncation_guard_selfcut", path=path) if selfcut else
                   prompts.render("truncation_guard", path=path,
                                  limit=f"~{out_tok} tokens" if out_tok else "the output-token limit"))
         conv = conv + [{"role": "user", "content": remedy}]
@@ -12387,20 +12442,24 @@ def guard_truncation(coder: dict, body: dict, coder_chat, rlog, *, step=None, ph
         # its last write was refused and that it stopped "partway through writing the file" (#5b).
         was_write = _truncated_write_path(coder) is not None or _last_write_path_seen
         key = ("selfcut_write" if selfcut else "truncated_write") if was_write else "truncated_call"
-        _add_note(coder, ("output stopped early mid-write — partial write refused (retry in smaller pieces)"
+        _add_note(coder, ("reply incomplete — actions withheld" if generation.incomplete(coder) else
+                          "output stopped early mid-write — partial write refused (retry in smaller pieces)"
                           if was_write and selfcut else
                           "output hit the token limit — partial write refused (retry in smaller pieces)"
                           if was_write else
                           "output ended before the call was complete — partial call refused"))
-        _refusal_turn(body, prompts.load_map("call_refused")[key])
+        _refusal_turn(body, prompts.load("generation_incomplete_refused") if generation.incomplete(coder)
+                      else prompts.load_map("call_refused")[key])
         # WHICH SENTENCE WENT OUT, in the event that produced it (#12). The `path`/`selfcut` fields on
         # `loop.truncated` describe the DETECTION; nothing recorded the wording, so the incident this
         # branch was written for — 17 of 17 truncations telling the model its WRITE was refused when
         # cria's own `path is None` said it was not a write — was invisible in the log and had to be
         # reconstructed from prompt captures. Now it is one field.
-        rlog.emit("loop.truncated_refused", step=step, wording=key, was_write=was_write)
+        rlog.emit("loop.truncated_refused", step=step,
+                  wording="generation_incomplete_refused" if generation.incomplete(coder) else key,
+                  classification=key, was_write=was_write)
     elif attempt:  # recovered after steering to incremental writes
-        _add_note(coder, f"output hit the token limit — steered to incremental writes ({attempt}×)")
+        _add_note(coder, f"steered to incremental writes ({attempt}×)")
     return coder
 
 
@@ -12409,16 +12468,20 @@ def _truncated_write_path(completion: dict) -> str | None:
     (possibly cut-off) tool-call arguments. Same lenient extraction as _path_of_args — a
     truncated response can leave the args as invalid JSON, and alias-keyed writes
     (file_path/file) must keep their incremental-write steer too."""
-    for ch in completion.get("choices", []):
-        for tc in (ch.get("message") or {}).get("tool_calls") or []:
-            fn = tc.get("function") or {}
-            if fn.get("name") not in _WRITE_TOOLS:
-                continue
-            # same patch_ok gate as _write_path: a truncated write_file whose CONTENT contains
-            # patch-example text must not steer the coder to a file it never touched
-            p = _path_of_args(fn.get("arguments") or "", patch_ok=fn.get("name") == "apply_patch")
-            if p:
-                return p
+    calls = [tc for ch in completion.get("choices", [])
+             for tc in (ch.get("message") or {}).get("tool_calls") or []]
+    evidence = completion.get(generation.EVIDENCE) or {}
+    for prefix in evidence.get("call_prefixes", []):
+        calls.append({"function": {"name": prefix.get("name"), "arguments": prefix.get("arguments")}})
+    for tc in calls:
+        fn = tc.get("function") or {}
+        if fn.get("name") not in _WRITE_TOOLS:
+            continue
+        # same patch_ok gate as _write_path: a truncated write_file whose CONTENT contains
+        # patch-example text must not steer the coder to a file it never touched
+        p = _path_of_args(fn.get("arguments") or "", patch_ok=fn.get("name") == "apply_patch")
+        if p:
+            return p
     return None
 
 
@@ -12431,12 +12494,10 @@ def _output_tokens(completion: dict) -> int | None:
 def _drop_tool_calls(completion: dict) -> None:
     """Strip tool calls from a completion in place (used to REFUSE a truncated/partial write so
     it never reaches the writeproxy → disk). The turn then reads as non-acting and the loop gates
-    on ground truth. Also normalizes ``finish_reason`` away from ``length`` so downstream code
-    doesn't re-trip the truncation check."""
+    on ground truth. A length stop remains incomplete through the harness wire."""
+    generation.safe_completion(completion)
     for ch in completion.get("choices", []):
         (ch.get("message") or {}).pop("tool_calls", None)
-        if ch.get("finish_reason") == "length":
-            ch["finish_reason"] = "stop"
 
 
 def _read_tool_result(messages: list[dict], call_id: str) -> str:
@@ -12845,6 +12906,7 @@ def _dump_verify(run_dir, key: str, idx: int, total: int, step: str, system: str
 def completion_to_sse(completion: dict):
     """Fake-stream a completion dict (content and/or tool_calls) as OpenAI SSE, so a
     streaming client gets the loop's response in the format it expects."""
+    completion = generation.safe_completion(completion)
     choice = (completion.get("choices") or [{}])[0]
     msg = choice.get("message") or {}
     model = completion.get("model", "")
@@ -12854,6 +12916,8 @@ def completion_to_sse(completion: dict):
     def chunk(delta: dict, finish=None) -> bytes:
         payload = {"id": cid, "object": "chat.completion.chunk", "created": created, "model": model,
                    "choices": [{"index": 0, "delta": delta, "finish_reason": finish}]}
+        if generation.EVIDENCE in completion:
+            payload[generation.EVIDENCE] = completion[generation.EVIDENCE]
         return b"data: " + json.dumps(payload, ensure_ascii=False).encode("utf-8") + b"\n\n"
 
     yield chunk({"role": "assistant"})

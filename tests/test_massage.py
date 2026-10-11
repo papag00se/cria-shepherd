@@ -273,8 +273,8 @@ class DeepPatchTests(unittest.TestCase):
         self.assertEqual(got.count("*** End Patch"), 1)
 
 
-def _sse(delta):
-    return b"data: " + json.dumps({"choices": [{"delta": delta}]}).encode() + b"\n\n"
+def _sse(delta, finish=None):
+    return b"data: " + json.dumps({"choices": [{"delta": delta, "finish_reason": finish}]}).encode() + b"\n\n"
 
 
 class StreamMassageTests(unittest.TestCase):
@@ -289,7 +289,7 @@ class StreamMassageTests(unittest.TestCase):
         return text, calls
 
     def test_clean_stream_passes_through(self):
-        stream = [_sse({"role": "assistant"}), _sse({"content": "the answer is 42"}), _sse({}), b"data: [DONE]\n\n"]
+        stream = [_sse({"role": "assistant"}), _sse({"content": "the answer is 42"}), _sse({}, 'stop'), b"data: [DONE]\n\n"]
         text, calls = self._assemble(massage_stream(iter(stream), "m"))
         self.assertEqual(text, "the answer is 42")
         self.assertEqual(calls, [])
@@ -297,7 +297,7 @@ class StreamMassageTests(unittest.TestCase):
     def test_leaked_call_recovered_from_stream(self):
         # a Hermes call leaked as content, split across deltas
         leaked = '<tool_call>{"name": "read_file", "arguments": {"path": "h.py"}}</tool_call>'
-        stream = [_sse({"role": "assistant"})] + [_sse({"content": c}) for c in [leaked[:20], leaked[20:]]] + [_sse({}), b"data: [DONE]\n\n"]
+        stream = [_sse({"role": "assistant"})] + [_sse({"content": c}) for c in [leaked[:20], leaked[20:]]] + [_sse({}, 'stop'), b"data: [DONE]\n\n"]
         text, calls = self._assemble(massage_stream(iter(stream), "m", tools=None))
         self.assertEqual(len(calls), 1)
         self.assertEqual(calls[0]["function"]["name"], "read_file")
@@ -307,7 +307,7 @@ class StreamMassageTests(unittest.TestCase):
         # Gemma's <|channel>thought… leaked into the CONTENT stream must be held back (captured), not
         # streamed raw to the client — the buffered path already strips it; the stream path must too.
         stream = [_sse({"role": "assistant"}), _sse({"content": "answer <|channel>thinking out loud"}),
-                  _sse({}), b"data: [DONE]\n\n"]
+                  _sse({}, 'stop'), b"data: [DONE]\n\n"]
         text, _calls = self._assemble(massage_stream(iter(stream), "m", tools=None))
         self.assertNotIn("<|channel", text)          # channel debris never reaches the client
         self.assertIn("answer", text)                 # the real content before it still streams
@@ -318,7 +318,7 @@ class StreamMassageTests(unittest.TestCase):
         # merge into one corrupt call (names/ids overwrite, args concatenate to bad JSON).
         leaked = ('<tool_call>{"name": "read_file", "arguments": {"path": "a.py"}}</tool_call>'
                   '<tool_call>{"name": "read_file", "arguments": {"path": "b.py"}}</tool_call>')
-        stream = [_sse({"role": "assistant"}), _sse({"content": leaked}), _sse({}), b"data: [DONE]\n\n"]
+        stream = [_sse({"role": "assistant"}), _sse({"content": leaked}), _sse({}, 'stop'), b"data: [DONE]\n\n"]
         _text, calls = self._assemble(massage_stream(iter(stream), "m", tools=None))
         self.assertEqual(len(calls), 2)
         self.assertEqual([c["index"] for c in calls], [0, 1])

@@ -2,6 +2,7 @@
 import json
 import os
 import subprocess
+import shlex
 from pathlib import Path
 
 import pytest
@@ -11,11 +12,11 @@ from test_server import _FakeUpstream
 
 
 @pytest.mark.skipif(not run.RESTORED_CODEX_BINARY.exists(), reason='pinned Codex integration')
-@pytest.mark.parametrize('trigger', ['usage', 'overflow', 'incomplete-history'])
+@pytest.mark.parametrize('trigger', ['usage', 'overflow', 'incomplete-history', 'length-withheld'])
 def test_pinned_codex_owns_context_recovery_at_l0(tmp_path, monkeypatch, trigger):
     from cria import massage
     monkeypatch.setattr(massage, '_TOOL_CALL_FIXES', massage._TOOL_CALL_FIXES)
-    seen, compactions = [], []
+    seen, compactions, wire_replies = [], [], []
     incomplete_args = '{"cmd":"echo unfinished'
     rejected = False
     def post(handler):
@@ -41,9 +42,12 @@ def test_pinned_codex_owns_context_recovery_at_l0(tmp_path, monkeypatch, trigger
         elif len(seen) == 1:
             message = {'tool_calls': [{'id': 'echo-proof', 'type': 'function', 'function': {
                 'name': 'exec_command', 'arguments': json.dumps({'cmd': 'echo context-proof'})}}]}
-            if trigger == 'incomplete-history':
+            if trigger in ('incomplete-history', 'length-withheld'):
                 message['tool_calls'].append({'id': 'cut-off', 'type': 'function', 'function': {
                     'name': 'exec_command', 'arguments': incomplete_args}})
+            if trigger == 'length-withheld':
+                message['tool_calls'][0]['function']['arguments'] = json.dumps({
+                    'cmd': 'printf executed > ' + shlex.quote(str(workspace / 'length-action-executed'))})
             prompt = 48614 if trigger in ('usage', 'incomplete-history') else 500
             usage = {'prompt_tokens': prompt, 'completion_tokens': 20, 'total_tokens': prompt + 20}
         elif trigger == 'overflow' and not rejected:
@@ -60,7 +64,9 @@ def test_pinned_codex_owns_context_recovery_at_l0(tmp_path, monkeypatch, trigger
             message = {'content': 'Done: context-proof.'}
             usage = {'prompt_tokens': 500, 'completion_tokens': 20, 'total_tokens': 520}
         handler._json(json.dumps({'choices': [{'message': {'role': 'assistant', **message},
-            'finish_reason': ('length' if trigger == 'incomplete-history' and len(seen) == 1 else
+            # Malformed legacy history remains covered independently. A LIMIT turn
+            # must no longer be promoted into that completed-call history.
+            'finish_reason': ('length' if trigger == 'length-withheld' and len(seen) == 1 else
                               'tool_calls' if message.get('tool_calls') else 'stop')}], 'usage': usage}).encode())
     monkeypatch.setattr(_FakeUpstream, 'do_POST', post)
     policy = tmp_path / 'policy.toml'
@@ -78,11 +84,29 @@ def test_pinned_codex_owns_context_recovery_at_l0(tmp_path, monkeypatch, trigger
     env = run._codex_env(dict(os.environ), workspace)
     env['TMPDIR'] = str(state)
     h = _Harness(0, False)
+    from cria.server import CriaHandler
+    original_write = CriaHandler._raw_write
+    def capture_wire(handler, raw):
+        if handler.server is h.cria:
+            wire_replies.append(raw)
+        return original_write(handler, raw)
+    monkeypatch.setattr(CriaHandler, '_raw_write', capture_wire)
     try:
         argv, _ = run.restored_codex_argv(run._codex_argv('Run echo context-proof, then finish.', workspace),
             'ornith1.5_9b', 49152, h.base + '/v1', Path(env['CODEX_HOME']))
         result = subprocess.run([*argv[:-1], '--skip-git-repo-check', argv[-1]], cwd=workspace,
             env=env, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=30)
+        if os.environ.get('PINNED_CONTEXT_RECEIPTS'):
+            receipt = Path(os.environ['PINNED_CONTEXT_RECEIPTS']) / trigger
+            receipt.mkdir(parents=True, exist_ok=True)
+            (receipt / 'requests.json').write_text(json.dumps(seen, ensure_ascii=False, indent=2))
+            (receipt / 'compactions.json').write_text(json.dumps(compactions, ensure_ascii=False, indent=2))
+            (receipt / 'wire.raw').write_bytes(b''.join(wire_replies))
+            (receipt / 'stdout').write_text(result.stdout)
+            (receipt / 'stderr').write_text(result.stderr)
+            (receipt / 'sandbox-command.json').write_text(json.dumps(argv, indent=2))
+            (receipt / 'result.json').write_text(json.dumps({'returncode': result.returncode,
+                'length_marker_exists': (workspace / 'length-action-executed').exists()}, indent=2))
         assert seen[0].get('tools')
         assert seen[-1].get('tools')
         assert not any(k.startswith(('context.floor', 'summarize.', 'loop.', 'plan.')) for k in h.kinds())
@@ -90,11 +114,38 @@ def test_pinned_codex_owns_context_recovery_at_l0(tmp_path, monkeypatch, trigger
             assert result.returncode == 0, result.stderr
             assert len(compactions) == 1, result.stderr
             if trigger == 'incomplete-history':
+                # Deliberately malformed legacy completed output: neither a well-formed
+                # nor a safe call. The exact literal remains unparsed historical data.
                 historical = [json.loads(call['function']['arguments'])
                               for message in compactions[0]['messages']
                               for call in message.get('tool_calls', [])]
                 assert {'_unparsed': incomplete_args} in historical
+                parse_errors = [message.get('content', '') for message in compactions[0]['messages']
+                                if message.get('role') == 'tool' and message.get('tool_call_id') == 'cut-off']
+                assert parse_errors and all('failed to parse function arguments' in text for text in parse_errors)
+                assert "-lc 'echo unfinished'" not in result.stderr
                 assert 'Reconnecting...' not in result.stderr
+                assert 'echo unfinished' not in result.stdout
+        elif trigger == 'length-withheld':
+            # Pinned Codex may reconnect after an incomplete response. That client
+            # behavior is not a cria continuation guarantee; no length call ran.
+            assert not compactions
+            assert not (workspace / 'length-action-executed').exists()
+            events = [json.loads(line[5:]) for line in b''.join(wire_replies).decode().splitlines()
+                      if line.startswith('data:')]
+            incomplete = [event['response'] for event in events if event.get('type') == 'response.incomplete']
+            assert incomplete and incomplete[0]['status'] == 'incomplete'
+            evidence = incomplete[0]['generation_evidence']
+            assert evidence['wire_finish_reason'] == 'length'
+            withheld = evidence['withheld_choices'][0]['message']['tool_calls']
+            assert withheld[1]['function']['arguments'] == incomplete_args
+            assert json.loads(withheld[0]['function']['arguments'])['cmd'].startswith('printf executed > ')
+            assert not any(event.get('item', {}).get('type') == 'function_call' for event in events)
+            assert not any(item.get('type') == 'function_call'
+                           for response in incomplete for item in response.get('output', []))
+            assert not any(message.get('tool_calls') for body in seen[1:] for message in body['messages'])
+            assert not any('echo context-proof' in str(message.get('content', ''))
+                           for body in seen[1:] for message in body['messages'] if message.get('role') == 'tool')
         else:
             # Codex0.159.3 does not repair an already-rejected context; it exits safely.
             # Recovery therefore depends on accurate usage BEFORE reaching that rejection.

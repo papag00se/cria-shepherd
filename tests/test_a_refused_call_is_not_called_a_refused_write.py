@@ -54,6 +54,10 @@ class _Rlog:
     def wording(self):
         return next((kw["wording"] for k, kw in self.events if k == "loop.truncated_refused"), None)
 
+    def classification(self):
+        return next((kw.get("classification", kw["wording"]) for k, kw in self.events
+                     if k == "loop.truncated_refused"), None)
+
 
 def _cut(name, args, finish="length"):
     return {"choices": [{"finish_reason": finish, "message": {
@@ -76,11 +80,11 @@ class TheSelectionIsDrivenByWhetherThereWasAWriteTests(unittest.TestCase):
 
     def test_a_cut_off_non_write_call_is_called_a_refused_CALL(self):
         _, rlog = self._run(_cut("exec_command", '{"cmd": "go test ./'))
-        self.assertEqual(rlog.wording(), "truncated_call")
+        self.assertEqual(rlog.classification(), "truncated_call")
 
     def test_a_cut_off_write_is_still_called_a_refused_WRITE(self):
         _, rlog = self._run(_cut("write_file", '{"path": "cart.go", "content": "package cart'))
-        self.assertEqual(rlog.wording(), "truncated_write")
+        self.assertEqual(rlog.classification(), "truncated_write")
 
     def test_a_self_cut_write_keeps_its_own_wording(self):
         _, rlog = self._run(_cut("write_file", '{"path": "cart.go", "content": "package cart',
@@ -98,8 +102,9 @@ class TheSelectionIsDrivenByWhetherThereWasAWriteTests(unittest.TestCase):
                 loop.guard_truncation(coder, body, lambda b, r: json.dumps(coder).encode(),
                                       rlog, step=1)
                 sent = "\n".join(str(m.get("content") or "") for m in body["messages"])
-                self.assertIn(prompts.load_map("call_refused")[key][:60], sent)
-                self.assertEqual(rlog.wording(), key)
+                self.assertIn(prompts.load("generation_incomplete_refused"), sent)
+                self.assertEqual(rlog.wording(), "generation_incomplete_refused")
+                self.assertEqual(rlog.classification(), key)
 
     # test_the_guard_consults_the_write_path_before_choosing (formerly here, source-text on
     # guard_truncation for "was_write" / '"truncated_call"') is REDUNDANT with the three behaviour
@@ -125,7 +130,7 @@ class TheSelectionIsDrivenByWhetherThereWasAWriteTests(unittest.TestCase):
         rlog = _Rlog()
         body = {"messages": [{"role": "user", "content": "do it"}]}
         loop.guard_truncation(write_cut, body, coder_chat, rlog, step=1)
-        self.assertEqual(rlog.wording(), "truncated_write",
+        self.assertEqual(rlog.classification(), "truncated_write",
                          "pass 1 proved a write was in flight; losing the path on the retry must "
                          "not downgrade the refusal to a plain call")
 
