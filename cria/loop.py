@@ -428,6 +428,9 @@ class PlanSession(GuardState):
     # (path, sha1 of the block) of every pasted file the text-write judge has ruled on, and its answer —
     # a temperature-0 model re-pastes the same file every turn, and a settled question is not re-asked.
     text_write_judged: dict = field(default_factory=dict)
+    # (path, sha1 of the content) of every native whole-file write_file that REPLACES most of a file the
+    # judge ruled WHOLE_FILE for (`Loop.shrinking_write_check`). Only that positive ruling is remembered.
+    shrink_write_judged: dict = field(default_factory=dict)
     # {workspace-relative path: (size, mtime)} of the FIRST complete survey this session received — the
     # baseline a later "unchanged on disk" fact is measured against. None until one lands.
     survey_baseline: dict = None
@@ -3073,6 +3076,62 @@ class Loop:
             return unread_target_fact(sess, wsview.current(root), path, messages)
         return check
 
+    def shrinking_write_check(self, sess_key: str, messages: list[dict], root, rlog):
+        """``(path, content, edit_tool) -> held text`` for the write lowering, or None when this session
+        cannot ask (assists off, no workspace, no reasoner). The text is "" when the write may proceed.
+
+        WHEN TO ASK is structural and deterministic (`shrink_measure`): the file exists, cria holds its
+        current text (a read or the coder's own write — an unknown file is silence, #11b), and the
+        candidate would leave less than half of that file's lines in place. WHAT IT IS is the same closed
+        question the pasted-file recovery puts (`WHOLE_FILE` / `OTHER`, `whole_file_ruling`), because
+        a fragment sent as a whole-file write and a fragment pasted in chat are one confusion (phi4 A4:
+        a 190-character `<dependencies>` excerpt replaced the 28-line pom.xml it had read; A3: a 22-line
+        stub replaced the 129-line Importer.java). Anything but a clear WHOLE_FILE holds the write —
+        failing toward NOT destroying — and an identical repeat is asked again, never remembered as held,
+        so it passes the moment the judge says WHOLE_FILE; `edit_file` and a full file are never gated."""
+        if not self._ctx.assists or not root or self._ctx.reasoner_chat is None or self._ctx.reasoner_role is None:
+            return None
+
+        def check(path: str, content: str, edit_tool: str = "") -> str:
+            sess = self._store.get(sess_key)
+            view = wsview.current(root)
+            if sess is None or not path or not getattr(view, "surveyed", False):
+                return ""
+            rel = view.rel(path)
+            if not rel or view.isfile(rel) is not True:
+                return ""
+            current = view.read(rel)
+            if current is None:
+                return ""
+            m = shrink_measure(current, content)
+            if m is None:
+                return ""
+            key = (rel, hashlib.sha1(content.encode("utf-8", "replace")).hexdigest())
+            if sess.shrink_write_judged.get(key) == "WHOLE_FILE":
+                return ""
+            labels = prompts.load_map("write_shrink_facts")
+            fact = prompts.fill(labels["measured"], path=rel, bytes=len(current.encode("utf-8", "replace")),
+                                lines=m["current_lines"], cand_bytes=len(content.encode("utf-8", "replace")),
+                                cand_lines=m["cand_lines"], kept=m["kept"])
+            answer = ask_closed(
+                self._ctx.reasoner_chat, self._ctx.reasoner_role,
+                prompts.load("write_call_judge") + "\n\n" + prompts.render(
+                    "write_call_judge_user", path=rel, fact=fact, content=content),
+                rlog, phase="write-shrink", max_tokens=JUDGE_MAX_TOKENS, retry_off=False)
+            verdict = whole_file_ruling(answer)
+            rlog.emit("loop.write_shrink_judged", path=rel, verdict=verdict[:40], current_lines=m["current_lines"],
+                      cand_lines=m["cand_lines"], kept=m["kept"])
+            if verdict == "WHOLE_FILE":
+                sess.shrink_write_judged[key] = verdict
+                return ""
+            removed = m["first_removed"]
+            held = prompts.fill(
+                labels["held"], fact=fact, removed=m["removed"], line=removed[0], quoted=removed[1])
+            if edit_tool:
+                held += " " + prompts.fill(labels["edit_on_menu"], tool=f"`{edit_tool}`")
+            return held
+        return check
+
     def _unexecuted_nudge_text(self, sess: PlanSession) -> str:
         """`unexecuted_write_nudge`, plus the measured fact the pasted-file recovery refused on (a file
         that exists and was never read) — consumed once."""
@@ -3185,8 +3244,7 @@ class Loop:
             # itself in a paragraph, and demanding a bare reply would refuse a clear positive for its
             # politeness. `WHOLE_FILE_MAYBE`, `NOT_WHOLE_FILE` and prose that merely mentions the word
             # have a different first word and are no ruling.
-            head = answer.upper().split()[0].strip(".,:;`*\"'") if answer.split() else ""
-            verdict = head if head in ("WHOLE_FILE", "OTHER") else answer.strip().upper()[:40]
+            verdict = whole_file_ruling(answer)
             if verdict in ("WHOLE_FILE", "OTHER"):
                 # Only a RULING is remembered. An empty or malformed answer (a timeout, a half answer)
                 # settles nothing, and caching it would silence this file's block for the whole session.
@@ -6450,6 +6508,39 @@ def _command_names_path(command: str, rel: str) -> bool:
 
 def _ran_a_command_naming(messages: list[dict], rel: str) -> bool:
     return any(_command_names_path(cmd, rel) for cmd, _res in _shell_commands_with_results(messages))
+
+
+# WHEN TO ASK, never a verdict (principle 8): a whole-file write is put to the judge only when the file
+# is big enough to have structure (SHRINK_MIN_LINES non-blank lines) and the candidate is at most half
+# its length AND keeps less than half of its distinct lines. Measured on 1,156 corpus writes to a file
+# whose text was known: 16 (1.4%) qualify, 10 of them honest rewrites the judge must let through.
+SHRINK_MIN_LINES = 8
+
+
+def shrink_measure(current: str, candidate: str) -> dict | None:
+    """The measured facts of a whole-file write over a known file, or None when it does not shrink it
+    past the detector. Lines are compared stripped, blank lines ignored."""
+    cur = [l.strip() for l in current.splitlines() if l.strip()]
+    cand = [l.strip() for l in candidate.splitlines() if l.strip()]
+    if len(cur) < SHRINK_MIN_LINES or len(cand) * 2 > len(cur):
+        return None
+    distinct, kept_set = set(cur), set(cand)
+    kept = len(distinct & kept_set)
+    if kept * 2 >= len(distinct):
+        return None
+    gone = [(i, l) for i, l in enumerate(
+        (l.strip() for l in current.splitlines()), 1) if l and l not in kept_set]
+    return {"current_lines": len(cur), "cand_lines": len(cand), "kept": kept,
+            "removed": len(gone), "first_removed": gone[0]}
+
+
+def whole_file_ruling(answer: str) -> str:
+    """The ruling of the closed WHOLE_FILE / OTHER question: the answer's FIRST word, exactly (the
+    convention `confirm_applies` uses) — a model that answers `WHOLE_FILE` and explains itself is not
+    refused for its politeness; `WHOLE_FILE_MAYBE`, `NOT_WHOLE_FILE` and prose that merely mentions the
+    word have another first word and are no ruling."""
+    head = answer.upper().split()[0].strip(".,:;`*\"'") if answer.split() else ""
+    return head if head in ("WHOLE_FILE", "OTHER") else answer.strip().upper()[:40]
 
 
 def unread_target_fact(sess, view, path: str, messages: list[dict]) -> str:

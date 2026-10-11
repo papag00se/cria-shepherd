@@ -1200,6 +1200,7 @@ class CriaHandler(BaseHTTPRequestHandler):
         self._native_search = None
         self._brave_key = None
         self._unread_target = None
+        self._shrink_check = None
         # LEVEL 2 — SIMPLE_TOOLS. Below this rung cria alters no toolset: the harness's own tools go
         # up exactly as they arrived, nothing is lowered to shell, nothing is re-presented, and the
         # menu is not curated. ONE owner for the whole tool layer, both call sites, so a rung cannot
@@ -1261,6 +1262,9 @@ class CriaHandler(BaseHTTPRequestHandler):
             self._unread_target = (self.server.loop.unread_target_check(
                 sess_key, body.get("messages", []), self._workspace_root)
                 if self.server.loop is not None else None)
+            self._shrink_check = (self.server.loop.shrinking_write_check(
+                sess_key, body.get("messages", []), self._workspace_root, rlog)
+                if self.server.loop is not None else None)
         # Tool-menu FOCUS: curate the harness's menu to the coding essentials (drop the goal/MCP/
         # connector firehose), then a terse per-tool cheat-sheet for the curated set. AFTER advertise,
         # so cria's write_file survives the curation.
@@ -1279,7 +1283,8 @@ class CriaHandler(BaseHTTPRequestHandler):
                                native_search=getattr(self, "_native_search", None), session=sess_key,
                                workspace_root=getattr(self, "_workspace_root", None),
                                external_dir_permission=self.server.cfg.safety.external_dir_permission,
-                               unread_target=getattr(self, "_unread_target", None))
+                               unread_target=getattr(self, "_unread_target", None),
+                               shrink_check=getattr(self, "_shrink_check", None))
         return completion
 
     def _focus_trim(self, framed: dict, rlog) -> tuple[dict, bool]:

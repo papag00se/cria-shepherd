@@ -74,7 +74,8 @@ class OneOwnerTests(unittest.TestCase):
         # G4 added +1 for a whole-file write naming an unread existing file; H1 REPLACED it with an
         # answer that is the file itself (`_read_in_place_of_write`, outside this function's source —
         # like the read-path guards above, it rides the read owner, not a refusal exit).
-        self.assertEqual(calls, 13)
+        # H2 +1: a whole-file write that would gut a file the coder read and the judge did not rule whole.
+        self.assertEqual(calls, 14)
 
     @staticmethod
     def _lower_fetch(result):

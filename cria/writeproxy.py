@@ -946,6 +946,13 @@ def _read_command(args: dict) -> str | None:
             f"then {steer}; else cat {q}; fi")
 
 
+def _held_shrinking_write(check, path: str, content: str, edit_names: set) -> str:
+    """The hold text for a whole-file write the shrink check refuses, or "" (no check, or it may run)."""
+    if check is None:
+        return ""
+    return check(path, content, sorted(edit_names)[0] if edit_names else "") or ""
+
+
 def _read_in_place_of_write(path: str, fact: str) -> str:
     """The command that answers a ``write_file`` for an unread existing file with that file.
 
@@ -1363,7 +1370,8 @@ def _survey_due(session: str | None, name: str) -> bool:
 def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: set[str] | None = None,
                        brave_key: str | None = None, native_search: str | None = None,
                        session: str | None = None, workspace_root: str | None = None,
-                       external_dir_permission: str = "write", unread_target=None) -> dict:
+                       external_dir_permission: str = "write", unread_target=None,
+                       shrink_check=None) -> dict:
     """Lower cria's synthetic tool calls to shell commands the harness runs, each stamped with the
     stateless re-presentation sentinel. Only lowers a tool cria INJECTED (a harness-native tool of
     the same name is the harness's to run). ``web_search`` routes to ``native_search`` when the
@@ -1510,6 +1518,16 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
                         read_in_place = True
                         if rlog is not None:
                             rlog.emit("writeproxy.write_unread_target", tool=name, path=str(path))
+                    elif (held := _held_shrinking_write(shrink_check, str(path), _repair_double_escaped(str(body)),
+                                                        injected & _EDIT_NAMES)):
+                        # A WHOLE-FILE WRITE THAT WOULD LEAVE LESS THAN HALF OF A FILE THE CODER HAS SEEN,
+                        # and that the judge did not rule the file's complete content (phi4 A4: a 190-char
+                        # `<dependencies>` excerpt over the 28-line pom.xml; A3: a 22-line stub over the
+                        # 129-line Importer.java). The call is not run; the coder's result carries the
+                        # measured facts, and its rejected payload rides after them (`_rejected_payload_note`).
+                        cmd = _refusal_command(held)
+                        if rlog is not None:
+                            rlog.emit("writeproxy.write_shrink_held", tool=name, path=str(path))
                     else:
                         # NO SECOND TRIM HERE. The fused-call tail is cut once, for every tool's
                         # every string argument, at `massage.strip_debris_from_args` — which runs on

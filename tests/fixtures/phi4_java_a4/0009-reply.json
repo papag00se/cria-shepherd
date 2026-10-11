@@ -1,0 +1,20 @@
+{
+ "choices": [
+  {
+   "message": {
+    "role": "assistant",
+    "tool_calls": [
+     {
+      "id": "nPTfStXWChtDGySr3DjMUHgWrL50BHHo",
+      "type": "function",
+      "function": {
+       "name": "write_file",
+       "arguments": "{\"path\": \"/home/jesse/suite-runs/suite-feed-pipeline-java_phi4_codex_poff_1791705464-r09m6ths/pom.xml\", \"content\": \"<dependencies>\\n    <dependency>\\n        <groupId>org.apache.commons</groupId>\\n        <artifactId>commons-csv</artifactId>\\n        <version>1.9.0</version>\\n    </dependency>\\n</dependencies>\\n\"}"
+      }
+     }
+    ]
+   },
+   "finish_reason": "tool_calls"
+  }
+ ]
+}
