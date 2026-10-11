@@ -643,17 +643,7 @@ def _fail(mode,**kw):
     _r=_b(kw)
     if len('{editfail}')+len(_r)>{cap}:
         kw.pop('current',None); _r=_b(kw)
-    # The report is plumbing the harness keeps and counts; the coder reads cria's decoding of it. Packed
-    # only when that is smaller; the drop-`current` decision above is made on the UNPACKED size, so what
-    # the coder is shown never depends on whether zlib was there.
-    try:
-        import zlib
-        _z='{zprefix}'+base64.b64encode(zlib.compress(json.dumps(kw).encode(),9)).decode()
-        if len(_z)<len(_r):
-            _r=_z
-    except Exception:
-        pass
-    sys.exit('{editfail}'+_r)
+{packblock}    sys.exit('{editfail}'+_r)
 if old==new:
     _fail('identical')
 _before=_v(str(p),s)
@@ -732,10 +722,26 @@ else:
 '''
 
 
-def _edit_command(path: str, old: str, new: str) -> str:
+# Spliced into `_fail` only for a coder at the gate's rung (`translate_outbound(pack=)`); below it the edit
+# command is byte-for-byte what it always was.
+_EDIT_PACK_BLOCK = r'''    # The report is plumbing the harness keeps and counts; the coder reads cria's decoding of it. Packed
+    # only when that is smaller; the drop-`current` decision above is made on the UNPACKED size, so what
+    # the coder is shown never depends on whether zlib was there.
+    try:
+        import zlib
+        _z='{zprefix}'+base64.b64encode(zlib.compress(json.dumps(kw).encode(),9)).decode()
+        if len(_z)<len(_r):
+            _r=_z
+    except Exception:
+        pass
+'''
+
+
+def _edit_command(path: str, old: str, new: str, pack: bool = False) -> str:
     py = (_VALIDATE_FN + _EDIT_PY).format(path=_b64(path), old=_b64(old), new=_b64(new),
                                           wrote=_WROTE, editfail=editrecovery.EDITFAIL,
-                                          zprefix=editrecovery.PACKED_PREFIX,
+                                          packblock=(_EDIT_PACK_BLOCK.format(zprefix=editrecovery.PACKED_PREFIX)
+                                                     if pack else ''),
                                           cap=content_reduce_mod.INLINE_RESULT_MAX_BYTES)
     return f"python3 - <<'{_HD_PY}'\n{py}{_HD_PY}"
 
@@ -1382,7 +1388,7 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
                        brave_key: str | None = None, native_search: str | None = None,
                        session: str | None = None, workspace_root: str | None = None,
                        external_dir_permission: str = "write", unread_target=None,
-                       shrink_check=None) -> dict:
+                       shrink_check=None, pack: bool = False) -> dict:
     """Lower cria's synthetic tool calls to shell commands the harness runs, each stamped with the
     stateless re-presentation sentinel. Only lowers a tool cria INJECTED (a harness-native tool of
     the same name is the harness's to run). ``web_search`` routes to ``native_search`` when the
@@ -1447,7 +1453,7 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
                     room = (content_reduce_mod.INLINE_RESULT_MAX_BYTES - _RIDE_ALONG_HOST_RESERVE
                             - _RIDE_ALONG_COMMAND_RESERVE - len(reason))
                     if room >= wsview.TREE_MIN_BYTES:
-                        ride = wsview.survey_command(session or "", cd=workspace_root or "", budget=room, pack=True)
+                        ride = wsview.survey_command(session or "", cd=workspace_root or "", budget=room, pack=pack)
                     elif rlog is not None:
                         rlog.emit("wsview.survey_not_carried", level="info", left=room, carrier=name)
                 cmd = _refusal_command(reason, ride)
@@ -1599,7 +1605,7 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
                             rlog.emit("writeproxy.edit_empty_old_string", tool=name, path=str(path))
                     else:
                         old, new = str(args.get("old_string") or ""), str(args.get("new_string") or "")
-                        cmd = _edit_command(str(path), old, new)
+                        cmd = _edit_command(str(path), old, new, pack=pack)
                         from . import cleanupsafety
                         raw = wsview.current().read_bytes(str(path))
                         try:
@@ -1667,7 +1673,7 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
                     room = (content_reduce_mod.INLINE_RESULT_MAX_BYTES
                             - _RIDE_ALONG_HOST_RESERVE - _RIDE_ALONG_COMMAND_RESERVE)
                     if room >= wsview.TREE_MIN_BYTES:
-                        cmd = (f"{cmd}\n{wsview.survey_command(session or '', cd=workspace_root or '', budget=room, pack=True)}")
+                        cmd = (f"{cmd}\n{wsview.survey_command(session or '', cd=workspace_root or '', budget=room, pack=pack)}")
                     elif rlog is not None:
                         rlog.emit("wsview.survey_not_carried", level="info", left=room,
                                   need=wsview.TREE_MIN_BYTES)

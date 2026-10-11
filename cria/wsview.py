@@ -1202,9 +1202,7 @@ def clear_pending(sess: str, bodies: list[str], progs: list[str], outside: list[
 
 _SURVEY_PY = r'''
 import base64, os, sys
-PIECES = []
-W = PIECES.append
-PACK = {pack}
+W = sys.stdout.write
 TREE_MAX, TREE_BYTES, FOLD_AT, PRUNE = {tree_max}, {tree_bytes}, {fold_at}, {prune!r}
 BLOB_FILES, BLOB_BYTES, BLOB_FILE = {blob_files}, {blob_bytes}, {blob_file}
 WANT = {want!r}
@@ -1303,7 +1301,7 @@ for rel in WANT:
         W("!%s\t%d\n" % (base64.b64encode(rel.encode()).decode(), sz))
         continue
     W("@%s\n" % base64.b64encode(rel.encode()).decode())
-    W(raw)
+    W(base64.b64encode(raw).decode() + "\n")
     bspent += len(raw)
     taken += 1
 W("{sec}outside{suf}\n")
@@ -1339,26 +1337,37 @@ W("{sec}done{suf}\n")
 W("entries\t%d\n" % nrec)
 W("complete\t%d\n" % complete)
 W("{close}\n")
+'''
+
+# THE PACKED VARIANT (N2) is the program above with three textual changes, so an unpacked survey is
+# byte-for-byte the program it always was (L2/L3 never see the packed one — see `survey_command(pack=)`).
+# Output is buffered, a body is kept as its RAW bytes, and the answer leaves once at the end.
+_PACK_EPILOGUE = r'''
 # THE ANSWER LEAVES HERE, ONCE. The text below is what this program has always printed (a body is its
-# base64 line). When PACK is set the same answer may travel as `{zopen} <bytes> <sha256>` + ONE base64
+# base64 line). The same answer may travel as `{zopen} <bytes> <sha256>` + ONE base64
 # line of a zlib stream in which each body is its RAW bytes (`\0<n>\n<raw>\n`) instead of base64 text,
 # because zlib cannot shrink base64 text much and shrinks the bytes it came from 3x. The header carries
 # the length and sha256 of the unpacked text so the reader proves the round trip; nothing that fails
 # to shrink, or cannot be packed here, is packed - it prints exactly the text above.
 LEGACY = "".join(p if isinstance(p, str) else base64.b64encode(p).decode() + "\n" for p in PIECES)
-if PACK:
-    try:
-        import hashlib, zlib
-        lb = LEGACY.encode()
-        packed = base64.b64encode(zlib.compress(b"".join(
-            p.encode() if isinstance(p, str) else b"\0%d\n" % len(p) + p + b"\n" for p in PIECES), 9)).decode()
-        frame = "{open}\n{zopen} %d %s\n%s\n{close}\n" % (len(lb), hashlib.sha256(lb).hexdigest(), packed)
-        if len(frame) < len(LEGACY):
-            LEGACY = frame
-    except Exception:
-        pass
+try:
+    import hashlib, zlib
+    lb = LEGACY.encode()
+    packed = base64.b64encode(zlib.compress(b"".join(
+        p.encode() if isinstance(p, str) else b"\0%d\n" % len(p) + p + b"\n" for p in PIECES), 9)).decode()
+    frame = "{open}\n{zopen} %d %s\n%s\n{close}\n" % (len(lb), hashlib.sha256(lb).hexdigest(), packed)
+    if len(frame) < len(LEGACY):
+        LEGACY = frame
+except Exception:
+    pass
 sys.stdout.write(LEGACY)
 '''
+_SURVEY_PACKED_PY = (
+    _SURVEY_PY
+    .replace("W = sys.stdout.write\n", "PIECES = []\nW = PIECES.append\n", 1)
+    .replace('    W(base64.b64encode(raw).decode() + "\\n")\n', "    W(raw)\n", 1)
+    .replace('W("{close}\\n")\n', 'W("{close}\\n")' + _PACK_EPILOGUE, 1))
+assert _SURVEY_PACKED_PY.count("PIECES") >= 4 and "{zopen}" in _SURVEY_PACKED_PY
 
 _HEREDOC = "__CRIA_SV_PY__"
 
@@ -1386,8 +1395,8 @@ def survey_helper_program() -> str:
         tree_max=TREE_MAX_ENTRIES, tree_bytes=p("tree_bytes"), fold_at=FOLD_AT,
         drain_max=FOLD_DRAIN_MAX, prune=_Param(f"set({sorted(PRUNE_DIRS)!r})"),
         blob_files=BLOB_FILES_MAX, blob_bytes=BLOB_BYTES_MAX, blob_file=BLOB_FILE_MAX,
-        want=p("want"), progs=p("progs"), outside=p("outside"), pack=_Param("0"),
-        open=SURVEY_OPEN, close=SURVEY_CLOSE, zopen=SURVEY_PACKED, sec=_SEC_PREFIX, suf=_SEC_SUFFIX)
+        want=p("want"), progs=p("progs"), outside=p("outside"),
+        open=SURVEY_OPEN, close=SURVEY_CLOSE, sec=_SEC_PREFIX, suf=_SEC_SUFFIX)
     return "import json\nPARAMS = json.loads(sys.argv[2])\n" + body.strip("\n") + "\n"
 
 
@@ -1433,12 +1442,12 @@ def survey_command(sess: str = "", *, cd: str = "", budget: int | None = None,
                 "} 2>/dev/null\n"
                 "( exit $__cria_sv_ec )\n"
                 f"{SURVEY_CMD_CLOSE}")
-    body = _SURVEY_PY.format(
+    body = (_SURVEY_PACKED_PY if pack else _SURVEY_PY).format(
         tree_max=TREE_MAX_ENTRIES, tree_bytes=tree_bytes,
         fold_at=FOLD_AT,
         drain_max=FOLD_DRAIN_MAX, prune=set(PRUNE_DIRS),
         blob_files=BLOB_FILES_MAX, blob_bytes=BLOB_BYTES_MAX, blob_file=BLOB_FILE_MAX,
-        want=list(bodies), progs=list(progs), outside=list(outside), pack=1 if pack else 0,
+        want=list(bodies), progs=list(progs), outside=list(outside), 
         open=SURVEY_OPEN, close=SURVEY_CLOSE, zopen=SURVEY_PACKED, sec=_SEC_PREFIX, suf=_SEC_SUFFIX)
     return (f"{SURVEY_CMD_OPEN}\n"
             "__cria_sv_ec=$?\n"
@@ -1570,6 +1579,11 @@ def apply_survey(view: View, survey_text: str) -> bool:
     is not this view's workspace, folding it in would answer questions about one repo with a listing
     of another. A view with NO root yet adopts the one the survey reports, which is how a session
     whose harness never announced a cwd still gets a workspace."""
+    if survey_text.startswith(SURVEY_PACKED):
+        # `_unpack` hands a packed block back unchanged when it did not verify (cut, corrupt, wrong
+        # length or sha256): say THAT, not "no tree section" — a different cause than a failed run.
+        _note_reject("packed-unverified")
+        return False
     secs = sections(survey_text)
     if "tree" not in secs:
         _note_reject("no-tree-section")

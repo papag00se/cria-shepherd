@@ -1287,7 +1287,10 @@ class CriaHandler(BaseHTTPRequestHandler):
                                workspace_root=getattr(self, "_workspace_root", None),
                                external_dir_permission=self.server.cfg.safety.external_dir_permission,
                                unread_target=getattr(self, "_unread_target", None),
-                               shrink_check=getattr(self, "_shrink_check", None))
+                               shrink_check=getattr(self, "_shrink_check", None),
+                               # N2: harness-side plumbing is packed only at the gate's rung (L4+, N1's scope);
+                               # L2/L3 lowered commands are byte-for-byte what they always were.
+                               pack=self.server.cfg.routing.done_refusals)
         return completion
 
     def _focus_trim(self, framed: dict, rlog) -> tuple[dict, bool]:

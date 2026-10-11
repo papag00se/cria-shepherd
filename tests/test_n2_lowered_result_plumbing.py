@@ -108,10 +108,59 @@ class PackedSurveyTests(unittest.TestCase):
         lines[0] = " ".join([parts[0], parts[1], "0" * 64])
         self._refused(wsview.SURVEY_OPEN + "\n" + "\n".join(lines))
 
-    def test_ride_along_asks_for_the_packed_form_and_the_gate_does_not(self):
-        self.assertIn("PACK = 1", wsview.survey_command("n2-x", cd="/w", budget=9000, pack=True))
-        self.assertIn("PACK = 0", wsview.survey_command("n2-x", cd="/w", budget=9000))
-        self.assertIn("PACK = 0", wsview.survey_helper_program())
+    def test_a_failed_pack_is_refused_for_its_own_reason(self):
+        lines = self._frame()
+        lines[0] = " ".join([lines[0].split()[0], "1", "0" * 64])
+        v = wsview.View(self.root, "n2-reason")
+        self.assertFalse(wsview.apply_survey(v, wsview.strip_survey(wsview.SURVEY_OPEN + "\n" + "\n".join(lines))[1]))
+        self.assertEqual(wsview.last_reject()["reason"], "packed-unverified")
+
+    def test_unpacked_survey_and_helper_programs_carry_no_packer(self):
+        for text in (wsview.survey_command("n2-x", cd="/w", budget=9000), wsview.survey_helper_program()):
+            self.assertNotIn("PIECES", text)
+            self.assertNotIn(wsview.SURVEY_PACKED, text)
+        self.assertIn(wsview.SURVEY_PACKED, wsview.survey_command("n2-x", cd="/w", budget=9000, pack=True))
+
+
+class PackIsGatedToTheGatesRungTests(unittest.TestCase):
+    """Packing is plumbing for a harness that counts it; L2/L3 translation (routing.simple_tools) must
+    send exactly the commands it always sent. Only L4+ (`done_refusals`, the gate's rung) packs."""
+
+    def _lowered(self, level: int, tool: str, args: dict) -> str:
+        from types import SimpleNamespace
+        from unittest.mock import Mock
+        from cria.config import RoutingConfig
+        from cria.server import CriaHandler
+        h = object.__new__(CriaHandler)
+        h.server = SimpleNamespace(cfg=SimpleNamespace(safety=SimpleNamespace(external_dir_permission="write"),
+                                                       routing=RoutingConfig(engagement_level=level)))
+        h._shell_tool = {"name": "exec_command", "schema": {"properties": {"cmd": {"type": "string"}}}}
+        h._synthetic = {tool}
+        h._workspace_root = "/w"
+        comp = {"choices": [{"message": {"tool_calls": [{"id": "t", "type": "function", "function": {
+            "name": tool, "arguments": json.dumps(args)}}]}}]}
+        sess = "n2-level-%d-%s" % (level, tool)
+        self.addCleanup(wsview.unbind, wsview.bind(wsview.View("/w", sess)))
+        out = h._translate_out(comp, sess, Mock())
+        return json.loads(out["choices"][0]["message"]["tool_calls"][0]["function"]["arguments"])["cmd"]
+
+    def test_levels_below_the_gate_send_unpacked_commands(self):
+        for level in (2, 3):
+            for tool, args in (("edit_file", {"path": "a.py", "old_string": "x", "new_string": "y"}),
+                               ("write_file", {"path": "a.py", "content": "x = 1\n"})):
+                cmd = self._lowered(level, tool, args)
+                self.assertTrue(editrecovery.PACKED_PREFIX not in cmd, (level, tool))
+                self.assertTrue(wsview.SURVEY_PACKED not in cmd, (level, tool))
+                self.assertTrue("PIECES" not in cmd, (level, tool))
+                self.assertTrue(wsview.SURVEY_CMD_OPEN in cmd, (level, tool))   # the ride-along itself is unchanged
+
+    def test_gate_levels_pack(self):
+        for level in (4, 5):
+            edit = self._lowered(level, "edit_file", {"path": "a.py", "old_string": "x", "new_string": "y"})
+            self.assertTrue("import zlib" in edit, level)
+            self.assertTrue(wsview.SURVEY_PACKED in edit, level)
+            write = self._lowered(level, "write_file", {"path": "a.py", "content": "x = 1\n"})
+            self.assertTrue(wsview.SURVEY_PACKED in write, level)
 
 
 class PackedEditFailTests(unittest.TestCase):
@@ -125,7 +174,7 @@ class PackedEditFailTests(unittest.TestCase):
         src = self.fail["current"]
         fd, path = tempfile.mkstemp(suffix=".java")
         os.write(fd, src.encode()); os.close(fd)
-        py = writeproxy._edit_command(path, "import java.util.*;", "import java.util.*;\nimport x.Y;")
+        py = writeproxy._edit_command(path, "import java.util.*;", "import java.util.*;\nimport x.Y;", pack=True)
         body = py.split("\n", 1)[1].rsplit("\n", 1)[0]
         r = subprocess.run(["python3", "-c", body.replace(writeproxy._HD_PY, "")], capture_output=True, text=True)
         os.unlink(path)
@@ -167,7 +216,7 @@ class PackedEditFailTests(unittest.TestCase):
         """`current` is dropped when the UNPACKED report exceeds the bound, as it always was."""
         big = "x = 1\n" * 3000
         fd, path = tempfile.mkstemp(suffix=".py"); os.write(fd, big.encode()); os.close(fd)
-        py = writeproxy._edit_command(path, "nothing here", "y")
+        py = writeproxy._edit_command(path, "nothing here", "y", pack=True)
         body = py.split("\n", 1)[1].rsplit("\n", 1)[0]
         r = subprocess.run(["python3", "-c", body.replace(writeproxy._HD_PY, "")], capture_output=True, text=True)
         os.unlink(path)

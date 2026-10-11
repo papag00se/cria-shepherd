@@ -13,7 +13,8 @@ INCIDENT = (Path(__file__).parent / 'fixtures/incident_parent_cleanup.py.txt').r
 def test_incident_blocks_without_a_reasoner():
     handler = object.__new__(CriaHandler)
     handler.server = SimpleNamespace(reasoner_role=None, cfg=SimpleNamespace(
-        safety=SimpleNamespace(external_dir_permission='none')))
+        safety=SimpleNamespace(external_dir_permission='none'),
+        routing=SimpleNamespace(done_refusals=False)))
     handler._shell_tool = {'name': 'exec_command', 'schema': {'properties': {'cmd': {'type': 'string'}}}}
     handler._synthetic = {'write_file'}
     handler._workspace_root = '/remote/project'
