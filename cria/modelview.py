@@ -23,6 +23,8 @@ token count; phi4's coder frames measure 10,388 est vs ~10,553 real (1.02x).
 """
 from __future__ import annotations
 
+import re
+
 from . import contextfloor, dedup, probegate, prompts
 
 # The messages that carry the repo's own check evidence into the model's view, each rendered by a
@@ -32,7 +34,8 @@ from . import contextfloor, dedup, probegate, prompts
 # run (`loop`). No call site sees all three — which is why the one-copy rule lives HERE, at the wire,
 # beside the cleaning that already decides what the model reads (#24). A test pins the literals to
 # `loop.CONTINUATION_MARKER` (modelview cannot import loop: loop imports upstream imports this).
-EVIDENCE_CARRIERS = ("⟦ctx:continuation⟧", probegate.CHECKS_MARKER, "⟦ctx:steer⟧")
+CONTINUATION = "⟦ctx:continuation⟧"
+EVIDENCE_CARRIERS = (CONTINUATION, probegate.CHECKS_MARKER, "⟦ctx:steer⟧")
 
 
 def wire_messages(messages: list[dict]) -> list[dict]:
@@ -56,3 +59,66 @@ def wire_messages(messages: list[dict]) -> list[dict]:
 def visible_tokens(messages: list[dict], tools) -> int:
     """Pre-floor chars/4 size of ``messages`` + ``tools`` as the model would be shown them."""
     return contextfloor.est_total(wire_messages(messages), tools)
+
+
+# The continuation names, at the moment it is rendered, the paired tool results the harness handed
+# over. By the time the body is serialized the floor, the gate cleaning and the orphan repair have
+# all had their say, so what that list promises ("their full original output remains in their paired
+# tool messages") can be false of the body the model actually receives: phi4 A2 call 0043 listed five
+# call ids and the body held one pair; call 0020 listed three and held none (#5b). So the list is
+# made true HERE, at the last point before serialization (#24): only ids whose assistant call AND
+# tool result are both in the outgoing messages stay on it; none left says so.
+RETAINED_HEADER = "Retained authoritative paired tool results ("
+_PAIRED_LINE = re.compile(r"^- paired tool result \(call id: ([^)\s]+)\)$")
+
+
+def _paired_ids(messages: list[dict]) -> set[str]:
+    called: set[str] = set()
+    answered: set[str] = set()
+    for m in messages:
+        if not isinstance(m, dict):
+            continue
+        for tc in m.get("tool_calls") or []:
+            if isinstance(tc, dict) and isinstance(tc.get("id"), str):
+                called.add(tc["id"])
+        if m.get("role") == "tool" and isinstance(m.get("tool_call_id"), str):
+            answered.add(m["tool_call_id"])
+    return called & answered
+
+
+def retained_results_truth(messages: list[dict]) -> list[dict]:
+    """``messages`` with every continuation's list of retained paired tool results made true of
+    THIS body. The same list when each listed id is paired in the body (or nothing is listed)."""
+    out = None
+    paired = None
+    for i, m in enumerate(messages):
+        c = m.get("content") if isinstance(m, dict) else None
+        if not (m.get("role") == "user" and isinstance(c, str) and c.startswith(CONTINUATION)):
+            continue
+        at = c.rfind(RETAINED_HEADER)
+        if at < 0:
+            continue
+        head_end = c.find("\n", at)
+        if head_end < 0:
+            continue
+        lines = c[head_end + 1:].split("\n")
+        listed = [(ln, _PAIRED_LINE.match(ln)) for ln in lines]
+        n = 0
+        while n < len(listed) and listed[n][1]:
+            n += 1
+        if n == 0:
+            continue                                    # "(none)" or nothing listed: nothing to correct
+        if paired is None:
+            paired = _paired_ids(messages)
+        kept = [ln for ln, mt in listed[:n] if mt.group(1) in paired]
+        if len(kept) == n:
+            continue
+        rest = "\n".join(lines[n:])
+        if kept:
+            section = c[at:head_end + 1] + "\n".join(kept)
+        else:
+            section = prompts.load("continuation_no_retained_results").strip()
+        if out is None:
+            out = list(messages)
+        out[i] = {**m, "content": c[:at] + section + (("\n" + rest) if rest else "")}
+    return out if out is not None else messages

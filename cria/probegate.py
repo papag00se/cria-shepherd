@@ -1992,6 +1992,15 @@ def clean_gate_results(messages: list, plan: "GatePlan | None" = None, *,
                                              and _a_command_could_have_changed_things_after(messages, i)),
                         checks_reran=(i == last_gate
                                       and _probe_reran_after_last_change(messages, i, plan)))
+                elif any(j > i and transport_states[transport_ids[j]].transport_complete
+                         for j in retained_transport):
+                    # An OLDER gate whose pages were lost cannot be verified — but a NEWER gate in
+                    # this very history did verify, and says what the repo's checks say now. "UNKNOWN"
+                    # about the superseded run, set beside the complete failing result of the next one,
+                    # read as a contradiction (phi4 A2 calls 0031/0037/0043). Only the NEWEST gate's
+                    # unknown-ness is a fact about the present, so this one is silence — not "clean":
+                    # it contributes no result at all, and the newest gate below is untouched.
+                    c = None
                 else:
                     c = prompts.load("probe_transport_unknown")
                 if c is None or _NO_SIGNAL_CHECK in c:

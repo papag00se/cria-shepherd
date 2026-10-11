@@ -8776,7 +8776,15 @@ def _read_ground_truth(sess, messages: list[dict]) -> str:
     if not seen:
         return ""
     labels = prompts.load_map("fetched_facts_sections")
-    lines = "\n".join(f"- {p} ({size})" for p, (_n, size) in sorted(seen.items()))
+    # WHETHER THE TEXT IS HERE, MEASURED. The ledger is durable — it outlives the messages it was
+    # built from — so "you read this" says nothing about whether the read RESULT is still in the
+    # window, and the old header told the coder to "look for it above" in a conversation that held no
+    # tool result at all (phi4 A2 0042: the compaction had replaced every one). Each entry now states
+    # the structural fact: is a non-refused read result for this path among the messages this anchor
+    # is being built for (#5b). The wording says nothing about what to do about it.
+    live = set(_extract_reads(messages or []))
+    where = {True: labels["read_in_view"], False: labels["read_out_of_view"]}
+    lines = "\n".join(f"- {p} ({size}){where[p in live]}" for p, (_n, size) in sorted(seen.items()))
     rest = 0
     more = prompts.fill(labels["read_more"], count=rest) if rest else ""
     return "\n\n" + prompts.fill(labels["read_header"], files=lines, more=more)

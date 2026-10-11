@@ -442,6 +442,9 @@ class Upstream:
                                 else (msgs, 0))
             if deorphaned:
                 rlog.emit("context.deorphaned", reshape="deorphan", count=deorphaned, level="info")
+            # The continuation's list of retained paired tool results is made true of THIS body now
+            # that the floor and the orphan repair have settled what it holds (modelview, #24).
+            msgs = modelview.retained_results_truth(msgs)
             # C44 R1 (review 9eaadebe): THE WIRE INVARIANT. `indicators.PROSE_DROPPED_MARKER` must
             # never reach a model (#17: no literal "cria"-family token; #24: a wire invariant belongs
             # at the wire). `loop.reframe_compaction` and `server._strip_and_reframe_inbound` are the
