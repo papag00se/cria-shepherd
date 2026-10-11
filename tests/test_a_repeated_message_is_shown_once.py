@@ -181,20 +181,25 @@ class DifferentCommandsAreNeverPairedTests(unittest.TestCase):
 
 class ItIsWiredIntoTheOutboundViewTests(unittest.TestCase):
     def test_the_coder_view_folds_repeats(self):
-        """Drive the real function: two byte-identical big payloads must fold to one NOTE pointer
-        plus the live copy, and the fold must be reported (context.repeat_dedup) so a caller can see
-        it happened."""
-        from cria import loop
+        """Two byte-identical big payloads fold to one NOTE pointer plus the live copy — at the WIRE
+        (`modelview.fold_repeats`, applied in `Upstream._prep` after the floor), reported as
+        context.repeat_dedup. The loop call site no longer folds (see
+        test_a_repeat_pointer_never_outlives_its_target)."""
+        from cria import config, modelview, upstream
 
         class _RLog:
             def __init__(self):
                 self.events = []
+                self.phase = "coder-s1"
 
             def emit(self, kind, **kw):
                 self.events.append((kind, kw))
 
         rlog = _RLog()
-        out = loop._elide_ledger_copies([tool(BIG, "a"), tool(BIG, "b")], None, rlog)
+        up = upstream.Upstream("http://unused", context_window=1_000_000,
+                               engagement_level=config.MAX_ENGAGEMENT_LEVEL)
+        raw, _e, _c = up._prep({"model": "m", "messages": [tool(BIG, "a"), tool(BIG, "b")]}, False, rlog)
+        out = json.loads(raw)["messages"]
         self.assertEqual(out[0]["content"], NOTE)
         self.assertEqual(out[1]["content"], BIG)
         self.assertTrue(any(k == "context.repeat_dedup" for k, _ in rlog.events))
