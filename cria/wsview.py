@@ -1492,7 +1492,8 @@ def _unpack(group: str) -> str:
     enc = text.encode()
     if len(enc) != n or hashlib.sha256(enc).hexdigest() != want or not text.startswith(SURVEY_OPEN + "\n"):
         return group
-    return text[len(SURVEY_OPEN) + 1:]
+    # What the block regex captures for an unpacked survey ends AT the close marker, not after it.
+    return text[len(SURVEY_OPEN) + 1:].removesuffix("\n")
 
 
 def strip_survey(text: str) -> tuple[str, str]:

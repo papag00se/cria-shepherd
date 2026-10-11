@@ -137,7 +137,7 @@ class TheEditAnchorShowsWhereTheCopyIsWrongTests(unittest.TestCase):
         for line in out.splitlines():
             if editrecovery.EDITFAIL in line:
                 blob = line.split(editrecovery.EDITFAIL, 1)[1].strip()
-                return json.loads(base64.b64decode(blob).decode())
+                return editrecovery.decode_report(blob)
         self.fail(f"no editfail report in:\n{out}")
 
     def test_the_window_covers_the_line_that_differs(self):

@@ -746,7 +746,7 @@ class ValidateBeforeLowerTests(unittest.TestCase):
         from cria import editrecovery
         valid = self._tmp("f.py", "x = 1\ny = 2\n")
         out = self._exec(_edit_command(valid, "y = 2", "y = (2"))                       # would break a valid file
-        fail = json.loads(base64.b64decode(out.split(editrecovery.EDITFAIL, 1)[1].strip()).decode())
+        fail = editrecovery.decode_report(out.split(editrecovery.EDITFAIL, 1)[1])
         self.assertEqual(fail["mode"], "would_break")                                   # reported, not applied
         self.assertEqual(open(valid).read(), "x = 1\ny = 2\n")                          # untouched
         broken = self._tmp("g.py", "def h(:\n    pass\n")                               # already broken
@@ -768,14 +768,14 @@ class EditCommandTests(unittest.TestCase):
         b = lambda x: base64.b64encode(x.encode()).decode()
         from cria import content_reduce
         script = (_VALIDATE_FN + _EDIT_PY).format(path=b(path), old=b(old), new=b(new),
-                                                  wrote=_WROTE, editfail=editrecovery.EDITFAIL,
+                                                  wrote=_WROTE, editfail=editrecovery.EDITFAIL, zprefix=editrecovery.PACKED_PREFIX,
                                                   cap=content_reduce.INLINE_RESULT_MAX_BYTES)
         r = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True)
         out = open(path).read(); os.unlink(path)
         msg = (r.stdout + r.stderr).strip()
         fail = None
         if msg.startswith(editrecovery.EDITFAIL):
-            fail = json.loads(base64.b64decode(msg[len(editrecovery.EDITFAIL):]).decode())
+            fail = editrecovery.decode_report(msg[len(editrecovery.EDITFAIL):])
         return r.returncode, msg, out, fail
 
     def test_exact_match_replaces(self):
