@@ -37,3 +37,11 @@ def test_anchor_note_loses_its_dangling_promise():
 def test_a_note_that_promised_no_body_is_left_alone():
     note = f"{editrecovery.EDIT_MARK} a.py — your old_string is not in the file (likely a stale copy). Read it."
     assert selfcompact.msg_digest({"role": "tool", "content": note}) == note
+
+
+def test_the_marker_and_file_always_stay_even_when_the_whole_first_line_is_the_promise():
+    phantom = f"{editrecovery.EDIT_MARK} Importer.java — that line already reads:\n---\nfoo\n---\nwhich is DONE."
+    out = selfcompact.msg_digest({"role": "tool", "content": phantom})
+    assert out.startswith(f"{editrecovery.EDIT_MARK} Importer.java — ") and OMITTED in out
+    other = selfcompact.msg_digest({"role": "tool", "content": phantom.replace("Importer", "Other")})
+    assert out != other                      # distinct files never collapse to one digest

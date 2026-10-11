@@ -1,2 +1,2 @@
 
-Since that check, you ran {{COMMANDS}} yourself ({{AGO}}){{EXIT}}. That run is NEWER than this block: its output is in your own tool results, and wherever it differs from what is listed above, it is the current state and this block is not.
+Since that check, you ran {{COMMANDS}} yourself ({{AGO}}){{EXIT}}. That run is NEWER than this block, so wherever it differs from what is listed above, it is the current state and this block is not.

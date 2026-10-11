@@ -179,7 +179,8 @@ class ARangedReadIsNotTheFileTests(unittest.TestCase):
         sess = _Sess()
         loop._track_read_files(sess, [_read("r1", "a.java", start_line=1, end_line=5),
                                       {"role": "tool", "tool_call_id": "r1", "content": "x\n" * 5}])
-        loop._track_read_files(sess, self._window("a.java", "x\n" * 200))
+        loop._track_read_files(sess, [_read("r2", "a.java"),   # tool-call ids are unique per call
+                                      {"role": "tool", "tool_call_id": "r2", "content": "x\n" * 200}])
         self.assertNotIn("only", sess.read_files["a.java"][1])
 
 

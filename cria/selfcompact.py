@@ -156,11 +156,13 @@ def edit_note_headline(text: str) -> str:
     promise with nothing after it, and the coder was left holding an instruction to "produce the
     corrected FULL file" from text it had been told was above (#5b)."""
     head = next((ln.strip() for ln in text.lstrip().splitlines() if ln.strip()), "")
-    sentences = re.split(r"(?<=[.!?])\s+", head)
+    tag = re.match(rf"{re.escape(_EDIT_MARK)} .*? — ", head)   # the marker and the file always stay
+    prefix = tag.group(0) if tag else ""
+    sentences = re.split(r"(?<=[.!?])\s+", head[len(prefix):])
     if sentences and sentences[-1].endswith(":"):
-        # the sentence that promises the body goes, and the absence is said
+        # the clause that promises the body goes, and the absence is said
         sentences.pop()
-        return " ".join([*sentences, prompts.load("edit_note_body_omitted").strip()])
+        return prefix + " ".join([*sentences, prompts.load("edit_note_body_omitted").strip()])
     return head                          # a note that promised no body needs no disclaimer
 
 

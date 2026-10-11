@@ -8443,24 +8443,28 @@ def _track_own_checks(sess, messages: list[dict]) -> None:
     if getattr(sess, "own_check_runs", None) is None:
         sess.own_check_runs = []
     heads = _gate_commands(getattr(sess, "last_gate_flag", ""))
+    own_gate = probegate.gate_call_ids(messages or [])   # cria's own gate command, by its provenance stamp
     for tid, cmd, res in _shell_runs(messages):
-        if tid in sess.own_check_seen:
+        if ("s", tid) in sess.own_check_seen:
             continue
-        sess.own_check_seen.add(tid)
-        if not heads or "⟦ctx:checks⟧" in res or getattr(sess, "action_seq", 0) <= getattr(sess, "last_gate_seq", 0):
+        sess.own_check_seen.add(("s", tid))
+        if (not heads or tid in own_gate
+                or getattr(sess, "action_seq", 0) <= getattr(sess, "last_gate_seq", 0)):
             continue
-        segments = {x.strip() for x in re.split(r"[\n;]|&&", cmd)}
-        named = [h for h in heads if h in segments]
+        parts = [x.strip() for x in re.split(r"[\n;]|&&", cmd) if x.strip()]
+        named = [h for h in heads if h in parts]
         if named:
+            # The exit code is the LAST command's: it speaks for the gate's command only when that is it.
             m = selfcompact._EXIT.search(res)
-            sess.own_check_runs.append((sess.action_seq, named, int(m.group(1)) if m else None))
+            code = int(m.group(1)) if m and parts[-1] in named else None
+            sess.own_check_runs.append((sess.action_seq, named, code))
 
 
 def newer_own_run(sess) -> str:
     """The carried check block's age against the coder's own LATER evidence: "" when the coder has not
     re-run any of those commands since the gate, else one fact naming the newest such run — which
-    commands, how many calls ago, and how it ended when the harness said. cria states that the run is
-    newer and where to find it; it never restates the run's output in its own words."""
+    commands, how many calls ago, and the exit code when it is the gate command's own. cria does not
+    say the run's output is still available (compaction may have removed it) nor restate it."""
     runs = [r for r in (getattr(sess, "own_check_runs", None) or []) if r[0] > getattr(sess, "last_gate_seq", 0)]
     if sess is None or not runs:
         return ""
@@ -8469,7 +8473,7 @@ def newer_own_run(sess) -> str:
     return prompts.fill(prompts.load("checks_note_newer_run"),
                         commands=", ".join(f"`{c}`" for c in cmds),
                         ago=f"{ago} of your calls ago" if ago else "your latest call",
-                        exit=f", and it exited with code {code}" if code is not None else "")
+                        exit=f", and that run exited with code {code}" if code is not None else "")
 
 
 def gate_age(sess) -> int:
@@ -9101,7 +9105,7 @@ def _read_label(start, end, c: str) -> str:
     A window that ran into the end of the file (asked 1-130 of a 106-line file) IS the file, and says
     so: the count is the lines that came back, never the end of the range asked for."""
     label = f"{c.count(chr(10)) + 1} lines"
-    if (start or end) and not _is_whole_read(start, end, c):
+    if not _read_is_whole(start, end, c):
         label = prompts.fill(prompts.load_map("fetched_facts_sections")["read_range"],
                              range=_line_range(start, end), size=label)
     return label
@@ -9116,10 +9120,9 @@ def _file_events(messages: list[dict]) -> list:
     events = []
     for idx, tid, path, start, end, c in _read_results_ordered(messages):
         nbytes, label = len(c.encode("utf-8", "replace")), _read_label(start, end, c)
-        events.append((idx, ("r", tid, path, nbytes, label), "read", path, nbytes, label,
-                       not _is_whole_read(start, end, c)))
+        events.append((idx, ("r", tid), "read", path, nbytes, label, not _read_is_whole(start, end, c)))
     for idx, tid, path, nbytes, label in _write_events(messages):
-        events.append((idx, ("w", tid, path, nbytes, label), "write", path, nbytes, label, False))
+        events.append((idx, ("w", tid), "write", path, nbytes, label, False))
     events.sort(key=lambda e: e[0])
     return events
 
@@ -9179,6 +9182,13 @@ def _read_results_ordered(messages: list[dict]):
 
 
 _NUMBERED = re.compile(r"(\d+): ")
+
+
+def _read_is_whole(start, end, text: str) -> bool:
+    """Did this one read return the WHOLE file — no window asked for, or a window that opens at line 1
+    and ran into the end. A window from line 50 that reaches the end is the tail, not the file."""
+    span = _read_span(start, end, text)
+    return span is not None and (span[1] is None or (span[0] <= 1 and span[2]))
 
 
 def _read_span(start, end, text: str):
@@ -9321,8 +9331,8 @@ def _write_events(messages: list[dict]):
         tid = m.get("tool_call_id") or m.get("call_id")
         if tid in calls:
             res = m.get("content") if m.get("content") is not None else m.get("output")
-            if isinstance(res, str) and denial.is_denied(res):
-                continue                      # refused — the file on disk is unchanged
+            if not (isinstance(res, str) and selfcompact.write_landed(res)):
+                continue                      # refused or failed — only the authoritative confirmation lands a write
             path, body = calls[tid]
             raw = body.encode("utf-8", "replace")
             yield idx, tid, path, len(raw), f"{body.count(chr(10)) + 1} lines"   # bytes owned by the ⟦ctx:files⟧ listing

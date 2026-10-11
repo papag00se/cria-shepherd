@@ -6,6 +6,7 @@ was stamped "gathered N calls ago", but nothing said a NEWER run of the very sam
 that run's output had been compacted away — so the briefing writer and the orient step copied the
 superseded failure as the present state (#5b). cria now remembers the coder's own re-runs of the
 gate's commands and names the newest one."""
+import base64
 import json
 
 from cria import loop, server
@@ -68,10 +69,15 @@ def test_each_run_is_folded_once_and_a_run_from_before_the_gate_is_not_newer():
     assert loop.newer_own_run(s) == ""
 
 
-def test_cria_own_replay_and_an_unrelated_command_are_not_the_coders_rerun():
+def _gate_cmd(cmd):
+    stamp = base64.b64encode(json.dumps(["mvn -q compile"]).encode()).decode()
+    return f"{cmd}\n# ⟦ctx:gate⟧{stamp}"
+
+
+def test_cria_own_gate_command_and_an_unrelated_command_are_not_the_coders_rerun():
     s = _Sess()
     s.action_seq = 7
-    loop._track_own_checks(s, _run("r", "mvn -q compile", "⟦ctx:checks⟧ the repo's own checks report"))
+    loop._track_own_checks(s, _run("r", _gate_cmd("mvn -q compile"), "Process exited with code 1"))
     loop._track_own_checks(s, _run("x", "ls -la", "total 0"))
     assert loop.newer_own_run(s) == ""
 
@@ -82,3 +88,22 @@ def test_no_exit_code_in_the_result_says_no_exit_code():
     loop._track_own_checks(s, _run("t", "mvn test", "BUILD SUCCESS"))
     out = loop.newer_own_run(s)
     assert "`mvn test`" in out and "exited with code" not in out
+
+
+def _code_of(cmd, out="Process exited with code 0\nOutput:\n"):
+    s = _Sess()
+    s.action_seq = 7
+    loop._track_own_checks(s, _run("t", cmd, out))
+    return loop.newer_own_run(s)
+
+
+def test_the_exit_code_is_stated_only_when_the_gate_command_is_the_last_part():
+    assert "exited with code 0" in _code_of("cd x && mvn test")
+    assert "exited with code 0" in _code_of("mvn -q compile\nmvn test")
+    for cmd in ("mvn test; echo done", "mvn test\necho done", "mvn test && echo done"):
+        out = _code_of(cmd)
+        assert "`mvn test`" in out and "exited with code" not in out, cmd
+
+
+def test_the_note_never_says_the_output_is_available():
+    assert "tool results" not in _code_of("mvn test")

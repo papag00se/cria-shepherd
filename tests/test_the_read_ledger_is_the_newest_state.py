@@ -91,3 +91,23 @@ def test_one_file_is_one_ledger_line_under_absolute_and_relative_paths(monkeypat
     assert got == {"pom.xml": "12 lines"}
     out = loop._read_ground_truth(sess, msgs)
     assert out.count("pom.xml") == 1 and "29 lines" not in out
+
+
+def test_a_failed_write_does_not_overwrite_a_true_read():
+    sess = _Sess()
+    _ledger(sess, [_call("a", path="a.java"), _res("a", "x\n" * 29 + "x")])
+    got = _ledger(sess, [_call("w", "write_file", path="a.java", content="a\nb"),
+                         _res("w", "bash: a.java: Permission denied\nProcess exited with code 1")])
+    assert got["a.java"] == "30 lines"
+
+
+def test_a_window_from_mid_file_that_reaches_the_end_is_a_window_not_the_file():
+    sess = _Sess()
+    _ledger(sess, [_call("a", path="a.java"), _res("a", "x\n" * 99 + "x")])
+    got = _ledger(sess, [_call("b", path="a.java", start_line=50, end_line=200),
+                         _res("b", "\n".join(f"{i}: l" for i in range(50, 101)))])
+    assert got["a.java"] == "100 lines"
+    sess2 = _Sess()
+    got = _ledger(sess2, [_call("b", path="a.java", start_line=50, end_line=200),
+                          _res("b", "\n".join(f"{i}: l" for i in range(50, 101)))])
+    assert got["a.java"].startswith("lines 50-200 only")
