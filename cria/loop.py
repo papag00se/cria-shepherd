@@ -6551,7 +6551,7 @@ def _command_names_path(command: str, rel: str) -> bool:
 _CAT_FLAGS = frozenset("nAbsvETe")
 
 
-def _prints_whole_file(command: str, rel: str) -> bool:
+def _prints_whole_file(command: str, rel: str, view=None) -> bool:
     """Is ``command`` — parsed, never guessed — a plain ``cat [-n…] FILE…`` that prints ``rel`` whole?
 
     Only that shape: no pipe, redirect, substitution or other program, because anything else may cut,
@@ -6578,7 +6578,7 @@ def _prints_whole_file(command: str, rel: str) -> bool:
             continue                                   # a relative name no longer names the same file
         for seg in segs:
             if len(seg) == 3 and seg[0] in ("bash", "sh") and seg[1] in ("-c", "-lc"):
-                if _prints_whole_file(seg[2], rel):
+                if _prints_whole_file(seg[2], rel, view):
                     return True
                 continue
             if len(seg) < 2 or seg[0] != "cat":
@@ -6586,15 +6586,24 @@ def _prints_whole_file(command: str, rel: str) -> bool:
             args = seg[1:]
             files = [a for a in args if not (a.startswith("-") and len(a) > 1 and set(a[1:]) <= _CAT_FLAGS)]
             if files and not any(re.search(r"[|<>&;()`$*?\[\]{}~]", a) for a in args) \
-                    and any(_command_names_path(f, rel) and (f == rel or f.endswith("/" + rel)) for f in files):
+                    and any(_is_the_file(f, rel, view) for f in files):
                 return True
     return False
 
 
-def _ran_a_command_naming(messages: list[dict], rel: str) -> bool:
+def _is_the_file(name: str, rel: str, view=None) -> bool:
+    """Does the path a command spells name exactly the workspace file ``rel``: the relative path, `./`
+    and it, or an absolute path the view resolves to it. A path that merely ENDS in the name — `sub/pom.xml`,
+    `../other/pom.xml`, `/tmp/pom.xml` — is another file."""
+    if name == rel or name == "./" + rel:
+        return True
+    return view is not None and name.startswith("/") and view.rel(name) == rel
+
+
+def _ran_a_command_naming(messages: list[dict], rel: str, view=None) -> bool:
     """Did the coder run a command that PRINTED the whole of ``rel`` (:func:`_prints_whole_file`)?
     The name is kept for its callers; a command that only mentions the path no longer counts."""
-    return any(_prints_whole_file(cmd, rel) for cmd, _res in _shell_commands_with_results(messages))
+    return any(_prints_whole_file(cmd, rel, view) for cmd, _res in _shell_commands_with_results(messages))
 
 
 # WHEN TO ASK, never a verdict (principle 8): a whole-file write is put to the judge only when the file
@@ -6659,7 +6668,7 @@ def unread_target_fact(sess, view, path: str, messages: list[dict]) -> str:
         return ""
     # A SHELL COMMAND THAT NAMES THE FILE MAY HAVE READ IT (`cat pom.xml`): cria cannot tell a read
     # from any other use of a path, so it does not claim the coder never looked (#5b, #11b).
-    if _ran_a_command_naming(messages, rel):
+    if _ran_a_command_naming(messages, rel, view):
         return ""
     labels = prompts.load_map("unread_target_fact")
     size = view.size(rel)

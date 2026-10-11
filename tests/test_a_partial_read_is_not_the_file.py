@@ -92,9 +92,31 @@ def test_the_coders_own_whole_write_is_seen_even_after_compaction(view):
     ("head -8 pom.xml", False), ("sed -n 1,8p pom.xml", False), ("cat pom.xml | head", False),
     ("grep -n artifactId pom.xml", False), ("cat pom.xml > /tmp/p", False), ("cd sub && cat pom.xml", False),
     ("cat pom.xml.bak", False), ("cat 'unterminated pom.xml", False),
+    # a path that merely ENDS in the name is another file
+    ("cat sub/pom.xml", False), ("cat ../other/pom.xml", False), ("cat /tmp/pom.xml", False),
+    (f"cat {ROOT}/sub/pom.xml", False), ("cat ./sub/../pom.xml", False),
 ])
-def test_only_a_plain_cat_of_the_file_is_a_shell_read(command, whole):
-    assert loop._prints_whole_file(command, "pom.xml") is whole
+def test_only_a_plain_cat_of_the_file_is_a_shell_read(command, whole, view):
+    assert loop._prints_whole_file(command, "pom.xml", view) is whole
+
+
+def test_without_a_view_only_the_relative_spellings_are_the_file():
+    assert loop._prints_whole_file("cat pom.xml", "pom.xml") and loop._prints_whole_file("cat ./pom.xml", "pom.xml")
+    assert not loop._prints_whole_file(f"cat {ROOT}/pom.xml", "pom.xml")
+
+
+def test_a_cat_of_another_directorys_pom_does_not_lift_the_hold(view):
+    for command in ("cat sub/pom.xml", "cat ../other/pom.xml", "cat /tmp/pom.xml"):
+        msgs = [{"role": "assistant", "tool_calls": [{"id": "s1", "type": "function", "function": {
+                    "name": "exec_command", "arguments": json.dumps({"cmd": command})}}]},
+                {"role": "tool", "tool_call_id": "s1", "content": "<project/>"}]
+        assert "write_bytes" not in _result(msgs), command
+
+
+def test_extract_whole_reads_ignores_refused_and_empty_results():
+    from cria import denial
+    assert loop._extract_whole_reads(_read(body=denial.mark("too large"))) == set()
+    assert loop._extract_whole_reads(_read(body="  ")) == set()
 
 
 # ── a file over one read's byte limit can only be read in ranges ────────────────────────────────
