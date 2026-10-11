@@ -856,6 +856,10 @@ class View:
         o = old.encode("utf-8", "replace")
         if body.count(o) != 1:
             return False
+        if b"\r" in body:
+            # The edit executor works in text mode and turns \r\n / lone \r into \n on every landed
+            # edit; a byte-level replace would keep the CRs and hold a body that is not the disk.
+            return False
         raw = body.replace(o, new.encode("utf-8", "replace"), 1)
         self._bodies[rel] = raw
         self._body_generation.pop(rel, None)

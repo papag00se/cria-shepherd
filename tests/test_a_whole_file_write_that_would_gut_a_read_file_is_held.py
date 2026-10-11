@@ -297,7 +297,6 @@ def test_a_legitimate_full_rewrite_after_edits_still_goes_to_the_judge(view, tmp
     on_disk = _replay(view, tmp_path, EDITS)
     judge = _Judge("WHOLE_FILE. A complete file.")
     check, _ = _check(judge)
-    import sys; v=wsview.current(ROOT); print("DBG", v.surveyed, v.isfile(JAVA), v.read_bytes(JAVA) is None, file=sys.stderr)
     _, cmd = _lower(JAVA, STUB, check)
     assert not _held(cmd, tmp_path) and (tmp_path / JAVA).read_text() == STUB
     assert len(judge.prompts) == 1 and on_disk != STUB
@@ -309,6 +308,18 @@ def test_a_flexible_or_ambiguous_edit_clears_the_body_as_before(view, tmp_path):
     assert view.note_edited(JAVA, "no such text", "x") is False
     assert view.note_edited(JAVA, "import java", "x") is False        # several matches
     assert view.note_edited("unread.txt", "a", "b") is False          # no held body at all
+
+
+def test_a_crlf_body_is_not_reconstructed_by_a_landed_edit(view, tmp_path):
+    """The edit executor normalises CRs; a byte replace would keep them -> untrusted, not guessed."""
+    _seed(tmp_path)
+    (tmp_path / JAVA).write_bytes(b"import java.a;\r\nclass A {}\r\n")
+    view.note_changed(JAVA)
+    view._bodies[JAVA] = b"import java.a;\r\nclass A {}\r\n"
+    view._stale.discard(JAVA)
+    assert view.note_edited(JAVA, "class A", "class B") is False
+    view.note_changed(JAVA)                      # the caller's fallback
+    assert view.read_bytes(JAVA) is None
 
 
 def test_a_shell_mutator_after_the_edits_stays_unmeasurable_or_unheld(view, tmp_path):
