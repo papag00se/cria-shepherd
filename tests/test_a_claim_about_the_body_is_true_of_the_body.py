@@ -108,7 +108,8 @@ def test_a_file_read_earlier_but_absent_from_the_window_is_marked_absent():
 
 def test_a_file_whose_read_result_is_present_gets_no_marker_and_no_positive_claim():
     out = loop._read_ground_truth(_Sess(), _read_pair("pom.xml", "<project>\n</project>"))
-    assert "- pom.xml (28 lines)\n" in out + "\n"
+    # the newest reading wins over the durable (older, larger) one: the read just returned 2 lines
+    assert "- pom.xml (2 lines)\n" in out + "\n"
     assert "is in this conversation" not in out.replace("no read result for it is in this conversation", "")
     assert "Importer.java (130 lines) — no read result for it is in this conversation" in out
 

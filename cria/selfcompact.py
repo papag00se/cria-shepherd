@@ -159,7 +159,8 @@ def edit_note_headline(text: str) -> str:
     sentences = re.split(r"(?<=[.!?])\s+", head)
     if sentences and sentences[-1].endswith(":"):
         # the sentence that promises the body goes, and the absence is said
-        return " ".join(sentences[:-1] + [prompts.load("edit_note_body_omitted").strip()])
+        sentences.pop()
+        return " ".join([*sentences, prompts.load("edit_note_body_omitted").strip()])
     return head                          # a note that promised no body needs no disclaimer
 
 
