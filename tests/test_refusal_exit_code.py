@@ -75,7 +75,8 @@ class OneOwnerTests(unittest.TestCase):
         # answer that is the file itself (`_read_in_place_of_write`, outside this function's source —
         # like the read-path guards above, it rides the read owner, not a refusal exit).
         # H2 +1: a whole-file write that would gut a file the coder read and the judge did not rule whole.
-        self.assertEqual(calls, 14)
+        # K2 +1: edit_file with an EMPTY old_string (it names no text; was "matches N places").
+        self.assertEqual(calls, 15)
 
     @staticmethod
     def _lower_fetch(result):

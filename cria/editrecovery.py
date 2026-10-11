@@ -109,8 +109,9 @@ def _steer_counts(prior_msgs: list, path: str) -> tuple[int, int]:
     last successful write. A turn is the run of messages after the last assistant message."""
     tag = _tag(path)
     start = _wrote_since(prior_msgs, path)
+    # no assistant message at all = no turn to speak of: every steer is from "earlier"
     turn = max((i for i, m in enumerate(prior_msgs) if isinstance(m, dict) and m.get("role") == "assistant"),
-               default=-1) + 1
+               default=len(prior_msgs) - 1) + 1
     hit = lambda seq, also="": sum(1 for m in seq if isinstance(m, dict) and tag in str(m.get("content") or "")
                                    and also in str(m.get("content") or ""))
     # in this turn only the COMMITTED directive (`escalate*`, which says STOP) is what a follower refers to
