@@ -133,6 +133,25 @@ class EditEchoTests(unittest.TestCase):
         self.assertLess(len(res), writeproxy.ECHO_MAX_BYTES + 600)
         self.assertIn("too large to show", res)
 
+    def test_a_whole_file_replacement_over_the_bound_says_it_is_not_repeated(self):
+        base = "a = 1\nb = 2\n"
+        new = "\n".join(f"v{i} = {i}" for i in range(400))
+        self.assertGreater(len(new), writeproxy.ECHO_MAX_BYTES)
+        res, disk, _ = _run({"old_string": "a = 1\nb = 2\n", "new_string": new + "\n"}, echo=True, base=base)
+        self.assertEqual(disk, new + "\n")
+        self.assertNotIn("around it", res)
+        self.assertIn("not repeated here", res)
+        self.assertEqual(_numbered_rows(res), [])
+
+    def test_a_large_replacement_between_long_lines_says_both_are_not_shown(self):
+        big = "x" * 50_000
+        new = "\n".join(f"v{i} = {i}" for i in range(400))
+        base = f"{big}\nMARK\n{big}\n"
+        res, _, _ = _run({"old_string": "MARK", "new_string": new}, echo=True, base=base)
+        self.assertIn("not repeated here", res)
+        self.assertIn("too large to show", res)
+        self.assertLess(len(res), 1000)
+
     def test_an_emptied_file_has_zero_lines_and_no_window(self):
         res, disk, _ = _run({"old_string": "a = 1", "new_string": ""}, echo=True, base="a = 1")
         self.assertEqual(disk, "")

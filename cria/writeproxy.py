@@ -763,7 +763,7 @@ _ECHO_DEF = r'''def _echo(res):
             pass
         return _r
     for i,segs in enumerate(cands):
-        omitted=bool(total) and not segs
+        omitted=(not segs) and (lo<first or hi>last)
         if sum(len(t.encode()) for _,t in segs)>{maxb} and i<len(cands)-1: continue
         r=_rep(segs,omitted)
         if len(r)>{wire} and i<len(cands)-1: continue
@@ -803,7 +803,7 @@ def render_edit_echo(content: str, path: str) -> str:
             return confirm
         if d.get("empty"):
             head = prompts.render("edit_echo_removed", path=path, total=total, a=first)
-        elif not segs or (len(segs) == 1 and segs[0][0] <= first and segs[0][0] + segs[0][1].count("\n") >= last):
+        elif segs and (len(segs) == 1 and segs[0][0] <= first and segs[0][0] + segs[0][1].count("\n") >= last):
             head = prompts.render("edit_echo", path=path, total=total, a=first, b=last)
         else:
             head = prompts.render("edit_echo_span_omitted", path=path, total=total, a=first, b=last)
