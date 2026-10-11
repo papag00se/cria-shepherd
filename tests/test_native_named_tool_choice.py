@@ -138,3 +138,16 @@ def test_named_caller_answer_remains_a_caller_tool(native_probe):
     assert result['content'] == ''
     assert result['grammar_accepts']
     assert result['buffered_wire']['choices'][0]['finish_reason'] == 'tool_calls'
+
+
+@pytest.mark.parametrize('endpoint', ['chat', 'responses'])
+@pytest.mark.parametrize('schema', [{'response_format': {'type': 'json_object'}},
+                                    {'json_schema': {'type': 'object'}},
+                                    {'response_format': {'type': 'json_schema', 'json_schema': {'schema': {'type': 'object'}}}}])
+def test_named_choice_with_standalone_schema_is_unsupported_before_generation(native_probe, endpoint, schema):
+    body = api_request(endpoint)
+    body.update(copy.deepcopy(schema))
+    result = native_probe('{}', body=body, endpoint=endpoint, grammar='{}')
+    assert 'unsupported by this serving path' in result['request_error']
+    assert result['request_error_wire']['code'] == 400
+    assert 'prompt' not in result

@@ -21,7 +21,14 @@
 +        }
 +        tool_choice = requested_choice.get<std::string>();
 +    }
-@@ -1357,1 +1375,11 @@
+@@ -1320,1 +1338,5 @@
+-    // get input files
++    if (!named_tool.empty() && !json_schema.is_null()) {
++        throw std::invalid_argument("named tool_choice with a standalone response schema is unsupported by this serving path");
++    }
++
++    // get input files
+@@ -1357,1 +1379,11 @@
 -    inputs.tools                  = common_chat_tools_parse_oaicompat(tools);
 +    inputs.tools                  = common_chat_tools_parse_oaicompat(tools);
 +    if (!named_tool.empty()) {
@@ -34,7 +41,7 @@
 +        }
 +        inputs.tools = std::move(selected);
 +    }
-@@ -1398,1 +1426,4 @@
+@@ -1398,1 +1430,4 @@
 -    inputs.chat_template_kwargs = opt.chat_template_kwargs;
 +    inputs.chat_template_kwargs = opt.chat_template_kwargs;
 +    if (!named_tool.empty() && (inputs.chat_template_kwargs.count("tools") || chat_template_kwargs_object.contains("tools"))) {

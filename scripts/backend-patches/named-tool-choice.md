@@ -16,6 +16,11 @@ caller menu and history are preserved; previous calls to other functions remain
 in history but do not re-enter the current generation menu.
 
 Unknown, missing, malformed or ambiguous names give request errors (400).
+Named selection combined with a standalone response schema also gives 400 before
+generation: that combination is unsupported by this serving path. Neither caller
+instruction is silently discarded. Chat/Responses schema requests are exercised
+through their actual producers; the Anthropic producer does not forward those
+OpenAI-specific schema fields.
 Reserved `tools` template overrides are rejected for named choice. Automatic,
 required and none retain their meanings, including Anthropic's `any` and `none`
 producer conversion. Null remains automatic at the shared preparation owner.
