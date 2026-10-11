@@ -84,13 +84,13 @@ class RestoredTextTests(unittest.TestCase):
         'you have no copy', against the rule that tells the coder to read what it has no copy of."""
         self.bind(_view())
         _restore, facts = _anchor(self.sess())
-        self.assertIn(f"- {JAVA} (130 lines) — its current text is below", facts)
+        self.assertIn(f"- {JAVA} (130 lines) — its current text is in the ⟦ctx:current⟧ block", facts)
         self.assertNotIn("no read result for it is in this conversation", facts)
 
     def test_the_wording_pair_the_ledger_and_the_system_rule_agree(self):
         rule = next(l for l in prompts.load("coder_system").splitlines() if "already read a file" in l)
         self.assertIn("neither the result nor the file's current text is here any more", rule)
-        self.assertIn("its current text is below", prompts.load_map("fetched_facts_sections")["read_restored"])
+        self.assertIn("its current text is in the ⟦ctx:current⟧ block", prompts.load_map("fetched_facts_sections")["read_restored"])
 
     def test_a_file_whose_whole_read_is_in_the_messages_is_not_repeated(self):
         read = [{"role": "assistant", "content": None, "tool_calls": [
@@ -229,7 +229,7 @@ class FloorAndWireTests(unittest.TestCase):
         self.assertEqual(rep.reserve, room)                                          # the reply room is intact
         self.assertTrue(out[-1]["content"].startswith("⟦ctx:facts⟧"))                # the active tail is kept
         stand_in = next(m for m in out if (m["content"] or "").startswith(modelview.RESTORED_MARKER))
-        self.assertIn("was here and was removed to fit the window: pom.xml, src/main/java/pipeline/Importer.java",
+        self.assertIn("was carried in this message and was removed to fit the window: pom.xml, src/main/java/pipeline/Importer.java",
                       stand_in["content"])
         self.assertNotIn("package pipeline;", stand_in["content"])
         self.assertFalse(cf._is_restored_text(stand_in))
@@ -269,7 +269,7 @@ class FloorAndWireTests(unittest.TestCase):
         raw, _e, _c = upstream.Upstream("http://unused", context_window=window)._prep(body, False, rlog, safety_override=1.05)
         self.assertEqual(rlog.restored_on_wire, {})
         wire = raw.decode()
-        self.assertNotIn("its current text is below", wire)
+        self.assertNotIn("its current text is in the ⟦ctx:current⟧ block", wire)
         self.assertIn("no read result for it is in this conversation", wire)
         self.assertNotIn(bodykeys.RESTORED_FILES, wire)
 
@@ -279,8 +279,8 @@ class FloorAndWireTests(unittest.TestCase):
         body = {"model": "m", "messages": msgs, "tools": _tools(), bodykeys.PINNED_TASK: self.s.plan.task}
         raw, _e, _c = upstream.Upstream("http://unused", context_window=65536)._prep(body, False, rlog, safety_override=1.05)
         self.assertEqual(set(rlog.restored_on_wire), {JAVA, "pom.xml"})
-        wire = raw.decode()
-        self.assertIn("its current text is below", wire)
+        wire = json.dumps(json.loads(raw), ensure_ascii=False)
+        self.assertIn("its current text is in the ⟦ctx:current⟧ block", wire)
         self.assertIn("----- pom.xml -----", wire)
         self.assertNotIn(bodykeys.RESTORED_FILES, wire)
 
@@ -302,6 +302,42 @@ class FloorAndWireTests(unittest.TestCase):
         self.assertEqual(check("pom.xml"), "")
         self.s.restored_current = {}
         self.assertIn("already exists on disk", check(JAVA))
+
+
+def test_the_ledger_names_the_block_not_a_direction_and_plan_off_puts_the_block_first():
+    """Review B2': on the default plan-off path the order is [⟦ctx:current⟧, ⟦ctx:facts⟧], so 'below' was false
+    there (and 'above' would be false on plan-on). The label names the block; the order is pinned."""
+    label = prompts.load_map("fetched_facts_sections")["read_restored"]
+    assert "⟦ctx:current⟧" in label and "below" not in label and "above" not in label
+    token = wsview.bind(_view())
+    try:
+        s = _session()
+        s.workspace_root = ROOT
+        s.read_files = {JAVA: (5157, "130 lines")}
+        restore, offered = loop._restored_text_message(s, MSGS)
+        facts = loop._fetched_facts_anchor(s, MSGS, offered)
+    finally:
+        wsview.unbind(token)
+    plan_off = loop._plan_off_tail(MSGS, restore, facts)
+    texts = [str(m["content"]) for m in plan_off]
+    assert texts.index(restore["content"]) < texts.index(facts["content"])     # block precedes the anchor
+    assert "in the ⟦ctx:current⟧ block" in facts["content"]
+
+
+def test_the_stand_in_claims_nothing_about_the_rest_of_the_request():
+    """Review B3: lever 2c fires after 2b (persona) already reduced the same request and levers 3/4 may follow,
+    so 'nothing else was changed' was false of the request. The stand-in speaks only of its own message."""
+    text = prompts.load("restore_reduced")
+    assert "nothing else" not in text and "unchanged" not in text
+    from tests import test_the_floor_reduces_caller_instructions_before_conversation_evidence as T
+    msgs, tools = T._body()
+    restore = {"role": "user", "content": "⟦ctx:current⟧ block\n" + "x = 1\n" * 4000,
+               bodykeys.RESTORED_FILES: {"offered": {"a.java": "s"}}}
+    out, _t, rep = cf.fit(msgs[:-1] + [restore, msgs[-1]], tools, window=16384, reserve=4000, safety=1.0,
+                          pinned_task=T.FIX["task"])
+    assert rep.caller_reduced == 1 and rep.restored_reduced == 1 and not rep.over_budget     # both levers fired
+    stand_in = next(m for m in out if (m["content"] or "").startswith(modelview.RESTORED_MARKER))
+    assert "a.java" in stand_in["content"] and "x = 1" not in stand_in["content"]
 
 
 def test_the_literals_the_floor_and_the_wire_mirror_are_in_sync():

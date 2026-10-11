@@ -5195,7 +5195,7 @@ class Loop:
             # Current fetched/disk facts belong after the historical rollup and rejected drafts. The
             # old after-system insertion made stale chronology the final authority a small model read.
             base = _elide_ledger_copies(framed["messages"], sess, rlog)
-            framed = {**framed, "messages": base + ([restore] if restore is not None else []) + [facts]}
+            framed = {**framed, "messages": _plan_off_tail(base, restore, facts)}
         elif restore is not None:
             framed = {**framed, "messages": framed["messages"] + [restore]}
         if self._ctx.coder_role is not None:  # the coder role's sampling/reasoning from cria.toml
@@ -9525,6 +9525,13 @@ def _restored_text_message(sess, messages: list[dict]) -> tuple[dict | None, dic
     if not offered and not text:
         return None, {}
     return {"role": "user", "content": text, bodykeys.RESTORED_FILES: {"offered": dict(offered)}}, offered
+
+
+def _plan_off_tail(base: list[dict], restore: dict | None, facts: dict) -> list[dict]:
+    """The plan-off coder view's end: the restored-text block, THEN the facts anchor (the anchor stays the
+    last message — the active turn). The ledger names the block rather than a direction because plan-on
+    puts them the other way round."""
+    return base + ([restore] if restore is not None else []) + [facts]
 
 
 def _write_events_paths(messages: list[dict]):
