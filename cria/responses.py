@@ -33,8 +33,10 @@ def _new_id(prefix: str) -> str:
 def to_chat_body(r: dict) -> dict:
     """Responses request → chat-completions body."""
     sys_parts: list[str] = []
+    persona = ""
     if isinstance(r.get("instructions"), str) and r["instructions"].strip():
-        sys_parts.append(r["instructions"])
+        persona = r["instructions"]
+        sys_parts.append(persona)
 
     rest: list[dict] = []
     for item in r.get("input") or []:
@@ -81,7 +83,10 @@ def to_chat_body(r: dict) -> dict:
         # Preserve the distinction through the pipeline: server may remove a harness persona, but
         # Responses `instructions` / developer items are caller authority and must reach the model.
         messages.append({"role": "system", "content": "\n\n".join(p for p in sys_parts if p),
-                         bodykeys.CALLER_INSTRUCTIONS: True})
+                         bodykeys.CALLER_INSTRUCTIONS: True,
+                         # `instructions` is the harness's own base prompt; developer items are the
+                         # caller's configured constraints. Only the former may later be reduced.
+                         **({bodykeys.CALLER_PERSONA: persona} if persona else {})})
     messages.extend(rest)
 
     body: dict = {"model": r.get("model"), "messages": messages, "stream": bool(r.get("stream"))}

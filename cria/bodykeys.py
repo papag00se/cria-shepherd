@@ -49,10 +49,17 @@ CONTEXT_REFIT_NO_CHANGE = "cria_context_refit_no_change"
 #: Kept through proxy/framing, then stripped from the message object at the wire.
 CALLER_INSTRUCTIONS = "cria_caller_instructions"
 
-#: On a system message: the EXACT substring of its content that is the calling harness's own
-#: instructions (the part ``CALLER_INSTRUCTIONS`` folded in).  It is a boundary carried by the author
-#: of the message, so the context floor can reduce that span — and only that span — under window
-#: pressure, before it deletes any conversation evidence.  Consumed (and stripped) at the wire.
+#: On a ``CALLER_INSTRUCTIONS`` message: the exact text of the harness's own BASE instructions (the
+#: Responses ``instructions`` field — its persona), as distinct from the developer items the user or
+#: operator configured (permissions, developer instructions), which are not reducible.  Written by the
+#: Responses translation, which knows the part boundaries; read by the coder frame; stripped at the wire.
+CALLER_PERSONA = "cria_caller_persona"
+
+#: On the framed coder system message: ``{"start": int, "text": str}`` — where the harness persona sits
+#: in that message's content, anchored at an offset after cria's own system text.  A boundary carried by
+#: the message's author, so the context floor can reduce that span — and only that span — under window
+#: pressure, before it deletes any conversation evidence.  Verified against the content before use.
+#: Consumed (and stripped) at the wire.
 CALLER_SPAN = "cria_caller_span"
 
 #: A typed missing-file completion remediation owns this coder body.  The loop uses it only as
@@ -77,4 +84,4 @@ RUMINATION = "cria_rumination"
 #: Every key above. The wire strips this set wholesale, so adding a key here is all it takes to keep
 #: it off the API — the thing five scattered literals could not guarantee.
 ALL = (MERGE_TURNS, OUTPUT_RESERVE, LOST_CALL, PINNED_TASK, CONTEXT_REFIT_NO_CHANGE,
-       CALLER_INSTRUCTIONS, CALLER_SPAN, COMPLETION_REMEDIATION, NOTES, RUMINATION, FENCED_REFUSED)
+       CALLER_INSTRUCTIONS, CALLER_PERSONA, CALLER_SPAN, COMPLETION_REMEDIATION, NOTES, RUMINATION, FENCED_REFUSED)

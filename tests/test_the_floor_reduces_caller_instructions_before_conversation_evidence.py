@@ -16,6 +16,10 @@ from cria.upstream import Upstream  # noqa: F401  (the wire strip is exercised b
 
 FIX = json.loads((Path(__file__).parent / "fixtures" / "phi4_java_a5" / "inputs.json").read_text())
 WINDOW = 16384
+# Codex's shape: `instructions` (its persona) + one developer item whose parts are the skills list and the
+# user's permissions. Only the persona is the harness's own prompt; the rest is configured constraint.
+PERSONA = FIX["caller"][:FIX["caller"].index("<skills_instructions>") - 2]
+CONFIGURED = FIX["caller"][len(PERSONA) + 2:]
 
 
 def _call(i, name, args):
@@ -26,7 +30,8 @@ def _call(i, name, args):
 def _body(hint=True):
     tools = FIX["tools"]
     framed = loop._frame_for_item(
-        [{"role": "developer", "content": FIX["caller"], bodykeys.CALLER_INSTRUCTIONS: True},
+        [{"role": "developer", "content": FIX["caller"], bodykeys.CALLER_INSTRUCTIONS: True,
+          bodykeys.CALLER_PERSONA: PERSONA},
          {"role": "user", "content": FIX["task"]}], FIX["task"], "", 0, 1, tools=tools, synthetic=True)
     if not hint:
         framed[0].pop(bodykeys.CALLER_SPAN)
@@ -43,9 +48,12 @@ def _fit(msgs, tools):
     return cf.fit(msgs, tools, window=WINDOW, reserve=WINDOW, safety=1.0, pinned_task=FIX["task"])
 
 
-def test_the_framed_system_message_carries_the_callers_exact_span():
+def test_the_framed_system_message_carries_the_personas_exact_span_at_its_offset():
+    from cria import prompts
     msgs, _ = _body()
-    assert msgs[0][bodykeys.CALLER_SPAN] == FIX["caller"]
+    sp = msgs[0][bodykeys.CALLER_SPAN]
+    assert sp["text"] == PERSONA and sp["start"] == len(prompts.load("coder_system")) + 2
+    assert msgs[0]["content"][sp["start"]:sp["start"] + len(PERSONA)] == PERSONA
     assert FIX["caller"] in msgs[0]["content"]
 
 
@@ -64,7 +72,9 @@ def test_after_the_boundary_the_evidence_survives_and_the_span_is_labelled():
     assert "WORKERS_ENABLED" in text and "maven-compiler-plugin" in text          # real read results
     assert [m["tool_call_id"] for m in out if m["role"] == "tool"] == ["c1", "c2", "c3"]
     system = out[0]["content"]
-    assert FIX["caller"] not in system and "⟦ctx:reduced⟧" in system and "left out of this request" in system
+    assert PERSONA not in system and "⟦ctx:reduced⟧" in system and "left out of this request" in system
+    assert CONFIGURED in system                                           # skills + permissions are kept whole
+    assert "`sandbox_mode` is `workspace-write`" in system
     assert system.startswith(msgs[0]["content"][:200])                   # cria's own coder_system intact
     assert system.endswith(toolmenu.cheatsheet(tools))                    # tool hint intact
     assert FIX["task"] in [m["content"] for m in out if m["role"] == "user"]   # the task is intact
@@ -74,7 +84,7 @@ def test_after_the_boundary_the_evidence_survives_and_the_span_is_labelled():
 def test_est_tokens_saved_is_the_span():
     msgs, tools = _body()
     _, _, rep = _fit(msgs, tools)
-    assert rep.msg_tokens_before - rep.msg_tokens_after > 4000
+    assert rep.msg_tokens_before - rep.msg_tokens_after > 3800
     assert rep.as_event()["caller_reduced"] == 1
 
 
@@ -87,7 +97,7 @@ def test_without_pressure_the_body_is_byte_identical():
 
 def test_a_span_the_message_no_longer_contains_is_left_alone():
     msgs, tools = _body()
-    msgs[0] = {**msgs[0], "content": msgs[0]["content"].replace(FIX["caller"], "different")}
+    msgs[0] = {**msgs[0], "content": msgs[0]["content"].replace(PERSONA, "different")}
     out, _, rep = _fit(msgs, tools)
     assert rep.caller_reduced == 0
 
@@ -108,7 +118,7 @@ def test_the_wire_reduces_the_span_under_pressure_and_never_serializes_the_hint(
         body, False, _Rlog(), safety_override=1.0)
     sent = json.loads(raw)
     assert bodykeys.CALLER_SPAN not in raw.decode() and bodykeys.CALLER_INSTRUCTIONS not in raw.decode()
-    assert "WORKERS_ENABLED" in raw.decode() and FIX["caller"] not in sent["messages"][0]["content"]
+    assert "WORKERS_ENABLED" in raw.decode() and PERSONA not in sent["messages"][0]["content"] and "sandbox_mode" in sent["messages"][0]["content"]
 
 
 def test_the_usage_report_owner_counts_the_hint_as_zero_tokens():
@@ -137,3 +147,28 @@ def test_the_stand_in_makes_no_claim_about_the_conversation_when_turns_are_also_
     assert "conversation" in note and "whole conversation" not in note and "files you read" not in note
     assert "unchanged" in note and "rest of this message" in note     # it speaks of its own message only
     assert any("⟦ctx:compacted⟧" in cf._msg_text(m) for m in out)      # the folding is announced by its own note
+
+
+def test_the_responses_translation_marks_only_the_instructions_field_as_the_persona():
+    from cria import responses
+    r = {"model": "m", "instructions": "BASE PERSONA", "input": [
+        {"type": "message", "role": "developer", "content": [
+            {"type": "input_text", "text": "<skills_instructions>s</skills_instructions>"},
+            {"type": "input_text", "text": "<permissions instructions>never</permissions instructions>"}]},
+        {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "task"}]}]}
+    sysm = responses.to_chat_body(r)["messages"][0]
+    assert sysm[bodykeys.CALLER_INSTRUCTIONS] and sysm[bodykeys.CALLER_PERSONA] == "BASE PERSONA"
+    assert sysm["content"].startswith("BASE PERSONA\n\n") and "never" in sysm["content"]
+    no_base = responses.to_chat_body({**r, "instructions": ""})["messages"][0]
+    assert bodykeys.CALLER_PERSONA not in no_base                  # nothing reducible: nothing carried
+
+
+def test_the_replace_is_anchored_at_the_offset_not_the_first_match():
+    text = "SHARED LINE. " * 40
+    content = "cria's own text quotes: " + text + " ... then the persona: " + text
+    start = content.rindex(text)
+    m = {"role": "system", "content": content, bodykeys.CALLER_SPAN: {"start": start, "text": text}}
+    out, n = cf._reduce_caller_spans([m])
+    assert n == 1 and out[0]["content"].startswith("cria's own text quotes: " + text + " ... then the persona: ⟦ctx:reduced⟧")
+    stale = {**m, bodykeys.CALLER_SPAN: {"start": start + 3, "text": text}}
+    assert cf._reduce_caller_spans([stale]) == ([stale], 0)           # content moved: left alone

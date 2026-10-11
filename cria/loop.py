@@ -6282,9 +6282,16 @@ def _frame_for_item(messages: list[dict], item: str, summary: str, idx: int, tot
     # system turn before dropping ordinary harness system messages below.
     # `add_cheatsheet` folded the tool hint onto the end of this message upstream of the frame; the
     # frame renders the hint itself below, so the caller's own words are taken WITHOUT it (one block).
-    caller = "\n\n".join(_msg_text_content({**m, "content": toolmenu.without_cheatsheet(m.get("content"))})
-                         for m in messages
-                         if isinstance(m, dict) and m.get(bodykeys.CALLER_INSTRUCTIONS))
+    callers = [m for m in messages if isinstance(m, dict) and m.get(bodykeys.CALLER_INSTRUCTIONS)]
+    texts = [_msg_text_content({**m, "content": toolmenu.without_cheatsheet(m.get("content"))}) for m in callers]
+    caller = "\n\n".join(texts)
+    # Where the harness's own base prompt sits inside `caller` (offset from the start of the block).
+    persona_at, persona, run = -1, "", 0
+    for m, t in zip(callers, texts):
+        p = m.get(bodykeys.CALLER_PERSONA)
+        if persona_at < 0 and isinstance(p, str) and p and p in t:
+            persona_at, persona = run + t.index(p), p
+        run += len(t) + 2
     messages = [m for m in messages if not (isinstance(m, dict) and m.get(bodykeys.CALLER_INSTRUCTIONS))]
     caller_block = f"\n\n{caller}" if caller else ""
     # The plan carries each section's probe KIND, which is what lets a non-zero TEST/BUILD exit whose
@@ -6300,7 +6307,7 @@ def _frame_for_item(messages: list[dict], item: str, summary: str, idx: int, tot
         # so turning the planner off is a fair 'coder without a planner', not a bare passthrough.
         system = (prompts.load("coder_system") + caller_block + (f"\n\n{hint}" if hint else "")
                   + (f"\n\n{done_block.rstrip()}" if prior_work else ""))
-        out: list[dict] = [{"role": "system", "content": system, **_caller_span_hint(caller)}]
+        out: list[dict] = [{"role": "system", "content": system, **_caller_span_hint(persona_at, persona)}]
         for m in messages:
             if m.get("role") in ("system", "developer"):
                 continue  # harness agent boilerplate → replaced by cria's coder_system above
@@ -6322,7 +6329,7 @@ def _frame_for_item(messages: list[dict], item: str, summary: str, idx: int, tot
     hint_block = f"{hint}\n\n" if hint else ""
     out: list[dict] = [{"role": "system",
                         "content": prompts.load("coder_system") + caller_block + "\n\n" + hint_block + done_block + prompt,
-                        **_caller_span_hint(caller)}]
+                        **_caller_span_hint(persona_at, persona)}]
     acked = False
     for m in messages:
         if m.get("role") in ("system", "developer"):
@@ -6342,11 +6349,16 @@ def _frame_for_item(messages: list[dict], item: str, summary: str, idx: int, tot
 _STEP_ARTIFACT = groundtruth._STEP_ARTIFACT   # defined one level down; see the note there
 
 
-def _caller_span_hint(caller: str) -> dict:
-    """The boundary of the harness's own instructions inside the coder system message, carried for the
-    context floor (principle 24): it may reduce exactly this span, labelled, before it folds any
-    conversation turn. Empty when the caller sent none."""
-    return {bodykeys.CALLER_SPAN: caller} if caller else {}
+def _caller_span_hint(persona_at: int, persona: str) -> dict:
+    """Where the harness's BASE instructions sit in the coder system message, carried for the context
+    floor (principle 24): it may reduce exactly this span, labelled, before it folds any conversation
+    turn. The system message is `coder_system + "\\n\\n" + caller + ...`, so the offset is anchored after
+    cria's own text, never found by searching. Empty when the caller sent no persona (the caller's
+    configured developer items are never in the span)."""
+    if persona_at < 0:
+        return {}
+    return {bodykeys.CALLER_SPAN: {"start": len(prompts.load("coder_system")) + 2 + persona_at,
+                                   "text": persona}}
 
 
 def step_artifacts_on_disk(step: str, root: str | None) -> list[str]:

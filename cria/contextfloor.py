@@ -336,32 +336,37 @@ def fit(messages: list[dict], tools, *, window: int, reserve: int,
 
 
 def _reduce_caller_spans(messages: list[dict]) -> tuple[list[dict], int]:
-    """Swap each system message's CALLER SPAN — the calling harness's own instructions, whose exact
-    text the message's author carried in ``bodykeys.CALLER_SPAN`` — for a labelled stand-in.
+    """Swap each system message's CALLER SPAN — the calling harness's own base prompt (its persona),
+    carried by the message's author as ``bodykeys.CALLER_SPAN = {"start", "text"}`` — for a labelled
+    stand-in.
 
     WHY FIRST. The span rides in the system message, which the floor protects, so under pressure it was
-    kept whole while the conversation's own evidence was folded: phi4 A5 (Codex persona + skills, 19.4 KB
-    ~4.8k of 16,384 tokens) lost 26 turns, the Importer/pom read results became first-line stubs, and the
-    coder — told by its record that it had already read them — never read them again. What the model
-    DID this session outranks what the harness said about itself before the session began. cria's own
-    system text, the tool hint and the task are not in the span and stay protected.
+    kept whole while the conversation's own evidence was folded: phi4 A5 (Codex persona, ~17 KB, ~4.2k of
+    16,384 tokens) lost 26 turns, the Importer/pom read results became first-line stubs, and the coder —
+    told by its record that it had already read them — never read them again. What the model DID this
+    session outranks what the harness said about itself before the session began. cria's own system text,
+    the tool hint, the task and the caller's CONFIGURED constraints (permissions, developer instructions)
+    are not in the span and stay protected.
 
-    Boundary is carried, not guessed (#24); a span the message no longer contains is left alone. The
-    reduction is labelled with the reason (#5, #22) and never silent. Whole span or nothing: a clipped
-    instruction block would be a different, truncated instruction (#5b)."""
+    The boundary is carried and anchored at its offset, never searched for (#24): a span the content no
+    longer holds at that offset is left alone. The reduction is labelled (#5, #22) with a sentence that
+    is true whatever else the floor does to the request. Whole span or nothing (#5b)."""
     out, n = messages, 0
     for i, m in enumerate(messages):
-        span = m.get(bodykeys.CALLER_SPAN) if isinstance(m, dict) else None
+        sp = m.get(bodykeys.CALLER_SPAN) if isinstance(m, dict) else None
         c = m.get("content") if isinstance(m, dict) else None
-        if not (m.get("role") in ("system", "developer") and isinstance(span, str) and span
-                and isinstance(c, str) and span in c):
+        if not (m.get("role") in ("system", "developer") and isinstance(sp, dict) and isinstance(c, str)):
             continue
-        note = prompts.render("caller_instructions_reduced", chars=f"{len(span):,}").strip()
-        if est_tokens(note) >= est_tokens(span):
+        start, text = sp.get("start"), sp.get("text")
+        if not (isinstance(start, int) and isinstance(text, str) and text
+                and c[start:start + len(text)] == text):
+            continue
+        note = prompts.render("caller_instructions_reduced", chars=f"{len(text):,}").strip()
+        if est_tokens(note) >= est_tokens(text):
             continue                      # a stand-in must save something
         if out is messages:
             out = list(messages)
-        out[i] = {**m, "content": c.replace(span, note, 1)}
+        out[i] = {**m, "content": c[:start] + note + c[start + len(text):]}
         n += 1
     return out, n
 
