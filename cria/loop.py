@@ -6103,7 +6103,10 @@ def _frame_for_item(messages: list[dict], item: str, summary: str, idx: int, tot
         messages = [m for m in messages if not _is_serialized_plan_cursor(m)]
     # Responses caller instructions are not harness persona. Fold them into cria's one authoritative
     # system turn before dropping ordinary harness system messages below.
-    caller = "\n\n".join(str(m.get("content") or "") for m in messages
+    # `add_cheatsheet` folded the tool hint onto the end of this message upstream of the frame; the
+    # frame renders the hint itself below, so the caller's own words are taken WITHOUT it (one block).
+    caller = "\n\n".join(_msg_text_content({**m, "content": toolmenu.without_cheatsheet(m.get("content"))})
+                         for m in messages
                          if isinstance(m, dict) and m.get(bodykeys.CALLER_INSTRUCTIONS))
     messages = [m for m in messages if not (isinstance(m, dict) and m.get(bodykeys.CALLER_INSTRUCTIONS))]
     caller_block = f"\n\n{caller}" if caller else ""

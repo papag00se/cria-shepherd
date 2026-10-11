@@ -249,6 +249,28 @@ def add_cheatsheet(body: dict, rlog=None) -> None:
         rlog.emit("toolmenu.cheatsheet")
 
 
+def without_cheatsheet(content):
+    """``content`` with the cheat-sheet :func:`add_cheatsheet` folded onto its end removed again.
+
+    The fold is the harness-system-message path (`add_cheatsheet` merges into whatever system message
+    leads the request). A caller-instruction system message is KEPT by the coder frame — and the frame
+    renders the same menu hint itself, so the kept copy carried it TWICE (phi4 / feed-pipeline-java A2:
+    the `Tools available this turn` block in the coder system message at 23,858 and again at 25,744, on
+    top of the template's own tool JSON). The note is always the LAST thing `_merge_system` appends and
+    always opens with the fragment header, so it is found by that structure, never by guessing."""
+    header = prompts.load_map("cheatsheet")["header"]
+    if isinstance(content, str):
+        i = content.rfind("\n\n" + header)
+        if i >= 0:
+            return content[:i]
+        return "" if content.startswith(header) else content
+    if isinstance(content, list) and content:
+        last = content[-1]
+        if isinstance(last, dict) and str(last.get("text") or "").startswith(header):
+            return content[:-1]
+    return content
+
+
 def _merge_system(existing, note: str):
     """Append the note to an existing system message's content, preserving whether it
     was a plain string or a list of content parts."""
