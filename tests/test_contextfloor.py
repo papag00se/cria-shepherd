@@ -214,6 +214,33 @@ class TestFits(unittest.TestCase):
         self.assertTrue(prot[1])   # the marker-protected result
         self.assertTrue(prot[0])   # M18: its issuing call is now protected too (pair kept intact)
 
+    def test_a_steer_appended_before_the_facts_anchor_is_part_of_the_active_turn(self):
+        """A1 call 0032: [system, task, …history…, ⟦ctx:steer⟧, ⟦ctx:facts⟧] over budget. The floor
+        protected "the last user message onward" — the facts anchor — so the steer one turn earlier was a
+        droppable middle turn and was folded into the past-tense digest."""
+        FACTS = "⟦ctx:facts⟧ FILES YOU HAVE ALREADY READ " + "f" * 3000   # the big anchor: history AND steer compete
+        history = []
+        for k in range(12):
+            history += [_a("did step %d " % k + "w" * 900, [{"id": "c%d" % k, "function": {"name": "n", "arguments": "{}"}}]),
+                        _tool("c%d" % k, "result %d " % k + "r" * 900)]
+        steer = "⟦ctx:steer⟧ The repo's automated checks pass; the task is not finished."
+        msgs = [{"role": "system", "content": "sys"}, _u("Fix the importer"), *history,
+                _u(steer), _u(FACTS)]
+        out, _, rep = contextfloor.fit(msgs, None, window=2000, reserve=300, pinned_task="Fix the importer")
+        self.assertGreaterEqual(rep.turns_dropped, 1)                     # the floor really did drop history
+        texts = [m.get("content") for m in out]
+        self.assertIn(steer, texts)                                       # the steer is kept AS ITSELF…
+        self.assertEqual(texts[-2:], [steer, FACTS])  # …in order, last
+        digest = [t for t in texts if isinstance(t, str) and "earlier turn(s)" in t]
+        self.assertFalse(any("automated checks pass" in t for t in digest))   # never inside the rollup
+
+    def test_the_run_of_notes_includes_a_files_listing_but_not_an_ordinary_user_turn(self):
+        from cria.contextfloor import _protected_mask
+        msgs = [{"role": "system", "content": "sys"}, _u("task"),
+                _u("an ordinary earlier user turn"), _u("⟦ctx:steer⟧ s"), _u("⟦ctx:files⟧ listing"),
+                _u("⟦ctx:facts⟧ facts")]
+        self.assertEqual(_protected_mask(msgs, "task"), [True, True, False, True, True, True])
+
     def test_strip_orphan_tools_prunes_a_dangling_call(self):
         # M18 (reverse): an assistant tool_call whose RESULT was dropped is a DANGLING call — strict
         # templates reject it just as they reject an orphan result. It must be pruned.

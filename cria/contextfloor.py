@@ -503,6 +503,31 @@ def _input_core(messages: list[dict], pinned_task: str) -> list[dict]:
     return [m for i, m in enumerate(messages) if i in keep]
 
 
+# cria's OWN user-role notes that ride in front of (or behind) the one the model is answering. They are
+# the live end of the conversation the way the last user turn is — see `_active_start`.
+_ACTIVE_NOTE_MARKERS = ("⟦ctx:steer⟧", "⟦ctx:facts⟧", "⟦ctx:files⟧")
+
+
+def _active_start(messages: list[dict], last_user: int) -> int:
+    """Index where the ACTIVE turn begins: the last user message, extended back over the contiguous run
+    of user messages that are cria's own live notes (a steer, the facts anchor, the files listing).
+
+    THE ACTIVE TURN WAS "THE LAST USER MESSAGE ONWARD", and cria's end-of-body is not one message: `_work`
+    appends the steer and THEN the facts anchor, so the steer — the one thing cria wants the coder to act
+    on — sat one user turn before the last and was an ordinary droppable middle turn. Walked on the A1 run
+    (capture 20261010T212733 call 0032): the steer and the files listing were folded into the
+    "⟦ctx:compacted⟧ 27 earlier turn(s)" digest as bullets, under a rollup that closes "Everything above
+    describes turns that have already happened". Nothing the floor did was wrong by its old rule; the rule
+    drew the line through the middle of one injection. A wire invariant (principle 24): the notes cria
+    appends together are one active turn, kept together here, where the floor owns what is droppable —
+    not by reordering the call sites that append them."""
+    start = last_user
+    while (start > 0 and messages[start - 1].get("role") == "user"
+           and _msg_text(messages[start - 1]).lstrip().startswith(_ACTIVE_NOTE_MARKERS)):
+        start -= 1
+    return start
+
+
 def _protected_mask(messages: list[dict], pinned_task: str = "") -> list[bool]:
     """True where a message must NOT be dropped: every system message, the active turn — the last
     user message through the end of the list — and THE FIRST REAL USER TURN, which is the task.
@@ -536,13 +561,14 @@ def _protected_mask(messages: list[dict], pinned_task: str = "") -> list[bool]:
                 first_task = i
             elif first_task < 0 and not wanted and not _is_env_preamble(m):
                 first_task = i
+    active = _active_start(messages, last_user) if last_user >= 0 else -1
     prot = [False] * n
     if first_task >= 0:
         prot[first_task] = True
     for i, m in enumerate(messages):
         if m.get("role") in ("system", "developer"):
             prot[i] = True
-        if last_user >= 0 and i >= last_user:
+        if last_user >= 0 and i >= active:
             prot[i] = True
         if _has_protect_marker(m):  # the briefing / gate anchor — don't drop it from under a reference
             prot[i] = True
