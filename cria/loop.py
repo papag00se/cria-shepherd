@@ -6488,9 +6488,14 @@ def _resolve_named_file(view, name: str, task: str):
 
 
 def _coder_has_seen(view, rel: str, sess, messages: list[dict]) -> bool:
-    """Has the coder READ (or itself WROTE) this workspace file in the conversation or the session ledger?"""
-    seen = set(getattr(sess, "read_files", None) or {})
-    seen |= set(_extract_reads(messages or []))
+    """Does the coder HOLD this workspace file's whole text — a whole read whose result is still in the
+    conversation, or its own whole write (the ledger of those is durable: cria composed the bytes)?
+
+    A RANGED READ IS NOT THE FILE, and a read whose result the harness has since compacted away is not
+    in the window (phi4 A4 0047: `pom.xml` lines 1-8 of 29, then a whole-file overwrite; seg-10: the
+    ledger said "read" over a window with no text in it). The durable read ledger is therefore not
+    consulted here — it still serves the ⟦ctx:facts⟧ listing, where "you looked once" is the fact."""
+    seen = _extract_whole_reads(messages or [])
     seen |= set(_extract_writes(messages or []))
     seen |= set(getattr(sess, "written_files", None) or {})
     return any(view.rel(p) == rel for p in seen)
@@ -6524,8 +6529,53 @@ def _command_names_path(command: str, rel: str) -> bool:
     return re.search(rf"(?<![\w.-]){re.escape(rel)}(?![\w/-]|\.\w)", command) is not None
 
 
+_CAT_FLAGS = frozenset("nAbsvETe")
+
+
+def _prints_whole_file(command: str, rel: str) -> bool:
+    """Is ``command`` — parsed, never guessed — a plain ``cat [-n…] FILE…`` that prints ``rel`` whole?
+
+    Only that shape: no pipe, redirect, substitution or other program, because anything else may cut,
+    filter or write the file, and a command that merely NAMES a path is not a read of it. Commands joined
+    by `;`, `&&` or newlines are each judged alone, and a `bash -c "..."` wrapper is looked through.
+    Anything unparseable abstains: no credit."""
+    import shlex
+    for line in command.splitlines():
+        try:
+            lex = shlex.shlex(line, posix=True, punctuation_chars=True)
+            lex.whitespace_split = True
+            toks = list(lex)
+        except ValueError:
+            continue
+        segs, cur = [], []
+        for t in toks:
+            if t in (";", "&&"):
+                segs.append(cur)
+                cur = []
+            else:
+                cur.append(t)
+        segs.append(cur)
+        if any(seg[:1] in (["cd"], ["pushd"]) for seg in segs):
+            continue                                   # a relative name no longer names the same file
+        for seg in segs:
+            if len(seg) == 3 and seg[0] in ("bash", "sh") and seg[1] in ("-c", "-lc"):
+                if _prints_whole_file(seg[2], rel):
+                    return True
+                continue
+            if len(seg) < 2 or seg[0] != "cat":
+                continue
+            args = seg[1:]
+            files = [a for a in args if not (a.startswith("-") and len(a) > 1 and set(a[1:]) <= _CAT_FLAGS)]
+            if files and not any(re.search(r"[|<>&;()`$*?\[\]{}~]", a) for a in args) \
+                    and any(_command_names_path(f, rel) and (f == rel or f.endswith("/" + rel)) for f in files):
+                return True
+    return False
+
+
 def _ran_a_command_naming(messages: list[dict], rel: str) -> bool:
-    return any(_command_names_path(cmd, rel) for cmd, _res in _shell_commands_with_results(messages))
+    """Did the coder run a command that PRINTED the whole of ``rel`` (:func:`_prints_whole_file`)?
+    The name is kept for its callers; a command that only mentions the path no longer counts."""
+    return any(_prints_whole_file(cmd, rel) for cmd, _res in _shell_commands_with_results(messages))
 
 
 # WHEN TO ASK, never a verdict (principle 8): a whole-file write is put to the judge only when the file
@@ -8897,10 +8947,31 @@ def _extract_reads(messages: list[dict]) -> dict:
     The byte count rides along because it is what decides which reading to KEEP: a later window must
     not replace a whole-file read in the ledger. Largest wins — a window is never larger than the
     file it came out of."""
+    out: dict = {}
+    for path, start, end, c in _read_results(messages):
+        raw = c.encode("utf-8", "replace")
+        # LINE COUNT ONLY, NO BYTE COUNT. The live ⟦ctx:files⟧ listing owns the byte size of
+        # every present file, read from os.stat. This ledger measured `len(read-result)`, which
+        # the read tool returns with the trailing newline stripped — so for one unchanged file it
+        # said 984 where the listing said 985, in the same prompt. Walked on ornith15 x
+        # shipping-rates-rb 2026-09-07: that uniform 1-byte gap across every file was the exact
+        # "the numbers are slightly off, so cria is fabricating" tell the original run weaponised
+        # into a ~100-turn distrust cascade. One owner for the byte metric; this ledger keeps the
+        # per-file fact it owns (you looked) and its line count, which never collides.
+        label = f"{c.count(chr(10)) + 1} lines"
+        if start or end:
+            label = prompts.fill(prompts.load_map("fetched_facts_sections")["read_range"],
+                                 range=_line_range(start, end), size=label)
+        _keep_larger(out, path, len(raw), label)
+    return out
+
+
+def _read_results(messages: list[dict]):
+    """``(path, start_line, end_line, result text)`` for every workspace read that returned content —
+    the one parse :func:`_extract_reads` and :func:`_extract_whole_reads` share."""
     from . import denial
     calls: dict = {}
     answered_by_read: set = set()
-    out: dict = {}
     for m in messages or []:
         if not isinstance(m, dict):
             continue
@@ -8926,22 +8997,26 @@ def _extract_reads(messages: list[dict]) -> dict:
                     continue
             elif not isinstance(c, str) or not c.strip() or denial.is_denied(c):
                 continue
-            path, start, end = calls[tid]
-            raw = c.encode("utf-8", "replace")
-            # LINE COUNT ONLY, NO BYTE COUNT. The live ⟦ctx:files⟧ listing owns the byte size of
-            # every present file, read from os.stat. This ledger measured `len(read-result)`, which
-            # the read tool returns with the trailing newline stripped — so for one unchanged file it
-            # said 984 where the listing said 985, in the same prompt. Walked on ornith15 x
-            # shipping-rates-rb 2026-09-07: that uniform 1-byte gap across every file was the exact
-            # "the numbers are slightly off, so cria is fabricating" tell the original run weaponised
-            # into a ~100-turn distrust cascade. One owner for the byte metric; this ledger keeps the
-            # per-file fact it owns (you looked) and its line count, which never collides.
-            label = f"{c.count(chr(10)) + 1} lines"
-            if start or end:
-                label = prompts.fill(prompts.load_map("fetched_facts_sections")["read_range"],
-                                     range=_line_range(start, end), size=label)
-            _keep_larger(out, path, len(raw), label)
-    return out
+            yield (*calls[tid], c)
+
+
+def _is_whole_read(start, end, text: str) -> bool:
+    """Did this read return the WHOLE file? No window asked for; or a window that opens at line 1 and
+    stopped short of the lines it asked for (it ran into the end of the file). A window that merely
+    ends where it was told to says nothing about what lies beyond it — an 8-line prefix of a 29-line
+    pom.xml is not the file (phi4 A4 0047, then overwritten whole)."""
+    if not (start or end):
+        return True
+    if start not in (None, 0, 1) or not text.startswith("1: "):
+        return False
+    if not end:
+        return True                                # `start_line=1` alone reads to the end
+    return len(text.rstrip("\n").split("\n")) < end
+
+
+def _extract_whole_reads(messages: list[dict]) -> set:
+    """Paths whose WHOLE text a read result in ``messages`` still carries (see :func:`_is_whole_read`)."""
+    return {p for p, start, end, c in _read_results(messages) if _is_whole_read(start, end, c)}
 
 
 def _args_of(args) -> dict:

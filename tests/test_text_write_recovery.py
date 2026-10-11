@@ -68,7 +68,10 @@ class TextWriteTests(unittest.TestCase):
             lp._ctx.reasoner_chat = None
         sess = sess or _synth()
         if read:
-            sess.read_files = {f"{ROOT}/{JAVA}": (4543, "4543 bytes"), f"{ROOT}/lookup.js": (1, "")}
+            # A WHOLE read whose result is in the conversation (K1: the durable ledger alone is not a read).
+            messages = [{"role": "assistant", "tool_calls": [{"id": "rd", "type": "function", "function": {
+                "name": "read_file", "arguments": json.dumps({"path": f"{ROOT}/{JAVA}"})}}]},
+                {"role": "tool", "tool_call_id": "rd", "content": "package pipeline;"}] + list(messages or [])
         sess.plan.task = task
         sess.workspace_root = ROOT
         log = _Log()

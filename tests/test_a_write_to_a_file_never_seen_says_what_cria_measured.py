@@ -109,7 +109,7 @@ def test_the_next_coder_prompt_says_which_call_did_not_run_and_what_exists(view)
     assert "write_file" in nudge and "`pom.xml`" in nudge
     assert "it was not run" in nudge and "nothing happened" in nudge
     assert "a code block comes before the call" in nudge               # the rule that stopped it
-    assert "pom.xml already exists on disk (980 bytes) and no read of it has been recorded this session, by a read tool or by a shell command naming it" in nudge
+    assert "pom.xml already exists on disk (980 bytes) and no read of its whole text is in this conversation" in nudge
     assert "cria" not in nudge.lower().replace("⟦ctx:denied⟧", "")      # #17
     assert {"role": "assistant", "content": REAL["content"]} in coder.bodies[1]["messages"]   # what it refers to
 
@@ -257,12 +257,25 @@ def _shell_read(command, result="<project>\n</project>", call_id="s1"):
             {"role": "tool", "tool_call_id": call_id, "content": result}]
 
 
-def test_a_shell_command_naming_the_file_may_have_read_it_so_no_hold(view):
-    for command in ("cat pom.xml", f"sed -n 1,40p {ROOT}/pom.xml", "head -50 ./pom.xml && echo done"):
+def test_a_shell_command_that_prints_the_whole_file_is_a_read_so_no_hold(view):
+    for command in ("cat pom.xml", f"cat {ROOT}/pom.xml", "cat -n ./pom.xml && echo done",
+                    "bash -lc 'cat pom.xml'"):
         comp = _call("write_file", {"path": "pom.xml", "content": "<project/>"})
         translate_outbound(comp, _CMD_SHELL, injected={"write_file"}, workspace_root=ROOT,
                            unread_target=_check(view, messages=_shell_read(command)))
         assert "write_bytes" in _cmd(comp), command
+
+
+def test_a_shell_command_that_only_names_or_cuts_the_file_is_not_a_read(view):
+    """K1: `head -50`, `sed -n 1,40p`, a pipe, a grep, a redirect and a `cd` before the `cat` print a piece
+    of the file, or a different one, or write it — they used to lift the hold by naming the path."""
+    for command in ("sed -n 1,40p pom.xml", "head -50 ./pom.xml && echo done", "cat pom.xml | head -5",
+                    "grep -n dependency pom.xml", "cat pom.xml > /tmp/x", "cd sub && cat pom.xml",
+                    "cat pom.xml.bak"):
+        comp = _call("write_file", {"path": "pom.xml", "content": "<project/>"})
+        translate_outbound(comp, _CMD_SHELL, injected={"write_file"}, workspace_root=ROOT,
+                           unread_target=_check(view, messages=_shell_read(command)))
+        assert "write_bytes" not in _cmd(comp), command
 
 
 def test_a_shell_command_naming_a_different_file_is_not_a_read_of_this_one(view):
@@ -282,11 +295,13 @@ def test_a_refused_or_empty_shell_result_is_not_a_read(view):
         assert "write_bytes" not in _cmd(comp)
 
 
-def test_a_file_the_coder_read_may_be_rewritten(view):
+def test_a_read_only_the_ledger_remembers_is_not_the_text_in_the_window(view):
+    """K1 / seg-10: the durable ledger says `pom.xml` was read, but the result was compacted away —
+    the coder holds no text of it, so the overwrite is still answered with the file."""
     comp = _call("write_file", {"path": "pom.xml", "content": "<project/>"})
     translate_outbound(comp, _CMD_SHELL, injected={"write_file"}, workspace_root=ROOT,
                        unread_target=_check(view, read=["pom.xml"]))
-    assert "write_bytes" in _cmd(comp)
+    assert "write_bytes" not in _cmd(comp)
 
 
 def test_a_file_the_coder_read_in_this_conversation_may_be_rewritten(view):

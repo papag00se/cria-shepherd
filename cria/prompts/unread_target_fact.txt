@@ -1,5 +1,6 @@
 # What cria MEASURED about a file a write names (prompts.load_map). A fact, never an instruction: the
-# workspace view proves the file exists and the session holds no read of it — by a read tool, or by a
-# shell command that names it — and no write of it by the coder.
-sized = {{PATH}} already exists on disk ({{SIZE}} bytes) and no read of it has been recorded this session, by a read tool or by a shell command naming it.
-unsized = {{PATH}} already exists on disk and no read of it has been recorded this session, by a read tool or by a shell command naming it.
+# workspace view proves the file exists and this conversation holds no read of its WHOLE text (a window
+# of it, a read whose result was compacted away, or a command that merely names it is not one) and no
+# whole write of it by the coder.
+sized = {{PATH}} already exists on disk ({{SIZE}} bytes) and no read of its whole text is in this conversation (a line range, a command that only names it, or a result no longer here is not one), and the coder has not written it whole.
+unsized = {{PATH}} already exists on disk and no read of its whole text is in this conversation (a line range, a command that only names it, or a result no longer here is not one), and the coder has not written it whole.
