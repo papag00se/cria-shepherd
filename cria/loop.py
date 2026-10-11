@@ -3024,7 +3024,7 @@ class Loop:
         _ws = getattr(sess, "workspace_root", None) or _extract_cwd(body.get("messages", []))
         if _ws:
             framed["messages"] = _ground_coder_view(framed.get("messages", []), _ws)
-            _note_survey_baseline(sess, _ws)
+            _note_survey_baseline(sess, _ws, body.get("messages", []))
         _add_completion_tool(framed)  # advertise the explicit-done tool for THIS coder call
         rlog.phase = f"coder-s{step}"  # label the call capture with the role + step
         sess.restored_current = {}      # credit is earned per call, from what the wire says it delivered
@@ -3104,7 +3104,8 @@ class Loop:
 
         WHEN TO ASK is structural and deterministic (`shrink_measure`): the file exists, cria holds its
         current text (a read or the coder's own write — an unknown file is silence, #11b), and the
-        candidate would REMOVE at least half of that file's non-blank lines (whatever its own length). WHAT IT IS is the same closed
+        candidate would REMOVE at least half of that file's non-blank lines (whatever its own length), and the file
+        existed in the session's first complete survey (`Session.survey_baseline` — not a file the coder created). WHAT IT IS is the same closed
         question the pasted-file recovery puts (`WHOLE_FILE` / `OTHER`, `whole_file_ruling`), because
         a fragment sent as a whole-file write and a fragment pasted in chat are one confusion (phi4 A4:
         a 190-character `<dependencies>` excerpt replaced the 28-line pom.xml it had read; A3: a 22-line
@@ -3135,6 +3136,12 @@ class Loop:
                 return None
             rel = view.rel(path)
             if not rel or view.isfile(rel) is not True:
+                return None
+            # PROGRESS THE CODER DID NOT MAKE (principle 2): only a file that existed in the session's first
+            # complete survey is protected. A deliverable the coder created itself (REVIEW.md) is rewritten
+            # whole as a matter of course; no baseline yet = nothing proves it pre-existed = silence.
+            base = getattr(sess, "survey_baseline", None)
+            if base is None or rel not in base:
                 return None
             raw = view.read_bytes(rel)
             if raw is None:
@@ -6763,16 +6770,22 @@ def unread_target_fact(sess, view, path: str, messages: list[dict]) -> str:
     return prompts.fill(labels["sized" if size is not None else "unsized"], path=rel, size=size)
 
 
-def _note_survey_baseline(sess, root) -> None:
+def _note_survey_baseline(sess, root, messages=()) -> None:
     """Remember the first COMPLETE survey's file sizes and mtimes, once per session. An incomplete or
-    folded listing is no baseline: a later "unchanged" would be measured against a partial picture."""
+    folded listing is no baseline: a later "unchanged" would be measured against a partial picture.
+
+    A file the coder's own landed `write_file` created BEFORE that survey rode back is not in it: the
+    first survey usually arrives on the result of the coder's first command, so a file that command wrote
+    is in the listing without having been there at the start (`shrinking_write_check` reads this
+    baseline as "existed before the coder touched anything")."""
     if getattr(sess, "survey_baseline", None) is not None or not root:
         return
     view = wsview.current(root)
     if not view.surveyed or not view.complete or view.folded:
         return
+    own = {r for p in _extract_writes(list(messages)) if (r := view.rel(p))}
     sess.survey_baseline = {r: (e.size, e.mtime) for e in view.files() or []
-                            if (r := view.rel(e.path))}
+                            if (r := view.rel(e.path)) and r not in own}
 
 
 def _measured_gap_facts(sess, reply: str) -> str:

@@ -81,8 +81,12 @@ class _Log:
         self.events.append(kind)
 
 
-def _check(judge, messages=()):
+def _check(judge, messages=(), created=(), baseline=True):
+    """``created`` = files the coder made this session (not in the first complete survey)."""
     sess = _synth()
+    if baseline:
+        v = wsview.current(ROOT)
+        sess.survey_baseline = {r: (e.size, e.mtime) for e in v.files() if (r := v.rel(e.path)) not in created}
     lp = _single_loop(lambda b, r: b"{}", reasoner_chat=judge, reasoner_role=Role(name="r", backend="local"),
                       workspace_root=ROOT)
     lp._store.put("sid:h2", sess)
@@ -416,3 +420,37 @@ def test_small_edits_and_additive_rewrites_are_untouched():
     assert loop.shrink_measure(cur, cur.replace("line 3\n", "line three\n")) is None
     assert loop.shrink_measure(cur, cur + "".join(f"more {i}\n" for i in range(200))) is None   # grows, loses nothing
     assert loop.shrink_measure("a\nb\nc\n", "x\n") is None                                     # < SHRINK_MIN_LINES
+
+
+def test_a_file_the_coder_created_this_session_is_rewritten_whole_without_a_hold(view, tmp_path):
+    """Cycle 12: REVIEW.md is a task deliverable the coder wrote itself; rewriting it in full is normal
+    (13 corpus hits). Principle 2 protects progress the coder did not make."""
+    review = "".join(f"## finding {i}\ndetail {i}\n" for i in range(10))
+    (tmp_path / "REVIEW.md").write_text(review)
+    view.note_written("REVIEW.md", review)
+    rewrite = "# Review\nall new\n"
+    judge = _Judge("OTHER")
+    check, _ = _check(judge, created={"REVIEW.md"})
+    _, cmd = _lower("REVIEW.md", rewrite, check)
+    assert judge.prompts == [] and "write_bytes" in cmd
+    # the same write over a file that WAS in the first survey is asked about (and held on OTHER)
+    check, _ = _check(_Judge("OTHER"))
+    _, cmd = _lower("REVIEW.md", rewrite, check)
+    assert _held(cmd, tmp_path)
+
+
+def test_no_complete_survey_baseline_is_silence(view):
+    judge = _Judge("OTHER")
+    check, _ = _check(judge, baseline=False)
+    _, cmd = _lower(JAVA, A9_REWRITE, check)
+    assert judge.prompts == [] and "write_bytes" in cmd
+
+
+def test_the_baseline_leaves_out_a_file_the_coders_landed_write_created_before_the_survey_rode_back(view):
+    from tests.test_loop import _synth as synth
+    sess = synth()
+    msgs = [{"role": "assistant", "content": None, "tool_calls": [{"id": "w1", "type": "function", "function": {
+                "name": "write_file", "arguments": json.dumps({"path": f"{ROOT}/pom.xml", "content": "x\n"})}}]},
+            {"role": "tool", "tool_call_id": "w1", "content": "⟦ctx:wrote⟧"}]
+    loop._note_survey_baseline(sess, ROOT, msgs)
+    assert "pom.xml" not in sess.survey_baseline and JAVA in sess.survey_baseline
