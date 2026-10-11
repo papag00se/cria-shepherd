@@ -23,15 +23,33 @@ token count; phi4's coder frames measure 10,388 est vs ~10,553 real (1.02x).
 """
 from __future__ import annotations
 
-from . import contextfloor, probegate
+from . import contextfloor, dedup, probegate, prompts
+
+# The messages that carry the repo's own check evidence into the model's view, each rendered by a
+# different owner: the compaction continuation freezes the gate's findings into the harness's history
+# (`loop.reframe_compaction`), the `⟦ctx:checks⟧` result is the gate's own rendering
+# (`probegate.clean_gate_results`), and the trailing `⟦ctx:steer⟧` restates them after the floor has
+# run (`loop`). No call site sees all three — which is why the one-copy rule lives HERE, at the wire,
+# beside the cleaning that already decides what the model reads (#24). A test pins the literals to
+# `loop.CONTINUATION_MARKER` (modelview cannot import loop: loop imports upstream imports this).
+EVIDENCE_CARRIERS = ("⟦ctx:continuation⟧", probegate.CHECKS_MARKER, "⟦ctx:steer⟧")
 
 
 def wire_messages(messages: list[dict]) -> list[dict]:
     """The conversation as the coder-bound wire carries it: cria-authored (stamped) gate calls and
-    results cleaned, everything else verbatim. A body without a stamped gate call is returned as is.
-    `Upstream._prep` applies exactly this before the floor, and the usage report measures exactly this."""
+    results cleaned, everything else verbatim. A body without a stamped gate call or repeated check
+    evidence is returned as is.
+    `Upstream._prep` applies exactly this before the floor, and the usage report measures exactly this.
+
+    ONE COPY OF THE CHECK EVIDENCE. Whatever the check carriers above repeat — the same failure block
+    in the continuation and in the steer, the governance paragraph in all three, a build tool's own
+    error list printed again under its failure banner — is shown once (the newest copy) and a pointer
+    stands where each earlier copy sat. Byte-exact and lossless (`dedup.fold_repeated_runs`); identity
+    when nothing repeats, so every other body is byte-identical."""
     if probegate.gate_call_ids(messages):
-        return probegate.clean_gate_results(messages, linked_only=True)
+        messages = probegate.clean_gate_results(messages, linked_only=True)
+    messages, _ = dedup.fold_repeated_runs(
+        messages, prompts.load("repeated_message_note").strip(), prefixes=EVIDENCE_CARRIERS)
     return messages
 
 

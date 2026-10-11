@@ -421,3 +421,134 @@ def fold_repeated_actions(log: str, note: str) -> tuple[str, int]:
         out.append(note.replace("{{N}}", "1"))
         pending = (len(out) - 1, 1)
     return ("\n".join(out), folded) if folded else (log, 0)
+
+
+# ── Repeated EVIDENCE RUNS across cria's own check carriers ──────────────────────────────────────
+# `fold_repeated_messages` folds a message that is byte-identical to a later one. Check evidence is
+# never repeated that way: the SAME failure block rides inside three different messages (the
+# compaction continuation that froze it, the `⟦ctx:checks⟧` result, the trailing `⟦ctx:steer⟧`), each
+# with its own framing around it, and a build tool prints each diagnostic more than once inside a
+# single result (maven: the error list, the same list again under `Failed to execute goal`, and both
+# again for the second command). Measured on phi4 / feed-pipeline-java A2 call 0042: one diagnostic
+# line 24 times in a 15,439-token body of a 16,384 window. See `fold_repeated_runs`.
+#
+# A UNIT is one line, or one sentence of a line (split after `. `/`! `/`? `), so a governance
+# paragraph that is one long line in one message and a differently-prefixed line in another still
+# matches sentence for sentence. Each unit keeps its trailing separator, so the units concatenate
+# back to the exact text.
+_UNIT_SPLIT = re.compile(r"[^\n]*?(?:(?<=[.!?])[ \t]+|\n|\Z)")
+
+# A unit this short is a bridge, not evidence: `[ERROR]`, `  symbol:   class Reader`. It may sit
+# INSIDE a repeated run (the run is contiguous), but never starts or ends one and never counts
+# toward the size floor.
+MIN_RUN_UNIT_CHARS = 20
+
+# A run must carry this much real text before it is folded. A pointer costs ~30 tokens and a PARTIAL
+# match (maven prints one error list in two spellings that agree on every line but the `symbol:` ones)
+# would otherwise cut a block into alternating fragments and pointers. Only a whole block is worth it.
+MIN_RUN_CHARS = 1000
+
+
+def _units(text: str) -> list[str]:
+    return [u for u in _UNIT_SPLIT.findall(text) if u]
+
+
+def _carries_evidence(m: dict, prefixes: "tuple[str, ...]") -> bool:
+    c = m.get("content")
+    return (m.get("role") in ("user", "tool") and isinstance(c, str)
+            and c.lstrip().startswith(prefixes))
+
+
+def fold_repeated_runs(msgs: list[dict], note: str, *, prefixes: "tuple[str, ...]",
+                       min_chars: int = MIN_RUN_CHARS) -> tuple[list[dict], int]:
+    """ONE copy of every repeated run of text across the messages whose content starts with one of
+    ``prefixes`` — the LAST copy stays whole, every earlier copy becomes ``note``. Rule 5's first
+    exception: byte-identical, nothing is shortened, the full text is still in the body.
+
+    A RUN is a maximal sequence of consecutive units (see ``_UNIT_SPLIT``) that appears again,
+    unit for unit, LATER in the body — in a later message or further down the same one. Matching is
+    exact, so a diagnostic is never merged with a merely similar one; a run is folded only when it
+    carries at least ``min_chars`` of real (non-bridge) text, and it never starts or ends on a
+    bridge unit. Newest wins, for the reason :func:`fold_repeated_messages` gives, so a pointer
+    always says "further down" and that is always true: the last copy of a run is never folded.
+
+    Only ``user``/``tool`` messages carrying one of ``prefixes`` are read or rewritten — never an
+    ``assistant`` turn (the model's own words), never ``system``, never the task."""
+    idx = [i for i, m in enumerate(msgs) if _carries_evidence(m, prefixes)]
+    if not idx:
+        return msgs, 0
+    # one flat unit stream; a message boundary is a sentinel no unit can equal, so a run never
+    # spans two messages (it would splice two records into one pointer).
+    flat: list[str | None] = []
+    where: list[tuple[int, int] | None] = []        # flat position -> (message index, unit index)
+    per_msg: dict[int, list[str]] = {}
+    for i in idx:
+        us = _units(msgs[i]["content"])
+        per_msg[i] = us
+        for k, u in enumerate(us):
+            flat.append(u.rstrip())
+            where.append((i, k))
+        flat.append(None)
+        where.append(None)
+    n = len(flat)
+    real = [u is not None and len(u) >= MIN_RUN_UNIT_CHARS for u in flat]
+    # Scan NEWEST FIRST: a unit is only ever folded against text that is itself KEPT, so a pointer's
+    # promised copy is always whole and never a fragment of another pointer's source.
+    order = list(range(n - 1, -1, -1))             # flat positions, newest first
+    rflat = [flat[p] for p in order]
+    rreal = [real[p] for p in order]
+    kept = [True] * n                              # in `order` space; False once folded
+    positions: dict[str, list[int]] = {}
+    folds: dict[int, list[tuple[int, int]]] = {}   # message index -> [(first unit, end unit)]
+    r = 0
+    while r < n:
+        u = rflat[r]
+        if u is None or not rreal[r]:
+            r += 1
+            continue
+        best = 0
+        for q in positions.get(u, ()):
+            length = 0
+            while (r + length < n and q + length < r and rflat[r + length] is not None
+                   and rflat[r + length] == rflat[q + length] and kept[q + length]):
+                length += 1
+            best = max(best, length)
+        while best and not rreal[r + best - 1]:    # never END (in reading order: START) on a bridge
+            best -= 1
+        if best and sum(len(rflat[r + j]) for j in range(best) if rreal[r + j]) >= min_chars:
+            for j in range(best):
+                kept[r + j] = False
+            # `order` runs newest-first, so this run read in the message's own direction is
+            # flat[order[r + best - 1] .. order[r]]
+            lo, hi = order[r + best - 1], order[r]
+            folds.setdefault(where[lo][0], []).append((where[lo][1], where[hi][1] + 1))
+            r += best
+        else:
+            positions.setdefault(u, []).append(r)
+            r += 1
+    for mi, spans in folds.items():
+        spans.sort()
+        merged: list[tuple[int, int]] = []
+        for a, b in spans:                          # two runs with nothing between are one pointer
+            if merged and merged[-1][1] == a:
+                merged[-1] = (merged[-1][0], b)
+            else:
+                merged.append((a, b))
+        folds[mi] = merged
+    if not folds:
+        return msgs, 0
+    out = list(msgs)
+    total = 0
+    for mi, spans in folds.items():
+        us = per_msg[mi]
+        parts: list[str] = []
+        cur = 0
+        for a, b in spans:
+            parts.append("".join(us[cur:a]))
+            tail = us[b - 1][len(us[b - 1].rstrip()):]      # the run's own trailing separator
+            parts.append(note + tail)
+            cur = b
+            total += 1
+        parts.append("".join(us[cur:]))
+        out[mi] = {**msgs[mi], "content": "".join(parts)}
+    return out, total
