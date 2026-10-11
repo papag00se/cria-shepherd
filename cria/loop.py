@@ -1488,6 +1488,22 @@ def _negative_diagnosis_nudge(obj: dict, *, task: str, action_log: str = "", che
         return suppress("unknown evidence source")
     if not task_quote or task_quote not in (task or ""):
         return suppress("task quote is not exact")
+    # THE LABEL IS THE JUDGE'S CLAIM; ABSENCE IS CRIA'S FACT. A verdict that cites `workspace_absence` as
+    # its evidence, over a subject that is a whole token of the EXACT task quote, and that the workspace
+    # view proves ABSENT, is a missing file whatever kind it chose. Walked on the A1 run (capture
+    # 20261010T212733 call 0021): kind `missing_content`, subject `REVIEW.md`, quote "Add `REVIEW.md`
+    # describing remaining problems…" (exact), source `workspace_absence` — every checkable field true —
+    # and it died on "missing-content source contract" because the label was the adjacent one. The
+    # `evidence_quote` of an absence has nothing to quote, so it is not consulted. Every check the
+    # missing_file branch below makes (task-named subject, view-proven absence) still runs on the
+    # canonical kind; a present, ambiguous or unknown-state file stays suppressed.
+    if (source == "workspace_absence" and kind != "missing_file" and subject
+            and _subject_is_exact_in_quote(subject, task_quote)
+            and _workspace_subject(workspace_root, subject)[1] is False):
+        if rlog is not None:
+            rlog.emit("loop.negative_diagnosis_canonicalised", level="info", phase=phase,
+                      was=kind, now="missing_file", subject=subject)
+        kind, evidence_quote = "missing_file", ""
     # MISSING_FILE ONLY. The claim "the task asked for this file and it is not there" is about a
     # PATH, so the task had better name that path — that check stays.
     #
@@ -5109,7 +5125,33 @@ class Loop:
             messages=body.get("messages", []), sess=sess)
         _record_satisfaction(sess, satisfied, reason)
         rlog.emit("loop.done_critic", plan_off=True, satisfied=satisfied)
-        return "" if satisfied else (reason or _unnamed_gap(sess, sess.pending_done))
+        if satisfied:
+            return ""
+        if not reason:
+            # THE DIAGNOSIS WAS SUPPRESSED (the judge's quotes/labels did not survive provenance). A named
+            # task file that the workspace view proves absent does not need the judge to have labelled it
+            # right: ask the same observer the plan-ON driver runs, whose answer must itself pass the one
+            # provenance owner. Only on a complete, current survey; anything else is silence (#11b).
+            gap = self._observe_missing_file_on_done(sess, body, task, rlog)
+            if gap:
+                return gap
+        return reason or _unnamed_gap(sess, sess.pending_done)
+
+    def _observe_missing_file_on_done(self, sess: PlanSession, body: dict, task: str, rlog) -> "VerdictNudge":
+        """The plan-OFF twin of the plan-ON deliverable observer. Trigger: the model tried to stop and the
+        completion check was not satisfied without a usable diagnosis (level 4's trigger — no assist
+        schedule involved). Returns the typed `missing_file` nudge or an empty one."""
+        view = wsview.current(sess.workspace_root) if sess.workspace_root else None
+        if (view is None or view.observation_fingerprint is None or not task
+                or self._ctx.reasoner_chat is None):
+            return VerdictNudge()
+        gap = observe_task_missing_file(
+            task, workspace_root=sess.workspace_root or "",
+            reasoner_chat=self._ctx.reasoner_chat, reasoner_role=self._ctx.reasoner_role, rlog=rlog)
+        if gap.diagnosis_kind == "missing_file" and gap.subject:
+            rlog.emit("loop.done_gap_observed", level="info", subject=gap.subject, plan_off=True)
+            return gap
+        return VerdictNudge()
 
     def _reasoned_reanchor(self, body: dict, rlog, workspace_root: str = "") -> str:
         """A REASONED continuation after a harness compaction (parity with the loop's re-plan from the
