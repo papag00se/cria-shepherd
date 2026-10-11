@@ -364,6 +364,7 @@ class GuardState:
     # punt-floor was a deterministic fallback behind a reasoner call — both are what the doctrine forbids
     # (principles #1, #2, #4). The search gate still REFUSES a near-duplicate search and steers "read the
     # source you named" — a steer the coder can disregard, not an action taken for it.
+    read_ledger_seen: set = None   # tool-call ids already folded into read_files (events apply once, in order)
     read_files: dict = None     # path -> (bytes, "N bytes, M lines"): DURABLE record of the WORKSPACE files the
     # coder has already read. The fetch ledger below survives compaction and this did not, so a
     # compacted coder kept its web history and lost every file it had opened — on
@@ -6705,8 +6706,7 @@ def _measured_gap_facts(sess, reply: str) -> str:
     if base and view is not None and view.observation_fingerprint is not None:
         now = {r: (e.size, e.mtime) for e in view.files() or [] if (r := view.rel(e.path))}
         same, moved = [], []
-        for path in sorted(getattr(sess, "read_files", None) or {}):
-            rel = view.rel(path)
+        for rel in sorted({view.rel(p) for p in getattr(sess, "read_files", None) or {}} - {None}):
             if rel in base and rel in now:
                 (same if now[rel] == base[rel] else moved).append(f"  {rel} ({now[rel][0]} bytes)")
         if same:
@@ -9021,31 +9021,75 @@ def _extract_reads(messages: list[dict]) -> dict:
     not replace a whole-file read in the ledger. Largest wins — a window is never larger than the
     file it came out of."""
     out: dict = {}
-    for path, start, end, c in _read_results(messages):
-        raw = c.encode("utf-8", "replace")
-        # LINE COUNT ONLY, NO BYTE COUNT. The live ⟦ctx:files⟧ listing owns the byte size of
-        # every present file, read from os.stat. This ledger measured `len(read-result)`, which
-        # the read tool returns with the trailing newline stripped — so for one unchanged file it
-        # said 984 where the listing said 985, in the same prompt. Walked on ornith15 x
-        # shipping-rates-rb 2026-09-07: that uniform 1-byte gap across every file was the exact
-        # "the numbers are slightly off, so cria is fabricating" tell the original run weaponised
-        # into a ~100-turn distrust cascade. One owner for the byte metric; this ledger keeps the
-        # per-file fact it owns (you looked) and its line count, which never collides.
-        label = f"{c.count(chr(10)) + 1} lines"
-        if start or end:
-            label = prompts.fill(prompts.load_map("fetched_facts_sections")["read_range"],
-                                 range=_line_range(start, end), size=label)
-        _keep_larger(out, path, len(raw), label)
+    for ev in _file_events(messages):
+        if ev[2] == "read":
+            _apply_ledger_event(out, ev)
     return out
+
+
+def _read_label(start, end, c: str) -> str:
+    """What one read RETURNED, in the ledger's words. LINE COUNT ONLY, NO BYTE COUNT. The live
+    ⟦ctx:files⟧ listing owns the byte size of every present file, read from os.stat. This ledger
+    measured `len(read-result)`, which the read tool returns with the trailing newline stripped — so
+    for one unchanged file it said 984 where the listing said 985, in the same prompt. Walked on
+    ornith15 x shipping-rates-rb 2026-09-07: that uniform 1-byte gap across every file was the exact
+    "the numbers are slightly off, so cria is fabricating" tell the original run weaponised into a
+    ~100-turn distrust cascade. One owner for the byte metric; this ledger keeps the per-file fact it
+    owns (you looked) and its line count, which never collides.
+
+    A window that ran into the end of the file (asked 1-130 of a 106-line file) IS the file, and says
+    so: the count is the lines that came back, never the end of the range asked for."""
+    label = f"{c.count(chr(10)) + 1} lines"
+    if (start or end) and not _is_whole_read(start, end, c):
+        label = prompts.fill(prompts.load_map("fetched_facts_sections")["read_range"],
+                             range=_line_range(start, end), size=label)
+    return label
+
+
+def _file_events(messages: list[dict]) -> list:
+    """Every read and landed write in ``messages``, oldest first: ``(position, id, kind, path, nbytes,
+    label, partial)``. One ordered stream, because what the ledger says about a path is its NEWEST
+    state — a bigger OLD reading must never outrank a newer smaller one (phi4 A4 CALL 0270: `Importer.java
+    (130 lines)` for the 106-line file the coder had since rewritten, `pom.xml (21 lines)` for a 12-line
+    one; both numbers were true once, of a file that no longer existed)."""
+    events = []
+    for idx, tid, path, start, end, c in _read_results_ordered(messages):
+        nbytes, label = len(c.encode("utf-8", "replace")), _read_label(start, end, c)
+        events.append((idx, ("r", tid, path, nbytes, label), "read", path, nbytes, label,
+                       not _is_whole_read(start, end, c)))
+    for idx, tid, path, nbytes, label in _write_events(messages):
+        events.append((idx, ("w", tid, path, nbytes, label), "write", path, nbytes, label, False))
+    events.sort(key=lambda e: e[0])
+    return events
+
+
+def _apply_ledger_event(d: dict, ev, key=None) -> None:
+    """Fold one event into ``d`` (path -> (nbytes, label)): the newest reading wins. The one exception
+    is a WINDOW that did not reach the end of the file — it says nothing about the rest, so it does not
+    displace an earlier reading of the whole (the ledger answers "have I looked at this file")."""
+    _idx, _id, kind, path, nbytes, label, partial = ev
+    path = key(path) if key else path
+    prev = d.get(path)
+    if kind == "write" and prev is None:
+        return                       # a write is not a read; written_files owns it
+    if partial and prev is not None and not prev[1].startswith("lines "):
+        return
+    d[path] = (nbytes, label)
 
 
 def _read_results(messages: list[dict]):
     """``(path, start_line, end_line, result text)`` for every workspace read that returned content —
     the one parse :func:`_extract_reads` and :func:`_extract_whole_reads` share."""
+    for _idx, _tid, *rest in _read_results_ordered(messages):
+        yield tuple(rest)
+
+
+def _read_results_ordered(messages: list[dict]):
+    """:func:`_read_results` with the result message's position and its tool-call id in front."""
     from . import denial
     calls: dict = {}
     answered_by_read: set = set()
-    for m in messages or []:
+    for idx, m in enumerate(messages or []):
         if not isinstance(m, dict):
             continue
         for tc in m.get("tool_calls") or []:
@@ -9070,7 +9114,7 @@ def _read_results(messages: list[dict]):
                     continue
             elif not isinstance(c, str) or not c.strip() or denial.is_denied(c):
                 continue
-            yield (*calls[tid], c)
+            yield (idx, tid, *calls[tid], c)
 
 
 _NUMBERED = re.compile(r"(\d+): ")
@@ -9175,19 +9219,11 @@ def _line_range(start, end) -> str:
     return f"from {start}" if start else f"up to {end}"
 
 
-def _keep_larger(out: dict, path: str, nbytes: int, label: str) -> None:
-    """Record this reading of ``path`` unless the ledger already holds a bigger one."""
-    prev = out.get(path)
-    if prev is None or nbytes >= prev[0]:
-        out[path] = (nbytes, label)
-
-
 def _extract_writes(messages: list[dict]) -> dict:
     """path -> (bytes, "N bytes, M lines") for every write that actually LANDED.
 
     THE SIBLING THE LEDGER WAS MISSING. :func:`_extract_reads` records what a read returned, and
-    `_keep_larger` then keeps the largest reading ever seen — correct for two reads of one file, and
-    wrong the moment the coder WRITES it. The recorded size stops describing the file and nothing
+    a read says what the file was WHEN READ — wrong once the coder WRITES it. The recorded size stops describing the file and nothing
     ever corrects it, because the ledger only refreshes on a read.
 
     Measured on all three cells of the 2026-08-28 walk, found independently by nine walkers. go
@@ -9200,10 +9236,17 @@ def _extract_writes(messages: list[dict]) -> dict:
     cria composed the write, so it holds the bytes exactly — nothing is measured on the filesystem
     and nothing is guessed. A refused write is not a write: the same `denial` bar the read side
     already applies, for the same reason (an attempted write is not a write)."""
+    out: dict = {}
+    for _idx, _tid, path, nbytes, label in _write_events(messages):
+        out[path] = (nbytes, label)
+    return out
+
+
+def _write_events(messages: list[dict]):
+    """``(position, id, path, bytes, label)`` for every write that landed — see :func:`_extract_writes`."""
     from . import denial
     calls: dict = {}
-    out: dict = {}
-    for m in messages or []:
+    for idx, m in enumerate(messages or []):
         if not isinstance(m, dict):
             continue
         for tc in m.get("tool_calls") or []:
@@ -9221,8 +9264,17 @@ def _extract_writes(messages: list[dict]) -> dict:
                 continue                      # refused — the file on disk is unchanged
             path, body = calls[tid]
             raw = body.encode("utf-8", "replace")
-            out[path] = (len(raw), f"{body.count(chr(10)) + 1} lines")   # bytes owned by the ⟦ctx:files⟧ listing
-    return out
+            yield idx, tid, path, len(raw), f"{body.count(chr(10)) + 1} lines"   # bytes owned by the ⟦ctx:files⟧ listing
+
+
+def _ledger_key(sess):
+    """path -> the ONE key a file goes by: workspace-relative when the workspace is known (the same file
+    read as `/abs/ws/pom.xml` and `pom.xml` was two ledger lines, 29 lines and 21 — phi4 A4 CALL 0270)."""
+    root = getattr(sess, "workspace_root", None)
+    if not root:
+        return lambda p: p
+    view = wsview.current(root)
+    return lambda p: view.rel(p) or p
 
 
 def _track_read_files(sess, messages: list[dict]) -> None:
@@ -9232,8 +9284,13 @@ def _track_read_files(sess, messages: list[dict]) -> None:
         return
     if getattr(sess, "read_files", None) is None:
         sess.read_files = {}
-    for path, (nbytes, label) in _extract_reads(messages).items():
-        _keep_larger(sess.read_files, path, nbytes, label)
+    if getattr(sess, "read_ledger_seen", None) is None:
+        sess.read_ledger_seen = set()
+    key = _ledger_key(sess)
+    for ev in _file_events(messages):
+        if ev[1] not in sess.read_ledger_seen:        # each event folds in once, so order is real time
+            sess.read_ledger_seen.add(ev[1])
+            _apply_ledger_event(sess.read_files, ev, key)
     # A file the coder WROTE is one it has seen, and its own write may be compacted away long before it
     # is rewritten — so the record is durable like the reads (`_coder_has_seen`).
     if getattr(sess, "written_files", None) is None:
@@ -9248,13 +9305,14 @@ def _read_ground_truth(sess, messages: list[dict]) -> str:
     copy of the workspace in every prompt. What the coder loses at compaction is not the bytes, it is
     the KNOWLEDGE THAT IT HAS ALREADY LOOKED — and that is one line per file."""
     seen = dict(getattr(sess, "read_files", None) or {})
-    for path, (nbytes, label) in _extract_reads(messages or []).items():
-        _keep_larger(seen, path, nbytes, label)
-    # A WRITE OVERRIDES, IT DOES NOT COMPETE. `_keep_larger` is the right rule between two READINGS
-    # of one file — a later window must not displace a whole-file read. It is the wrong rule against
-    # a WRITE, which is not another reading but the file's new state, and may legitimately be
-    # smaller. Applied last so the newest thing cria knows about the path is what the ledger says.
-    seen.update({p: v for p, v in _extract_writes(messages or []).items() if p in seen})
+    key = _ledger_key(sess)
+    done = getattr(sess, "read_ledger_seen", None) or set()
+    events = _file_events(messages or [])
+    # Events not yet folded into the durable record apply on top of it, oldest first: the newest thing
+    # cria knows about a path is what the ledger says (a write is a new state, not a competing reading).
+    for ev in events:
+        if ev[1] not in done:
+            _apply_ledger_event(seen, ev, key)
     if not seen:
         return ""
     labels = prompts.load_map("fetched_facts_sections")
@@ -9265,7 +9323,7 @@ def _read_ground_truth(sess, messages: list[dict]) -> str:
     # messages this anchor is built for. That claim survives the floor (the floor only removes
     # messages); the opposite one — "its result IS here" — would be true only before it, and an
     # anchor is built before the floor, so it is never said (#5b). The wording names no action.
-    live = set(_extract_reads(messages or []))
+    live = {key(ev[3]) for ev in events if ev[2] == "read"}
     out_of_view = labels["read_out_of_view"]
     lines = "\n".join(f"- {p} ({size}){'' if p in live else out_of_view}"
                       for p, (_n, size) in sorted(seen.items()))
