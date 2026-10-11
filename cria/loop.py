@@ -3093,6 +3093,11 @@ class Loop:
         `OTHER` holds the identical content indefinitely. The coder's ways out are `edit_file`, a shell
         command, or different content (a full file that keeps most of the current one is never asked).
 
+        MEASURED ON phi4 (2026-10-11, temperature 0): the judge answered `OTHER` on 22 of 22 runs of 11
+        legitimate shrinking rewrites (and held 14 of 14 runs of the fragments, A3/A4 included). For such a
+        model a drastic shrink of a file the coder has seen is therefore effectively HELD until it uses
+        `edit_file`, sends content that keeps more of the file, or uses the shell. Accepted trade: the
+        variants that let rewrites through also let the A3 stub through. Detector rate: 1.4% of big-file writes.
         THE HOLD IS BOUND TO THE BYTES MEASURED. The text above comes from the view, which a coder's own
         shell command can leave behind the disk; the check therefore returns those bytes with the hold, and
         the lowered command refuses only while the file on disk still equals them (otherwise it writes, as
