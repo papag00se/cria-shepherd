@@ -37,7 +37,7 @@ def _run(args, echo, base=None):
 
 
 def _numbered_rows(text):
-    return [(int(m.group(1)), m.group(2)) for m in (re.match(r"\s*(\d+)\t(.*)$", ln) for ln in text.splitlines()) if m]
+    return [(int(m.group(1)), m.group(2)) for m in (re.match(r"(\d+): (.*)$", ln) for ln in text.splitlines()) if m]
 
 
 class EditEchoTests(unittest.TestCase):
@@ -108,8 +108,65 @@ class EditEchoTests(unittest.TestCase):
         res, _, _ = _run(_FX["edit"], echo=True)
         self.assertLess(len(res) - len(prompts.render("write_confirm", path=_PATH)), 900)
 
+    def test_long_lines_next_to_the_edit_stay_within_the_bound(self):
+        big = "x" * 50_000
+        base = f"a = 1\n{big}\nb = 2\n{big}\nc = 3\n"
+        res, disk, cmd = _run({"old_string": "b = 2", "new_string": "b = 3"}, echo=True, base=base)
+        self.assertEqual(disk, base.replace("b = 2", "b = 3"))
+        self.assertLess(len(res), writeproxy.ECHO_MAX_BYTES + 600)
+        self.assertIn("too large to show", res)
+        self.assertIn("now has 5 lines", res)
+        d = tempfile.mkdtemp()
+        pathlib.Path(d, _PATH).parent.mkdir(parents=True)
+        pathlib.Path(d, _PATH).write_text(base)
+        comp = {"choices": [{"message": {"tool_calls": [{"id": "e1", "type": "function", "function": {
+            "name": "edit_file", "arguments": json.dumps({"path": _PATH, "old_string": "b = 2", "new_string": "b = 3"})}}]}}]}
+        translate_outbound(comp, _CMD_SHELL, injected={"edit_file"}, edit_echo=True)
+        c = json.loads(comp["choices"][0]["message"]["tool_calls"][0]["function"]["arguments"])["cmd"]
+        out = subprocess.run(["bash", "-c", c], cwd=d, capture_output=True, text=True).stdout
+        line = next(l for l in out.splitlines() if l.startswith(writeproxy.EDIT_VIEW))
+        self.assertLessEqual(len(line), writeproxy.ECHO_WIRE_MAX_BYTES)
+
+    def test_one_long_line_in_the_context_drops_to_the_lines_that_fit(self):
+        base = "a = 1\n" + "x" * 50_000 + "\nb = 2\nc = 3\n"
+        res, _, _ = _run({"old_string": "b = 2\nc = 3", "new_string": "b = 3\nc = 4"}, echo=True, base=base)
+        self.assertLess(len(res), writeproxy.ECHO_MAX_BYTES + 600)
+        self.assertIn("too large to show", res)
+
+    def test_an_emptied_file_has_zero_lines_and_no_window(self):
+        res, disk, _ = _run({"old_string": "a = 1", "new_string": ""}, echo=True, base="a = 1")
+        self.assertEqual(disk, "")
+        self.assertIn("now has 0 lines", res)
+        self.assertEqual(_numbered_rows(res), [])
+
+    def test_rows_use_the_read_file_line_format(self):
+        res, _, _ = _run(_FX["edit"], echo=True)
+        self.assertRegex(res, r"(?m)^9\d: ")
+
+    def test_the_wording_is_past_tense(self):
+        self.assertIn("spelled", prompts.load("edit_echo_flexible"))
+
+    def test_level_four_server_wiring_is_byte_identical_and_level_five_echoes(self):
+        from types import SimpleNamespace
+        from cria import server
+        from cria.config import DONE_REFUSALS_ENABLED, ASSISTS_ENABLED, RoutingConfig
+        seen = {}
+        def run(level):
+            routing = RoutingConfig(engagement_level=level)
+            h = SimpleNamespace(server=SimpleNamespace(cfg=SimpleNamespace(
+                routing=routing, safety=SimpleNamespace(external_dir_permission="write"))),
+                _shell_tool=_CMD_SHELL, _synthetic={"edit_file"}, _workspace_root=None)
+            comp = {"choices": [{"message": {"tool_calls": [{"id": "e1", "type": "function", "function": {
+                "name": "edit_file", "arguments": json.dumps({"path": "a.py", "old_string": "x", "new_string": "y"})}}]}}]}
+            server.CriaHandler._translate_out(h, comp, "s", None)
+            return json.loads(comp["choices"][0]["message"]["tool_calls"][0]["function"]["arguments"])["cmd"]
+        l4, l5 = run(DONE_REFUSALS_ENABLED), run(ASSISTS_ENABLED)
+        self.assertIn(writeproxy._edit_command("a.py", "x", "y", pack=True), l4)
+        self.assertNotIn("editview", l4)
+        self.assertIn("editview", l5)
+
     def test_prompts_never_name_the_product(self):
-        for n in ("edit_echo", "edit_echo_removed", "edit_echo_span_omitted", "edit_echo_window", "edit_echo_flexible"):
+        for n in ("edit_echo", "edit_echo_removed", "edit_echo_span_omitted", "edit_echo_window", "edit_echo_flexible", "edit_echo_omitted"):
             self.assertNotIn("cria", prompts.load(n).lower())
 
 

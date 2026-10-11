@@ -730,25 +730,44 @@ else:
 # history) is shown as the two context windows around it, each lossless for the lines it names.
 # Absent the flag none of this is spliced in and the command is byte-for-byte what it always was.
 ECHO_CONTEXT = 3
-ECHO_SPAN_MAX_BYTES = 3000
+# ONE byte bound on the whole echo: the lines shown (span + context), and — separately — the report that
+# carries them (the `_fail` bound). Over it the window is dropped to the two context windows around the
+# span, and over it again to the header alone, which says so. A window is never cut mid-way.
+ECHO_MAX_BYTES = 3000
+ECHO_WIRE_MAX_BYTES = content_reduce_mod.INLINE_RESULT_MAX_BYTES
 EDIT_VIEW = "\u27e6ctx:editview\u27e7"
 _ECHO_DEF = r'''def _echo(res):
     a0,a1,flex=_pos
     L=res.split(chr(10))
-    if res.endswith(chr(10)): L.pop()
+    if res.endswith(chr(10)) or not res: L.pop()
     total=len(L)
     nl=lambda i: res.count(chr(10),0,i)+1
     first=nl(a0); last=nl(max(a0,a1-1)) if a1>a0 else first
     first=min(max(first,1),max(total,1)); last=min(max(last,first),max(total,1))
     lo=max(1,first-{ctx}); hi=min(total,last+{ctx})
-    txt=chr(10).join(L[lo-1:hi])
-    if len(txt.encode())<={spanmax} or a1<=a0:
-        segs=[[lo,txt]]
-    else:
-        segs=[]
-        if first>lo: segs.append([lo,chr(10).join(L[lo-1:first-1])])
-        if hi>last: segs.append([last+1,chr(10).join(L[last:hi])])
-    print('{editview}'+base64.b64encode(json.dumps(dict(first=first,last=last,total=total,flex=flex,empty=a1<=a0,segs=segs)).encode()).decode())
+    J=chr(10).join
+    cands=[[[lo,J(L[lo-1:hi])]]]
+    if a1>a0:
+        cands.append([x for x in ([[lo,J(L[lo-1:first-1])]] if first>lo else [])+([[last+1,J(L[last:hi])]] if hi>last else [])])
+    cands.append([])
+    if total==0: cands=[[]]
+    def _rep(segs,omitted):
+        kw=dict(first=first,last=last,total=total,flex=flex,empty=a1<=a0,segs=segs,omitted=omitted)
+        _b=lambda d: base64.b64encode(json.dumps(d).encode()).decode()
+        _r=_b(kw)
+        try:
+            import zlib
+            _z='{zprefix}'+base64.b64encode(zlib.compress(json.dumps(kw).encode(),9)).decode()
+            if len(_z)<len(_r): _r=_z
+        except Exception:
+            pass
+        return _r
+    for i,segs in enumerate(cands):
+        omitted=bool(total) and not segs
+        if sum(len(t.encode()) for _,t in segs)>{maxb} and i<len(cands)-1: continue
+        r=_rep(segs,omitted)
+        if len(r)>{wire} and i<len(cands)-1: continue
+        print('{editview}'+r); break
 '''
 
 
@@ -777,31 +796,34 @@ def render_edit_echo(content: str, path: str) -> str:
         if not ln.startswith(EDIT_VIEW):
             continue
         try:
-            d = json.loads(base64.b64decode(ln[len(EDIT_VIEW):]).decode())
+            d = editrecovery.decode_report(ln[len(EDIT_VIEW):])
             first, last, total = int(d["first"]), int(d["last"]), int(d["total"])
             segs = [(int(n), str(t)) for n, t in d["segs"]]
         except (ValueError, KeyError, TypeError):
             return confirm
         if d.get("empty"):
             head = prompts.render("edit_echo_removed", path=path, total=total, a=first)
-        elif len(segs) == 1 and segs[0][0] <= first and segs[0][0] + segs[0][1].count("\n") >= last:
+        elif not segs or (len(segs) == 1 and segs[0][0] <= first and segs[0][0] + segs[0][1].count("\n") >= last):
             head = prompts.render("edit_echo", path=path, total=total, a=first, b=last)
         else:
             head = prompts.render("edit_echo_span_omitted", path=path, total=total, a=first, b=last)
         parts = [confirm, head]
         if d.get("flex"):
             parts.append(prompts.load("edit_echo_flexible"))
+        if d.get("omitted"):
+            parts.append(prompts.load("edit_echo_omitted"))
         for n, t in segs:
             rows = t.split("\n")
             parts.append(prompts.render("edit_echo_window", first=n, last=n + len(rows) - 1))
-            parts.append("\n".join(f"{n + i:>6}\t{r}" for i, r in enumerate(rows)))
+            parts.append("\n".join(f"{n + i}: {r}" for i, r in enumerate(rows)))
         return "\n".join(parts)
     return confirm
 
 
 def _edit_command(path: str, old: str, new: str, pack: bool = False, echo: bool = False) -> str:
     py = (_VALIDATE_FN + _EDIT_PY).format(
-        echodef=(_ECHO_DEF.format(ctx=ECHO_CONTEXT, spanmax=ECHO_SPAN_MAX_BYTES, editview=EDIT_VIEW) if echo else ""),
+        echodef=(_ECHO_DEF.format(ctx=ECHO_CONTEXT, maxb=ECHO_MAX_BYTES, wire=ECHO_WIRE_MAX_BYTES,
+                                     zprefix=editrecovery.PACKED_PREFIX, editview=EDIT_VIEW) if echo else ""),
         echocall="_echo(res); " if echo else "",
         posx="_pos=(s.find(old),s.find(old)+len(new),False)\n    " if echo else "",
         posf="_pos=(a,a+len(new),True)\n        " if echo else "",path=_b64(path), old=_b64(old), new=_b64(new),
