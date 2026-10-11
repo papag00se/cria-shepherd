@@ -177,23 +177,29 @@ def _read_file(args: dict, root: str) -> str:
 # keys (`done`, `satisfied`, `consistent`); the steer author shares it too and answers in PROSE. A
 # verdict tool offered to the author would be cria instructing the role collapse it already had to
 # guard against once (see ANSWER_NOW_STEER). Callers that want it name their key.
-def verdict_tool(key: str) -> dict:
-    """The one-call answer tool for a judge whose verdict field is ``key``."""
+def verdict_tool(key: str, schema: str = "") -> dict:
+    """The one-call answer tool for a judge whose verdict field is ``key``.
+
+    ``schema`` names whose fields these are: "" is the completion judge's (``key`` true = the work is
+    done), "observation" the deliverable observer's (``key`` true = a task-named file is ABSENT). The two
+    flags point opposite ways, so the descriptions the model reads cannot be shared."""
+    pre = "observe_" if schema == "observation" else "verdict_"
+    flag = _TD["observe_missing_file"] if schema == "observation" else _TD["verdict_satisfied"]
     return {"type": "function", "function": {
         "name": "verdict", "description": _TD["verdict"],
         "parameters": {"type": "object", "properties": {
-            key: {"type": "boolean", "description": _TD["verdict_satisfied"]},
-            "reason": {"type": "string", "description": _TD["verdict_reason"]},
-            "proposed_fix": {"type": "string", "description": _TD["verdict_fix"]},
-            "diagnosis_kind": {"type": "string", "description": _TD["verdict_diagnosis_kind"]},
-            "subject": {"type": "string", "description": _TD["verdict_subject"]},
-            "task_quote": {"type": "string", "description": _TD["verdict_task_quote"]},
-            "evidence_source": {"type": "string", "description": _TD["verdict_evidence_source"]},
-            "evidence_quote": {"type": "string", "description": _TD["verdict_evidence_quote"]}},
+            key: {"type": "boolean", "description": flag},
+            "reason": {"type": "string", "description": _TD[pre + "reason"]},
+            "proposed_fix": {"type": "string", "description": _TD[pre + "fix"]},
+            "diagnosis_kind": {"type": "string", "description": _TD[pre + "diagnosis_kind"]},
+            "subject": {"type": "string", "description": _TD[pre + "subject"]},
+            "task_quote": {"type": "string", "description": _TD[pre + "task_quote"]},
+            "evidence_source": {"type": "string", "description": _TD[pre + "evidence_source"]},
+            "evidence_quote": {"type": "string", "description": _TD[pre + "evidence_quote"]}},
             "required": [key, "reason", "proposed_fix", "diagnosis_kind", "subject",
                          "task_quote", "evidence_source", "evidence_quote"]}}}
 
 
-def tools_for(verdict_key: str = "") -> list:
+def tools_for(verdict_key: str = "", schema: str = "") -> list:
     """The judge's menu: inspection, plus the verdict tool when the caller declares a key."""
-    return list(VERIFY_TOOLS) + ([verdict_tool(verdict_key)] if verdict_key else [])
+    return list(VERIFY_TOOLS) + ([verdict_tool(verdict_key, schema)] if verdict_key else [])

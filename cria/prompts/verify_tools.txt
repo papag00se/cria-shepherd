@@ -51,6 +51,21 @@ verdict_subject = The exact task- or step-named workspace path for missing_file 
 verdict_task_quote = When false, an exact contiguous quote from the task or step that states the unmet requirement. Empty when true.
 verdict_evidence_source = When false, exactly one of workspace_absence, workspace_file, action_log, checks, or participation. Use workspace_absence only for missing_file, workspace_file for content read from a file, and checks for a failed check. Empty when true.
 verdict_evidence_quote = When false, an exact contiguous quote from the named evidence source with no paraphrase. Empty only for workspace_absence or a true verdict.
+# The verdict tool's fields for the DELIVERABLE OBSERVER (`loop.observe_task_missing_file`), whose flag
+# means the OPPOSITE of the completion judge's: `missing_file` is true when a task-named file IS absent.
+# It used to be offered the judge's descriptions above — `missing_file`: "true only when every requested
+# deliverable is present, verified and working" — so the tool schema phi4 read said the reverse of the
+# system prompt, and the fields said "When satisfied is false ... Empty when true" about a verdict that has
+# no `satisfied`. phi4 answered false and wrote the literal word `empty` into two fields, over a REVIEW.md
+# the task names and the workspace lacks (A2 call 0008). An empty field is the empty STRING, said as such.
+observe_missing_file = true only when ONE whole file the user's task names by its exact path is absent from the workspace right now; false otherwise, including when no named file is established as absent.
+observe_reason = When true, a short statement of the evidence that the file is absent. When false, the empty string "".
+observe_fix = Always the empty string "".
+observe_diagnosis_kind = The text missing_file when the flag is true. The empty string "" when it is false.
+observe_subject = When true, the exact task-named workspace path of the absent file. When false, the empty string "".
+observe_task_quote = When true, the file path alone, exactly as the task writes it. When false, the empty string "".
+observe_evidence_source = The text workspace_absence when the flag is true. The empty string "" when it is false.
+observe_evidence_quote = Always the empty string "".
 # WHY THE LOOKING STOPPED, prefixed to whichever forced answer follows. All three closers used to
 # open "You have inspected enough" — a statement about the READER's judgement, asserted at the two
 # moments cria could least support it: after the reader had just asked to look at something (its

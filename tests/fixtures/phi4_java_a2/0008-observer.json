@@ -1,0 +1,103 @@
+{
+ "capture": "20261010T230133-01a1298d-6183-7b42-af3c-6aa8613cb926/0008-deliverable-observation",
+ "task": "Fix these three problems in the supplier feed importer:\n\n1. Make it at least 4× faster without changing any totals, row counts, or per-SKU results.\n2. Fix the threading bug and re-enable parallel workers. Processing the same feed repeatedly must always produce identical results.\n3. Handle malformed input safely: blank quantities, currency symbols in prices, missing columns, and quoted descriptions containing commas. A SKU appearing on several rows is normal — those rows all count. Decide and implement how each bad-row type is handled, and report skipped-row counts by reason in the summary. Use a third-party Java CSV library for parsing quoted CSV and add it to the project dependencies; do not write a CSV parser.\n\nKeep `Importer.summarize(path)` compatible, including its returned `skus`, `rows`, and `totals`.\n\nAdd `REVIEW.md` describing remaining problems or risks in the code you changed. For every issue, include the file name and line number.",
+ "before_system": "You are a narrow workspace observer, not a completion judge and not the coder. Do not judge whether the task is complete, whether checks pass, whether code works, or what should be fixed. Do not write, run, fetch, plan, clear, or interpret repository checks.\n\nUse the read-only tools only if needed to inspect the current workspace. Answer only whether ONE whole file explicitly named by the user's task is absent from the current workspace. Do not infer a filename from a requested behavior, test, API, or implementation. Do not report missing content inside an existing file. If no exact task-named whole file is currently and completely established as absent, answer false with every diagnosis field empty.\n\nOutput only:\n{\"missing_file\": true|false, \"reason\": \"<short evidence-based absence or empty>\", \"proposed_fix\": \"<empty>\", \"diagnosis_kind\": \"missing_file or empty\", \"subject\": \"<exact task-named workspace path or empty>\", \"task_quote\": \"<exact contiguous task quote or empty>\", \"evidence_source\": \"workspace_absence or empty\", \"evidence_quote\": \"\"}",
+ "before_tools": [
+  {
+   "type": "function",
+   "function": {
+    "name": "list_dir",
+    "description": "List a directory INSIDE the workspace: entries with sizes (dirs marked with /). Call with no path (or \".\") for the workspace root. Use this to check what actually exists before ruling on a step that promises a file.",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "path": {
+       "type": "string",
+       "description": "directory relative to the workspace root; omit or '.' for the root"
+      }
+     }
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "read_file",
+    "description": "Read a file INSIDE the workspace and see its REAL content (optionally only lines start_line..end_line, 1-based inclusive). Use this to check that a claimed artifact actually contains what the step requires — a file can exist and still be empty or a stub.",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "path": {
+       "type": "string"
+      },
+      "start_line": {
+       "type": "integer"
+      },
+      "end_line": {
+       "type": "integer"
+      }
+     },
+     "required": [
+      "path"
+     ]
+    }
+   }
+  },
+  {
+   "type": "function",
+   "function": {
+    "name": "verdict",
+    "description": "Give your final answer. Call this once, when you have finished looking. Do not call it and another tool in the same turn.",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "missing_file": {
+       "type": "boolean",
+       "description": "true only when every requested deliverable is present, verified and working; false otherwise."
+      },
+      "reason": {
+       "type": "string",
+       "description": "A short evidence-based verdict: what proves completion, or the exact deliverable that is missing, failing, fake or unproven."
+      },
+      "proposed_fix": {
+       "type": "string",
+       "description": "When satisfied is false, NAME the missing or failing deliverable in one line — what must become true, not how to make it true. Never a command, a tool call, a library, a filename the task did not name, or an approach; those belong to the coder. Empty string when true."
+      },
+      "diagnosis_kind": {
+       "type": "string",
+       "description": "When false, exactly one of missing_file, missing_content, failed_check, unverified_requirement, or other. A whole absent file and missing content inside an existing file are different types. Empty when true."
+      },
+      "subject": {
+       "type": "string",
+       "description": "The exact task- or step-named workspace path for missing_file or missing_content; otherwise empty unless one exact subject is useful."
+      },
+      "task_quote": {
+       "type": "string",
+       "description": "When false, an exact contiguous quote from the task or step that states the unmet requirement. Empty when true."
+      },
+      "evidence_source": {
+       "type": "string",
+       "description": "When false, exactly one of workspace_absence, workspace_file, action_log, checks, or participation. Use workspace_absence only for missing_file, workspace_file for content read from a file, and checks for a failed check. Empty when true."
+      },
+      "evidence_quote": {
+       "type": "string",
+       "description": "When false, an exact contiguous quote from the named evidence source with no paraphrase. Empty only for workspace_absence or a true verdict."
+      }
+     },
+     "required": [
+      "missing_file",
+      "reason",
+      "proposed_fix",
+      "diagnosis_kind",
+      "subject",
+      "task_quote",
+      "evidence_source",
+      "evidence_quote"
+     ]
+    }
+   }
+  }
+ ],
+ "before_reply": "```json\n{\n  \"missing_file\": false,\n  \"reason\": \"\",\n  \"proposed_fix\": \"\",\n  \"diagnosis_kind\": \"empty\",\n  \"subject\": \"\",\n  \"task_quote\": \"\",\n  \"evidence_source\": \"empty\",\n  \"evidence_quote\": \"\"\n}\n```",
+ "after_reply_live_phi4_2_of_2": "### Part 1: File Presence Check\n\n- `README.md`: present\n- `data/feed.csv`: present\n- `data/feed_messy.csv`: present\n- `pom.xml`: present\n- `src/main/java/pipeline/Importer.java`: present\n- `REVIEW.md`: absent\n\n### Part 2: JSON Output\n\n```json\n{\n  \"missing_file\": true,\n  \"reason\": \"REVIEW.md is not listed in the workspace files.\",\n  \"proposed_fix\": \"\",\n  \"diagnosis_kind\": \"missing_file\",\n  \"subject\": \"REVIEW.md\",\n  \"task_quote\": \"REVIEW.md\",\n  \"evidence_source\": \"workspace_absence\",\n  \"evidence_quote\": \"\"\n}\n```"
+}

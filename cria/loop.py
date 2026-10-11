@@ -1043,6 +1043,7 @@ def _judge_completion(chat_fn, role, system: str, user: str, rlog, *, phase: str
                       force_think_off: bool = False, transcript: list | None = None,
                       answer_now: str | None = None, answer_now_simple: str | None = None,
                       verdict_key: str = "",
+                      verdict_schema: str = "",
                       seed_files: bool = False,
                       evidence_blocks: list[str] | None = None) -> dict:
     """ONE judge completion whose author may first LOOK — the shared inspection loop behind the step
@@ -1115,7 +1116,7 @@ def _judge_completion(chat_fn, role, system: str, user: str, rlog, *, phase: str
             # `<function=exec_command>`. cria discarded those and "unverified — keep working" reached
             # a finished workspace (qwen35/ruby 0138 and 9 more). Opt-in by key: the steer author
             # shares this loop and answers in prose.
-            body["tools"] = verifytools.tools_for(verdict_key)   # withdrawn on the forced-answer round
+            body["tools"] = verifytools.tools_for(verdict_key, verdict_schema)   # withdrawn on the forced-answer round
         if role is not None:
             role.apply(body, internal=True, rlog=rlog)
         elif force_think_off:  # no role configured, but still force the think block off
@@ -2212,12 +2213,21 @@ def observe_task_missing_file(task: str, *, workspace_root: str, reasoner_chat, 
     """
     if not (task.strip() and workspace_root and reasoner_chat is not None):
         return VerdictNudge()
+    inventory = workspace_inventory(workspace_root)
     try:
         comp = _judge_completion(
             reasoner_chat, reasoner_role, prompts.load("deliverable_observation"),
-            prompts.render("deliverable_observation_user", task=task), rlog,
+            # THE FACT THE QUESTION TURNS ON, handed over rather than left to be asked for. The only
+            # workspace evidence this prompt carried was the readable files' contents plus a "named, not
+            # shown" list — no statement of what the directory holds, so "absent" was never establishable
+            # and an observer obeying its own "only when completely established" rule answered false
+            # over a REVIEW.md the task names and the disk lacks (A2 call 0008). Gathering a listing is
+            # deterministic code's job (#8); the inventory withholds its "not listed = does not exist"
+            # clause itself whenever the survey is partial, folded or overtaken (#11b).
+            prompts.render("deliverable_observation_user", task=task,
+                           inventory=f"{inventory}\n\n" if inventory else ""), rlog,
             phase="deliverable-observation", workspace_root=workspace_root,
-            verdict_key="missing_file", seed_files=True)
+            verdict_key="missing_file", verdict_schema="observation", seed_files=True)
     except Exception as e:
         rlog.emit("loop.deliverable_observation_error", level="warn", error=str(e))
         return VerdictNudge()
