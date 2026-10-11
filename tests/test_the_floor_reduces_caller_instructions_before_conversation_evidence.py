@@ -127,7 +127,12 @@ def test_the_usage_report_owner_counts_the_hint_as_zero_tokens():
 
 
 def test_the_do_not_reread_rule_holds_only_while_the_result_is_visible():
-    """A5: the rule forbade re-reading a file whose result the floor had already removed."""
+    """A5: the rule forbade re-reading a file whose result the floor had already removed.
+
+    WORDING-PINNED, knowingly: whether a model re-reads is a property of the model, which no hermetic
+    test can drive. The behavioural evidence is the live phi4 replay in the review thread (prose plan
+    before; real read_file/edit_file calls after M1+M2); this test only keeps the conditional from being
+    reverted to the unconditional rule."""
     from cria import prompts
     line = next(l for l in prompts.load("coder_system").splitlines() if "already read a file" in l)
     assert "do not read or run the same thing again" in line     # kept: repeat reads of visible text
@@ -172,3 +177,22 @@ def test_the_replace_is_anchored_at_the_offset_not_the_first_match():
     assert n == 1 and out[0]["content"].startswith("cria's own text quotes: " + text + " ... then the persona: ⟦ctx:reduced⟧")
     stale = {**m, bodykeys.CALLER_SPAN: {"start": start + 3, "text": text}}
     assert cf._reduce_caller_spans([stale]) == ([stale], 0)           # content moved: left alone
+
+
+def test_the_non_synthetic_step_framing_carries_the_span_and_the_floor_reduces_it():
+    """The planner-on path builds the same system message with a step prompt appended; the offset is the
+    same because the persona sits right after coder_system on both paths."""
+    from cria import prompts
+    tools = FIX["tools"]
+    framed = loop._frame_for_item(
+        [{"role": "developer", "content": FIX["caller"], bodykeys.CALLER_INSTRUCTIONS: True,
+          bodykeys.CALLER_PERSONA: PERSONA}, {"role": "user", "content": FIX["task"]}],
+        "Make the importer faster", "summary", 1, 3, tools=tools, synthetic=False)
+    sysm = framed[0]
+    sp = sysm[bodykeys.CALLER_SPAN]
+    assert sp["start"] == len(prompts.load("coder_system")) + 2 and sysm["content"][sp["start"]:].startswith(PERSONA)
+    assert "Make the importer faster" in sysm["content"]                  # the step rides in the same message
+    out, n = cf._reduce_caller_spans(framed)
+    assert n == 1 and PERSONA not in out[0]["content"]
+    assert CONFIGURED in out[0]["content"] and "Make the importer faster" in out[0]["content"]
+    assert out[0]["content"].startswith(prompts.load("coder_system"))
