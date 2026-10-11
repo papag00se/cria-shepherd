@@ -7106,7 +7106,7 @@ def _observed_successful_write(messages: list[dict], subject: str, root: str | N
         path = calls.get(tid)
         if path:
             content = message.get("content") if message.get("content") is not None else message.get("output")
-            if isinstance(content, str) and content.strip() == prompts.render("write_confirm", path=path).strip():
+            if isinstance(content, str) and content.strip().splitlines()[:1] == [prompts.render("write_confirm", path=path).strip()]:
                 return True
     return False
 

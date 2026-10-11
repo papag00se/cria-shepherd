@@ -647,15 +647,15 @@ def _fail(mode,**kw):
 if old==new:
     _fail('identical')
 _before=_v(str(p),s)
-def _w(res):
+{echodef}def _w(res):
     if _before is None:                       # the file PARSES now — do not let this edit break it
         _e=_v(str(p),res)
         if _e is not None:
             _fail('would_break',err=_e)
-    p.write_text(res); print('{wrote}'); sys.exit()
+    p.write_text(res); print('{wrote}'); {echocall}sys.exit()
 n=s.count(old)
 if n==1:
-    _w(s.replace(old,new,1))
+    {posx}_w(s.replace(old,new,1))
 if n>1:
     _fail('multi',n=n)
 toks=old.split()
@@ -682,7 +682,7 @@ if toks:
             ls=s.rfind(chr(10),0,a)+1
             if not s[ls:a].strip():
                 a=ls
-        _w(s[:a]+new+s[m.end():])
+        {posf}_w(s[:a]+new+s[m.end():])
     if len(ms)>1:
         _fail('multi_flex',n=len(ms))
 oldl=old.split(chr(10))
@@ -722,6 +722,55 @@ else:
 '''
 
 
+# THE EDIT'S RESULT, AS THE FILE NOW READS. The executor already holds the post-edit bytes, so for an
+# engaged coder (`translate_outbound(edit_echo=)`) it reports the window it just wrote — the replaced span
+# plus ECHO_CONTEXT lines either side, with the file's line count — as a second marker line that
+# `represent_inbound` renders. It is a window, never a claim about the whole file, and it is read off the
+# bytes on disk, not authored. A span too large to repeat (the coder's own new_string, already in its
+# history) is shown as the two context windows around it, each lossless for the lines it names.
+# Absent the flag none of this is spliced in and the command is byte-for-byte what it always was.
+ECHO_CONTEXT = 3
+# ONE byte bound on the whole echo: the lines shown (span + context), and — separately — the report that
+# carries them (the `_fail` bound). Over it the window is dropped to the two context windows around the
+# span, and over it again to the header alone, which says so. A window is never cut mid-way.
+ECHO_MAX_BYTES = 3000
+ECHO_WIRE_MAX_BYTES = content_reduce_mod.INLINE_RESULT_MAX_BYTES
+EDIT_VIEW = "\u27e6ctx:editview\u27e7"
+_ECHO_DEF = r'''def _echo(res):
+    a0,a1,flex=_pos
+    L=res.split(chr(10))
+    if res.endswith(chr(10)) or not res: L.pop()
+    total=len(L)
+    nl=lambda i: res.count(chr(10),0,i)+1
+    first=nl(a0); last=nl(max(a0,a1-1)) if a1>a0 else first
+    first=min(max(first,1),max(total,1)); last=min(max(last,first),max(total,1))
+    lo=max(1,first-{ctx}); hi=min(total,last+{ctx})
+    J=chr(10).join
+    cands=[[[lo,J(L[lo-1:hi])]]]
+    if a1>a0:
+        cands.append([x for x in ([[lo,J(L[lo-1:first-1])]] if first>lo else [])+([[last+1,J(L[last:hi])]] if hi>last else [])])
+    cands.append([])
+    if total==0: cands=[[]]
+    def _rep(segs,omitted):
+        kw=dict(first=first,last=last,total=total,flex=flex,empty=a1<=a0,segs=segs,omitted=omitted)
+        _b=lambda d: base64.b64encode(json.dumps(d).encode()).decode()
+        _r=_b(kw)
+        try:
+            import zlib
+            _z='{zprefix}'+base64.b64encode(zlib.compress(json.dumps(kw).encode(),9)).decode()
+            if len(_z)<len(_r): _r=_z
+        except Exception:
+            pass
+        return _r
+    for i,segs in enumerate(cands):
+        omitted=(not segs) and (lo<first or hi>last)
+        if sum(len(t.encode()) for _,t in segs)>{maxb} and i<len(cands)-1: continue
+        r=_rep(segs,omitted)
+        if len(r)>{wire} and i<len(cands)-1: continue
+        print('{editview}'+r); break
+'''
+
+
 # Spliced into `_fail` only for a coder at the gate's rung (`translate_outbound(pack=)`); below it the edit
 # command is byte-for-byte what it always was.
 _EDIT_PACK_BLOCK = r'''    # The report is plumbing the harness keeps and counts; the coder reads cria's decoding of it. Packed
@@ -737,8 +786,47 @@ _EDIT_PACK_BLOCK = r'''    # The report is plumbing the harness keeps and counts
 '''
 
 
-def _edit_command(path: str, old: str, new: str, pack: bool = False) -> str:
-    py = (_VALIDATE_FN + _EDIT_PY).format(path=_b64(path), old=_b64(old), new=_b64(new),
+def render_edit_echo(content: str, path: str) -> str:
+    """The landed edit's confirmation, plus the window of the file the executor reported (when it did).
+    Everything after the confirmation is facts read off the post-edit bytes; a missing or unreadable
+    report leaves the plain confirmation — saying less is allowed."""
+    confirm = prompts.render("write_confirm", path=path)
+    for ln in content.splitlines():
+        ln = ln.strip()
+        if not ln.startswith(EDIT_VIEW):
+            continue
+        try:
+            d = editrecovery.decode_report(ln[len(EDIT_VIEW):])
+            first, last, total = int(d["first"]), int(d["last"]), int(d["total"])
+            segs = [(int(n), str(t)) for n, t in d["segs"]]
+        except (ValueError, KeyError, TypeError):
+            return confirm
+        if d.get("empty"):
+            head = prompts.render("edit_echo_removed", path=path, total=total, a=first)
+        elif segs and (len(segs) == 1 and segs[0][0] <= first and segs[0][0] + segs[0][1].count("\n") >= last):
+            head = prompts.render("edit_echo", path=path, total=total, a=first, b=last)
+        else:
+            head = prompts.render("edit_echo_span_omitted", path=path, total=total, a=first, b=last)
+        parts = [confirm, head]
+        if d.get("flex"):
+            parts.append(prompts.load("edit_echo_flexible"))
+        if d.get("omitted"):
+            parts.append(prompts.load("edit_echo_omitted"))
+        for n, t in segs:
+            rows = t.split("\n")
+            parts.append(prompts.render("edit_echo_window", first=n, last=n + len(rows) - 1))
+            parts.append("\n".join(f"{n + i}: {r}" for i, r in enumerate(rows)))
+        return "\n".join(parts)
+    return confirm
+
+
+def _edit_command(path: str, old: str, new: str, pack: bool = False, echo: bool = False) -> str:
+    py = (_VALIDATE_FN + _EDIT_PY).format(
+        echodef=(_ECHO_DEF.format(ctx=ECHO_CONTEXT, maxb=ECHO_MAX_BYTES, wire=ECHO_WIRE_MAX_BYTES,
+                                     zprefix=editrecovery.PACKED_PREFIX, editview=EDIT_VIEW) if echo else ""),
+        echocall="_echo(res); " if echo else "",
+        posx="_pos=(s.find(old),s.find(old)+len(new),False)\n    " if echo else "",
+        posf="_pos=(a,a+len(new),True)\n        " if echo else "",path=_b64(path), old=_b64(old), new=_b64(new),
                                           wrote=_WROTE, editfail=editrecovery.EDITFAIL,
                                           packblock=(_EDIT_PACK_BLOCK.format(zprefix=editrecovery.PACKED_PREFIX)
                                                      if pack else ''),
@@ -1389,7 +1477,7 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
                        brave_key: str | None = None, native_search: str | None = None,
                        session: str | None = None, workspace_root: str | None = None,
                        external_dir_permission: str = "write", unread_target=None,
-                       shrink_check=None, pack: bool = False) -> dict:
+                       shrink_check=None, pack: bool = False, edit_echo: bool = False) -> dict:
     """Lower cria's synthetic tool calls to shell commands the harness runs, each stamped with the
     stateless re-presentation sentinel. Only lowers a tool cria INJECTED (a harness-native tool of
     the same name is the harness's to run). ``web_search`` routes to ``native_search`` when the
@@ -1616,7 +1704,7 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
                             rlog.emit("writeproxy.edit_empty_old_string", tool=name, path=str(path))
                     else:
                         old, new = str(args.get("old_string") or ""), str(args.get("new_string") or "")
-                        cmd = _edit_command(str(path), old, new, pack=pack)
+                        cmd = _edit_command(str(path), old, new, pack=pack, echo=edit_echo)
                         from . import cleanupsafety
                         raw = wsview.current().read_bytes(str(path))
                         try:
@@ -2240,7 +2328,7 @@ def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | Non
             if tid in strip_ids:                          # read/nav result → drop the shell envelope
                 out.append({**m, "content": _strip_exec_envelope(content, preserve_eof=preserve_eof)})
             elif tid in write_paths and any(ln.strip() == _WROTE for ln in content.splitlines()):  # write/edit SUCCESS
-                out.append({**m, "content": prompts.render("write_confirm", path=write_paths[tid])})
+                out.append({**m, "content": render_edit_echo(content, write_paths[tid])})
             elif tid in write_paths:                      # write/edit FAILURE → strip the shell envelope,
                 # then hand a structured edit-fail fact-report to the ONE edit-recovery owner, which
                 # composes the single monotonic directive keyed on this file's failure history so far
