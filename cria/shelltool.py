@@ -136,6 +136,7 @@ _SHELL_WRITE = re.compile(
     # is an argument, not a subcommand.
   | """ + _CMD_POS + r"""\S+\s+(?:[^-\s]\S*\s+)?(?:install|uninstall|add|remove|update|upgrade|get
                                                  |download|fetch|restore|sync|vendor|ci)\b
+  | """ + _CMD_POS + r"""find\b[^|;&]*\s-(?:delete|exec|execdir|ok|okdir|fprint0?|fprintf|fls)\b  # find that acts, not reports
   | \bopen\s*\([^)]*['"][wax]                 # python/ruby open(path, 'w')
   | \b(?:writeFileSync|writeFile|appendFileSync)\s*\(
   | \bFile\.(?:write|open)\b

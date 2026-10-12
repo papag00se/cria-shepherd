@@ -22,7 +22,7 @@ import os
 import re
 import shlex
 
-from . import prompts, toolpath
+from . import prompts, shelltool, toolpath
 
 LEVELS = ("none", "read", "write")
 
@@ -603,6 +603,45 @@ _DEP_CACHE_MARKERS = (
 )
 
 
+# The roots the HARNESS itself declares writable ("The writable roots are `a`, `b`." in Codex's
+# permissions text). The harness has already decided those directories are the run's own — cwd plus
+# the install/scratch dir its build tools are configured to use (JAVA_TOOL_OPTIONS
+# -Dmaven.repo.local, GOMODCACHE, CARGO_HOME ...). Walked: feed-pipeline-java x ornith1.5_9b
+# 1791513868 ran a read-only `find <install>/m2/repository -iname '*opencsv*'` to learn which jar
+# the build resolved and was refused "outside the working directory" on every try (the hard-coded
+# dependency-cache markers know `~/.m2/repository`, not a cache the build is told to keep elsewhere);
+# it never read the real OpenCSV API and wrote classes that do not exist. Derived from the request,
+# never a hard-coded path.
+_WRITABLE_ROOTS_SENTENCE = re.compile(r"writable[ _]roots?\b[^`\n]{0,40}?((?:\s*`[^`\n]+`[\s,.]*(?:and\s+)?)+)",
+                                      re.IGNORECASE)
+_BACKTICKED = re.compile(r"`([^`\n]+)`")
+
+
+def declared_roots(messages) -> tuple[str, ...]:
+    """Absolute directories the harness declares writable in its system/developer permission text,
+    else (). The sentence is the harness's own; cria only reads it back."""
+    roots: list[str] = []
+    for m in messages or []:
+        if not isinstance(m, dict) or m.get("role") not in ("system", "developer"):
+            continue
+        c = m.get("content")
+        text = c if isinstance(c, str) else " ".join(
+            str(part.get("text", "")) for part in (c or []) if isinstance(part, dict))
+        for sent in _WRITABLE_ROOTS_SENTENCE.finditer(text):
+            for r in _BACKTICKED.findall(sent.group(1)):
+                r = r.strip()
+                if os.path.isabs(r) and os.path.normpath(r) != os.sep and r not in roots:
+                    roots.append(os.path.normpath(r))
+    return tuple(roots)
+
+
+def _in_declared_root(path: str, roots) -> bool:
+    if not roots or not path or not path.strip():
+        return False
+    p = os.path.normpath(os.path.expanduser(path.strip()))
+    return os.path.isabs(p) and any(p == r or p.startswith(r + os.sep) for r in roots)
+
+
 def _is_dependency_cache(path: str) -> bool:
     """True when ``path`` is inside a package manager's read-only dependency-artifact cache — the
     ground truth for an installed dependency's API. The artifact subtree only, so a manager's
@@ -732,7 +771,7 @@ def _case_typo_of_workspace(path: str, workspace: str | None) -> bool:
     return False
 
 
-def _refusal(verb: str, path: str, workspace: str | None = None) -> str:
+def _refusal(verb: str, path: str, workspace: str | None = None, roots=()) -> str:
     # prompts/external_path_refusal.txt — {{PATH}} takes the quoted repr, matching the old f"{path!r}".
     # {{ROOT}} names the ACTUAL project directory when known: the anonymous "the project directory"
     # left a blocked model inventing roots (/tmp/src, /tmp/project) for whole runs — the refusal is
@@ -740,6 +779,9 @@ def _refusal(verb: str, path: str, workspace: str | None = None) -> str:
     root = f" ({workspace})" if workspace else ""
     if _case_typo_of_workspace(path, workspace):
         note = prompts.load("external_path_case_note")
+    elif _in_declared_root(path, roots):
+        # A WRITE into a harness-declared root: reads of it are allowed, so say what the rule is.
+        note = prompts.load("external_path_declared_root_note")
     else:
         # A refused package-manager cache root (~/.m2, ~/.gradle, ...) draws the offline-misdiagnosis
         # note: the artifact subtree IS readable and this is not a network limit.
@@ -750,18 +792,18 @@ def _refusal(verb: str, path: str, workspace: str | None = None) -> str:
                         casenote=note)
 
 
-def path_refusal(path: str, is_write: bool, level: str, workspace: str | None) -> str | None:
+def path_refusal(path: str, is_write: bool, level: str, workspace: str | None, roots=()) -> str | None:
     """The refusal for a synthetic file tool's EXPLICIT path, or None when allowed. read_file/list_dir
     are reads; write_file/edit_file are writes."""
     if level == "write" or _exempt(path) or not is_external(path, workspace):
         return None
     # A READ of a dependency-artifact cache is grounding, not exfiltration — allowed at every level.
     # A WRITE into it is refused unless the operator chose `write` (falls through below).
-    if not is_write and _is_dependency_cache(path):
+    if not is_write and (_is_dependency_cache(path) or _in_declared_root(path, roots)):
         return None
     if level == "read" and not is_write:
         return None
-    return _refusal("Writing" if is_write else "Reading", path, workspace)
+    return _refusal("Writing" if is_write else "Reading", path, workspace, roots)
 
 
 def root_recursive_delete_refusal(command: str) -> str | None:
@@ -796,7 +838,7 @@ def root_recursive_delete_refusal(command: str) -> str | None:
     return None
 
 
-def command_refusal(command: str, level: str, workspace: str | None) -> str | None:
+def command_refusal(command: str, level: str, workspace: str | None, roots=()) -> str | None:
     """The refusal for a RAW shell command, or None when allowed — heuristic: refuse when the command
     names an external absolute/``~`` path, weighed against whether it looks like a write. Under
     ``none`` any external path is refused; under ``read`` only an external WRITE is."""
@@ -817,6 +859,9 @@ def command_refusal(command: str, level: str, workspace: str | None) -> str | No
     killing = kill_refusal(command, level)
     if killing:
         return killing
+    # A command that changes nothing (shelltool's classifier, generous toward "writes") may read a
+    # root the harness declared writable; one that might write there stays under the normal rule.
+    read_only = bool(roots) and not shelltool.writes_something("shell", command)
     network = bool(_NETWORK_CMD.search(command))
     search_cmd = bool(_TEXT_SEARCH_LEAD.search(command))
     spans = _quoted_spans(command)
@@ -846,6 +891,8 @@ def command_refusal(command: str, level: str, workspace: str | None) -> str | No
         # not skipped — it falls through and is refused.
         if _is_dependency_cache(tok) and not _is_write_target(command, m.start()):
             continue
+        if read_only and _in_declared_root(tok, roots):
+            continue
         # In a network request, a rooted path token is a URL fragment, not a file access — exempt it
         # unless it is an explicit write TARGET (curl -o /etc/x, > /tmp/y), which is a real external write.
         is_write = _is_write_target(command, m.start())
@@ -862,4 +909,4 @@ def command_refusal(command: str, level: str, workspace: str | None) -> str | No
     # it as "Writing", also misnaming the action).
     if level == "read" and not (ext_is_write or _MUTATING_VERB.search(command)):
         return None
-    return _refusal("Writing/reading" if level == "none" else "Writing", external, workspace)
+    return _refusal("Writing/reading" if level == "none" else "Writing", external, workspace, roots)

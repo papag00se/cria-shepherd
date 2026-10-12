@@ -1382,7 +1382,7 @@ def _search_command(args: dict, brave_key: str) -> str:
             f"|| printf %s {_qbash(fallback)}")
 
 
-def _external_refusal(name, args, fn, injected, level: str, workspace: str | None) -> str | None:
+def _external_refusal(name, args, fn, injected, level: str, workspace: str | None, roots=()) -> str | None:
     """A refusal string when this tool call reaches outside the workspace beyond ``level``, else None.
     A synthetic file tool is checked by its explicit path + operation; a raw shell command by a
     heuristic scan. cria's OWN composed commands (the gate probe / a lowered synthetic, carrying a
@@ -1400,7 +1400,7 @@ def _external_refusal(name, args, fn, injected, level: str, workspace: str | Non
         target = _guarded_path(name, args)
         if not target:
             return None
-        return dirguard.path_refusal(target, name in _WRITE_NAMES or name in _EDIT_NAMES, level, workspace)
+        return dirguard.path_refusal(target, name in _WRITE_NAMES or name in _EDIT_NAMES, level, workspace, roots)
     if is_shell_tool_name(name):  # the harness's raw shell → heuristic path/verb scan
         command = _command_of(fn.get("arguments"))
         # cria's own composed command → trust. ANCHORED, not a substring scan anywhere in the text: a
@@ -1419,7 +1419,7 @@ def _external_refusal(name, args, fn, injected, level: str, workspace: str | Non
         if (head.startswith("# " + _SENTINEL) or head.startswith("# " + GATE_SENTINEL)
                 or (head.startswith("cd ") and "___CRIA_GATE_" in head)):
             return None
-        return dirguard.command_refusal(command, level, workspace)
+        return dirguard.command_refusal(command, level, workspace, roots)
     return None
 
 
@@ -1490,7 +1490,8 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
                        brave_key: str | None = None, native_search: str | None = None,
                        session: str | None = None, workspace_root: str | None = None,
                        external_dir_permission: str = "write", unread_target=None,
-                       shrink_check=None, pack: bool = False, edit_echo: bool = False) -> dict:
+                       shrink_check=None, pack: bool = False, edit_echo: bool = False,
+                       declared_roots: tuple = ()) -> dict:
     """Lower cria's synthetic tool calls to shell commands the harness runs, each stamped with the
     stateless re-presentation sentinel. Only lowers a tool cria INJECTED (a harness-native tool of
     the same name is the harness's to run). ``web_search`` routes to ``native_search`` when the
@@ -1545,7 +1546,8 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
             # EXTERNAL-DIR GUARD (cria-side, independent of the harness sandbox): a fledgling model
             # gets bounded to the workspace even when the harness runs --yolo. Refuse a synthetic file
             # tool or raw shell command reaching outside the workspace beyond [safety] permission.
-            elif (reason := _external_refusal(name, args, fn, injected, external_dir_permission, workspace_root)) is not None:
+            elif (reason := _external_refusal(name, args, fn, injected, external_dir_permission, workspace_root,
+                                         declared_roots)) is not None:
                 # CARRY THE SURVEY WHEN A PROGRAM QUESTION IS STILL UNANSWERED. `dirguard` has just
                 # queued it while composing this very refusal; this is the only carrier a coder
                 # looping on raw installs is guaranteed to produce. Budgeted like any other
