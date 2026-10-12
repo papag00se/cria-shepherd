@@ -64,7 +64,7 @@ class _SentenceJudge:
             return _reply("PLAN" if any(p in text for p in self.plans) else "STATE")
         if "TASK or NEW" in system:
             return _reply("TASK" if any(r in text for r in self.restated) else "NEW")
-        return _reply("PRESERVES" if "NARROWS or PRESERVES" in system else "FAITHFUL")
+        return _reply("COVERED" if "COVERED or MISSING" in system else "FAITHFUL")
 
 
 def _validate(chat, briefing, task=TASK):
@@ -74,12 +74,26 @@ def _validate(chat, briefing, task=TASK):
 
 
 class SentenceSplitTests(unittest.TestCase):
-    def test_headings_labels_and_fenced_output_are_not_sentences(self):
+    def test_headings_are_judged_not_dropped(self):
         got = loop.briefing_sentences(REAL_CANDIDATE)
-        self.assertIn("The tests have not been run successfully due to the above compilation errors.", got)
+        self.assertIn("Current State", got)
+        self.assertIn("Fix Compilation Errors:", got)
         self.assertIn(PRESCRIBED, got)
-        self.assertFalse(any("cannot find symbol" in s for s in got))   # fenced tool output
-        self.assertFalse(any(s.startswith("#") for s in got))
+        self.assertEqual(loop.briefing_sentences("# Fix Cart.java by adding a null check"),
+                         ["Fix Cart.java by adding a null check"])
+
+    def test_a_colon_line_is_judged_and_a_fence_is_one_unit(self):
+        got = loop.briefing_sentences("Next step:\n```\nsed -i s/a/b/ Cart.java\nmake\n```")
+        self.assertEqual(got, ["Next step:", "sed -i s/a/b/ Cart.java\nmake"])
+
+    def test_a_fence_verbatim_in_the_transcript_is_quoted_output_not_the_writer(self):
+        out = "Importer.java:92: cannot find symbol"
+        self.assertEqual(loop.briefing_sentences(f"```\n{out}\n```", [f"tool: {out}\n$ mvn"]), [])
+        self.assertEqual(loop.briefing_sentences(f"```\n{out}\n```", ["unrelated"]), [out])
+
+    def test_a_bare_list_number_joins_its_item(self):
+        self.assertEqual(loop.briefing_sentences("1.\nAdd the import.\n2.\nRerun."),
+                         ["1. Add the import.", "2. Rerun."])
 
     def test_a_short_imperative_is_still_judged(self):
         self.assertEqual(loop.briefing_sentences("Run mvn test.\nBuild OK."), ["Run mvn test.", "Build OK."])
@@ -90,6 +104,26 @@ class SentenceSplitTests(unittest.TestCase):
 
 
 class PlanLensTests(unittest.TestCase):
+    def test_a_heading_that_is_an_instruction_is_rejected(self):
+        chat = _SentenceJudge(plans=["Fix Cart.java"])
+        self.assertFalse(_validate(chat, "# Fix Cart.java by adding a null check"))
+
+    def test_a_fenced_command_after_a_colon_is_rejected(self):
+        chat = _SentenceJudge(plans=["sed -i"])
+        self.assertFalse(_validate(chat, "Next step:\n```\nsed -i s/a/b/ Cart.java\n```"))
+
+    def test_a_non_empty_briefing_with_nothing_to_judge_fails_closed(self):
+        calls = []
+        self.assertFalse(_validate(lambda b, r: calls.append(b) or _reply("STATE"), "---\n* \n```\n```"))
+        self.assertEqual(calls, [])
+
+    def test_beyond_the_judgment_cap_fails_closed(self):
+        chat = _SentenceJudge(plans=[])
+        text = "\n".join(f"Fact number {i} holds." for i in range(loop.MAX_PLAN_JUDGMENTS + 1))
+        self.assertFalse(_validate(chat, text))
+        self.assertEqual(chat.calls, [])
+        self.assertTrue(_validate(chat, "\n".join(text.splitlines()[:loop.MAX_PLAN_JUDGMENTS])))
+
     def test_a_restated_task_requirement_is_not_a_plan(self):
         """Real false-reject: a 'Remaining Requirements' list that only restates the task."""
         chat = _SentenceJudge(plans=[RESTATED], restated=[RESTATED])
@@ -122,6 +156,81 @@ class PlanLensTests(unittest.TestCase):
         chat = _SentenceJudge(plans=[])
         _validate(chat, "\n".join([STATE] * 30))
         self.assertEqual(sum("checking ONE sentence" in c for c in chat.calls), 1)
+
+
+RUBY_TASK = """Make these five changes to the shipping module:
+
+1. Fix the failing repository tests. Do not change assertions in tests that came with the repo.
+2. Add an `express` service costing `14.99` base plus `2.50` per kilogram.
+3. Add a README rate table listing every zone with its base rate and per-kilogram rate.
+4. Add `Shipping.zone_for(code)` for two-letter country codes:
+   - `GB` returns `domestic`
+   - EU members returns `eu`
+5. Make `Shipping.shipping_cost` accept either a zone name or country code.
+
+Do not hardcode EU membership. Add a third-party Ruby gem that determines whether a country is in the EU."""
+
+# Real captured candidates (20261009T225945 call 0086: omits the gem; 20261010T083620 call 0131: lists all).
+OMITS_GEM = "Fix the failing tests. Add an express service. Add a README rate table. Implement Shipping.zone_for. Make shipping_cost accept a zone name or country code."
+LISTS_ALL = OMITS_GEM + " Do not hardcode EU membership: add a third-party Ruby gem for EU lookup (unverified)."
+
+
+class _CoverageJudge:
+    """A requirement is COVERED iff its distinguishing word appears in the candidate."""
+
+    def __call__(self, body, _rlog):
+        system = body["messages"][0]["content"]
+        if "PLAN or STATE" in system:
+            return _reply("STATE")
+        if "COVERED or MISSING" in system:
+            blocks = [m["content"] for m in body["messages"]]
+            unit = next(b for b in blocks if b.startswith("REQUIREMENT FROM"))
+            cand = next(b for b in blocks if b.startswith("CANDIDATE"))
+            key = ("gem" if "gem" in unit else "README" if "README" in unit else
+                   "express" if "express" in unit else "zone_for" if "zone_for" in unit else
+                   "shipping_cost" if "shipping_cost" in unit else "failing")
+            return _reply("COVERED" if key in cand else "MISSING")
+        return _reply("FAITHFUL")
+
+
+class CoverageLensTests(unittest.TestCase):
+    def test_units_are_top_level_requirements_with_their_sub_bullets(self):
+        units = loop.task_units(RUBY_TASK)
+        self.assertEqual(len(units), 6)    # the lead-in line is not a requirement; sub-bullets stay inside item 4
+        self.assertIn("EU members returns `eu`", units[3])
+        self.assertTrue(units[5].startswith("Do not hardcode EU membership."))
+
+    def test_a_briefing_that_omits_a_deliverable_is_rejected(self):
+        self.assertFalse(_validate(_CoverageJudge(), OMITS_GEM, task=RUBY_TASK))
+
+    def test_a_briefing_that_lists_every_deliverable_is_accepted_even_if_none_is_done(self):
+        """Real false-reject class: 13 of 20 read NARROWS rejections listed every deliverable."""
+        self.assertTrue(_validate(_CoverageJudge(), LISTS_ALL, task=RUBY_TASK))
+
+    def test_each_requirement_is_asked_separately_with_the_candidate(self):
+        seen = []
+        judge = _CoverageJudge()
+        _validate(lambda b, r: seen.append(b) or judge(b, r), LISTS_ALL, task=RUBY_TASK)
+        asked = [next(m["content"] for m in b["messages"] if m["content"].startswith("REQUIREMENT"))
+                 for b in seen if "COVERED or MISSING" in b["messages"][0]["content"]]
+        self.assertEqual(len(asked), 6)
+
+    def test_an_unreadable_coverage_answer_fails_closed(self):
+        def chat(body, rlog):
+            sysm = body["messages"][0]["content"]
+            return _reply("STATE" if "PLAN or STATE" in sysm else "maybe")
+        self.assertFalse(_validate(chat, LISTS_ALL, task=RUBY_TASK))
+
+    def test_more_requirements_than_the_cap_fails_closed(self):
+        task = "\n".join(f"Requirement number {i} applies." for i in range(loop.MAX_TASK_UNITS + 1))
+        calls = []
+
+        def chat(body, rlog):
+            calls.append(body["messages"][0]["content"])
+            return _reply("STATE" if "PLAN or STATE" in calls[-1] else "COVERED")
+
+        self.assertFalse(_validate(chat, "Done.", task=task))
+        self.assertFalse(any("COVERED or MISSING" in c for c in calls))   # refused, not clipped
 
 
 if __name__ == "__main__":

@@ -16,8 +16,8 @@ class _Rlog:
 def _validation_reply(system):
     if "PLAN or STATE" in system:
         return "STATE"
-    if "NARROWS or PRESERVES" in system:
-        return "PRESERVES"
+    if "COVERED or MISSING" in system:
+        return "COVERED"
     if "UNFAITHFUL or FAITHFUL" in system:
         return "FAITHFUL"
     return None
@@ -80,7 +80,7 @@ class SelfCompactWiringTests(unittest.TestCase):
         rendered = ["\n".join(str(m.get("content") or "") for m in call["messages"])
                     for call in seen]
         self.assertIn(task, rendered[0], "the briefing writer must see the north-star task")
-        self.assertTrue(any(task in text and "full unresolved scope" in text for text in rendered[1:]),
+        self.assertTrue(any(task in text and "REQUIREMENT FROM THE ORIGINAL TASK" in text for text in rendered[1:]),
                         "an independent scope judgment must compare the candidate with the task")
 
     def test_skips_short_history(self):

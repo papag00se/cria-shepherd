@@ -39,7 +39,7 @@ def _provider(plan_word):
         @staticmethod
         def chat(pb, rlog):
             system = pb["messages"][0]["content"]
-            text = plan_word if "PLAN or STATE" in system else "PRESERVES"
+            text = plan_word if "PLAN or STATE" in system else "COVERED"
             if "UNFAITHFUL or FAITHFUL" in system:
                 text = "FAITHFUL"
             return json.dumps({"choices": [{"message": {"role": "assistant", "content": text}}]})

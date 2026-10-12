@@ -961,8 +961,8 @@ class ResponsesStatusTickerTests(unittest.TestCase):
 def _compaction_validation_verdict(system):
     if "PLAN or STATE" in system:
         return "STATE"
-    if "NARROWS or PRESERVES" in system:
-        return "PRESERVES"
+    if "COVERED or MISSING" in system:
+        return "COVERED"
     if "UNFAITHFUL or FAITHFUL" in system:
         return "FAITHFUL"
     return None

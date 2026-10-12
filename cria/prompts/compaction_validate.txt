@@ -1,6 +1,6 @@
 You are validating a proposed coding-session briefing against authoritative session evidence supplied after this instruction. Judge one question only: does the candidate conflict with, overclaim, or materially omit that evidence?
 
-Answer UNFAITHFUL if any state, cause, accomplishment, file-content, build, test, blocked, or missing claim lacks support or conflicts with the evidence; if it assigns success to a failing state; or if it omits a decisive negative finding or unresolved contradiction so that a disproven approach appears viable again. Filesystem inventory establishes names and sizes only, never contents. Latest-check facts govern build and test state. Uncertain, stale, or model-reported state is not established fact.
+Answer UNFAITHFUL if any state, cause, accomplishment, file-content, build, test, blocked, or missing claim lacks support or conflicts with the evidence; if it assigns success to a failing state; if it marks a requirement of the original task done, or says nothing is outstanding, without a check in the evidence that passed for it; or if it omits a decisive negative finding or unresolved contradiction so that a disproven approach appears viable again. Filesystem inventory establishes names and sizes only, never contents. Latest-check facts govern build and test state. Uncertain, stale, or model-reported state is not established fact.
 
 Answer FAITHFUL only if none of those defects is present. If uncertain, answer UNFAITHFUL.
 

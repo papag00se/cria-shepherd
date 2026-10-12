@@ -122,8 +122,8 @@ class B1AppendixOnlyTruthfulFrameTests(unittest.TestCase):
                 all_text = json.dumps(msgs)
                 if "PLAN or STATE" in all_text:
                     return json.dumps({"choices": [{"message": {"content": "STATE"}}]}).encode()
-                if "NARROWS or PRESERVES" in all_text:
-                    return json.dumps({"choices": [{"message": {"content": "PRESERVES"}}]}).encode()
+                if "COVERED or MISSING" in all_text:
+                    return json.dumps({"choices": [{"message": {"content": "COVERED"}}]}).encode()
                 if "UNFAITHFUL or FAITHFUL" in all_text:
                     return json.dumps({"choices": [{"message": {"content": "FAITHFUL"}}]}).encode()
                 return json.dumps({"choices": [{"message": {

@@ -8226,23 +8226,75 @@ def _composed_closed_ask(chat_fn, role, rlog, *, phase: str):
     return ask
 
 
-def briefing_sentences(briefing: str) -> list[str]:
-    """The briefing's sentences in order — structural split only (lines, then sentence ends), so
-    each is judged whole, however short ("Run mvn test." is a plan). Markdown headings, a bare
-    "Label:" line, and code fences (quoted tool output, not the writer's words) are skipped."""
+# Judgments one handoff may cost. A briefing with more distinct sentences than this is not accepted:
+# beyond the cap the plan lens cannot be asked, and cria fails closed rather than clip (principle:
+# never judge a prefix and call it the whole).
+MAX_PLAN_JUDGMENTS = 80
+
+
+def _squash(text: str) -> str:
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def briefing_sentences(briefing: str, transcript_blocks: list[str] | None = None) -> list[str]:
+    """Every unit of the briefing the plan lens must judge, in order — structural split only.
+
+    Nothing the writer authored is exempt: heading text and "Label:" lines are judged (a heading can
+    be an instruction — "# Fix Cart.java by adding a null check"); only lines with no word character
+    (rules, bare bullets) are dropped. A bare list number ("1.") is merged into its item. A fenced
+    block is one unit, judged whole — except when it is verbatim in the transcript (quoted tool
+    output, which is not the writer's words)."""
+    transcript = [_squash(t) for t in (transcript_blocks or [])]
     out: list[str] = []
-    fenced = False
+    fence: list[str] | None = None
+    pending_number = ""
     for line in briefing.splitlines():
         if line.strip().startswith("```"):
-            fenced = not fenced
+            if fence is None:
+                fence = []
+            else:
+                block = "\n".join(fence).strip()
+                fence = None
+                if block and not any(_squash(block) in t for t in transcript):
+                    out.append(block)
             continue
-        if fenced or line.strip().startswith("#"):
+        if fence is not None:
+            fence.append(line)
             continue
-        line = line.strip(" -*\t").strip()
-        if not line or line.endswith(":") or not re.search(r"\w", line):
+        text = line.strip().lstrip("#").strip(" -*\t").strip()
+        if re.fullmatch(r"\(?\d+[.)]", text):
+            pending_number = text
             continue
-        out.extend(p.strip() for p in re.split(r"(?<=[.!?])\s+(?=[A-Z`*])", line) if p.strip())
+        if not re.search(r"\w", text):
+            continue
+        pieces = [p.strip() for p in re.split(r"(?<=[.!?])\s+(?=[A-Z`*])", text) if p.strip()]
+        if pending_number:
+            pieces[0], pending_number = f"{pending_number} {pieces[0]}", ""
+        out.extend(pieces)
+    if fence:   # an unterminated fence is still the writer's text
+        out.append("\n".join(fence).strip())
     return out
+
+
+MAX_TASK_UNITS = 40
+
+
+def task_units(task: str) -> list[str]:
+    """The original task as its separate requirements — structural split only: one unit per
+    top-level line or list item, with its indented sub-bullets and quoted ('>') example lines kept
+    inside it. A bare lead-in line ending in ':' ("Make these five changes:") states no requirement
+    of its own — the items under it do — and is the only text not judged as a unit."""
+    items: list[str] = []
+    for line in task.splitlines():
+        if not re.search(r"\w", line):
+            continue
+        if items and (line[:1] in " \t" and re.match(r"\s*[-*\u2022]", line)
+                      or line.lstrip().startswith(">")):
+            items[-1] += " " + line.strip(" -*\u2022>\t")
+        else:
+            items.append(line.strip(" -*\t"))
+    units = [re.sub(r"^\(?\d+[.)]\s+", "", i) for i in items if not i.endswith(":")]
+    return list(dict.fromkeys(u for u in units if re.search(r"\w", u)))
 
 
 def validate_compaction_briefing(chat_fn, role, briefing: str, *, files: str, checks: str,
@@ -8285,11 +8337,14 @@ def validate_compaction_briefing(chat_fn, role, briefing: str, *, files: str, ch
     # Splitting is structural (lines, then sentence ends), never semantic; every sentence the
     # candidate contains is judged, so nothing is clipped. Anything unreadable fails closed.
     def retrospective() -> bool:
-        seen: set[str] = set()
-        for sentence in briefing_sentences(briefing):
-            if sentence in seen:
-                continue
-            seen.add(sentence)
+        sentences = list(dict.fromkeys(briefing_sentences(briefing, transcript_blocks)))
+        if not sentences:
+            answers["retrospective-plan"] = "no judgeable sentence in a non-empty briefing"
+            return False
+        if len(sentences) > MAX_PLAN_JUDGMENTS:
+            answers["retrospective-plan"] = f"{len(sentences)} sentences exceed the judgment cap"
+            return False
+        for sentence in sentences:
             evid = ([prompts.render("compaction_sentence_task", task=task.strip())]
                     if task.strip() else [])
             evid.append(prompts.render("compaction_sentence", sentence=sentence))
@@ -8305,9 +8360,29 @@ def validate_compaction_briefing(chat_fn, role, briefing: str, *, files: str, ch
 
     accepted = retrospective()
     task_fact = (prompts.render("compaction_task_fact", task=task.strip()) if task.strip() else "")
+
+    # Task scope is checked PER REQUIREMENT, not as one holistic verdict. The holistic "does the
+    # candidate narrow, replace, or prematurely complete the task? If uncertain, NARROWS" rejected 160
+    # of 250 captured briefings; read in full (20 cases), 13 listed every deliverable and were
+    # rejected anyway, 3 were undecidable from candidate + task alone (a completion claim needs the
+    # transcript), and only 4 truly dropped deliverables. Coverage is answerable from the candidate
+    # and one requirement; whether a requirement is actually DONE is the fidelity lens's job, which
+    # holds the transcript and the checks. Any requirement not COVERED, or an unreadable answer,
+    # rejects.
+    def coverage() -> bool:
+        units = task_units(task)
+        if len(units) > MAX_TASK_UNITS:
+            answers["coverage-missing"] = f"{len(units)} task requirements exceed the judgment cap"
+            return False
+        for unit in units:
+            if not judge("scope", prompts.load("compaction_validate_coverage"),
+                         [prompts.render("compaction_unit", unit=unit), candidate], "COVERED"):
+                answers["coverage-missing"] = unit[:160]
+                return False
+        return True
+
     if accepted and task_fact:
-        accepted = judge("scope", prompts.load("compaction_validate_scope"),
-                         [task_fact, candidate], "PRESERVES")
+        accepted = coverage()
     if accepted:
         blocks = list(transcript_blocks)
         if task_fact and task_fact not in blocks:

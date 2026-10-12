@@ -1,0 +1,7 @@
+You are checking a proposed coding-session briefing against ONE requirement from the original task, shown before the candidate. Judge one question only: does the candidate account for this requirement?
+
+Answer COVERED if the candidate mentions the requirement in any wording — as done, as not yet done, or as unverified — including when it is merged with other requirements or shortened. Answer MISSING if the candidate says nothing about it, or restates it as something narrower or different (for example, only the latest compiler error).
+
+Whether the requirement is actually done is not your question; other checks judge that. If the candidate states it at all, it is COVERED.
+
+Your entire answer must be exactly one word: COVERED or MISSING.

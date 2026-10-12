@@ -50,7 +50,7 @@ class CompactionBriefingValidationTests(unittest.TestCase):
         self.assertNotIn("checks do NOT report a problem", rendered)
 
     def test_only_unanimous_focused_accept_verdicts_adopt_the_briefing(self):
-        judge = Judge(["PRESERVES", "FAITHFUL"])
+        judge = Judge(["COVERED", "FAITHFUL"])
         self.assertTrue(loop.validate_compaction_briefing(
             judge, self.role,
             "Importer.java was edited.", files="Importer.java", checks="BUILD EXIT: 1",
@@ -59,7 +59,7 @@ class CompactionBriefingValidationTests(unittest.TestCase):
         systems = [call["messages"][0]["content"] for call in judge.bodies]
         self.assertEqual(len(systems), 3)    # one sentence (STATE), then scope, then fidelity
         self.assertIn("PLAN or STATE", systems[0])
-        self.assertIn("NARROWS or PRESERVES", systems[1])
+        self.assertIn("COVERED or MISSING", systems[1])
         self.assertIn("UNFAITHFUL or FAITHFUL", systems[2])
 
     def test_a_forward_plan_is_rejected_before_the_long_evidence_call(self):
