@@ -639,6 +639,32 @@ def declared_roots(messages) -> tuple[str, ...]:
     return tuple(roots)
 
 
+# The build's OWN dependency location, when a TOOL result printed it (a JVM option the launcher echoes).
+# Only a location inside a declared root counts: that is the one case where cria knows the read is
+# allowed. Assistant text is the model's guess and never a source.
+_BUILD_REPO_FLAG = re.compile(r"-Dmaven\.repo\.local=([^\s\"',;]+)")
+
+
+def dependency_roots(messages) -> tuple[str, ...]:
+    """Directories the run's build keeps its dependencies in: the roots the harness declared writable
+    (system/developer text only) plus any in-root location a TOOL result shows the build was told to
+    use. () when the harness declared nothing, so every other session is unchanged."""
+    roots = declared_roots(messages)
+    if not roots:
+        return ()
+    out = list(roots)
+    for m in messages or []:
+        if isinstance(m, dict) and m.get("role") == "tool":
+            c = m.get("content")
+            text = c if isinstance(c, str) else " ".join(
+                str(part.get("text", "")) for part in (c or []) if isinstance(part, dict))
+            for loc in _BUILD_REPO_FLAG.findall(text):
+                loc = os.path.normpath(loc)
+                if loc not in out and _in_declared_root(loc, roots):
+                    out.insert(0, loc)   # the exact location first: searched before its ancestors
+    return tuple(out)
+
+
 def _in_declared_root(path: str, roots) -> bool:
     if not roots or not path or not path.strip():
         return False

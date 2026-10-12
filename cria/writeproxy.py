@@ -30,12 +30,11 @@ import re
 from pathlib import Path
 from shlex import quote as _qbash  # one bash-quoting rule (was a hand-rolled _qbash)
 
-from . import brave, denial, depsurface, editrecovery, prompts, webfetch, wsview
+from . import brave, denial, depsurface, dirguard, editrecovery, prompts, webfetch, wsview
 from .probegate import GATE_SENTINEL
 from . import content_reduce as content_reduce_mod
 from . import probeparse
 from . import proberun
-from . import dirguard
 from .config import CRIA_HOME
 from .shelltool import _CMD_FIELDS, is_shell_tool_name, shell_args
 from .toolargs import PATH_KEYS as _PATH_KEYS, parse_args as _parse, tool_path as _tool_path
@@ -2618,6 +2617,7 @@ def _note_dependency_surface(messages: list[dict], workspace_root, sess_key: str
     if newest_tool is None:
         return
     declared = depsurface.declared_coordinates(workspace_root)
+    build_roots = dirguard.dependency_roots(messages)   # where THIS run's build keeps its dependencies
     declared_keys = {(eco, package, version) for eco, package, version in declared}
 
     total_bytes = 0
@@ -2668,7 +2668,7 @@ def _note_dependency_surface(messages: list[dict], workspace_root, sess_key: str
         cid = newest_tool.get("tool_call_id")
         if not cid:
             continue   # no stable id to anchor to -- skip rather than anchor to nothing
-        surface = depsurface.gather(eco, package, version, workspace_root)
+        surface = depsurface.gather(eco, package, version, workspace_root, cache_roots=build_roots)
         new_gathers += 1   # gather() ran -- counts here whether or not it fit the budget below
         if surface is None:
             depsurface.record_abstain(sess_key, coordinate_key)

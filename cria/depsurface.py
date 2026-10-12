@@ -147,35 +147,75 @@ _JVM_VERSION_RE = re.compile(r'^[0-9][A-Za-z0-9._-]*$')
 _JAVA_CLASS_RE = re.compile(r'^[A-Za-z_$][\w$]*(\.[A-Za-z_$][\w$]*)*$')
 
 
+# THE BUILD'S OWN CACHE, NOT JUST THE HOME ONE. The suite (and any sandboxed harness) tells the build
+# to keep its dependency cache beside the run (`-Dmaven.repo.local=<install>/m2/repository`, GOMODCACHE,
+# CARGO_HOME ...). `cache_roots` are directories the caller KNOWS are the run's own (the harness-declared
+# roots and a location the build printed in a tool result: `dirguard.dependency_roots`). A coordinate's
+# real on-disk path is searched for beneath them, bounded, after the home default misses. Walked:
+# feed-pipeline-java x ornith1.5_9b B0/B1 -- opencsv-5.9.jar sat in <install>/m2/repository the whole
+# run while this module looked only in ~/.m2 and abstained.
+MAX_ROOT_DEPTH = 4
+MAX_ROOT_DIRS = 3000
+
+
+def _under_roots(cache_roots, relparts: tuple[str, ...], want_file: bool) -> str | None:
+    """The first existing ``<dir>/<relparts...>`` for a ``<dir>`` at most MAX_ROOT_DEPTH below a root
+    (breadth-first, at most MAX_ROOT_DIRS directories visited per root), contained under that root
+    after symlink resolution; ``None`` when absent. Sorted, so the answer is deterministic."""
+    for root in cache_roots or ():
+        if not os.path.isdir(root):
+            continue
+        level, visited = [root], 0
+        for _ in range(MAX_ROOT_DEPTH + 1):
+            nxt: list[str] = []
+            for d in level:
+                cand = _safe_child(root, os.path.relpath(d, root), *relparts)
+                if cand and (os.path.isfile(cand) if want_file else os.path.isdir(cand)):
+                    return cand
+                try:
+                    kids = sorted(e.path for e in os.scandir(d) if e.is_dir(follow_symlinks=False))
+                except OSError:
+                    continue
+                visited += len(kids)
+                if visited > MAX_ROOT_DIRS:
+                    break
+                nxt.extend(kids)
+            if visited > MAX_ROOT_DIRS or not nxt:
+                break
+            level = nxt
+    return None
+
+
 def _go_escape(module_path: str) -> str:
     """Go's module-cache escaping: each uppercase letter becomes ``!`` + its lowercase form (golang.org
     /x/mod/module.EscapePath)."""
     return re.sub(r"[A-Z]", lambda m: "!" + m.group(0).lower(), module_path)
 
 
-def _go_module_dir(package: str, version: str) -> str | None:
+def _go_module_dir(package: str, version: str, cache_roots=()) -> str | None:
     tagged = version if version.lower().startswith("v") else f"v{version}"
     if not (_GO_MODULE_RE.match(package) and _GO_VERSION_RE.match(tagged)):
         return None
     cache_root = os.path.join(os.path.expanduser("~"), "go", "pkg", "mod")
     cand = _safe_child(cache_root, f"{_go_escape(package)}@{tagged}")
-    return cand if cand and os.path.isdir(cand) else None
+    if cand and os.path.isdir(cand):
+        return cand
+    return _under_roots(cache_roots, (f"{_go_escape(package)}@{tagged}",), want_file=False)
 
 
-def _rust_crate_dir(package: str, version: str) -> str | None:
+def _rust_crate_dir(package: str, version: str, cache_roots=()) -> str | None:
     if not (_RUST_NAME_RE.match(package) and _RUST_VERSION_RE.match(version)):
         return None
     base = os.path.join(os.path.expanduser("~"), ".cargo", "registry", "src")
-    if not os.path.isdir(base):
-        return None
-    for entry in sorted(os.listdir(base)):
-        cand = _safe_child(base, entry, f"{package}-{version}", "src")
-        if cand and os.path.isdir(cand):
-            return cand
-    return None
+    if os.path.isdir(base):
+        for entry in sorted(os.listdir(base)):
+            cand = _safe_child(base, entry, f"{package}-{version}", "src")
+            if cand and os.path.isdir(cand):
+                return cand
+    return _under_roots(cache_roots, (f"{package}-{version}", "src"), want_file=False)
 
 
-def _ruby_gem_dir(package: str, version: str, workspace_root: str | None) -> str | None:
+def _ruby_gem_dir(package: str, version: str, workspace_root: str | None, cache_roots=()) -> str | None:
     if not (_RUBY_NAME_RE.match(package) and _RUBY_VERSION_RE.match(version)):
         return None
     bases: list[str] = []
@@ -197,16 +237,19 @@ def _ruby_gem_dir(package: str, version: str, workspace_root: str | None) -> str
                 real_match = os.path.realpath(match)
                 if real_match == real_base or real_match.startswith(real_base + os.sep):
                     return real_match
-    return None
+    return _under_roots(cache_roots, ("gems", tail, "lib"), want_file=False)
 
 
-def _m2_jar(group: str, artifact: str, version: str) -> str | None:
+def _m2_jar(group: str, artifact: str, version: str, cache_roots=()) -> str | None:
     if not (_JVM_GROUP_ARTIFACT_RE.match(group) and _JVM_GROUP_ARTIFACT_RE.match(artifact)
             and _JVM_VERSION_RE.match(version)):
         return None
     cache_root = os.path.join(os.path.expanduser("~"), ".m2", "repository")
     cand = _safe_child(cache_root, *group.split("."), artifact, version, f"{artifact}-{version}.jar")
-    return cand if cand and os.path.isfile(cand) else None
+    if cand and os.path.isfile(cand):
+        return cand
+    return _under_roots(cache_roots, (*group.split("."), artifact, version, f"{artifact}-{version}.jar"),
+                        want_file=True)
 
 
 # ---------------------------------------------------------------------- per-ecosystem selection
@@ -366,8 +409,8 @@ def _go_doc_all(package: str, tagged_version: str) -> tuple[list[str], bool] | N
     return kept, well_formed
 
 
-def _gather_go(package: str, version: str, _workspace_root: str | None) -> DependencySurface | None:
-    root = _go_module_dir(package, version)   # validates grammar + containment
+def _gather_go(package: str, version: str, _workspace_root: str | None, cache_roots=()) -> DependencySurface | None:
+    root = _go_module_dir(package, version, cache_roots)   # validates grammar + containment
     if not root:
         return None
     tagged = version if version.lower().startswith("v") else f"v{version}"
@@ -386,8 +429,8 @@ def _gather_go(package: str, version: str, _workspace_root: str | None) -> Depen
                              complete=False)
 
 
-def _gather_rust(package: str, version: str, _workspace_root: str | None) -> DependencySurface | None:
-    root = _rust_crate_dir(package, version)
+def _gather_rust(package: str, version: str, _workspace_root: str | None, cache_roots=()) -> DependencySurface | None:
+    root = _rust_crate_dir(package, version, cache_roots)
     if not root:
         return None
     lines, sources = _select(root, ".rs", _RUST_EXPORTED.match)
@@ -398,8 +441,8 @@ def _gather_rust(package: str, version: str, _workspace_root: str | None) -> Dep
                              complete=False)
 
 
-def _gather_ruby(package: str, version: str, workspace_root: str | None) -> DependencySurface | None:
-    root = _ruby_gem_dir(package, version, workspace_root)
+def _gather_ruby(package: str, version: str, workspace_root: str | None, cache_roots=()) -> DependencySurface | None:
+    root = _ruby_gem_dir(package, version, workspace_root, cache_roots)
     if not root:
         return None
     lines, sources = _select(root, ".rb", _RUBY_MEMBER.match)
@@ -444,12 +487,12 @@ def _javap_lines(jar_path: str, fqcn: str) -> list[str]:
             if ln.strip() and not ln.startswith("Compiled from ")]
 
 
-def _gather_jvm(coordinate: str, version: str, _workspace_root: str | None) -> DependencySurface | None:
+def _gather_jvm(coordinate: str, version: str, _workspace_root: str | None, cache_roots=()) -> DependencySurface | None:
     """``coordinate`` is ``"groupId:artifactId"`` -- the exact shape :func:`_parse_pom_xml` emits."""
     if ":" not in coordinate:
         return None
     group, artifact = coordinate.split(":", 1)
-    jar = _m2_jar(group.strip(), artifact.strip(), version)   # validates grammar + containment
+    jar = _m2_jar(group.strip(), artifact.strip(), version, cache_roots)   # validates grammar + containment
     if not jar:
         return None
     classes = _jar_classes(jar)
@@ -494,18 +537,19 @@ _PROBES = {
 }
 
 
-def gather(ecosystem: str, package: str, version: str, workspace_root: str | None = None) \
-        -> DependencySurface | None:
+def gather(ecosystem: str, package: str, version: str, workspace_root: str | None = None,
+           cache_roots=()) -> DependencySurface | None:
     """The real exported surface for one resolved coordinate, or ``None`` to abstain.
 
     Abstains (never raises) when: the ecosystem has no probe in this candidate's table, the
     coordinate fails its ecosystem's grammar check, the local cache has no directory/jar for this
-    exact coordinate, or nothing readable came out of it."""
+    exact coordinate, or nothing readable came out of it. ``cache_roots`` (see :func:`_under_roots`)
+    are searched after the home default; empty = the home default only, exactly as before."""
     probe = _PROBES.get((ecosystem or "").lower())
     if probe is None or not package or not version:
         return None
     try:
-        return probe(package, version, workspace_root)
+        return probe(package, version, workspace_root, tuple(cache_roots))
     except OSError:
         return None
 
