@@ -773,7 +773,8 @@ def thrash_edits_clause(gs: GuardState) -> str:
     return clause
 
 
-def _satisfaction_verdict(system: str, user: str, reasoner_chat, reasoner_role, rlog, *, reasoning_off: bool, workspace_root: str = "") -> dict | None:
+def _satisfaction_verdict(system: str, user: str, reasoner_chat, reasoner_role, rlog, *, reasoning_off: bool, workspace_root: str = "",
+                          evidence_blocks: list[str] | None = None) -> dict | None:
     """One critic call → the parsed {"satisfied": …} dict, or None if the model produced no parseable
     JSON. Mirrors the plan-path _verdict: NOT summarize() — summarize returns free text and only retries
     on EMPTY, but a reasoning-ON critic pass here does not go empty, it ROLE-PLAYS THE CODER (reasons
@@ -802,6 +803,8 @@ def _satisfaction_verdict(system: str, user: str, reasoner_chat, reasoner_role, 
             # up being told to answer `{"done": …}` under a prompt that specifies `satisfied`.
             verdict_key="satisfied",
             seed_files=True,
+            evidence_blocks=evidence_blocks,
+            evidence_intro=None,   # the question (satisfaction_user_composed) says where the record is
             force_think_off=reasoning_off)
         if massage.is_truncated(comp):
             # Cut at the cap → not a verdict. Parsing it risks a partial object that happened to
@@ -1128,7 +1131,8 @@ def _judge_completion(chat_fn, role, system: str, user: str, rlog, *, phase: str
                       verdict_key: str = "",
                       verdict_schema: str = "",
                       seed_files: bool = False,
-                      evidence_blocks: list[str] | None = None) -> dict:
+                      evidence_blocks: list[str] | None = None,
+                      evidence_intro: str | None = "composed_evidence_intro") -> dict:
     """ONE judge completion whose author may first LOOK — the shared inspection loop behind the step
     critic AND the completion critic (operator directive: judges get real read-only tools, not just a
     snapshot). With a ``workspace_root``, the judge is offered verifytools (list_dir/read_file,
@@ -1146,8 +1150,11 @@ def _judge_completion(chat_fn, role, system: str, user: str, rlog, *, phase: str
     if evidence_blocks:
         # Match summarize's composed-call contract: historical evidence is reducible by the
         # ONE context floor; current facts and the active question stay in the final turn.
+        # ``evidence_intro`` is a prompt key, or None when the final question already says where the
+        # evidence is: with a pinned question the leading intro is NOT protected (the question is), so a
+        # separate intro would be the oldest turn and the first the floor sheds.
         messages[1:1] = [
-            {"role": "user", "content": prompts.load("composed_evidence_intro")},
+            *([{"role": "user", "content": prompts.load(evidence_intro)}] if evidence_intro else []),
             *({"role": "user", "content": block} for block in evidence_blocks if block.strip()),
         ]
     inspectable = bool(workspace_root) and wsview.current(workspace_root).surveyed
@@ -1169,7 +1176,9 @@ def _judge_completion(chat_fn, role, system: str, user: str, rlog, *, phase: str
             # BEFORE the question, not after it. The files are context; the thing being asked has to
             # be the last thing read. (It also keeps `messages[-1]` the prompt every caller and test
             # reasonably expects it to be.)
-            messages.insert(1, {"role": "user", "content": seeded})
+            # Just before the question, AFTER any composed history: the floor sheds oldest first, and the
+            # current on-disk files must outlast the older record, not be the first thing it removes.
+            messages.insert(len(messages) - 1, {"role": "user", "content": seeded})
             rlog.emit("loop.judge_files_seeded", phase=phase, chars=len(seeded))
     inspection_start = len(messages) if evidence_blocks else 2
     rounds = 0
@@ -1665,6 +1674,9 @@ def _negative_diagnosis_nudge(obj: dict, *, task: str, action_log: str = "", che
     if ask is None:
         return suppress("semantic support unavailable")
 
+    # The action log is the unbounded input: composed blocks the floor can reduce, not one protected
+    # message (see `_diagnostic_action_verdict`).
+    composed = bool(action_log.strip()) and getattr(ask, "composes_evidence", False)
     question = prompts.render(
         "negative_diagnosis_support",
         diagnosis_kind=kind,
@@ -1677,8 +1689,10 @@ def _negative_diagnosis_nudge(obj: dict, *, task: str, action_log: str = "", che
         workspace_facts=workspace_fact or "(none available)",
         checks=checks or "(none available)",
         participation=participation_facts or "(none available)",
-        action_log=action_log or "(none available)")
-    answer = strip_think(ask(question) or "")
+        action_log=(prompts.load("negative_diagnosis_log_above") if composed
+                    else (action_log or "(none available)")))
+    answer = strip_think((ask(question, _evidence_blocks(action_log)) if composed
+                          else ask(question)) or "")
     head = answer.upper().split()[0].strip(".,:;`*\"'") if answer.split() else ""
     if head != "SUPPORTED":
         return suppress("semantic support absent or undecidable")
@@ -2280,8 +2294,17 @@ def judge_satisfaction(task: str, evidence: str, reasoner_chat, reasoner_role, r
                           evidence=evidence or "(no actions recorded yet)")
     if coder_tools:  # reasoning about the coder's work → give it the coder's tools (see _verify)
         user = user + "\n\n" + prompts.render("reasoner_coder_tools", tools=coder_tools)
-    obj = _satisfaction_verdict(system, user, reasoner_chat, reasoner_role, rlog, reasoning_off=False,
-                                workspace_root=workspace_root)
+    # THE JUDGE IS ASKED THE TASK; THE RECORD RIDES BEFORE IT AS COMPOSED BLOCKS. The action log is the
+    # one unbounded input, and in the active user message it was irreducible (A11: 22k estimated tokens
+    # into a 16k window, nothing the floor may touch, the verdict failed at the wire both passes). As
+    # blocks the floor drops the OLDEST ones, each drop labelled, and the question, the task and the
+    # newest actions stay. `user` (whole) remains the string the nudge's grounding checks read.
+    blocks = _evidence_blocks(evidence or "(no actions recorded yet)")
+    asked = prompts.render("satisfaction_user_composed", task=task)
+    if coder_tools:
+        asked = asked + "\n\n" + prompts.render("reasoner_coder_tools", tools=coder_tools)
+    obj = _satisfaction_verdict(system, asked, reasoner_chat, reasoner_role, rlog, reasoning_off=False,
+                                workspace_root=workspace_root, evidence_blocks=blocks)
     if obj is not None:
         obj = _fill_missing_verdict_flag(obj, "satisfied", rlog, "satisfaction")
     if obj is not None:
@@ -2321,10 +2344,9 @@ def judge_satisfaction(task: str, evidence: str, reasoner_chat, reasoner_role, r
         # solution down to 4/5. The VERDICT still stands (not satisfied, fail closed, #13); what is
         # withheld is the invented reason, so the caller falls back to the plain instruction rather
         # than sending the coder to fix work that is already right (#3, #5b).
-        diagnosis_ask = ((lambda sysm: ask_closed(
-            reasoner_chat, reasoner_role, sysm, rlog, phase="satisfaction-diagnosis",
-            max_tokens=JUDGE_MAX_TOKENS, retry_off=False))
-            if reasoner_role is not None else None)
+        diagnosis_ask = (_composed_closed_ask(reasoner_chat, reasoner_role, rlog,
+                                              phase="satisfaction-diagnosis")
+                         if reasoner_role is not None else None)
         nudge = _verdict_nudge(obj, satisfied, routes, evidence=user, task=task,
                                action_log=evidence, checks=gate_findings,
                                participation_facts=measured_participation,
@@ -2337,7 +2359,8 @@ def judge_satisfaction(task: str, evidence: str, reasoner_chat, reasoner_role, r
     # stamp — competent to REJECT, not to APPROVE. So use it only to confirm NOT-satisfied; a
     # "satisfied" that exists ONLY because the careful pass failed is downgraded and we fail CLOSED. A
     # false "done" over fake work is far worse than a few more work turns.
-    retry = _satisfaction_verdict(system, user, reasoner_chat, reasoner_role, rlog, reasoning_off=True)
+    retry = _satisfaction_verdict(system, asked, reasoner_chat, reasoner_role, rlog, reasoning_off=True,
+                                  evidence_blocks=blocks)
     if retry is not None:
         retry = _fill_missing_verdict_flag(retry, "satisfied", rlog, "satisfaction-retry")
     if retry is None:
@@ -2348,10 +2371,9 @@ def judge_satisfaction(task: str, evidence: str, reasoner_chat, reasoner_role, r
     if retry.get("satisfied"):
         rlog.emit("loop.satisfaction_failclosed", level="info")
         return False, "unverified — the careful check could not confirm completion; keep working", ""
-    retry_ask = ((lambda sysm: ask_closed(
-        reasoner_chat, reasoner_role, sysm, rlog, phase="satisfaction-retry-diagnosis",
-        max_tokens=JUDGE_MAX_TOKENS, retry_off=False))
-        if reasoner_role is not None else None)
+    retry_ask = (_composed_closed_ask(reasoner_chat, reasoner_role, rlog,
+                                      phase="satisfaction-retry-diagnosis")
+                 if reasoner_role is not None else None)
     nudge = _verdict_nudge(retry, False, routes, evidence=user, task=task,
                            action_log=evidence, checks=gate_findings,
                            participation_facts=measured_participation,
@@ -2495,6 +2517,32 @@ def _briefing_disk_truth(briefing: str, files_list: str, rlog=None) -> str:
 # used to sit here was a character clip, and the one after that is a judge call that errors out and
 # fails closed into the same re-nudge loop the clip was built for.
 EVIDENCE_SUMMARY_TRIGGER_CHARS = 48000
+
+# A closed-question judge's evidence rides as COMPOSED BLOCKS of about this many characters, never as one
+# protected message. The floor can reduce only whole unprotected turns, so evidence inside the system
+# message or the active user message is irreducible: phi4 A11 sent a 22,222-estimated-token satisfaction
+# judge and a 17,672-token steer-diagnostic judge into a 16,384-token window with nothing the floor was
+# allowed to touch, and both failed at the wire ("Measured input cannot fit the context window without
+# losing protected input"). Blocks cut on line boundaries and re-concatenate to the original text.
+EVIDENCE_BLOCK_CHARS = 6000
+
+
+def _evidence_blocks(text: str, limit: int = EVIDENCE_BLOCK_CHARS) -> list[str]:
+    """``text`` as ordered blocks of whole lines, each about ``limit`` characters (a single longer line
+    stays whole — a line is never cut), so ``"".join(blocks) == text``. The context floor then reduces
+    the OLDEST blocks first, each reduction labelled, and the newest evidence survives."""
+    blocks: list[str] = []
+    cur: list[str] = []
+    size = 0
+    for line in (text or "").splitlines(keepends=True):
+        if cur and size + len(line) > limit:
+            blocks.append("".join(cur))
+            cur, size = [], 0
+        cur.append(line)
+        size += len(line)
+    if cur:
+        blocks.append("".join(cur))
+    return blocks
 
 
 def _summarised_evidence(log: str, chat_fn, role, rlog) -> str:
@@ -8155,14 +8203,27 @@ _ASK_USER_TURN = "Answer the question above."
 
 
 def ask_closed(chat_fn, role, question: str, rlog, *, phase: str, max_tokens: int = 1024,
-               retry_off: bool = True) -> str:
+               retry_off: bool = True, evidence_blocks: list[str] | None = None,
+               evidence_intro: str = "composed_evidence_intro") -> str:
     """ONE primitive for every closed question cria puts to a reasoner — reasoning off, temperature
     0, the question in the user turn where the model looks for it. Returns "" on anything unreadable,
     which every caller already treats as "no answer". A caller whose contract permits only one
     actual judgment can disable the otherwise loss-preserving empty-answer retry."""
     return summarize(chat_fn, replace(role, reasoning="off") if role is not None else None,
                      question, _ASK_USER_TURN, rlog, phase=phase, max_tokens=max_tokens,
-                     temperature=0.0, retry_off=retry_off) or ""
+                     temperature=0.0, retry_off=retry_off, evidence_blocks=evidence_blocks,
+                     evidence_intro=evidence_intro) or ""
+
+
+def _composed_closed_ask(chat_fn, role, rlog, *, phase: str):
+    """The closed-question seat for a diagnosis, able to carry the question's unbounded evidence as
+    composed blocks (``ask(question, evidence_blocks)``) so the one context floor can reduce it."""
+    def ask(question: str, evidence_blocks: list[str] | None = None) -> str:
+        return ask_closed(chat_fn, role, question, rlog, phase=phase, max_tokens=JUDGE_MAX_TOKENS,
+                          retry_off=False, evidence_blocks=evidence_blocks,
+                          evidence_intro="composed_evidence_intro_system")
+    ask.composes_evidence = True
+    return ask
 
 
 def validate_compaction_briefing(chat_fn, role, briefing: str, *, files: str, checks: str,
@@ -8229,7 +8290,8 @@ SUMMARIZE_MAX_TOKENS = 8192
 def summarize(chat_fn, role, system: str, user: str, rlog, *, phase: str = "compactor",
               max_tokens: int = SUMMARIZE_MAX_TOKENS, retry_off: bool = True, coder_tools: str = "",
               capture: list | None = None, temperature: float | None = None,
-              evidence_blocks: list[str] | None = None) -> str:
+              evidence_blocks: list[str] | None = None,
+              evidence_intro: str = "composed_evidence_intro") -> str:
     """The ONE reasoner text-generation primitive — call the model with (system, user) and return the
     text ("" on failure/empty). With ``retry_off`` (default), retries with reasoning FORCED OFF when
     the first pass yields no text (a reasoning model can burn its whole budget THINKING and emit empty
@@ -8262,7 +8324,7 @@ def summarize(chat_fn, role, system: str, user: str, rlog, *, phase: str = "comp
             # task protection off the evidence, and the final question remains the active turn.
             # The blocks between them are facts in their original order, not a per-site clip; only
             # contextfloor.fit may reduce them, and every reduction it makes is labelled.
-            messages.append({"role": "user", "content": prompts.load("composed_evidence_intro")})
+            messages.append({"role": "user", "content": prompts.load(evidence_intro)})
             messages.extend({"role": "user", "content": block}
                             for block in evidence_blocks if block and block.strip())
         messages.append({"role": "user", "content": user})
@@ -10565,9 +10627,12 @@ def author_steer(reasoner_chat, reasoner_role, workspace_root, gs, body: dict, r
     # "Answer the question above.", reasoned "the original directive does not contain any file paths
     # or line numbers" about the SYSTEM PROMPT ITSELF, and returned NO_DIRECTIVE — so every steer
     # that reached the rewriter was dropped, always, for a reason that had nothing to do with it.
-    def _steer_ask(system: str, user: str) -> str:
+    def _steer_ask(system: str, user: str, evidence_blocks: list[str] | None = None) -> str:
         return summarize(reasoner_chat, reasoner_role, system, user or _ASK_USER_TURN, rlog,
-                         phase="steer-code", temperature=0.0) or ""
+                         phase="steer-code", temperature=0.0, evidence_blocks=evidence_blocks,
+                         evidence_intro="composed_evidence_intro_system") or ""
+    # Declared, not detected by shape: this seat can carry a question's evidence as composed blocks.
+    _steer_ask.composes_evidence = True
     # Same shape for the answer-vs-thinking recovery below, under its own phase tag.
     def _recover_ask(system: str) -> str:
         return summarize(reasoner_chat, reasoner_role, system, _ASK_USER_TURN, rlog,
@@ -11476,7 +11541,7 @@ def _provider_rejected_name_the_steer_relies_on(
 
 
 def _diagnostic_action_verdict(directive: str, findings: str, refused, rlog, ask,
-                               grounding: str = "") -> str:
+                               grounding: str = "", ask_with_evidence=None) -> str:
     """Whether an optional authored steer is supported by current check/refusal evidence.
 
     The old guard asked a lexical question for each identifier-shaped token shared by a directive
@@ -11496,11 +11561,20 @@ def _diagnostic_action_verdict(directive: str, findings: str, refused, rlog, ask
         return "SUPPORTED"
     if ask is None:
         return "UNDECIDABLE"
-    ans = strip_think(ask(prompts.render(
+    # THE GROUNDING IS THE UNBOUNDED PART, so it rides as composed evidence blocks the floor can reduce
+    # (oldest first, labelled) — inside the system message it was protected and irreducible (A11: the
+    # whole session, 17.7k estimated tokens, into a 16k window; both passes failed at the wire and the
+    # steer was withheld as UNDECIDABLE for a reason that had nothing to do with the steer). The seat's
+    # question is the same; only where the evidence sits changes.
+    composed = bool(grounding.strip()) and ask_with_evidence is not None
+    question = prompts.render(
         "steer_diagnostic_action", directive=directive,
         findings=(findings or prompts.load("steer_diagnostic_no_findings")),
-        grounding=(grounding or prompts.load("steer_diagnostic_no_grounding")),
-        refusals=(refused_text or prompts.load("steer_diagnostic_no_refusals")))) or "").strip()
+        grounding=(prompts.load("steer_diagnostic_grounding_above") if composed
+                   else (grounding or prompts.load("steer_diagnostic_no_grounding"))),
+        refusals=(refused_text or prompts.load("steer_diagnostic_no_refusals")))
+    ans = strip_think((ask_with_evidence(question, _evidence_blocks(grounding)) if composed
+                       else ask(question)) or "").strip()
     head = ans.upper().split()[0].strip(".,:;`*\"'") if ans.split() else ""
     verdict = (head if head in {"SUPPORTED", "CONTRADICTED", "UNSUPPORTED", "UNRELATED"}
                else "UNDECIDABLE")
@@ -11793,7 +11867,9 @@ def _vet_steer(directive: str | None, evidence: str, rlog, ask=None,
                 return None, "diagnostic_stale"
             verdict = _diagnostic_action_verdict(
                 directive, findings, refusals, rlog,
-                (lambda sysm: ask(sysm, "")) if ask else None, grounding=evidence)
+                (lambda sysm: ask(sysm, "")) if ask else None, grounding=evidence,
+                ask_with_evidence=((lambda sysm, blocks: ask(sysm, "", blocks))
+                                   if getattr(ask, "composes_evidence", False) else None))
             if verdict != "SUPPORTED":
                 return None, "diagnostic_" + verdict.lower()
             action_judged = True
