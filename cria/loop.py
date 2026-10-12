@@ -6597,6 +6597,12 @@ def _frame_for_item(messages: list[dict], item: str, summary: str, idx: int, tot
         if persona_at < 0 and isinstance(p, str) and p and p in t:
             persona_at, persona = run + t.index(p), p
         run += len(t) + 2
+    # Where installed libraries may be READ (the harness's declared roots, the build's own dependency
+    # location) — a fact the model otherwise only meets as a refusal. "" unless the harness declared roots.
+    # Read BEFORE the caller-instruction messages are dropped below: the harness's permission text
+    # ("The writable roots are `...`") lives in exactly those messages (Codex `developer` items), so
+    # asking after the drop saw no declared root on every live Codex request.
+    roots_note = dirguard.readable_roots_note(messages, workspace_root)
     messages = [m for m in messages if not (isinstance(m, dict) and m.get(bodykeys.CALLER_INSTRUCTIONS))]
     caller_block = f"\n\n{caller}" if caller else ""
     # The plan carries each section's probe KIND, which is what lets a non-zero TEST/BUILD exit whose
@@ -6604,9 +6610,6 @@ def _frame_for_item(messages: list[dict], item: str, summary: str, idx: int, tot
     # failure it is instead of "no error-class problems".
     messages = probegate.clean_gate_results(messages, gate_plan)  # strip raw gate plumbing/advisory
     hint = toolmenu.cheatsheet(tools)
-    # Where installed libraries may be READ (the harness's declared roots, the build's own dependency
-    # location) — a fact the model otherwise only meets as a refusal. "" unless the harness declared roots.
-    roots_note = dirguard.readable_roots_note(messages, workspace_root)
     caller_block += f"\n\n{roots_note}" if roots_note else ""
     done_block = (prompts.render("done_block", prior_work=prior_work) + "\n\n") if prior_work else ""
     if synthetic:
