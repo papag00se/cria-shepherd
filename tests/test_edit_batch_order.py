@@ -65,6 +65,21 @@ class BatchOrderTests(unittest.TestCase):
         self.assertEqual(f2.read_text(), expected)
         self.assertTrue(all(writeproxy.EDIT_ORDER_LATE not in o.stdout + o.stderr for o in outs.values()))
         self.assertEqual([p.name for p in pathlib.Path(d2).iterdir()], ["src"])        # nothing in the tree
+        self.assertEqual(os.listdir(tmp2), [])             # and the queue's marks are gone once the batch is done
+
+    def test_a_resent_identical_batch_gets_its_own_queue(self):
+        edits = [{"old_string": "a", "new_string": "b"}, {"old_string": "b", "new_string": "c"}]
+        first, second = _lower(edits, path="f.txt"), _lower(edits, path="f.txt")
+        import re
+        tok = lambda c: re.search(r"\.cria-edits-'\+'([0-9a-f]+)", c).group(1)
+        self.assertNotEqual(tok(first[1]), tok(second[1]))
+
+    def test_the_wait_is_shorter_than_the_yield_the_call_gets(self):
+        """The lowered call is not given a time budget; a harness yields a running command at ~10 s, so a
+        queued edit that outwaited that would be reported 'still running' and apply behind the model's back."""
+        from cria import probegate
+        self.assertLess(writeproxy.EDIT_SEQ_WAIT_SECONDS, probegate.GATE_POLL_WAIT_S)
+        self.assertLessEqual(writeproxy.EDIT_SEQ_WAIT_SECONDS, 7)
 
     def test_without_the_queue_the_same_reversed_batch_differs(self):
         """The fixture really is order-sensitive (guards the test above against going vacuous)."""

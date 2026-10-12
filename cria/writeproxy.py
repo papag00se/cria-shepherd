@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import uuid
 import json
 import os
 import re
@@ -300,7 +301,7 @@ _HD_PY = "__CRIA_PY_EOF__"
 # finished (see `_EDIT_SEQ_BLOCK`). Rendered into prose by `render_edit_echo` / `editrecovery.recover`.
 EDIT_ORDER_LATE = editrecovery.ORDER_LATE
 EDIT_SEQ_DIR = ".cria-edits-"            # under $TMPDIR (else /tmp) — never in the user's tree
-EDIT_SEQ_WAIT_SECONDS = 20
+EDIT_SEQ_WAIT_SECONDS = 5     # under the ~10 s a harness's exec yields without a budget (probegate.GATE_POLL_WAIT_S)
 _TMP_SUFFIX = ".tmp-partial"   # never carries the marker: a leftover is a filename the model can ls
 # A POSITIVE success token a write/edit prints ONLY on success. The empty-result reframe keys on
 # this, not on blank output — otherwise a FAILED write/edit (silent success and stderr-only failure
@@ -587,7 +588,14 @@ _bp=next((a for a in p.parents if a.exists()), None)
 if _bp is not None and not _bp.is_dir():
     sys.exit(base64.b64decode('{parentfile}').decode().replace('%%NAME%%',str(p)).replace('%%BLOCK%%',str(_bp)))
 p.parent.mkdir(parents=True,exist_ok=True)
-tmp=str(p)+'{suffix}'
+# The SAME directory lock the edit executor takes, so a write and an edit sent in one batch cannot interleave;
+# and a temp name of its own (the pid) so two of them can never share one.
+import fcntl
+try:
+    _lk=os.open(os.path.realpath(str(p.parent)),os.O_RDONLY); fcntl.flock(_lk,fcntl.LOCK_EX)
+except OSError:
+    pass
+tmp=str(p)+'.'+str(os.getpid())+'{suffix}'
 try:
     pathlib.Path(tmp).write_bytes(raw)
     os.replace(tmp,str(p))
@@ -639,23 +647,24 @@ def _write_command(path: str, content: str) -> str:
 # monotonic directive (surgical → committed whole-file rewrite), keyed on the file's failure history.
 # This keeps the history-blind, whipsawing rewrite/don't-rewrite advice OUT of the per-call heredoc.
 _EDIT_PY = r'''import base64,sys,re,pathlib,difflib,json
+import fcntl,os
 p=pathlib.Path(base64.b64decode('{path}').decode())
+rp=pathlib.Path(os.path.realpath(str(p)))   # the file itself: a symlink is read and written THROUGH, never replaced
 old=base64.b64decode('{old}').decode()
 new=base64.b64decode('{new}').decode()
 # ONE EDIT AT A TIME PER DIRECTORY. A coder that sends a batch of edits gets them run CONCURRENTLY by its
-# harness, each in its own process, and read-modify-write on one file loses updates — and `write_text`
-# truncates before it writes, so a sibling's read can land on an EMPTY file and be told the text it
-# anchored on is "not in the file". Walked on phi4 / Java A11 call 0016 (thirty-odd edits in one turn,
-# twenty-odd refused with an empty `current`). The lock is on the directory, so it leaves nothing in the
-# user's tree; it is released when this process exits.
-import fcntl,os
+# harness, each in its own process, and read-modify-write on one file loses updates — and a write that
+# truncates in place lets a sibling's read land on an EMPTY file and be told the text it anchored on is
+# "not in the file". Walked on phi4 / Java A11 call 0016 (thirty-odd edits in one turn, twenty-odd refused
+# with an empty `current`). So: take the lock, and swap the new bytes in atomically (below). The lock is on
+# the directory, so it leaves nothing in the user's tree; it is released when this process exits.
 _late=False
 #%%SEQ%%
 try:
-    _lk=os.open(str(p.parent),os.O_RDONLY); fcntl.flock(_lk,fcntl.LOCK_EX)
+    _lk=os.open(str(rp.parent),os.O_RDONLY); fcntl.flock(_lk,fcntl.LOCK_EX)
 except OSError:
     pass
-s=p.read_text()
+s=rp.read_text()
 def _fail(mode,**kw):
     kw['mode']=mode; kw['path']=p.name; kw.setdefault('current',s)
     _b=lambda d: base64.b64encode(json.dumps(d).encode()).decode()
@@ -672,15 +681,23 @@ _before=_v(str(p),s)
         _e=_v(str(p),res)
         if _e is not None:
             _fail('would_break',err=_e)
-    _t=str(p)+'%%SUFFIX%%'                      # atomic: a reader never sees the file half-written
     try:
-        pathlib.Path(_t).write_text(res)
-        import shutil; shutil.copymode(str(p),_t)
-        os.replace(_t,str(p))
-    except BaseException:
-        try: os.unlink(_t)
-        except OSError: pass
-        raise
+        if os.stat(str(rp)).st_nlink>1:          # a hard link: a swap would split it from its other names
+            rp.write_text(res)                   # — write in place (still under the lock)
+        else:
+            _t=str(rp)+'.'+str(os.getpid())+'%%SUFFIX%%'   # atomic: a reader never sees the file half-written
+            try:
+                pathlib.Path(_t).write_text(res)
+                _st=os.stat(str(rp)); os.chmod(_t,_st.st_mode&0o7777)
+                try: os.chown(_t,_st.st_uid,_st.st_gid)
+                except OSError: pass
+                os.replace(_t,str(rp))
+            except BaseException:
+                try: os.unlink(_t)
+                except OSError: pass
+                raise
+    except OSError as _e:
+        sys.exit(base64.b64decode('%%UNWRITABLE%%').decode().replace('%%NAME%%',p.name).replace('%%ERR%%',_e.strerror or str(_e)))
     print('{wrote}')
     if _late: print('%%LATE%%')
     {echocall}sys.exit()
@@ -804,7 +821,9 @@ _ECHO_DEF = r'''def _echo(res):
     dup=None
     NL=new.split(chr(10))
     if NL and NL[-1]=='': NL.pop()
-    if len(NL)>len(old.split(chr(10))) and a1>a0:
+    OL=old.split(chr(10))
+    if OL and OL[-1]=='': OL.pop()
+    if len(NL)>len(OL) and a1>a0:
         _n=lambda l: ' '.join(l.split())
         N=[(first+j,_n(l)) for j,l in enumerate(NL) if l.strip()]
         F=[(last+1+k,_n(l)) for k,l in enumerate(L[last:last+len(NL)]) if l.strip()]
@@ -814,7 +833,7 @@ _ECHO_DEF = r'''def _echo(res):
             while m<len(F) and j+m<len(N) and N[j+m][1]==F[m][1]: m+=1
             if m>best: best=m; bj=j
         if best>=2 and len(set(t for _,t in F[:best]))>=2 and any(c.isalnum() for _,t in F[:best] for c in t):
-            dup=[F[0][0],F[best-1][0],N[bj][0],N[bj+best-1][0],len(old.split(chr(10))),len(NL)]
+            dup=[F[0][0],F[best-1][0],N[bj][0],N[bj+best-1][0],len(OL),len(NL)]
     def _rep(segs,omitted):
         kw=dict(first=first,last=last,total=total,flex=flex,empty=a1<=a0,segs=segs,omitted=omitted)
         if dup: kw['dup']=dup
@@ -857,14 +876,21 @@ _EDIT_PACK_BLOCK = r'''    # The report is plumbing the harness keeps and counts
 # directory lock, until each has left a done-mark (written at process exit, whether it applied, was refused or
 # failed). A predecessor that never arrives inside the bound is not waited for further: the edit applies and
 # its result says it ran early. A turn with a single edit per file carries none of this.
-_EDIT_SEQ_BLOCK = r'''import time,atexit
-_sd=os.path.join(os.environ.get('TMPDIR') or '/tmp','%s'+%r)
+_EDIT_SEQ_BLOCK = r'''import time,atexit,shutil
+_sd=os.path.join(os.environ.get('TMPDIR') or '/tmp','%(dir)s'+%(turn)r)
+def _done():
+    try: open(os.path.join(_sd,'%(idx)d'),'w').close()
+    except OSError: pass
+    if %(last)r: shutil.rmtree(_sd,ignore_errors=True)   # the last of the group has every predecessor's mark (or gave up)
 try:
+    for _o in os.listdir(os.path.dirname(_sd)):              # marks left by a turn that never finished
+        _q=os.path.join(os.path.dirname(_sd),_o)
+        if _o.startswith('%(dir)s') and time.time()-os.stat(_q).st_mtime>3600: shutil.rmtree(_q,ignore_errors=True)
     os.makedirs(_sd,exist_ok=True)
-    atexit.register(lambda: open(os.path.join(_sd,'%d'),'w').close())
-    _miss=lambda: [k for k in %r if not os.path.exists(os.path.join(_sd,str(k)))]
+    atexit.register(_done)
+    _miss=lambda: [k for k in %(preds)r if not os.path.exists(os.path.join(_sd,str(k)))]
     _t0=time.time()
-    while _miss() and time.time()-_t0<%r: time.sleep(0.05)
+    while _miss() and time.time()-_t0<%(wait)r: time.sleep(0.05)
     _late=bool(_miss())
 except OSError:
     pass
@@ -922,7 +948,7 @@ def render_edit_echo(content: str, path: str) -> str:
 
 
 def _edit_command(path: str, old: str, new: str, pack: bool = False, echo: bool = False,
-                  seq: tuple[str, int, list[int]] | None = None) -> str:
+                  seq: tuple[str, int, list[int], bool] | None = None) -> str:
     py = (_VALIDATE_FN + _EDIT_PY).format(
         echodef=(_ECHO_DEF.format(ctx=ECHO_CONTEXT, maxb=ECHO_MAX_BYTES, wire=ECHO_WIRE_MAX_BYTES,
                                      zprefix=editrecovery.PACKED_PREFIX, editview=EDIT_VIEW) if echo else ""),
@@ -933,9 +959,11 @@ def _edit_command(path: str, old: str, new: str, pack: bool = False, echo: bool 
                                           packblock=(_EDIT_PACK_BLOCK.format(zprefix=editrecovery.PACKED_PREFIX)
                                                      if pack else ''),
                                           cap=content_reduce_mod.INLINE_RESULT_MAX_BYTES)
+    py = py.replace('%%UNWRITABLE%%', _b64(denial.mark(prompts.load("edit_unwritable"))))
     if seq is not None:
-        turn, idx, preds = seq
-        py = py.replace("#%%SEQ%%\n", _EDIT_SEQ_BLOCK % (EDIT_SEQ_DIR, turn, idx, list(preds), EDIT_SEQ_WAIT_SECONDS))
+        turn, idx, preds, last = seq
+        py = py.replace("#%%SEQ%%\n", _EDIT_SEQ_BLOCK % dict(dir=EDIT_SEQ_DIR, turn=turn, idx=idx, preds=list(preds),
+                                                       wait=EDIT_SEQ_WAIT_SECONDS, last=last))
     return f"python3 - <<'{_HD_PY}'\n{py}{_HD_PY}"
 
 
@@ -1579,7 +1607,7 @@ def _survey_due(session: str | None, name: str) -> bool:
 
 
 def _edit_sequence(tool_calls: list, injected: set) -> dict:
-    """``{call index: (turn token, index, predecessor indexes)}`` for the edit calls of ONE turn that share a file
+    """``{call index: (group token, index, predecessor indexes, is-last)}`` for the edit calls of ONE turn that share a file
     with an earlier edit call of the same turn. Everything else is absent: a lone edit per file runs unqueued."""
     by_path: dict[str, list[int]] = {}
     for i, tc in enumerate(tool_calls):
@@ -1593,9 +1621,13 @@ def _edit_sequence(tool_calls: list, injected: set) -> dict:
     group = [ix for ix in by_path.values() if len(ix) > 1]
     if not group:
         return {}
-    turn = hashlib.sha1("|".join(str((tc.get("id"), (tc.get("function") or {}).get("arguments")))
-                                 for tc in tool_calls).encode()).hexdigest()[:16]
-    return {i: (turn, i, ix[:n]) for ix in group for n, i in enumerate(ix)}
+    nonce = uuid.uuid4().hex     # per translation: a resent identical batch can never see an earlier batch's marks
+    out: dict = {}
+    for ix in group:
+        token = hashlib.sha1((nonce + str(ix)).encode()).hexdigest()[:16]
+        for n, i in enumerate(ix):
+            out[i] = (token, i, ix[:n], n == len(ix) - 1)
+    return out
 
 
 def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: set[str] | None = None,

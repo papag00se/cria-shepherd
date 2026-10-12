@@ -112,5 +112,99 @@ class ConcurrentEditTests(unittest.TestCase):
         self.assertEqual(f.stat().st_mode & 0o777, 0o755)
 
 
+
+class LinkAndFailureTests(unittest.TestCase):
+    """An edit goes THROUGH a link; it never replaces one (AGENTS.md-style symlinks, hard links)."""
+
+    def _edit(self, d, name, old, new):
+        return subprocess.run(["bash", "-c", writeproxy._edit_command(name, old, new)], cwd=d, capture_output=True,
+                              text=True)
+
+    def test_a_symlink_stays_a_symlink_and_the_target_changes(self):
+        import os
+        d = tempfile.mkdtemp()
+        real = pathlib.Path(d, "AGENTS.md")
+        real.write_text("one\ntwo\n")
+        link = pathlib.Path(d, "CLAUDE.md")
+        os.symlink("AGENTS.md", link)
+        r = self._edit(d, "CLAUDE.md", "two", "three")
+        self.assertIn("wrote", r.stdout.lower())
+        self.assertTrue(link.is_symlink())
+        self.assertEqual(os.readlink(link), "AGENTS.md")
+        self.assertEqual(real.read_text(), "one\nthree\n")
+        self.assertEqual(link.read_text(), "one\nthree\n")
+        self.assertEqual(sorted(p.name for p in pathlib.Path(d).iterdir()), ["AGENTS.md", "CLAUDE.md"])
+
+    def test_a_symlink_into_another_directory_writes_beside_the_target(self):
+        import os
+        d = tempfile.mkdtemp()
+        other = pathlib.Path(tempfile.mkdtemp(), "t.txt")
+        other.write_text("alpha\n")
+        os.symlink(other, pathlib.Path(d, "l.txt"))
+        self._edit(d, "l.txt", "alpha", "beta")
+        self.assertTrue(pathlib.Path(d, "l.txt").is_symlink())
+        self.assertEqual(other.read_text(), "beta\n")
+        self.assertEqual([p.name for p in other.parent.iterdir()], ["t.txt"])
+
+    def test_a_hard_link_keeps_every_name_in_step(self):
+        import os
+        d = tempfile.mkdtemp()
+        a = pathlib.Path(d, "a.txt")
+        a.write_text("x\ny\n")
+        b = pathlib.Path(d, "b.txt")
+        os.link(a, b)
+        self._edit(d, "a.txt", "y", "z")
+        self.assertEqual(b.read_text(), "x\nz\n")
+        self.assertEqual(os.stat(a).st_ino, os.stat(b).st_ino)
+        self.assertEqual(os.stat(a).st_nlink, 2)
+
+    def test_an_unwritable_directory_is_a_plain_statement_not_a_traceback(self):
+        import os
+        if os.geteuid() == 0:
+            self.skipTest("root ignores directory modes")
+        d = tempfile.mkdtemp()
+        f = pathlib.Path(d, "f.txt")
+        f.write_text("a\n")
+        os.chmod(d, 0o555)
+        try:
+            r = self._edit(d, "f.txt", "a", "b")
+        finally:
+            os.chmod(d, 0o755)
+        out = r.stdout + r.stderr
+        self.assertNotIn("Traceback", out)
+        self.assertIn("could not be written", out)
+        self.assertEqual(f.read_text(), "a\n")
+
+    def test_a_write_waits_for_the_directory_lock_an_edit_would_take(self):
+        import fcntl
+        import os
+        d = tempfile.mkdtemp()
+        fd = os.open(d, os.O_RDONLY)
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        try:
+            proc = subprocess.Popen(["bash", "-c", writeproxy._write_command("w.txt", "hello\n")], cwd=d,
+                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            with self.assertRaises(subprocess.TimeoutExpired):
+                proc.wait(timeout=0.7)
+            self.assertFalse(pathlib.Path(d, "w.txt").exists())
+        finally:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+            os.close(fd)
+        proc.communicate(timeout=10)
+        self.assertEqual(pathlib.Path(d, "w.txt").read_text(), "hello\n")
+
+    def test_a_trailing_newline_does_not_add_a_line_to_old_string(self):
+        """`class A {\\n` is ONE line. Counted as two it understated how much bigger the replacement was."""
+        d = tempfile.mkdtemp()
+        f = pathlib.Path(d, "A.txt")
+        f.write_text("head\nclass A {\n  int x;\n  int y;\n}\ntail\n")
+        r = subprocess.run(["bash", "-c", writeproxy._edit_command(
+            "A.txt", "class A {\n", "class A {\n  int x;\n  int y;\n}\n", echo=True)], cwd=d, capture_output=True,
+            text=True)
+        echo = writeproxy.render_edit_echo(r.stdout, "A.txt")
+        self.assertIn("Your old_string covered 1 line(s) and your new_string is 4 lines.", echo)
+        self.assertIn("(blank lines aside)", echo)
+
+
 if __name__ == "__main__":
     unittest.main()
