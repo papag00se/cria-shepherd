@@ -1,0 +1,137 @@
+"""A batch of edits applies in the coder's CALL order, however the harness schedules the processes.
+
+Real batch: phi4 / Java attempt A11 call 0024 — eleven edits to Importer.java in one turn, run concurrently by
+the harness. Later edits are anchored on text earlier ones produce; applied in arrival order the file ended
+up different from the call-order result (9 landed in order, 10 reversed, different bytes)."""
+import json
+import os
+import pathlib
+import subprocess
+import tempfile
+import threading
+import time
+import unittest
+
+from cria import prompts, writeproxy
+from cria.writeproxy import translate_outbound
+
+_FX = json.loads((pathlib.Path(__file__).parent / "fixtures" / "a11_call24_batch.json").read_text())
+_SHELL = {"name": "exec_command", "schema": {"properties": {"cmd": {"type": "string"}}}}
+
+
+def _lower(edits, path=None):
+    comp = {"choices": [{"message": {"tool_calls": [
+        {"id": f"c{i}", "type": "function", "function": {"name": "edit_file", "arguments": json.dumps(
+            {"path": path or _FX["path"], **e})}} for i, e in enumerate(edits)]}}]}
+    translate_outbound(comp, _SHELL, injected={"edit_file"})
+    return [json.loads(tc["function"]["arguments"])["cmd"] for tc in comp["choices"][0]["message"]["tool_calls"]]
+
+
+def _workspace(base):
+    d = tempfile.mkdtemp()
+    f = pathlib.Path(d, _FX["path"])
+    f.parent.mkdir(parents=True)
+    f.write_text(base)
+    return d, f
+
+
+def _run(cmd, d, tmp):
+    return subprocess.run(["bash", "-c", cmd], cwd=d, capture_output=True, text=True,
+                          env={**os.environ, "TMPDIR": tmp})
+
+
+class BatchOrderTests(unittest.TestCase):
+    def test_a_reversed_concurrent_batch_equals_the_call_order_result(self):
+        cmds = _lower(_FX["edits"])
+        d, f = _workspace(_FX["base"])
+        tmp = tempfile.mkdtemp()
+        for c in cmds:                                   # the reference: one at a time, in call order
+            _run(c, d, tmp)
+        expected = f.read_text()
+        d2, f2 = _workspace(_FX["base"])
+        tmp2 = tempfile.mkdtemp()
+        outs = {}
+
+        def one(i):
+            outs[i] = _run(cmds[i], d2, tmp2)
+
+        ts = []
+        for i in reversed(range(len(cmds))):             # the LAST call starts first
+            t = threading.Thread(target=one, args=(i,))
+            t.start()
+            ts.append(t)
+            time.sleep(0.05)
+        [t.join() for t in ts]
+        self.assertEqual(f2.read_text(), expected)
+        self.assertTrue(all(writeproxy.EDIT_ORDER_LATE not in o.stdout + o.stderr for o in outs.values()))
+        self.assertEqual([p.name for p in pathlib.Path(d2).iterdir()], ["src"])        # nothing in the tree
+
+    def test_without_the_queue_the_same_reversed_batch_differs(self):
+        """The fixture really is order-sensitive (guards the test above against going vacuous)."""
+        plain = [writeproxy._edit_command(_FX["path"], e["old_string"], e["new_string"]) for e in _FX["edits"]]
+        outs = []
+        for order in (plain, plain[::-1]):
+            d, f = _workspace(_FX["base"])
+            for c in order:
+                _run(c, d, tempfile.mkdtemp())
+            outs.append(f.read_text())
+        self.assertNotEqual(*outs)
+
+    def test_a_predecessor_that_never_arrives_is_not_waited_for_and_the_result_says_so(self):
+        old = writeproxy.EDIT_SEQ_WAIT_SECONDS
+        writeproxy.EDIT_SEQ_WAIT_SECONDS = 0.4
+        try:
+            cmds = _lower([{"old_string": "line 1", "new_string": "one"}, {"old_string": "line 2", "new_string": "two"}],
+                          path="f.txt")
+        finally:
+            writeproxy.EDIT_SEQ_WAIT_SECONDS = old
+        d = tempfile.mkdtemp()
+        pathlib.Path(d, "f.txt").write_text("line 1\nline 2\n")
+        t0 = time.time()
+        r = _run(cmds[1], d, tempfile.mkdtemp())          # call 0 never runs
+        self.assertLess(time.time() - t0, 10)
+        self.assertEqual(pathlib.Path(d, "f.txt").read_text(), "line 1\ntwo\n")
+        rendered = writeproxy.render_edit_echo(r.stdout, "f.txt")
+        self.assertIn(prompts.load("edit_order_late").strip(), rendered)
+        self.assertNotIn(writeproxy.EDIT_ORDER_LATE, rendered)
+
+    def test_a_late_refusal_is_also_said_in_words(self):
+        old = writeproxy.EDIT_SEQ_WAIT_SECONDS
+        writeproxy.EDIT_SEQ_WAIT_SECONDS = 0.3
+        try:
+            cmds = _lower([{"old_string": "line 1", "new_string": "one"}, {"old_string": "nope", "new_string": "x"}],
+                          path="f.txt")
+        finally:
+            writeproxy.EDIT_SEQ_WAIT_SECONDS = old
+        d = tempfile.mkdtemp()
+        pathlib.Path(d, "f.txt").write_text("line 1\n")
+        r = _run(cmds[1], d, tempfile.mkdtemp())
+        from cria import editrecovery
+        text = editrecovery.recover(r.stdout + r.stderr, [])
+        self.assertIn(prompts.load("edit_order_late").strip(), text)
+        self.assertNotIn(editrecovery.ORDER_LATE, text)
+
+    def test_a_refused_predecessor_releases_the_queue(self):
+        cmds = _lower([{"old_string": "line 1", "new_string": "one"}, {"old_string": "line 2", "new_string": "two"}],
+                      path="f.txt")
+        tmp = tempfile.mkdtemp()
+        # run the release leg for call 0 the way a refused call would, then the successor must not wait
+        import re
+        turn = re.search(r"\.cria-edits-'\+'([0-9a-f]+)", cmds[1]).group(1)
+        d = tempfile.mkdtemp()
+        pathlib.Path(d, "f.txt").write_text("line 1\nline 2\n")
+        subprocess.run(["bash", "-c", writeproxy._seq_release(turn, 0)], env={**os.environ, "TMPDIR": tmp}, check=True)
+        t0 = time.time()
+        r = _run(cmds[1], d, tmp)
+        self.assertLess(time.time() - t0, 5)
+        self.assertNotIn(writeproxy.EDIT_ORDER_LATE, r.stdout)
+
+    def test_one_edit_per_file_carries_no_queue(self):
+        cmds = _lower([{"old_string": "a", "new_string": "b"}], path="f.txt")
+        self.assertNotIn(writeproxy.EDIT_SEQ_DIR, cmds[0])
+        two = _lower([{"old_string": "a", "new_string": "b"}], path="g.txt")
+        self.assertEqual(cmds[0].count("python3"), two[0].count("python3"))
+
+
+if __name__ == "__main__":
+    unittest.main()

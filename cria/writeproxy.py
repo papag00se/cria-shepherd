@@ -22,6 +22,7 @@ shell it didn't call. `web_search` routes to the harness's own search tool when 
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import os
 import re
@@ -295,6 +296,11 @@ _HD_PY = "__CRIA_PY_EOF__"
 # MODEL's path (`<ws>/.`, legitimately inside); the temp path cria derived from it was never
 # re-checked. A directory target is now refused before any temp exists, which removes the escape at
 # its source; the cleanup covers every other way a write can fail.
+# A result line saying the edit ran BEFORE one or more edits the coder sent ahead of it in the same turn had
+# finished (see `_EDIT_SEQ_BLOCK`). Rendered into prose by `render_edit_echo` / `editrecovery.recover`.
+EDIT_ORDER_LATE = editrecovery.ORDER_LATE
+EDIT_SEQ_DIR = ".cria-edits-"            # under $TMPDIR (else /tmp) — never in the user's tree
+EDIT_SEQ_WAIT_SECONDS = 20
 _TMP_SUFFIX = ".tmp-partial"   # never carries the marker: a leftover is a filename the model can ls
 # A POSITIVE success token a write/edit prints ONLY on success. The empty-result reframe keys on
 # this, not on blank output — otherwise a FAILED write/edit (silent success and stderr-only failure
@@ -643,6 +649,8 @@ new=base64.b64decode('{new}').decode()
 # twenty-odd refused with an empty `current`). The lock is on the directory, so it leaves nothing in the
 # user's tree; it is released when this process exits.
 import fcntl,os
+_late=False
+#%%SEQ%%
 try:
     _lk=os.open(str(p.parent),os.O_RDONLY); fcntl.flock(_lk,fcntl.LOCK_EX)
 except OSError:
@@ -652,6 +660,7 @@ def _fail(mode,**kw):
     kw['mode']=mode; kw['path']=p.name; kw.setdefault('current',s)
     _b=lambda d: base64.b64encode(json.dumps(d).encode()).decode()
     _r=_b(kw)
+    if _late: print('%%LATE%%')
     if len('{editfail}')+len(_r)>{cap}:
         kw.pop('current',None); _r=_b(kw)
 {packblock}    sys.exit('{editfail}'+_r)
@@ -672,7 +681,9 @@ _before=_v(str(p),s)
         try: os.unlink(_t)
         except OSError: pass
         raise
-    print('{wrote}'); {echocall}sys.exit()
+    print('{wrote}')
+    if _late: print('%%LATE%%')
+    {echocall}sys.exit()
 n=s.count(old)
 if n==1:
     {posx}_w(s.replace(old,new,1))
@@ -739,7 +750,7 @@ elif close:
     _fail('close',anchor=close)     # near-miss: a mistyped token
 else:
     _fail('no_anchor')
-'''.replace('%%SUFFIX%%', _TMP_SUFFIX)
+'''.replace('%%LATE%%', EDIT_ORDER_LATE).replace('%%SUFFIX%%', _TMP_SUFFIX)
 
 
 # THE EDIT'S RESULT, AS THE FILE NOW READS. The executor already holds the post-edit bytes, so for an
@@ -840,11 +851,40 @@ _EDIT_PACK_BLOCK = r'''    # The report is plumbing the harness keeps and counts
 '''
 
 
+# THE COMMAND CARRIES ITS PLACE IN THE TURN. A batch of edits the harness runs concurrently must still apply in
+# the order the coder sent them — a later edit is anchored on text an earlier one produces. Each edit in a
+# batch that touches the same file names its predecessors (call indexes in this turn); it waits, OUTSIDE the
+# directory lock, until each has left a done-mark (written at process exit, whether it applied, was refused or
+# failed). A predecessor that never arrives inside the bound is not waited for further: the edit applies and
+# its result says it ran early. A turn with a single edit per file carries none of this.
+_EDIT_SEQ_BLOCK = r'''import time,atexit
+_sd=os.path.join(os.environ.get('TMPDIR') or '/tmp','%s'+%r)
+try:
+    os.makedirs(_sd,exist_ok=True)
+    atexit.register(lambda: open(os.path.join(_sd,'%d'),'w').close())
+    _miss=lambda: [k for k in %r if not os.path.exists(os.path.join(_sd,str(k)))]
+    _t0=time.time()
+    while _miss() and time.time()-_t0<%r: time.sleep(0.05)
+    _late=bool(_miss())
+except OSError:
+    pass
+'''
+
+
+def _seq_release(turn: str, idx: int) -> str:
+    """Shell leg that marks call ``idx`` of ``turn`` done when its command never reaches the edit heredoc (a
+    refusal answered it) — so the edits queued behind it do not wait out the bound for a call that is over."""
+    return (f'mkdir -p "${{TMPDIR:-/tmp}}/{EDIT_SEQ_DIR}{turn}" 2>/dev/null; '
+            f': > "${{TMPDIR:-/tmp}}/{EDIT_SEQ_DIR}{turn}/{idx}" 2>/dev/null\n')
+
+
 def render_edit_echo(content: str, path: str) -> str:
     """The landed edit's confirmation, plus the window of the file the executor reported (when it did).
     Everything after the confirmation is facts read off the post-edit bytes; a missing or unreadable
     report leaves the plain confirmation — saying less is allowed."""
     confirm = prompts.render("write_confirm", path=path)
+    if any(ln.strip() == EDIT_ORDER_LATE for ln in content.splitlines()):
+        return render_edit_echo(content.replace(EDIT_ORDER_LATE, ""), path) + "\n" + prompts.load("edit_order_late")
     for ln in content.splitlines():
         ln = ln.strip()
         if not ln.startswith(EDIT_VIEW):
@@ -881,7 +921,8 @@ def render_edit_echo(content: str, path: str) -> str:
     return confirm
 
 
-def _edit_command(path: str, old: str, new: str, pack: bool = False, echo: bool = False) -> str:
+def _edit_command(path: str, old: str, new: str, pack: bool = False, echo: bool = False,
+                  seq: tuple[str, int, list[int]] | None = None) -> str:
     py = (_VALIDATE_FN + _EDIT_PY).format(
         echodef=(_ECHO_DEF.format(ctx=ECHO_CONTEXT, maxb=ECHO_MAX_BYTES, wire=ECHO_WIRE_MAX_BYTES,
                                      zprefix=editrecovery.PACKED_PREFIX, editview=EDIT_VIEW) if echo else ""),
@@ -892,6 +933,9 @@ def _edit_command(path: str, old: str, new: str, pack: bool = False, echo: bool 
                                           packblock=(_EDIT_PACK_BLOCK.format(zprefix=editrecovery.PACKED_PREFIX)
                                                      if pack else ''),
                                           cap=content_reduce_mod.INLINE_RESULT_MAX_BYTES)
+    if seq is not None:
+        turn, idx, preds = seq
+        py = py.replace("#%%SEQ%%\n", _EDIT_SEQ_BLOCK % (EDIT_SEQ_DIR, turn, idx, list(preds), EDIT_SEQ_WAIT_SECONDS))
     return f"python3 - <<'{_HD_PY}'\n{py}{_HD_PY}"
 
 
@@ -1534,6 +1578,26 @@ def _survey_due(session: str | None, name: str) -> bool:
     return n % SURVEY_EVERY == 0
 
 
+def _edit_sequence(tool_calls: list, injected: set) -> dict:
+    """``{call index: (turn token, index, predecessor indexes)}`` for the edit calls of ONE turn that share a file
+    with an earlier edit call of the same turn. Everything else is absent: a lone edit per file runs unqueued."""
+    by_path: dict[str, list[int]] = {}
+    for i, tc in enumerate(tool_calls):
+        fn = tc.get("function") or {}
+        if fn.get("name") not in _EDIT_NAMES or fn.get("name") not in injected:
+            continue
+        args = _parse(fn.get("arguments"))
+        path = _tool_path(args)
+        if path and isinstance(args.get("old_string"), str) and args["old_string"] and "new_string" in args:
+            by_path.setdefault(os.path.normpath(str(path)), []).append(i)
+    group = [ix for ix in by_path.values() if len(ix) > 1]
+    if not group:
+        return {}
+    turn = hashlib.sha1("|".join(str((tc.get("id"), (tc.get("function") or {}).get("arguments")))
+                                 for tc in tool_calls).encode()).hexdigest()[:16]
+    return {i: (turn, i, ix[:n]) for ix in group for n, i in enumerate(ix)}
+
+
 def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: set[str] | None = None,
                        brave_key: str | None = None, native_search: str | None = None,
                        session: str | None = None, workspace_root: str | None = None,
@@ -1549,7 +1613,8 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
         if not tool_calls:
             continue
         rebuilt: list[dict] = []
-        for tc in tool_calls:
+        edit_seq = _edit_sequence(tool_calls, injected)
+        for ti, tc in enumerate(tool_calls):
             fn = tc.get("function") or {}
             name = fn.get("name")
             args = _parse(fn.get("arguments"))
@@ -1765,7 +1830,7 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
                             rlog.emit("writeproxy.edit_empty_old_string", tool=name, path=str(path))
                     else:
                         old, new = str(args.get("old_string") or ""), str(args.get("new_string") or "")
-                        cmd = _edit_command(str(path), old, new, pack=pack, echo=edit_echo)
+                        cmd = _edit_command(str(path), old, new, pack=pack, echo=edit_echo, seq=edit_seq.get(ti))
                         from . import cleanupsafety
                         raw = wsview.current().read_bytes(str(path))
                         try:
@@ -1842,6 +1907,8 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
                 # harness's), so the removal rides on a command cria composes. The next GATE carries
                 # it too — this is the leg that matters when there is no next gate, which is the case
                 # where the litter would otherwise sit in the user's repo for good (#7).
+                if ti in edit_seq and EDIT_SEQ_DIR not in cmd:   # answered without running the edit: release the queue
+                    cmd = _seq_release(edit_seq[ti][0], ti) + cmd
                 if (rm := _litter_leg(workspace_root)):
                     cmd = f"{rm}\n{cmd}"
                 rebuilt.append(_shell_call(tc.get("id"), shell_tool, f"{_sentinel(name, fn.get('arguments'))}\n{cmd}"))
