@@ -12677,13 +12677,11 @@ def guard_truncation(coder: dict, body: dict, coder_chat, rlog, *, step=None, ph
         _refusal_turn(body, prompts.load_map("call_refused")["incomplete_args"] + also)
         return coder
     attempt = 0
-    _write_seen = False   # did any pass of this turn carry a mid-write cut? (a retry can lose the path)
     conv = list(body.get("messages") or [])
     while _cut_off(coder) and attempt < MAX_TRUNCATION_RETRIES:
         # a self-cut reply is cut in ITS cut call, whatever the family — not in the first write it carries
         path = _truncated_write_path(coder) if massage.is_truncated(coder) else _cut_target(coder)[2]
         also = _also_withheld(coder)
-        _write_seen = _write_seen or path is not None
         out_tok = _output_tokens(coder)
         # A SELF-cut write used to fall out here with only a ⟦cria⟧ note — which is HUMAN-facing and
         # stripped before the model, so the coder was told nothing at all: its write silently never
@@ -12718,7 +12716,11 @@ def guard_truncation(coder: dict, body: dict, coder_chat, rlog, *, step=None, ph
         # Read it here, before the calls are gone.
         selfcut = not massage.is_truncated(coder)
         _closing_target = _cut_target(coder)[2] if selfcut else _truncated_write_path(coder)
-        was_write = _closing_target is not None or _write_seen
+        # WRITE-NESS IS A FACT ABOUT THE DROPPED REPLY, by the cut call's family — a path may be lost to
+        # a cut ('{"pa'), a family is not. An earlier pass's write says nothing about this reply.
+        was_write = (_closing_target is not None
+                     or (_cut_target(coder)[0] in _WRITE_TOOLS if selfcut
+                         else any(n in _WRITE_TOOLS for n, _a in _cut_off_calls(coder))))
         _closing_whole = was_write and _whole_file_cut(coder)
         _closing_also = _also_withheld(coder)
         _drop_tool_calls(coder)

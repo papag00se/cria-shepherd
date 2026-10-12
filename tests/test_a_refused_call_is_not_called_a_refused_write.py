@@ -114,25 +114,29 @@ class TheSelectionIsDrivenByWhetherThereWasAWriteTests(unittest.TestCase):
     # assert the wording it picks — the write-path-first selection this source check pinned by
     # spelling. Removed rather than kept as a weaker duplicate.
 
-    def test_a_mid_write_cut_seen_on_any_pass_still_counts_as_a_write(self):
-        """The retry can succeed at finding the path on pass 1 and lose it on pass 2 — the closing
-        message must still describe what actually happened, not just the LAST pass. Drive it: pass
-        1 is a write cut off, pass 2 is a DIFFERENT (non-write) cut-off call, and the guard runs out
-        of retries there — the wording must still be the write refusal, not the call refusal."""
+    def _two_pass(self, second):
         write_cut = _cut("write_file", '{"path": "cart.go", "content": "package cart')
-        call_cut = _cut("exec_command", '{"cmd": "go test ./')  # pass 2: cut off, but NOT a write
-        responses = [call_cut]
-
-        def coder_chat(b, r):
-            return json.dumps(responses.pop(0)).encode()
-
         from cria import loop
         rlog = _Rlog()
         body = {"messages": [{"role": "user", "content": "do it"}]}
-        loop.guard_truncation(write_cut, body, coder_chat, rlog, step=1)
-        self.assertEqual(rlog.classification(), "truncated_write",
-                         "pass 1 proved a write was in flight; losing the path on the retry must "
-                         "not downgrade the refusal to a plain call")
+        responses = [second]
+        loop.guard_truncation(write_cut, body, lambda b, r: json.dumps(responses.pop(0)).encode(),
+                              rlog, step=1)
+        return rlog, body["messages"][-1]["content"]
+
+    def test_a_dropped_write_whose_path_was_lost_is_still_a_write(self):
+        """Pass 1 found the path, the dropped reply is a write_file cut inside its own `path` key:
+        write-ness comes from the call's family, so the refusal is still the write refusal."""
+        rlog, _ = self._two_pass(_cut("write_file", '{"pa'))
+        self.assertEqual(rlog.classification(), "truncated_write")
+
+    def test_an_earlier_write_does_not_make_a_dropped_non_write_a_write(self):
+        for finish in ("length", "tool_calls"):
+            with self.subTest(finish=finish):
+                rlog, last = self._two_pass(_cut("exec_command", '{"cmd": "go test ./', finish))
+                self.assertEqual(rlog.classification(), "truncated_call")
+                self.assertNotIn("edit-style", last)
+                self.assertNotIn("old/new pair", last)
 
 
 if __name__ == "__main__":
