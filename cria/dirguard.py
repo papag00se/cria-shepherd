@@ -1213,6 +1213,162 @@ def root_recursive_delete_refusal(command: str) -> str | None:
     return None
 
 
+_SHELL_RESERVED = {"time", "exec", "command", "builtin", "eval", "source", "."}
+_INTERPRETERS = {"sh", "bash", "zsh", "dash", "ksh", "fish", "env", "eval", "exec", "sudo", "python",
+                 "python3", "perl", "ruby", "node", "php", "awk", "sed", "xargs"}
+
+
+def _command_position(command: str, start: int, spans) -> bool:
+    """True when the token at ``start`` is the program a segment runs: only whitespace separates it
+    from the start of the command or the last ``; & | (``, and it is not inside quotes. Callers
+    exclude backslashes/newlines first, so this textual test cannot be fooled by continuations."""
+    if any(s <= start < e for s, e in spans):
+        return False
+    return not re.split(r"[;&|(]", command[:start])[-1].strip()
+
+
+def _command_position_refusal(command, level, workspace, roots, external, start):
+    """The truthful refusal when the ONLY outside-path token(s) responsible are programs run by
+    absolute path (``/usr/bin/time -v java …``), or None to keep today's message. Ground truth by
+    doing: it re-evaluates the command with those tokens replaced and offers the bare-name form only
+    when command_refusal itself allows that exact command."""
+    if "\\" in command or "\n" in command or "\r" in command:
+        return None
+    spans = _quoted_spans(command)
+    cmd_toks = []
+    for m in _PATH_TOKEN.finditer(command):
+        if is_external(m.group(0), workspace) and not _exempt(m.group(0)) \
+                and _command_position(command, m.start(), spans):
+            cmd_toks.append(m)
+    if not any(m.start() == start for m in cmd_toks):
+        return None
+
+    def swap(repl):
+        out, last = [], 0
+        for m in cmd_toks:
+            out.append(command[last:m.start()])
+            out.append(repl(m.group(0)))
+            last = m.end()
+        return "".join(out) + command[last:]
+    # Were these tokens the ONLY reason? Judge the command with each program swapped for a harmless one.
+    if command_refusal(swap(lambda t: "true"), level, workspace, roots) is not None:
+        return None
+    bare = swap(lambda t: os.path.basename(t))
+    rewrite = ""
+    if (all(os.path.basename(m.group(0)) and os.path.basename(m.group(0)) not in _SHELL_RESERVED
+            for m in cmd_toks) and command_refusal(bare, level, workspace, roots) is None):
+        rewrite = prompts.fill(prompts.load("external_path_command_rewrite"), command=bare)
+    root = f" ({workspace})" if workspace else ""
+    return prompts.fill(prompts.load("external_path_command_position"), path=repr(external), root=root,
+                        rewrite=rewrite)
+
+
+def _words_of(command: str):
+    lexer = shlex.shlex(command, posix=True, punctuation_chars=";&|()<>\n")
+    lexer.whitespace = " \t\r"
+    lexer.commenters = ""
+    lexer.wordchars += "".join(c for c in "[]{}$,:@%+!^#=" if c not in lexer.wordchars)
+    try:
+        return list(lexer)
+    except ValueError:
+        return None
+
+
+def _unproven_element(command: str, workspace: str | None):
+    """(kind, word) for the FIRST element that stopped ``command_only_reads`` from proving a read —
+    a cd/pushd, a shell variable, a redirect, a pipe into a non-reader, xargs, an interpreter — or
+    None when it is none of those (today's generic wording then stands)."""
+    if not command or "<<" in command or "`" in command or "$(" in command:
+        return None
+    words = _words_of(command)
+    if not words:
+        return None
+    seg: list[str] = []
+    after_pipe = False
+    i = 0
+    while i <= len(words):
+        w = words[i] if i < len(words) else ";"
+        if w and set(w) <= _PUNCT:
+            if w in _REDIRECTS:
+                if seg and seg[-1].isdigit():
+                    seg.pop()
+                nxt = words[i + 1] if i + 1 < len(words) else None
+                if nxt is not None and set(nxt) <= _PUNCT:
+                    nxt = None
+                if not _redirect_ok(w, nxt, workspace):
+                    return ("redirect", w)
+                i += 2 if nxt is not None else 1
+                continue
+            if seg:
+                found = _segment_element(seg, workspace, after_pipe)
+                if found:
+                    return found
+            after_pipe = (w == "|")
+            seg = []
+        else:
+            seg.append(w)
+        i += 1
+    return None
+
+
+def _segment_element(seg: list[str], workspace, after_pipe: bool):
+    cmd = seg[0]
+    if re.match(r"^[A-Za-z_]\w*=", cmd):
+        return ("assign", cmd)
+    if cmd in ("cd", "pushd") and not _segment_reads(seg, workspace):
+        return (cmd, seg[1] if len(seg) > 1 else "")
+    for a in seg[1:]:
+        if "$" in a:
+            return ("variable", a)
+    if cmd == "xargs":
+        return ("xargs", cmd)
+    if cmd in _INTERPRETERS:
+        return ("interpreter", cmd)
+    if after_pipe and cmd not in _READERS:
+        return ("pipe", cmd)
+    return None
+
+
+def _literal_rewrite(command: str, workspace: str | None):
+    """A literal-path form of the two shapes cria can rewrite mechanically, else None:
+    ``cd R && find . ARGS`` -> ``find R ARGS`` and ``NAME=P; jar tf "$NAME"`` -> ``jar tf P``."""
+    if any(c in command for c in "\\\n\r`<>|") or "$(" in command or "<<" in command:
+        return None
+    words = _words_of(command)
+    if not words:
+        return None
+    if (len(words) >= 5 and words[0] == "cd" and words[2] == "&&" and words[3] == "find"
+            and words[4] == "."):
+        root, rest = words[1], words[5:]
+        if (any(set(a) <= _PUNCT for a in rest) or any("$" in a for a in [root, *rest])
+                or any(c in root for c in "{}*?[~")):
+            return None
+        return shlex.join(["find", root, *rest])
+    if len(words) == 5 and words[1] in (";", "&&") and words[0].count("=") == 1:
+        name, _, val = words[0].partition("=")
+        if (re.fullmatch(r"[A-Za-z_]\w*", name) and val and not any(c in val for c in "${}*?[~")
+                and words[2] == "jar" and words[3] == "tf" and words[4] in (f"${name}", f"${{{name}}}")
+                ):
+            return shlex.join(["jar", "tf", val])
+    return None
+
+
+def _unproven_refusal(command, level, workspace, roots, external):
+    """The refusal for a command that touches a readable outside root but is not proven read-only:
+    names the actual element, and offers a literal-path rewrite only when command_refusal allows it."""
+    found = _unproven_element(command, workspace)
+    if found is None:
+        return prompts.fill(prompts.load("external_path_declared_root_unproven"), path=repr(external))
+    kind, word = found
+    element = prompts.fill(prompts.load_map("external_path_unproven_elements")[kind], word=word)
+    rewrite = " "
+    lit = _literal_rewrite(command, workspace)
+    if lit and command_refusal(lit, level, workspace, roots) is None:
+        rewrite = prompts.fill(prompts.load("external_path_unproven_rewrite"), command=lit) + "\n"
+    return prompts.fill(prompts.load("external_path_declared_root_unproven_named"), path=repr(external),
+                        element=element, rewrite=rewrite)
+
+
 def command_refusal(command: str, level: str, workspace: str | None, roots=()) -> str | None:
     """The refusal for a RAW shell command, or None when allowed — heuristic: refuse when the command
     names an external absolute/``~`` path, weighed against whether it looks like a write. Under
@@ -1241,6 +1397,7 @@ def command_refusal(command: str, level: str, workspace: str | None, roots=()) -
     segments = _segment_spans(command)
     spans = _quoted_spans(command)
     external = None
+    ext_start = None
     ext_is_write = False
     for m in _PATH_TOKEN.finditer(command):
         tok = m.group(0)
@@ -1283,6 +1440,7 @@ def command_refusal(command: str, level: str, workspace: str | None, roots=()) -
             continue
         external = tok
         ext_is_write = is_write
+        ext_start = m.start()
         break
     if external is None:
         # Nothing ABSOLUTE tripped the scan. A WRITE can still leave the workspace by a relative
@@ -1301,5 +1459,9 @@ def command_refusal(command: str, level: str, workspace: str | None, roots=()) -
         # Say exactly what was refused: a write TARGET there, or a command not proven to only read.
         if ext_is_write:
             return _refusal("Writing", external, workspace, roots, level)
-        return prompts.fill(prompts.load("external_path_declared_root_unproven"), path=repr(external))
+        return _unproven_refusal(command, level, workspace, roots, external)
+    if ext_start is not None and not ext_is_write:
+        positional = _command_position_refusal(command, level, workspace, roots, external, ext_start)
+        if positional:
+            return positional
     return _refusal("Writing/reading" if level == "none" else "Writing", external, workspace, roots, level)
