@@ -69,3 +69,14 @@ option A (small, upstream, proactive) and re-run B1 end-to-end; (2) if Java stil
 note is in the window, wire B into the check-failure block (`writeproxy`, beside
 `_note_missing_dependency`) with a fails-before/passes-after test; (3) widen the replay to Go/Rust turns.
 Limitation: O2 (readable-roots) is not on main; B1 absent-arm already inspected the jar sometimes.
+
+## 7. Step 1 landed (option A) + replay with the real output
+`depsurface.gather(..., cache_roots)`: the home default first, then a bounded search (depth 4, 3000 dirs,
+containment-checked) under `dirguard.dependency_roots(messages)` = harness-declared roots (system/developer
+text) + an in-root `-Dmaven.repo.local` shown in a TOOL result (assistant text never a source). Covers
+jvm/go/rust/ruby locators. No roots -> unchanged. The failure-driven namespace listing (option B) is NOT
+in: the surface is gathered once per coordinate and anchored, before any failure exists, so it does not fit
+that rung; it stays step 2 (check-failure block).
+Replay, B1 0084/0085, real `represent_inbound` output, 3 runs per arm (`o8/real-B1-*.json`): jar
+inspected (javap/jar tf) 0/6 -> 4/6; edits used real classes 2 (one still invented
+`com.opencsv.enums.CSVRecord`); absent arm 0/6 inspected, 0 edits. Small N, same direction as the prototype.

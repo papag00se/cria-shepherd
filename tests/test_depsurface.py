@@ -198,7 +198,7 @@ class GoDocBlockSelectionTests(unittest.TestCase):
         real_go_doc_all = depsurface._go_doc_all
         depsurface._go_doc_all = lambda package, tagged: (["const (", "\tX = 1"], False)
         real_module_dir = depsurface._go_module_dir
-        depsurface._go_module_dir = lambda package, version: "/fake/does/not/need/to/exist"
+        depsurface._go_module_dir = lambda package, version, cache_roots=(): "/fake/does/not/need/to/exist"
         try:
             surface = depsurface._gather_go("example.com/x", "v1.0.0", None)
         finally:
