@@ -78,11 +78,60 @@ class TheHandoffClaimsOnlyWhatCriaObserved(unittest.TestCase):
     def test_an_edit_before_the_gate_does_not_count(self):
         s = loop.PlanSession(plan=[])
         forward(s, "edit_file", {"path": "src/A.java", "old_string": "a", "new_string": "b"}, "e0")
-        loop.track_gate_progress(s, FLAG, [])
+        loop.track_gate_progress(s, FLAG, [{"role": "tool", "tool_call_id": "e0", "content": "Edited src/A.java"}])
         for i in range(3):
             forward(s, "read_file", {"path": "a.java"}, f"r{i}")
         self.assertTrue(loop.gate_unedited(s))
         self.assertNotIn("Re-run the check", note(s))
+
+    def test_a_write_forwarded_before_the_gate_with_no_result_yet_is_still_a_write(self):
+        s = loop.PlanSession(plan=[])
+        forward(s, "write_file", {"path": "src/A.java", "content": "x"}, "pending")
+        loop.track_gate_progress(s, FLAG, [])               # the verdict is read; that write has no result
+        for i in range(3):
+            forward(s, "read_file", {"path": "a.java"}, f"r{i}")
+        self.assertFalse(loop.gate_unedited(s))
+        self.assertIn("Re-run the check", note(s))
+
+    def test_that_write_succeeding_after_the_gate_still_defeats_it(self):
+        s = loop.PlanSession(plan=[])
+        forward(s, "write_file", {"path": "src/A.java", "content": "x"}, "pending")
+        loop.track_gate_progress(s, FLAG, [])
+        loop.guard_track_write_streak(s, {"choices": [{"message": {"tool_calls": []}}]}, _Log(),
+                                      messages=[{"role": "tool", "tool_call_id": "pending", "content": "Wrote src/A.java"}])
+        self.assertFalse(loop.gate_unedited(s))
+
+    def test_that_write_failing_after_the_gate_does_not_defeat_it(self):
+        s = loop.PlanSession(plan=[])
+        forward(s, "write_file", {"path": "src/A.java", "content": "x"}, "pending")
+        loop.track_gate_progress(s, FLAG, [])
+        s.refused_write_ids = {"pending"}
+        self.assertTrue(loop.gate_unedited(s))
+
+    def test_a_result_seen_only_in_the_folded_transcript_still_answered_the_write(self):
+        s = loop.PlanSession(plan=[])
+        forward(s, "write_file", {"path": "src/A.java", "content": "x"}, "old")
+        # the result came back in a transcript the harness then compacted away: the coder window never held it
+        loop._note_write_results(s, [{"role": "tool", "tool_call_id": "old", "content": "Wrote src/A.java"}])
+        loop.track_gate_progress(s, FLAG, [])
+        self.assertTrue(loop.gate_unedited(s))
+
+    def test_the_compaction_hardening_records_the_results_it_folds(self):
+        s = loop.PlanSession(plan=[])
+        forward(s, "write_file", {"path": "src/A.java", "content": "x"}, "old")
+        srv = SimpleNamespace(loop=SimpleNamespace(_store={"k": s}), cfg=SimpleNamespace(routing=SimpleNamespace(roles={})))
+        body = {"messages": [{"role": "user", "content": "x"},
+                             {"role": "tool", "tool_call_id": "old", "content": "Wrote src/A.java"}]}
+        comp = {"choices": [{"message": {"role": "assistant", "content": "summary"}, "finish_reason": "stop"}]}
+        server._harden_compaction_reply(comp, body, None, srv, _Log(), sess_key="k")
+        self.assertEqual(s.write_result_ids, {"old"})
+
+    def test_the_restored_session_never_licenses_the_claim(self):
+        s = loop.PlanSession(plan=loop._synthetic_plan("task"))
+        forward(s, "read_file", {"path": "a"}, "r")
+        loop.track_gate_progress(s, FLAG, [])
+        r = loop._session_from_dict(loop._session_to_dict(s))
+        self.assertFalse(loop.gate_unedited(r))
 
     def test_a_write_known_not_to_have_run_does_not_count(self):
         s = session()
@@ -181,6 +230,39 @@ class TheRuminationStepIsGroundedOnlyWhenItIsTrue(unittest.TestCase):
         msgs.append({"role": "assistant", "tool_calls": [{"id": "p", "type": "function", "function": {
             "name": "apply_patch", "arguments": json.dumps({"input": f"*** Begin Patch\n*** Update File: {REL}\n@@\n-a\n+b\n*** End Patch"})}}]})
         self.assertEqual(self.step(msgs), "")
+
+    def _after_read(self, calls):
+        msgs = read_msgs(REL, 180, 230, body="\n".join(f"{i}: l" for i in range(180, 231)))
+        for cid, name, args in calls:
+            msgs.append({"role": "assistant", "tool_calls": [{"id": cid, "type": "function", "function": {
+                "name": name, "arguments": json.dumps(args)}}]})
+        return msgs
+
+    def test_the_second_target_of_a_multi_file_patch_defeats_it(self):
+        patch = ("*** Begin Patch\n*** Update File: other.java\n@@\n-a\n+b\n"
+                 f"*** Update File: {REL}\n@@\n-a\n+b\n*** End Patch")
+        msgs = self._after_read([("p", "apply_patch", {"input": patch})])
+        self.assertIn(REL, list(loop._write_paths_after(msgs, 1)))
+        self.assertEqual(self.step(msgs), "")
+
+    def test_patch_delete_and_move_targets_defeat_it(self):
+        for body in (f"*** Delete File: {REL}", f"*** Update File: o.java\n*** Move to: {REL}"):
+            msgs = self._after_read([("p", "apply_patch", {"input": f"*** Begin Patch\n{body}\n*** End Patch"})])
+            self.assertEqual(self.step(msgs), "", body)
+
+    def test_a_quoted_redirect_to_the_path_defeats_it(self):
+        msgs = self._after_read([("s", "exec_command", {"cmd": f'echo hi > "{REL}"'})])
+        self.assertEqual(self.step(msgs), "")
+
+    def test_a_shell_write_with_unknown_targets_defeats_it(self):
+        for cmd in (f"sed -i s/a/b/ {REL}", "cp a.java b.java", "git checkout -- .", "echo x > o.txt && sed -i s/a/b/ *.java"):
+            msgs = self._after_read([("s", "exec_command", {"cmd": cmd})])
+            self.assertEqual(self.step(msgs), "", cmd)
+
+    def test_a_fully_resolved_write_to_another_file_and_a_plain_command_do_not(self):
+        msgs = self._after_read([("s", "exec_command", {"cmd": "echo x > other.txt"}),
+                                 ("c", "exec_command", {"cmd": "mvn -q compile"})])
+        self.assertTrue(self.step(msgs))
 
     def test_an_edit_since_the_gate_or_a_green_gate_defeats_it(self):
         msgs = read_msgs(REL, 180, 230, body="\n".join(f"{i}: l" for i in range(180, 231)))

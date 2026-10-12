@@ -656,6 +656,13 @@ def _harden_compaction_reply(comp: dict, body: dict, provider, server, rlog, ses
     # in that package. cria then carried that sentence as `⟦ctx:continuation⟧` for the rest of the
     # run and a steer turned it into a numbered work order (#5b).
     sk = sess_key or session_key({}, body.get("messages", []))
+    # The transcript being folded is the last place most of its tool results will ever be seen: a write
+    # whose result came back only here is still a write that was answered (`gate_unedited`).
+    _loop = getattr(server, "loop", None)
+    _sess = _loop._store.get(sk) if _loop is not None else None
+    if _sess is not None:
+        from .loop import _note_write_results
+        _note_write_results(_sess, body.get("messages", []))
     ws = _session_cwd(sk, body.get("messages", []), rlog)
     text = _text_of(comp).strip()
     truncated = massage.is_truncated(comp)

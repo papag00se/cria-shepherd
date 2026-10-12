@@ -341,6 +341,12 @@ class GuardState:
     # len(write_call_ids) when the last gate's verdict was read — the position "since that check" is
     # measured from (`gate_unedited`). None = cria cannot say.
     gate_write_mark: int | None = None
+    # The registered write calls whose result was NOT yet known when that verdict was read. Each may
+    # still finish after the verdict, so a forwarding position alone cannot say it landed before it.
+    gate_pending_write_ids: set | None = None
+    # Registered write calls whose result cria has seen, remembered across requests: the window drops old
+    # results (harness compaction), and a result no longer in the window is still a result that came back.
+    write_result_ids: set | None = None
     last_gate_testless: bool = False  # the last GREEN gate ran NO tests (0 collected / no test probe) — a
     last_gate_skipped: int = 0        # tool-reported SKIPPED count from the last gate's test run — a suite
     # can pass while SKIPPING the checks that matter (0728-m11: live tests skipTest() on the exact 404
@@ -699,6 +705,17 @@ STUCK_STEP_REPLAN = 4
 STEP_THRASH_REPLAN = 12
 
 
+def _note_write_results(gs: GuardState, messages) -> None:
+    """Remember which registered write calls have had a result come back (landed or failed)."""
+    answered = gs.write_result_ids = getattr(gs, "write_result_ids", None) or set()
+    registered = set(getattr(gs, "write_call_ids", None) or [])
+    for m in messages or []:
+        if isinstance(m, dict) and m.get("role") == "tool":
+            cid = m.get("tool_call_id") or m.get("call_id")
+            if cid in registered:
+                answered.add(cid)
+
+
 def track_gate_progress(gs: GuardState, finding: str, messages=None) -> None:
     """Shared plan-off gate-progress tracking. ``finding`` = the RED block-nudge/ground-truth text, or
     a FALSY value on a GREEN/clean gate. Maintains the identical-finding stall (same error unchanged
@@ -725,6 +742,12 @@ def track_gate_progress(gs: GuardState, finding: str, messages=None) -> None:
     gs.last_gate_flag = finding or ""
     gs.last_gate_seq = gs.action_seq
     gs.gate_write_mark = len(gs.write_call_ids or []) if gs.write_tracking else None
+    # Completion-aware: only a write whose result was already in hand (landed OR failed) is "before the
+    # gate". One with no result yet may land after it, so it is remembered as outstanding.
+    _note_write_results(gs, messages)
+    gs.gate_pending_write_ids = (
+        {c for c in (gs.write_call_ids or [])[:gs.gate_write_mark] if c not in gs.write_result_ids}
+        if gs.gate_write_mark is not None else None)
     if not finding:
         gs.gate_stall = 0
         gs.gate_sig = ""
@@ -7833,6 +7856,7 @@ def guard_track_write_streak(gs: GuardState, coder: dict, rlog, *, step=None, me
     # turn later, from the marked result — so the correction happens here, before this turn accrues.
     refused = _unlanded_call_ids(messages or [])
     gs.refused_write_ids = (gs.refused_write_ids or set()) | set(refused)
+    _note_write_results(gs, messages)
     if refused:
         kept_w, kept_i = [], []
         for path, cid in zip(gs.recent_writes, gs.recent_write_ids):
@@ -8890,7 +8914,8 @@ def newer_own_run(sess) -> str:
 
 def gate_unedited(sess) -> bool:
     """True only when cria's own record shows NO file edit/write tool call of the coder's has been
-    forwarded since the last gate's verdict was read — and not one that is not known to have failed.
+    forwarded since the last gate's verdict was read — and none forwarded earlier whose result was still
+    unknown at that moment — unless it is known to have failed.
 
     This claims what cria observed and nothing about the disk: a shell command can change files and
     is not in the registry (the wording built on this says so). The registry (`write_call_ids`) is
@@ -8905,7 +8930,11 @@ def gate_unedited(sess) -> bool:
     if mark is None or not getattr(sess, "write_tracking", False) or ids is None or len(ids) < mark:
         return False
     refused = getattr(sess, "refused_write_ids", None) or set()
-    return all(cid in refused for cid in ids[mark:])
+    pending = getattr(sess, "gate_pending_write_ids", None)
+    if pending is None:
+        return False
+    # An outstanding write from before the verdict counts like one after it, unless it is known not to have run.
+    return all(cid in refused for cid in list(ids[mark:]) + list(pending))
 
 
 class GateAge(int):
@@ -12680,7 +12709,8 @@ def grounded_rumination_step(gs, messages: list[dict]) -> str:
             last = span[1] if span[1] is not None else len(text.rstrip("\n").split("\n"))
             if not (span[0] <= line <= last):
                 continue
-            if any(_same_workspace_file(wp, path, root) for wp in _write_paths_after(messages, idx)):
+            if any(wp is _ANY_PATH or _same_workspace_file(wp, path, root)
+                   for wp in _write_paths_after(messages, idx)):
                 continue
             return prompts.render("rumination_next_step_grounded", finding=raw.strip(),
                                   path=f"`{rpath}`", line=line)
@@ -12688,13 +12718,73 @@ def grounded_rumination_step(gs, messages: list[dict]) -> str:
     return ""
 
 
+_ANY_PATH = object()   # a mutation whose targets cannot be fully determined: any file may have changed
+
+_PATCH_ALL_TARGETS_RE = re.compile(r"^\*\*\* (?:Add|Update|Delete) File: (.+?)\s*$|^\*\*\* Move to: (.+?)\s*$", re.M)
+
+
+def _mutation_targets(fn: dict):
+    """Every file one call may have changed: a list of paths ([] for a non-write call), or ``_ANY_PATH``
+    when the call is a write whose targets cannot be fully determined. Authoritative for the later-write
+    test, unlike `_write_path` (one file, a streak-grouping key): a patch names every Add/Update/Delete
+    header and Move-to, and a shell command the classifier flags as writing is resolved only when every
+    redirect/`tee` target is read from it AND it holds no other mutator — otherwise it is unknown."""
+    name = fn.get("name")
+    lowered = _command_text(fn.get("arguments") or "") or ""
+    original = writeproxy.original_call(lowered)
+    if original is not None:
+        fn, name = original, original.get("name")
+    elif writeproxy.is_crias_own(lowered):
+        return []
+    args = fn.get("arguments") or ""
+    if _is_write_tool(name):
+        out = []
+        if name == "apply_patch":
+            try:
+                obj = json.loads(args) if isinstance(args, str) else dict(args or {})
+            except (json.JSONDecodeError, TypeError, ValueError):
+                obj = None
+            blob = (obj.get("input") or obj.get("patch") or "") if isinstance(obj, dict) else args
+            blob = blob if isinstance(blob, str) else ""
+            if not isinstance(obj, dict):
+                blob = blob.replace("\\n", "\n")
+            out = [(a or b).strip().strip('"') for a, b in _PATCH_ALL_TARGETS_RE.findall(blob)]
+        keyed = _path_of_args(args, patch_ok=False)
+        if keyed:
+            out.append(keyed)
+        return out or _ANY_PATH
+    if is_shell_tool_name(name):
+        text = _command_text(args)
+        if text is None:
+            return _ANY_PATH   # an undecodable fragment: nothing can be said about its targets
+        # Read from the UNMASKED text: `echo hi > "src/A.java"` is a real redirect the quote-masking
+        # matcher cannot see. A `>` inside a string only adds a harmless extra target.
+        targets = [m.group(1) for m in _REDIRECT_QUOTED_RE.finditer(text)] + \
+                  [m.group(1) for m in _TEE_TARGET_RE.finditer(text)]
+        rest = _TEE_TARGET_RE.sub(" ", _REDIRECT_QUOTED_RE.sub(" ", text))
+        if not targets and not writes_something(name, text):
+            return []
+        # anything else the classifier still flags (cp, sed -i, git checkout …) has unknown targets
+        if targets and not writes_something(name, rest):
+            return targets
+        return _ANY_PATH
+    return []
+
+
+_REDIRECT_QUOTED_RE = re.compile(r'(?<![-=<>\d&])>{1,2}\s*(?!/dev/|&)["\']?([\w./~$-]+)["\']?')
+
+
 def _write_paths_after(messages: list[dict], idx: int):
-    """Paths of every write-class call (landed or not, shell redirects included) after position ``idx``."""
+    """Paths of every write-class call (landed or not) after position ``idx`` — every target of a
+    multi-file patch — or ``_ANY_PATH`` for a write whose targets are not fully known."""
     for m in (messages or [])[idx + 1:]:
         if isinstance(m, dict) and m.get("role") == "assistant":
             for tc in m.get("tool_calls") or []:
-                if (p := _write_path(tc.get("function") or {})) is not None:
-                    yield p
+                got = _mutation_targets(tc.get("function") or {})
+                if got is _ANY_PATH:
+                    yield _ANY_PATH
+                else:
+                    yield from got
 
 
 def guard_rumination(coder: dict, body: dict, coder_chat, rlog, *, step=None, phase: str = "coder",
