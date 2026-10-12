@@ -75,6 +75,16 @@ _ANCHOR_MARKERS = ("⟦ctx:briefing⟧", "⟦ctx:continuation⟧", "___CRIA_GATE
                    FACTS_MARKER, _SPEC_ROUTES_MARKER, _SPEC_SHAPE_MARKER)
 
 
+# Markers that exist ONLY because older turns were compacted/dropped (a rollup, a briefing handoff,
+# the harness-compaction reframe, the context floor's digest). Not the gate/task/facts anchors.
+_COMPACTION_MARKERS = ("⟦ctx:briefing⟧", "⟦ctx:continuation⟧", SUMMARY_MARKER, "⟦ctx:compacted⟧")
+
+
+def body_is_compacted(messages: list) -> bool:
+    """True when this body carries evidence that older turns were actually compacted or dropped."""
+    return any(mk in _text(m) for m in messages for mk in _COMPACTION_MARKERS)
+
+
 @dataclass
 class CompactState:
     summary: str = ""      # the current rolling summary text

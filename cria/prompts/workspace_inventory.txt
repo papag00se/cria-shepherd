@@ -9,7 +9,12 @@
 header = WORKSPACE FILES in {{ROOT}} (on-disk ground truth at judging time, newest first):
 complete = This list is complete — a file not listed here does not exist in the workspace.
 empty = WORKSPACE FILES in {{ROOT}}: none — the workspace has no files at judging time.
-coder_header = ⟦ctx:files⟧ YOUR WORKSPACE RIGHT NOW (on-disk ground truth, newest first — older turns were compacted, so this list, not any remembered or summarized file content, says which files exist):
+# The header states compaction ONLY when this body actually carries a compaction (a rollup, briefing,
+# continuation reframe, or context-floor digest). ornith1.5_9b / Java B2 read the unconditional clause
+# after a successful write with nothing dropped, concluded "the workspace keeps getting reset" and
+# rewrote Importer.java from scratch repeatedly (#5b: never claim what cria does not know).
+coder_header = ⟦ctx:files⟧ YOUR WORKSPACE RIGHT NOW (on-disk ground truth, newest first — this list says which files exist):
+coder_header_compacted = ⟦ctx:files⟧ YOUR WORKSPACE RIGHT NOW (on-disk ground truth, newest first — older turns were compacted, so this list, not any remembered or summarized file content, says which files exist):
 coder_note = Every file above is readable with read_file. If a file's current text is not in this conversation, read it rather than reconstructing it from memory or from the summary; if its current text is here, use that copy.
 planner_header = WORKSPACE FILES in {{ROOT}} (on-disk ground truth right now, before any work has started — newest first):
 planner_empty = WORKSPACE FILES in {{ROOT}}: none — the workspace is empty; nothing has been built yet.
