@@ -29,6 +29,7 @@ from . import prompts
 
 # Heredoc → cria: a structured edit-FAILURE fact-report (base64 JSON follows the marker).
 EDITFAIL = "⟦ctx:editfail⟧"
+ORDER_LATE = "⟦ctx:editorder⟧"   # == writeproxy.EDIT_ORDER_LATE (that module imports this one)
 # A report may travel as ``PACKED_PREFIX`` + base64(zlib(json)) instead of base64(json). '.' is not in the
 # base64 alphabet, so the two cannot be confused; zlib's own checksum rejects a corrupted stream.
 PACKED_PREFIX = "z."
@@ -241,6 +242,10 @@ def recover(content: str, prior_msgs: list, rlog=None) -> str:
     # Whatever preceded the marker is kept in place — the warning is still true and still wanted; it
     # simply belongs ABOVE the directive rather than in front of a prefix test.
     head, rest = content[:i], content[i + len(EDITFAIL):]
+    # An order note rides in front of the report (the edit ran ahead of its predecessors in the turn): said in words.
+    if ORDER_LATE in head:
+        head = head.replace(ORDER_LATE, prompts.load("edit_order_late").strip())
+        head = head.rstrip("\n") + "\n"
     try:
         fail = decode_report(rest)
     except ValueError:

@@ -22,6 +22,8 @@ shell it didn't call. `web_search` routes to the harness's own search tool when 
 from __future__ import annotations
 
 import base64
+import hashlib
+import uuid
 import json
 import os
 import re
@@ -295,6 +297,11 @@ _HD_PY = "__CRIA_PY_EOF__"
 # MODEL's path (`<ws>/.`, legitimately inside); the temp path cria derived from it was never
 # re-checked. A directory target is now refused before any temp exists, which removes the escape at
 # its source; the cleanup covers every other way a write can fail.
+# A result line saying the edit ran BEFORE one or more edits the coder sent ahead of it in the same turn had
+# finished (see `_EDIT_SEQ_BLOCK`). Rendered into prose by `render_edit_echo` / `editrecovery.recover`.
+EDIT_ORDER_LATE = editrecovery.ORDER_LATE
+EDIT_SEQ_DIR = ".cria-edits-"            # under $TMPDIR (else /tmp) — never in the user's tree
+EDIT_SEQ_WAIT_SECONDS = 5     # under the ~10 s a harness's exec yields without a budget (probegate.GATE_POLL_WAIT_S)
 _TMP_SUFFIX = ".tmp-partial"   # never carries the marker: a leftover is a filename the model can ls
 # A POSITIVE success token a write/edit prints ONLY on success. The empty-result reframe keys on
 # this, not on blank output — otherwise a FAILED write/edit (silent success and stderr-only failure
@@ -581,7 +588,14 @@ _bp=next((a for a in p.parents if a.exists()), None)
 if _bp is not None and not _bp.is_dir():
     sys.exit(base64.b64decode('{parentfile}').decode().replace('%%NAME%%',str(p)).replace('%%BLOCK%%',str(_bp)))
 p.parent.mkdir(parents=True,exist_ok=True)
-tmp=str(p)+'{suffix}'
+# The SAME directory lock the edit executor takes, so a write and an edit sent in one batch cannot interleave;
+# and a temp name of its own (the pid) so two of them can never share one.
+import fcntl
+try:
+    _lk=os.open(os.path.realpath(str(p.parent)),os.O_RDONLY); fcntl.flock(_lk,fcntl.LOCK_EX)
+except OSError:
+    pass
+tmp=str(p)+'.'+str(os.getpid())+'{suffix}'
 try:
     pathlib.Path(tmp).write_bytes(raw)
     os.replace(tmp,str(p))
@@ -633,14 +647,29 @@ def _write_command(path: str, content: str) -> str:
 # monotonic directive (surgical → committed whole-file rewrite), keyed on the file's failure history.
 # This keeps the history-blind, whipsawing rewrite/don't-rewrite advice OUT of the per-call heredoc.
 _EDIT_PY = r'''import base64,sys,re,pathlib,difflib,json
+import fcntl,os
 p=pathlib.Path(base64.b64decode('{path}').decode())
+rp=pathlib.Path(os.path.realpath(str(p)))   # the file itself: a symlink is read and written THROUGH, never replaced
 old=base64.b64decode('{old}').decode()
 new=base64.b64decode('{new}').decode()
-s=p.read_text()
+# ONE EDIT AT A TIME PER DIRECTORY. A coder that sends a batch of edits gets them run CONCURRENTLY by its
+# harness, each in its own process, and read-modify-write on one file loses updates — and a write that
+# truncates in place lets a sibling's read land on an EMPTY file and be told the text it anchored on is
+# "not in the file". Walked on phi4 / Java A11 call 0016 (thirty-odd edits in one turn, twenty-odd refused
+# with an empty `current`). So: take the lock, and swap the new bytes in atomically (below). The lock is on
+# the directory, so it leaves nothing in the user's tree; it is released when this process exits.
+_late=False
+#%%SEQ%%
+try:
+    _lk=os.open(str(rp.parent),os.O_RDONLY); fcntl.flock(_lk,fcntl.LOCK_EX)
+except OSError:
+    pass
+s=rp.read_text()
 def _fail(mode,**kw):
     kw['mode']=mode; kw['path']=p.name; kw.setdefault('current',s)
     _b=lambda d: base64.b64encode(json.dumps(d).encode()).decode()
     _r=_b(kw)
+    if _late: print('%%LATE%%')
     if len('{editfail}')+len(_r)>{cap}:
         kw.pop('current',None); _r=_b(kw)
 {packblock}    sys.exit('{editfail}'+_r)
@@ -652,7 +681,26 @@ _before=_v(str(p),s)
         _e=_v(str(p),res)
         if _e is not None:
             _fail('would_break',err=_e)
-    p.write_text(res); print('{wrote}'); {echocall}sys.exit()
+    try:
+        if os.stat(str(rp)).st_nlink>1:          # a hard link: a swap would split it from its other names
+            rp.write_text(res)                   # — write in place (still under the lock)
+        else:
+            _t=str(rp)+'.'+str(os.getpid())+'%%SUFFIX%%'   # atomic: a reader never sees the file half-written
+            try:
+                pathlib.Path(_t).write_text(res)
+                _st=os.stat(str(rp)); os.chmod(_t,_st.st_mode&0o7777)
+                try: os.chown(_t,_st.st_uid,_st.st_gid)
+                except OSError: pass
+                os.replace(_t,str(rp))
+            except BaseException:
+                try: os.unlink(_t)
+                except OSError: pass
+                raise
+    except OSError as _e:
+        sys.exit(base64.b64decode('%%UNWRITABLE%%').decode().replace('%%NAME%%',p.name).replace('%%ERR%%',_e.strerror or str(_e)))
+    print('{wrote}')
+    if _late: print('%%LATE%%')
+    {echocall}sys.exit()
 n=s.count(old)
 if n==1:
     {posx}_w(s.replace(old,new,1))
@@ -719,7 +767,7 @@ elif close:
     _fail('close',anchor=close)     # near-miss: a mistyped token
 else:
     _fail('no_anchor')
-'''
+'''.replace('%%LATE%%', EDIT_ORDER_LATE).replace('%%SUFFIX%%', _TMP_SUFFIX)
 
 
 # THE EDIT'S RESULT, AS THE FILE NOW READS. The executor already holds the post-edit bytes, so for an
@@ -764,8 +812,31 @@ _ECHO_DEF = r'''def _echo(res):
         cands.append([x for x in ([[lo,J(L[lo-1:first-1])]] if first>lo else [])+([[last+1,J(L[last:hi])]] if hi>last else [])])
     cands.append([])
     if total==0: cands=[[]]
+    # THE LINES THAT NOW FOLLOW THE REPLACEMENT, MEASURED AGAINST IT. An old_string that anchors only the
+    # head of a member (its signature line) while new_string carries the WHOLE member replaces that head
+    # and nothing else: the old body is still in the file, directly under the new one. Counted, not
+    # judged: the first lines after the span (blank ones skipped) that read the same, whitespace
+    # collapsed, as one unbroken stretch of the replacement. Only a replacement longer than what it
+    # replaced can leave such a remainder, and a stretch of one line (or one repeated line) is no signal.
+    dup=None
+    NL=new.split(chr(10))
+    if NL and NL[-1]=='': NL.pop()
+    OL=old.split(chr(10))
+    if OL and OL[-1]=='': OL.pop()
+    if len(NL)>len(OL) and a1>a0:
+        _n=lambda l: ' '.join(l.split())
+        N=[(first+j,_n(l)) for j,l in enumerate(NL) if l.strip()]
+        F=[(last+1+k,_n(l)) for k,l in enumerate(L[last:last+len(NL)]) if l.strip()]
+        best=0; bj=0
+        for j in range(len(N)):
+            m=0
+            while m<len(F) and j+m<len(N) and N[j+m][1]==F[m][1]: m+=1
+            if m>best: best=m; bj=j
+        if best>=2 and len(set(t for _,t in F[:best]))>=2 and any(c.isalnum() for _,t in F[:best] for c in t):
+            dup=[F[0][0],F[best-1][0],N[bj][0],N[bj+best-1][0],len(OL),len(NL)]
     def _rep(segs,omitted):
         kw=dict(first=first,last=last,total=total,flex=flex,empty=a1<=a0,segs=segs,omitted=omitted)
+        if dup: kw['dup']=dup
         _b=lambda d: base64.b64encode(json.dumps(d).encode()).decode()
         _r=_b(kw)
         try:
@@ -799,11 +870,47 @@ _EDIT_PACK_BLOCK = r'''    # The report is plumbing the harness keeps and counts
 '''
 
 
+# THE COMMAND CARRIES ITS PLACE IN THE TURN. A batch of edits the harness runs concurrently must still apply in
+# the order the coder sent them — a later edit is anchored on text an earlier one produces. Each edit in a
+# batch that touches the same file names its predecessors (call indexes in this turn); it waits, OUTSIDE the
+# directory lock, until each has left a done-mark (written at process exit, whether it applied, was refused or
+# failed). A predecessor that never arrives inside the bound is not waited for further: the edit applies and
+# its result says it ran early. A turn with a single edit per file carries none of this.
+_EDIT_SEQ_BLOCK = r'''import time,atexit,shutil
+_sd=os.path.join(os.environ.get('TMPDIR') or '/tmp','%(dir)s'+%(turn)r)
+def _done():
+    try: open(os.path.join(_sd,'%(idx)d'),'w').close()
+    except OSError: pass
+    if %(last)r: shutil.rmtree(_sd,ignore_errors=True)   # the last of the group has every predecessor's mark (or gave up)
+try:
+    for _o in os.listdir(os.path.dirname(_sd)):              # marks left by a turn that never finished
+        _q=os.path.join(os.path.dirname(_sd),_o)
+        if _o.startswith('%(dir)s') and time.time()-os.stat(_q).st_mtime>3600: shutil.rmtree(_q,ignore_errors=True)
+    os.makedirs(_sd,exist_ok=True)
+    atexit.register(_done)
+    _miss=lambda: [k for k in %(preds)r if not os.path.exists(os.path.join(_sd,str(k)))]
+    _t0=time.time()
+    while _miss() and time.time()-_t0<%(wait)r: time.sleep(0.05)
+    _late=bool(_miss())
+except OSError:
+    pass
+'''
+
+
+def _seq_release(turn: str, idx: int) -> str:
+    """Shell leg that marks call ``idx`` of ``turn`` done when its command never reaches the edit heredoc (a
+    refusal answered it) — so the edits queued behind it do not wait out the bound for a call that is over."""
+    return (f'mkdir -p "${{TMPDIR:-/tmp}}/{EDIT_SEQ_DIR}{turn}" 2>/dev/null; '
+            f': > "${{TMPDIR:-/tmp}}/{EDIT_SEQ_DIR}{turn}/{idx}" 2>/dev/null\n')
+
+
 def render_edit_echo(content: str, path: str) -> str:
     """The landed edit's confirmation, plus the window of the file the executor reported (when it did).
     Everything after the confirmation is facts read off the post-edit bytes; a missing or unreadable
     report leaves the plain confirmation — saying less is allowed."""
     confirm = prompts.render("write_confirm", path=path)
+    if any(ln.strip() == EDIT_ORDER_LATE for ln in content.splitlines()):
+        return render_edit_echo(content.replace(EDIT_ORDER_LATE, ""), path) + "\n" + prompts.load("edit_order_late")
     for ln in content.splitlines():
         ln = ln.strip()
         if not ln.startswith(EDIT_VIEW):
@@ -821,6 +928,13 @@ def render_edit_echo(content: str, path: str) -> str:
         else:
             head = prompts.render("edit_echo_span_omitted", path=path, total=total, a=first, b=last)
         parts = [confirm, head]
+        dup = d.get("dup")
+        if dup:
+            try:
+                a, b, x, y, nold, nnew = (int(v) for v in dup)
+                parts.append(prompts.render("edit_echo_repeat", a=a, b=b, x=x, y=y, old=nold, new=nnew))
+            except (ValueError, TypeError):
+                pass
         if d.get("flex"):
             parts.append(prompts.load("edit_echo_flexible"))
         if d.get("omitted"):
@@ -833,7 +947,8 @@ def render_edit_echo(content: str, path: str) -> str:
     return confirm
 
 
-def _edit_command(path: str, old: str, new: str, pack: bool = False, echo: bool = False) -> str:
+def _edit_command(path: str, old: str, new: str, pack: bool = False, echo: bool = False,
+                  seq: tuple[str, int, list[int], bool] | None = None) -> str:
     py = (_VALIDATE_FN + _EDIT_PY).format(
         echodef=(_ECHO_DEF.format(ctx=ECHO_CONTEXT, maxb=ECHO_MAX_BYTES, wire=ECHO_WIRE_MAX_BYTES,
                                      zprefix=editrecovery.PACKED_PREFIX, editview=EDIT_VIEW) if echo else ""),
@@ -844,6 +959,11 @@ def _edit_command(path: str, old: str, new: str, pack: bool = False, echo: bool 
                                           packblock=(_EDIT_PACK_BLOCK.format(zprefix=editrecovery.PACKED_PREFIX)
                                                      if pack else ''),
                                           cap=content_reduce_mod.INLINE_RESULT_MAX_BYTES)
+    py = py.replace('%%UNWRITABLE%%', _b64(denial.mark(prompts.load("edit_unwritable"))))
+    if seq is not None:
+        turn, idx, preds, last = seq
+        py = py.replace("#%%SEQ%%\n", _EDIT_SEQ_BLOCK % dict(dir=EDIT_SEQ_DIR, turn=turn, idx=idx, preds=list(preds),
+                                                       wait=EDIT_SEQ_WAIT_SECONDS, last=last))
     return f"python3 - <<'{_HD_PY}'\n{py}{_HD_PY}"
 
 
@@ -1486,6 +1606,30 @@ def _survey_due(session: str | None, name: str) -> bool:
     return n % SURVEY_EVERY == 0
 
 
+def _edit_sequence(tool_calls: list, injected: set) -> dict:
+    """``{call index: (group token, index, predecessor indexes, is-last)}`` for the edit calls of ONE turn that share a file
+    with an earlier edit call of the same turn. Everything else is absent: a lone edit per file runs unqueued."""
+    by_path: dict[str, list[int]] = {}
+    for i, tc in enumerate(tool_calls):
+        fn = tc.get("function") or {}
+        if fn.get("name") not in _EDIT_NAMES or fn.get("name") not in injected:
+            continue
+        args = _parse(fn.get("arguments"))
+        path = _tool_path(args)
+        if path and isinstance(args.get("old_string"), str) and args["old_string"] and "new_string" in args:
+            by_path.setdefault(os.path.normpath(str(path)), []).append(i)
+    group = [ix for ix in by_path.values() if len(ix) > 1]
+    if not group:
+        return {}
+    nonce = uuid.uuid4().hex     # per translation: a resent identical batch can never see an earlier batch's marks
+    out: dict = {}
+    for ix in group:
+        token = hashlib.sha1((nonce + str(ix)).encode()).hexdigest()[:16]
+        for n, i in enumerate(ix):
+            out[i] = (token, i, ix[:n], n == len(ix) - 1)
+    return out
+
+
 def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: set[str] | None = None,
                        brave_key: str | None = None, native_search: str | None = None,
                        session: str | None = None, workspace_root: str | None = None,
@@ -1501,7 +1645,8 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
         if not tool_calls:
             continue
         rebuilt: list[dict] = []
-        for tc in tool_calls:
+        edit_seq = _edit_sequence(tool_calls, injected)
+        for ti, tc in enumerate(tool_calls):
             fn = tc.get("function") or {}
             name = fn.get("name")
             args = _parse(fn.get("arguments"))
@@ -1717,7 +1862,7 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
                             rlog.emit("writeproxy.edit_empty_old_string", tool=name, path=str(path))
                     else:
                         old, new = str(args.get("old_string") or ""), str(args.get("new_string") or "")
-                        cmd = _edit_command(str(path), old, new, pack=pack, echo=edit_echo)
+                        cmd = _edit_command(str(path), old, new, pack=pack, echo=edit_echo, seq=edit_seq.get(ti))
                         from . import cleanupsafety
                         raw = wsview.current().read_bytes(str(path))
                         try:
@@ -1794,6 +1939,8 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
                 # harness's), so the removal rides on a command cria composes. The next GATE carries
                 # it too — this is the leg that matters when there is no next gate, which is the case
                 # where the litter would otherwise sit in the user's repo for good (#7).
+                if ti in edit_seq and EDIT_SEQ_DIR not in cmd:   # answered without running the edit: release the queue
+                    cmd = _seq_release(edit_seq[ti][0], ti) + cmd
                 if (rm := _litter_leg(workspace_root)):
                     cmd = f"{rm}\n{cmd}"
                 rebuilt.append(_shell_call(tc.get("id"), shell_tool, f"{_sentinel(name, fn.get('arguments'))}\n{cmd}"))

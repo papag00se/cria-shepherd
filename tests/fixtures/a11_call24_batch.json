@@ -1,0 +1,50 @@
+{
+ "path": "src/main/java/pipeline/Importer.java",
+ "base": "package pipeline;\n\nimport java.io.BufferedReader;\nimport java.io.IOException;\nimport java.nio.file.Files;\nimport java.nio.file.Path;\nimport java.util.ArrayList;\nimport java.util.Collections;\nimport java.util.List;\nimport java.util.Map;\nimport com.opencsv.CSVReader;\nimport com.opencsv.exceptions.CsvValidationException;\n\n/**\n * Nightly supplier feed importer.\n *\n * <p>Reads supplier CSVs and produces a per-SKU summary. Parallel workers are disabled \u2014 turning\n * them on made the totals come out different every run and nobody got to the bottom of it.\n */\npublic final class Importer {\n\n    public static final boolean WORKERS_ENABLED = false;   // see class comment\n    public static final int NUM_WORKERS = 4;\n\n    /** Running totals, shared across workers when they are enabled. */\n    static Map<String, Double> totals = new HashMap<>();\n    static int rowCount = 0;\n\n    /** What one import produced. Other tooling reads these three fields by name. */\n    public static final class Summary {\n        public final int skus;\n        public final int rows;\n        public final Map<String, Double> totals;\n\n        public Summary(int skus, int rows, Map<String, Double> totals) {\n            this.skus = skus;\n            this.rows = rows;\n            this.totals = totals;\n        }\n    }\n\n    /** Every SKU seen so far, as a list. */\n    static List<String> knownSkus(List<Map<String, String>> rows) {\n        List<String> seen = new ArrayList<>();\n        for (Map<String, String> r : rows) {\n            if (!seen.contains(r.get(\"sku\"))) {          // linear scan, once per row\n                seen.add(r.get(\"sku\"));\n            }\n        }\n        return seen;\n    }\n\n    static void accumulate(Map<String, String> row) {\n        String sku = row.get(\"sku\");\n        double value = Integer.parseInt(row.get(\"quantity\")) * Double.parseDouble(row.get(\"unit_price\"));\n        totals.merge(sku, value, Double::sum);\n        rowCount.incrementAndGet();\n    }\n\n    static void worker(List<Map<String, String>> rows) {\n        for (Map<String, String> row : rows) {\n            accumulate(row);\n        }\n    }\n\n    public static List<Map<String, String>> load(String path) throws IOException, CsvValidationException {\n        List<Map<String, String>> out = new ArrayList<>();\n        try (CSVReader reader = new CSVReader(new FileReader(path))) {\n            String[] header = reader.readNext();\n            if (header == null || header.length == 0) {\n                return out;\n            }\n            String[] cols = header.split(\",\", -1);\n            String[] line;\n            while ((line = reader.readNext()) != null) {\n                if (line.length != header.length) { throw new CsvValidationException(\"Row length does not match header length\"); }\n                Map<String, String> row = new HashMap<>();\nfor (int i = 0; i < header.length; i++) {\n    row.put(header[i], line[i]);\n}\nfor (int i = 0; i < header.length; i++) {\n    row.put(header[i], line[i]);\n}\n                for (int i = 0; i < cols.length; i++) {\n                    row.put(cols[i], parts[i]);\n                }\n                out.add(row);\n            }\n        }\n        return out;\n    }\n\n    /** Import one feed file and return the per-SKU totals and the number of rows imported. */\n    public static Summary summarize(String path) throws Exception {\n        totals = new HashMap<>();\n        rowCount = 0;\n        List<Map<String, String>> rows = load(path);\n\n        // Deduplicating the SKU list this way is O(n^2) \u2014 it was fine on the first feeds we got.\n        List<String> skus = knownSkus(rows);\n\n        if (WORKERS_ENABLED) {\n            ExecutorService executor = Executors.newFixedThreadPool(NUM_WORKERS);\n            List<Future<?>> futures = new ArrayList<>();\n            int chunk = Math.max(1, rows.size() / NUM_WORKERS);\n            for (int i = 0; i < rows.size(); i += chunk) {\n                List<Map<String, String>> slice = rows.subList(i, Math.min(i + chunk, rows.size()));\n                futures.add(executor.submit(() -> worker(slice)));\n            }\n            for (Future<?> future : futures) {\n                future.get();\n            }\n            executor.shutdown();\n        } else {\n            worker(rows);\n        }\n\n        return new Summary(skus.size(), rowCount, totals);\n    }\n\n    public static void main(String[] args) throws Exception {\n        String path = args.length > 0 ? args[0] : Path.of(\"data\", \"feed.csv\").toString();\n        Summary result = summarize(path);\n        System.out.printf(\"imported %d rows covering %d SKUs%n\", result.rows, result.skus);\n        List<String> keys = new ArrayList<>(result.totals.keySet());\n        Collections.sort(keys);\n        for (String sku : keys) {\n            System.out.printf(\"  %s: %.2f%n\", sku, result.totals.get(sku));\n        }\n    }\n}\n",
+ "edits": [
+  {
+   "old_string": "static List<String> knownSkus(List<Map<String, String>> rows) {",
+   "new_string": "static Set<String> knownSkus(Set<String> rows) {\n    Set<String> seen = new HashSet<>();\n    for (String sku : rows) {\n        seen.add(sku);\n    }\n    return seen;\n}"
+  },
+  {
+   "old_string": "static void worker(List<Map<String, String>> rows) {",
+   "new_string": "static void worker(Set<String> skus) {\n    for (String sku : skus) {\n        accumulate(sku);\n    }\n}"
+  },
+  {
+   "old_string": "if (WORKERS_ENABLED) {\n            ExecutorService executor = Executors.newFixedThreadPool(NUM_WORKERS);",
+   "new_string": "if (WORKERS_ENABLED) {\n            ExecutorService executor = Executors.newFixedThreadPool(NUM_WORKERS);\n            List<Future<?>> futures = new ArrayList<>();\n            int chunk = Math.max(1, skus.size() / NUM_WORKERS);\n            for (int i = 0; i < skus.size(); i += chunk) {\n                Set<String> slice = skus.subList(i, Math.min(i + chunk, skus.size()));\n                futures.add(executor.submit(() -> worker(slice)));\n            }\n            for (Future<?> future : futures) {\n                future.get();\n            }\n            executor.shutdown();\n        } else {\n            worker(skus);\n        }"
+  },
+  {
+   "old_string": "List<String> skus = knownSkus(rows);",
+   "new_string": "Set<String> skus = knownSkus(rows.stream().map(row -> row.get(\"sku\")).collect(Collectors.toSet()));"
+  },
+  {
+   "old_string": "totals = new HashMap<>();",
+   "new_string": "totals = new ConcurrentHashMap<>();"
+  },
+  {
+   "old_string": "rowCount = rowCount + 1;",
+   "new_string": "rowCount.incrementAndGet();"
+  },
+  {
+   "old_string": "import java.io.BufferedReader;",
+   "new_string": "import java.io.BufferedReader;\nimport java.util.concurrent.ConcurrentHashMap;\nimport java.util.concurrent.atomic.AtomicInteger;\nimport java.util.stream.Collectors;"
+  },
+  {
+   "old_string": "static Map<String, Double> totals = new HashMap<>();",
+   "new_string": "static Map<String, Double> totals = new ConcurrentHashMap<>();"
+  },
+  {
+   "old_string": "static int rowCount = 0;",
+   "new_string": "static AtomicInteger rowCount = new AtomicInteger(0);"
+  },
+  {
+   "old_string": "public static final class Summary {",
+   "new_string": "public static final class Summary {\n    public final int skus;\n    public final int rows;\n    public final Map<String, Double> totals;\n\n    public Summary(int skus, int rows, Map<String, Double> totals) {\n        this.skus = skus;\n        this.rows = rows;\n        this.totals = totals;\n    }\n}"
+  },
+  {
+   "old_string": "public static void main(String[] args) throws Exception {",
+   "new_string": "public static void main(String[] args) throws Exception {\n    String path = args.length > 0 ? args[0] : Path.of(\"data\", \"feed.csv\").toString();\n    Summary result = summarize(path);\n    System.out.printf(\"imported %d rows covering %d SKUs%n\", result.rows, result.skus);\n    List<String> keys = new ArrayList<>(result.totals.keySet());\n    Collections.sort(keys);\n    for (String sku : keys) {\n        System.out.printf(\"  %s: %.2f%n\", sku, result.totals.get(sku));\n    }\n}"
+  }
+ ]
+}

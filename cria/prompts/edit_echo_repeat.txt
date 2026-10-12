@@ -1,0 +1,1 @@
+Your old_string covered {{OLD}} line(s) and your new_string is {{NEW}} lines. Lines {{A}}-{{B}}, directly after your replacement, read the same as lines {{X}}-{{Y}} inside it (blank lines aside).
