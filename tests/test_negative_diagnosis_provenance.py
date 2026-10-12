@@ -75,7 +75,9 @@ class NegativeDiagnosisGroundingTests(unittest.TestCase):
                 "missing_file", task_quote=task, subject="REPORT.md",
                 source="workspace_absence", evidence_quote="",
                 reason="REPORT.md is missing.")
-            ask = _Ask("UNSUPPORTED")
+            # Absence remains deterministic; required OUTPUT status is now independently judged
+            # against the root task for every typed missing_file candidate (approved O19 contract).
+            ask = _Ask(json.dumps({"required_output": True, "subject": "REPORT.md", "task_quote": task}))
 
             out = loop._negative_diagnosis_nudge(
                 obj, task=task, workspace_root=root, ask=ask, rlog=_Rlog(), phase="test")
@@ -84,7 +86,7 @@ class NegativeDiagnosisGroundingTests(unittest.TestCase):
             self.assertIn("REPORT.md", out)
             self.assertIn("not present", out)
             self.assertEqual(out.action, task)
-            self.assertEqual(ask.prompts, [])
+            self.assertEqual(len(ask.prompts), 1)
 
     def test_existing_file_and_missing_content_are_distinct_types(self):
         with tempfile.TemporaryDirectory() as root:

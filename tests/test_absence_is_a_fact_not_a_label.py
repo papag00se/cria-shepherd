@@ -35,7 +35,10 @@ def _verdict(**kw):
 class CanonicaliseTests(unittest.TestCase):
     def ruling(self, obj, task=TASK):
         rlog = _Rlog()
-        out = loop._negative_diagnosis_nudge(obj, task=task, workspace_root=ROOT, ask=_Ask("SUPPORTED"),
+        # Only originally typed missing_file needs the new required-output question. Canonicalized
+        # absence facts still cost no question and carry no remediation authority.
+        ask = _Ask(json.dumps({"required_output": True, "subject": obj["subject"], "task_quote": QUOTE}))
+        out = loop._negative_diagnosis_nudge(obj, task=task, workspace_root=ROOT, ask=ask,
                                              rlog=rlog, phase="test")
         return out, rlog
 

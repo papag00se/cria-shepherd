@@ -341,13 +341,19 @@ class AcceptedActionProvenanceTests(unittest.TestCase):
             "evidence_quote": "",
         }
 
+    @staticmethod
+    def _required(task):
+        # New O19 requirement seat; initial verdict remains captured by the mocked judge above.
+        content = json.dumps({"required_output": True, "subject": "REPORT.md", "task_quote": task})
+        return lambda *_: json.dumps({"choices": [{"message": {"content": content}}]}).encode()
+
     def test_the_task_requirement_is_the_one_returned_for_both_consumers(self):
         task = "Add REPORT.md."
         with tempfile.TemporaryDirectory() as root, \
              mock.patch.object(loop, "_satisfaction_verdict", return_value=self._missing(task)), \
              mock.patch.object(loop, "_grounded_steer_or_none") as old_guard:
             satisfied, nudge, plan_action = loop.judge_satisfaction(
-                task, "the observed output", lambda *_: b"", None, _Rlog(),
+                task, "the observed output", self._required(task), Role(name="reasoner", backend="local"), _Rlog(),
                 workspace_root=root, messages=[], sess=loop.GuardState())
 
         self.assertFalse(satisfied)
@@ -365,7 +371,7 @@ class AcceptedActionProvenanceTests(unittest.TestCase):
              mock.patch.object(loop, "_satisfaction_verdict", side_effect=[None, obj]), \
              mock.patch.object(loop, "_grounded_steer_or_none") as old_guard:
             satisfied, nudge, plan_action = loop.judge_satisfaction(
-                task, "the observed result", lambda *_: b"", None, _Rlog(),
+                task, "the observed result", self._required(task), Role(name="reasoner", backend="local"), _Rlog(),
                 workspace_root=root, messages=[], sess=loop.GuardState())
 
         self.assertFalse(satisfied)

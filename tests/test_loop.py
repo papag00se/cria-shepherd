@@ -5834,6 +5834,9 @@ class SatisfactionJudgeToolTests(unittest.TestCase):
                     return json.dumps({"choices": [{"message": {"tool_calls": [
                         {"id": "s1", "type": "function",
                          "function": {"name": "list_dir", "arguments": "{}"}}]}}]}).encode()
+                if len(bodies) == 3:  # independent original-task required-output grounding
+                    return json.dumps({"choices": [{"message": {"content": json.dumps({
+                        "required_output": True, "subject": "README.md", "task_quote": "Add README.md."})}}]}).encode()
                 return json.dumps({"choices": [{"message": {"content": json.dumps(
                     {"satisfied": False, "reason": "README.md is not in the workspace",
                      "proposed_fix": "Add README.md.", "diagnosis_kind": "missing_file",
@@ -6044,7 +6047,9 @@ class ApprovePathConfirmTests(unittest.TestCase):
                 "proposed_fix": "Write README.md.", "diagnosis_kind": "missing_file",
                 "subject": "README.md", "task_quote": "Write README.md.",
                 "evidence_source": "workspace_absence", "evidence_quote": ""})
-            chat = _Scripted([sat, negative])
+            required = {"choices": [{"message": {"content": json.dumps({
+                "required_output": True, "subject": "README.md", "task_quote": "Write README.md."})}}]}
+            chat = _Scripted([sat, negative, required])
             ok, reason, _fx = judge_satisfaction(
                 "Write resolve_handle.py and Write README.md.", "ev", chat, self._role(),
                                             _Rlog(), workspace_root=ws)

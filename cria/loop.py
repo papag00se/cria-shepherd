@@ -1585,16 +1585,70 @@ def _subject_is_exact_in_quote(subject: str, quote: str) -> bool:
     return re.search(rf"(?<![\w./-]){token}(?![\w/-])", quote) is not None
 
 
+def _required_output_span_names_subject(task: str, quote: str, subject: str) -> bool:
+    """Validate literal extraction and exact file identity against the ORIGINAL source boundaries.
+
+    This does not judge whether the file is an output or interpret literal/Markdown regions. The
+    focused question owns that judgment. Checking source boundaries (not a clipped extracted quote)
+    prevents a quote ending mid-path from turning REVIEW.md.bak into a requirement for REVIEW.md.
+    """
+    if not task or not quote or not subject:
+        return False
+    # Source-delimited literal names are whole values, not runs of characters from a filename
+    # blacklist. This is identity validation only: no decoding, normalization or output judgment.
+    literals = tuple(re.finditer(r"(?P<mark>[`\"'])(?P<value>.*?)(?P=mark)", task, re.DOTALL))
+
+    def source_end(pos: int, enclosed: bool = False) -> bool:
+        if pos == len(task) or task[pos].isspace():
+            return True
+        # A closed literal has already proved the full name; following prose punctuation is
+        # separate only when followed by whitespace/end. Plain names admit the requested terminal
+        # sentence period only; any other ambiguous punctuation abstains.
+        punctuation = ".,;:!?" if enclosed else "."
+        return task[pos] in punctuation and (pos + 1 == len(task) or task[pos + 1].isspace())
+
+    at = task.find(quote)
+    while at >= 0:
+        if at and not task[at - 1].isspace():
+            at = task.find(quote, at + 1)
+            continue
+        for match in re.finditer(re.escape(subject), quote):
+            start, end = at + match.start(), at + match.end()
+            enclosing = next((unit for unit in literals
+                              if unit.start("value") <= start and end <= unit.end("value")), None)
+            if enclosing is not None:
+                if enclosing.group("value") != subject:
+                    continue
+                start, end = enclosing.span()
+                if start < at or end > at + len(quote):
+                    continue
+            elif ((start and task[start - 1] in ("`", '"', "'"))
+                  or (end < len(task) and task[end] in ("`", '"', "'"))):
+                continue  # an unmatched/partial literal boundary cannot prove full name identity
+            # Positive source separators, NOT a blacklist of filename punctuation. For an
+            # unenclosed name only whitespace/end or a terminal prose period proves its end.
+            # Anything ambiguous abstains; this does not interpret Markdown or output intent.
+            left = start == 0 or task[start - 1].isspace()
+            right = source_end(end, enclosed=enclosing is not None)
+            span_end = source_end(at + len(quote),
+                                  enclosed=enclosing is not None and end == at + len(quote))
+            if left and right and span_end:
+                return True
+        at = task.find(quote, at + 1)
+    return False
+
+
 def _negative_diagnosis_nudge(obj: dict, *, task: str, action_log: str = "", checks: str = "",
                                participation_facts: str = "", workspace_root: str = "",
-                               ask=None, rlog=None, phase: str = "negative-diagnosis") -> VerdictNudge:
+                               ask=None, rlog=None, phase: str = "negative-diagnosis",
+                               original_task: str | None = None) -> VerdictNudge:
     """Return only a negative diagnosis whose typed provenance survives deterministic checks.
 
     The caller's completion control remains NOT_DONE whatever this returns. This function controls
-    only what may be said to the coder. Exact task/evidence quotes are checked against their named
-    authoritative source. File state comes only from wsview. Relationships code cannot establish
-    are put to at most one focused semantic question; anything except SUPPORTED suppresses the
-    prose and action.
+    only what may be said to the coder. A typed missing_file/workspace_absence gets one independent
+    required-output question against original_task (or task for direct root-task callers); the
+    initial judge's quote is not authority. Other kinds retain exact task/evidence source checks.
+    File state comes only from wsview. Unsupported or undecidable relationships suppress delivery.
     """
     kind = str(obj.get("diagnosis_kind") or "").strip()
     subject = str(obj.get("subject") or "").strip()
@@ -1612,6 +1666,39 @@ def _negative_diagnosis_nudge(obj: dict, *, task: str, action_log: str = "", che
         return suppress("unknown diagnosis kind")
     if source not in _NEGATIVE_EVIDENCE_SOURCES:
         return suppress("unknown evidence source")
+    if kind == "missing_file" and source == "workspace_absence":
+        # The initial judge's quote/essay/fix is NOT requirement authority, even when its quote is
+        # literal. Ask one focused question against the untouched root task for EVERY typed candidate.
+        authority = task if original_task is None else original_task
+        rel, present, _body = _workspace_subject(workspace_root, subject)
+        if present is not False or not rel:
+            return suppress("file exists or workspace state is unknown")
+        if not authority or ask is None:
+            return suppress("required-output grounding unavailable")
+        question = prompts.render("missing_output_requirement", task=authority, subject=subject)
+        try:
+            answer = ask(question)
+            grounded = extract_json_object(strip_think(answer or ""))
+        except Exception:
+            return suppress("required-output grounding unavailable")
+        if (not isinstance(grounded, dict) or grounded.get("required_output") is not True
+                or grounded.get("subject") != subject
+                or not isinstance(grounded.get("task_quote"), str)
+                or not _required_output_span_names_subject(authority, grounded["task_quote"], subject)):
+            return suppress("required-output grounding unsupported")
+        # A question can take time. A changed/unknown workspace or changed path identity cannot
+        # authorize delivery of a fact gathered before the question.
+        current_rel, current_present, _body = _workspace_subject(workspace_root, subject)
+        if current_present is not False or current_rel != rel:
+            return suppress("file exists or workspace state is unknown")
+        task_quote = grounded["task_quote"]
+        absence = prompts.render("negative_diagnosis_missing_file", subject=rel)
+        if rlog is not None:
+            rlog.emit("loop.negative_diagnosis_supported", level="info", phase=phase,
+                      diagnosis_kind=kind, evidence_source=source)
+        return VerdictNudge(prompts.render("negative_diagnosis", task_quote=task_quote,
+                                          source=source, evidence=absence),
+                            task_quote, diagnosis_kind=kind, subject=rel)
     if not task_quote or task_quote not in (task or ""):
         return suppress("task quote is not exact")
     retyped = False
@@ -1665,7 +1752,9 @@ def _negative_diagnosis_nudge(obj: dict, *, task: str, action_log: str = "", che
     workspace_fact = ""
     source_text = ""
     if kind == "missing_file":
-        if source != "workspace_absence" or evidence_quote:
+        # An absence has nothing to quote: whatever the judge put in `evidence_quote` is not consulted.
+        # The absence is established only by the wsview resolution below.
+        if source != "workspace_absence":
             return suppress("missing-file source contract")
         rel, present, _body = _workspace_subject(workspace_root, subject)
         if present is not False:
@@ -1906,7 +1995,8 @@ def _test_participation_blocks_completion(task: str, report, reasoner_chat, reas
 
 
 def _confirm_completion(claim: str, reason: str, workspace_root: str, reasoner_chat, reasoner_role,
-                        rlog, *, phase: str, cria_facts: str = "") -> Confirmation:
+                        rlog, *, phase: str, cria_facts: str = "",
+                        original_task: str = "") -> Confirmation:
     """The APPROVE-path brake — one narrow, reasoning-off check run ONLY on a done/satisfied verdict:
     is the completion claim CONSISTENT with (a) the fresh on-disk listing and (b) the verdict's own
     reason? Measured need (n=3 in one day, both judges): a judge holding contrary ground truth in its
@@ -2049,13 +2139,11 @@ def _confirm_completion(claim: str, reason: str, workspace_root: str, reasoner_c
     if verdict is False:
         # A refuted or undecidable diagnosis cannot approve the task and cannot be forwarded. The
         # boolean remains false; only a typed, current-evidence-backed explanation may accompany it.
-        semantic_ask = (lambda sysm: summarize(
-            reasoner_chat, role, sysm, _ASK_USER_TURN, rlog,
-            phase=phase + "-diagnosis", max_tokens=JUDGE_MAX_TOKENS, retry_off=False,
-            temperature=0.0) or "") \
-            if reasoner_role is not None else None
+        semantic_ask = (_composed_closed_ask(reasoner_chat, role, rlog,
+                                             phase=phase + "-diagnosis")
+                        if reasoner_role is not None else None)
         nudge = _negative_diagnosis_nudge(
-            diagnosis_obj or {}, task=claim, checks=cria_facts,
+            diagnosis_obj or {}, task=claim, original_task=original_task, checks=cria_facts,
             workspace_root=workspace_root, ask=semantic_ask, rlog=rlog,
             phase=phase + "-diagnosis")
         return Confirmation(False, True, str(nudge))
@@ -2361,7 +2449,7 @@ def judge_satisfaction(task: str, evidence: str, reasoner_chat, reasoner_role, r
             # while the listing in the judge's prompt proved its absence).
             confirmed, why = _confirm_completion(task, str(obj.get("reason") or ""), workspace_root,
                                                  reasoner_chat, reasoner_role, rlog,
-                                                 phase="satisfaction-confirm",
+                                                 phase="satisfaction-confirm", original_task=task,
                                                  cria_facts=_cria_measured_facts(sess))
             rlog.emit("loop.satisfaction_confirm", confirmed=confirmed)
             if not confirmed:
@@ -2381,7 +2469,7 @@ def judge_satisfaction(task: str, evidence: str, reasoner_chat, reasoner_role, r
                                               phase="satisfaction-diagnosis")
                          if reasoner_role is not None else None)
         nudge = _verdict_nudge(obj, satisfied, routes, evidence=user, task=task,
-                               action_log=evidence, checks=gate_findings,
+                               original_task=task, action_log=evidence, checks=gate_findings,
                                participation_facts=measured_participation,
                                diagnosis_ask=diagnosis_ask, phase="satisfaction-diagnosis",
                                workspace_root=workspace_root, rlog=rlog,
@@ -2408,7 +2496,7 @@ def judge_satisfaction(task: str, evidence: str, reasoner_chat, reasoner_role, r
                                       phase="satisfaction-retry-diagnosis")
                  if reasoner_role is not None else None)
     nudge = _verdict_nudge(retry, False, routes, evidence=user, task=task,
-                           action_log=evidence, checks=gate_findings,
+                           original_task=task, action_log=evidence, checks=gate_findings,
                            participation_facts=measured_participation,
                            diagnosis_ask=retry_ask, phase="satisfaction-retry-diagnosis",
                            workspace_root=workspace_root, rlog=rlog,
@@ -2422,8 +2510,8 @@ def observe_task_missing_file(task: str, *, workspace_root: str, reasoner_chat, 
 
     The caller owns the complete/current survey prerequisite.  This observer cannot clear, re-run,
     or reinterpret checks; false, unreadable, and unsupported answers are silence.  The shared
-    negative-diagnosis owner re-checks the exact task quote and current wsview absence before the
-    pre-frame owner can arm a remediation.
+    negative-diagnosis owner independently grounds required-output status in the original task
+    and re-checks current wsview absence before the pre-frame owner can arm a remediation.
     """
     if not (task.strip() and workspace_root and reasoner_chat is not None):
         return VerdictNudge()
@@ -2455,8 +2543,10 @@ def observe_task_missing_file(task: str, *, workspace_root: str, reasoner_chat, 
     if not isinstance(obj, dict) or obj.get("missing_file") is not True:
         return VerdictNudge()
     return _negative_diagnosis_nudge(
-        obj, task=task, workspace_root=workspace_root, rlog=rlog,
-        phase="deliverable-observation")
+        obj, task=task, original_task=task, workspace_root=workspace_root, rlog=rlog,
+        ask=(_composed_closed_ask(reasoner_chat, reasoner_role, rlog,
+                                 phase="deliverable-observation-requirement")
+             if reasoner_role is not None else None), phase="deliverable-observation")
 
 
 def satisfaction_done_note(reason: str, *, checks_ran: bool = True) -> str:
@@ -3727,7 +3817,7 @@ class Loop:
         # The AUTHORITATIVE task is the plan's own — NOT _history_root, which after a harness compaction
         # is the SUMMARY (it may have dropped a requirement), letting a green-but-incomplete finish pass.
         # (Parity with _replan_tail, which already judges against sess.plan.task.)
-        task = sess.plan.task or _history_root(body.get("messages", []))[0]
+        task = sess.plan.task
         ev = _satisfaction_evidence(body.get("messages", []), rlog=rlog,
                      chat_fn=self._reasoner()[0], role=self._reasoner()[1],
                      gate_plan=getattr(sess, "gate_plan", None),
@@ -3842,7 +3932,7 @@ class Loop:
             view = wsview.current(sess.workspace_root) if sess.workspace_root else None
             if view is not None and view.observation_fingerprint is not None:
                 sess.deliverable_observation_last_drive = sess.drive_count
-                task = sess.plan.task or _history_root(body.get("messages", []))[0]
+                task = sess.plan.task
                 gap = observe_task_missing_file(
                     task, workspace_root=sess.workspace_root or "",
                     reasoner_chat=self._ctx.reasoner_chat, reasoner_role=self._ctx.reasoner_role,
@@ -4010,7 +4100,7 @@ class Loop:
                                   workspace_root=sess.workspace_root or "",
                                   gate_red=bool(sess.last_gate_red),
                                   messages=body.get("messages", []), sess=sess,
-                                  participation_facts=participation_facts)
+                                  participation_facts=participation_facts, original_task=sess.plan.task)
         if ok:  # advance ONLY on a genuine pass — no fail cap (re-nudge forever otherwise)
             return self._advance(sess, key, body, idx, total, rlog)
         sess.verify_fails += 1
@@ -4294,7 +4384,7 @@ class Loop:
                                       workspace_root=sess.workspace_root or "",
                                       gate_red=bool(sess.last_gate_red),
                                       messages=body.get("messages", []), sess=sess,
-                                      participation_facts=participation_facts)
+                                      participation_facts=participation_facts, original_task=sess.plan.task)
             if ok:
                 return self._advance(sess, key, body, idx, total, rlog)
             sess.verify_fails += 1
@@ -4381,7 +4471,7 @@ class Loop:
                                   red_findings=red_findings or "",  # grounded in the coder's own runs
                                   gate_red=bool(sess.last_gate_red),
                                   messages=body.get("messages", []), sess=sess,
-                                  participation_facts=participation_facts)
+                                  participation_facts=participation_facts, original_task=sess.plan.task)
         if nudge is not None:
             if ok:
                 # The critic read the findings and ruled they are not this step's goal. Loud by
@@ -4507,7 +4597,7 @@ class Loop:
             red_findings=findings if sess.last_gate_red else "",
             gate_red=bool(sess.last_gate_red),
             messages=msgs, sess=sess,
-            participation_facts=participation_facts)
+            participation_facts=participation_facts, original_task=sess.plan.task)
         # SAY WHAT IT DID, always — a guard that is silent when it declines cannot be told apart from
         # one that never ran.
         rlog.emit("loop.periodic_step_check", step=idx, done=verification.done, drive=sess.drive_count,
@@ -4837,7 +4927,7 @@ class Loop:
                 routes: str = "", workspace_root: str = "", red_findings: str = "",
                 gate_red: bool = False, sources_read: list | None = None,
                 messages: list | None = None, sess=None,
-                participation_facts: str = "") -> Verification:
+                participation_facts: str = "", original_task: str = "") -> Verification:
         # NB: no per-step fast-path around the critic. The one that existed shortcut a research step whose
         # facts cria had surfaced — but it could only recognize a step cria itself had injected and pinned,
         # and that injection is gone. The critic judges every step, grounded on the same durable fetch
@@ -4946,7 +5036,7 @@ class Loop:
                     # the FRESH on-disk listing and with its own stated reason.
                     confirmation = _confirm_completion(item, str(obj.get("reason") or ""), workspace_root,
                                                         self._ctx.reasoner_chat, self._ctx.reasoner_role,
-                                                        rlog, phase="critic-confirm",
+                                                        rlog, phase="critic-confirm", original_task=original_task,
                                                         cria_facts=participation_facts)
                     rlog.emit("loop.done_confirm", step=idx, confirmed=confirmation.confirmed)
                     if not confirmation.confirmed:
@@ -4959,6 +5049,7 @@ class Loop:
                 phase="critic-diagnosis", max_tokens=JUDGE_MAX_TOKENS, retry_off=False))
                 if self._ctx.reasoner_role is not None else None)
             reason = _verdict_nudge(obj, done, routes, evidence=user, task=item,
+                                    original_task=original_task,
                                     action_log=evidence, checks=red_findings,
                                     participation_facts=participation_facts,
                                     diagnosis_ask=diagnosis_ask, phase="critic-diagnosis",
@@ -4988,6 +5079,7 @@ class Loop:
             phase="critic-retry-diagnosis", max_tokens=JUDGE_MAX_TOKENS, retry_off=False))
             if self._ctx.reasoner_role is not None else None)
         reason = _verdict_nudge(retry, False, routes, evidence=user, task=item,
+                                original_task=original_task,
                                 action_log=evidence, checks=red_findings,
                                 participation_facts=participation_facts,
                                 diagnosis_ask=retry_ask, phase="critic-retry-diagnosis",
@@ -5183,8 +5275,7 @@ class Loop:
         # Stamped BEFORE the work, so a check that runs and returns "not satisfied" still spaces the
         # next one — the cost this paces is the call, not the verdict.
         sess.satisfaction_last_drive = sess.drive_count
-        task = (sess.plan.task if getattr(sess, "plan", None) and sess.plan.task
-                else _history_root(body.get("messages", []))[0])
+        task = getattr(getattr(sess, "plan", None), "task", "")
         evidence = _satisfaction_evidence(body.get("messages", []), rlog=rlog,
                      chat_fn=self._reasoner()[0], role=self._reasoner()[1],
                            gate_plan=getattr(sess, "gate_plan", None),
@@ -5609,7 +5700,13 @@ class Loop:
         or "" when satisfied. Runs on EVERY green 'done' (NO once-bound): cria never lets a still-
         incomplete task exit early; the model finishes the real work on its own. Fail-CLOSED — an
         undecidable judge counts as not-satisfied (judge_satisfaction already only confirms NOT-done)."""
-        task = _history_root(body.get("messages", []))[0]
+        # Harness history may now be a continuation/summary. Only the retained original task
+        # supplies requirement authority; an unknown root cannot authorize a typed output.
+        task = getattr(getattr(sess, "plan", None), "task", "")
+        if not task:
+            _record_satisfaction(sess, False, VerdictNudge())
+            rlog.emit("loop.done_critic", plan_off=True, satisfied=False, original_task_unknown=True)
+            return _unnamed_gap(sess, sess.pending_done)
         ev = _satisfaction_evidence(body.get("messages", []), rlog=rlog,
                      chat_fn=self._reasoner()[0], role=self._reasoner()[1],
                      gate_plan=getattr(sess, "gate_plan", None),
@@ -5651,6 +5748,9 @@ class Loop:
         """The plan-OFF twin of the plan-ON deliverable observer. Trigger: the model tried to stop and the
         completion check was not satisfied without a usable diagnosis (level 4's trigger — no assist
         schedule involved). Returns the typed `missing_file` nudge or an empty one."""
+        # The legacy argument may be a generated continuation. Never let it replace retained root
+        # authority, including when this observer is invoked independently of the done critic.
+        task = getattr(getattr(sess, "plan", None), "task", "")
         view = wsview.current(sess.workspace_root) if sess.workspace_root else None
         if (view is None or view.observation_fingerprint is None or not task
                 or self._ctx.reasoner_chat is None):
@@ -13645,13 +13745,15 @@ def _verdict_nudge(obj: dict, done: bool, routes: str = "", *,
                    evidence: str = "", workspace_root: str | None = None, rlog=None,
                    messages: list | None = None, sess=None, task: str = "",
                    action_log: str = "", checks: str = "", participation_facts: str = "",
-                   diagnosis_ask=None, phase: str = "negative-diagnosis") -> VerdictNudge:
+                   diagnosis_ask=None, phase: str = "negative-diagnosis",
+                   original_task: str | None = None) -> VerdictNudge:
     """Build the coder-facing value from a verdict.
 
     Every production caller supplies ``task``. Positive verdicts keep their completion reason;
-    negative ones go through the single typed provenance owner and use its exact task quote as the
-    action. The no-task arm remains only for older private unit-level callers of this helper; no
-    completion path can reach it.
+    negative ones go through the single typed provenance owner. Missing outputs use an independently
+    extracted literal root requirement as the action; generated-step callers pass original_task.
+    The no-task arm remains only for older private unit-level callers of this helper; no completion
+    path can reach it.
     """
     reason = str(obj.get("reason", "")).strip()
     fix = _fix_text(obj)
@@ -13659,7 +13761,7 @@ def _verdict_nudge(obj: dict, done: bool, routes: str = "", *,
         return VerdictNudge(reason)
     if task:
         return _negative_diagnosis_nudge(
-            obj, task=task, action_log=action_log, checks=checks,
+            obj, task=task, original_task=original_task, action_log=action_log, checks=checks,
             participation_facts=participation_facts, workspace_root=workspace_root or "",
             ask=diagnosis_ask, rlog=rlog, phase=phase)
     # Compatibility for private callers that do not yet have task provenance. Production verdict

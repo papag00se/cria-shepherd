@@ -22,6 +22,7 @@ from pathlib import Path
 import pytest
 
 from cria import groundtruth, loop, prompts, verifytools, wsview
+from cria.config import Role
 from tests.wsfixture import survey
 
 FX = json.loads((Path(__file__).parent / "fixtures" / "phi4_java_a2" / "0008-observer.json").read_text())
@@ -109,16 +110,26 @@ def test_an_unsurveyed_workspace_adds_no_listing_and_makes_no_completeness_claim
 
 
 def _observe(reply, surveyed_view):
-    chat = lambda b, r: json.dumps({"choices": [{"message": {"role": "assistant", "content": reply},
-                                                 "finish_reason": "stop"}]}).encode()
+    calls = []
+    def chat(body, rlog):
+        calls.append(body)
+        # Preserve the captured discovery verdict; O19 now independently confirms output status.
+        content = reply if len(calls) == 1 else json.dumps({
+            "required_output": True, "subject": "REVIEW.md",
+            "task_quote": "Add `REVIEW.md` describing remaining problems or risks in the code you changed. "
+                          "For every issue, include the file name and line number."})
+        return json.dumps({"choices": [{"message": {"role": "assistant", "content": content},
+                                        "finish_reason": "stop"}]}).encode()
     log = _Log()
     out = loop.observe_task_missing_file(FX["task"], workspace_root=ROOT, reasoner_chat=chat,
-                                         reasoner_role=None, rlog=log)
+                                         reasoner_role=Role(name="reasoner", backend="local"), rlog=log)
+    log.question_calls = calls
     return out, log
 
 
 def test_the_live_phi4_answer_names_the_absent_file(surveyed):
-    out, _ = _observe(FX["after_reply_live_phi4_2_of_2"], surveyed)
+    out, log = _observe(FX["after_reply_live_phi4_2_of_2"], surveyed)
+    assert len(log.question_calls) == 2   # captured observer + independent root requirement
     assert str(out)                                                  # a typed nudge, not silence
     assert (out.diagnosis_kind, out.subject) == ("missing_file", "REVIEW.md")
 

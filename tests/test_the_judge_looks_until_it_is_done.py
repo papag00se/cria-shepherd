@@ -68,6 +68,7 @@ import tempfile
 import unittest
 
 from cria import loop, prompts, verifytools
+from cria.config import Role
 
 
 class _Rlog:
@@ -142,7 +143,12 @@ class TheJudgesOwnReasonReachesTheCoderTests(unittest.TestCase):
         reason = ("REVIEW.md does not exist in the workspace (confirmed via list_dir). "
                   "The task explicitly requires creating this file.")
 
+        calls = []
         def chat(body, _rlog):
+            calls.append(body)
+            if len(calls) == 2:
+                return json.dumps({"choices": [{"message": {"content": json.dumps({
+                    "required_output": True, "subject": "REVIEW.md", "task_quote": "Add REVIEW.md."})}}]}).encode()
             return json.dumps({"choices": [{"message": {"content": json.dumps(
                 {"satisfied": False, "reason": reason, "proposed_fix": "Add REVIEW.md.",
                  "diagnosis_kind": "missing_file", "subject": "REVIEW.md",
@@ -151,9 +157,11 @@ class TheJudgesOwnReasonReachesTheCoderTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as ws:
             ok, why, _fix = loop.judge_satisfaction(
-                "Build the thing and Add REVIEW.md.", "x" * 200_000, chat, None, _Rlog(),
+                "Build the thing and Add REVIEW.md.", "x" * 200_000, chat,
+                Role(name="reasoner", backend="local"), _Rlog(),
                 workspace_root=ws)
         self.assertIs(ok, False)                      # completion still fails closed (#13)
+        self.assertEqual(len(calls), 2)                # initial verdict + independent requirement
         self.assertIn("REVIEW.md is not present", why)
         self.assertNotEqual(why, prompts.load("unverified_step"))
 

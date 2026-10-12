@@ -81,8 +81,11 @@ def test_a_missing_FILE_claim_still_needs_the_task_to_name_that_file():
     rlog = _Rlog()
     claim = {**JUDGE, "diagnosis_kind": "missing_file", "evidence_source": "workspace_absence",
              "evidence_quote": "", "subject": "docs/NOTES.md"}
-    _negative_diagnosis_nudge(claim, task=TASK, workspace_root="", ask=None, rlog=rlog)
-    assert "workspace subject is not task-named" in rlog.causes, rlog.causes
+    # The typed missing-file contract now checks current absence and independently grounds the
+    # required output. Neither an unavailable view/question nor an initial quote can authorize it.
+    out = _negative_diagnosis_nudge(claim, task=TASK, workspace_root="", ask=None, rlog=rlog)
+    assert not out and not out.action and not out.subject
+    assert "file exists or workspace state is unknown" in rlog.causes, rlog.causes
 
 
 def test_a_missing_FILE_claim_naming_a_task_file_gets_past_the_check():

@@ -25,10 +25,16 @@ _DIR = Path(__file__).parent
 def fill(text: str, **tokens: object) -> str:
     """Replace every ``{{TOKEN}}`` in ``text`` with the matching keyword arg (the key is
     upper-cased, so ``fill(t, step=x)`` fills ``{{STEP}}``). Tokens with no arg are left
-    in place; single braces are never touched."""
+    in place; single braces are never touched. Only ORIGINAL template placeholders are scanned;
+    inserted values are inert, even when they contain another supplied placeholder."""
+    values: dict[str, str] = {}
     for key, value in tokens.items():
-        text = text.replace("{{" + key.upper() + "}}", str(value))
-    return text
+        name, rendered = key.upper(), str(value)
+        if name in values and values[name] != rendered:
+            raise ValueError(f"Conflicting values for prompt token {name}")
+        values[name] = rendered
+    return re.sub(r"\{\{([^{}]+)\}\}",
+                  lambda match: values.get(match.group(1), match.group(0)), text)
 
 
 def load(name: str) -> str:
