@@ -1,0 +1,5 @@
+# The measured-edits clause of the thrash trigger (steer_triggers.txt `thrash`). Parsed by prompts.load_map.
+thrash_edits_some = {{N}} file {{EDITS}} landed between those rounds
+thrash_edits_idle = , none of them between the last {{K}} rounds
+thrash_edits_none = no file edit landed between those rounds
+thrash_edits_unknown = no edit count is available for those rounds

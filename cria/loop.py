@@ -326,6 +326,13 @@ class GuardState:
     # stuck on one thing; that drives the REASONED thrash-assist (a concrete unstick step), never a give-up.
     gate_stall: int = 0        # consecutive RED gates with the SAME finding (no progress); reset on change/GREEN
     gate_sig: str = ""         # the last RED finding, to detect an unchanged signature
+    # EDITS BETWEEN THE COUNTED ROUNDS (#5b). The thrash trigger used to say the coder "kept editing" —
+    # unmeasured: in run 01a12bca the last four RED rounds had no write between them. Every forwarded
+    # write call id is kept (never flushed, unlike recent_writes); the ones whose results show they did
+    # not run are taken back out; each round in the streak stores the landed count at that moment.
+    write_call_ids: list = None
+    refused_write_ids: set = None
+    stall_edit_marks: list = None
     last_gate_testless: bool = False  # the last GREEN gate ran NO tests (0 collected / no test probe) — a
     last_gate_skipped: int = 0        # tool-reported SKIPPED count from the last gate's test run — a suite
     # can pass while SKIPPING the checks that matter (0728-m11: live tests skipTest() on the exact 404
@@ -707,12 +714,41 @@ def track_gate_progress(gs: GuardState, finding: str) -> None:
     if not finding:
         gs.gate_stall = 0
         gs.gate_sig = ""
+        gs.stall_edit_marks = []
         return
     if finding == gs.gate_sig:
         gs.gate_stall += 1
+        gs.stall_edit_marks = list(gs.stall_edit_marks or []) + [landed_writes(gs)]
     else:
         gs.gate_stall = 1
         gs.gate_sig = finding
+        gs.stall_edit_marks = [landed_writes(gs)]
+
+
+def landed_writes(gs: GuardState) -> int:
+    """Write calls cria forwarded this session that were not later shown to have been refused."""
+    refused = gs.refused_write_ids or set()
+    return sum(1 for cid in (gs.write_call_ids or []) if cid not in refused)
+
+
+def thrash_edits_clause(gs: GuardState) -> str:
+    """The measured edit count across the RED rounds the stall counted — the clause the thrash trigger
+    states instead of claiming the coder "kept editing". Round marks are the landed-write count at
+    each round, so the difference is the edits that landed BETWEEN rounds."""
+    marks = list(getattr(gs, "stall_edit_marks", None) or [])
+    fills = prompts.load_map("thrash_edits")
+    if len(marks) < 2:
+        return fills["thrash_edits_unknown"]
+    n = marks[-1] - marks[0]
+    if n <= 0:
+        return fills["thrash_edits_none"]
+    idle = 0
+    while idle + 1 < len(marks) and marks[-1 - idle - 1] == marks[-1]:
+        idle += 1
+    clause = prompts.fill(fills["thrash_edits_some"], n=n, edits="edit" if n == 1 else "edits")
+    if idle:
+        clause += prompts.fill(fills["thrash_edits_idle"], k=idle + 1)
+    return clause
 
 
 def _satisfaction_verdict(system: str, user: str, reasoner_chat, reasoner_role, rlog, *, reasoning_off: bool, workspace_root: str = "") -> dict | None:
@@ -7694,10 +7730,20 @@ def guard_track_write_streak(gs: GuardState, coder: dict, rlog, *, step=None, me
         gs.recent_writes = []
     if gs.recent_write_ids is None:
         gs.recent_write_ids = []
+    if gs.write_call_ids is None:
+        gs.write_call_ids = []
+    seen_ids = set(gs.write_call_ids)
+    for ch in coder.get("choices", []):
+        for tc in (ch.get("message") or {}).get("tool_calls") or []:
+            cid = tc.get("id")
+            if cid and cid not in seen_ids and _write_path(tc.get("function") or {}) is not None:
+                gs.write_call_ids.append(cid)
+                seen_ids.add(cid)
     # TAKE BACK THE ONES THAT NEVER RAN. This window is filled from the OUTBOUND completion, so at
     # the time a write is recorded cria does not yet know whether it will refuse it. It knows one
     # turn later, from the marked result — so the correction happens here, before this turn accrues.
     refused = _unlanded_call_ids(messages or [])
+    gs.refused_write_ids = (gs.refused_write_ids or set()) | set(refused)
     if refused:
         kept_w, kept_i = [], []
         for path, cid in zip(gs.recent_writes, gs.recent_write_ids):
@@ -8907,7 +8953,8 @@ _STEER_TRIGGER = {
         prompts.load_map("steer_triggers")["wheel_spin"],
         path=gs.spin_path, writes=WHEEL_SPIN_WRITES),
     "thrash": lambda gs, step: prompts.fill(
-        prompts.load_map("steer_triggers")["thrash"], rounds=gs.gate_stall),
+        prompts.load_map("steer_triggers")["thrash"], rounds=gs.gate_stall,
+        edits=thrash_edits_clause(gs)),
 }
 
 
@@ -12625,10 +12672,8 @@ def guard_truncation(coder: dict, body: dict, coder_chat, rlog, *, step=None, ph
             break  # not a mid-write truncation → the write steer doesn't apply; refuse below
         attempt += 1
         rlog.phase = f"{phase}-continue{attempt}"
-        remedy = (prompts.render("generation_withheld_write", path=path) if generation.incomplete(coder) else
-                  prompts.render("truncation_guard_selfcut", path=path) if selfcut else
-                  prompts.render("truncation_guard", path=path,
-                                 limit=f"~{out_tok} tokens" if out_tok else "the output-token limit"))
+        remedy = (prompts.render("truncation_guard_selfcut", path=path) if selfcut else
+                  _length_cut_notice(coder, path, out_tok))
         conv = conv + [{"role": "user", "content": remedy}]
         coder = massage.apply(
             _parse_completion(coder_chat({**body, "messages": conv}, rlog)), body.get("tools"), rlog)
@@ -12675,6 +12720,39 @@ def guard_truncation(coder: dict, body: dict, coder_chat, rlog, *, step=None, ph
     elif attempt:  # recovered after steering to incremental writes
         _add_note(coder, f"steered to incremental writes ({attempt}×)")
     return coder
+
+
+def _cut_off_calls(completion: dict) -> list[tuple[str, str]]:
+    """(tool name, raw arguments) of every call the reply carried — live ``tool_calls`` plus the
+    prefixes the V4 wire retains as evidence once the calls are withheld at a length stop."""
+    calls = [tc.get("function") or {} for ch in completion.get("choices", [])
+             for tc in (ch.get("message") or {}).get("tool_calls") or []]
+    for prefix in (completion.get(generation.EVIDENCE) or {}).get("call_prefixes", []):
+        calls.append({"name": prefix.get("name"), "arguments": prefix.get("arguments")})
+    return [(str(fn.get("name") or ""), fn.get("arguments") or "") for fn in calls]
+
+
+def _length_cut_notice(coder: dict, path: str, out_tok: int | None) -> str:
+    """The model-facing notice for a reply that reached the output limit with a write-family call in it,
+    built from what was MEASURED about that reply (#5b): which tool and path, whether the call's own
+    arguments were complete or cut, how many tokens the reply used, and how much of it was text versus
+    the call. The 'build it in small pieces' advice is true ONLY of a whole-file write whose own content
+    was what overflowed — an edit, or a call that finished its arguments, gets the notice that says so
+    (observed: a complete 1.4K edit_file after a long prose lead was called a cut-off whole-file write)."""
+    name, args = next(((n, a) for n, a in _cut_off_calls(coder)
+                       if n in _WRITE_TOOLS and _path_of_args(a, patch_ok=n == "apply_patch") == path),
+                      ("", ""))
+    try:
+        complete = isinstance(json.loads(args), dict)
+    except (ValueError, TypeError):
+        complete = False
+    used = f"{out_tok} tokens" if out_tok else "the output-token limit"
+    if name in writeproxy_names and not complete:
+        return prompts.render("truncation_guard", path=path, limit=used, tool=name)
+    prose = sum(len(str((ch.get("message") or {}).get("content") or "")) for ch in coder.get("choices", []))
+    key = "complete" if complete else "cut"
+    return prompts.fill(prompts.load_map("truncation_withheld")[key], tool=name, path=path, used=used,
+                        prose=prose, call=len(args))
 
 
 def _truncated_write_path(completion: dict) -> str | None:

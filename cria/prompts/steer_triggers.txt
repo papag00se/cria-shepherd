@@ -17,4 +17,7 @@
 # whatever it says arrives as evidence.
 refusal = {{COUNT}} of its recent calls were refused, so none of them ran — the most recent was: {{ACTION}}
 wheel_spin = It has rewritten the file `{{PATH}}` at least {{WRITES}} times with varying content and it still is not converging.
-thrash = The repo's own checks have failed with the SAME error for {{ROUNDS}} rounds while it kept editing — it is not converging.
+# The thrash line said "while it kept editing" — an unmeasured claim (#5b): in run 01a12bca the last four
+# RED rounds had NO write between them. The clause is now the measured count of edits that landed between
+# the counted rounds (thrash_edits.txt, loop.thrash_edits_clause).
+thrash = The repo's own checks have failed with the SAME error for {{ROUNDS}} rounds, and {{EDITS}} — it is not converging.

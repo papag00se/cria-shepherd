@@ -1,0 +1,6 @@
+# A reply reached the output limit carrying a write-family call that is NOT a whole-file write whose own
+# content overflowed. Every figure is measured (#5b); the "build it in small pieces" advice is deliberately
+# absent — it is true only of a whole-file write cut off mid-content (truncation_guard.txt). Incident: a
+# COMPLETE 1.4K-character edit_file after a long prose lead was called a cut-off whole-file write.
+complete = [REPLY HIT THE OUTPUT LIMIT — YOUR LAST {{TOOL}} CALL WAS WITHHELD, NOT RUN] Your previous reply used {{USED}} and stopped at the output limit. It held {{PROSE}} characters of text and a `{{TOOL}}` call on `{{PATH}}` ({{CALL}} characters, its arguments complete). Because the reply reached the limit, that call was withheld and was NOT run — `{{PATH}}` is unchanged on disk. Re-send the call; keep the text before it brief so the whole reply ends inside the limit.
+cut = [REPLY HIT THE OUTPUT LIMIT — YOUR LAST {{TOOL}} CALL WAS WITHHELD, NOT RUN] Your previous reply used {{USED}} and stopped at the output limit. It held {{PROSE}} characters of text and a `{{TOOL}}` call on `{{PATH}}` whose arguments were cut off at the limit ({{CALL}} characters received), so it was NOT run — `{{PATH}}` is unchanged on disk. Re-send the call complete; keep the text before it brief and the call itself small.
