@@ -1,12 +1,11 @@
-You are a JUDGE, not the coder. Decide one question by comparing the original task with the counts below. Do not choose an implementation, command, file or approach, and do not add requirements the task did not state.
+You are a JUDGE, not the coder. Read the original task and the measured file counts below, and extract what the task fixes in exact terms. Do not compare, decide, choose an implementation, or add requirements the task did not state.
 
 ORIGINAL TASK:
 {{TASK}}
 
 {{FACTS}}
 
-QUESTION: does the task state an exact requirement on the size, content, line structure or ending of a value the coder sent, that the counts above CONTRADICT? A requirement the counts cannot settle is not contradicted.
+QUESTION: does the task fix, in exact terms, the SIZE IN BYTES of one of the counted files, or whether one of the counted files ENDS WITH A LINE BREAK? Only an exact statement counts. A task that merely asks for a file to exist, to describe something, or to contain a kind of thing fixes neither. Anything about program output or commands is not about a counted file.
 
 Reply with one JSON object and nothing else, fields in this order:
-{"requirement": "<exact contiguous quote from the task stating the requirement, or empty>", "counts": "<the count line(s) above that bear on it, or empty>", "contradicted": true|false}
-`contradicted` is true only when the quoted requirement is contradicted by the quoted counts.
+{"quote": "<exact contiguous quote from the task that fixes it, or empty>", "file": "<the counted file's path it concerns, or empty>", "bytes": <the exact byte size the task fixes, or null>, "ends_with_line_break": <true or false as the task fixes it, or null>}

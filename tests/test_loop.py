@@ -1330,11 +1330,7 @@ class CompactionTests(unittest.TestCase):
         from cria.loop import _satisfaction_evidence, _work_log
         msgs = [{"role": "assistant", "tool_calls": [{"id": "a", "function": {"name": "write_file", "arguments": '{"path":"h.py"}'}}]},
                 {"role": "tool", "tool_call_id": "a", "content": "wrote h.py"}]
-        ev = _satisfaction_evidence(msgs)
-        # The log is untouched and no summary header appears; the only addition is the exact
-        # argument counts block (cria.argfacts), appended after it.
-        self.assertTrue(ev.startswith(_work_log(msgs) + "\n\nMEASURED FROM THE CALL ARGUMENTS"))
-        self.assertNotIn("SUMMARY OF EARLIER WORK", ev)
+        self.assertEqual(_satisfaction_evidence(msgs), _work_log(msgs))
         self.assertNotIn("SUMMARY OF EARLIER WORK", _satisfaction_evidence(msgs))
 
 

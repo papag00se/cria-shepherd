@@ -49,7 +49,7 @@ from pathlib import Path
 
 from .upstream import UpstreamProtocolError
 from . import bodykeys, generation, modelview, wsview
-from . import argfacts, callcapture, dedup, denial, editrecovery, execcheck, focustrim, groundtruth, indicators, massage, participation, probediscovery, probegate, probeparse, proberun, prompts, reasoning, selfcompact, shellshape, toolmenu, urlgrounding, verifytools, webfetch
+from . import callcapture, dedup, denial, editrecovery, execcheck, filefacts, focustrim, groundtruth, indicators, massage, participation, probediscovery, probegate, probeparse, proberun, prompts, reasoning, selfcompact, shellshape, toolmenu, urlgrounding, verifytools, webfetch
 from .upstream import CallerContextRetryNoChange, ContextRefitNoChange
 from .classify import JUDGE_MAX_TOKENS, _task_key, latest_user_text
 from . import jsontext, planner, refusalledger, writeproxy
@@ -1684,28 +1684,44 @@ def _exact_form_blocks_completion(task: str, evidence: str, reasoner_chat, reaso
     The broad satisfaction verdict is one JSON object whose first field is the verdict, so a weak
     judge commits to ``satisfied`` before it has compared anything.  C13-C: it approved a 29-byte
     file for a task that required 30 (a final line break), with the task, the write and the read all
-    intact in its prompt, three of three replays and again with exact counts appended.  Deterministic
-    code GATHERS the counts of what the coder sent (:mod:`cria.argfacts`); ONE focused question asks
+    intact in its prompt — 3 of 3 replays, and again with exact counts appended to the broad prompt.
+    Deterministic code GATHERS the counts of the CURRENT content of the files the session wrote or
+    edited (:func:`_written_file_facts`, never a command or path string); ONE focused question asks
     whether the task states an exact requirement those counts contradict, requirement quoted before
-    the verdict.  Only a ``contradicted: false`` lets the approval stand: an unreadable answer fails
-    CLOSED, like every other approve-path brake.  What the coder is told is cria's own measurement,
-    never the judge's words.  No counts (no call carried a string) means nothing to ask."""
-    facts = argfacts.extract(evidence)
+    the verdict.  Only ``contradicted: false`` lets the approval stand; an unreadable answer fails
+    CLOSED.  What the coder is told is cria's own measurement, never the judge's words.  A fact the
+    disk can no longer vouch for is never stated (a veto the disk can settle is settled by the disk),
+    so with no counts there is nothing to ask."""
+    facts = filefacts.extract(evidence)
     if not facts:
         return ""
     answer = ask_closed(reasoner_chat, reasoner_role,
                         prompts.render("exact_form_requirement", task=task, facts=facts), rlog,
                         phase="exact-form-requirement", retry_off=False)
     obj = extract_json_object(reasoner_role.clean_content(answer) if reasoner_role is not None else answer)
-    verdict = obj.get("contradicted") if isinstance(obj, dict) else None
+    if not isinstance(obj, dict) or not {"bytes", "ends_with_line_break"} <= obj.keys():
+        if rlog is not None:
+            rlog.emit("loop.exact_form_requirement", contradicted="unknown")
+        return prompts.load("unverified_step")
+    # The judge only EXTRACTS what the task fixes; the comparison is arithmetic on measured counts.
+    # An extraction is believed only when its quote is in the task and its file is a counted file —
+    # a requirement the task never made, or about a file nobody counted, cannot veto (the false
+    # positives of the first focused question were exactly these).
+    quote = " ".join(str(obj.get("quote") or "").split())
+    grounded = bool(quote) and quote in " ".join(task.split())
+    counted = {p: (n, e) for p, n, e in filefacts.parse(evidence)}
+    want_file = str(obj.get("file") or "").strip()
+    measured = counted.get(want_file)
+    contradicted = False
+    if grounded and measured is not None:
+        n, ends = measured
+        want_bytes, want_end = obj.get("bytes"), obj.get("ends_with_line_break")
+        contradicted = ((isinstance(want_bytes, int) and not isinstance(want_bytes, bool) and want_bytes != n)
+                        or (isinstance(want_end, bool) and want_end != ends))
     if rlog is not None:
-        rlog.emit("loop.exact_form_requirement",
-                  contradicted=verdict if isinstance(verdict, bool) else "unknown")
-    if verdict is False:
-        return ""
-    if verdict is True:
-        return prompts.render("exact_form_unmet", facts=facts)
-    return prompts.load("unverified_step")
+        rlog.emit("loop.exact_form_requirement", contradicted=contradicted, grounded=grounded,
+                  counted=measured is not None)
+    return prompts.render("exact_form_unmet", facts=facts) if contradicted else ""
 
 
 def _test_participation_blocks_completion(task: str, report, reasoner_chat, reasoner_role, rlog,
@@ -3548,7 +3564,8 @@ class Loop:
         task = sess.plan.task or _history_root(body.get("messages", []))[0]
         ev = _satisfaction_evidence(body.get("messages", []), rlog=rlog,
                      chat_fn=self._reasoner()[0], role=self._reasoner()[1],
-                     gate_plan=getattr(sess, "gate_plan", None))
+                     gate_plan=getattr(sess, "gate_plan", None),
+                     workspace_root=getattr(sess, "workspace_root", "") or "")
         ev += _gate_notes(sess)
         # RUN THE DELIVERABLE. The repo's own checks prove a workspace compiles, lints and passes its
         # tests; none of that can tell you the delivered program does anything. This check existed and
@@ -5004,7 +5021,8 @@ class Loop:
                 else _history_root(body.get("messages", []))[0])
         evidence = _satisfaction_evidence(body.get("messages", []), rlog=rlog,
                      chat_fn=self._reasoner()[0], role=self._reasoner()[1],
-                           gate_plan=getattr(sess, "gate_plan", None))
+                           gate_plan=getattr(sess, "gate_plan", None),
+                           workspace_root=getattr(sess, "workspace_root", "") or "")
         evidence += _gate_notes(sess)
         # RUN THE DELIVERABLE, BEFORE the verdict. This check existed on this path already — but only
         # AFTER the judge had said "satisfied", where it can decorate a completion and never inform
@@ -5428,7 +5446,8 @@ class Loop:
         task = _history_root(body.get("messages", []))[0]
         ev = _satisfaction_evidence(body.get("messages", []), rlog=rlog,
                      chat_fn=self._reasoner()[0], role=self._reasoner()[1],
-                     gate_plan=getattr(sess, "gate_plan", None))
+                     gate_plan=getattr(sess, "gate_plan", None),
+                     workspace_root=getattr(sess, "workspace_root", "") or "")
         ev += _gate_notes(sess)
         # RUN THE DELIVERABLE — the THIRD sibling of the same wiring. The marker was added to
         # _periodic_satisfaction and _reopen_if_unsatisfied on 2026-08-02 and this path was missed, and
@@ -5802,7 +5821,7 @@ def _rewrite_summary_text(messages: list[dict], root_text: str) -> str:
 
 
 def _work_log(messages: list[dict], *, keep_checks: bool = False, rlog=None,
-              gate_plan=None, calls_out: list | None = None) -> str:
+              gate_plan=None) -> str:
     """A log of the coder's REAL actions — the tool calls it made (file writes, commands)
     and what they returned — for the completion compaction. cria's own plan-file writes and probe
     runs are stripped so the summary reflects the actual work, not the orchestration scaffolding.
@@ -5868,8 +5887,6 @@ def _work_log(messages: list[dict], *, keep_checks: bool = False, rlog=None,
                 frame_mark = mark if mark and ("\n" in args or "\r" in args) else ""
                 suffix_mark = "" if frame_mark else mark
                 lines.append(f"$ {fn.get('name')}{frame_mark} {args}{suffix_mark}")
-                if calls_out is not None:
-                    calls_out.append((str(fn.get("name")), args))
         elif role == "tool":
             c = str(m.get("content") or "")
             if c and not _is_cria_scaffolding(c, keep_checks=keep_checks):
@@ -5917,7 +5934,7 @@ def _is_cria_scaffolding(text: str, *, keep_checks: bool = False) -> bool:
 
 
 def _satisfaction_evidence(messages: list[dict], rlog=None, gate_plan=None,
-                           chat_fn=None, role=None) -> str:
+                           chat_fn=None, role=None, workspace_root: str = "") -> str:
     """Evidence for the whole-task satisfaction judge. Beyond the structured tool-action log
     (_work_log), it MUST include cria's summary-marker prose — continuation / rollup / briefing —
     because a HARNESS or self compaction REPLACES the structured tool history with that prose. On the
@@ -5929,14 +5946,12 @@ def _satisfaction_evidence(messages: list[dict], rlog=None, gate_plan=None,
     # measured 73.7KB slot (0183-satisfaction, run 0729T224807); the judge holds read_file/list_dir
     # to drill past the disclosed elision, and the doom loop (fail closed -> re-nudge -> grow) is
     # the same mechanism the critic bound was shipped for.
-    logged_calls: list = []
-    log = _dedup_evidence(_work_log(messages, keep_checks=True, rlog=rlog, gate_plan=gate_plan,
-                                    calls_out=logged_calls),
+    log = _dedup_evidence(_work_log(messages, keep_checks=True, rlog=rlog, gate_plan=gate_plan),
                           rlog=rlog, chat_fn=chat_fn, role=role)
-    # EXACT COUNTS OF WHAT THE CODER SENT, appended after the (possibly deduplicated) log: the
-    # escaped-JSON layout hides the byte-level shape of a value (a missing final line break) from the
-    # judge. Gathered deterministically from the call arguments only — never from tool results.
-    measured = argfacts.render(logged_calls)
+    # EXACT COUNTS OF THE FILES THE SESSION WROTE OR EDITED, appended after the (possibly
+    # deduplicated) log: the escaped-JSON layout hides a file's byte-level shape from the judge.
+    # Measured from file CONTENT only (see _written_file_facts), silent when nothing can be stated.
+    measured = filefacts.render(_written_file_facts(messages, workspace_root))
     if measured:
         log = f"{log}\n\n{measured}"
     # The marker must START the message, and the message must not be an ASSISTANT turn. cria authors
@@ -9697,6 +9712,67 @@ def _plan_off_tail(base: list[dict], restore: dict | None, facts: dict) -> list[
     last message — the active turn). The ledger names the block rather than a direction because plan-on
     puts them the other way round."""
     return base + ([restore] if restore is not None else []) + [facts]
+
+
+def _written_file_facts(messages: list[dict], workspace_root: str = "") -> list:
+    """The CURRENT content of every file the session wrote or edited, as ``filefacts.FileFact``s.
+
+    Only paths a write/edit call that RETURNED A RESULT named (a refused or failed call changed
+    nothing and is skipped — never "sent" content).  Each file's bytes come from ONE of two sources,
+    in order: the workspace view's current body (the read-only probe cria already owns) when the
+    view is usable and nothing that could have changed the workspace ran since it was surveyed; else
+    the content of the newest whole write to that path, but ONLY when no later call could have
+    changed that file — a later landed edit/patch, or a shell that writes, silences the fact rather
+    than letting it go stale (a veto the disk can settle is settled by the disk, never by history).
+    Anything else is not stated.  Paths come from the call's own path argument via the one shared
+    :func:`_path_of_args`; command strings are never mined."""
+    from . import denial, shelltool
+    events: list[tuple] = []          # (idx, name, path, whole-content-or-None) of calls that ran
+    pending: dict = {}
+    failed = writeproxy._failed_edit_ids(messages)
+    for idx, m in enumerate(messages or []):
+        if not isinstance(m, dict):
+            continue
+        for tc in m.get("tool_calls") or []:
+            fn = tc.get("function") or {}
+            name, args = fn.get("name"), fn.get("arguments") or ""
+            if tc.get("id") and (name in _WRITE_TOOLS or shelltool.writes_something(
+                    name, writeproxy._command_of(args))):
+                pending[tc["id"]] = (name, args)
+        tid = m.get("tool_call_id") or m.get("call_id")
+        if tid in pending:
+            res = m.get("content") if m.get("content") is not None else m.get("output")
+            res = res if isinstance(res, str) else ""
+            if tid in failed or denial.is_denied(res):
+                continue                                   # refused / failed: it changed nothing
+            name, args = pending[tid]
+            whole = None
+            if name in writeproxy_names:
+                body = _args_of(args).get("content")
+                whole = body if isinstance(body, str) else None
+            patch_ok = name not in writeproxy_names and name not in writeproxy._EDIT_NAMES
+            events.append((idx, name, _path_of_args(args, patch_ok=patch_ok), whole))
+    paths = list(dict.fromkeys(p for _i, n, p, _w in events if p and n in _WRITE_TOOLS))
+    view = wsview.current(workspace_root) if workspace_root else None
+    use_view = view is not None and view.usable and not view.may_have_changed
+    facts = []
+    for path in paths:
+        if use_view:
+            raw = view.read_bytes(path)
+            if raw is not None:
+                facts.append(filefacts.FileFact(view.rel(path) or path, raw, True))
+                continue
+        last = max((i for i, (_ix, n, p, w) in enumerate(events)
+                    if p == path and w is not None), default=None)
+        if last is None:
+            continue
+        # anything after the newest whole write that could have changed THIS file silences the fact
+        touched = any(n in _WRITE_TOOLS and (p == path or p is None) and w is None
+                      or n not in _WRITE_TOOLS
+                      for _ix, n, p, w in events[last + 1:])
+        if not touched:
+            facts.append(filefacts.FileFact(path, events[last][3].encode("utf-8", "replace"), False))
+    return facts
 
 
 def _write_events_paths(messages: list[dict]):
