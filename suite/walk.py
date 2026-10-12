@@ -17,6 +17,9 @@ For each call NNNN-<phase> in the capture directory it prints:
                             or diverging from its predecessor — that is flagged with the char
                             count and, by default, the divergent remainder is printed IN FULL.
                             --full-prompts disables prefix-dedup entirely.
+  --- UNFINISHED STREAMED REASONING ---  any saved .json.reasoning.partial.txt, verbatim,
+                            labelled with its artifact name and byte count; never a completed
+                            response. Included even when a completed response also exists.
   --- THINK ---             the model's complete reasoning_content, unabridged.
   --- SAY ---               the complete assistant text, unabridged.
   --- TOOL CALL <name> ---  the complete raw argument string of every tool call, unabridged.
@@ -217,6 +220,18 @@ def emit_call(num: str, phase: str, stem: Path, prev_prompts: dict, full_prompts
         lines.append(prompt[i:].rstrip("\n"))
     prev_prompts[phase] = prompt
 
+    # Upstream._partial_path appends to the FULL metadata filename (including .json). A killed
+    # stream can leave only this artifact. Coexistence with a response does not erase the fragment:
+    # expose it separately, never promote its prose to assistant text, actions or a finish status.
+    partial_file = Path(f"{stem}.json.reasoning.partial.txt")
+    if partial_file.exists():
+        partial = partial_file.read_bytes()
+        lines.append(f"--- UNFINISHED STREAMED REASONING [artifact: {partial_file.name}; "
+                     f"{len(partial)} bytes; not a completed response] ---")
+        # Producer writes UTF-8. Decode strictly and do not strip or translate any saved newline.
+        lines.append(partial.decode("utf-8"))
+        lines.append("--- END UNFINISHED STREAMED REASONING ---")
+
     resp_file = stem.parent / f"{num}-{phase}.response.json"
     if resp_file.exists():
         resp = json.loads(resp_file.read_text(errors="replace"))
@@ -302,13 +317,14 @@ def main():
     chunks, cur, size, lines = [], [], 0, 0
     for b in blocks:
         n = b.count("\n") + 1
+        block_bytes = len(b.encode("utf-8"))
         # A call never splits across chunks — every chunk is a whole number of calls. Both budgets
         # bind: bytes so a chunk stays loadable, lines so it stays READABLE by a line-capped reader.
-        if cur and (size + len(b) > args.chunk_bytes or lines + n > args.chunk_lines):
+        if cur and (size + block_bytes > args.chunk_bytes or lines + n > args.chunk_lines):
             chunks.append("".join(cur))
             cur, size, lines = [], 0, 0
         cur.append(b)
-        size += len(b)
+        size += block_bytes
         lines += n
     if cur:
         chunks.append("".join(cur))
@@ -316,15 +332,15 @@ def main():
     over = []
     for i, text in enumerate(chunks, 1):
         name = f"chunk{i:0{width}d}.txt"
-        (outdir / name).write_text(text)
+        (outdir / name).write_bytes(text.encode("utf-8"))
         n = text.count("\n") + 1
         if n > args.chunk_lines:
             over.append((name, n))
-    total = sum(len(c) for c in chunks)
+    sizes = [len(c.encode("utf-8")) for c in chunks]
+    total = sum(sizes)
     print(f"{len(calls)} calls → {len(chunks)} chunks, {total:,} bytes, in {outdir}")
     if segment_bytes:
         names = [f"chunk{i:0{width}d}.txt" for i in range(1, len(chunks) + 1)]
-        sizes = [len(c) for c in chunks]
         findings_dir = args.findings_dir or (outdir / "findings")
         segments = write_assignments(outdir, names, sizes, segment_bytes, findings_dir, args.label)
         oversized = sum(1 for s in segments if s["oversized"])
