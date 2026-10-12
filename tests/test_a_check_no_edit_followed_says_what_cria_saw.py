@@ -259,35 +259,37 @@ class TheRuminationStepIsGroundedOnlyWhenItIsTrue(unittest.TestCase):
             msgs = self._after_read([("s", "exec_command", {"cmd": cmd})])
             self.assertEqual(self.step(msgs), "", cmd)
 
-    def test_every_target_of_a_multi_write_shell_command_defeats_it(self):
+    def test_any_shell_call_not_proven_read_only_defeats_it(self):
+        # every shape the O16v2 re-reviews found, plus plain writes elsewhere: no target parsing,
+        # a call is proven read-only (positive allow-list, no output redirect/tee) or any file changed.
         for cmd in (f"echo hi | tee other.txt {REL}", f"echo hi | tee -a other.txt {REL}",
-                    f"echo hi | tee other.txt {REL} -a", f"echo hi | tee other.txt {REL} -p",
-                    f"echo hi > a.txt 2> {REL}", f"echo hi > a.txt; echo yo > {REL}",
-                    f"echo hi | tee a.txt && tee {REL}", f"echo hi | tee $F {REL}", f"echo hi | tee *.txt {REL}"):
+                    f"echo hi | tee other.txt {REL} -p", f"echo hi > a.txt 2> {REL}",
+                    f"echo hi > a.txt; echo yo > {REL}", f"echo hi | tee $F {REL}",
+                    f"echo hi | tee 'x' \\{REL}", f"echo hi | \\tee {REL}", f"echo hi | 'tee' {REL}",
+                    f"sh -c 'echo hi > {REL}'", f'echo "$(echo hi > {REL})" > other.txt',
+                    f"bash -c \"echo hi > {REL}\"", f"echo hi > {REL}", f'echo hi > "{REL}"',
+                    "echo x > other.txt", "mvn -q compile", f"sed -i s/a/b/ {REL}",
+                    "cp a.java b.java", "git checkout -- .", f"cat {REL} > other.txt",
+                    f"cat {REL} | tee other.txt", f"cat {REL} 1> other.txt"):
             msgs = self._after_read([("s", "exec_command", {"cmd": cmd})])
             self.assertEqual(self.step(msgs), "", cmd)
 
-    def test_mutation_targets_is_complete_or_unresolved(self):
-        mt = lambda c: loop._mutation_targets({"name": "exec_command", "arguments": json.dumps({"cmd": c})})
-        self.assertEqual(mt("echo | tee a.txt b.txt"), ["a.txt", "b.txt"])
-        self.assertEqual(mt("echo | tee -a a.txt b.txt"), ["a.txt", "b.txt"])
-        self.assertEqual(mt("echo | tee a.txt b.txt -a"), ["a.txt", "b.txt"])
-        self.assertEqual(mt("cmd > a 2> b"), ["a", "b"])
-        self.assertEqual(mt("cmd > a; cmd2 > b"), ["a", "b"])
-        self.assertEqual(mt("cmd > 'a b'"), loop._ANY_PATH)
-        for c in ("echo | tee -x a b", "echo | tee `x` b", "echo | tee ${X}", "echo hi > {a,b}", "echo hi > $F"):
-            self.assertIs(mt(c), loop._ANY_PATH, c)
-        self.assertEqual(mt("mvn -q compile 2>&1 | tail -5"), [])
-
-    def test_resolved_unrelated_multi_writes_do_not(self):
-        for cmd in ("echo hi | tee a.txt b.txt", "echo hi > a.txt 2> b.txt", "echo hi > a.txt; echo y > b.txt"):
+    def test_only_provably_read_only_shell_calls_leave_it_eligible(self):
+        cmds = (f"cat {REL}", "grep -rn foo src", "ls -la src/main", "find . -name '*.java'",
+                f"head -50 {REL}", f"wc -l {REL}", "grep -n x a.java 2>&1 | head -5", "cat a.java 2>/dev/null")
+        for cmd in cmds:
             msgs = self._after_read([("s", "exec_command", {"cmd": cmd})])
             self.assertTrue(self.step(msgs), cmd)
-
-    def test_a_fully_resolved_write_to_another_file_and_a_plain_command_do_not(self):
-        msgs = self._after_read([("s", "exec_command", {"cmd": "echo x > other.txt"}),
-                                 ("c", "exec_command", {"cmd": "mvn -q compile"})])
+        msgs = self._after_read([("s", "exec_command", {"cmd": c}) for c in ("ls", "grep -n x a.java", "wc -l a.java")])
         self.assertTrue(self.step(msgs))
+        msgs = self._after_read([("s", "exec_command", {"cmd": "ls"}), ("t", "exec_command", {"cmd": "echo y > b.txt"})])
+        self.assertEqual(self.step(msgs), "")
+
+    def test_mutation_targets_is_read_only_or_unresolved(self):
+        mt = lambda c: loop._mutation_targets({"name": "exec_command", "arguments": json.dumps({"cmd": c})}, "/w")
+        self.assertEqual(mt("grep -rn x src | head -5"), [])
+        for c in ("echo | tee a.txt", "cmd > a", "echo hi > a.txt", "mvn -q compile 2>&1 | tail -5", "cat a $(x)"):
+            self.assertIs(mt(c), loop._ANY_PATH, c)
 
     def test_an_edit_since_the_gate_or_a_green_gate_defeats_it(self):
         msgs = read_msgs(REL, 180, 230, body="\n".join(f"{i}: l" for i in range(180, 231)))

@@ -12710,7 +12710,7 @@ def grounded_rumination_step(gs, messages: list[dict]) -> str:
             if not (span[0] <= line <= last):
                 continue
             if any(wp is _ANY_PATH or _same_workspace_file(wp, path, root)
-                   for wp in _write_paths_after(messages, idx)):
+                   for wp in _write_paths_after(messages, idx, root)):
                 continue
             return prompts.render("rumination_next_step_grounded", finding=raw.strip(),
                                   path=f"`{rpath}`", line=line)
@@ -12723,7 +12723,7 @@ _ANY_PATH = object()   # a mutation whose targets cannot be fully determined: an
 _PATCH_ALL_TARGETS_RE = re.compile(r"^\*\*\* (?:Add|Update|Delete) File: (.+?)\s*$|^\*\*\* Move to: (.+?)\s*$", re.M)
 
 
-def _mutation_targets(fn: dict):
+def _mutation_targets(fn: dict, workspace_root: str | None = None):
     """Every file one call may have changed: a list of paths ([] for a non-write call), or ``_ANY_PATH``
     when the call is a write whose targets cannot be fully determined. Authoritative for the later-write
     test, unlike `_write_path` (one file, a streak-grouping key): a patch names every Add/Update/Delete
@@ -12757,123 +12757,19 @@ def _mutation_targets(fn: dict):
         text = _command_text(args)
         if text is None:
             return _ANY_PATH   # an undecodable fragment: nothing can be said about its targets
-        return _shell_mutation_targets(name, text)
+        # No write-target parsing: the call is proven read-only by dirguard's positive allow-list
+        # (with no output redirect/tee at all), or ANY file may have changed.
+        return [] if dirguard.command_only_reads(text, workspace_root, no_writes=True) else _ANY_PATH
     return []
 
 
-_SHELL_OPS = ("&&", "||", ";;", "|&", "|", ";", "&", "\n", "(", ")")
-_LITERAL_TARGET_RE = re.compile(r"[\w./~-]+\Z")
-_REDIRECT_OP_RE = re.compile(r"(?:\d*>>?|&>>?|>\|)\Z")
-
-
-def _shell_tokens(text: str):
-    """Split a shell line into ``(raw, value, kind)`` tokens, kind ``op`` (control operator), ``redir``
-    (a ``>``/``>>`` with optional fd) or ``word``. None when it cannot be tokenised (unbalanced quote)."""
-    toks, i, n = [], 0, len(text)
-    while i < n:
-        ch = text[i]
-        if ch in " \t\r":
-            i += 1
-            continue
-        op = next((o for o in _SHELL_OPS if text.startswith(o, i)), None)
-        if op:
-            toks.append((op, op, "op"))
-            i += len(op)
-            continue
-        raw, val, quote = [], [], ""
-        while i < n:
-            ch = text[i]
-            if quote:
-                raw.append(ch)
-                if ch == quote:
-                    quote = ""
-                elif ch == "\\" and quote == '"' and i + 1 < n:
-                    i += 1
-                    raw.append(text[i]); val.append(text[i])
-                else:
-                    val.append(ch if quote == "'" or ch not in "$`" else "\0")
-                i += 1
-                continue
-            if ch in "'\"":
-                quote = ch; raw.append(ch); i += 1
-                continue
-            if ch in " \t\r\n" or any(text.startswith(o, i) for o in _SHELL_OPS):
-                break
-            if ch == ">" or ch == "<":   # a redirect operator ends a bare word unless it is the word's fd prefix
-                if ch == ">" and all(c.isdigit() for c in raw) or ch == "<":
-                    raw.append(ch); val.append(ch); i += 1
-                    if ch == ">" and i < n and text[i] in ">|":
-                        raw.append(text[i]); val.append(text[i]); i += 1
-                    break
-                break
-            if ch == "\\" and i + 1 < n:
-                raw.append(ch); i += 1; raw.append(text[i]); val.append(text[i]); i += 1
-                continue
-            raw.append(ch); val.append(ch if ch not in "$`" else "\0"); i += 1
-        if quote:
-            return None
-        r, v = "".join(raw), "".join(val)
-        toks.append((r, v, "redir" if _REDIRECT_OP_RE.match(r) else "word"))
-    return toks
-
-
-def _shell_mutation_targets(name, text):
-    """Targets of a shell command: a list ONLY when every write in it is a simple redirect (``>``/``>>``,
-    one literal target) or a ``tee`` whose operands are all literal (``-a`` the only option understood);
-    ``[]`` for a non-writer; otherwise ``_ANY_PATH``. Nothing outside those shapes is guessed at."""
-    toks = _shell_tokens(text)
-    if toks is None or any(k == "redir" and r.startswith("&") for r, _v, k in toks):
-        return _ANY_PATH if writes_something(name, text) or toks is None else []
-    targets, keep, unresolved, i = [], [], False, 0
-    while i < len(toks):
-        raw, val, kind = toks[i]
-        if kind == "redir":
-            nxt = toks[i + 1] if i + 1 < len(toks) else None
-            if (nxt is not None and nxt[2] == "op" and nxt[0] == "&" and i + 2 < len(toks)
-                    and toks[i + 2][2] == "word" and re.fullmatch(r"\d+|-", toks[i + 2][1])):
-                i += 3   # `2>&1` / `>&-`: an fd duplication, no file
-                continue
-            if nxt is None or nxt[2] != "word":
-                unresolved = True
-            elif nxt[1] == "/dev/null" or (nxt[1].startswith("&")):
-                pass
-            elif _LITERAL_TARGET_RE.match(nxt[1]):
-                targets.append(nxt[1])
-            else:
-                unresolved = True
-            i += 2
-            continue
-        if kind == "word" and raw == "tee":
-            i += 1
-            while i < len(toks) and toks[i][2] == "word":
-                r, v, _k = toks[i]
-                if v in ("-a", "--append"):
-                    pass
-                elif v.startswith("-") or not _LITERAL_TARGET_RE.match(v):
-                    unresolved = True
-                else:
-                    targets.append(v)
-                i += 1
-            continue
-        keep.append(raw if kind != "op" else " ; ")
-        i += 1
-    if unresolved:
-        return _ANY_PATH
-    if writes_something(name, " ".join(keep)):
-        return _ANY_PATH
-    return targets
-
-
-_REDIRECT_QUOTED_RE = re.compile(r'(?<![-=<>\d&])>{1,2}\s*(?!/dev/|&)["\']?([\w./~$-]+)["\']?')
-
-
-def _write_paths_after(messages: list[dict], idx: int):
+def _write_paths_after(messages: list[dict], idx: int, workspace_root: str | None = None):
     """Paths of every write-class call (landed or not) after position ``idx`` — every target of a
     multi-file patch — or ``_ANY_PATH`` for a write whose targets are not fully known."""
     for m in (messages or [])[idx + 1:]:
         if isinstance(m, dict) and m.get("role") == "assistant":
             for tc in m.get("tool_calls") or []:
-                got = _mutation_targets(tc.get("function") or {})
+                got = _mutation_targets(tc.get("function") or {}, workspace_root)
                 if got is _ANY_PATH:
                     yield _ANY_PATH
                 else:
