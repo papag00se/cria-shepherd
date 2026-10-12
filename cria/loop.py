@@ -8236,18 +8236,37 @@ def _squash(text: str) -> str:
     return re.sub(r"\s+", " ", text).strip()
 
 
-def briefing_sentences(briefing: str, transcript_blocks: list[str] | None = None) -> list[str]:
-    """Every unit of the briefing the plan lens must judge, in order — structural split only.
+_NOT_AFTER_LIST_NUMBER = r"(?<!\b\d\.)(?<!\b\d\d\.)"
+_SENTENCE_END = re.compile(r"(?<=[.!?])" + _NOT_AFTER_LIST_NUMBER + r"\s+(?=[A-Z`*])")
 
-    Nothing the writer authored is exempt: heading text and "Label:" lines are judged (a heading can
-    be an instruction — "# Fix Cart.java by adding a null check"); only lines with no word character
-    (rules, bare bullets) are dropped. A bare list number ("1.") is merged into its item. A fenced
-    block is one unit, judged whole — except when it is verbatim in the transcript (quoted tool
-    output, which is not the writer's words)."""
+
+def briefing_sentences(briefing: str, transcript_blocks: list[str] | None = None,
+                       files: str = "") -> list[tuple[str, str]]:
+    """Every unit of the briefing the plan lens must judge, in order, as (section, unit) — structural
+    split only.
+
+    Nothing the writer authored is exempt: heading text (``# Fix Cart.java by adding a null check``)
+    is judged as a unit; only lines with no word character are dropped. A "Label:" line is not
+    judged alone — a bare "What remains to be done:" is not a claim, and judged alone a small model
+    called it a plan — it is the SECTION shown beside every unit beneath it, so "Next step:" over a
+    fenced command is judged as that command under that label. A bare list number ("1.") joins its
+    item. A fenced block is one unit, judged whole — except when it is verbatim in the transcript
+    (quoted tool output, not the writer's words). A unit that is verbatim a line of the workspace
+    inventory (`README.md (370 B)`) is cria's own listing. A label with nothing under it is judged as
+    a unit."""
     transcript = [_squash(t) for t in (transcript_blocks or [])]
-    out: list[str] = []
+    listed = {_squash(l.replace("`", "")) for l in files.splitlines() if l.strip()}
+    out: list[tuple[str, str]] = []
     fence: list[str] | None = None
-    pending_number = ""
+    section, number, unjudged_label = "", "", False
+
+    def emit(unit: str) -> None:
+        nonlocal number, unjudged_label
+        if number:
+            unit, number = f"{number} {unit}", ""
+        unjudged_label = False
+        out.append((section, unit))
+
     for line in briefing.splitlines():
         if line.strip().startswith("```"):
             if fence is None:
@@ -8256,23 +8275,32 @@ def briefing_sentences(briefing: str, transcript_blocks: list[str] | None = None
                 block = "\n".join(fence).strip()
                 fence = None
                 if block and not any(_squash(block) in t for t in transcript):
-                    out.append(block)
+                    emit(block)
             continue
         if fence is not None:
             fence.append(line)
             continue
+        if line.strip().startswith("#"):
+            section = ""    # a markdown heading opens a new section
         text = line.strip().lstrip("#").strip(" -*\t").strip()
         if re.fullmatch(r"\(?\d+[.)]", text):
-            pending_number = text
+            number = text
             continue
         if not re.search(r"\w", text):
             continue
-        pieces = [p.strip() for p in re.split(r"(?<=[.!?])\s+(?=[A-Z`*])", text) if p.strip()]
-        if pending_number:
-            pieces[0], pending_number = f"{pending_number} {pieces[0]}", ""
-        out.extend(pieces)
+        if text.endswith(":") and not re.search(
+                r"\w[.!?]\s+\S", re.sub(r"^\(?\d+[.)]\s+", "", text)):
+            section, unjudged_label = (f"{number} {text}".strip(), True)
+            number = ""
+            continue
+        for piece in (p.strip() for p in _SENTENCE_END.split(text) if p.strip()):
+            if _squash(piece.replace("`", "")) in listed:
+                continue
+            emit(piece)
     if fence:   # an unterminated fence is still the writer's text
-        out.append("\n".join(fence).strip())
+        emit("\n".join(fence).strip())
+    if unjudged_label:   # a trailing label with nothing under it
+        out.append(("", section))
     return out
 
 
@@ -8337,16 +8365,18 @@ def validate_compaction_briefing(chat_fn, role, briefing: str, *, files: str, ch
     # Splitting is structural (lines, then sentence ends), never semantic; every sentence the
     # candidate contains is judged, so nothing is clipped. Anything unreadable fails closed.
     def retrospective() -> bool:
-        sentences = list(dict.fromkeys(briefing_sentences(briefing, transcript_blocks)))
+        sentences = list(dict.fromkeys(briefing_sentences(briefing, transcript_blocks, files)))
         if not sentences:
             answers["retrospective-plan"] = "no judgeable sentence in a non-empty briefing"
             return False
         if len(sentences) > MAX_PLAN_JUDGMENTS:
             answers["retrospective-plan"] = f"{len(sentences)} sentences exceed the judgment cap"
             return False
-        for sentence in sentences:
+        for section, sentence in sentences:
             evid = ([prompts.render("compaction_sentence_task", task=task.strip())]
                     if task.strip() else [])
+            if section:
+                evid.append(prompts.render("compaction_section", section=section))
             evid.append(prompts.render("compaction_sentence", sentence=sentence))
             if judge("retrospective", prompts.load("compaction_validate_retrospective"),
                      evid, "STATE"):

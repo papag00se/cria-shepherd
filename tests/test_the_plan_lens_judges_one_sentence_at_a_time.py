@@ -74,33 +74,54 @@ def _validate(chat, briefing, task=TASK):
 
 
 class SentenceSplitTests(unittest.TestCase):
-    def test_headings_are_judged_not_dropped(self):
-        got = loop.briefing_sentences(REAL_CANDIDATE)
-        self.assertIn("Current State", got)
-        self.assertIn("Fix Compilation Errors:", got)
-        self.assertIn(PRESCRIBED, got)
-        self.assertEqual(loop.briefing_sentences("# Fix Cart.java by adding a null check"),
-                         ["Fix Cart.java by adding a null check"])
+    def units(self, text, **kw):
+        return loop.briefing_sentences(text, **kw)
 
-    def test_a_colon_line_is_judged_and_a_fence_is_one_unit(self):
-        got = loop.briefing_sentences("Next step:\n```\nsed -i s/a/b/ Cart.java\nmake\n```")
-        self.assertEqual(got, ["Next step:", "sed -i s/a/b/ Cart.java\nmake"])
+    def test_a_heading_is_judged_as_a_unit(self):
+        self.assertEqual(self.units("# Fix Cart.java by adding a null check"),
+                         [("", "Fix Cart.java by adding a null check")])
+
+    def test_a_label_is_the_section_of_the_units_beneath_it_not_a_unit(self):
+        got = self.units(REAL_CANDIDATE)
+        self.assertIn(("Fix Compilation Errors:**".rstrip("*"), PRESCRIBED), got)
+        self.assertFalse(any(u.endswith(":") for _, u in got))
+        self.assertNotIn(("", "What remains to be done:"), got)
+
+    def test_a_label_over_a_fence_is_judged_as_the_command_under_that_label(self):
+        self.assertEqual(self.units("Next step:\n```\nsed -i s/a/b/ Cart.java\nmake\n```"),
+                         [("Next step:", "sed -i s/a/b/ Cart.java\nmake")])
+
+    def test_a_markdown_heading_resets_the_section(self):
+        self.assertEqual(self.units("Next step:\nRun it.\n# State\nBuilt."),
+                         [("Next step:", "Run it."), ("", "State"), ("", "Built.")])
+
+    def test_a_trailing_label_with_nothing_under_it_is_still_judged(self):
+        self.assertEqual(self.units("Built.\nNext step:"), [("", "Built."), ("", "Next step:")])
 
     def test_a_fence_verbatim_in_the_transcript_is_quoted_output_not_the_writer(self):
         out = "Importer.java:92: cannot find symbol"
-        self.assertEqual(loop.briefing_sentences(f"```\n{out}\n```", [f"tool: {out}\n$ mvn"]), [])
-        self.assertEqual(loop.briefing_sentences(f"```\n{out}\n```", ["unrelated"]), [out])
+        self.assertEqual(self.units(f"```\n{out}\n```", transcript_blocks=[f"tool: {out}\n$ mvn"]), [])
+        self.assertEqual(self.units(f"```\n{out}\n```", transcript_blocks=["unrelated"]), [("", out)])
 
-    def test_a_bare_list_number_joins_its_item(self):
-        self.assertEqual(loop.briefing_sentences("1.\nAdd the import.\n2.\nRerun."),
-                         ["1. Add the import.", "2. Rerun."])
+    def test_a_list_number_joins_its_item_and_is_never_its_own_unit(self):
+        self.assertEqual(self.units("1.\nAdd the import.\n2.\nRerun."),
+                         [("", "1. Add the import."), ("", "2. Rerun.")])
+        self.assertEqual(self.units("3. **Parse the file**: it works."), [("", "3. **Parse the file**: it works.")])
 
-    def test_a_short_imperative_is_still_judged(self):
-        self.assertEqual(loop.briefing_sentences("Run mvn test.\nBuild OK."), ["Run mvn test.", "Build OK."])
+    def test_a_numbered_label_is_a_section_not_a_unit(self):
+        """Real false-reject: '1. **Performance Improvement**:' judged PLAN on its own."""
+        self.assertEqual(self.units("1. **Performance Improvement**:\n   Make it faster."),
+                         [("1. **Performance Improvement**:", "Make it faster.")])
 
-    def test_multiple_sentences_on_one_line_are_split_whole(self):
-        self.assertEqual(loop.briefing_sentences("The build failed. Add the import and rerun."),
-                         ["The build failed.", "Add the import and rerun."])
+    def test_the_workspace_inventory_line_is_cria_not_the_writer(self):
+        """Real false-rejects: '`README.md` (370 B)' judged PLAN."""
+        self.assertEqual(self.units("- `README.md` (370 B)\n- Run mvn test now.",
+                                    files="README.md (370 B)\npom.xml (591 B)"),
+                         [("", "Run mvn test now.")])
+
+    def test_a_short_imperative_and_multi_sentence_lines_are_judged_whole(self):
+        self.assertEqual(self.units("Run mvn test.\nThe build failed. Add the import and rerun."),
+                         [("", "Run mvn test."), ("", "The build failed."), ("", "Add the import and rerun.")])
 
 
 class PlanLensTests(unittest.TestCase):
