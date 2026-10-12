@@ -45,6 +45,7 @@ from .loop import (
     ask_closed,
     completion_to_sse,
     gate_age,
+    gate_calls_since,
     newer_own_run,
     reframe_compaction,
     strip_prose_dropped_marker,
@@ -371,7 +372,14 @@ def _last_checks_note(server, sess_key: str) -> str:
     # reads as current; when the coder's own build has gone green since, the block is cria asserting
     # a state the coder has already disproved. It cost a green build once — see `last_gate_seq`.
     since = _gate_age(server, sess_key)
-    stale = (prompts.fill(prompts.load("checks_note_staleness"), calls=str(since))
+    # NO WORKSPACE FILE CHANGED since the check (a fingerprint comparison, `loop.gate_workspace_unchanged`):
+    # then the block describes the current code, and telling the reader to re-run it is false advice.
+    unchanged = since == selfcompact.UNCHANGED_SINCE_CHECK
+    if unchanged:
+        loop = getattr(server, "loop", None)
+        since = gate_calls_since(loop._store.get(sess_key)) if loop is not None else 0
+    stale = (prompts.load("checks_note_unchanged") if unchanged else
+             prompts.fill(prompts.load("checks_note_staleness"), calls=str(since))
              if since >= _CHECKS_STALE_AFTER else "")
     # Anchored to the HANDOFF, never to "now": this text is baked into the briefing the harness keeps
     # in its history, so a "N calls ago" would stay N for every later call while the truth moved on

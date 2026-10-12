@@ -471,6 +471,9 @@ class PlanSession(GuardState):
     # cria cannot know whether a newer command contradicts a finding — but it does know how old the
     # finding is, and saying so is the difference between a fact and an implication (#5b, #12).
     last_gate_seq: int = 0
+    # `wsview` change fingerprint taken when the last gate's result was read; None = could not say.
+    # Compared (never counted) against the one at handoff/guard time — see `gate_workspace_unchanged`.
+    last_gate_workspace_fp: str | None = None
     # The coder's OWN runs of a command the last gate also ran, as ``(action_seq, [commands], exit code
     # or None)``, newest last — durable, because the result that proves them is compacted away long
     # before the carried check block is. A block that says "the build fails" is stale the moment the
@@ -716,6 +719,7 @@ def track_gate_progress(gs: GuardState, finding: str, messages=None) -> None:
     one that did)."""
     gs.last_gate_flag = finding or ""
     gs.last_gate_seq = gs.action_seq
+    gs.last_gate_workspace_fp = wsview.current().change_fingerprint
     if not finding:
         gs.gate_stall = 0
         gs.gate_sig = ""
@@ -3258,7 +3262,7 @@ class Loop:
         coder = self._recover_text_write(sess, coder, framed, body, rlog)
         coder = _normalize_completion(coder, rlog)  # a task_complete call → step 'done' (or dropped)
         coder = guard_rumination(coder, framed, self._ctx.coder_chat, rlog, step=step,
-                                 phase=f"coder-s{step}", coder_role=self._ctx.coder_role)
+                                 phase=f"coder-s{step}", coder_role=self._ctx.coder_role, sess=sess)
         coder = guard_truncation(coder, framed, self._ctx.coder_chat, rlog, step=step, phase=f"coder-s{step}")
         _strip_completion_banners(coder)  # scrub cria's own banners the coder parroted
         if self._ctx.coder_role is not None:  # strip leaked reasoning from the coder's content when off
@@ -8877,16 +8881,35 @@ def newer_own_run(sess) -> str:
                         exit=f", and that run exited with code {code}" if code is not None else "")
 
 
-def gate_age(sess) -> int:
-    """How many of the coder's OWN calls have run since the last gate. 0 when cria cannot say.
+def gate_workspace_unchanged(sess) -> bool:
+    """True only when cria can PROVE no workspace file changed since the last gate was read: the
+    fingerprint taken then equals the one the bound view gives now (`wsview.View.change_fingerprint`).
+    An unknown fingerprint on either side is False — "changed" is the safe direction."""
+    if sess is None:
+        return False
+    then = getattr(sess, "last_gate_workspace_fp", None)
+    return bool(then) and then == wsview.current().change_fingerprint
 
-    THE PRIMITIVE for both halves of one fact. A gate verdict is pinned into two places — the
-    compaction writer's INPUT framing (`selfcompact.checks_input`) and the briefing's OUTPUT
-    appendix (`server._last_checks_note`) — and each one says how current it is. They must not be
-    able to disagree about the age, so neither of them computes it."""
+
+def gate_calls_since(sess) -> int:
+    """How many of the coder's OWN calls have run since the last gate. 0 when cria cannot say."""
     if sess is None:
         return 0
     return max(0, getattr(sess, "action_seq", 0) - getattr(sess, "last_gate_seq", 0))
+
+
+def gate_age(sess) -> int:
+    """How current the last gate verdict is — THE PRIMITIVE for both halves of one fact.
+
+    A gate verdict is pinned into two places — the compaction writer's INPUT framing
+    (`selfcompact.checks_input`) and the briefing's OUTPUT appendix (`server._last_checks_note`) — and
+    each one says how current it is. They must not be able to disagree, so neither of them computes it.
+
+    The number of the coder's own calls since the gate, EXCEPT ``selfcompact.UNCHANGED_SINCE_CHECK``
+    when calls have run but the workspace fingerprint proves no file changed since: then the check
+    still describes the current code, and call count is the wrong measure of its age."""
+    n = gate_calls_since(sess)
+    return selfcompact.UNCHANGED_SINCE_CHECK if n and gate_workspace_unchanged(sess) else n
 
 
 def passing_test_regression(sess, report) -> str:
@@ -12596,8 +12619,67 @@ def guard_probe_steer(gs: GuardState, body: dict, rlog, *, author, step=None) ->
     return authored or canned
 
 
+def grounded_rumination_step(sess, conv: list) -> str:
+    """The rumination notice's next-step sentence when cria can ground it, else "" (the caller then
+    keeps the default wording).
+
+    Grounded means ALL of: the latest gate is red; the workspace fingerprint proves no file changed
+    since it (`gate_workspace_unchanged`); that gate's own output names a ``file:line: message``
+    location; and the text of that line — read from the file's body the view holds — appears in a
+    tool result of THIS conversation, i.e. the model can see the current file. Then "re-read the file
+    or re-run the check" is advice to repeat what it already holds, and the true fact is named
+    instead: the checker's own lines, verbatim, and that the file is above and unchanged."""
+    if sess is None or not getattr(sess, "last_gate_red", False):
+        return ""
+    flag = getattr(sess, "last_gate_flag", "") or ""
+    if not flag or not gate_workspace_unchanged(sess):
+        return ""
+    lines = flag.splitlines()
+    for i, raw in enumerate(lines):
+        located = split_located_line(raw)
+        if located is None:
+            continue
+        path, lineno, shown = located
+        body_text = wsview.current().read(path)
+        if body_text is None:
+            continue
+        src = body_text.splitlines()
+        if not 1 <= lineno <= len(src) or len(src[lineno - 1].strip()) < 4:
+            continue
+        needle = src[lineno - 1].strip()
+        if not any(isinstance(m, dict) and m.get("role") == "tool" and needle in _message_text(m)
+                   for m in conv or []):
+            continue
+        message = [shown]
+        for nxt in lines[i + 1:]:
+            if nxt.startswith(("$ ", "\u2022 ")) or not nxt.strip():
+                break
+            message.append(nxt)
+        return prompts.render("rumination_next_step_grounded", message="\n".join(message), path=path)
+    return ""
+
+
+def split_located_line(line: str):
+    """``(path, line number, text)`` for a gate-block line carrying a checker's ``file:line: message``
+    (optionally after ``$ command \u2014 `` or a bullet), else None. The text is the checker's words,
+    verbatim, from the location on."""
+    text = line.split(" \u2014 ", 1)[1] if line.startswith("$ ") and " \u2014 " in line else line
+    text = text.lstrip("\u2022 ").strip()
+    d = probeparse.split_diag(text)
+    if d is None or not d[1] or not d[0]:
+        return None
+    return d[0], int(d[1]), text
+
+
+def _message_text(m: dict) -> str:
+    c = m.get("content")
+    if isinstance(c, str):
+        return c
+    return json.dumps(c, ensure_ascii=False) if c is not None else ""
+
+
 def guard_rumination(coder: dict, body: dict, coder_chat, rlog, *, step=None, phase: str = "coder",
-                     coder_role=None) -> dict:
+                     coder_role=None, sess=None) -> dict:
     """Rumination guard (ported from codex-local §19). The streaming coder aborted this turn as
     a reasoning loop (``finish_reason == "rumination"``) — the model was second-guessing itself
     into the ground and would otherwise return an empty turn or run to truncation. Re-prompt to
@@ -12609,6 +12691,8 @@ def guard_rumination(coder: dict, body: dict, coder_chat, rlog, *, step=None, ph
     the guards are NOT gated behind the planner; only plan-authored guidance is."""
     attempt = 0
     conv = list(body.get("messages") or [])
+    # Computed once, from the session's gate facts: "" keeps the default next-step sentence.
+    grounded = grounded_rumination_step(sess, conv) if massage.is_ruminating(coder) else ""
     _last_notice = None   # the guard notice this loop appended, so a retry REPLACES it
     _last_sent = None     # the conversation the previous attempt actually sent
     while massage.is_ruminating(coder) and attempt < MAX_RUMINATION_RETRIES:
@@ -12651,10 +12735,12 @@ def guard_rumination(coder: dict, body: dict, coder_chat, rlog, *, step=None, ph
             # can already make, and wrong for one circling because it has not read the thing it needs
             # (feed-pipeline-java 1787436645 — `CSVParserBuilder` appears in the turn after it).
             prompts.render("rumination_guard_length",
-                           tokens=v.get("reasoning_tokens", "many"))
+                           tokens=v.get("reasoning_tokens", "many"),
+                           **({"rumination_next_step": grounded} if grounded else {}))
             if v.get("arm") == "length" else
             prompts.render("rumination_guard", hits=v.get("hits", "several"),
-                           tokens=v.get("reasoning_tokens", "many")))}
+                           tokens=v.get("reasoning_tokens", "many"),
+                           **({"rumination_next_step": grounded} if grounded else {})))}
         # ONE NOTICE, REPLACED — never a stack. Each retry used to APPEND, so attempt 3 carried three
         # copies of the same paragraph and the prompt grew with every failure. Walked on
         # `shipping-rates-rb x ternary-bonsai` 1787111689, whose last four calls all died the same

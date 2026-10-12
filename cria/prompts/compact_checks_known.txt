@@ -17,3 +17,6 @@ fresh = If this section and the transcript disagree, this section is right.
 # The coder has run its own commands since. The block is still a real result, but it is no longer
 # the newest one in the room, and it may not claim to outrank what came after it.
 stale = This check ran {{CALLS}} of the coder's own commands ago, so the transcript may hold a newer one. Where a LATER command in the transcript ran the same check and reported something different, that later result is the current state and this section is not — say what the newest run showed, and say when each ran.
+# The coder has run commands since, but no workspace file has changed since the check, so the block
+# describes the code as it is now.
+unchanged = No workspace file has changed since this check ran, so this section describes the current code.

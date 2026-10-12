@@ -120,6 +120,18 @@ OUTSIDE_MAX = 24
 PRUNE_DIRS = (".git",)
 
 
+# What a check's own run rewrites. Excluded from the change fingerprint (`View.change_fingerprint`).
+FRESHNESS_IGNORE_SEGMENTS = ("target", "__pycache__", ".pytest_cache", ".mypy_cache", "node_modules",
+                             ".gradle")
+FRESHNESS_IGNORE_PREFIXES = ("tmp/read-only",)
+
+
+def _freshness_ignored(rel: str) -> bool:
+    if any(rel == p or rel.startswith(p + "/") for p in FRESHNESS_IGNORE_PREFIXES):
+        return True
+    return any(seg in FRESHNESS_IGNORE_SEGMENTS for seg in rel.split("/"))
+
+
 # --------------------------------------------------------------------------- the view
 
 @dataclass(frozen=True)
@@ -151,7 +163,8 @@ class View:
 
     __slots__ = ("root", "_files", "_dirs", "_folded", "_bodies", "_body_generation", "_stale",
                  "_progs", "_outside", "_undeliverable", "_surveyed", "_complete", "_sess",
-                 "_survey_generation", "_ran_a_mutator", "_cache_candidates", "_body_confirmed")
+                 "_survey_generation", "_ran_a_mutator", "_cache_candidates", "_body_confirmed",
+                 "_edits_seen", "_tree_files")
 
     def __init__(self, root: str | None, sess: str = "") -> None:
         self.root: str = _posix(root or "").rstrip("/") if root else ""
@@ -198,6 +211,12 @@ class View:
         # wrong for "what is there now" — and the callers that turn a False into a sentence about the
         # world need to be able to tell the two apart (#11b, #23c).
         self._ran_a_mutator = False
+        # How many landed writes/edits the conversation replay has applied to this view. Part of the
+        # change fingerprint so a same-size, same-mtime rewrite still moves it.
+        self._edits_seen = 0
+        # The LAST SURVEY's own (size, mtime) records — untouched by replayed reads/writes, which
+        # re-state `_files` from the conversation. The change fingerprint reads this, not `_files`.
+        self._tree_files: dict[str, tuple[int, float]] = {}
         # Whether the last listing named EVERY file. A survey that hit its own entry bound is still
         # worth having — what it listed is real — but "not listed" stops meaning "not there", and
         # every predicate downgrades accordingly.
@@ -267,6 +286,27 @@ class View:
             return None
         rows = [f"F\t{path}\t{size}\t{mtime!r}" for path, (size, mtime) in sorted(self._files.items())]
         rows.extend(f"D\t{path}" for path in sorted(self._dirs))
+        return hashlib.sha256("\n".join(rows).encode("utf-8")).hexdigest()
+
+    @property
+    def change_fingerprint(self) -> str | None:
+        """A cheap, deterministic fingerprint of the workspace files a check depends on, or ``None``.
+
+        Path + size + mtime of every surveyed file EXCEPT build output and cria's own spill dir
+        (``FRESHNESS_IGNORE_SEGMENTS``, ``FRESHNESS_IGNORE_PREFIXES``) — those move every time the
+        check itself runs, and say nothing about the code it checked. Two equal fingerprints mean no
+        workspace file changed in between; it is compared, never counted from calls.
+
+        ``None`` is "cannot say": no complete survey, a folded directory outside the ignored ones, or a
+        command that could have written ran after the last survey. Callers must treat ``None`` as
+        "changed" — it never licenses a claim of freshness."""
+        if not self._surveyed or not self._complete or self._ran_a_mutator:
+            return None
+        if any(not _freshness_ignored(d) for d in self._folded):
+            return None
+        rows = [f"F\t{path}\t{size}\t{mtime!r}" for path, (size, mtime) in sorted(self._tree_files.items())
+                if not _freshness_ignored(path)]
+        rows.append(f"E\t{self._edits_seen}")
         return hashlib.sha256("\n".join(rows).encode("utf-8")).hexdigest()
 
     # -- path algebra ------------------------------------------------------
@@ -602,6 +642,7 @@ class View:
                     self._files[rel] = (0, 0.0)
         self._surveyed = True
         self._ran_a_mutator = False
+        self._tree_files = dict(self._files)
         self._drop_stale_bodies()
 
     def _drop_stale_bodies(self) -> None:
@@ -771,13 +812,15 @@ class View:
             if name:
                 self._progs[name] = resolved
 
-    def note_written(self, path, content: str) -> None:
+    def note_written(self, path, content: str, _landed: bool = True) -> None:
         """cria lowered a whole-content write for this path and the harness reported it landed:
         the bytes ARE the file until something else changes it."""
         rel = self.rel(path)
         if rel is None:
             return
         raw = content if isinstance(content, bytes) else content.encode("utf-8", "replace")
+        if _landed:
+            self._edits_seen += 1
         self._bodies[rel] = raw
         self._body_generation.pop(rel, None)  # a coder tool result is not this gate's survey
         self._stale.discard(rel)
@@ -823,7 +866,7 @@ class View:
 
     def note_read(self, path, content: str) -> None:
         """A whole-file read result — the same proof as a write, from the other direction."""
-        self.note_written(path, content)
+        self.note_written(path, content, _landed=False)
 
     @property
     def may_have_changed(self) -> bool:
@@ -850,6 +893,7 @@ class View:
         ``note_changed``: never a guess. The size is recorded like a write's; the next survey that
         carries the file's real size is the check on the reconstruction."""
         rel = self.rel(path)
+        self._edits_seen += 1
         if rel is None or not old or rel not in self._bodies or rel in self._stale:
             return False
         body = self._bodies[rel]
@@ -874,6 +918,7 @@ class View:
         """An edit landed. cria knows the file changed and does NOT know what it now holds, which
         is a different thing from knowing nothing at all: existence survives, the body does not."""
         rel = self.rel(path)
+        self._edits_seen += 1
         if rel is None:
             return
         self._stale.add(rel)
@@ -996,6 +1041,10 @@ class DirectView(View):
                                         for p in prefixes))
             out.append((d, list(sub), sorted(files)))
         return out
+
+    @property
+    def change_fingerprint(self) -> str | None:
+        return None       # cria's own disk is never evidence about the coder's workspace
 
     def files(self) -> list[Entry] | None:
         return None

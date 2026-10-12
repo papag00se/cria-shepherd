@@ -570,6 +570,9 @@ def compaction_request(messages: list[dict], files_list: str = "", gate_plan=Non
 # How many of the coder's own calls may pass before the pinned check block stops claiming to outrank
 # the transcript. One owner for both halves of the fact: `server._last_checks_note` reads it too.
 CHECKS_STALE_AFTER = 2
+# The age the shared primitive (`loop.gate_age`) reports when the coder's calls have run since the
+# gate but the workspace fingerprint is UNCHANGED: not a count, a different fact.
+UNCHANGED_SINCE_CHECK = -1
 
 
 def checks_input(flag: str, since: int = 0) -> str:
@@ -594,7 +597,8 @@ def checks_input(flag: str, since: int = 0) -> str:
     if not flag:
         return ""
     lines = prompts.load_map("compact_checks_known")
-    clause = (prompts.fill(lines["stale"], calls=str(since)) if since >= CHECKS_STALE_AFTER
+    clause = (lines["unchanged"] if since == UNCHANGED_SINCE_CHECK
+              else prompts.fill(lines["stale"], calls=str(since)) if since >= CHECKS_STALE_AFTER
               else lines["fresh"])
     return prompts.fill(lines["block"], flag=flag, precedence=clause)
 
