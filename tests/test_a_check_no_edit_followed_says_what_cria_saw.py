@@ -285,6 +285,36 @@ class TheRuminationStepIsGroundedOnlyWhenItIsTrue(unittest.TestCase):
         msgs = self._after_read([("s", "exec_command", {"cmd": "ls"}), ("t", "exec_command", {"cmd": "echo y > b.txt"})])
         self.assertEqual(self.step(msgs), "")
 
+    def test_a_jvm_option_on_a_reader_is_not_proven_and_defeats_it(self):
+        from cria import dirguard
+        for cmd in (f"javap -J-Xlog:class+load=info:file={REL} java.lang.String",
+                    "javap -J-Xlog:class+load=info:file=new.log java.lang.String",
+                    f"jar tf x.zip -J-Xlog:class+load=info:file={REL}",
+                    "jar tf x.zip -J-Xlog:class+load=info:file=new.log",
+                    "javap -J -Xlog:class+load=info:file=n.log java.lang.String",
+                    "jar tf @args", "javap @args java.lang.String"):
+            for nw in (False, True):
+                self.assertFalse(dirguard.command_only_reads(cmd, "/w", no_writes=nw), (cmd, nw))
+            msgs = self._after_read([("s", "exec_command", {"cmd": cmd})])
+            self.assertEqual(self.step(msgs), "", cmd)
+        for cmd in ("javap -p java.lang.String", "jar tf x.zip"):
+            self.assertTrue(dirguard.command_only_reads(cmd, "/w", no_writes=True), cmd)
+
+    def test_the_jvm_option_really_writes(self):
+        import os, shutil, subprocess, tempfile
+        if not (shutil.which("javap") and shutil.which("jar")):
+            self.skipTest("no JDK")
+        d = tempfile.mkdtemp(prefix="o16jvm-")
+        try:
+            subprocess.run(["jar", "cf", "x.zip", "."], cwd=d, check=True, capture_output=True)
+            for cmd in ("javap -J-Xlog:class+load=info:file=new1.log java.lang.String",
+                        "jar tf x.zip -J-Xlog:class+load=info:file=new2.log"):
+                subprocess.run(["bash", "-c", cmd], cwd=d, capture_output=True)
+            self.assertTrue(os.path.exists(os.path.join(d, "new1.log")))
+            self.assertTrue(os.path.exists(os.path.join(d, "new2.log")))
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+
     def test_mutation_targets_is_read_only_or_unresolved(self):
         mt = lambda c: loop._mutation_targets({"name": "exec_command", "arguments": json.dumps({"cmd": c})}, "/w")
         self.assertEqual(mt("grep -rn x src | head -5"), [])

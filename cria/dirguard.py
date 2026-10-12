@@ -761,6 +761,8 @@ def _segment_reads(words: list[str], workspace: str | None = None, no_writes: bo
     if cmd == "unzip":  # a LISTING flag is mandatory: bare `unzip x.zip` extracts
         flags = set(_short_flags(args))
         return bool(flags & set("lpvtZ")) and flags <= set("lpvqtZ1") and not any(a.startswith("--") for a in args)
+    if cmd in ("jar", "javap") and any(a.startswith(("-J", "@")) for a in args):
+        return False  # -J hands the JVM an option (-Xlog:…:file=F writes); @file can hide one
     if cmd == "jar":  # `jar tf x.jar`: the table of contents, never create/extract/update
         first = args[0].lstrip("-") if args else ""
         return bool(first) and "t" in first and set(first) <= set("tvf")
