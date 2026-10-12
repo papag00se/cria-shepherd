@@ -68,7 +68,7 @@ def test_single_quoted_dollar_is_not_named_a_variable():
     r2 = _r(f"ls {REPO} '$HOME/x' | tar cf - -T -")
     assert r2 and "the shell variable" not in r2 and "pipe into `tar`" in r2
     r3 = _r(f'ls {REPO} "$HOME/x" | xargs rm')
-    assert r3 and "the shell variable ($HOME/x)" in r3
+    assert r3 and "the shell variable ($HOME)" in r3 and "$HOME/x" not in r3
 
 
 def test_printf_v_absolute_program_gets_no_builtin_rewrite():
@@ -111,7 +111,18 @@ def test_mixed_quote_words_never_invent_a_variable():
             assert out.strip() == want
 
 
-def test_live_dollar_is_still_named_beside_quoted_concatenation():
-    for tail in ('"$JAR"', "$JAR", '"${JAR}x"', "'a'b $JAR"):
+def test_dollar_prefixed_quoting_never_names_a_variable():
+    """Reviewer 2: `$'..'` (ANSI-C) and `$".."` (locale) are quoting, not expansion — whitelist, no grammar."""
+    for tail in ("$'$JAR'", "$'\\x24JAR'", "$'\\044JAR'", "x$'$JAR'y", "$'plain'", '$"\\$JAR"',
+                 '$"$JAR"', '$"plain"', "$'a' $JAR"):
         r = _r(f"ls {REPO} {tail} | tar cf - -T -")
-        assert r and "the shell variable" in r, (tail, r)
+        assert r, tail
+        assert "the shell variable" not in r, (tail, r)
+        assert "pipe into `tar`" in r, tail
+
+
+def test_live_dollar_is_named_with_exactly_the_variable_text():
+    for tail, name in (('"$JAR"', "$JAR"), ("$JAR", "$JAR"), ("${JAR}x", "${JAR}"), ('"${JAR}x"', "${JAR}"),
+                       ("'a'b $JAR", "$JAR"), ("$JAR/sub", "$JAR")):
+        r = _r(f"ls {REPO} {tail} | tar cf - -T -")
+        assert r and f"the shell variable ({name})" in r, (tail, r)

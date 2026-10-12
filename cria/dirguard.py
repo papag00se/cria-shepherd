@@ -1276,9 +1276,9 @@ def _unproven_element(command: str, workspace: str | None):
         return None
     flags = _word_liveness(command)
     if len(flags) != len(words):
-        flags = [False] * len(words)  # provenance not established: never claim a variable
+        flags = [None] * len(words)  # provenance not established: never claim a variable
     seg: list[str] = []
-    live: list[bool] = []
+    live: list = []
     after_pipe = False
     i = 0
     while i <= len(words):
@@ -1309,37 +1309,49 @@ def _unproven_element(command: str, workspace: str | None):
     return None
 
 
-def _word_liveness(command: str) -> list[bool]:
-    """One flag per word/operator token, in command order: does the word contain a ``$`` that bash would
-    expand — outside single quotes and not backslash-escaped. A real quote-aware scan of the command
-    itself (never a comparison of two tokenizations): ``'$NAME'foo`` is literal text, ``"$NAME"`` is live."""
-    out: list[bool] = []
-    cur = None  # None = between words; else the live flag of the word being built
+_VAR_AT = re.compile(r"\$(?:[A-Za-z_]\w*|\{[A-Za-z_]\w*\})")
+
+
+def _word_liveness(command: str) -> list[str | None]:
+    """One entry per word/operator token, in command order: the exact ``$NAME`` / ``${NAME}`` text of the
+    first ``$`` in the word that bash would expand (outside single quotes, not backslash-escaped,
+    immediately followed by a name), else None. A positive whitelist, not a bash grammar: any command
+    with ``$'``, ``$"``, a backtick, ``$(`` or a heredoc never names a variable."""
+    if any(t in command for t in ("$'", '$"', "`", "$(", "<<")):
+        return [None] * len(_words_of(command) or [])
+    out: list[str | None] = []
+    cur: str | None = None
+    inword = False
     punct = False
     i, n = 0, len(command)
+
+    def live_at(k):
+        nonlocal cur
+        if cur is None:
+            m = _VAR_AT.match(command, k)
+            if m:
+                cur = m.group(0)
+
     while i < n:
         c = command[i]
         if c in " \t\r":
-            if cur is not None:
+            if inword:
                 out.append(cur)
-                cur = None
-            punct = False
+            inword, cur, punct = False, None, False
         elif c in ";&|()<>\n":
             if not punct:
-                if cur is not None:
+                if inword:
                     out.append(cur)
-                cur = False
-                punct = True
+                inword, cur, punct = True, None, True
         else:
             if punct:
-                out.append(False)
-                cur, punct = None, False
-            if cur is None:
-                cur = False
+                out.append(None)
+                inword, cur, punct = False, None, False
+            inword = True
             if c == "\\":
                 i += 1
             elif c == "$":
-                cur = True
+                live_at(i)
             elif c == "'":
                 j = command.find("'", i + 1)
                 i = n if j < 0 else j
@@ -1349,23 +1361,23 @@ def _word_liveness(command: str) -> list[bool]:
                     if command[i] == "\\":
                         i += 1
                     elif command[i] == "$":
-                        cur = True
+                        live_at(i)
                     i += 1
         i += 1
-    if cur is not None:
+    if inword:
         out.append(cur)
     return out
 
 
-def _segment_element(seg: list[str], workspace, after_pipe: bool, live: list[bool]):
+def _segment_element(seg: list[str], workspace, after_pipe: bool, live: list):
     cmd = seg[0]
     if re.match(r"^[A-Za-z_]\w*=", cmd):
         return ("assign", cmd)
     if cmd in ("cd", "pushd") and not _segment_reads(seg, workspace):
         return (cmd, seg[1] if len(seg) > 1 else "")
-    for a, is_live in zip(seg[1:], live[1:]):
-        if is_live:
-            return ("variable", a)
+    for name in live[1:]:
+        if name:
+            return ("variable", name)
     if cmd == "xargs":
         return ("xargs", cmd)
     if cmd in _INTERPRETERS:
