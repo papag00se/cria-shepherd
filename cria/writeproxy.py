@@ -30,7 +30,7 @@ import re
 from pathlib import Path
 from shlex import quote as _qbash  # one bash-quoting rule (was a hand-rolled _qbash)
 
-from . import brave, denial, depsurface, dirguard, editrecovery, prompts, webfetch, wsview
+from . import bodykeys, brave, denial, depsurface, dirguard, editrecovery, prompts, webfetch, wsview
 from .probegate import GATE_SENTINEL
 from . import content_reduce as content_reduce_mod
 from . import probeparse
@@ -2505,7 +2505,7 @@ def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | Non
                 # PEP 668: `pip install` fails by design on this box. A weak model retries it forever
                 # (observed: Fabliq wedged a whole step re-running pip). Append the remedy (stdlib /
                 # --break-system-packages / venv) ONCE — grounded in the real error, not invented.
-                out.append({**m, "content": content + "\n\n" + prompts.load("pep668_remedy")})
+                out.append(_noted(m, content, prompts.load("pep668_remedy")))
             elif _found_nothing(own_cmds.get(tid, ""), content):
                 # AN EMPTY RESULT FROM A SEARCH IS AN ANSWER. `grep` exits 1 and prints nothing when
                 # the string is not there, and the harness envelope renders that as `Process exited
@@ -2515,13 +2515,13 @@ def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | Non
                 # each time, and read it as "the command did not work" rather than "the method does
                 # not exist" — which was the whole question of the run. Its own words at 0072: "in our
                 # fetch we didn't see that snippet; maybe it's later in the file."
-                out.append({**m, "content": content + "\n\n" + prompts.load("search_found_nothing")})
+                out.append(_noted(m, content, prompts.load("search_found_nothing")))
             elif _blind_pipe_failure(own_cmds.get(tid, ""), content):
                 # The model's OWN filter pipe ate the error: `pytest … | grep -E 'passed|failed'` on a
                 # collection error prints NOTHING (grep exits 1 on no match), and a weak model re-ran
                 # that blind for ELEVEN turns while the real traceback existed (run 0729-gemma4 B3).
                 # The note states only computable facts: nonzero exit, empty output, a filter present.
-                out.append({**m, "content": content + "\n\n" + prompts.load("filtered_failure_note")})
+                out.append(_noted(m, content, prompts.load("filtered_failure_note")))
             elif content != str(m.get("content") or ""):
                 out.append({**m, "content": content})   # the binary-soup cleanse changed it
             else:
@@ -2637,14 +2637,14 @@ def _note_dependency_surface(messages: list[dict], workspace_root, sess_key: str
             break   # anchored notes have priority; if even one cannot fit, stop -- phase 2 won't fit either
         anchor_msg = by_call_id.get(anchor_id)
         if anchor_msg is not None:
-            anchor_msg["content"] = anchor_msg["content"] + "\n\n" + note_text
+            append_note(anchor_msg, note_text)
             total_bytes += note_bytes
             anchor_renders += 1
             continue
         # Anchor lost (compaction) -- re-anchor once on the newest tool result, same cached text.
         new_cid = newest_tool.get("tool_call_id")
         if new_cid:
-            newest_tool["content"] = newest_tool["content"] + "\n\n" + note_text
+            append_note(newest_tool, note_text)
             depsurface.set_anchor_state(sess_key, coordinate_key, new_cid, note_text)
             total_bytes += note_bytes
             anchor_renders += 1
@@ -2689,7 +2689,7 @@ def _note_dependency_surface(messages: list[dict], workspace_root, sess_key: str
                 rlog.emit("writeproxy.dependency_surface_withheld_new", level="info", ecosystem=eco,
                           coordinate=coordinate_key)
             continue
-        newest_tool["content"] = newest_tool["content"] + "\n\n" + note
+        append_note(newest_tool, note)
         depsurface.set_anchor_state(sess_key, coordinate_key, cid, note)
         depsurface.clear_abstain(sess_key, coordinate_key)
         total_bytes += note_bytes
@@ -2723,7 +2723,7 @@ def _note_dependency_surface(messages: list[dict], workspace_root, sess_key: str
         if shown_lines:
             block = prompts.render("dependency_surface_withheld", count=str(len(pointers)),
                                    pointers="\n".join(shown_lines))
-            newest_tool["content"] = newest_tool["content"] + "\n\n" + block
+            append_note(newest_tool, block)
             total_bytes += len(block.encode("utf-8", "replace"))
 
 
@@ -2759,6 +2759,38 @@ def _render_dependency_surface(surface, ecosystem: str) -> str:
                           shown=str(len(shown)), lines="\n".join(shown), read_hint=surface.read_hint)
 
 
+def _noted(m: dict, content: str, note: str) -> dict:
+    out = dict(m)
+    append_note(out, note, content)
+    return out
+
+
+def _digest(text: str) -> str:
+    return hashlib.sha1(text.encode("utf-8", "replace")).hexdigest()
+
+
+def append_note(m: dict, note: str, content: str | None = None) -> None:
+    """Append cria's ``note`` to tool message ``m`` and record WHERE THE PAYLOAD ENDED (length + digest of what
+    the tool said), the first time only — a cria-internal hint (`bodykeys.PAYLOAD_BOUNDARY`) the wire strips.
+    ``content`` is the payload when the caller already cleansed it. Every producer that appends cria text to
+    a tool result goes through here, so a reader that counts the payload never has to guess from the text."""
+    c = m.get("content") if content is None else content
+    c = c if isinstance(c, str) else ""
+    if bodykeys.PAYLOAD_BOUNDARY not in m:
+        m[bodykeys.PAYLOAD_BOUNDARY] = (len(c), _digest(c))
+    m["content"] = c + "\n\n" + note
+
+
+def payload_of(m: dict, content: str) -> str:
+    """The tool's own payload within ``content``: cut at the producer's recorded boundary when it is still
+    true of these bytes (length AND digest), else the whole content — never a guess from marker text."""
+    b = m.get(bodykeys.PAYLOAD_BOUNDARY)
+    if isinstance(b, (tuple, list)) and len(b) == 2 and isinstance(b[0], int) \
+            and 0 <= b[0] <= len(content) and _digest(content[:b[0]]) == b[1]:
+        return content[:b[0]]
+    return content
+
+
 def _note_missing_dependency(messages: list[dict], workspace_root, rlog) -> None:
     """Label the MOST RECENT command result whose own output says a dependency will not load.
 
@@ -2791,7 +2823,7 @@ def _note_missing_dependency(messages: list[dict], workspace_root, rlog) -> None
     note = prompts.fill(proberun.dependency_line(eco, workspace_root or ""), name=name)
     if note in last["content"]:
         return
-    last["content"] = last["content"] + "\n\n" + note
+    append_note(last, note)
     if rlog is not None:
         rlog.emit("writeproxy.dependency_note", level="info", ecosystem=eco, name=name)
 
@@ -2863,7 +2895,7 @@ def _note_dependency_search(messages: list[dict], own_cmds: dict[str, str],
             else prompts.fill(words["absent"], searched=searched))
     if note in last["content"]:
         return
-    last["content"] = last["content"] + "\n\n" + note
+    append_note(last, note)
     if rlog is not None:
         rlog.emit("writeproxy.dependency_source_note", level="info",
                   ecosystem=eco or "", root=root, searched=searched)

@@ -87,7 +87,12 @@ FENCED_REFUSED = "cria_fenced_refused"
 #: would otherwise be authored from a truncated thought.
 RUMINATION = "cria_rumination"
 
+#: MESSAGE-level (not body): ``(length, sha1)`` of a tool result's own payload, recorded by the producer
+#: that appended cria text after it (`writeproxy.append_note`), so the ledger counts only the payload.
+#: Stripped from every message at the wire (`Upstream._prep`).
+PAYLOAD_BOUNDARY = "cria_payload_boundary"
+
 #: Every key above. The wire strips this set wholesale, so adding a key here is all it takes to keep
 #: it off the API — the thing five scattered literals could not guarantee.
 ALL = (MERGE_TURNS, OUTPUT_RESERVE, LOST_CALL, PINNED_TASK, CONTEXT_REFIT_NO_CHANGE,
-       CALLER_INSTRUCTIONS, CALLER_PERSONA, CALLER_SPAN, RESTORED_FILES, COMPLETION_REMEDIATION, NOTES, RUMINATION, FENCED_REFUSED)
+       CALLER_INSTRUCTIONS, CALLER_PERSONA, CALLER_SPAN, RESTORED_FILES, COMPLETION_REMEDIATION, NOTES, RUMINATION, FENCED_REFUSED, PAYLOAD_BOUNDARY)

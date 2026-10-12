@@ -513,7 +513,8 @@ class Upstream:
         if isinstance(out.get("messages"), list):
             out["messages"] = [{k: v for k, v in m.items()
                                 if k not in (bodykeys.CALLER_INSTRUCTIONS, bodykeys.CALLER_PERSONA,
-                                             bodykeys.CALLER_SPAN, bodykeys.RESTORED_FILES)}
+                                             bodykeys.CALLER_SPAN, bodykeys.RESTORED_FILES,
+                                             bodykeys.PAYLOAD_BOUNDARY)}
                                if isinstance(m, dict) else m for m in out["messages"]]
         sent_estimate = contextfloor.est_total(out.get("messages"), out.get("tools"))
         # The pre-frame observer never rides in ``out``.  It is correlated here, after every wire

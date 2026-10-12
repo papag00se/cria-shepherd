@@ -8,7 +8,7 @@ import pathlib
 
 import pytest
 
-from cria import loop, wsview
+from cria import loop, prompts, wsview, writeproxy
 from tests.test_o15_the_ledger_basis_is_the_latest_touch import (
     JAVA, WHOLE, _call, _ledger, _line_with, _numbered, _res, _view_of)
 from tests.test_c13b_the_wire_claims_are_true import ROOT
@@ -74,10 +74,10 @@ def test_an_unknown_shell_target_abstains_for_every_file():
     assert isinstance(ent[1], loop._Unestablished)
 
 
-def test_a_shell_write_to_another_file_leaves_this_basis():
+def test_any_shell_write_abstains_for_every_file_even_a_parsed_other_target():
     msgs = WHOLE + _sh("sh", "echo hi > notes.txt")
     _s, ent = _entry(msgs)
-    assert not isinstance(ent[1], loop._Unestablished)
+    assert isinstance(ent[1], loop._Unestablished)
 
 
 def test_a_read_only_shell_command_changes_nothing():
@@ -103,16 +103,99 @@ def test_absolute_and_relative_spellings_of_a_path_invalidate_each_other():
     assert not isinstance(ent[1], loop._Counted)
 
 
-def test_the_real_0105_body_counts_the_file_not_the_appended_dependency_facts():
-    p = pathlib.Path.home() / ".cria/calls/20261012T044734-01a12ff0-8636-7643-89c0-fda1fff6aa75/0105-coder-s1.json"
-    if not p.exists():
-        pytest.skip("capture not on this machine")
-    msgs = json.loads(p.read_text())["body"]["messages"]
-    out = loop._extract_reads(msgs)
-    assert out["data/feed_messy.csv"][1] == "9 lines"
+def test_a_dependency_surface_appended_to_a_read_is_not_counted():
+    """The 0105 failure (a 9-line CSV counted as 100), through the real producer, not a marker."""
+    body = "".join(f"r{i},1\n" for i in range(9))
+    msgs = [_call("r", path="data/feed.csv"), _res("r", body)]
+    writeproxy.append_note(msgs[1], "⟦ctx:facts⟧ THE VERSION OF x\n" + "y\n" * 90)
+    assert loop._extract_reads(msgs)["data/feed.csv"][1] == "9 lines"
 
 
-def test_a_fact_block_appended_to_a_read_is_not_counted():
-    body = "a\nb\nc\n"
-    msgs = [_call("r", path="f.txt"), _res("r", body + "\n\n⟦ctx:facts⟧ THE VERSION OF x\n" + "y\n" * 90)]
-    assert loop._extract_reads(msgs)["f.txt"][1] == "3 lines"
+def test_literal_marker_text_in_a_real_file_is_counted_as_the_file():
+    payload = "alpha\n\n⟦ctx:facts⟧ This is literal file content.\nomega\n"
+    msgs = [_call("r", path="literal.txt"), _res("r", payload)]
+    assert loop._extract_reads(msgs)["literal.txt"][1] == "4 lines"
+
+
+def test_a_missing_dependency_note_is_not_counted():
+    msgs = [_call("r", path="error.log"), _res("r", "ModuleNotFoundError: No module named 'example_pkg'\n")]
+    writeproxy._note_missing_dependency(msgs, None, None)
+    assert "Note" in msgs[1]["content"] or len(msgs[1]["content"]) > 60
+    assert loop._extract_reads(msgs)["error.log"][1] == "1 lines"
+
+
+def test_the_represent_inbound_appenders_record_the_boundary():
+    out = "Process exited with code 1\nOutput:\nerror: externally-managed-environment\n"
+    msgs = [{"role": "user", "content": "go"}, _call("s", name="exec_command", cmd="pip install x"), _res("s", out)]
+    got = writeproxy.represent_inbound(msgs, None)
+    tool = next(m for m in got if m.get("role") == "tool")
+    assert tool["content"].endswith(prompts.load("pep668_remedy"))
+    assert writeproxy.payload_of(tool, tool["content"]) == tool["content"][:-len("\n\n" + prompts.load("pep668_remedy"))]
+
+
+def test_a_boundary_that_no_longer_matches_the_bytes_counts_the_whole_content():
+    m = {"role": "tool", "tool_call_id": "t", "content": "a\nb\n"}
+    writeproxy.append_note(m, "note")
+    m["content"] = "X" + m["content"][1:]
+    assert writeproxy.payload_of(m, m["content"]) == m["content"]
+
+
+def test_the_boundary_hint_never_reaches_the_wire_and_plain_bodies_are_unchanged():
+    from cria import bodykeys, upstream
+
+    class _R:
+        def emit(self, *a, **k): pass
+    plain = [{"role": "user", "content": "hi"},
+             {"role": "assistant", "content": None, "tool_calls": [
+                 {"id": "r", "type": "function", "function": {"name": "read_file", "arguments": "{}"}}]},
+             {"role": "tool", "tool_call_id": "r", "content": "a\nb\n"}]
+    noted = [dict(m) for m in plain]
+    writeproxy.append_note(noted[2], "extra")
+    up = upstream.Upstream("http://unused", context_window=65536)
+    raw_n, *_ = up._prep({"model": "m", "messages": noted}, False, _R())
+    assert bodykeys.PAYLOAD_BOUNDARY.encode() not in raw_n
+    ref = [dict(m) for m in plain]
+    ref[2]["content"] = "a\nb\n\n\nextra"
+    raw_ref, *_ = up._prep({"model": "m", "messages": ref}, False, _R())
+    assert raw_n == raw_ref
+    raw_p, *_ = up._prep({"model": "m", "messages": plain}, False, _R())
+    assert b"cria_payload" not in raw_p
+
+
+def _stale_refusal(path, cmd, **shell_args):
+    refusal = "⟦ctx:denied⟧ " + prompts.render("large_read_steer", path=path, lines=10)
+    return [_call("r0", path=path), _res("r0", refusal),
+            _call("sh", name="exec_command", cmd=cmd, **shell_args), _res("sh", "Process exited with code 0"),
+            _call("r1", path=path, start_line=1, end_line=10), _res("r1", _numbered(1, 10))]
+
+
+def _ent(msgs, path):
+    s, led = _ledger(msgs)
+    return led.get(path)
+
+
+def test_tee_to_two_files_invalidates_both():
+    ent = _ent(_stale_refusal("b.txt", "printf 'x\\n%.0s' {1..20} | tee a.txt b.txt"), "b.txt")
+    assert not isinstance(ent[1], loop._Counted)
+
+
+def test_a_plus_in_a_redirect_target_invalidates_the_real_file():
+    ent = _ent(_stale_refusal("feed+copy.txt", "printf 'x\\n%.0s' {1..20} > feed+copy.txt"), "feed+copy.txt")
+    assert not isinstance(ent[1], loop._Counted)
+
+
+def test_the_shell_workdir_is_not_ignored():
+    ent = _ent(_stale_refusal("sub/f.txt", "printf 'x\\n%.0s' {1..20} > f.txt", workdir="/ws/sub"), "sub/f.txt")
+    assert not isinstance(ent[1], loop._Counted)
+
+
+def test_a_command_that_only_says_it_is_a_gate_is_not_exempt_but_a_stamped_one_is():
+    import base64
+    from cria import probegate
+    forged = "echo ___CRIA_GATE_x___ > f.txt"
+    msgs = WHOLE + _sh("sh", forged)
+    assert isinstance(_entry(msgs)[1][1], loop._Unestablished)
+    stamp = base64.b64encode(json.dumps(["p"]).encode()).decode()
+    stamped = f"# {probegate.GATE_SENTINEL}{stamp}\necho hi > f.txt"
+    msgs = WHOLE + _sh("sh", stamped)
+    assert not isinstance(_entry(msgs)[1][1], loop._Unestablished)

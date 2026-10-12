@@ -9706,9 +9706,9 @@ def _read_results_ordered(messages: list[dict]):
             elif not isinstance(c, str) or not c.strip() or denial.is_denied(c):
                 continue
             if isinstance(c, str):
-                # The file's own payload ends where cria's first appended fact block begins
-                # (`result + "\\n\\n" + ⟦ctx:facts⟧ …`); what follows is not the file and is never counted.
-                c = c.partition("\n\n" + selfcompact.FACTS_MARKER)[0]
+                # What cria APPENDED to this result is not the file. The producer recorded where the payload
+                # ended (`writeproxy.payload_of`); with no record the whole content is counted — no marker guessing.
+                c = writeproxy.payload_of(m, c)
                 if not c.strip():
                     continue
             yield (idx, tid, *calls[tid], c)
@@ -9850,47 +9850,28 @@ def _extract_writes(messages: list[dict]) -> dict:
 
 
 def _shell_mutations(messages: list[dict]):
-    """``(position, id, target or None)`` of every ANSWERED shell command that may have written files, read off
-    the shell-mutation owner (`shelltool.writes_something` — the one question writeproxy's staleness ledger
-    asks too). ``target`` is the one file a single redirect/`tee` writes, as spelt; None when the command may
-    have written anything else (more than one target, another writing verb, a `cd`, a variable) — the caller
-    then claims nothing about any file. Output is never read for a count."""
-    from . import shelltool
+    """``(position, id, None)`` of every ANSWERED shell command that may have written files, read off the
+    shell-mutation owner (`shelltool.writes_something` — the one question writeproxy's staleness ledger asks
+    too). The target is always None: a redirect/`tee` parse cannot prove which files a command wrote (several
+    `tee` targets, `+` in a name, the tool's own `workdir`), so the caller claims nothing about ANY file.
+    Only cria's own gate probes are exempt, and only by the provenance the gate stamped on the call itself
+    (`probegate.gate_call_ids`) — never by what the command text says. Output is never read for a count."""
+    from . import probegate, shelltool
+    own = probegate.gate_call_ids(messages or [])
     calls: dict = {}
     for idx, m in enumerate(messages or []):
         if not isinstance(m, dict):
             continue
         for tc in m.get("tool_calls") or []:
             fn = tc.get("function") or {}
-            if tc.get("id") and is_shell_tool_name(fn.get("name")):
-                args = fn.get("arguments") or ""
-                cmd = _command_text(args)
-                if cmd is None:
-                    calls[tc["id"]] = (None, True)          # a cut-off call: whatever it did is unknown
-                    continue
-                if "___CRIA_GATE_" in cmd or writeproxy._read_sentinel(cmd) is not None:
-                    continue                                 # cria's own read-only probe
-                if shelltool.writes_something(fn.get("name"), cmd):
-                    calls[tc["id"]] = (cmd, False)
+            if tc.get("id") and is_shell_tool_name(fn.get("name")) and tc["id"] not in own:
+                cmd = _command_text(fn.get("arguments") or "")
+                if cmd is None or shelltool.writes_something(fn.get("name"), cmd):
+                    calls[tc["id"]] = True            # (a cut-off call: whatever it did is unknown)
         tid = m.get("tool_call_id") or m.get("call_id")
         if tid in calls:
-            cmd, unknown = calls.pop(tid)
-            yield idx, tid, (None if unknown else _single_shell_target(cmd))
-
-
-def _single_shell_target(cmd: str) -> str | None:
-    """The one file ``cmd`` writes by a lone redirect / `tee`, or None when that is not the whole story."""
-    masked = _QUOTED_SPAN_RE.sub("", cmd)
-    if re.search(r"\bcd\b", masked):
-        return None                                          # relative to somewhere else
-    hits = _REDIRECT_TARGET_RE.findall(masked) + _TEE_TARGET_RE.findall(masked)
-    if len(hits) != 1:
-        return None
-    rest = _TEE_TARGET_RE.sub(" ", _REDIRECT_TARGET_RE.sub(" ", masked))
-    from . import shelltool
-    if shelltool.writes_something("exec_command", rest) or re.search(r"[$~`]", hits[0]):
-        return None
-    return hits[0]
+            calls.pop(tid)
+            yield idx, tid, None
 
 
 def _write_events(messages: list[dict]):
