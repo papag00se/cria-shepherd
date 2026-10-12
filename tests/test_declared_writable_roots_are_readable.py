@@ -70,6 +70,11 @@ def _bypasses():
             f"sort -T {I}/m2 x", f"file --comp -m m {I}/a", f"rg --pr=cmd x {I}/m2", f"rg --pre=cmd x {I}/m2",
             f"rg --hostname=b x {I}/m2", f"cat {I}/a >{{{I}/m2/x,}}", f"cat {I}/a > {I}/m2/x*",
             f"cat {I}/a | tee {{{I}/m2/x,}}", f"cat {I}/a > x[12]", f"cat {I}/a > \"$D/x\"",
+            f"ls >/dev/null;>x rm -rf {I}/m2", f"true|<x rm {I}/b", f"ls {I} ;>x rm {I}/b",
+            f"ls {I} |>x rm {I}/b", f"ls {I} &&>x rm {I}/b", f"ls {I} ||>x rm {I}/b",
+            f"ls {I}\n>x rm {I}/b", f"ls {I} ;<x rm {I}/b", f"ls {I} |<x rm {I}/b",
+            f"ls {I} |& rm {I}/b", f"ls {I} ;; rm {I}/b", f"cat <>{I}/m2/new", f"cat <<<x {I}/a",
+            f"ls {I} ;&>x rm {I}/b", f"ls {I} &;> rm {I}/b",
             f"find {I}/m2 -fprint {I}/m2/out", f"ls {I}/m2 ; rm -rf {I}/m2", f"ls {I}/m2 2>{I}/m2/e"]
 
 
@@ -116,3 +121,19 @@ def test_server_hands_the_declared_roots_to_translate_outbound(monkeypatch):
     h._workspace_root = WS
     h._translate_out({"choices": []}, "sid:roots", R())
     assert seen["declared_roots"] == (INSTALL, RUNS)
+
+
+def test_every_operator_token_shlex_can_build_is_a_known_operator_or_unproven():
+    """Enumerate every 1-3 character run of operator characters; each must be refused unless it is
+    exactly one known separator/redirect (or a run of newlines) — no glued pair slips a command past."""
+    import itertools
+    chars = ";&|()<>\n"
+    known = dirguard._SEPARATORS | dirguard._REDIRECTS
+    for n in (1, 2, 3):
+        for combo in itertools.product(chars, repeat=n):
+            op = "".join(combo)
+            if op in known or set(op) == {"\n"}:
+                continue
+            cmd = f"ls {INSTALL}/m2 {op} rm {INSTALL}/m2/x"
+            assert dirguard.command_only_reads(cmd, WS) is False, repr(op)
+            assert dirguard.command_refusal(cmd, "none", WS, ROOTS) is not None, repr(op)

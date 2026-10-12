@@ -659,6 +659,10 @@ _READERS = {"cd", "echo", "printf", "pwd", "true", "ls", "cat", "head", "tail", 
 _FIND_ACTIONS = {"-delete", "-exec", "-execdir", "-ok", "-okdir", "-fprint", "-fprint0", "-fprintf", "-fls"}
 
 
+_SEPARATORS = {";", "&&", "||", "|", "&", "\n"}
+_REDIRECTS = {">", ">>", "<", ">&", "<&", "&>", "&>>", ">|"}
+
+
 def _short_flags(args) -> str:
     return "".join(a.lstrip("-") for a in args if a.startswith("-") and not a.startswith("--"))
 
@@ -734,9 +738,12 @@ def command_only_reads(command: str, workspace: str | None) -> bool:
     while i <= len(words):
         w = words[i] if i < len(words) else ";"
         if w and set(w) <= _PUNCT:
-            if "(" in w or ")" in w:
+            # shlex glues adjacent operator characters into ONE token (`;>`, `|<`, `&&>`, `\n>`), which
+            # would hide a separator inside what looks like a redirect. Only a token that is exactly
+            # one known operator is understood; any other combination is unproven.
+            if w not in _SEPARATORS and w not in _REDIRECTS and set(w) != {"\n"}:
                 return False
-            if ">" in w or "<" in w:
+            if w in _REDIRECTS:
                 if seg and seg[-1].isdigit():
                     seg.pop()  # the fd number of `2>file`
                 nxt = words[i + 1] if i + 1 < len(words) else None
