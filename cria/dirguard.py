@@ -735,8 +735,10 @@ def _short_flags(args) -> str:
     return "".join(a.lstrip("-") for a in args if a.startswith("-") and not a.startswith("--"))
 
 
-def _segment_reads(words: list[str], workspace: str | None = None) -> bool:
+def _segment_reads(words: list[str], workspace: str | None = None, no_writes: bool = False) -> bool:
     cmd, args = words[0], words[1:]
+    if no_writes and cmd == "tee":
+        return False
     if cmd == "cd":  # moves the REAL cwd, which relative redirect targets resolve against
         return len(args) == 1 and _plain_project_path(args[0], workspace)
     if cmd == "tee":  # a copy of stdin: harmless exactly when every file it writes is in the project
@@ -759,6 +761,8 @@ def _segment_reads(words: list[str], workspace: str | None = None) -> bool:
     if cmd == "unzip":  # a LISTING flag is mandatory: bare `unzip x.zip` extracts
         flags = set(_short_flags(args))
         return bool(flags & set("lpvtZ")) and flags <= set("lpvqtZ1") and not any(a.startswith("--") for a in args)
+    if cmd in ("jar", "javap") and any(a.startswith(("-J", "@")) for a in args):
+        return False  # -J hands the JVM an option (-Xlog:…:file=F writes); @file can hide one
     if cmd == "jar":  # `jar tf x.jar`: the table of contents, never create/extract/update
         first = args[0].lstrip("-") if args else ""
         return bool(first) and "t" in first and set(first) <= set("tvf")
@@ -773,11 +777,15 @@ def _plain_project_path(path: str, workspace: str | None, allow_devnull: bool = 
     return (allow_devnull and _exempt(path)) or not is_external(path, workspace)
 
 
-def _redirect_ok(op: str, target: str | None, workspace: str | None) -> bool:
+def _redirect_ok(op: str, target: str | None, workspace: str | None, no_writes: bool = False) -> bool:
     """A redirect is harmless when it writes nothing outside the project: an fd duplication
     (`2>&1`), /dev/null, or a file inside the workspace. `&>`, `>|`, `1>` all reduce to this."""
     if ">" not in op:
         return True  # `<` input: reading, judged by the path scan like any other operand
+    if no_writes:  # nothing may be written ANYWHERE: only an fd duplication or /dev/null
+        if op == ">&" and target is not None and (target.isdigit() or target == "-"):
+            return True
+        return target is not None and _exempt(target) and "<" not in op and "(" not in op
     if "&" in op and op.rstrip("&|").endswith(">&") and target is not None and target.lstrip("&").isdigit():
         return True
     if target is None or "<" in op or "(" in op:
@@ -785,9 +793,12 @@ def _redirect_ok(op: str, target: str | None, workspace: str | None) -> bool:
     return _plain_project_path(target, workspace, allow_devnull=True)
 
 
-def command_only_reads(command: str, workspace: str | None) -> bool:
+def command_only_reads(command: str, workspace: str | None, *, no_writes: bool = False) -> bool:
     """True only when EVERY segment of ``command`` is a known reader and every redirect stays inside
-    the project (or /dev/null). Unknown ⇒ False."""
+    the project (or /dev/null). Unknown ⇒ False. ``no_writes`` is the stricter proof that the command
+    changes NO file anywhere: output redirects other than fd duplication and /dev/null, and ``tee``,
+    are refused too (a write into the project is harmless to the O1 guard, not to a caller asking
+    whether a file it read is still current)."""
     if not command or "<<" in command or "`" in command or "$(" in command:
         return False
     lexer = shlex.shlex(command, posix=True, punctuation_chars=";&|()<>\n")
@@ -817,11 +828,11 @@ def command_only_reads(command: str, workspace: str | None) -> bool:
                 nxt = words[i + 1] if i + 1 < len(words) else None
                 if nxt is not None and set(nxt) <= _PUNCT:
                     nxt = None
-                if not _redirect_ok(w, nxt, workspace):
+                if not _redirect_ok(w, nxt, workspace, no_writes):
                     return False
                 i += 2 if nxt is not None else 1
                 continue
-            if seg and not _segment_reads(seg, workspace):
+            if seg and not _segment_reads(seg, workspace, no_writes):
                 return False
             seg = []
         else:

@@ -594,7 +594,9 @@ def checks_input(flag: str, since: int = 0) -> str:
     if not flag:
         return ""
     lines = prompts.load_map("compact_checks_known")
-    clause = (prompts.fill(lines["stale"], calls=str(since)) if since >= CHECKS_STALE_AFTER
+    # `since` may be a loop.GateAge, which also says whether no edit/write tool call has landed since.
+    stale = lines["stale_unedited" if getattr(since, "unedited", False) else "stale"]
+    clause = (prompts.fill(stale, calls=str(since)) if since >= CHECKS_STALE_AFTER
               else lines["fresh"])
     return prompts.fill(lines["block"], flag=flag, precedence=clause)
 

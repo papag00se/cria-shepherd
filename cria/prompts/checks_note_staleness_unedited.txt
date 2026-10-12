@@ -1,0 +1,2 @@
+
+When this handoff was written you had run {{CALLS}} of your own commands since that check, and none of your file edit/write tool calls had landed in that time. Unless you changed files some other way since (for example with a shell command), that check still describes the code — act on what it names. If one of your commands shows something different — a build that now succeeds, a test that now passes — your own newer result is the current state and this block is not — and so is anything you have run or changed since this handoff.

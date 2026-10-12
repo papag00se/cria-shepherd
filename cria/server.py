@@ -371,7 +371,11 @@ def _last_checks_note(server, sess_key: str) -> str:
     # reads as current; when the coder's own build has gone green since, the block is cria asserting
     # a state the coder has already disproved. It cost a green build once — see `last_gate_seq`.
     since = _gate_age(server, sess_key)
-    stale = (prompts.fill(prompts.load("checks_note_staleness"), calls=str(since))
+    # `since` is a loop.GateAge: the age AND whether no edit/write tool call has landed in it. Only when
+    # cria's own record shows none does the note say so; otherwise (or when it cannot tell) it is the
+    # unconditional wording.
+    stale = (prompts.fill(prompts.load("checks_note_staleness_unedited" if getattr(since, "unedited", False)
+                                       else "checks_note_staleness"), calls=str(since))
              if since >= _CHECKS_STALE_AFTER else "")
     # Anchored to the HANDOFF, never to "now": this text is baked into the briefing the harness keeps
     # in its history, so a "N calls ago" would stay N for every later call while the truth moved on
@@ -652,6 +656,13 @@ def _harden_compaction_reply(comp: dict, body: dict, provider, server, rlog, ses
     # in that package. cria then carried that sentence as `⟦ctx:continuation⟧` for the rest of the
     # run and a steer turned it into a numbered work order (#5b).
     sk = sess_key or session_key({}, body.get("messages", []))
+    # The transcript being folded is the last place most of its tool results will ever be seen: a write
+    # whose result came back only here is still a write that was answered (`gate_unedited`).
+    _loop = getattr(server, "loop", None)
+    _sess = _loop._store.get(sk) if _loop is not None else None
+    if _sess is not None:
+        from .loop import _note_write_results
+        _note_write_results(_sess, body.get("messages", []))
     ws = _session_cwd(sk, body.get("messages", []), rlog)
     text = _text_of(comp).strip()
     truncated = massage.is_truncated(comp)
