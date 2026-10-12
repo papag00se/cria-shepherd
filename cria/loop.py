@@ -1696,19 +1696,19 @@ def _exact_form_blocks_completion(task: str, evidence: str, reasoner_chat, reaso
     facts = filefacts.extract(evidence)
     if not facts:
         return ""
-    def ask(name: str, **tokens) -> dict | None:
+    def ask(name: str, need: tuple = (), **tokens) -> dict | None:
         """One focused closed question → its JSON object; ONE re-ask on an unreadable answer (as
         _confirm_completion does) before the caller fails closed."""
         for _ in range(2):
             raw = ask_closed(reasoner_chat, reasoner_role, prompts.render(name, **tokens), rlog,
                              phase=name.replace("_", "-"), retry_off=False)
             got = extract_json_object(reasoner_role.clean_content(raw) if reasoner_role is not None else raw)
-            if isinstance(got, dict):
+            if isinstance(got, dict) and set(need) <= got.keys():
                 return got
         return None
 
-    obj = ask("exact_form_requirement", task=task, facts=facts)
-    if obj is None or not {"bytes", "ends_with_line_break"} <= obj.keys():
+    obj = ask("exact_form_requirement", need=("bytes", "ends_with_line_break"), task=task, facts=facts)
+    if obj is None:
         if rlog is not None:
             rlog.emit("loop.exact_form_requirement", contradicted="unknown")
         return prompts.load("unverified_step")
@@ -1726,9 +1726,17 @@ def _exact_form_blocks_completion(task: str, evidence: str, reasoner_chat, reaso
         n, ends = measured
         want_bytes, want_end = obj.get("bytes"), obj.get("ends_with_line_break")
         if isinstance(want_bytes, int) and not isinstance(want_bytes, bool) and want_bytes != n:
-            contradicted = want_bytes in {int(x.replace(",", "")) for x in re.findall(r"\d[\d,]*", quote)}
-        if isinstance(want_end, bool) and want_end != ends and not contradicted:
-            said = ask("exact_form_ending_confirm", quote=quote)
+            # A number in the quote is not a byte size ("at most 200 words", "under 100 lines", a value
+            # inside a config): ONE focused question about the quote alone settles what it fixes.
+            said = ask("exact_form_bytes_confirm", need=("exact_bytes",), quote=quote)
+            if said is None:
+                unreadable = True
+            else:
+                fixed = said["exact_bytes"]
+                contradicted = (isinstance(fixed, int) and not isinstance(fixed, bool)
+                                and fixed == want_bytes)
+        if isinstance(want_end, bool) and want_end != ends and not contradicted and not unreadable:
+            said = ask("exact_form_ending_confirm", need=("states",), quote=quote)
             if said is None:
                 unreadable = True
             else:

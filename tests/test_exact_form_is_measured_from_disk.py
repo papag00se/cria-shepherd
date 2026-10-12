@@ -51,16 +51,24 @@ class _Rlog:
 
 
 CONFIRM = "QUESTION: does the quote itself state"
+BYTES = "QUESTION: does the quote itself fix the EXACT size"
 
 
 class _Chat:
-    def __init__(self, focused, states="ends_with_break"):
-        self.focused, self.states, self.bodies = focused, states, []
+    def __init__(self, focused, states="ends_with_break", exact="same"):
+        self.focused, self.states, self.exact, self.bodies = focused, states, exact, []
 
     def __call__(self, body, _rlog):
         self.bodies.append(body)
         system = body["messages"][0]["content"]
-        if CONFIRM in system:
+        if BYTES in system:
+            if self.exact == "same":                       # a faithful reader: whatever number the quote fixes
+                import re
+                nums = re.findall(r"exactly (\d+) bytes", body["messages"][0]["content"])
+                content = json.dumps({"exact_bytes": int(nums[0]) if nums else None})
+            else:
+                content = json.dumps({"exact_bytes": self.exact}) if self.exact != "unreadable" else "no idea"
+        elif CONFIRM in system:
             content = json.dumps({"states": self.states}) if self.states else "no idea"
         elif Q in system:
             content = self.focused.pop(0) if isinstance(self.focused, list) else self.focused
@@ -80,8 +88,8 @@ def extraction(file="probe.txt", quote="including the final newline", bytes_=Non
 REQUIRES_FINAL_LF = extraction()
 
 
-def judge(messages, focused=REQUIRES_FINAL_LF, root="", task=TASK, states="ends_with_break"):
-    chat = _Chat(focused, states)
+def judge(messages, focused=REQUIRES_FINAL_LF, root="", task=TASK, states="ends_with_break", exact="same"):
+    chat = _Chat(focused, states, exact)
     ev = loop._satisfaction_evidence(messages, workspace_root=root)
     sat, reason, _ = loop.judge_satisfaction(task, ev, chat, None, _Rlog(), workspace_root="")
     return sat, reason, chat, ev
@@ -152,6 +160,36 @@ class FactsAreOfCurrentContent(unittest.TestCase):
         sat, reason, _, _ = judge(write("w", C29), ok, task=task)
         self.assertFalse(sat)
         self.assertIn("29 bytes", reason)
+
+    def test_a_number_in_the_quote_that_is_not_a_byte_size_cannot_veto(self):
+        # captured live: each of these blocked 3/3 (or 1/3) when any number in the quote could veto
+        for task, quote, number in (
+                ("Write README.md of at most 200 words.", "of at most 200 words", 200),
+                ("Keep it under 100 lines.", "under 100 lines", 100),
+                ("Set max_size to 1024 bytes in limits.json.", "max_size to 1024 bytes", 1024)):
+            sat, _, chat, _ = judge(write("w", C29), extraction(quote=quote, bytes_=number, ends=None),
+                                    task=task, exact=None)
+            self.assertTrue(sat, quote)
+            self.assertEqual(chat.asked(), 1)
+
+    def test_exactly_16_bytes_vetoes_when_the_size_differs(self):
+        task = "Create probe.txt of exactly 16 bytes."
+        sat, reason, _, _ = judge(write("w", C29), extraction(quote="exactly 16 bytes", bytes_=16, ends=None),
+                                  task=task)
+        self.assertFalse(sat)
+        self.assertIn("29 bytes", reason)
+
+    def test_a_confirmation_naming_another_number_cannot_veto(self):
+        task = "Create probe.txt of exactly 16 bytes."
+        self.assertTrue(judge(write("w", C29), extraction(quote="exactly 16 bytes", bytes_=16, ends=None),
+                              task=task, exact=17)[0])
+
+    def test_an_unreadable_byte_confirmation_is_reasked_then_fails_closed(self):
+        task = "Create probe.txt of exactly 16 bytes."
+        sat, _, chat, _ = judge(write("w", C29), extraction(quote="exactly 16 bytes", bytes_=16, ends=None),
+                                task=task, exact="unreadable")
+        self.assertFalse(sat)
+        self.assertEqual(sum(BYTES in b["messages"][0]["content"] for b in chat.bodies), 2)
 
     def test_F3_a_byte_count_the_quote_does_not_contain_cannot_veto(self):
         # the quote fixes nothing; the judge mis-copied a count into `bytes`
