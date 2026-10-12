@@ -12666,21 +12666,25 @@ def guard_truncation(coder: dict, body: dict, coder_chat, rlog, *, step=None, ph
         return massage.is_truncated(c) or massage.has_incomplete_tool_args(c)
 
     if not massage.is_truncated(coder) and massage.has_incomplete_tool_args(coder) \
-            and _truncated_write_path(coder) is None:
+            and _cut_target(coder)[2] is None:
         # Not a write (e.g. a shell command with inline code) — there is nothing to chunk, so refuse it.
         rlog.emit("loop.incomplete_tool_call_dropped", step=step)
+        also = _also_withheld(coder)   # named BEFORE the calls are dropped
         _drop_tool_calls(coder)
         _add_note(coder, "tool call was cut off mid-arguments — partial call refused")
         # ...and tell the MODEL too: _add_note is a ⟦cria⟧ human indicator, stripped before the model,
         # so a refusal reported only there is invisible to the coder — its call just vanishes.
-        _refusal_turn(body, prompts.load_map("call_refused")["incomplete_args"])
+        _refusal_turn(body, prompts.load_map("call_refused")["incomplete_args"] + also)
         return coder
     attempt = 0
     _last_write_path_seen = False   # did any pass of this turn actually carry a mid-write cut?
+    _last_also = ""                 # the other withheld calls of the last cut pass (named in the closing refusal)
     _last_whole_file_seen = False   # ...and was any such cut a whole-file write's own content?
     conv = list(body.get("messages") or [])
     while _cut_off(coder) and attempt < MAX_TRUNCATION_RETRIES:
-        path = _truncated_write_path(coder)
+        # a self-cut reply is cut in ITS cut call, whatever the family — not in the first write it carries
+        path = _truncated_write_path(coder) if massage.is_truncated(coder) else _cut_target(coder)[2]
+        _last_also = _also_withheld(coder)
         _last_write_path_seen = _last_write_path_seen or path is not None
         out_tok = _output_tokens(coder)
         # A SELF-cut write used to fall out here with only a ⟦cria⟧ note — which is HUMAN-facing and
@@ -12697,9 +12701,11 @@ def guard_truncation(coder: dict, body: dict, coder_chat, rlog, *, step=None, ph
         rlog.phase = f"{phase}-continue{attempt}"
         whole = _whole_file_cut(coder)
         _last_whole_file_seen = _last_whole_file_seen or whole
-        remedy = ((prompts.render("truncation_guard_selfcut", path=_cut_target(coder)[2] or path) if whole else
+        remedy = ((prompts.render("truncation_guard_selfcut", path=_cut_target(coder)[2] or path,
+                                  also=_last_also) if whole else
                    prompts.fill(prompts.load_map("truncation_withheld")["selfcut"],
-                                tool=_cut_target(coder)[0], path=_cut_target(coder)[2] or path)) if selfcut else
+                                tool=_cut_target(coder)[0], path=_cut_target(coder)[2] or path,
+                                also=_last_also)) if selfcut else
                   _length_cut_notice(coder, path, out_tok))
         conv = conv + [{"role": "user", "content": remedy}]
         coder = massage.apply(
@@ -12736,7 +12742,7 @@ def guard_truncation(coder: dict, body: dict, coder_chat, rlog, *, step=None, ph
                           if was_write else
                           "output ended before the call was complete — partial call refused"))
         _refusal_turn(body, prompts.load("generation_incomplete_refused") if generation.incomplete(coder)
-                      else prompts.load_map("call_refused")[key])
+                      else prompts.load_map("call_refused")[key] + _last_also)
         # WHICH SENTENCE WENT OUT, in the event that produced it (#12). The `path`/`selfcut` fields on
         # `loop.truncated` describe the DETECTION; nothing recorded the wording, so the incident this
         # branch was written for — 17 of 17 truncations telling the model its WRITE was refused when
@@ -12767,21 +12773,26 @@ def _args_complete(args: str) -> bool:
         return False
 
 
-def _cut_target(coder: dict) -> tuple[str, str, str | None, bool]:
-    """(tool name, raw arguments, path, arguments-complete) of THE call a length/self-cut stop cut:
-    the LAST write-family call whose own arguments are incomplete, else the last write-family call
-    (a reply that stops at the limit stops inside its last call). Not the first — a reply may carry a
-    complete edit followed by the write that was actually cut."""
-    calls = [(n, a, _path_of_args(a, patch_ok=n == "apply_patch"), _args_complete(a))
-             for n, a in _cut_off_calls(coder) if n in _WRITE_TOOLS]
-    cut = [c for c in calls if not c[3]]
-    return (cut or calls or [("", "", None, False)])[-1]
+def _cut_target(coder: dict) -> tuple[str, str, str | None, bool, int]:
+    """(tool name, raw arguments, write path or None, arguments-complete, position) of THE call a
+    length/self-cut stop cut, whatever its family: the LAST call whose own arguments are incomplete,
+    else the last call (a reply that stops at the limit stops inside its last call). Not the first — a
+    reply may carry a complete edit followed by the call that was actually cut. ``path`` is None when
+    that call is not a write-family call."""
+    calls = _cut_off_calls(coder)
+    if not calls:
+        return "", "", None, False, -1
+    cut = [i for i, (_n, a) in enumerate(calls) if not _args_complete(a)]
+    i = (cut or [len(calls) - 1])[-1]
+    n, a = calls[i]
+    path = _path_of_args(a, patch_ok=n == "apply_patch") if n in _WRITE_TOOLS else None
+    return n, a, path, _args_complete(a), i
 
 
 def _whole_file_cut(coder: dict) -> bool:
     """True only when the cut call is a whole-file write tool whose OWN arguments were cut off — the one
     case the 'build it in small pieces' advice is true of."""
-    name, _args, _path, complete = _cut_target(coder)
+    name, _args, _path, complete, _i = _cut_target(coder)
     return name in writeproxy_names and not complete
 
 
@@ -12789,6 +12800,20 @@ def _describe_withheld(name: str, args: str, path: str | None) -> str:
     where = f" on `{path}`" if path else ""
     state = "arguments complete" if _args_complete(args) else "arguments cut off at the limit"
     return f"`{name}`{where} ({len(args)} characters, {state})"
+
+
+def _describe_call(name: str, args: str) -> str:
+    return _describe_withheld(name, args, _path_of_args(args, patch_ok=name == "apply_patch")
+                              if name in _WRITE_TOOLS else None)
+
+
+def _also_withheld(coder: dict) -> str:
+    """The sentence naming every call in the reply OTHER than the cut one — by position, so a call whose
+    name and arguments equal the cut call's is still listed. Empty when the cut call was alone."""
+    idx = _cut_target(coder)[4]
+    others = [_describe_call(n, a) for i, (n, a) in enumerate(_cut_off_calls(coder)) if i != idx]
+    return prompts.fill(prompts.load_map("truncation_withheld")["also"],
+                        others="; ".join(others)) if others else ""
 
 
 def _length_cut_notice(coder: dict, path: str, out_tok: int | None) -> str:
@@ -12800,16 +12825,12 @@ def _length_cut_notice(coder: dict, path: str, out_tok: int | None) -> str:
     says so (observed: a complete 1.4K edit_file after a long prose lead was called a cut-off whole-file
     write; and a complete edit followed by a cut write_file was described as the edit alone)."""
     used = f"{out_tok} tokens" if out_tok else "the output-token limit"
-    name, args, cut_path, _complete = _cut_target(coder)
+    name, _args, cut_path, _complete, _i = _cut_target(coder)
     if _whole_file_cut(coder):
-        others = [_describe_withheld(n, a, _path_of_args(a, patch_ok=n == "apply_patch"))
-                  for n, a in _cut_off_calls(coder) if (n, a) != (name, args)]
-        also = prompts.fill(prompts.load_map("truncation_withheld")["also"],
-                            others="; ".join(others)) if others else ""
-        return prompts.render("truncation_guard", path=cut_path or path, limit=used, tool=name, also=also)
+        return prompts.render("truncation_guard", path=cut_path or path, limit=used, tool=name,
+                              also=_also_withheld(coder))
     prose = sum(len(str((ch.get("message") or {}).get("content") or "")) for ch in coder.get("choices", []))
-    calls = "; ".join(_describe_withheld(n, a, _path_of_args(a, patch_ok=n == "apply_patch") if n in _WRITE_TOOLS else None)
-                      for n, a in _cut_off_calls(coder))
+    calls = "; ".join(_describe_call(n, a) for n, a in _cut_off_calls(coder))
     return prompts.fill(prompts.load_map("truncation_withheld")["withheld"], used=used, prose=prose, calls=calls)
 
 

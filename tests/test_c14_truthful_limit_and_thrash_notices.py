@@ -268,3 +268,55 @@ class TwoCallReplyAtTheLimitTests(unittest.TestCase):
             self.assertIn("B.java", t)
             self.assertIn("arguments cut off at the limit", t)
             self.assertIn("arguments complete", t)
+
+
+def _call(cid, name, args):
+    return {"id": cid, "type": "function", "function": {
+        "name": name, "arguments": args if isinstance(args, str) else json.dumps(args)}}
+
+
+def _reply(calls, finish):
+    return {"choices": [{"index": 0, "finish_reason": finish, "message": {
+        "role": "assistant", "content": "", "tool_calls": calls}}], "usage": {"completion_tokens": 700}}
+
+
+class SelfCutNamesTheCutCallAndTheRestTests(unittest.TestCase):
+    EDIT_A = _call("a", "edit_file", {"path": "A.java", "old_string": "x", "new_string": "y"})
+
+    def test_complete_edit_then_cut_shell_call_is_not_called_an_edit_cut(self):
+        shell = _call("s", "exec_command", '{"cmd": "python3 -c \\"print(')
+        sent, closing = _all_sent(_reply([copy.deepcopy(self.EDIT_A), shell], "tool_calls"))
+        for t in sent + [closing]:
+            self.assertNotIn("stopped partway through the arguments of a `edit_file`", t)
+            self.assertNotIn("SMALL pieces", t)
+        refusal = closing if not sent else sent[0]
+        self.assertIn("A.java", refusal)                      # the complete edit is named as withheld
+        self.assertIn("`edit_file` on `A.java`", refusal)
+        self.assertIn("arguments complete", refusal)
+
+    def test_self_cut_whole_file_write_after_a_complete_edit_names_the_edit(self):
+        wf = _call("w", "write_file", '{"path": "B.java", "content": "<project>')
+        sent, closing = _all_sent(_reply([copy.deepcopy(self.EDIT_A), wf], "tool_calls"))
+        self.assertIn("B.java", sent[0])
+        self.assertIn("SMALL pieces", sent[0])
+        self.assertIn("`edit_file` on `A.java`", sent[0])
+        self.assertIn("`edit_file` on `A.java`", closing)
+
+    def test_self_cut_edit_after_a_complete_edit_names_both(self):
+        cut = _call("c", "edit_file", '{"path": "B.java", "old_string": "<a')
+        sent, closing = _all_sent(_reply([copy.deepcopy(self.EDIT_A), cut], "tool_calls"))
+        self.assertIn("call on `B.java`", sent[0])
+        self.assertIn("`edit_file` on `A.java`", sent[0])
+        self.assertNotIn("SMALL pieces", sent[0])
+        self.assertIn("`edit_file` on `A.java`", closing)
+
+
+class AlsoListKeepsAnIdenticalCallTests(unittest.TestCase):
+    def test_a_call_identical_to_the_cut_one_is_still_listed(self):
+        wf = '{"path": "B.java", "content": "<project>'
+        base = _reply([_call("w1", "write_file", wf), _call("w2", "write_file", wf)], "length")
+        for c in (copy.deepcopy(base), generation.safe_completion(copy.deepcopy(base))):
+            t = _sent(c)
+            self.assertIn("SMALL pieces", t)
+            self.assertIn("also carried", t)
+            self.assertIn("`write_file` on `B.java`", t)     # the identical first call, by position
