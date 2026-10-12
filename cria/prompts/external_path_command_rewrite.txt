@@ -1,3 +1,0 @@
-
-The same command with the bare program name, which is permitted:
-{{COMMAND}}

@@ -87,6 +87,32 @@ class RelativeAndQuotedWriteTargets(unittest.TestCase):
                     self.assertIsNone(dirguard.command_refusal(cmd, "none", ws, ()))
                     self.assertFalse(run(cmd), "the allowed command wrote outside the workspace")
 
+# --- O18 repair: an allowed external READ must not end the scan before a later external WRITE ---
+import pytest as _pytest
+from cria import dirguard as _dg
+
+_WS = "/tmp/ws/p"
+_MUST_REFUSE = [
+    'cat "/tmp/outside/input"; grep x input > /tmp/outside/out',
+    'grep x input > /tmp/outside/out; cat "/tmp/outside/input"',
+    'cat /tmp/outside/input && grep x input > /tmp/outside/out',
+    'cat /tmp/outside/input || echo a > /tmp/outside/out',
+    'cat /tmp/outside/input | tee /tmp/outside/out',
+    'cat /tmp/a; cat /tmp/b; echo hi > /tmp/o/z',
+    'cat /tmp/a; echo > ../y',
+]
+
+
+@_pytest.mark.parametrize("level", ["none", "read"])
+@_pytest.mark.parametrize("cmd", _MUST_REFUSE)
+def test_a_read_then_an_external_write_is_refused(cmd, level):
+    assert _dg.command_refusal(cmd, level, _WS), (level, cmd)
+
+
+def test_a_lone_external_read_is_still_allowed_at_read():
+    for c in ('cat "/tmp/outside/input"', "cat /tmp/a; cat /tmp/b", "grep x /etc/hosts > local.txt"):
+        assert _dg.command_refusal(c, "read", _WS) is None, c
+
 
 if __name__ == "__main__":
     unittest.main()

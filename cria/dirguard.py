@@ -1213,7 +1213,6 @@ def root_recursive_delete_refusal(command: str) -> str | None:
     return None
 
 
-_SHELL_RESERVED = {"time", "exec", "command", "builtin", "eval", "source", "."}
 _INTERPRETERS = {"sh", "bash", "zsh", "dash", "ksh", "fish", "env", "eval", "exec", "sudo", "python",
                  "python3", "perl", "ruby", "node", "php", "awk", "sed", "xargs"}
 
@@ -1230,8 +1229,8 @@ def _command_position(command: str, start: int, spans) -> bool:
 def _command_position_refusal(command, level, workspace, roots, external, start):
     """The truthful refusal when the ONLY outside-path token(s) responsible are programs run by
     absolute path (``/usr/bin/time -v java …``), or None to keep today's message. Ground truth by
-    doing: it re-evaluates the command with those tokens replaced and offers the bare-name form only
-    when command_refusal itself allows that exact command."""
+    doing: it re-evaluates the command with those programs replaced to confirm they were the only
+    reason. It offers NO rewrite — a bare name resolves through PATH and can mean a different program."""
     if "\\" in command or "\n" in command or "\r" in command:
         return None
     spans = _quoted_spans(command)
@@ -1243,28 +1242,20 @@ def _command_position_refusal(command, level, workspace, roots, external, start)
     if not any(m.start() == start for m in cmd_toks):
         return None
 
-    def swap(repl):
-        out, last = [], 0
-        for m in cmd_toks:
-            out.append(command[last:m.start()])
-            out.append(repl(m.group(0)))
-            last = m.end()
-        return "".join(out) + command[last:]
     # Were these tokens the ONLY reason? Judge the command with each program swapped for a harmless one.
-    if command_refusal(swap(lambda t: "true"), level, workspace, roots) is not None:
+    out, last = [], 0
+    for m in cmd_toks:
+        out.append(command[last:m.start()])
+        out.append("true")
+        last = m.end()
+    if command_refusal("".join(out) + command[last:], level, workspace, roots) is not None:
         return None
-    bare = swap(lambda t: os.path.basename(t))
-    rewrite = ""
-    if (all(os.path.basename(m.group(0)) and os.path.basename(m.group(0)) not in _SHELL_RESERVED
-            for m in cmd_toks) and command_refusal(bare, level, workspace, roots) is None):
-        rewrite = prompts.fill(prompts.load("external_path_command_rewrite"), command=bare)
     root = f" ({workspace})" if workspace else ""
-    return prompts.fill(prompts.load("external_path_command_position"), path=repr(external), root=root,
-                        rewrite=rewrite)
+    return prompts.fill(prompts.load("external_path_command_position"), path=repr(external), root=root)
 
 
-def _words_of(command: str):
-    lexer = shlex.shlex(command, posix=True, punctuation_chars=";&|()<>\n")
+def _words_of(command: str, posix: bool = True):
+    lexer = shlex.shlex(command, posix=posix, punctuation_chars=";&|()<>\n")
     lexer.whitespace = " \t\r"
     lexer.commenters = ""
     lexer.wordchars += "".join(c for c in "[]{}$,:@%+!^#=" if c not in lexer.wordchars)
@@ -1283,7 +1274,11 @@ def _unproven_element(command: str, workspace: str | None):
     words = _words_of(command)
     if not words:
         return None
+    raw = _words_of(command, posix=False)
+    if raw is None or len(raw) != len(words):
+        raw = words  # quoting unknown: the single-quote test below then cannot clear a word
     seg: list[str] = []
+    live: list[bool] = []
     after_pipe = False
     i = 0
     while i <= len(words):
@@ -1292,6 +1287,7 @@ def _unproven_element(command: str, workspace: str | None):
             if w in _REDIRECTS:
                 if seg and seg[-1].isdigit():
                     seg.pop()
+                    live.pop()
                 nxt = words[i + 1] if i + 1 < len(words) else None
                 if nxt is not None and set(nxt) <= _PUNCT:
                     nxt = None
@@ -1300,25 +1296,43 @@ def _unproven_element(command: str, workspace: str | None):
                 i += 2 if nxt is not None else 1
                 continue
             if seg:
-                found = _segment_element(seg, workspace, after_pipe)
+                found = _segment_element(seg, workspace, after_pipe, live)
                 if found:
                     return found
             after_pipe = (w == "|")
             seg = []
+            live = []
         else:
             seg.append(w)
+            live.append(_has_live_dollar(raw[i]) if raw is not words else "$" in w)
         i += 1
     return None
 
 
-def _segment_element(seg: list[str], workspace, after_pipe: bool):
+def _has_live_dollar(raw_word: str) -> bool:
+    """True when a ``$`` in the word (quotes still attached) is outside single quotes — only then is it
+    a variable expansion; ``'$NAME'`` is literal text."""
+    quote = None
+    for c in raw_word:
+        if quote == "'":
+            quote = None if c == "'" else quote
+        elif c == "'" and quote is None:
+            quote = "'"
+        elif c == '"':
+            quote = None if quote == '"' else '"'
+        elif c == "$":
+            return True
+    return False
+
+
+def _segment_element(seg: list[str], workspace, after_pipe: bool, live: list[bool]):
     cmd = seg[0]
     if re.match(r"^[A-Za-z_]\w*=", cmd):
         return ("assign", cmd)
     if cmd in ("cd", "pushd") and not _segment_reads(seg, workspace):
         return (cmd, seg[1] if len(seg) > 1 else "")
-    for a in seg[1:]:
-        if "$" in a:
+    for a, is_live in zip(seg[1:], live[1:]):
+        if is_live:
             return ("variable", a)
     if cmd == "xargs":
         return ("xargs", cmd)
@@ -1329,44 +1343,16 @@ def _segment_element(seg: list[str], workspace, after_pipe: bool):
     return None
 
 
-def _literal_rewrite(command: str, workspace: str | None):
-    """A literal-path form of the two shapes cria can rewrite mechanically, else None:
-    ``cd R && find . ARGS`` -> ``find R ARGS`` and ``NAME=P; jar tf "$NAME"`` -> ``jar tf P``."""
-    if any(c in command for c in "\\\n\r`<>|") or "$(" in command or "<<" in command:
-        return None
-    words = _words_of(command)
-    if not words:
-        return None
-    if (len(words) >= 5 and words[0] == "cd" and words[2] == "&&" and words[3] == "find"
-            and words[4] == "."):
-        root, rest = words[1], words[5:]
-        if (any(set(a) <= _PUNCT for a in rest) or any("$" in a for a in [root, *rest])
-                or any(c in root for c in "{}*?[~")):
-            return None
-        return shlex.join(["find", root, *rest])
-    if len(words) == 5 and words[1] in (";", "&&") and words[0].count("=") == 1:
-        name, _, val = words[0].partition("=")
-        if (re.fullmatch(r"[A-Za-z_]\w*", name) and val and not any(c in val for c in "${}*?[~")
-                and words[2] == "jar" and words[3] == "tf" and words[4] in (f"${name}", f"${{{name}}}")
-                ):
-            return shlex.join(["jar", "tf", val])
-    return None
-
-
 def _unproven_refusal(command, level, workspace, roots, external):
     """The refusal for a command that touches a readable outside root but is not proven read-only:
-    names the actual element, and offers a literal-path rewrite only when command_refusal allows it."""
+    names the actual element (never a rewrite: no mechanical form is meaning-equivalent)."""
     found = _unproven_element(command, workspace)
     if found is None:
         return prompts.fill(prompts.load("external_path_declared_root_unproven"), path=repr(external))
     kind, word = found
     element = prompts.fill(prompts.load_map("external_path_unproven_elements")[kind], word=word)
-    rewrite = " "
-    lit = _literal_rewrite(command, workspace)
-    if lit and command_refusal(lit, level, workspace, roots) is None:
-        rewrite = prompts.fill(prompts.load("external_path_unproven_rewrite"), command=lit) + "\n"
     return prompts.fill(prompts.load("external_path_declared_root_unproven_named"), path=repr(external),
-                        element=element, rewrite=rewrite)
+                        element=element)
 
 
 def command_refusal(command: str, level: str, workspace: str | None, roots=()) -> str | None:
@@ -1437,6 +1423,10 @@ def command_refusal(command: str, level: str, workspace: str | None, roots=()) -
         if read_only and not is_write and _in_declared_root(tok, roots):
             continue
         if network and not is_write:
+            continue
+        # At `read` an external READ is allowed — but it must not END the scan: a later segment may
+        # write outside (`cat "/tmp/o/in"; grep x in > /tmp/o/out`), so keep judging every target.
+        if level == "read" and not is_write and not _MUTATING_VERB.search(command):
             continue
         external = tok
         ext_is_write = is_write
