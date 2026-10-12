@@ -230,7 +230,9 @@ class GateAndJudgeWiringTests(unittest.TestCase):
                 '{"satisfied": false, "reason": "not proven", "proposed_fix": "deliverable"}'}}]}).encode()
 
         loop.judge_satisfaction("do the thing", "ordinary evidence", judge, None, _Rlog(), sess=state)
-        prompt = calls[0]["messages"][-1]["content"]
+        # The record rides as composed evidence blocks before the question (so the floor can reduce it):
+        # the judge's prompt is every message of the call, not only the last.
+        prompt = "\n".join(str(m["content"]) for m in calls[0]["messages"])
         self.assertIn("BUILD / SOURCE / TEST PARTICIPATION", prompt)
         self.assertIn(tally, prompt)
         self.assertIn('"source": "unknown"', prompt)
