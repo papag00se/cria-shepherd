@@ -1,0 +1,1 @@
+ Outside it, READS of example dependency caches (~/.m2, ~/.gradle, ~/.cargo, the Go module cache, site-packages, node_modules) and of directories the environment lists as writable are allowed.

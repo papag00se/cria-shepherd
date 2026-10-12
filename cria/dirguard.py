@@ -663,7 +663,9 @@ def readable_roots_note(messages, workspace: str | None) -> str:
         return ""
     deps = []
     for m in messages or []:
-        if isinstance(m, dict) and m.get("role") not in ("system", "developer"):
+        # Only TOOL results: the launcher's own echo is a fact; assistant text is the model's guess and
+        # must never become cria's stated fact.
+        if isinstance(m, dict) and m.get("role") == "tool":
             for loc in _BUILD_REPO_FLAG.findall(_text_of(m)):
                 loc = os.path.normpath(loc)
                 if loc not in deps and _in_declared_root(loc, roots):
@@ -924,7 +926,7 @@ def _case_typo_of_workspace(path: str, workspace: str | None) -> bool:
     return False
 
 
-def _refusal(verb: str, path: str, workspace: str | None = None, roots=()) -> str:
+def _refusal(verb: str, path: str, workspace: str | None = None, roots=(), level: str = "none") -> str:
     # prompts/external_path_refusal.txt — {{PATH}} takes the quoted repr, matching the old f"{path!r}".
     # {{ROOT}} names the ACTUAL project directory when known: the anonymous "the project directory"
     # left a blocked model inventing roots (/tmp/src, /tmp/project) for whole runs — the refusal is
@@ -942,7 +944,8 @@ def _refusal(verb: str, path: str, workspace: str | None = None, roots=()) -> st
         note = (prompts.fill(prompts.load("external_path_depcache_note"), subtree=subtree)
                 if subtree else "")
     return prompts.fill(prompts.load("external_path_refusal"), verb=verb, path=repr(path), root=root,
-                        casenote=note)
+                        casenote=note,
+                        reads=("" if level == "read" else prompts.load("external_path_reads_allowed")))
 
 
 def path_refusal(path: str, is_write: bool, level: str, workspace: str | None, roots=()) -> str | None:
@@ -956,7 +959,7 @@ def path_refusal(path: str, is_write: bool, level: str, workspace: str | None, r
         return None
     if level == "read" and not is_write:
         return None
-    return _refusal("Writing" if is_write else "Reading", path, workspace, roots)
+    return _refusal("Writing" if is_write else "Reading", path, workspace, roots, level)
 
 
 def root_recursive_delete_refusal(command: str) -> str | None:
@@ -1067,6 +1070,6 @@ def command_refusal(command: str, level: str, workspace: str | None, roots=()) -
     if _in_declared_root(external, roots):
         # Say exactly what was refused: a write TARGET there, or a command not proven to only read.
         if ext_is_write:
-            return _refusal("Writing", external, workspace, roots)
+            return _refusal("Writing", external, workspace, roots, level)
         return prompts.fill(prompts.load("external_path_declared_root_unproven"), path=repr(external))
-    return _refusal("Writing/reading" if level == "none" else "Writing", external, workspace, roots)
+    return _refusal("Writing/reading" if level == "none" else "Writing", external, workspace, roots, level)

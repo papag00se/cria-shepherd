@@ -60,7 +60,7 @@ def test_the_size_saved_is_the_block_the_incident_carried_twice():
     # The block AS THE INCIDENT CARRIED IT (its second copy), not today's wording: the menu text is
     # free to change; what this pins is the size of the duplicate.
     block = system[system.index(HEADER, system.index(HEADER) + 1):]
-    assert block in system
+    assert system.endswith(block) and block.startswith(HEADER)
     once = system.replace("\n\n" + block, "", 1)
     assert system.count(HEADER) - once.count(HEADER) == 1
     assert len(system) - len(once) == len(block) + 2 > 1500

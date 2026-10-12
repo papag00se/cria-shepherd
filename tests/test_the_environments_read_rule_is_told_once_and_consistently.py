@@ -49,13 +49,16 @@ def test_the_rules_the_model_reads_no_longer_forbid_what_is_allowed():
     assert "EVERYTHING inside" not in sys_txt and "READING installed libraries" in sys_txt
     assert "archive" in prompts.load("cheatsheet")
     refusal = prompts.load("external_path_refusal")
-    assert "every file you read or write" not in refusal and "only READS" in refusal
+    assert "every file you read or write" not in refusal and "installed-library" not in refusal
     assert "Writes must stay inside" in refusal
 
 
 def test_a_superseded_note_does_not_invite_a_reread():
     note = prompts.render("superseded_writes_dropped", count="1", paths="Importer.java")
-    assert "read the file" not in note and "Nothing was lost" in note and "still here in full" in note
+    assert "remains above in full" in note and "Nothing was lost" in note
+    # not knowable: a later edit_file/sed -i/formatter can change the disk; main's re-read sentence stays
+    assert "what is on disk" not in note and "already in this conversation" not in note
+    assert "To be sure, read the file" in note
 
 
 def test_the_inventory_directs_reading_only_files_whose_text_is_not_here():
@@ -71,3 +74,32 @@ def test_the_compaction_note_points_at_a_later_copy_before_a_re_read():
     note = contextfloor._compacted_note(dropped, 1, 20000)["content"]
     assert "what the file said THEN" in note and "only current answer" not in note
     assert "later copy" in note
+
+
+def test_the_note_never_starts_with_a_design_comment_line():
+    note = dirguard.readable_roots_note(_msgs(), RUNS)
+    assert note and not note.lstrip().startswith("#")
+
+
+def test_assistant_text_is_never_the_source_of_the_build_location():
+    guess = "-Dmaven.repo.local=%s/guess" % INSTALL
+    msgs = _msgs("no build output yet") + [{"role": "assistant", "content": "I will run mvn " + guess}]
+    note = dirguard.readable_roots_note(msgs, RUNS)
+    assert "/guess" not in note and INSTALL in note
+
+
+def test_every_command_the_note_names_is_allowed_on_a_declared_root():
+    roots = dirguard.declared_roots(_msgs())
+    for c in (f"ls {INSTALL}/m2/repository", f"find {INSTALL}/m2/repository -name '*.jar'",
+              f"cat {INSTALL}/m2/repository/a.pom", f"grep -r opencsv {INSTALL}/m2/repository",
+              f"unzip -l {INSTALL}/m2/repository/o.jar", f"jar tf {INSTALL}/m2/repository/o.jar",
+              f"javap -cp {INSTALL}/m2/repository/o.jar com.opencsv.CSVReader"):
+        assert dirguard.command_refusal(c, "none", RUNS, roots) is None, c
+
+
+def test_the_refusal_claims_reads_only_where_reads_are_refused():
+    r = dirguard.path_refusal("/etc/x/y", True, "none", RUNS)
+    assert r and "example dependency caches" in r and "installed-library" not in r
+    w = dirguard.path_refusal("/etc/x/y", True, "read", RUNS)
+    assert w and "READS" not in w and "Writes must stay inside" in w
+    assert dirguard.path_refusal("/usr/share/java/x.jar", False, "none", RUNS) is not None
