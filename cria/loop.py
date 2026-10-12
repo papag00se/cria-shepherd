@@ -9563,7 +9563,7 @@ def _edit_landings(messages: list[dict]):
         yield idx, tid, path, total
 
 
-def _file_events(messages: list[dict]) -> list:
+def _file_events(messages: list[dict], key=None) -> list:
     """Every read, landed write and landed edit in ``messages``, oldest first: ``(position, id, kind, path,
     nbytes, label, partial)``. One ordered stream, because what the ledger says about a path is its NEWEST
     state — a bigger OLD reading must never outrank a newer smaller one (phi4 A4 CALL 0270: `Importer.java
@@ -9575,23 +9575,36 @@ def _file_events(messages: list[dict]) -> list:
     size, at the position of the last page (ornith1.5_9b Java B3 0087: `246 lines when you last read or wrote
     it` after the coder read the whole 267-line file in pages and landed two edits). A synthesized whole
     event has id ``("c", tid)``; an edit has ``("e", tid)`` and kind ``edit``."""
+    norm = key or (lambda p: p)       # ONE spelling per file BEFORE anything is grouped, invalidated or merged
     raw = []
     for idx, tid, path, start, end, c in _read_results_ordered(messages):
-        raw.append((idx, "read", tid, path, start, end, c))
+        raw.append((idx, "read", tid, norm(path), start, end, c))
     for idx, tid, path, nbytes, label in _write_events(messages):
-        raw.append((idx, "write", tid, path, nbytes, label))
+        raw.append((idx, "write", tid, norm(path), nbytes, label))
     for idx, tid, path, total in _edit_landings(messages):
-        raw.append((idx, "edit", tid, path, total))
+        raw.append((idx, "edit", tid, norm(path), total))
     for idx, path, n in _refused_line_counts_ordered(messages):
-        raw.append((idx, "refuse", None, path, n))
+        raw.append((idx, "refuse", None, norm(path), n))
+    for idx, tid, path in _shell_mutations(messages):
+        raw.append((idx, "shell", tid, norm(path) if path else None))
     raw.sort(key=lambda e: e[0])
     events = []
-    spans: dict = {}            # path -> {"spans": [(a, b)], "eof": bool, "done": bool}
+    spans: dict = {}            # path -> {"spans": [(a, b)], "eof": line the file ends at (or None), "done": bool}
     known: dict = {}            # path -> size cria's own refusal reported since the path last changed
     for e in raw:
         idx, kind, tid, path = e[:4]
         if kind == "refuse":
             known[path] = e[4]
+        elif kind == "shell":
+            # A shell command that wrote something: whatever it changed, the pages and sizes gathered so far
+            # no longer describe it. An unknown target (None) invalidates every path (the basis is unknown).
+            if path is None:
+                spans.clear()
+                known.clear()
+            else:
+                spans.pop(path, None)
+                known.pop(path, None)
+            events.append((idx, ("s", tid), "shell", path, None, None, False))
         elif kind == "write":
             spans.pop(path, None)
             known.pop(path, None)
@@ -9611,15 +9624,16 @@ def _file_events(messages: list[dict]) -> list:
             if span[1] is None:
                 spans.pop(path, None)
                 continue
-            st = spans.setdefault(path, {"spans": [], "eof": False, "done": False})
+            st = spans.setdefault(path, {"spans": [], "eof": None, "done": False})
             st["spans"].append((span[0], span[1]))
-            st["eof"] = st["eof"] or span[2]
+            if span[2]:
+                st["eof"] = span[1]       # the line the file ENDS at — not the end of the contiguous prefix
             covered = 0
             for a_, b_ in sorted(st["spans"]):
                 if a_ > covered + 1:
                     break
                 covered = max(covered, b_)
-            size = covered if st["eof"] else known.get(path)
+            size = st["eof"] if st["eof"] is not None else known.get(path)
             if not whole and not st["done"] and covered and size is not None and covered >= size:
                 st["done"] = True
                 events.append((idx, ("c", tid), "read", path, None, _Counted(f"{size} lines"), False))
@@ -9632,6 +9646,13 @@ def _apply_ledger_event(d: dict, ev, key=None) -> None:
     is a WINDOW that did not reach the end of the file — it says nothing about the rest, so it does not
     displace an earlier reading of the whole (the ledger answers "have I looked at this file")."""
     _idx, _id, kind, path, nbytes, label, partial = ev
+    if kind == "shell":
+        # A command that wrote something (path None: it is not known what): the recorded basis is no longer
+        # the file at the latest touch — kept for what it was, never claimed.
+        for p in ([key(path) if key else path] if path else list(d)):
+            if p in d and not d[p][1].startswith("lines "):
+                d[p] = (None, d[p][1] if isinstance(d[p][1], _Unestablished) else _Unestablished(d[p][1]))
+        return
     path = key(path) if key else path
     prev = d.get(path)
     if kind in ("write", "edit") and prev is None:
@@ -9684,6 +9705,12 @@ def _read_results_ordered(messages: list[dict]):
                     continue
             elif not isinstance(c, str) or not c.strip() or denial.is_denied(c):
                 continue
+            if isinstance(c, str):
+                # The file's own payload ends where cria's first appended fact block begins
+                # (`result + "\\n\\n" + ⟦ctx:facts⟧ …`); what follows is not the file and is never counted.
+                c = c.partition("\n\n" + selfcompact.FACTS_MARKER)[0]
+                if not c.strip():
+                    continue
             yield (idx, tid, *calls[tid], c)
 
 
@@ -9822,6 +9849,50 @@ def _extract_writes(messages: list[dict]) -> dict:
     return out
 
 
+def _shell_mutations(messages: list[dict]):
+    """``(position, id, target or None)`` of every ANSWERED shell command that may have written files, read off
+    the shell-mutation owner (`shelltool.writes_something` — the one question writeproxy's staleness ledger
+    asks too). ``target`` is the one file a single redirect/`tee` writes, as spelt; None when the command may
+    have written anything else (more than one target, another writing verb, a `cd`, a variable) — the caller
+    then claims nothing about any file. Output is never read for a count."""
+    from . import shelltool
+    calls: dict = {}
+    for idx, m in enumerate(messages or []):
+        if not isinstance(m, dict):
+            continue
+        for tc in m.get("tool_calls") or []:
+            fn = tc.get("function") or {}
+            if tc.get("id") and is_shell_tool_name(fn.get("name")):
+                args = fn.get("arguments") or ""
+                cmd = _command_text(args)
+                if cmd is None:
+                    calls[tc["id"]] = (None, True)          # a cut-off call: whatever it did is unknown
+                    continue
+                if "___CRIA_GATE_" in cmd or writeproxy._read_sentinel(cmd) is not None:
+                    continue                                 # cria's own read-only probe
+                if shelltool.writes_something(fn.get("name"), cmd):
+                    calls[tc["id"]] = (cmd, False)
+        tid = m.get("tool_call_id") or m.get("call_id")
+        if tid in calls:
+            cmd, unknown = calls.pop(tid)
+            yield idx, tid, (None if unknown else _single_shell_target(cmd))
+
+
+def _single_shell_target(cmd: str) -> str | None:
+    """The one file ``cmd`` writes by a lone redirect / `tee`, or None when that is not the whole story."""
+    masked = _QUOTED_SPAN_RE.sub("", cmd)
+    if re.search(r"\bcd\b", masked):
+        return None                                          # relative to somewhere else
+    hits = _REDIRECT_TARGET_RE.findall(masked) + _TEE_TARGET_RE.findall(masked)
+    if len(hits) != 1:
+        return None
+    rest = _TEE_TARGET_RE.sub(" ", _REDIRECT_TARGET_RE.sub(" ", masked))
+    from . import shelltool
+    if shelltool.writes_something("exec_command", rest) or re.search(r"[$~`]", hits[0]):
+        return None
+    return hits[0]
+
+
 def _write_events(messages: list[dict]):
     """``(position, id, path, bytes, label)`` for every write that landed — see :func:`_extract_writes`."""
     from . import denial
@@ -9869,11 +9940,12 @@ def _track_read_files(sess, messages: list[dict]) -> None:
     key = _ledger_key(sess)
     if getattr(sess, "file_touch", None) is None:
         sess.file_touch = {}                          # rel -> sequence of the last read / write / landed edit
-    touched = [(ev[0], ev[1], ev[3]) for ev in _file_events(messages)]
+    events = _file_events(messages, key)
+    touched = [(ev[0], ev[1], ev[3]) for ev in events]
     for _pos, tid, path in sorted(touched, key=lambda e: e[0]):
-        if tid not in sess.read_ledger_seen:
+        if tid not in sess.read_ledger_seen and path is not None:
             sess.file_touch[key(path)] = 1 + max(sess.file_touch.values(), default=0)
-    for ev in _file_events(messages):
+    for ev in events:
         if ev[1] not in sess.read_ledger_seen:        # each event folds in once, so order is real time
             sess.read_ledger_seen.add(ev[1])
             _apply_ledger_event(sess.read_files, ev, key)
@@ -9892,7 +9964,7 @@ def _ledger_state(sess, messages: list[dict]):
     seen = dict(getattr(sess, "read_files", None) or {})
     key = _ledger_key(sess)
     done = getattr(sess, "read_ledger_seen", None) or set()
-    events = _file_events(messages or [])
+    events = _file_events(messages or [], key)
     # Events not yet folded into the durable record apply on top of it, oldest first: the newest thing
     # cria knows about a path is what the ledger says (a write is a new state, not a competing reading).
     for ev in events:
