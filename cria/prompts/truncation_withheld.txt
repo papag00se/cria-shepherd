@@ -1,6 +1,11 @@
 # A reply reached the output limit carrying a write-family call that is NOT a whole-file write whose own
-# content overflowed. Every figure is measured (#5b); the "build it in small pieces" advice is deliberately
-# absent — it is true only of a whole-file write cut off mid-content (truncation_guard.txt). Incident: a
-# COMPLETE 1.4K-character edit_file after a long prose lead was called a cut-off whole-file write.
-complete = [REPLY HIT THE OUTPUT LIMIT — YOUR LAST {{TOOL}} CALL WAS WITHHELD, NOT RUN] Your previous reply used {{USED}} and stopped at the output limit. It held {{PROSE}} characters of text and a `{{TOOL}}` call on `{{PATH}}` ({{CALL}} characters, its arguments complete). Because the reply reached the limit, that call was withheld and was NOT run — `{{PATH}}` is unchanged on disk. Re-send the call; keep the text before it brief so the whole reply ends inside the limit.
-cut = [REPLY HIT THE OUTPUT LIMIT — YOUR LAST {{TOOL}} CALL WAS WITHHELD, NOT RUN] Your previous reply used {{USED}} and stopped at the output limit. It held {{PROSE}} characters of text and a `{{TOOL}}` call on `{{PATH}}` whose arguments were cut off at the limit ({{CALL}} characters received), so it was NOT run — `{{PATH}}` is unchanged on disk. Re-send the call complete; keep the text before it brief and the call itself small.
+# content overflowed — or a reply that ended early mid-arguments of such a call (`selfcut`). Every figure is
+# measured (#5b); the "build it in small pieces" advice is deliberately absent — it is true only of a
+# whole-file write cut off mid-content (truncation_guard.txt). Incident: a COMPLETE 1.4K-character
+# edit_file was called a cut-off whole-file write.
+# THE FIGURES SAY ONLY WHAT WAS DELIVERED. In that incident the server reported 4450 completion tokens but
+# only 1770 characters (394 frames) ever arrived — so the text is not claimed to be what used the budget,
+# and no advice presumes it was.
+complete = [REPLY HIT THE OUTPUT LIMIT — YOUR LAST {{TOOL}} CALL WAS WITHHELD, NOT RUN] Your previous reply used {{USED}} and stopped at the output limit. Of it, {{PROSE}} characters of text and a `{{TOOL}}` call on `{{PATH}}` ({{CALL}} characters, its arguments complete) were delivered. Because the reply reached the limit, that call was withheld and was NOT run — `{{PATH}}` is unchanged on disk. Re-send the call and end the reply as soon as the call is complete.
+cut = [REPLY HIT THE OUTPUT LIMIT — YOUR LAST {{TOOL}} CALL WAS WITHHELD, NOT RUN] Your previous reply used {{USED}} and stopped at the output limit. Of it, {{PROSE}} characters of text and a `{{TOOL}}` call on `{{PATH}}` were delivered, but the call's arguments were cut off at the limit ({{CALL}} characters), so it was NOT run — `{{PATH}}` is unchanged on disk. Re-send the call complete, as small as the change allows.
+selfcut = [YOUR LAST {{TOOL}} CALL WAS REFUSED] Your previous reply stopped partway through the arguments of a `{{TOOL}}` call on `{{PATH}}` — it did NOT hit any limit, it ended early — so the call was incomplete and was NOT run; `{{PATH}}` is unchanged on disk. This was not a whole-file write. Re-send the call complete.

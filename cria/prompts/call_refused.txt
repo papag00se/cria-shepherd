@@ -4,6 +4,7 @@
 incomplete_args = [YOUR LAST TOOL CALL WAS REFUSED] It was cut off partway through its arguments, so it was incomplete and was NOT run — nothing happened. Re-send it complete. If it is a shell command with inline code, keep it short and quote it simply.
 truncated_write = [YOUR LAST WRITE WAS REFUSED] Your response hit the output limit partway through writing the file, so nothing was saved and the file was NOT changed. Do not re-send the same whole-file write — build it in SMALL pieces: the first portion with write_file, then APPEND each remaining section with edit_file.
 selfcut_write = [YOUR LAST WRITE WAS REFUSED] Your response stopped partway through the arguments while writing the file — it did NOT hit any limit, it ended early — so nothing was saved and the file was NOT changed. Do not re-send the same whole-file write: build it in SMALL pieces, the first portion with write_file, then APPEND each remaining section with edit_file, one small call at a time.
+selfcut_edit = [YOUR LAST TOOL CALL WAS REFUSED] Your response stopped partway through the arguments of an edit-style write call — it did NOT hit any limit, it ended early — so the call was incomplete, was NOT run, and the file was NOT changed. This was not a whole-file write. Re-send the call complete, with a small old/new pair.
 
 # NEITHER OF THE TWO ABOVE, because cria itself established this was not a file write. `path is
 # None` means `_truncated_write_path` found no write in the cut-off call — the loop breaks there and

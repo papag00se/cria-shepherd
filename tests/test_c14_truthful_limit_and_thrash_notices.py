@@ -135,3 +135,46 @@ class ThrashClauseIsMeasuredTests(unittest.TestCase):
 
     def test_prompt_has_no_unmeasured_claim(self):
         self.assertNotIn("kept editing", prompts.load_map("steer_triggers")["thrash"])
+
+
+def _selfcut(name, args):
+    return {"choices": [{"index": 0, "finish_reason": "tool_calls", "message": {
+        "role": "assistant", "content": "",
+        "tool_calls": [{"id": "c1", "type": "function", "function": {"name": name, "arguments": args}}]}}]}
+
+
+def _all_sent(coder):
+    """Every user message the guard appends (retry remedy + closing refusal) with a chat that keeps cutting."""
+    body = {"messages": [{"role": "user", "content": "go"}]}
+    sent = []
+
+    def chat(b, rlog):
+        sent.append(b["messages"][-1]["content"])
+        return json.dumps(copy.deepcopy(coder)).encode()
+    loop.guard_truncation(copy.deepcopy(coder), body, chat, _Rlog(), step=1)
+    return sent, body["messages"][-1]["content"]
+
+
+class SelfCutWordingFollowsTheCallTests(unittest.TestCase):
+    EDIT = _selfcut("edit_file", '{"path": "pom.xml", "old_string": "<a>')
+    WRITE = _selfcut("write_file", '{"path": "pom.xml", "content": "<project>')
+
+    def test_a_self_cut_edit_is_not_called_a_whole_file_write(self):
+        sent, closing = _all_sent(self.EDIT)
+        for t in sent + [closing]:
+            self.assertNotIn("whole-file write:", t)
+            self.assertNotIn("SMALL pieces", t)
+            self.assertNotIn("write_file, then APPEND", t)
+        self.assertIn("edit_file", sent[0])
+        self.assertIn("not a whole-file write", sent[0])
+        self.assertIn("not a whole-file write", closing)
+
+    def test_a_self_cut_whole_file_write_keeps_the_pieces_advice_both_places(self):
+        sent, closing = _all_sent(self.WRITE)
+        self.assertIn("SMALL pieces", sent[0])
+        self.assertIn("SMALL pieces", closing)
+
+    def test_the_limit_notice_does_not_presume_the_text_was_the_cost(self):
+        t = _sent(json.loads(FIX.read_text()))
+        self.assertNotIn("brief", t)
+        self.assertIn("were delivered", t)

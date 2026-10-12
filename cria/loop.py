@@ -12655,6 +12655,7 @@ def guard_truncation(coder: dict, body: dict, coder_chat, rlog, *, step=None, ph
         return coder
     attempt = 0
     _last_write_path_seen = False   # did any pass of this turn actually carry a mid-write cut?
+    _last_whole_file_seen = False   # ...and was any such cut a whole-file write's own content?
     conv = list(body.get("messages") or [])
     while _cut_off(coder) and attempt < MAX_TRUNCATION_RETRIES:
         path = _truncated_write_path(coder)
@@ -12672,7 +12673,11 @@ def guard_truncation(coder: dict, body: dict, coder_chat, rlog, *, step=None, ph
             break  # not a mid-write truncation → the write steer doesn't apply; refuse below
         attempt += 1
         rlog.phase = f"{phase}-continue{attempt}"
-        remedy = (prompts.render("truncation_guard_selfcut", path=path) if selfcut else
+        whole = _whole_file_cut(coder, path)
+        _last_whole_file_seen = _last_whole_file_seen or whole
+        remedy = ((prompts.render("truncation_guard_selfcut", path=path) if whole else
+                   prompts.fill(prompts.load_map("truncation_withheld")["selfcut"],
+                                tool=_cut_call_facts(coder, path)[0], path=path)) if selfcut else
                   _length_cut_notice(coder, path, out_tok))
         conv = conv + [{"role": "user", "content": remedy}]
         coder = massage.apply(
@@ -12700,7 +12705,8 @@ def guard_truncation(coder: dict, body: dict, coder_chat, rlog, *, step=None, ph
         # Measured over five days: all 17 truncations had `path is None`, so 17 of 17 told the model
         # its last write was refused and that it stopped "partway through writing the file" (#5b).
         was_write = _truncated_write_path(coder) is not None or _last_write_path_seen
-        key = ("selfcut_write" if selfcut else "truncated_write") if was_write else "truncated_call"
+        key = (("selfcut_write" if _last_whole_file_seen else "selfcut_edit") if selfcut else
+               "truncated_write") if was_write else "truncated_call"
         _add_note(coder, ("reply incomplete — actions withheld" if generation.incomplete(coder) else
                           "output stopped early mid-write — partial write refused (retry in smaller pieces)"
                           if was_write and selfcut else
@@ -12732,13 +12738,8 @@ def _cut_off_calls(completion: dict) -> list[tuple[str, str]]:
     return [(str(fn.get("name") or ""), fn.get("arguments") or "") for fn in calls]
 
 
-def _length_cut_notice(coder: dict, path: str, out_tok: int | None) -> str:
-    """The model-facing notice for a reply that reached the output limit with a write-family call in it,
-    built from what was MEASURED about that reply (#5b): which tool and path, whether the call's own
-    arguments were complete or cut, how many tokens the reply used, and how much of it was text versus
-    the call. The 'build it in small pieces' advice is true ONLY of a whole-file write whose own content
-    was what overflowed — an edit, or a call that finished its arguments, gets the notice that says so
-    (observed: a complete 1.4K edit_file after a long prose lead was called a cut-off whole-file write)."""
+def _cut_call_facts(coder: dict, path: str | None) -> tuple[str, str, bool]:
+    """(tool name, raw arguments, arguments-parse-as-complete-JSON) of the write-family call on ``path``."""
     name, args = next(((n, a) for n, a in _cut_off_calls(coder)
                        if n in _WRITE_TOOLS and _path_of_args(a, patch_ok=n == "apply_patch") == path),
                       ("", ""))
@@ -12746,6 +12747,24 @@ def _length_cut_notice(coder: dict, path: str, out_tok: int | None) -> str:
         complete = isinstance(json.loads(args), dict)
     except (ValueError, TypeError):
         complete = False
+    return name, args, complete
+
+
+def _whole_file_cut(coder: dict, path: str | None) -> bool:
+    """True only when the cut call is a whole-file write tool whose OWN arguments were cut off — the one
+    case the 'build it in small pieces' advice is true of."""
+    name, _args, complete = _cut_call_facts(coder, path)
+    return name in writeproxy_names and not complete
+
+
+def _length_cut_notice(coder: dict, path: str, out_tok: int | None) -> str:
+    """The model-facing notice for a reply that reached the output limit with a write-family call in it,
+    built from what was MEASURED about that reply (#5b): which tool and path, whether the call's own
+    arguments were complete or cut, how many tokens the reply used, and how much of it was text versus
+    the call. The 'build it in small pieces' advice is true ONLY of a whole-file write whose own content
+    was what overflowed — an edit, or a call that finished its arguments, gets the notice that says so
+    (observed: a complete 1.4K edit_file after a long prose lead was called a cut-off whole-file write)."""
+    name, args, complete = _cut_call_facts(coder, path)
     used = f"{out_tok} tokens" if out_tok else "the output-token limit"
     if name in writeproxy_names and not complete:
         return prompts.render("truncation_guard", path=path, limit=used, tool=name)
