@@ -62,6 +62,14 @@ def _bypasses():
             f"(cd {I}/m2 && make clean)", f"cd {I}/m2 && make clean",
             f"sqlite3 {I}/codex-home/state_5.sqlite 'delete from t'", f"cat {I}/m2/a $(rm -rf {I}/m2)",
             f"find {I}/m2 -exec rm {{}} ;", f"find {I} -delete", f"tee {I}/m2/a", f"ls {I}/m2 > {I}/m2/x",
+            f"cd {I}/m2 && echo x > y", f"cd {I}/m2 ; echo x > y", f"cd {I}/m2 || echo x > y",
+            f"cd {I}/m2 & echo x > y", f"cd {I}/m2\necho x > y", f"cd {I}; cd m2; echo>x",
+            f"cd {I}/m2 && ls | tee out", f"cd {I}/m2 && unzip x.zip", f"cd {I}/m2 && unzip -q x.zip",
+            f"cd {I}/m2 && file --compile -m magic", f"cd && ls {I}", f"cd - && ls {I}",
+            f"sort --outp={I}/a x", f"sort --o={I}/a x", f"sort --comp=prog x {I}/a", f"sort --co=prog x {I}/a",
+            f"sort -T {I}/m2 x", f"file --comp -m m {I}/a", f"rg --pr=cmd x {I}/m2", f"rg --pre=cmd x {I}/m2",
+            f"rg --hostname=b x {I}/m2", f"cat {I}/a >{{{I}/m2/x,}}", f"cat {I}/a > {I}/m2/x*",
+            f"cat {I}/a | tee {{{I}/m2/x,}}", f"cat {I}/a > x[12]", f"cat {I}/a > \"$D/x\"",
             f"find {I}/m2 -fprint {I}/m2/out", f"ls {I}/m2 ; rm -rf {I}/m2", f"ls {I}/m2 2>{I}/m2/e"]
 
 
@@ -74,7 +82,7 @@ def test_every_reviewed_write_bypass_stays_refused_and_wire_unchanged_without_ro
 def test_local_redirects_of_a_read_are_allowed_and_refusals_name_the_path():
     I = INSTALL
     for c in (f"find {I}/m2 -name '*.jar' > jars.txt", f"unzip -l {I}/m2/a.jar | tee notes.txt",
-              f"unzip -p {I}/m2/a.jar > /dev/null", f"jar tf {I}/m2/a.jar | grep -i csv 2>&1",
+              f"unzip -p {I}/m2/a.jar > /dev/null", f"unzip -l {I}/m2/a.jar | head", f"cd sub && ls {I}/m2", f"jar tf {I}/m2/a.jar | grep -i csv 2>&1",
               f"cd {WS} && find {I}/m2/repository -iname '*opencsv*' 2>/dev/null; echo ---; ls -la {I}/m2 2>&1 | head"):
         assert dirguard.command_refusal(c, "none", WS, ROOTS) is None, c
     r = dirguard.command_refusal(f"find {I}/m2 | xargs rm", "none", WS, ROOTS)

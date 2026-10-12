@@ -665,25 +665,40 @@ def _short_flags(args) -> str:
 
 def _segment_reads(words: list[str], workspace: str | None = None) -> bool:
     cmd, args = words[0], words[1:]
+    if cmd == "cd":  # moves the REAL cwd, which relative redirect targets resolve against
+        return len(args) == 1 and _plain_project_path(args[0], workspace)
     if cmd == "tee":  # a copy of stdin: harmless exactly when every file it writes is in the project
-        return all(not a.startswith("-") and "$" not in a and (_exempt(a) or not is_external(a, workspace))
+        return all(not a.startswith("-") and _plain_project_path(a, workspace, allow_devnull=True)
                    for a in args)
     if cmd not in _READERS:
         return False
     if cmd == "find":
         return not any(a in _FIND_ACTIONS for a in args)
-    if cmd == "sort":
-        return "o" not in _short_flags(args) and not any(a.startswith(("--output", "--compress")) for a in args)
-    if cmd == "rg":
-        return not any(a.startswith(("--pre", "--hostname-bin")) for a in args)
-    if cmd == "file":
-        return "C" not in _short_flags(args)
-    if cmd == "unzip":  # list / print / test only: no -d, -o, -x, -j extraction
-        return set(_short_flags(args)) <= set("lpvqtZ1") and not any(a.startswith("--") for a in args)
+    # GNU getopt accepts ANY unambiguous prefix of a long option (`sort --outp=f` is --output,
+    # `--comp=prog` runs a program), so a denylist of spellings is unsound: sort and file take no
+    # long option at all.
+    if cmd in ("sort", "file"):
+        return (not any(a.startswith("--") for a in args)
+                and not set(_short_flags(args)) & set("oTCm" if cmd == "file" else "oT"))
+    if cmd == "rg":  # --pre / --hostname-bin run programs; refuse them and every prefix of them
+        longs = [a.split("=", 1)[0] for a in args if a.startswith("--") and a != "--"]
+        return not any(o.startswith(("--pre", "--hostname-bin")) or "--pre".startswith(o)
+                       or "--hostname-bin".startswith(o) for o in longs)
+    if cmd == "unzip":  # a LISTING flag is mandatory: bare `unzip x.zip` extracts
+        flags = set(_short_flags(args))
+        return bool(flags & set("lpvtZ")) and flags <= set("lpvqtZ1") and not any(a.startswith("--") for a in args)
     if cmd == "jar":  # `jar tf x.jar`: the table of contents, never create/extract/update
         first = args[0].lstrip("-") if args else ""
         return bool(first) and "t" in first and set(first) <= set("tvf")
     return True
+
+
+def _plain_project_path(path: str, workspace: str | None, allow_devnull: bool = False) -> bool:
+    """A literal path inside the project: no expansion (`$`, braces, globs, `~`) can make it name
+    anything else, and it is not outside the workspace."""
+    if not path or any(c in path for c in "${}*?[~`") or path == "-":
+        return False
+    return (allow_devnull and _exempt(path)) or not is_external(path, workspace)
 
 
 def _redirect_ok(op: str, target: str | None, workspace: str | None) -> bool:
@@ -695,8 +710,7 @@ def _redirect_ok(op: str, target: str | None, workspace: str | None) -> bool:
         return True
     if target is None or "<" in op or "(" in op:
         return False
-    return _exempt(target) or (not _after_unresolved_expansion(target, 0) and "$" not in target
-                               and not is_external(target, workspace))
+    return _plain_project_path(target, workspace, allow_devnull=True)
 
 
 def command_only_reads(command: str, workspace: str | None) -> bool:
@@ -707,6 +721,10 @@ def command_only_reads(command: str, workspace: str | None) -> bool:
     lexer = shlex.shlex(command, posix=True, punctuation_chars=";&|()<>\n")
     lexer.whitespace = " \t\r"
     lexer.commenters = ""
+    # punctuation_chars strips most symbols from wordchars, so `x[12]` or `{a,b}` would split into
+    # separate "words" and a glob/brace target could look like a plain one. Keep every other
+    # printable character inside the word so the target is judged whole.
+    lexer.wordchars += "".join(c for c in "[]{}$,:@%+!^#=" if c not in lexer.wordchars)
     try:
         words = list(lexer)
     except ValueError:
