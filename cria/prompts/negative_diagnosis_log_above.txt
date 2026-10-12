@@ -1,1 +1,1 @@
-(The action log is the messages before this one, in order.)
+(The action log is the user messages that follow this one, in order.)

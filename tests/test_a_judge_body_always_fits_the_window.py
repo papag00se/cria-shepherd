@@ -166,7 +166,7 @@ class TheCompletionJudgeFitsTests(unittest.TestCase):
     def test_the_whole_record_is_still_sent_when_it_fits(self):
         evidence = _log(3000, self.NEWEST)
         _, bodies = self._judge(3000)
-        carried = "".join(m["content"] for m in bodies[0]["messages"][2:-1])
+        carried = "".join(m["content"] for m in bodies[0]["messages"][1:-1])
         self.assertEqual(carried, evidence)
 
 
@@ -202,6 +202,92 @@ class TheNegativeDiagnosisQuestionFitsTests(unittest.TestCase):
     def test_a_plain_ask_still_gets_the_whole_question_in_one_message(self):
         _nudge, bodies = self._nudge(False)
         self.assertEqual(len(bodies[0]["messages"]), 2)
+
+
+class EveryPointerIsTrueOfTheLayoutItDescribesTests(unittest.TestCase):
+    """The words that tell the model where the evidence is must match the body actually sent. The
+    closed-question seats put the QUESTION in the system message, the evidence in the user messages
+    that FOLLOW it, and a closing "answer the question above" turn; the completion judge has no
+    system question — its pinned final message asks it and the evidence is ABOVE that message."""
+    GROUNDING = _log(9000, "NEWEST")
+
+    def _roles(self, messages):
+        return [m["role"] for m in messages]
+
+    def _assert_system_question_layout(self, messages, joined_evidence, pointer):
+        self.assertEqual(messages[0]["role"], "system")
+        self.assertIn(pointer, messages[0]["content"])          # says the evidence FOLLOWS
+        self.assertNotIn(joined_evidence[:80], messages[0]["content"])   # and it truly is not in here
+        self.assertIn("question asked in the system message", messages[1]["content"])
+        self.assertIn("follow this one", messages[1]["content"])
+        self.assertEqual("".join(m["content"] for m in messages[2:-1]), joined_evidence)
+        self.assertEqual(set(self._roles(messages[1:])), {"user"})
+        self.assertEqual(messages[-1]["content"], loop._ASK_USER_TURN)
+        for m in messages:
+            self.assertNotIn("messages before this one", m["content"])
+            self.assertNotIn("question in the final message", m["content"])
+
+    def test_the_steer_diagnostic_body(self):
+        chat = _Capture("SUPPORTED")
+        seat = loop._composed_closed_ask(chat, None, _Rlog(), phase="steer-code")
+        loop._diagnostic_action_verdict(
+            "Add the missing import.", "Importer.java:12: error: cannot find symbol", set(), _Rlog(),
+            lambda q: "", grounding=self.GROUNDING, ask_with_evidence=seat)
+        self._assert_system_question_layout(chat.bodies[0]["messages"], self.GROUNDING,
+                                            "user messages that follow this one")
+
+    def test_the_negative_diagnosis_body(self):
+        chat = _Capture("SUPPORTED")
+        seat = loop._composed_closed_ask(chat, None, _Rlog(), phase="negative-diagnosis")
+        obj = {"satisfied": False, "diagnosis_kind": "unverified_requirement", "subject": "",
+               "task_quote": "make it 4x faster", "evidence_source": "action_log",
+               "evidence_quote": "mvn -q test -Dtest=ImporterTest7 exited 1", "reason": "x"}
+        loop._negative_diagnosis_nudge(obj, task="Fix it and make it 4x faster.",
+                                       action_log=self.GROUNDING, ask=seat, rlog=_Rlog())
+        self._assert_system_question_layout(chat.bodies[0]["messages"], self.GROUNDING,
+                                            "user messages that follow this one")
+
+    def test_the_completion_judge_body(self):
+        chat = _Capture(json.dumps({"satisfied": False, "reason": "no"}))
+        loop.judge_satisfaction("Make it 4x faster.", self.GROUNDING, chat, None, _Rlog())
+        messages = chat.bodies[0]["messages"]
+        self.assertEqual(self._roles(messages)[0], "system")
+        self.assertNotIn("question asked in the system message", _text(messages))
+        self.assertEqual("".join(m["content"] for m in messages[1:-1]), self.GROUNDING)
+        self.assertIn("user messages above this one", messages[-1]["content"])
+        self.assertIn("Make it 4x faster.", messages[-1]["content"])
+
+
+class TheCurrentFilesOutlastTheOlderRecordTests(unittest.TestCase):
+    NEWEST = "NEWEST-ACTION exit 0"
+    FILES = "THE FILES AS THEY ARE ON DISK NOW: Importer.java " + "class Importer {} " * 200
+
+    def _body(self):
+        from types import SimpleNamespace
+        from unittest import mock
+        chat = _Capture(json.dumps({"satisfied": False, "reason": "no"}))
+        view = SimpleNamespace(surveyed=True)
+        with mock.patch.object(loop.wsview, "current", return_value=view), \
+             mock.patch.object(loop.groundtruth, "files_for_a_judge", return_value=self.FILES):
+            loop.judge_satisfaction("Make it 4x faster.", _log(88000, self.NEWEST), chat, None,
+                                    _Rlog(), workspace_root="/ws")
+        return chat.bodies[0]
+
+    def test_the_files_message_sits_after_the_record_and_before_the_question(self):
+        msgs = self._body()["messages"]
+        at = [i for i, m in enumerate(msgs) if m["content"] == self.FILES]
+        self.assertEqual(at, [len(msgs) - 2])
+
+    def test_through_the_real_wire_fit_the_older_record_goes_before_the_current_files(self):
+        body = self._body()
+        work, _t, rep = contextfloor.fit(body["messages"], body.get("tools"), window=WINDOW,
+                                         reserve=RESERVE, safety=SAFETY,
+                                         pinned_task=body["cria_pinned_task"])
+        self.assertFalse(rep.over_budget)
+        self.assertGreater(rep.turns_dropped, 0)
+        text = _text(work)
+        self.assertIn(self.FILES, text)
+        self.assertIn(self.NEWEST, text)
 
 
 if __name__ == "__main__":

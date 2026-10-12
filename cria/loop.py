@@ -746,6 +746,7 @@ def _satisfaction_verdict(system: str, user: str, reasoner_chat, reasoner_role, 
             verdict_key="satisfied",
             seed_files=True,
             evidence_blocks=evidence_blocks,
+            evidence_intro=None,   # the question (satisfaction_user_composed) says where the record is
             force_think_off=reasoning_off)
         if massage.is_truncated(comp):
             # Cut at the cap → not a verdict. Parsing it risks a partial object that happened to
@@ -1072,7 +1073,8 @@ def _judge_completion(chat_fn, role, system: str, user: str, rlog, *, phase: str
                       verdict_key: str = "",
                       verdict_schema: str = "",
                       seed_files: bool = False,
-                      evidence_blocks: list[str] | None = None) -> dict:
+                      evidence_blocks: list[str] | None = None,
+                      evidence_intro: str | None = "composed_evidence_intro") -> dict:
     """ONE judge completion whose author may first LOOK — the shared inspection loop behind the step
     critic AND the completion critic (operator directive: judges get real read-only tools, not just a
     snapshot). With a ``workspace_root``, the judge is offered verifytools (list_dir/read_file,
@@ -1090,8 +1092,11 @@ def _judge_completion(chat_fn, role, system: str, user: str, rlog, *, phase: str
     if evidence_blocks:
         # Match summarize's composed-call contract: historical evidence is reducible by the
         # ONE context floor; current facts and the active question stay in the final turn.
+        # ``evidence_intro`` is a prompt key, or None when the final question already says where the
+        # evidence is: with a pinned question the leading intro is NOT protected (the question is), so a
+        # separate intro would be the oldest turn and the first the floor sheds.
         messages[1:1] = [
-            {"role": "user", "content": prompts.load("composed_evidence_intro")},
+            *([{"role": "user", "content": prompts.load(evidence_intro)}] if evidence_intro else []),
             *({"role": "user", "content": block} for block in evidence_blocks if block.strip()),
         ]
     inspectable = bool(workspace_root) and wsview.current(workspace_root).surveyed
@@ -1113,7 +1118,9 @@ def _judge_completion(chat_fn, role, system: str, user: str, rlog, *, phase: str
             # BEFORE the question, not after it. The files are context; the thing being asked has to
             # be the last thing read. (It also keeps `messages[-1]` the prompt every caller and test
             # reasonably expects it to be.)
-            messages.insert(1, {"role": "user", "content": seeded})
+            # Just before the question, AFTER any composed history: the floor sheds oldest first, and the
+            # current on-disk files must outlast the older record, not be the first thing it removes.
+            messages.insert(len(messages) - 1, {"role": "user", "content": seeded})
             rlog.emit("loop.judge_files_seeded", phase=phase, chars=len(seeded))
     inspection_start = len(messages) if evidence_blocks else 2
     rounds = 0
@@ -8128,14 +8135,16 @@ _ASK_USER_TURN = "Answer the question above."
 
 
 def ask_closed(chat_fn, role, question: str, rlog, *, phase: str, max_tokens: int = 1024,
-               retry_off: bool = True, evidence_blocks: list[str] | None = None) -> str:
+               retry_off: bool = True, evidence_blocks: list[str] | None = None,
+               evidence_intro: str = "composed_evidence_intro") -> str:
     """ONE primitive for every closed question cria puts to a reasoner — reasoning off, temperature
     0, the question in the user turn where the model looks for it. Returns "" on anything unreadable,
     which every caller already treats as "no answer". A caller whose contract permits only one
     actual judgment can disable the otherwise loss-preserving empty-answer retry."""
     return summarize(chat_fn, replace(role, reasoning="off") if role is not None else None,
                      question, _ASK_USER_TURN, rlog, phase=phase, max_tokens=max_tokens,
-                     temperature=0.0, retry_off=retry_off, evidence_blocks=evidence_blocks) or ""
+                     temperature=0.0, retry_off=retry_off, evidence_blocks=evidence_blocks,
+                     evidence_intro=evidence_intro) or ""
 
 
 def _composed_closed_ask(chat_fn, role, rlog, *, phase: str):
@@ -8143,7 +8152,8 @@ def _composed_closed_ask(chat_fn, role, rlog, *, phase: str):
     composed blocks (``ask(question, evidence_blocks)``) so the one context floor can reduce it."""
     def ask(question: str, evidence_blocks: list[str] | None = None) -> str:
         return ask_closed(chat_fn, role, question, rlog, phase=phase, max_tokens=JUDGE_MAX_TOKENS,
-                          retry_off=False, evidence_blocks=evidence_blocks)
+                          retry_off=False, evidence_blocks=evidence_blocks,
+                          evidence_intro="composed_evidence_intro_system")
     ask.composes_evidence = True
     return ask
 
@@ -8212,7 +8222,8 @@ SUMMARIZE_MAX_TOKENS = 8192
 def summarize(chat_fn, role, system: str, user: str, rlog, *, phase: str = "compactor",
               max_tokens: int = SUMMARIZE_MAX_TOKENS, retry_off: bool = True, coder_tools: str = "",
               capture: list | None = None, temperature: float | None = None,
-              evidence_blocks: list[str] | None = None) -> str:
+              evidence_blocks: list[str] | None = None,
+              evidence_intro: str = "composed_evidence_intro") -> str:
     """The ONE reasoner text-generation primitive — call the model with (system, user) and return the
     text ("" on failure/empty). With ``retry_off`` (default), retries with reasoning FORCED OFF when
     the first pass yields no text (a reasoning model can burn its whole budget THINKING and emit empty
@@ -8245,7 +8256,7 @@ def summarize(chat_fn, role, system: str, user: str, rlog, *, phase: str = "comp
             # task protection off the evidence, and the final question remains the active turn.
             # The blocks between them are facts in their original order, not a per-site clip; only
             # contextfloor.fit may reduce them, and every reduction it makes is labelled.
-            messages.append({"role": "user", "content": prompts.load("composed_evidence_intro")})
+            messages.append({"role": "user", "content": prompts.load(evidence_intro)})
             messages.extend({"role": "user", "content": block}
                             for block in evidence_blocks if block and block.strip())
         messages.append({"role": "user", "content": user})
@@ -10549,7 +10560,8 @@ def author_steer(reasoner_chat, reasoner_role, workspace_root, gs, body: dict, r
     # that reached the rewriter was dropped, always, for a reason that had nothing to do with it.
     def _steer_ask(system: str, user: str, evidence_blocks: list[str] | None = None) -> str:
         return summarize(reasoner_chat, reasoner_role, system, user or _ASK_USER_TURN, rlog,
-                         phase="steer-code", temperature=0.0, evidence_blocks=evidence_blocks) or ""
+                         phase="steer-code", temperature=0.0, evidence_blocks=evidence_blocks,
+                         evidence_intro="composed_evidence_intro_system") or ""
     # Declared, not detected by shape: this seat can carry a question's evidence as composed blocks.
     _steer_ask.composes_evidence = True
     # Same shape for the answer-vs-thinking recovery below, under its own phase tag.

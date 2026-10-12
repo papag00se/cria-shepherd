@@ -1,1 +1,1 @@
-(The evidence is the messages before this one, in order.)
+(The evidence is the user messages that follow this one, in order.)
