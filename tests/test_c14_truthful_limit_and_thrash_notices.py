@@ -10,7 +10,7 @@ import json
 import pathlib
 import unittest
 
-from cria import denial, generation, loop, prompts
+from cria import denial, editrecovery, generation, loop, prompts
 
 FIX = pathlib.Path(__file__).parent / "fixtures" / "a10_0018_complete_edit_at_length.json"
 
@@ -178,3 +178,93 @@ class SelfCutWordingFollowsTheCallTests(unittest.TestCase):
         t = _sent(json.loads(FIX.read_text()))
         self.assertNotIn("brief", t)
         self.assertIn("were delivered", t)
+
+
+def _tc(cid, name, args):
+    return {"id": cid, "type": "function", "function": {"name": name, "arguments": json.dumps(args)}}
+
+
+def _asst(*calls):
+    return {"role": "assistant", "content": "", "tool_calls": list(calls)}
+
+
+def _res(cid, text="ok"):
+    return {"role": "tool", "tool_call_id": cid, "content": text}
+
+
+class ThrashClauseInRealDriverOrderTests(unittest.TestCase):
+    """The driver records a gate round AFTER the coder turn's results are in the request history but the
+    write tracker saw the call BEFORE its result existed; the count must come from the results present."""
+
+    def _sent(self, gs, call):
+        loop.guard_track_write_streak(gs, {"choices": [{"message": {"tool_calls": [call]}}]},
+                                      _Rlog(), messages=[])
+
+    def test_a_failed_edit_before_the_gate_is_not_counted(self):
+        gs = loop.GuardState()
+        msgs = []
+        for _ in range(3):
+            loop.track_gate_progress(gs, "E", msgs)
+        e1 = _tc("e1", "edit_file", {"path": "A.java", "old_string": "x", "new_string": "y"})
+        self._sent(gs, e1)                                  # tracker sees the call, no result yet
+        msgs += [_asst(e1), _res("e1", editrecovery.EDIT_MARK + " no match")]
+        loop.track_gate_progress(gs, "E", msgs)
+        text = loop._STEER_TRIGGER["thrash"](gs, None)
+        self.assertIn("no file edit landed between those rounds", text)
+
+    def test_a_refusal_known_only_at_a_later_round_is_taken_back(self):
+        gs = loop.GuardState()
+        msgs = []
+        loop.track_gate_progress(gs, "E", msgs)
+        w1 = _tc("w1", "write_file", {"path": "A.java", "content": "x"})
+        self._sent(gs, w1)
+        msgs += [_asst(w1), _res("w1", denial.mark("write_file REFUSED (not written): x"))]
+        loop.track_gate_progress(gs, "E", msgs)
+        w2 = _tc("w2", "write_file", {"path": "B.java", "content": "y"})
+        self._sent(gs, w2)
+        msgs += [_asst(w2), _res("w2")]
+        loop.track_gate_progress(gs, "E", msgs)
+        loop.track_gate_progress(gs, "E", msgs)
+        text = loop._STEER_TRIGGER["thrash"](gs, None)
+        self.assertIn("1 file edit landed between those rounds, none of them between the last 2 rounds", text)
+
+    def test_writes_the_tracker_never_saw_are_read_from_the_history(self):
+        gs = loop.GuardState()
+        loop.track_gate_progress(gs, "E", [])
+        w = _tc("w1", "write_file", {"path": "A.java", "content": "x"})
+        loop.track_gate_progress(gs, "E", [_asst(w), _res("w1")])
+        self.assertIn("1 file edit landed", loop._STEER_TRIGGER["thrash"](gs, None))
+
+
+class TwoCallReplyAtTheLimitTests(unittest.TestCase):
+    def _two(self):
+        a = {"id": "a", "type": "function", "function": {
+            "name": "edit_file", "arguments": json.dumps({"path": "A.java", "old_string": "x", "new_string": "y"})}}
+        b = {"id": "b", "type": "function", "function": {
+            "name": "write_file", "arguments": '{"path": "B.java", "content": "<project>'}}
+        return {"choices": [{"index": 0, "finish_reason": "length", "message": {
+            "role": "assistant", "content": "lead", "tool_calls": [a, b]}}],
+            "usage": {"completion_tokens": 900}}
+
+    def test_cut_write_after_a_complete_edit_is_named_and_gets_the_pieces_advice(self):
+        for c in (self._two(), generation.safe_completion(self._two())):
+            t = _sent(c)
+            self.assertIn("B.java", t)
+            self.assertIn("SMALL pieces", t)
+            self.assertIn("A.java", t)                 # the other withheld call is named, not erased
+            self.assertIn("edit_file", t)
+            self.assertNotIn("LAST edit_file CALL", t)
+
+    def test_cut_edit_after_a_complete_write_names_both_and_no_pieces_advice(self):
+        c = self._two()
+        calls = c["choices"][0]["message"]["tool_calls"]
+        calls[0]["function"]["name"], calls[0]["function"]["arguments"] = "write_file", json.dumps(
+            {"path": "A.java", "content": "x"})
+        calls[1]["function"]["name"], calls[1]["function"]["arguments"] = "edit_file", '{"path": "B.java", "old_string": "<a'
+        for v in (copy.deepcopy(c), generation.safe_completion(copy.deepcopy(c))):
+            t = _sent(v)
+            self.assertNotIn("SMALL pieces", t)
+            self.assertIn("A.java", t)
+            self.assertIn("B.java", t)
+            self.assertIn("arguments cut off at the limit", t)
+            self.assertIn("arguments complete", t)

@@ -691,7 +691,7 @@ STUCK_STEP_REPLAN = 4
 STEP_THRASH_REPLAN = 12
 
 
-def track_gate_progress(gs: GuardState, finding: str) -> None:
+def track_gate_progress(gs: GuardState, finding: str, messages=None) -> None:
     """Shared plan-off gate-progress tracking. ``finding`` = the RED block-nudge/ground-truth text, or
     a FALSY value on a GREEN/clean gate. Maintains the identical-finding stall (same error unchanged
     across gates = no progress → the reasoned thrash-assist). A COULDN'T-RUN gate must NOT call this
@@ -708,7 +708,12 @@ def track_gate_progress(gs: GuardState, finding: str) -> None:
 
     It used to write `last_checks_text` here instead — a second carrier with ZERO readers, whose own
     docstring claimed it fed the steer author. One field, written at the one funnel every gate path
-    reaches (#23: one owner)."""
+    reaches (#23: one owner).
+
+    ``messages`` is the request history AT MARK TIME: the authoritative results of every write sent
+    before this round are in it, so the edits-between-rounds fact is settled from them here (a
+    running count taken before a refusal/failed edit was recorded read an edit that never landed as
+    one that did)."""
     gs.last_gate_flag = finding or ""
     gs.last_gate_seq = gs.action_seq
     if not finding:
@@ -716,34 +721,51 @@ def track_gate_progress(gs: GuardState, finding: str) -> None:
         gs.gate_sig = ""
         gs.stall_edit_marks = []
         return
+    mark = _register_writes_at_round(gs, messages)
     if finding == gs.gate_sig:
         gs.gate_stall += 1
-        gs.stall_edit_marks = list(gs.stall_edit_marks or []) + [landed_writes(gs)]
+        gs.stall_edit_marks = list(gs.stall_edit_marks or []) + [mark]
     else:
         gs.gate_stall = 1
         gs.gate_sig = finding
-        gs.stall_edit_marks = [landed_writes(gs)]
+        gs.stall_edit_marks = [mark]
 
 
-def landed_writes(gs: GuardState) -> int:
-    """Write calls cria forwarded this session that were not later shown to have been refused."""
-    refused = gs.refused_write_ids or set()
-    return sum(1 for cid in (gs.write_call_ids or []) if cid not in refused)
+def _register_writes_at_round(gs: GuardState, messages) -> int:
+    """Bring the write-call registry and the refused set up to date from ``messages`` and return the
+    registry length — this round's position. The edits that landed between two rounds are the
+    registry entries between their positions that are not refused/failed (:func:`thrash_edits_clause`)."""
+    if gs.write_call_ids is None:
+        gs.write_call_ids = []
+    seen = set(gs.write_call_ids)
+    for m in messages or []:
+        if isinstance(m, dict) and m.get("role") == "assistant":
+            for tc in m.get("tool_calls") or []:
+                cid = tc.get("id")
+                if cid and cid not in seen and _write_path(tc.get("function") or {}) is not None:
+                    gs.write_call_ids.append(cid)
+                    seen.add(cid)
+    gs.refused_write_ids = (gs.refused_write_ids or set()) | _unlanded_call_ids(messages or [])
+    return len(gs.write_call_ids)
 
 
 def thrash_edits_clause(gs: GuardState) -> str:
     """The measured edit count across the RED rounds the stall counted — the clause the thrash trigger
-    states instead of claiming the coder "kept editing". Round marks are the landed-write count at
-    each round, so the difference is the edits that landed BETWEEN rounds."""
+    states instead of claiming the coder "kept editing". Each round's mark is a position in the write
+    registry, so the edits BETWEEN two rounds are the entries between their marks that were not
+    refused or failed, judged by the freshest refused set."""
     marks = list(getattr(gs, "stall_edit_marks", None) or [])
     fills = prompts.load_map("thrash_edits")
     if len(marks) < 2:
         return fills["thrash_edits_unknown"]
-    n = marks[-1] - marks[0]
+    refused = getattr(gs, "refused_write_ids", None) or set()
+    ids = getattr(gs, "write_call_ids", None) or []
+    per = [sum(1 for cid in ids[a:b] if cid not in refused) for a, b in zip(marks, marks[1:])]
+    n = sum(per)
     if n <= 0:
         return fills["thrash_edits_none"]
     idle = 0
-    while idle + 1 < len(marks) and marks[-1 - idle - 1] == marks[-1]:
+    while idle < len(per) and per[-1 - idle] == 0:
         idle += 1
     clause = prompts.fill(fills["thrash_edits_some"], n=n, edits="edit" if n == 1 else "edits")
     if idle:
@@ -4162,7 +4184,7 @@ class Loop:
         # because the stall signal is "the same finding as last time" and comparing the new flag with
         # itself is always true.
         prev_flag = sess.last_gate_flag
-        record_gate_state(sess, outcome, gate_error_text(outcome), rlog)
+        record_gate_state(sess, outcome, gate_error_text(outcome), rlog, body.get("messages"))
         if sess.gate_replan_required:
             probe_tc = guard_gate_replan_after_survey(
                 sess, body, rlog, workspace_root=sess.workspace_root)
@@ -4324,7 +4346,7 @@ class Loop:
                 [transport_tc], note=f"receiving workspace observation for step {idx}/{total}")
         raw = _read_tool_result(body.get("messages", []), sess.probe_call_id)
         outcome = read_gate(sess.gate_plan, raw, rlog)
-        record_gate_state(sess, outcome, gate_error_text(outcome), rlog)
+        record_gate_state(sess, outcome, gate_error_text(outcome), rlog, body.get("messages"))
         if sess.gate_replan_required:
             probe_tc = guard_gate_replan_after_survey(
                 sess, body, rlog, workspace_root=sess.workspace_root)
@@ -8105,7 +8127,7 @@ def guard_periodic_result(gs: GuardState, body: dict, rlog, *, reasoner_chat=Non
     # pre-satisfy the completion backstop for a 'done' that comes later. That is the one field this
     # path owns differently, and it is restored right after.
     fresh_before = gs.gate_fresh
-    record_gate_state(gs, outcome, err, rlog)
+    record_gate_state(gs, outcome, err, rlog, body.get("messages"))
     gs.gate_fresh = fresh_before
     if err and (reset := runner_reset_steer(
             gs, outcome, body, rlog, reasoner_chat=reasoner_chat, reasoner_role=reasoner_role,
@@ -8375,7 +8397,7 @@ def _check_state_words(gs) -> str:
     return words["passed"] if getattr(gs, "last_gate_ran", False) else words["never_ran"]
 
 
-def record_gate_state(gs: GuardState, outcome, findings: str, rlog=None) -> None:
+def record_gate_state(gs: GuardState, outcome, findings: str, rlog=None, messages=None) -> None:
     """A gate reading becomes session state HERE, and only here. Every reader calls this.
 
     There were three readers and two of them wrote the state inline, in their own words, with their
@@ -8414,7 +8436,7 @@ def record_gate_state(gs: GuardState, outcome, findings: str, rlog=None) -> None
     if findings:
         gs.last_gate_red = True
         gs.gate_fresh = False    # red never satisfies the completion backstop
-        track_gate_progress(gs, findings)
+        track_gate_progress(gs, findings, messages)
         return
     # A CLEAN PARTIAL GATE IS NOT A GREEN GATE. `ran` is True as long as ANY section came back, so a
     # script cut in transit — the survey used to overrun the shared result on a third of real
@@ -8436,7 +8458,7 @@ def record_gate_state(gs: GuardState, outcome, findings: str, rlog=None) -> None
     gs.gate_fresh = True         # fresh ground truth — the completion backstop is satisfied
     gs.last_gate_testless = not proberun.gate_ran_tests(outcome.report)  # vacuous-green evidence
     gs.last_gate_skipped = proberun.gate_skipped_count(outcome.report)
-    track_gate_progress(gs, "")
+    track_gate_progress(gs, "", messages)
 
 
 def guard_gate_verdict(gs: GuardState, body: dict, rlog) -> str | None:
@@ -8459,7 +8481,7 @@ def guard_gate_verdict(gs: GuardState, body: dict, rlog) -> str | None:
     # line could not be parsed" while a ⟦ctx:checks⟧ block in the same prompt quoted the located
     # error. Its wording lives in prompts (#22); the old one was an inline f-string here.
     findings = gate_error_text(outcome)
-    record_gate_state(gs, outcome, findings, rlog)
+    record_gate_state(gs, outcome, findings, rlog, body.get("messages"))
     if getattr(outcome, "transport_unknown", False):
         return prompts.load("probe_transport_unknown")
     if not outcome.ran:
@@ -12463,7 +12485,7 @@ def guard_probe_steer(gs: GuardState, body: dict, rlog, *, author, step=None) ->
     # THE READING IS STATE, whatever cria does with the steer. This is the same probe result the
     # completion gate reads (same call id, same plan) and it used to be read here and dropped on the
     # floor, so a gate that flipped green→red on a redirect/wheel-spin turn left last_gate_red False.
-    record_gate_state(gs, outcome, gate_error_text(outcome))
+    record_gate_state(gs, outcome, gate_error_text(outcome), None, body.get("messages"))
     if gs.redirect_probe:  # repetition: a REASONED redirect (or the canned floor when no reasoner)
         gs.redirect_probe = False
         gs.steer_source = "refusal guard"
@@ -12673,11 +12695,11 @@ def guard_truncation(coder: dict, body: dict, coder_chat, rlog, *, step=None, ph
             break  # not a mid-write truncation → the write steer doesn't apply; refuse below
         attempt += 1
         rlog.phase = f"{phase}-continue{attempt}"
-        whole = _whole_file_cut(coder, path)
+        whole = _whole_file_cut(coder)
         _last_whole_file_seen = _last_whole_file_seen or whole
-        remedy = ((prompts.render("truncation_guard_selfcut", path=path) if whole else
+        remedy = ((prompts.render("truncation_guard_selfcut", path=_cut_target(coder)[2] or path) if whole else
                    prompts.fill(prompts.load_map("truncation_withheld")["selfcut"],
-                                tool=_cut_call_facts(coder, path)[0], path=path)) if selfcut else
+                                tool=_cut_target(coder)[0], path=_cut_target(coder)[2] or path)) if selfcut else
                   _length_cut_notice(coder, path, out_tok))
         conv = conv + [{"role": "user", "content": remedy}]
         coder = massage.apply(
@@ -12738,40 +12760,57 @@ def _cut_off_calls(completion: dict) -> list[tuple[str, str]]:
     return [(str(fn.get("name") or ""), fn.get("arguments") or "") for fn in calls]
 
 
-def _cut_call_facts(coder: dict, path: str | None) -> tuple[str, str, bool]:
-    """(tool name, raw arguments, arguments-parse-as-complete-JSON) of the write-family call on ``path``."""
-    name, args = next(((n, a) for n, a in _cut_off_calls(coder)
-                       if n in _WRITE_TOOLS and _path_of_args(a, patch_ok=n == "apply_patch") == path),
-                      ("", ""))
+def _args_complete(args: str) -> bool:
     try:
-        complete = isinstance(json.loads(args), dict)
+        return isinstance(json.loads(args), dict)
     except (ValueError, TypeError):
-        complete = False
-    return name, args, complete
+        return False
 
 
-def _whole_file_cut(coder: dict, path: str | None) -> bool:
+def _cut_target(coder: dict) -> tuple[str, str, str | None, bool]:
+    """(tool name, raw arguments, path, arguments-complete) of THE call a length/self-cut stop cut:
+    the LAST write-family call whose own arguments are incomplete, else the last write-family call
+    (a reply that stops at the limit stops inside its last call). Not the first — a reply may carry a
+    complete edit followed by the write that was actually cut."""
+    calls = [(n, a, _path_of_args(a, patch_ok=n == "apply_patch"), _args_complete(a))
+             for n, a in _cut_off_calls(coder) if n in _WRITE_TOOLS]
+    cut = [c for c in calls if not c[3]]
+    return (cut or calls or [("", "", None, False)])[-1]
+
+
+def _whole_file_cut(coder: dict) -> bool:
     """True only when the cut call is a whole-file write tool whose OWN arguments were cut off — the one
     case the 'build it in small pieces' advice is true of."""
-    name, _args, complete = _cut_call_facts(coder, path)
+    name, _args, _path, complete = _cut_target(coder)
     return name in writeproxy_names and not complete
 
 
+def _describe_withheld(name: str, args: str, path: str | None) -> str:
+    where = f" on `{path}`" if path else ""
+    state = "arguments complete" if _args_complete(args) else "arguments cut off at the limit"
+    return f"`{name}`{where} ({len(args)} characters, {state})"
+
+
 def _length_cut_notice(coder: dict, path: str, out_tok: int | None) -> str:
-    """The model-facing notice for a reply that reached the output limit with a write-family call in it,
-    built from what was MEASURED about that reply (#5b): which tool and path, whether the call's own
-    arguments were complete or cut, how many tokens the reply used, and how much of it was text versus
-    the call. The 'build it in small pieces' advice is true ONLY of a whole-file write whose own content
-    was what overflowed — an edit, or a call that finished its arguments, gets the notice that says so
-    (observed: a complete 1.4K edit_file after a long prose lead was called a cut-off whole-file write)."""
-    name, args, complete = _cut_call_facts(coder, path)
+    """The model-facing notice for a reply that reached the output limit with write-family calls in it,
+    built from what was MEASURED about that reply (#5b): EVERY withheld call (tool, path, whether its own
+    arguments were complete or cut), how many tokens the reply used, and how many characters of text were
+    delivered. The 'build it in small pieces' advice is true ONLY when the CUT call is a whole-file write
+    whose own content overflowed — an edit, or calls that finished their arguments, get the notice that
+    says so (observed: a complete 1.4K edit_file after a long prose lead was called a cut-off whole-file
+    write; and a complete edit followed by a cut write_file was described as the edit alone)."""
     used = f"{out_tok} tokens" if out_tok else "the output-token limit"
-    if name in writeproxy_names and not complete:
-        return prompts.render("truncation_guard", path=path, limit=used, tool=name)
+    name, args, cut_path, _complete = _cut_target(coder)
+    if _whole_file_cut(coder):
+        others = [_describe_withheld(n, a, _path_of_args(a, patch_ok=n == "apply_patch"))
+                  for n, a in _cut_off_calls(coder) if (n, a) != (name, args)]
+        also = prompts.fill(prompts.load_map("truncation_withheld")["also"],
+                            others="; ".join(others)) if others else ""
+        return prompts.render("truncation_guard", path=cut_path or path, limit=used, tool=name, also=also)
     prose = sum(len(str((ch.get("message") or {}).get("content") or "")) for ch in coder.get("choices", []))
-    key = "complete" if complete else "cut"
-    return prompts.fill(prompts.load_map("truncation_withheld")[key], tool=name, path=path, used=used,
-                        prose=prose, call=len(args))
+    calls = "; ".join(_describe_withheld(n, a, _path_of_args(a, patch_ok=n == "apply_patch") if n in _WRITE_TOOLS else None)
+                      for n, a in _cut_off_calls(coder))
+    return prompts.fill(prompts.load_map("truncation_withheld")["withheld"], used=used, prose=prose, calls=calls)
 
 
 def _truncated_write_path(completion: dict) -> str | None:
