@@ -1,0 +1,3 @@
+The task states an exact requirement on a file you wrote, and the counts below contradict it. Make the file match the task.
+
+{{FACTS}}

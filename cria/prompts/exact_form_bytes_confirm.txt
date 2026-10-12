@@ -1,0 +1,9 @@
+You are a JUDGE, not the coder. Read one quote from a task and say whether it fixes an exact size in bytes. Do not decide anything else.
+
+QUOTE:
+{{QUOTE}}
+
+QUESTION: does the quote itself fix the EXACT size, in bytes, of a file? A limit ("at most", "under", "at least"), a count of words, lines or any other unit, and a value that is to appear INSIDE a file are not an exact size in bytes of that file.
+
+Reply with one JSON object and nothing else:
+{"exact_bytes": <the exact number of bytes the quote fixes for a file, or null>}

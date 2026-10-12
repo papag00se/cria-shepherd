@@ -1,0 +1,11 @@
+You are a JUDGE, not the coder. Read the original task and the measured file counts below, and extract what the task fixes in exact terms. Do not compare, decide, choose an implementation, or add requirements the task did not state.
+
+ORIGINAL TASK:
+{{TASK}}
+
+{{FACTS}}
+
+QUESTION: does the task fix, in exact terms, the SIZE IN BYTES of one of the counted files, or whether one of the counted files ENDS WITH A LINE BREAK? Only an exact statement counts. A task that merely asks for a file to exist, to describe something, or to contain a kind of thing fixes neither. Anything about program output or commands is not about a counted file.
+
+Reply with one JSON object and nothing else, fields in this order:
+{"quote": "<exact contiguous quote from the task that fixes it, or empty>", "file": "<the counted file's path it concerns, or empty>", "bytes": <the exact byte size the task fixes, or null>, "ends_with_line_break": <true or false as the task fixes it, or null>}

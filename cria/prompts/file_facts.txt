@@ -1,0 +1,9 @@
+# Measured facts about the files the coder wrote or edited, for the completion judge. Counted from the
+# file's content, never from a command or path string, and never from a tool's own report.
+header = MEASURED FROM THE FILES THE CODER WROTE OR EDITED — exact counts of each file's content (UTF-8 bytes, line breaks, whether a line break is its last byte). "on disk" is the workspace as last observed; "as last written" is the content of the newest write that returned a result, with no later call that could have changed the file.
+line = - {{PATH}} ({{SOURCE}}): {{BYTES}} bytes, {{BREAKS}} line break(s), the content {{ENDS}}
+source_disk = on disk
+source_written = as last written
+ends_with_break = ends with a line break
+ends_without_break = does NOT end with a line break
+empty = is empty

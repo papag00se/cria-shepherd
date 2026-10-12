@@ -1,0 +1,9 @@
+You are a JUDGE, not the coder. Read one quote from a task and say what it states about how a file ends. Do not decide anything else.
+
+QUOTE:
+{{QUOTE}}
+
+QUESTION: does the quote itself state that a file must END WITH a line break, or that it must NOT end with a line break? A quote that does not speak of how a file ends states neither.
+
+Reply with one JSON object and nothing else:
+{"states": "ends_with_break" | "ends_without_break" | "neither"}
