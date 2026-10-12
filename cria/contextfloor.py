@@ -199,9 +199,18 @@ def _reduce_restored_text(messages: list[dict], msg_budget: int) -> tuple[list[d
     for m in messages:
         if _is_restored_text(m):
             hint = m.get(_RESTORED_HINT) or {}
-            paths = ", ".join(sorted(hint.get("named") or hint.get("offered") or {}))
+            offered = sorted(hint.get("offered") or {})
+            uncarried = sorted(set(hint.get("named") or ()) - set(offered))
+            # Two sentences, each TRUE of the files it names: what the block carried and the floor removed,
+            # and what it never carried (named NOT SHOWN / NOT AVAILABLE) — one sentence for both said the
+            # second kind of file "was carried in this message and was removed".
+            parts = ([prompts.render("restore_reduced", paths=", ".join(offered)).strip()] if offered else [])
+            if uncarried:
+                note = prompts.render("restore_reduced_uncarried", paths=", ".join(uncarried)).strip()
+                parts.append(note.removeprefix(_RESTORED_MARK).strip() if parts else note)
             out.append({k: v for k, v in m.items() if k != _RESTORED_HINT}
-                       | {"content": prompts.render("restore_reduced", paths=paths).strip()})
+                       | {"content": " ".join(parts) if parts else
+                          prompts.render("restore_reduced", paths="").strip()})
             n += 1
         else:
             out.append(m)

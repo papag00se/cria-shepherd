@@ -9270,6 +9270,14 @@ def _extract_reads(messages: list[dict]) -> dict:
     return out
 
 
+def _count_lines(text: str) -> int:
+    """THE ONE LINE-COUNTING RULE for every count the ledger states — what a read or a write returned (``last``)
+    and what the workspace's body holds now (``now``): the lines of ``text`` as `sed -n` numbers them, a final
+    newline ending its line rather than starting another. (The read tool strips that newline and a write body
+    keeps it, so `count("\\n") + 1` called one file N lines and the same file written N+1.)"""
+    return text.count("\n") + (0 if not text or text.endswith("\n") else 1)
+
+
 def _read_label(start, end, c: str) -> str:
     """What one read RETURNED, in the ledger's words. LINE COUNT ONLY, NO BYTE COUNT. The live
     ⟦ctx:files⟧ listing owns the byte size of every present file, read from os.stat. This ledger
@@ -9282,11 +9290,22 @@ def _read_label(start, end, c: str) -> str:
 
     A window that ran into the end of the file (asked 1-130 of a 106-line file) IS the file, and says
     so: the count is the lines that came back, never the end of the range asked for."""
-    label = f"{c.count(chr(10)) + 1} lines"
+    label = f"{_count_lines(c)} lines"
     if not _read_is_whole(start, end, c):
         label = prompts.fill(prompts.load_map("fetched_facts_sections")["read_range"],
                              range=_line_range(start, end), size=label)
     return label
+
+
+def _raw_read_bytes(start, end, c: str):
+    """The byte length of what a read returned WHEN THAT IS THE FILE'S OWN BYTES, else None. Only an unwindowed
+    read returns them: a window comes back line-numbered (so even a 1-to-EOF window, which `_read_label` calls
+    the plain file, is longer than the file), a harness-cut result is shorter, and a text that held bytes that
+    are not UTF-8 was re-encoded larger. ``None`` means "no byte count to compare with the workspace's size"
+    (`_dated_count` then claims nothing), never a guess."""
+    if start or end or "\ufffd" in c or writeproxy.note_harness_cuts([{"role": "tool", "content": c}]):
+        return None
+    return len(c.encode("utf-8", "replace"))
 
 
 def _file_events(messages: list[dict]) -> list:
@@ -9297,7 +9316,7 @@ def _file_events(messages: list[dict]) -> list:
     one; both numbers were true once, of a file that no longer existed)."""
     events = []
     for idx, tid, path, start, end, c in _read_results_ordered(messages):
-        nbytes, label = len(c.encode("utf-8", "replace")), _read_label(start, end, c)
+        nbytes, label = _raw_read_bytes(start, end, c), _read_label(start, end, c)
         events.append((idx, ("r", tid), "read", path, nbytes, label, not _read_is_whole(start, end, c)))
     for idx, tid, path, nbytes, label in _write_events(messages):
         events.append((idx, ("w", tid), "write", path, nbytes, label, False))
@@ -9513,7 +9532,7 @@ def _write_events(messages: list[dict]):
                 continue                      # refused or failed — only the authoritative confirmation lands a write
             path, body = calls[tid]
             raw = body.encode("utf-8", "replace")
-            yield idx, tid, path, len(raw), f"{body.count(chr(10)) + 1} lines"   # bytes owned by the ⟦ctx:files⟧ listing
+            yield idx, tid, path, len(raw), f"{_count_lines(body)} lines"   # bytes owned by the ⟦ctx:files⟧ listing
 
 
 def _ledger_key(sess):
@@ -9618,14 +9637,14 @@ def _dated_count(view, rel: str, nbytes: int, label: str, labels: dict) -> str:
     by a measured one when the view holds the current body. A reading of a window, or a workspace nothing is known
     of, is left as it is (it claims nothing about the whole file / nothing can contradict it). A 1-byte gap is the
     read tool's stripped trailing newline, never a change (`_read_label`)."""
-    if view is None or not _WHOLE_COUNT.fullmatch(label):
+    if view is None or nbytes is None or not _WHOLE_COUNT.fullmatch(label):
         return label
     size = view.size(rel)
     if size is None or abs(size - nbytes) <= 1:
         return label
     raw = None if view.may_have_changed else view.read_bytes(rel)
     if raw is not None and len(raw) == size:
-        return prompts.fill(labels["read_changed_now"], now=len(raw.decode("utf-8", "replace").splitlines()),
+        return prompts.fill(labels["read_changed_now"], now=_count_lines(raw.decode("utf-8", "replace")),
                             then=label)
     return prompts.fill(labels["read_changed"], then=label)
 

@@ -86,21 +86,33 @@ def test_the_standin_is_not_shed_as_the_oldest_droppable_turn():
     assert JAVA in stand_in[0]["content"] and "package pipeline;" not in stand_in[0]["content"]
 
 
-def test_the_standin_names_a_file_the_block_could_not_carry():
-    """Importer.java is 9,123 B > the 9,000 B the block carries: it was NOT SHOWN, so it was in no `offered`
-    map and the stand-in named only pom.xml — the one file the coder most needed to re-read."""
+def test_the_standin_says_a_true_thing_of_each_kind_of_file_it_names():
+    """An OFFERED file (text carried, then removed), a NOT SHOWN file (too large: Importer.java is 9,123 B > the
+    9,000 B the block carries) and a NOT AVAILABLE file (no current body): the first kind 'was carried and was
+    removed'; the other two never were, and the stand-in must not say they were."""
+    removed = "The current text of these files was carried in this message and was removed to fit the window: "
+    uncarried = "No current text of these files is carried here"
     tok = _bind(_view())
     try:
         s = _sess({JAVA: (len(IMPORTER.encode()), "243 lines"), "pom.xml": (len(POM.encode()), "34 lines")})
         restore, offered = loop._restored_text_message(s, [])
-        assert JAVA in restore["content"] and "NOT SHOWN HERE" in restore["content"]
-        assert set(offered) == {"pom.xml"}
+        assert set(offered) == {"pom.xml"} and JAVA in restore["content"] and "NOT SHOWN HERE" in restore["content"]
         msgs, _ = _over_budget_body(s)
         out, _t, rep = cf.fit(msgs, _tools(), window=6000, reserve=1500, safety=1.05, pinned_task=FX["task"])
     finally:
         wsview.unbind(tok)
-    stand_in = next(m for m in out if str(m.get("content") or "").startswith(modelview.RESTORED_MARKER))
-    assert JAVA in stand_in["content"] and "pom.xml" in stand_in["content"]
+    text = next(m for m in out if str(m.get("content") or "").startswith(modelview.RESTORED_MARKER))["content"]
+    assert text.startswith(modelview.RESTORED_MARKER + " " + removed + "pom.xml. ")
+    assert f"{uncarried} — each was too large for this message, or no current text of it was held: {JAVA}." in text
+    assert JAVA not in text.split(uncarried)[0]                    # the removed-sentence never names it
+    assert text.count(modelview.RESTORED_MARKER) == 1
+    # NOT AVAILABLE only (a reduced bare block): no file was carried, so nothing "was removed".
+    bare = {"role": "user", "content": "x " * 6000,
+            bodykeys.RESTORED_FILES: {"offered": {}, "named": [JAVA, "pom.xml"]}}
+    out2, n = cf._reduce_restored_text([bare], 10)
+    assert n == 1 and removed not in out2[0]["content"]
+    assert out2[0]["content"].startswith(f"{modelview.RESTORED_MARKER} {uncarried}")
+    assert "pom.xml, " + JAVA in out2[0]["content"] or JAVA + ", pom.xml" in out2[0]["content"]
 
 
 def test_a_file_with_no_current_body_is_named_not_silently_left_out():
@@ -134,7 +146,7 @@ def test_a_count_the_disk_has_outgrown_is_dated_and_replaced_by_a_measured_one()
     finally:
         wsview.unbind(tok)
     line = next(ln for ln in out.splitlines() if ln.startswith(f"- {JAVA}"))
-    assert "243 lines now" in line and "127 lines when you last read it" in line and "changed since" in line
+    assert "243 lines now" in line and "127 lines when you last read or wrote it" in line and "changed since" in line
     assert "(127 lines)" not in out
     assert "- pom.xml (34 lines)" in out                                   # an unchanged file keeps its count
 
@@ -145,7 +157,7 @@ def test_a_changed_file_whose_body_is_not_held_says_it_changed_without_inventing
         out = _facts(_sess({JAVA: (4500, "127 lines")}))
     finally:
         wsview.unbind(tok)
-    assert f"- {JAVA} (127 lines when you last read it — the file has changed since)" in out
+    assert f"- {JAVA} (127 lines when you last read or wrote it — the file has changed since)" in out
     assert "now" not in out.split(JAVA)[1].split("\n")[0]
 
 
@@ -157,7 +169,7 @@ def test_a_command_that_may_have_changed_files_never_lets_a_stale_body_supply_th
         out = _facts(_sess({JAVA: (4500, "127 lines")}))
     finally:
         wsview.unbind(tok)
-    assert "lines now" not in out and "127 lines when you last read it" in out
+    assert "lines now" not in out and "127 lines when you last read or wrote it" in out
 
 
 def test_a_ranged_reading_and_an_unsurveyed_workspace_are_left_alone():
@@ -214,3 +226,63 @@ def test_every_line_a_pointer_replaced_is_shown_in_the_body_sent():
                 assert ln in text, f"a line the pointer replaced is nowhere in the body (window {window}): {ln[-60:]}"
     folded = _prep(msgs, 16384)
     assert any(NOTE in str(m.get("content")) for m in folded)              # the fold does fire on the real shape
+
+
+# --- 2b. which ledger entries may be dated -----------------------------------------------------------------
+
+def _read_messages(path, start, end, result, call="r1"):
+    args = {"path": path}
+    if start or end:
+        args.update(start_line=start, end_line=end)
+    return [{"role": "assistant", "content": None, "tool_calls": [{"id": call, "type": "function", "function": {
+                "name": "read_file", "arguments": json.dumps(args)}}]},
+            {"role": "tool", "tool_call_id": call, "content": result}]
+
+
+def _ledger_line(messages, rel):
+    tok = _bind(_view())
+    try:
+        s = _sess({})
+        loop._track_read_files(s, messages)
+        out = loop._fetched_facts_anchor(s, messages, {})["content"]
+    finally:
+        wsview.unbind(tok)
+    return next(ln for ln in out.splitlines() if ln.startswith(f"- {rel}"))
+
+
+def test_an_unchanged_file_read_by_a_1_to_eof_window_is_not_called_changed():
+    """The window comes back line-numbered, so its length is not the file's: `_read_label` calls it the plain file
+    ('N lines') and the byte comparison used to call the UNCHANGED pom.xml changed."""
+    numbered = "\n".join(f"{i}: {ln}" for i, ln in enumerate(POM.rstrip("\n").split("\n"), 1))
+    line = _ledger_line(_read_messages("pom.xml", 1, 500, numbered), "pom.xml")
+    assert line.startswith("- pom.xml (33 lines)") and "changed" not in line
+
+
+def test_a_whole_read_of_an_unchanged_file_is_not_called_changed_and_counts_like_the_workspace():
+    line = _ledger_line(_read_messages("pom.xml", None, None, POM.rstrip("\n")), "pom.xml")
+    assert line.startswith("- pom.xml (33 lines)") and "changed" not in line
+    assert loop._count_lines(POM) == loop._count_lines(POM.rstrip("\n")) == 33        # one rule, read or written
+
+
+def test_a_reading_that_held_a_non_utf8_byte_is_not_called_changed():
+    raw = b"a = 1\nb = \xff\xfe\n"                  # 13 bytes on disk; the replace-decoded text is 3 longer
+    text = raw.decode("utf-8", "replace")
+    tree = "F\t1\t%d\tlatin.py" % len(raw)
+    v = wsview.View(ROOT, f"c13b-{next(_N)}")
+    assert wsview.apply_survey(v, survey(tree, root=ROOT))
+    tok = _bind(v)
+    try:
+        msgs = _read_messages("latin.py", None, None, text.rstrip("\n"))
+        s = _sess({})
+        loop._track_read_files(s, msgs)
+        out = loop._fetched_facts_anchor(s, msgs, {})["content"]
+    finally:
+        wsview.unbind(tok)
+    assert "- latin.py (2 lines)" in out and "changed" not in out
+
+
+def test_a_harness_cut_reading_is_not_dated():
+    cut = POM[:400] + "\n…37 tokens truncated…\n" + POM[-100:]
+    assert loop._raw_read_bytes(None, None, cut) is None
+    line = _ledger_line(_read_messages("pom.xml", None, None, cut), "pom.xml")
+    assert "changed" not in line

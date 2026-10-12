@@ -107,8 +107,8 @@ read_range = lines {{RANGE}} only — {{SIZE}}
 # A line count is a fact about the file WHEN IT WAS READ. When the workspace's own size for the file no longer
 # matches what that read returned, the count is not carried as if it were current (phi4 A10: "127 lines" for a
 # file the coder's edits had grown to 243): it is dated, and replaced by a fresh count when the body is held.
-read_changed = {{THEN}} when you last read it — the file has changed since
-read_changed_now = {{NOW}} lines now — {{THEN}} when you last read it, so the file has changed since
+read_changed = {{THEN}} when you last read or wrote it — the file has changed since
+read_changed_now = {{NOW}} lines now — {{THEN}} when you last read or wrote it, so the file has changed since
 # FILES THE CODER WORKED ON WHOSE TEXT IS NO LONGER IN THE CONVERSATION. The ledger above says you
 # looked; after the harness folded the history the text itself is gone, and an edit or a rewrite is then
 # composed from memory. The block below is its own message (⟦ctx:current⟧) so the floor can shed it, with a
