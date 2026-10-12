@@ -447,7 +447,8 @@ def _is_tool_result(m: dict) -> bool:
 
 
 def compaction_request_parts(messages: list[dict], files_list: str = "", gate_plan=None,
-                             checks: str = "", checks_age: int = 0) -> list[str]:
+                             checks: str = "", checks_age: int = 0, *,
+                             newer_messages: list[dict] | None = None) -> list[str]:
     """Independently reducible evidence blocks for a compaction call.
 
     A single flattened user message is irreducible at the context floor: the system instruction and
@@ -458,7 +459,15 @@ def compaction_request_parts(messages: list[dict], files_list: str = "", gate_pl
     fit them losslessly-first and label any reduction it must make.  The same blocks are the
     validators' transcript, so writer and judge read one rendering.
     """
+    # None opts out, preserving existing callers' rendering byte for byte. An empty
+    # list opts in at a boundary with no newer tail. Each public turn keeps its own
+    # scope label through independent context-floor reduction; reasoning is never read.
     parts = [serialize([m]) for m in compaction_evidence_messages(messages, gate_plan)]
+    if newer_messages is not None:
+        labels = prompts.load_map("compaction_grounding")
+        parts = [prompts.fill(labels["middle"], turn=p) for p in parts]
+        parts.extend(prompts.fill(labels["newer"], turn=serialize([m]))
+                     for m in compaction_evidence_messages(newer_messages, gate_plan))
     if files_list.strip():
         parts.append(files_list.strip())
     known = checks_input(checks, checks_age)
@@ -473,21 +482,24 @@ def compaction_ask() -> str:
 
 
 def compaction_request_messages(messages: list[dict], files_list: str = "", gate_plan=None,
-                                checks: str = "", checks_age: int = 0) -> list[dict]:
+                                checks: str = "", checks_age: int = 0, *,
+                                newer_messages: list[dict] | None = None) -> list[dict]:
     """User-role evidence turns followed by the compaction ask.
 
     The first small turn is intentionally the first user message, so contextfloor's task protection
     does not accidentally pin the first (possibly enormous) evidence block.  The final ask remains
     the active turn.  Everything between is independently reducible by the wire-owned floor.
     """
-    parts = compaction_request_parts(messages, files_list, gate_plan, checks, checks_age)
+    parts = compaction_request_parts(messages, files_list, gate_plan, checks, checks_age,
+                                     newer_messages=newer_messages)
     return ([{"role": "user", "content": prompts.load("composed_evidence_intro")}] +
             [{"role": "user", "content": p} for p in parts] +
             [{"role": "user", "content": compaction_ask()}])
 
 
 def compaction_request(messages: list[dict], files_list: str = "", gate_plan=None,
-                       checks: str = "", checks_age: int = 0) -> str:
+                       checks: str = "", checks_age: int = 0, *,
+                       newer_messages: list[dict] | None = None) -> str:
     """The compactor's user message: the cleaned transcript, the disk, then cria's ask LAST.
 
     ``gate_plan`` is the live ``probegate.GatePlan``. Every other caller of ``clean_gate_results``
@@ -526,6 +538,10 @@ def compaction_request(messages: list[dict], files_list: str = "", gate_plan=Non
 
     Fixing the sibling by copying the two lines would have left a third place to forget. Both callers
     now compose the request here."""
+    if newer_messages is not None:
+        return "\n\n".join(compaction_request_parts(
+            messages, files_list, gate_plan, checks, checks_age,
+            newer_messages=newer_messages) + [compaction_ask()])
     # SUPERSEDED WRITE BODIES ARE STUBBED HERE TOO. `compact()` already does this to the transcript
     # it EMITS (see the call beside the files list), but the summarizer's INPUT did not — so the
     # model writing the briefing read every old version of every file and put them in it, and the
@@ -1016,10 +1032,17 @@ def compact(messages: list[dict], summarize, state: CompactState, *,
             recompact_tokens: int = RECOMPACT_TOKENS, pinned_task: str = "", force: bool = False,
             boundary_keep_tail_tokens: int = BOUNDARY_KEEP_TAIL_TOKENS,
             files_list: str = "", refold=None,
-            refold_tokens: int = REFOLD_TOKENS, rlog=None) -> tuple[list[dict], CompactState, bool]:
+            refold_tokens: int = REFOLD_TOKENS, rlog=None,
+            with_grounding: bool = False) -> tuple[list[dict], CompactState, bool]:
     """Return (messages, state, applied?). ``summarize(list[dict]) -> str`` folds the old middle into
     a briefing (injected so this is testable without a model). No-op (same list) at/below the token
     trigger, or when there is no middle to compact (the recent tail already spans everything).
+
+    Opting into ``with_grounding`` calls summarize/refold with the keyword-only
+    ``newer_messages=messages[tail_start:]``: a separate read-only grounding scope,
+    never additional replacement history. Both callbacks must accept that keyword.
+    Old one-argument callbacks remain unchanged by default. No coverage, throttle,
+    increment or tail budget is derived from the grounding scope.
 
     ``force`` (the plan loop passes it at a STEP BOUNDARY) both lowers the trigger AND shrinks the kept tail
     to ``boundary_keep_tail_tokens`` (0 by default → NO verbatim tail) — so the just-verified step's work
@@ -1078,7 +1101,9 @@ def compact(messages: list[dict], summarize, state: CompactState, *,
             # identical span again one coder turn later".
             state = CompactState(summary=state.summary, covered=state.covered,
                                  attempted=tail_start)
-            fresh = strip_frame_echo(summarize(summarizable), prompts.load("selfcompact_summary"))
+            fresh_text = (summarize(summarizable, newer_messages=messages[tail_start:])
+                          if with_grounding else summarize(summarizable))
+            fresh = strip_frame_echo(fresh_text, prompts.load("selfcompact_summary"))
             # An EMPTY summary must NEVER be adopted. ``summarize`` returns "" on a failed/empty compactor
             # call (it happens — a reasoning model can burn its budget thinking and emit no content), and
             # taking it would advance ``covered`` to tail_start: every folded turn replaced by a rollup
@@ -1098,7 +1123,9 @@ def compact(messages: list[dict], summarize, state: CompactState, *,
             # tokens, bounding degradation to a handful of generations across a whole session. A
             # failed/empty refold keeps the un-refolded text (fail-safe: too long beats gone).
             if refold is not None and est_tokens(combined) >= refold_tokens:
-                folded = strip_frame_echo(refold(combined), prompts.load("selfcompact_refold"))
+                folded_text = (refold(combined, newer_messages=messages[tail_start:])
+                               if with_grounding else refold(combined))
+                folded = strip_frame_echo(folded_text, prompts.load("selfcompact_refold"))
                 if folded.strip():
                     combined = folded
             state = CompactState(summary=combined, covered=tail_start, attempted=tail_start)

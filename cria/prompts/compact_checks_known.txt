@@ -12,8 +12,9 @@
 # past the same threshold, tells the reader its own newer result wins. The input framing was the half
 # that still asserted precedence unconditionally.
 block = THE REPO'S OWN CHECKS, AS THEY LAST RAN. This is a real result from a real command, not a claim from the transcript above. Do not work the current build state out by reading the transcript alone: an error earlier in the session may already be fixed, and a success may already be stale. Copy what matters from here, quoting the concrete error and its file:line. {{PRECEDENCE}}\n\n{{FLAG}}
-# Nothing of the coder's has run since the gate, so the block IS the current state.
-fresh = If this section and the transcript disagree, this section is right.
+# Below the age threshold is not proof that no newer result exists (age can also be unknown).
+# Real result order and scope govern precedence even for one later command.
+fresh = Where this section and older transcript claims disagree and no newer run of the same check is supplied, this section is right. A later result from the same check supersedes this outcome; unrelated checks and unmet requirements remain unresolved.
 # The coder has run its own commands since. The block is still a real result, but it is no longer
 # the newest one in the room, and it may not claim to outrank what came after it.
 stale = This check ran {{CALLS}} of the coder's own commands ago, so the transcript may hold a newer one. Where a LATER command in the transcript ran the same check and reported something different, that later result is the current state and this section is not — say what the newest run showed, and say when each ran.

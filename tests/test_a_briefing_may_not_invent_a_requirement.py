@@ -51,11 +51,20 @@ class TheOutstandingBulletCarriesTheEvidenceRuleTests(unittest.TestCase):
         self.assertIn("nothing verified outstanding", line.lower())
 
     def test_the_files_rule_now_runs_both_ways(self):
-        """It forbade claiming a file was CREATED and said nothing about claiming one is MISSING —
-        which is the half cart-billing-go x nemotron-elastic's briefing got wrong."""
+        """Both presence and absence need the survey's actual scope; neither an
+        uncertain listing nor a filename proves contents, behavior or done work."""
         low = self.sys.lower()
-        self.assertIn("never state that a file was created unless it is on that list", low)
-        self.assertIn("never state that a file is missing when it is on that list", low)
+        self.assertIn("only a survey labelled complete and current establishes that an unlisted file is absent",
+                      low)
+        self.assertIn("when complete and current, the survey settles whether a file exists and nothing else",
+                      low)
+        self.assertIn("a partial, folded or stale survey leaves unlisted paths unknown", low)
+        self.assertIn("listed names describe what was observed then, not necessarily what exists now", low)
+        self.assertIn("preserve later real tool evidence of creation, movement or deletion", low)
+        self.assertIn("not contents, behavior or task completion", low)
+        # Filesystem names cannot replace execution evidence in either direction.
+        self.assertIn("check actually ran and passed", low)
+        self.assertIn("check that ran and reported it", low)
 
 
 class AModelsSummaryIsNotGroundTruthTests(unittest.TestCase):

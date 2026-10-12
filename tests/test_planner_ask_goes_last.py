@@ -99,7 +99,9 @@ class PlannerInventoryWordingTests(unittest.TestCase):
         d = tempfile.mkdtemp()
         out = groundtruth.workspace_inventory(d, flavor="planner")
         self.assertNotIn("judging", out)
-        self.assertIn("nothing has been built yet", out)
+        self.assertEqual(out, prompts.fill(prompts.load_map("workspace_inventory")["planner_empty"], root=d))
+        self.assertIn("current complete survey found no files", out)
+        self.assertNotIn("nothing has been built yet", out)
 
     def test_the_judge_flavor_is_unchanged(self):
         self.assertIn("at judging time", groundtruth.workspace_inventory(tempfile.mkdtemp()))
@@ -113,10 +115,17 @@ class PlannerInventoryWordingTests(unittest.TestCase):
         self.assertIn("a.py", out)
 
     def test_the_gather_asks_for_the_planner_flavor(self):
-        """The planner's OWN seed must read the planner-flavored inventory ("nothing has been
-        built yet"), never the critic's ("at judging time") — driven end to end rather than
-        matched against the call's own spelling, which cannot tell a real flavor="planner" from
-        one that silently regressed to the judge default while still naming the right function."""
-        seed = _seed("write a Python script that resolves handles", cwd=tempfile.mkdtemp())
-        self.assertIn("nothing has been built yet", seed)
-        self.assertNotIn("at judging time", seed)
+        """The actual seed must contain the planner-flavored observed inventory,
+        not the critic's judging wording or an invented claim that work never happened."""
+        task = "write a Python script that resolves handles"
+        cwd = tempfile.mkdtemp()
+        seed = _seed(task, cwd=cwd)
+        inventory = prompts.fill(prompts.load_map("workspace_inventory")["planner_empty"], root=cwd)
+        ask = prompts.load("plan_closing_ask")
+        self.assertTrue(seed.startswith(inventory))
+        self.assertIn("current complete survey found no files", seed)
+        self.assertNotIn("nothing has been built yet", seed)
+        self.assertNotIn("judging", seed)
+        self.assertLess(seed.index(inventory), seed.index(task))
+        self.assertLess(seed.index(task), seed.index(ask))
+        self.assertTrue(seed.endswith(ask))

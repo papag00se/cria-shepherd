@@ -381,8 +381,8 @@ def _last_checks_note(server, sess_key: str) -> str:
     # in its history, so a "N calls ago" would stay N for every later call while the truth moved on
     # (A6 walk seg-11/18/19: "You have run 8 of your own commands since" repeated unchanged). Said
     # as of the moment it was written, it stays true however long it is carried (#5b).
-    age = (f"{since} of your calls before this handoff was written" if since
-           else "when this handoff was written")
+    ages = prompts.load_map("compaction_check_age")
+    age = prompts.fill(ages["aged"], calls=str(since)) if since else ages["fresh"]
     loop = getattr(server, "loop", None)
     newer = newer_own_run(loop._store.get(sess_key)) if loop is not None else ""
     return prompts.fill(prompts.load("checks_note"), age=age, flag=flag, staleness=stale + newer)
@@ -549,6 +549,12 @@ def _workspace_listing(ws: str | None) -> str:
             lines.append(f"  {name}")
     if not lines:
         return ""
+    # This shallow names-only appendix is not an absence check. It must still carry
+    # the survey's independent coverage and freshness limits into the frozen handoff.
+    if not view.complete or view.folded:
+        lines.append(labels["partial"])
+    if view.may_have_changed:
+        lines.append(labels["stale"])
     return labels["compaction_header"] + "\n" + "\n".join(lines)
 
 
@@ -686,7 +692,8 @@ def _harden_compaction_reply(comp: dict, body: dict, provider, server, rlog, ses
                 _compaction_messages(pb.get("messages", [])),
                 groundtruth.workspace_inventory(ws or "", flavor="briefing"),
                 _session_gate_plan(server, sk),
-                _last_gate_flag(server, sk)),
+                _last_gate_flag(server, sk),
+                _gate_age(server, sk)),
         ]}
         # BOUNDED, not None (C41). `pb` still carries whatever `max_tokens` the harness's ORIGINAL
         # request had — often None ("uncapped"), which is a reasonable thing for a harness to ask of

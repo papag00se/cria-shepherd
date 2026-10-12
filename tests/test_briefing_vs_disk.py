@@ -47,8 +47,15 @@ class TheDiskRefutesTheBriefingTests(unittest.TestCase):
         out = loop._briefing_disk_truth(ROLLUP, FILES)
         for sentence in ROLLUP.splitlines():
             self.assertIn(sentence, out)                       # every word survives
-        self.assertIn("GROUND TRUTH — these files DO exist", out)
-        self.assertIn("ada_handle_resolver.py", out.split("GROUND TRUTH")[1])
+        observation = out[len(ROLLUP):]
+        self.assertTrue(out.startswith(ROLLUP))          # exact original, including ordering
+        self.assertIn("SURVEY OBSERVATION", observation)
+        self.assertIn("these files were observed in the workspace survey", observation)
+        self.assertIn("ada_handle_resolver.py", observation)
+        self.assertIn("test_da_hash_resolver.py", observation)
+        self.assertIn("does not establish their contents, current existence after later changes", observation)
+        self.assertIn("or that missing work inside them is done", observation)
+        self.assertNotIn("on disk right now", observation)
 
     def test_a_true_denial_about_a_function_keeps_its_meaning(self):
         out = loop._briefing_disk_truth("resolver.py: the main() function has not been written.",

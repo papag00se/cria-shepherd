@@ -25,8 +25,11 @@ def _listing(tmp_path, msgs):
 def test_no_compaction_no_compaction_claim(tmp_path):
     text = _listing(tmp_path, _body())
     assert "compacted" not in text
-    assert "this list says which files exist" in text and "Importer.java" in text
-    assert "Every file above is readable with read_file" in text
+    assert "YOUR WORKSPACE SURVEY" in text and "names observed" in text
+    assert "Importer.java (17 B)" in text
+    assert "RIGHT NOW" not in text and "just now" not in text
+    assert "Use read_file for file contents" in text
+    assert "read it rather than reconstructing it from memory or from the summary" in text
 
 
 def test_real_compaction_keeps_the_claim(tmp_path):

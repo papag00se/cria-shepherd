@@ -3,11 +3,11 @@
 # prompts.load_map. These are MODEL-FACING, so they carry the ⟦ctx:checks⟧ marker and NEVER the
 # literal project name (principle #17: a distinctive proper noun makes a weak model meta-reason about
 # the mechanism instead of coding). {{FINDINGS}} is the red gate's own output.
-red = ⟦ctx:checks⟧ GROUND TRUTH — the repo's own checks were run and they currently FAIL:\n{{FINDINGS}}\nTrust this over any claim above that the work is done or the tests pass.
-testless = ⟦ctx:checks⟧ GROUND TRUTH — the last checks that ran passed but executed NO tests, so the tests are UNVERIFIED. Run them before treating them as passing.
-# Same shape as `red`, for a briefing that says a file is missing which cria's own disk
-# listing shows exists. Additive: the briefing keeps its words, the disk gets the last one.
-files_exist = ⟦ctx:checks⟧ GROUND TRUTH — these files DO exist on disk right now: {{FILES}}. Trust this over any claim above that they are missing or were never written; read them before recreating anything.
+red = ⟦ctx:checks⟧ CHECK OBSERVATION — when this briefing was written, the last recorded repo checks had reported failures:\n{{FINDINGS}}\nThis is a historical result, not a claim about the build now. A later result from the same check supersedes this outcome; unrelated checks and unmet requirements remain unresolved.
+testless = ⟦ctx:checks⟧ CHECK OBSERVATION — when this briefing was written, the last recorded checks had passed but executed NO tests. That run did not verify tests. A later result may establish test execution; a clean build alone does not.
+# The additive existence correction receives observed names, not survey age or file contents.
+# It may not upgrade a stale survey or refute missing work INSIDE an existing file.
+files_exist = ⟦ctx:checks⟧ SURVEY OBSERVATION — these files were observed in the workspace survey: {{FILES}}. This establishes their existence at that observation; it does not establish their contents, current existence after later changes, or that missing work inside them is done.
 # Same shape again, for a briefing that calls a SYMBOL broken which the checks never named. Walked on
 # cart-billing-go x nemotron-elastic: the model worked out that `decimal.NewFromString` was the right
 # constructor, its edit failed to apply, cria compacted, and the briefing came back listing

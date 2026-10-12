@@ -1,2 +1,2 @@
-LATEST CHECK RESULTS (the repo's own checks, gathered {{AGE}}):
+LATEST CHECK RESULTS AS OF THIS HANDOFF (historical observation of the repo's own checks, gathered {{AGE}}; a later result of the same check supersedes this outcome):
 {{FLAG}}{{STALENESS}}

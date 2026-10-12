@@ -346,14 +346,13 @@ def files_for_a_judge(root: str | None) -> str:
 
 
 def workspace_inventory(root: str | None, flavor: str = "judge", compacted: bool = False) -> str:
-    """What ACTUALLY exists in the workspace right now — deterministic ground truth for the critic's
-    evidence, gathered by cria from the filesystem (never from the model's claims). Closes the judge's
-    blind spot on artifact steps: without it, a "write README.md" step was passed on FEASIBILITY with
-    zero write actions in evidence and no README on disk, and a FileNotFoundError naming one file was
-    read as "the directory does not exist" while the workspace held files. The listing is COMPLETE —
-    never truncated (operator's call: a bounded list weakens the one clause that makes it decisive) —
-    so "not listed = does not exist" always holds. Empty string when there is no workspace root to
-    inspect (evidence composition drops the section, as with the fetch facts)."""
+    """Render the harness survey with its actual coverage and freshness.
+
+    Only a complete, unfolded, current survey supports absence. A bounded survey and
+    an overtaken survey are independent uncertainties; preserve both when both apply.
+    Unknown workspace/survey returns no inventory, never an empty-workspace claim.
+    Rendering neither refreshes the survey nor changes its ownership state.
+    """
     if not root:
         return ""
     entries = _walk_entries(wsview.current(root), root)
@@ -386,10 +385,10 @@ def workspace_inventory(root: str | None, flavor: str = "judge", compacted: bool
     _v = wsview.current(root)
     bounded = not (_v.complete and not _v.folded)
     complete = not bounded and not _v.may_have_changed
-    # WHY the clause is withheld decides which sentence replaces it: a bound the survey hit is a
-    # different fact from a listing the disk has overtaken, and the second one has to withdraw the
-    # header's freshness claim as well (#5b).
-    caveat = "partial" if bounded else "stale"
+    # Coverage and age are independent. A bounded survey can ALSO have been overtaken.
+    # Neutral headers never contradict these scope lines or silently upgrade the survey.
+    caveats = ([labels["partial"]] if bounded else []) + (
+        [labels["stale"]] if _v.may_have_changed else [])
     if not entries and not folded:
         if not complete:
             return ""          # nothing seen AND the survey was bounded — say nothing, not "empty"
@@ -408,19 +407,17 @@ def workspace_inventory(root: str | None, flavor: str = "judge", compacted: bool
         # version — do not reconstruct content from the summary" is true of a bounded or overtaken
         # listing too, and was being dropped along with the clause it happened to share a line with.
         lines.append(labels["coder_note"])
-        if not complete:
-            lines.append(labels[caveat])
+        lines.extend(caveats)
         return "\n".join(lines)
     if flavor == "briefing":
-        # The rolling/harness compaction writer. Same complete listing, wording that says why it is
-        # here: the transcript's file mentions may be stale, this is not. See the header's own note.
+        # The rolling/harness writer gets the same survey scope as every other reader.
         lines = [labels["briefing_header"]]
         lines += [_entry_line(rel, size) for _, rel, size in entries] + fold_lines
-        lines.append(labels["complete" if complete else caveat])
+        lines.extend([labels["complete"]] if complete else caveats)
         return "\n".join(lines)
     lines = [prompts.fill(labels["planner_header" if flavor == "planner" else "header"], root=root)]
     lines += [_entry_line(rel, size) for _, rel, size in entries] + fold_lines
-    lines.append(labels["complete" if complete else caveat])
+    lines.extend([labels["complete"]] if complete else caveats)
     return "\n".join(lines)
 
 

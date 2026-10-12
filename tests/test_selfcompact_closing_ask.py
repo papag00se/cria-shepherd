@@ -86,9 +86,11 @@ class SelfCompactionAskTests(unittest.TestCase):
 
         real_parts = selfcompact.compaction_request_parts
 
-        def recording_parts(messages, files_list="", gate_plan=None, checks="", checks_age=0):
-            calls.append(len(messages))
-            return real_parts(messages, files_list, gate_plan, checks, checks_age)
+        def recording_parts(messages, files_list="", gate_plan=None, checks="", checks_age=0,
+                            *, newer_messages=None):
+            calls.append((len(messages), newer_messages))
+            return real_parts(messages, files_list, gate_plan, checks, checks_age,
+                              newer_messages=newer_messages)
 
         with unittest.mock.patch.object(selfcompact, "compaction_request_parts", recording_parts):
             # the harness-compaction path (server.py)
@@ -105,6 +107,9 @@ class SelfCompactionAskTests(unittest.TestCase):
             Loop(ctx)._self_compact(_big_transcript(), sess, 1, _RLog())
 
         self.assertGreaterEqual(len(calls), 2, "both entry points must delegate to the one composer")
+        self.assertIsNone(calls[0][1], "the harness default keeps its existing whole-history scope")
+        self.assertTrue(any(newer for _, newer in calls[1:]),
+                        "the Loop must delegate its separate retained tail to the same composer")
 
     def test_the_evidence_comes_first_and_the_ask_last(self):
         from cria import prompts, selfcompact
@@ -259,6 +264,10 @@ class NoHandComposedTranscriptTests(unittest.TestCase):
         sess.last_gate_flag = "⟦ctx:checks⟧ test_x.py:1: AssertionError: 400 != 200"
         rollup = next(m["content"] for m in Loop(ctx)._self_compact(_big_transcript(), sess, 1, _RLog())
                       if "⟦ctx:rollup⟧" in str(m.get("content")))
-        self.assertIn("all 7 tests now pass", rollup)    # the laundered claim is still there...
-        self.assertIn("currently FAIL", rollup)          # ...but so is the real gate state, which wins
+        self.assertIn("all 7 tests now pass", rollup)    # the unverified claim is not silently deleted
+        self.assertIn(sess.last_gate_flag, rollup)       # exact real gate finding overrides the claim
+        self.assertIn("when this briefing was written", rollup)
+        self.assertIn("had reported failures", rollup)
+        self.assertIn("A later result from the same check supersedes this outcome", rollup)
+        self.assertNotIn("currently FAIL", rollup)
         self.assertIn("400 != 200", rollup)

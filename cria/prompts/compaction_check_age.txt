@@ -1,0 +1,5 @@
+# Durable check age anchored to handoff creation, never the time of a later read.
+# Parsed by prompts.load_map.
+aged = {{CALLS}} of your calls before this handoff was written
+fresh = when this handoff was written
+observation = This check was gathered {{AGE}}.{{STALENESS}}

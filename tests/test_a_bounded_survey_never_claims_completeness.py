@@ -65,8 +65,21 @@ class TheCompletenessClauseIsEarnedTests(unittest.TestCase):
         ws, v, token = _surveyed(3, "main.py")
         self.addCleanup(wsview.unbind, token)
         out = groundtruth.workspace_inventory(ws)
-        self.assertIn("This list is complete", out)
+        clause = "This survey is complete and current — a file not listed here does not exist in the workspace."
+        self.assertTrue(v.complete)
+        self.assertFalse(v.may_have_changed)
+        self.assertIn(clause, out)
         self.assertIn("main.py", out)
+        for i in range(3):
+            self.assertIn(f"f{i:04}.py", out)
+        # Completeness is not freshness. A later potentially mutating command
+        # must withdraw absence authority without erasing the observed names.
+        v.note_a_mutator_ran()
+        stale = groundtruth.workspace_inventory(ws)
+        self.assertNotIn(clause, stale)
+        self.assertIn("not a fresh one", stale)
+        self.assertIn("main.py", stale)
+        self.assertIn("before concluding anything is absent", stale)
 
     def test_a_bounded_survey_says_so_instead(self):
         """A folded subdirectory bounds the survey without emptying it."""

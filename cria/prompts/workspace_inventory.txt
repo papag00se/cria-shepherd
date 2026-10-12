@@ -4,20 +4,20 @@
 # ("no obstacle blocks completion") with zero write actions in evidence and no README on disk
 # (run 0728-m4 step 3), and a FileNotFoundError over one file was read as "the directory does not
 # exist" (run 0728-m1 step 1). Both directions, one fact.
-# The listing is always COMPLETE (operator's call — no truncation), so the decisive
-# "not listed = does not exist" clause always attaches. Parsed by prompts.load_map.
-header = WORKSPACE FILES in {{ROOT}} (on-disk ground truth at judging time, newest first):
-complete = This list is complete — a file not listed here does not exist in the workspace.
+# Headers describe the survey, not its freshness. Only the renderer's complete/current
+# scope line permits absence claims. Parsed by prompts.load_map.
+header = WORKSPACE FILES in {{ROOT}} (names observed in the workspace survey, newest first):
+complete = This survey is complete and current — a file not listed here does not exist in the workspace.
 empty = WORKSPACE FILES in {{ROOT}}: none — the workspace has no files at judging time.
 # The header states compaction ONLY when this body actually carries a compaction (a rollup, briefing,
 # continuation reframe, or context-floor digest). ornith1.5_9b / Java B2 read the unconditional clause
 # after a successful write with nothing dropped, concluded "the workspace keeps getting reset" and
 # rewrote Importer.java from scratch repeatedly (#5b: never claim what cria does not know).
-coder_header = ⟦ctx:files⟧ YOUR WORKSPACE RIGHT NOW (on-disk ground truth, newest first — this list says which files exist):
-coder_header_compacted = ⟦ctx:files⟧ YOUR WORKSPACE RIGHT NOW (on-disk ground truth, newest first — older turns were compacted, so this list, not any remembered or summarized file content, says which files exist):
-coder_note = Every file above is readable with read_file. If a file's current text is not in this conversation, read it rather than reconstructing it from memory or from the summary; if its current text is here, use that copy.
-planner_header = WORKSPACE FILES in {{ROOT}} (on-disk ground truth right now, before any work has started — newest first):
-planner_empty = WORKSPACE FILES in {{ROOT}}: none — the workspace is empty; nothing has been built yet.
+coder_header = ⟦ctx:files⟧ YOUR WORKSPACE SURVEY (names observed, newest first):
+coder_header_compacted = ⟦ctx:files⟧ YOUR WORKSPACE SURVEY (names observed, newest first — older turns were compacted; remembered or summarized content does not establish current file state):
+coder_note = Use read_file for file contents. If a file's current text is not in this conversation, read it rather than reconstructing it from memory or from the summary; if its current text is here, use that copy.
+planner_header = WORKSPACE FILES in {{ROOT}} (names observed in the workspace survey, newest first):
+planner_empty = WORKSPACE FILES in {{ROOT}}: none — the current complete survey found no files.
 # The steer author's template heads its disk section "THE FILES IT HAS BEEN CHANGING" — and on
 # nemotron-nano 1786243834 the ONLY entry was cria's own spilled reference copy under
 # tmp/read-only/, so the one prompt that needed "the coder has produced nothing" read as file
@@ -31,7 +31,7 @@ spill_note = — reference material saved into the read-only scratch directory f
 # in the run. The existing repair (loop._briefing_disk_truth) answers the opposite direction, a
 # briefing that DENIES a file cria can see; nothing answered invention. So the writer is shown the
 # list, and the completeness clause below is what makes it decisive.
-briefing_header = FILES ON DISK RIGHT NOW (gathered from the filesystem just now, newest first). This is the only description of the workspace you have — the transcript's file mentions may be stale:
+briefing_header = FILES ON DISK — WORKSPACE SURVEY (names observed, newest first). Its scope note below states whether it is complete and current; neither this heading nor older transcript mentions establish freshness, and the transcript's file mentions may be stale:
 
 install_prefix = \n  {{PREFIX}}/ — {{COUNT}} files installed here by a package manager on this session's own instruction; not your source, and not listed one by one.
 
@@ -47,11 +47,11 @@ partial = This list is NOT complete — the survey of this workspace hit its own
 # the disk while the view stands still. Measured: 674 prompts carried "This list is complete — a file
 # not listed here does not exist" and 0 carried the partial wording; in 20260822T231008 call 0102 the
 # listing named 10 files under that clause while 95 sat in the workspace, put there by a `gem install`
-# whose own `ls` output was 200 lines further up the SAME prompt. The headers above say "right now" /
-# "just now" / "at judging time", so this clause has to withdraw that too, not only the completeness.
-stale = This list is the last complete look at the workspace, not a fresh one: a command has run since that could have changed the tree — an install, a build, a shell write — so read it as of that moment rather than as of now. A file missing from it may have been created since; use list_dir on a directory you expect before concluding anything is absent.
+# whose own `ls` output was 200 lines further up the SAME prompt. The old headers said "right now" /
+# "just now" / "at judging time"; neutral headers now leave scope and freshness to these clauses.
+stale = This list is the last look at the workspace, not a fresh one: a command has run since that could have changed the tree — an install, a build, a shell write — so read it as of that moment rather than as of now. A file missing from it may have been created since; use list_dir on a directory you expect before concluding anything is absent.
 
 # The COMPACTION listing's header (server._workspace_listing). Same inventory, different reader: the
-# compactor is writing the summary that becomes the session's entire remembered past, so the clause
-# it needs is "these already exist", not "anything missing is absent".
-compaction_header = FILES ALREADY IN THIS WORKSPACE (on disk right now — do not re-create them):
+# compactor is writing the summary that becomes the session's entire remembered past. Observed
+# names remain useful; this shallow appendix establishes neither fresh existence nor absence.
+compaction_header = FILES ALREADY IN THIS WORKSPACE (names observed in the last workspace survey, not file contents or a complete absence check):

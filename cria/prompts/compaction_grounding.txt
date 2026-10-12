@@ -1,0 +1,7 @@
+# Two evidence scopes. Render each turn as its own reducible block so its label
+# survives independently of adjacent turns. Both writer and fidelity use the SAME blocks.
+# The engine renderer uses this map when newer_messages is supplied. Loop integration
+# remains separately gated; default callers keep their prior unlabelled rendering.
+# Parsed by prompts.load_map.
+middle = MIDDLE BEING REPLACED (work to summarize):\n{{TURN}}
+newer = NEWER RETAINED EVIDENCE (later than the middle; read-only grounding, not extra work to summarize; these turns remain with the agent):\n{{TURN}}

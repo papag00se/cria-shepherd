@@ -4231,16 +4231,24 @@ class Loop:
         task_fact = (prompts.render("compaction_task_fact", task=root_task.strip())
                      if root_task.strip() else "")
 
-        def make_summary(mm: list[dict]) -> str:
-            history = selfcompact.compaction_request_parts(mm, gate_plan=gate_plan)
+        def evidence_for(mm: list[dict], *, newer_messages: list[dict]):
+            # One public-content producer for both scopes and both readers. Grounding
+            # qualifies the replacement work; it never expands what compact() covers.
+            history = selfcompact.compaction_request_parts(
+                mm, gate_plan=gate_plan, newer_messages=newer_messages)
             evidence = selfcompact.compaction_request_parts(
-                mm, inventory_for_writer, gate_plan, gate_flag, gate_age(sess))
+                mm, inventory_for_writer, gate_plan, gate_flag, gate_age(sess),
+                newer_messages=newer_messages)
             if task_fact:
                 # The pinned task was deliberately excluded from ``mm`` so it survives verbatim in
                 # the coder view. That also made the briefing writer blind to it: both failed L5
                 # cells repeatedly redefined the task as fixing the latest compiler/module blocker.
                 history.append(task_fact)
                 evidence.append(task_fact)
+            return history, evidence
+
+        def make_summary(mm: list[dict], *, newer_messages: list[dict]) -> str:
+            history, evidence = evidence_for(mm, newer_messages=newer_messages)
             candidate = summarize(
                 chat_fn, role, prompts.load("selfcompact_summary"),
                 selfcompact.compaction_ask(), rlog,
@@ -4256,14 +4264,17 @@ class Loop:
             return (_briefing_disk_truth(candidate, inventory_for_coder, rlog)
                     + _briefing_gate_ground_truth(sess))
 
-        def refold_summary(text: str) -> str:
-            refold_evidence = [text] + ([task_fact] if task_fact else [])
+        def refold_summary(text: str, *, newer_messages: list[dict]) -> str:
+            # The accumulated summary is model-authored replacement work, not a
+            # fresh source of execution truth. Refolding gets the same newer scope.
+            refold_history, refold_evidence = evidence_for(
+                [{"role": "assistant", "content": text}], newer_messages=newer_messages)
             candidate = summarize(chat_fn, role, prompts.load("selfcompact_refold"),
                                   _ASK_USER_TURN, rlog, phase="self-compact-refold",
                                   max_tokens=ROLLUP_MAX_TOKENS, evidence_blocks=refold_evidence)
             if not validate_compaction_briefing(
                     chat_fn, role, candidate, files=inventory_for_writer, checks=checks_fact,
-                    transcript_blocks=[text], task=root_task, rlog=rlog,
+                    transcript_blocks=refold_history, task=root_task, rlog=rlog,
                     phase="compaction-refold-validate"):
                 return ""
             return candidate
@@ -4280,7 +4291,7 @@ class Loop:
             files_list=inventory_for_coder,
             # The RARE fold-of-the-accumulated-summary is independently validated before adoption.
             refold=refold_summary,
-            rlog=rlog)
+            rlog=rlog, with_grounding=True)
         if applied:
             rlog.emit("context.self_compact", reshape="compact", step=idx, before=len(msgs),
                       after=len(out), boundary=force)
@@ -9154,10 +9165,22 @@ def _briefing_gate_ground_truth(sess) -> str:
     # the proper noun principle #17 forbids the model from ever seeing.
     lines = prompts.load_map("briefing_checks")
     if getattr(sess, "last_gate_red", False) and getattr(sess, "last_gate_flag", ""):
-        return "\n\n" + prompts.fill(lines["red"], findings=sess.last_gate_flag.strip())
-    if getattr(sess, "last_gate_testless", False):
-        return "\n\n" + lines["testless"]
-    return ""
+        observation = prompts.fill(lines["red"], findings=sess.last_gate_flag.strip())
+    elif getattr(sess, "last_gate_testless", False):
+        observation = lines["testless"]
+    else:
+        return ""
+    # The harness uses these same age/provenance owners and prompt fragments.
+    # Anchor age to creation, not a later read of this frozen rolling increment.
+    since = gate_age(sess)
+    ages = prompts.load_map("compaction_check_age")
+    age = prompts.fill(ages["aged"], calls=str(since)) if since else ages["fresh"]
+    stale = (prompts.fill(prompts.load(
+        "checks_note_staleness_unedited" if getattr(since, "unedited", False)
+        else "checks_note_staleness"), calls=str(since))
+        if since >= selfcompact.CHECKS_STALE_AFTER else "")
+    return "\n\n" + observation + "\n" + prompts.fill(
+        ages["observation"], age=age, staleness=stale + newer_own_run(sess))
 
 
 def guard_ground_truth(outcome) -> str:

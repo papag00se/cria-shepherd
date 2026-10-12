@@ -23,7 +23,20 @@ of the writer.
 import types
 import unittest
 
-from cria import groundtruth, prompts, selfcompact, server
+from cria import groundtruth, prompts, selfcompact, server, wsview
+
+
+def survey_inventory(flavor, *, changed=False, complete=True):
+    """Render a harness-reported survey without assuming a local filesystem."""
+    view = wsview.View("/w", "briefing-inventory-test")
+    view._ingest_tree("D\t\nD\tsrc\nF\t5\t12\tsrc/main.rs\n", complete=complete)
+    if changed:
+        view.note_a_mutator_ran()
+    token = wsview.bind(view)
+    try:
+        return groundtruth.workspace_inventory("/w", flavor=flavor)
+    finally:
+        wsview.unbind(token)
 
 
 def transcript():
@@ -93,23 +106,52 @@ class TheListingIsDecisiveTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as ws:
             self.assertIn("none", groundtruth.workspace_inventory(ws, flavor="briefing"))
 
-    def test_the_other_flavors_are_unchanged(self):
-        import tempfile
-        import pathlib
-        with tempfile.TemporaryDirectory() as ws:
-            pathlib.Path(ws, "a.rs").write_text("x")
-            self.assertIn("at judging time", groundtruth.workspace_inventory(ws))
-            self.assertIn("before any work has started",
-                          groundtruth.workspace_inventory(ws, flavor="planner"))
-            self.assertIn("⟦ctx:files⟧", groundtruth.workspace_inventory(ws, flavor="coder"))
+    def test_the_other_flavors_preserve_observed_names_and_their_own_scope(self):
+        """The shared survey is evidence, not proof that work has never started."""
+        labels = prompts.load_map("workspace_inventory")
+        for flavor in ("judge", "planner", "coder"):
+            with self.subTest(flavor=flavor):
+                out = survey_inventory(flavor)
+                self.assertIn("src/main.rs (12 B)", out)
+                self.assertNotIn(labels["partial"], out)
+                self.assertNotIn(labels["stale"], out)
+                self.assertNotIn("before any work has started", out)
+                if flavor == "coder":
+                    self.assertIn("⟦ctx:files⟧", out)
+                    self.assertIn(labels["coder_note"], out)
+                else:
+                    self.assertIn(labels["complete"], out)
+
+    def test_no_flavor_upgrades_a_partial_or_overtaken_survey(self):
+        labels = prompts.load_map("workspace_inventory")
+        for flavor in ("judge", "planner", "coder", "briefing"):
+            for changed, complete in ((True, True), (False, False), (True, False)):
+                with self.subTest(flavor=flavor, changed=changed, complete=complete):
+                    out = survey_inventory(flavor, changed=changed, complete=complete)
+                    self.assertIn("src/main.rs (12 B)", out)
+                    self.assertNotIn(labels["complete"], out)
+                    self.assertEqual(labels["stale"] in out, changed)
+                    self.assertEqual(labels["partial"] in out, not complete)
+                    for fresh_claim in ("RIGHT NOW", "right now", "just now", "at judging time"):
+                        self.assertNotIn(fresh_claim, out)
 
 
 class ThePromptTellsItWhatTheListMeansTests(unittest.TestCase):
     def setUp(self):
         self.body = prompts.load("selfcompact_summary")
 
-    def test_it_may_not_claim_a_file_that_is_not_listed(self):
-        self.assertIn("Never state that a file was created unless it is on that list", self.body)
+    def test_absence_needs_complete_current_scope_not_merely_an_unlisted_path(self):
+        """An unconditional listing rule can contradict writes after stale/partial surveys."""
+        self.assertIn("Only a survey labelled complete and current establishes that an unlisted file is absent",
+                      self.body)
+        self.assertIn("A partial, folded or stale survey leaves unlisted paths UNKNOWN", self.body)
+        self.assertIn("Preserve later real tool evidence of creation, movement or deletion", self.body)
+        self.assertNotIn("Never state that a file was created unless it is on that list", self.body)
+        labels = prompts.load_map("workspace_inventory")
+        self.assertIn(labels["complete"], survey_inventory("briefing"))
+        for changed, complete in ((True, True), (False, False)):
+            self.assertNotIn(labels["complete"],
+                             survey_inventory("briefing", changed=changed, complete=complete))
 
     def test_the_list_settles_existence_only(self):
         """It carries names and sizes. It cannot say whether a test passed."""

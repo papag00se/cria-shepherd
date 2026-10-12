@@ -1953,8 +1953,12 @@ class LoopSelfCompactTests(unittest.TestCase):
         big = [{"role": "system", "content": "sys"}] + [{"role": "assistant", "content": "y" * 1000} for _ in range(50)]
         rollup = next(m["content"] for m in Loop(ctx)._self_compact(big, sess, 1, _Rlog())
                       if "⟦ctx:rollup⟧" in str(m.get("content")))
-        self.assertIn("all 7 tests now pass", rollup)    # the laundered claim is still there...
-        self.assertIn("currently FAIL", rollup)          # ...but so is the real gate state, which wins
+        self.assertIn("all 7 tests now pass", rollup)    # model claim is preserved, not deleted
+        self.assertIn(sess.last_gate_flag, rollup)       # exact real check output also survives
+        self.assertIn("when this briefing was written", rollup)
+        self.assertIn("had reported failures", rollup)
+        self.assertIn("A later result from the same check supersedes this outcome", rollup)
+        self.assertNotIn("currently FAIL", rollup)
         self.assertIn("400 != 200", rollup)
 
 
@@ -5441,7 +5445,8 @@ class WorkspaceInventoryTests(unittest.TestCase):
         self.assertIn("README.md (9 B)", inv)
         self.assertIn(os.path.join("sub", "mod.py"), inv)
         self.assertLess(inv.index("README.md"), inv.index("mod.py"))   # newest first
-        self.assertIn("list is complete", inv)                         # untruncated → decisive clause
+        self.assertIn("survey is complete and current", inv)
+        self.assertIn("a file not listed here does not exist in the workspace", inv)
 
     def test_non_deliverable_dirs_are_pruned(self):
         from cria.loop import workspace_inventory
@@ -5452,15 +5457,18 @@ class WorkspaceInventoryTests(unittest.TestCase):
         self.assertNotIn("__pycache__", inv)
 
     def test_large_workspaces_are_listed_in_full(self):
-        """No truncation — operator's call: a bounded list weakens the one clause that makes the
-        inventory decisive. Every file is listed and the completeness claim always holds."""
+        """A current complete survey lists every file without a renderer cap.
+        Absence is decisive only under that explicit survey scope."""
         from cria.loop import workspace_inventory
         with tempfile.TemporaryDirectory() as d:
             for i in range(120):
                 Path(d, f"f{i:03d}.txt").write_text("x")
             inv = workspace_inventory(d)
         self.assertEqual(inv.count(".txt ("), 120)         # every file, no cap
-        self.assertIn("list is complete", inv)
+        for i in range(120):
+            self.assertIn(f"f{i:03d}.txt (1 B)", inv)
+        self.assertIn("survey is complete and current", inv)
+        self.assertIn("a file not listed here does not exist in the workspace", inv)
         self.assertNotIn("more file", inv)
 
     def test_empty_workspace_states_the_fact(self):
