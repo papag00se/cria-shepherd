@@ -418,6 +418,35 @@ def _already_here(command: str, found: dict, routes: dict) -> str:
     return ""
 
 
+# Where the shell finds programs by name. A command word spelled as the absolute path of one of these
+# is the program being RUN (`/usr/bin/time -v java ...`), not a data path the coder reached into.
+_SYSTEM_BIN_DIRS = ("/bin", "/sbin", "/usr/bin", "/usr/sbin", "/usr/local/bin", "/usr/local/sbin")
+
+
+def _is_system_program(path: str) -> bool:
+    """The absolute path of a program directly inside a standard system bin directory (root-owned;
+    nothing can be written there from here, and a missing program is reported truthfully by the shell),
+    or an existing executable file directly inside a directory on $PATH (user-controlled, so it must
+    exist)."""
+    p = os.path.normpath(path)
+    parent = os.path.dirname(p)
+    if parent in _SYSTEM_BIN_DIRS:
+        return True
+    on_path = {os.path.normpath(d) for d in os.environ.get("PATH", "").split(os.pathsep) if os.path.isabs(d)}
+    return parent in on_path and os.path.isfile(p) and os.access(p, os.X_OK)
+
+
+def _is_command_word(command: str, start: int) -> bool:
+    """True when the token at ``start`` is the first word of a pipeline segment: nothing before it, or
+    only separators (`;` `&&` `|` `(` newline). A redirect operator (`>&`, `>|`, `<(`) puts a `<`/`>` in
+    the run, so a redirect TARGET is never mistaken for a command."""
+    before = command[:start].rstrip(" \t")
+    run = re.search(r"[;&|()\n<>]*$", before).group(0)
+    if not before:
+        return True
+    return bool(run) and "<" not in run and ">" not in run
+
+
 def _is_write_target(command: str, start: int) -> bool:
     """True when the path token at ``start`` is the target of a file WRITE (a redirect or an output
     flag) — the only external file access still refused inside a network command."""
@@ -735,11 +764,23 @@ def _short_flags(args) -> str:
     return "".join(a.lstrip("-") for a in args if a.startswith("-") and not a.startswith("--"))
 
 
-def _segment_reads(words: list[str], workspace: str | None = None) -> bool:
+def _segment_reads(words: list[str], workspace: str | None = None, roots=(), state: dict | None = None) -> bool:
     cmd, args = words[0], words[1:]
+    st = state if state is not None else {"root_cd": False, "targets": []}
     if cmd == "cd":  # moves the REAL cwd, which relative redirect targets resolve against
-        return len(args) == 1 and _plain_project_path(args[0], workspace)
+        if len(args) != 1:
+            return False
+        if _plain_project_path(args[0], workspace):
+            return True
+        # A literal directory inside a declared root: reading there is what the readable-roots note
+        # recommends (`cd <root>/x && find . -name ...`). It moves the cwd INTO the root, so every
+        # redirect/tee target of the whole command must then be provably outside it (judged at the end).
+        if (not any(c in args[0] for c in "${}*?[~`") and _in_declared_root(args[0], roots)):
+            st["root_cd"] = True
+            return True
+        return False
     if cmd == "tee":  # a copy of stdin: harmless exactly when every file it writes is in the project
+        st["targets"].extend(a for a in args if not a.startswith("-"))
         return all(not a.startswith("-") and _plain_project_path(a, workspace, allow_devnull=True)
                    for a in args)
     if cmd not in _READERS:
@@ -785,7 +826,34 @@ def _redirect_ok(op: str, target: str | None, workspace: str | None) -> bool:
     return _plain_project_path(target, workspace, allow_devnull=True)
 
 
-def command_only_reads(command: str, workspace: str | None) -> bool:
+# `NAME=<literal path>` followed by `$NAME` uses (`JAR=<root>/x.jar; jar tf "$JAR"`) is expanded
+# lexically before judging. Shell-semantic variables are never accepted: they change how LATER words
+# split, resolve or run (IFS, PATH, CDPATH, HOME, LD_*, BASH_ENV ...).
+_ASSIGN = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)=([^\s]*)$")
+_SPECIAL_VARS = {"IFS", "PATH", "CDPATH", "HOME", "ENV", "PWD", "OLDPWD", "SHELLOPTS", "BASHOPTS", "GLOBIGNORE",
+                 "PS1", "PS2", "PS4", "PROMPT_COMMAND", "TMPDIR", "CLASSPATH", "JAVA_TOOL_OPTIONS",
+                 "JDK_JAVA_OPTIONS", "_JAVA_OPTIONS"}
+_VAR_USE = re.compile(r"\$([A-Za-z_][A-Za-z0-9_]*)")
+
+
+def _simple_assignment(words: list[str], workspace: str | None, roots) -> tuple[str, str] | None:
+    """(name, value) for a segment that is exactly one `NAME=<literal path>`: the value is itself a
+    path inside the project or a declared root, with no expansion character in it."""
+    if len(words) != 1:
+        return None
+    m = _ASSIGN.match(words[0])
+    if not m:
+        return None
+    name, value = m.groups()
+    if (name in _SPECIAL_VARS or name.startswith(("LD_", "BASH", "DYLD_")) or not value
+            or any(c in value for c in "${}*?[]~`\\'\"")):
+        return None
+    if _plain_project_path(value, workspace) or _in_declared_root(value, roots):
+        return name, value
+    return None
+
+
+def command_only_reads(command: str, workspace: str | None, roots=()) -> bool:
     """True only when EVERY segment of ``command`` is a known reader and every redirect stays inside
     the project (or /dev/null). Unknown ⇒ False."""
     if not command or "<<" in command or "`" in command or "$(" in command:
@@ -802,6 +870,13 @@ def command_only_reads(command: str, workspace: str | None) -> bool:
     except ValueError:
         return False
     seg: list[str] = []
+    state: dict = {"root_cd": False, "targets": []}
+    env: dict[str, str] = {}
+    prev_sep = ";"  # what ended the previous segment; the command start counts as unconditional
+
+    def expand(word: str) -> str:
+        return _VAR_USE.sub(lambda m: env.get(m.group(1), m.group(0)), word) if env else word
+
     i = 0
     while i <= len(words):
         w = words[i] if i < len(words) else ";"
@@ -817,16 +892,41 @@ def command_only_reads(command: str, workspace: str | None) -> bool:
                 nxt = words[i + 1] if i + 1 < len(words) else None
                 if nxt is not None and set(nxt) <= _PUNCT:
                     nxt = None
+                elif nxt is not None:
+                    nxt = expand(nxt)
                 if not _redirect_ok(w, nxt, workspace):
                     return False
+                if ">" in w and nxt is not None and not ("&" in w and nxt.lstrip("&").isdigit()):
+                    state["targets"].append(nxt)
                 i += 2 if nxt is not None else 1
                 continue
-            if seg and not _segment_reads(seg, workspace):
-                return False
+            if set(w) == {"\n"}:
+                w = "\n"
+            if seg:
+                assign = _simple_assignment(seg, workspace, roots)
+                if assign:
+                    # Only an UNCONDITIONAL assignment is real: `true || A=x; cd $A` never sets A, and an
+                    # unset `$A` makes `cd` go HOME. A pipeline/background/subshell one is lost too.
+                    if prev_sep not in (";", "\n") or w not in (";", "&&", "\n"):
+                        return False
+                    env[assign[0]] = assign[1]
+                else:
+                    seg = [seg[0], *(expand(a) for a in seg[1:])]
+                    if not _segment_reads(seg, workspace, roots, state):
+                        return False
             seg = []
+            prev_sep = w
         else:
             seg.append(w)
         i += 1
+    if state["root_cd"]:
+        # The cwd was moved into a declared root, so a RELATIVE write target anywhere in the command
+        # would land there. Only /dev/null or an ABSOLUTE workspace path is provably elsewhere.
+        for t in state["targets"]:
+            if t == "/dev/null":
+                continue
+            if not (os.path.isabs(t) and _plain_project_path(t, workspace) and not _exempt(t)):
+                return False
     return True
 
 
@@ -1052,7 +1152,7 @@ def command_refusal(command: str, level: str, workspace: str | None, roots=()) -
         return killing
     # A command that changes nothing (shelltool's classifier, generous toward "writes") may read a
     # root the harness declared writable; one that might write there stays under the normal rule.
-    read_only = bool(roots) and command_only_reads(command, workspace)
+    read_only = bool(roots) and command_only_reads(command, workspace, roots)
     network = bool(_NETWORK_CMD.search(command))
     search_cmd = bool(_TEXT_SEARCH_LEAD.search(command))
     spans = _quoted_spans(command)
@@ -1075,6 +1175,10 @@ def command_refusal(command: str, level: str, workspace: str | None, roots=()) -
         if _is_numeric_literal(tok):
             continue
         if not is_external(tok, workspace) or _exempt(tok):
+            continue
+        # Running a system program by absolute path is not reaching for a data path; its ARGUMENTS
+        # (and an inner command: `/usr/bin/time rm -rf /outside`) are still judged by this loop.
+        if _is_command_word(command, m.start()) and _is_system_program(tok):
             continue
         # A READ of a dependency-artifact cache grounds an installed library's real API (javap a jar,
         # read a module's source); it writes nothing outside the workspace, so allow it even at
