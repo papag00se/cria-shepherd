@@ -636,6 +636,17 @@ _EDIT_PY = r'''import base64,sys,re,pathlib,difflib,json
 p=pathlib.Path(base64.b64decode('{path}').decode())
 old=base64.b64decode('{old}').decode()
 new=base64.b64decode('{new}').decode()
+# ONE EDIT AT A TIME PER DIRECTORY. A coder that sends a batch of edits gets them run CONCURRENTLY by its
+# harness, each in its own process, and read-modify-write on one file loses updates — and `write_text`
+# truncates before it writes, so a sibling's read can land on an EMPTY file and be told the text it
+# anchored on is "not in the file". Walked on phi4 / Java A11 call 0016 (thirty-odd edits in one turn,
+# twenty-odd refused with an empty `current`). The lock is on the directory, so it leaves nothing in the
+# user's tree; it is released when this process exits.
+import fcntl,os
+try:
+    _lk=os.open(str(p.parent),os.O_RDONLY); fcntl.flock(_lk,fcntl.LOCK_EX)
+except OSError:
+    pass
 s=p.read_text()
 def _fail(mode,**kw):
     kw['mode']=mode; kw['path']=p.name; kw.setdefault('current',s)
@@ -652,7 +663,16 @@ _before=_v(str(p),s)
         _e=_v(str(p),res)
         if _e is not None:
             _fail('would_break',err=_e)
-    p.write_text(res); print('{wrote}'); {echocall}sys.exit()
+    _t=str(p)+'%%SUFFIX%%'                      # atomic: a reader never sees the file half-written
+    try:
+        pathlib.Path(_t).write_text(res)
+        import shutil; shutil.copymode(str(p),_t)
+        os.replace(_t,str(p))
+    except BaseException:
+        try: os.unlink(_t)
+        except OSError: pass
+        raise
+    print('{wrote}'); {echocall}sys.exit()
 n=s.count(old)
 if n==1:
     {posx}_w(s.replace(old,new,1))
@@ -719,7 +739,7 @@ elif close:
     _fail('close',anchor=close)     # near-miss: a mistyped token
 else:
     _fail('no_anchor')
-'''
+'''.replace('%%SUFFIX%%', _TMP_SUFFIX)
 
 
 # THE EDIT'S RESULT, AS THE FILE NOW READS. The executor already holds the post-edit bytes, so for an
@@ -764,8 +784,29 @@ _ECHO_DEF = r'''def _echo(res):
         cands.append([x for x in ([[lo,J(L[lo-1:first-1])]] if first>lo else [])+([[last+1,J(L[last:hi])]] if hi>last else [])])
     cands.append([])
     if total==0: cands=[[]]
+    # THE LINES THAT NOW FOLLOW THE REPLACEMENT, MEASURED AGAINST IT. An old_string that anchors only the
+    # head of a member (its signature line) while new_string carries the WHOLE member replaces that head
+    # and nothing else: the old body is still in the file, directly under the new one. Counted, not
+    # judged: the first lines after the span (blank ones skipped) that read the same, whitespace
+    # collapsed, as one unbroken stretch of the replacement. Only a replacement longer than what it
+    # replaced can leave such a remainder, and a stretch of one line (or one repeated line) is no signal.
+    dup=None
+    NL=new.split(chr(10))
+    if NL and NL[-1]=='': NL.pop()
+    if len(NL)>len(old.split(chr(10))) and a1>a0:
+        _n=lambda l: ' '.join(l.split())
+        N=[(first+j,_n(l)) for j,l in enumerate(NL) if l.strip()]
+        F=[(last+1+k,_n(l)) for k,l in enumerate(L[last:last+len(NL)]) if l.strip()]
+        best=0; bj=0
+        for j in range(len(N)):
+            m=0
+            while m<len(F) and j+m<len(N) and N[j+m][1]==F[m][1]: m+=1
+            if m>best: best=m; bj=j
+        if best>=2 and len(set(t for _,t in F[:best]))>=2 and any(c.isalnum() for _,t in F[:best] for c in t):
+            dup=[F[0][0],F[best-1][0],N[bj][0],N[bj+best-1][0],len(old.split(chr(10))),len(NL)]
     def _rep(segs,omitted):
         kw=dict(first=first,last=last,total=total,flex=flex,empty=a1<=a0,segs=segs,omitted=omitted)
+        if dup: kw['dup']=dup
         _b=lambda d: base64.b64encode(json.dumps(d).encode()).decode()
         _r=_b(kw)
         try:
@@ -821,6 +862,13 @@ def render_edit_echo(content: str, path: str) -> str:
         else:
             head = prompts.render("edit_echo_span_omitted", path=path, total=total, a=first, b=last)
         parts = [confirm, head]
+        dup = d.get("dup")
+        if dup:
+            try:
+                a, b, x, y, nold, nnew = (int(v) for v in dup)
+                parts.append(prompts.render("edit_echo_repeat", a=a, b=b, x=x, y=y, old=nold, new=nnew))
+            except (ValueError, TypeError):
+                pass
         if d.get("flex"):
             parts.append(prompts.load("edit_echo_flexible"))
         if d.get("omitted"):
