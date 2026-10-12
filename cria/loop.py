@@ -1356,7 +1356,8 @@ def _ground_coder_view(messages: list, workspace_root: str) -> list:
     ride every turn without steering the model at a file it has rightly moved off (that judgement
     belongs to the model's own next action, which editrecovery grounds).
     """
-    inv = workspace_inventory(workspace_root or "", flavor="coder")
+    inv = workspace_inventory(workspace_root or "", flavor="coder",
+                              compacted=selfcompact.body_is_compacted(messages))
     if not inv.strip():
         return messages
     kept = [m for m in messages if not selfcompact._is_files_msg(m)]

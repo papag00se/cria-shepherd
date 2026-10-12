@@ -22,7 +22,7 @@ def _msgs():
 
 def test_appends_one_fresh_listing_at_the_tail(monkeypatch):
     monkeypatch.setattr(loop, "workspace_inventory",
-                        lambda root, flavor="coder": "⟦ctx:files⟧ cart.go (450 bytes)")
+                        lambda root, flavor="coder", **kw: "⟦ctx:files⟧ cart.go (450 bytes)")
     msgs = _msgs()
     out = loop._ground_coder_view(msgs, "/ws")
     assert selfcompact._is_files_msg(out[-1]), "the fresh listing must be the LAST message (most salient)"
@@ -32,7 +32,7 @@ def test_appends_one_fresh_listing_at_the_tail(monkeypatch):
 
 def test_folds_a_stale_prior_listing(monkeypatch):
     monkeypatch.setattr(loop, "workspace_inventory",
-                        lambda root, flavor="coder": "⟦ctx:files⟧ FRESH cart.go go.mod")
+                        lambda root, flavor="coder", **kw: "⟦ctx:files⟧ FRESH cart.go go.mod")
     stale = {"role": "user", "content": "⟦ctx:files⟧ STALE old listing cart.go"}
     msgs = [{"role": "user", "content": "task"}, stale, {"role": "tool", "content": "r"}]
     out = loop._ground_coder_view(msgs, "/ws")
@@ -46,7 +46,7 @@ def test_listing_never_buries_a_fresh_action(monkeypatch):
     # listing rides ABOVE it so the action stays in the most-salient slot. Regression: appending the
     # listing last buried the checker's redirect (test_red_gate / RefusalRedirect).
     monkeypatch.setattr(loop, "workspace_inventory",
-                        lambda root, flavor="coder": "⟦ctx:files⟧ cart.go")
+                        lambda root, flavor="coder", **kw: "⟦ctx:files⟧ cart.go")
     steer = {"role": "user", "content": "⟦ctx:steer⟧ fix tests/test_x.py — the checker's own error"}
     msgs = [{"role": "user", "content": "task"}, steer]
     out = loop._ground_coder_view(msgs, "/ws")
@@ -58,7 +58,7 @@ def test_listing_after_a_trailing_tool_result_does_not_orphan_it(monkeypatch):
     # A user message may not be inserted between an assistant tool_call and its result, so a trailing
     # tool result gets the listing AFTER it (state, not an action).
     monkeypatch.setattr(loop, "workspace_inventory",
-                        lambda root, flavor="coder": "⟦ctx:files⟧ cart.go")
+                        lambda root, flavor="coder", **kw: "⟦ctx:files⟧ cart.go")
     msgs = [{"role": "assistant", "content": "", "tool_calls": [{"function": {"name": "read_file", "arguments": "{}"}}]},
             {"role": "tool", "content": "file bytes"}]
     out = loop._ground_coder_view(msgs, "/ws")
@@ -67,6 +67,6 @@ def test_listing_after_a_trailing_tool_result_does_not_orphan_it(monkeypatch):
 
 
 def test_noop_when_survey_is_empty(monkeypatch):
-    monkeypatch.setattr(loop, "workspace_inventory", lambda root, flavor="coder": "")
+    monkeypatch.setattr(loop, "workspace_inventory", lambda root, flavor="coder", **kw: "")
     msgs = _msgs()
     assert loop._ground_coder_view(msgs, "/ws") == msgs, "no survey → the view is unchanged"
