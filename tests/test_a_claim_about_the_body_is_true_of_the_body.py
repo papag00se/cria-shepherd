@@ -83,10 +83,9 @@ def test_the_wire_applies_it_after_the_floor_and_orphan_repair():
     assert NONE in _cont(sent)
 
 
-# ── (b) the read ledger states ABSENCE only, never presence ─────────────────────────────────────
-# "its read result is in this conversation" was computed before the floor, so it could be false by the
-# time the body was sent. "no read result for it is in this conversation" cannot become false: the
-# floor only removes messages.
+# ── (b) a missing supported read is UNKNOWN, not universal absence ──────────────────────────────
+# Extraction does not cover opaque shell output. Removal by the floor cannot justify an absence
+# claim whose initial observation was incomplete. Positive restored delivery is settled at the wire.
 
 class _Sess:
     read_files = {"src/main/java/pipeline/Importer.java": (4543, "130 lines"),
@@ -99,10 +98,10 @@ def _read_pair(path, text):
             {"role": "tool", "tool_call_id": "r1", "content": text}]
 
 
-def test_a_file_read_earlier_but_absent_from_the_window_is_marked_absent():
+def test_a_file_read_earlier_without_a_supported_read_in_the_window_is_unknown():
     out = loop._read_ground_truth(_Sess(), _fx("0042"))
-    assert "Importer.java (130 lines) — no read result for it is in this conversation" in out
-    assert "pom.xml (28 lines) — no read result for it is in this conversation" in out
+    assert "Importer.java (130 lines) — availability of its read text is not established here" in out
+    assert "pom.xml (28 lines) — availability of its read text is not established here" in out
     assert "look for it above" not in out
 
 
@@ -110,8 +109,8 @@ def test_a_file_whose_read_result_is_present_gets_no_marker_and_no_positive_clai
     out = loop._read_ground_truth(_Sess(), _read_pair("pom.xml", "<project>\n</project>"))
     # the newest reading wins over the durable (older, larger) one: the read just returned 2 lines
     assert "- pom.xml (2 lines)\n" in out + "\n"
-    assert "is in this conversation" not in out.replace("no read result for it is in this conversation", "")
-    assert "Importer.java (130 lines) — no read result for it is in this conversation" in out
+    assert "is in this conversation" not in out
+    assert "Importer.java (130 lines) — availability of its read text is not established here" in out
 
 
 def test_a_refused_read_does_not_count_as_text_in_the_conversation():
@@ -119,4 +118,4 @@ def test_a_refused_read_does_not_count_as_text_in_the_conversation():
     refused = "⟦ctx:denied⟧ reading that whole is not allowed"
     assert denial.is_denied(refused)
     out = loop._read_ground_truth(_Sess(), _read_pair("pom.xml", refused))
-    assert "pom.xml (28 lines) — no read result for it is in this conversation" in out
+    assert "pom.xml (28 lines) — availability of its read text is not established here" in out

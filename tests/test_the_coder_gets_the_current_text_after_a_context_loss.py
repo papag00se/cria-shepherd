@@ -115,7 +115,7 @@ class RestoredTextTests(unittest.TestCase):
         self.assertNotIn("package pipeline;", restore["content"])
         self.assertEqual(restore[bodykeys.RESTORED_FILES]["offered"], {})
         self.assertIn("NOT AVAILABLE HERE — pom.xml, src/main/java/pipeline/Importer.java", restore["content"])
-        self.assertIn("no read result for it is in this conversation", facts)      # the ledger is unchanged
+        self.assertIn("availability of its read text is not established here", facts)
         bodies, _progs, _out = wsview.pending("restore")
         self.assertIn(JAVA, bodies)                                              # the harness is asked, not cria
 
@@ -274,7 +274,7 @@ class FloorAndWireTests(unittest.TestCase):
         self.assertEqual(rlog.restored_on_wire, {})
         wire = raw.decode()
         self.assertNotIn("its current text is in the ⟦ctx:current⟧ block", wire)
-        self.assertIn("no read result for it is in this conversation", wire)
+        self.assertIn("availability of its read text is not established here", wire)
         self.assertNotIn(bodykeys.RESTORED_FILES, wire)
 
     def test_a_block_that_reached_the_wire_earns_the_credit_and_the_hint_never_ships(self):

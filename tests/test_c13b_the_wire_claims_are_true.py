@@ -33,7 +33,9 @@ NOTE = prompts.load("repeated_message_note").strip()
 def _view(bodies=((JAVA, IMPORTER), ("pom.xml", POM)), body_for=None):
     tree = ("D\tsrc\nD\tsrc/main\nD\tsrc/main/java\nD\tsrc/main/java/pipeline\n"
             + "".join(f"F\t1\t{len(t.encode())}\t{rel}\n" for rel, t in bodies))
-    v = wsview.View(ROOT, f"c13b-{next(_N)}")      # bodies are remembered per session name: never share one
+    # Pytest and cross-test imports can load this helper under different module names. Each has
+    # its own counter, so include the module identity to avoid sharing cached bodies across them.
+    v = wsview.View(ROOT, f"{__name__}:c13b-{next(_N)}")
     assert wsview.apply_survey(v, survey(tree.rstrip("\n"), root=ROOT))
     for rel, text in (bodies if body_for is None else [b for b in bodies if b[0] in body_for]):
         v.note_written(f"{ROOT}/{rel}", text)

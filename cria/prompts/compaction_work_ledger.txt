@@ -1,2 +1,10 @@
-WHAT THE TOOLS DID IN THE EARLIER TURNS (derived from the recorded tool calls and their results — a record of events, not a claim about whether the work is correct):
-{{LINES}}
+# Ledger framing and shell outcome labels (parsed by prompts.load_map).
+# Issued means a tool call is recorded, not that a shell process started or succeeded.
+# Keep the complete original producer signature, shared by carry extraction and parsing. Scope is
+# separate framing, never a shortened signature that could admit an accepted model briefing.
+signature = WHAT THE TOOLS DID IN THE EARLIER TURNS (derived from the recorded tool calls and their results — a record of events, not a claim about whether the work is correct):
+scope = This records issued calls and explicitly confirmed effects. A call marked issued does not establish execution, success, or a change to files.
+header = {{SIGNATURE}}\n{{SCOPE}}\n{{LINES}}
+shell_refused = refused, did not run: {{COMMAND}}
+shell_answered = issued (result recorded; execution not established): {{COMMAND}}
+shell_unanswered = issued (no result recorded; execution not established): {{COMMAND}}

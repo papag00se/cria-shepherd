@@ -901,12 +901,14 @@ _LEDGER_EXEC_ARGS = ("cmd", "command")
 _LEDGER_CMD_CAP = 300
 # One event per line: "- <event>", or "- (N times) <event>" for N identical CONSECUTIVE events. The
 # count is a PREFIX so no event text (a command, a path) can imitate it; the event always starts with
-# a fixed word (a tool name, "ran:", "refused,").
+# a fixed word (a tool name, "issued", "refused,").
 _LEDGER_LINE = re.compile(r"^- (?:\((\d+) times\) )?(.+)$")
 
 
 def _ledger_head() -> str:
-    return prompts.render("compaction_work_ledger", lines="").strip()
+    # Carry extraction and parsing share the complete original producer signature. Scope
+    # framing may evolve separately, without accepting arbitrary headings sharing its prefix.
+    return prompts.load_map("compaction_work_ledger")["signature"]
 
 
 def _one_line(text: str) -> str:
@@ -933,7 +935,12 @@ def parse_ledger(text: str) -> list[tuple[str, int]]:
     if head not in text:
         return []
     out: list[tuple[str, int]] = []
-    for raw in text.split(head, 1)[1].lstrip("\n").split("\n"):
+    # Only the exact new scope framing is skipped. Old handoffs have events immediately
+    # after the same full signature; preserve their wording without re-judging lost results.
+    tail = text.split(head, 1)[1].lstrip("\n")
+    scope = prompts.load_map("compaction_work_ledger")["scope"] + "\n"
+    tail = tail.removeprefix(scope)
+    for raw in tail.split("\n"):
         hit = _LEDGER_LINE.match(raw.rstrip("\r"))
         if not hit:
             break
@@ -942,7 +949,7 @@ def parse_ledger(text: str) -> list[tuple[str, int]]:
 
 
 def work_ledger(msgs: list[dict], *, carried: str = "", root: str = "") -> str:
-    """A deterministic record of what the coder's tools DID in ``msgs`` — "" when nothing qualifies.
+    """A deterministic record of issued calls and confirmed effects — "" when nothing qualifies.
 
     The harness handshake discards a model-written briefing whenever a focused validator rejects it
     (a forward plan, a narrowed scope), and the next window then had only a workspace listing. The
@@ -952,6 +959,7 @@ def work_ledger(msgs: list[dict], *, carried: str = "", root: str = "") -> str:
     own denial/edit-refusal marks for a call that did not run) — never a sentence lifted from a
     tool's output, so it carries no instruction and claims no more than a tool confirmed. A tool
     result that is neither is "no confirmation recorded": absence of a confirmation is not a refusal.
+    An unmarked shell answer establishes result availability, not execution; a missing answer stays unknown.
     Events keep their ORDER (identical consecutive ones are counted), so a later outcome reads as later.
     It says nothing about the task and nothing about what to do next.
 
@@ -970,6 +978,7 @@ def work_ledger(msgs: list[dict], *, carried: str = "", root: str = "") -> str:
         return path[len(root) + 1:] if root and path.startswith(root.rstrip("/") + "/") else path
 
     results = _results_by_call(msgs)
+    labels = prompts.load_map("compaction_work_ledger")
     for m in msgs:
         if not isinstance(m, dict):
             continue
@@ -994,11 +1003,12 @@ def work_ledger(msgs: list[dict], *, carried: str = "", root: str = "") -> str:
             if cmd and not writeproxy.is_crias_own(cmd):  # cria's own gate/lowering is not the coder's act
                 cmd = _one_line(clip(cmd.strip(), _LEDGER_CMD_CAP,
                                      f" [command continues; {len(cmd.strip())} characters in all]"))
-                add(("refused, did not run: " if refused else "ran: ") + cmd)
+                state = "shell_refused" if refused else ("shell_unanswered" if result is None else "shell_answered")
+                add(prompts.fill(labels[state], command=cmd))
     if not events:
         return ""
     lines = "\n".join(f"- ({n} times) {e}" if n > 1 else f"- {e}" for e, n in events)
-    return prompts.render("compaction_work_ledger", lines=lines)
+    return prompts.fill(labels["header"], signature=labels["signature"], scope=labels["scope"], lines=lines)
 
 
 def compact(messages: list[dict], summarize, state: CompactState, *,

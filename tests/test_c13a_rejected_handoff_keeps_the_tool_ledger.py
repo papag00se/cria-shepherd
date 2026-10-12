@@ -63,7 +63,7 @@ class RejectedHandoffTests(unittest.TestCase):
 
     def test_the_ledger_quotes_no_tool_output_and_carries_no_instruction(self):
         text = _harden("x", "PLAN")
-        ledger = text[text.index("WHAT THE TOOLS DID"):]
+        ledger = text[text.index(selfcompact._ledger_head()):]
         for tool_voice in ("STOP editing", "Fix the content", "REFUSED", "read it whole"):
             self.assertNotIn(tool_voice, ledger)
 
@@ -75,7 +75,7 @@ class RejectedHandoffTests(unittest.TestCase):
     def test_an_accepted_briefing_ships_without_a_ledger(self):
         text = _harden("Importer.java was written.", "RETROSPECTIVE")
         self.assertTrue(text.startswith("Importer.java was written."))
-        self.assertNotIn("WHAT THE TOOLS DID", text)
+        self.assertNotIn(selfcompact._ledger_head(), text)
 
     # ---- B1: a refused command did not run ----------------------------------------------------
     def test_a_refused_shell_command_is_not_recorded_as_run(self):
@@ -97,12 +97,12 @@ class RejectedHandoffTests(unittest.TestCase):
         self.assertIn(f"- refused, did not run: {cmd}", ledger)
         self.assertNotIn(f"- ran: {cmd}", ledger)
 
-    def test_a_command_with_a_non_denial_result_is_ran(self):
+    def test_a_command_with_a_non_denial_result_only_establishes_an_answer(self):
         call = {"id": "c", "type": "function", "function": {"name": "exec_command",
                                                             "arguments": json.dumps({"cmd": "ls"})}}
         ledger = selfcompact.work_ledger([{"role": "assistant", "tool_calls": [call]},
                                           {"role": "tool", "tool_call_id": "c", "content": "a.txt"}])
-        self.assertIn("- ran: ls", ledger)
+        self.assertIn("- issued (result recorded; execution not established): ls", ledger)
 
     # ---- B2: carry-forward only from cria's own handoff turn -----------------------------------
     @staticmethod
@@ -115,7 +115,7 @@ class RejectedHandoffTests(unittest.TestCase):
     def test_the_ledger_a_dropped_handoff_shipped_is_carried_into_the_next(self):
         from cria.loop import reframe_compaction
         reply = _harden("x", "PLAN")                                  # carries the prose-dropped marker
-        ledger_text = reply[reply.index("WHAT THE TOOLS DID"):]
+        ledger_text = reply[reply.index(selfcompact._ledger_head()):]
         later = [{"role": "user", "content": "task"}, self._stored_handoff(reply),
                  {"role": "assistant", "content": "", "tool_calls": [
                      {"id": "c1", "type": "function", "function": {
@@ -161,7 +161,7 @@ class RejectedHandoffTests(unittest.TestCase):
                                                             "arguments": json.dumps({"cmd": "echo hi (x3)"})}}
         ledger = selfcompact.work_ledger([{"role": "assistant", "tool_calls": [call]},
                                           {"role": "tool", "tool_call_id": "c", "content": "hi"}])
-        self.assertEqual(selfcompact.parse_ledger(ledger), [("ran: echo hi (x3)", 1)])
+        self.assertEqual(selfcompact.parse_ledger(ledger), [("issued (result recorded; execution not established): echo hi (x3)", 1)])
 
     # ---- order, paths, unconfirmed ---------------------------------------------------------------
     def test_outcomes_keep_their_order_and_one_file_is_one_path(self):

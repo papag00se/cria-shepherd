@@ -89,8 +89,10 @@ no_spec_here =  (this page answered with content rather than an endpoint definit
 descriptions = this page is a catalogue — it names where each API's description lives; fetch a service-desc url to get the spec itself:
 # The workspace files the coder has already READ. Paths and sizes only — the contents are on disk
 # and re-reading one is a single call; what compaction destroys is the knowledge that it looked.
-read_header = FILES YOU HAVE ALREADY READ FROM THIS WORKSPACE — this is the record that you looked, so you do not spend a turn rediscovering it after older messages scroll away. It is not the text itself: an entry marked as having no read result in this conversation has none in the messages you were sent.\n{{FILES}}{{MORE}}
-read_out_of_view =  — no read result for it is in this conversation
+# Supported read extraction is not an exhaustive detector of conversation text (opaque shell output may
+# still contain it). A missing match, including the wire's downgrade after restoration is shed, is unknown.
+read_header = FILES YOU HAVE ALREADY READ FROM THIS WORKSPACE — this is the record that you looked, not the text itself. An entry with availability not established does not say its text is absent from the conversation.\n{{FILES}}{{MORE}}
+read_out_of_view =  — availability of its read text is not established here
 read_more = \n- …and {{COUNT}} more file(s) you have read this session.
 # The closing sentence of the durable anchor. It is about FETCHES, so it may only be said when the
 # block holds one. Appending the read ledger to the same anchor made it render with zero fetches
@@ -113,21 +115,18 @@ read_changed_now = {{NOW}} lines now — {{THEN}} when you last read or wrote it
 # establish, nothing is said about "when you last read or wrote it" — only the current count, or that none is known.
 read_now_only = {{NOW}} lines now
 read_basis_unknown = line count when you last read or edited it not established
-# FILES THE CODER WORKED ON WHOSE TEXT IS NO LONGER IN THE CONVERSATION. The ledger above says you
-# looked; after the harness folded the history the text itself is gone, and an edit or a rewrite is then
-# composed from memory. The block below is its own message (⟦ctx:current⟧) so the floor can shed it, with a
-# label, before it deletes anything the coder said or saw. The bytes are the workspace's own report; what
-# the workspace last reported is all that can be backed, so that is all the header says (#5b, #11b).
-restore_header = ⟦ctx:current⟧ CURRENT TEXT OF FILES YOU READ OR WROTE EARLIER, NO LONGER IN THIS CONVERSATION — each file exactly as the workspace last reported it (taken from the workspace, not remembered or summarized). Anchor any edit on this text, not on memory:
+# Workspace-backed text for files the coder worked on. Candidate selection subtracts supported reads,
+# not every possible conversation copy. Describe this reducible block, never universal absence.
+restore_header = ⟦ctx:current⟧ WORKSPACE TEXT OF FILES YOU READ OR WROTE EARLIER — each file shown here exactly as the workspace last reported it (taken from the workspace, not remembered or summarized). This block does not establish whether other copies are in the conversation. Anchor any edit on file text, not on memory:
 # The same block when NO text rides in it (every file named below is too large or has no current body): the
 # header above promises text, so it is not said.
-restore_header_bare = ⟦ctx:current⟧ FILES YOU READ OR WROTE EARLIER, WHOSE TEXT IS NO LONGER IN THIS CONVERSATION AND IS NOT CARRIED HERE:
+restore_header_bare = ⟦ctx:current⟧ FILES YOU READ OR WROTE EARLIER — THIS BLOCK CARRIES NO TEXT FOR THEM; IT DOES NOT ESTABLISH WHETHER OTHER COPIES ARE IN THE CONVERSATION:
 restore_file = ----- {{PATH}} -----\n{{BODY}}
 restore_omitted = NOT SHOWN HERE — {{PATHS}}. Each is larger than one read returns, or would pass the {{LIMIT}} bytes this block carries; read_file it (in line ranges if it is large) or grep for what you need.
 # A file whose text COULD NOT ride in that block this turn: the workspace holds no current body for it (an edit
 # moved it past the last survey) or a command that may have changed files ran since. It is NAMED, never left
 # out silently — the coder that is told nothing re-plans from memory (phi4 A10: ~45 text-only turns).
-restore_unavailable = NOT AVAILABLE HERE — {{PATHS}}. No current text of these is held right now; read_file each one (in line ranges if it is large) before editing it — do not edit from memory.
+restore_unavailable = NOT AVAILABLE HERE — {{PATHS}}. This block holds no current workspace text for these files. Other conversation copies are not assessed here. Base edits on file text, not memory; if you have no usable copy, read_file it (in line ranges if it is large).
 # The ledger entry of a file whose text rides in that block THIS turn. Settled at the wire after the floor
-# (modelview.settle_restored_text): if the block did not survive, the line says the plain absence again.
+# (modelview.settle_restored_text): if the block did not survive, availability is unknown again.
 read_restored =  — its current text is in the ⟦ctx:current⟧ block
