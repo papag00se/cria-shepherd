@@ -107,7 +107,7 @@ class TheReadLedgerTests(unittest.TestCase):
                     "arguments": r'{"path":"/w/c.go","content":"package p\nfunc A(){}\n"}'}}]},
                 {"role": "tool", "tool_call_id": "w1", "content": "Wrote /w/c.go"}]
         out = loop._read_ground_truth(_Sess(), msgs)
-        self.assertIn("/w/c.go (3 lines)", out)
+        self.assertIn("/w/c.go (2 lines)", out)      # two lines: a final newline ends one, it does not start a third (`_count_lines`)
         self.assertNotIn("894", out)
 
     def test_a_refused_write_does_not_enter_the_ledger(self):

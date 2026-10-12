@@ -1,0 +1,1 @@
+⟦ctx:current⟧ No current text of these files is carried here — each was too large for this message, or no current text of it was held: {{PATHS}}. read_file a file (in line ranges if it is large) before editing it — do not edit from memory.

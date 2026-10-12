@@ -485,4 +485,4 @@ def test_a_large_rejected_payload_is_kept_once_in_the_answer_and_the_file_count_
     assert msgs[1]["content"].count(big) == 1                     # the payload survives exactly, once
     from cria import denial
     assert denial.read_instead_payload(msgs[1]["content"]) == SEED_POM
-    assert loop._extract_reads(msgs)["pom.xml"][1] == f"{SEED_POM.count(chr(10)) + 1} lines"
+    assert loop._extract_reads(msgs)["pom.xml"][1] == f"{loop._count_lines(SEED_POM)} lines"
