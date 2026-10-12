@@ -28,7 +28,7 @@ import json
 import re
 from dataclasses import dataclass
 
-from . import jsontext, probegate, prompts, toolargs, writeproxy
+from . import denial, jsontext, probegate, prompts, toolargs, writeproxy
 from .content_reduce import clip, est_tokens
 
 # Tunables in TOKENS. TRIGGER is operator-tunable via [context] trigger_compaction; the rest are
@@ -887,66 +887,105 @@ def stub_old_write_args(msgs: list[dict]) -> list[dict]:
 
 _LEDGER_EXEC_ARGS = ("cmd", "command")
 _LEDGER_CMD_CAP = 300
-
-
-_LEDGER_COUNT = re.compile(r"^(- .*?)(?: \(x(\d+)\))?$")
+# One event per line: "- <event>", or "- (N times) <event>" for N identical CONSECUTIVE events. The
+# count is a PREFIX so no event text (a command, a path) can imitate it; the event always starts with
+# a fixed word (a tool name, "ran:", "refused,").
+_LEDGER_LINE = re.compile(r"^- (?:\((\d+) times\) )?(.+)$")
 
 
 def _ledger_head() -> str:
     return prompts.render("compaction_work_ledger", lines="").strip()
 
 
-def work_ledger(msgs: list[dict]) -> str:
+def _one_line(text: str) -> str:
+    """Every line break a ``str.splitlines`` honours (\\r, \\u2028 …) becomes the same visible
+    separator, so one event is always ONE ``\\n``-delimited line and parses back whole."""
+    return " \u23ce ".join(text.splitlines())
+
+
+def _results_by_call(msgs: list[dict]) -> dict:
+    out: dict = {}
+    for m in msgs:
+        if isinstance(m, dict) and _is_tool_result(m):
+            tid = m.get("tool_call_id") or m.get("call_id")
+            c = m.get("content") if m.get("content") is not None else m.get("output")
+            if tid and isinstance(c, str):
+                out[tid] = c
+    return out
+
+
+def parse_ledger(text: str) -> list[tuple[str, int]]:
+    """The ``(event, count)`` lines of the ledger that follows the header in ``text`` ([] if none).
+    Splits on ``\\n`` only — the renderer guarantees no event contains another line break."""
+    head = _ledger_head()
+    if head not in text:
+        return []
+    out: list[tuple[str, int]] = []
+    for raw in text.split(head, 1)[1].lstrip("\n").split("\n"):
+        hit = _LEDGER_LINE.match(raw.rstrip("\r"))
+        if not hit:
+            break
+        out.append((hit.group(2), int(hit.group(1) or 1)))
+    return out
+
+
+def work_ledger(msgs: list[dict], *, carried: str = "", root: str = "") -> str:
     """A deterministic record of what the coder's tools DID in ``msgs`` — "" when nothing qualifies.
 
     The harness handshake discards a model-written briefing whenever a focused validator rejects it
     (a forward plan, a narrowed scope), and the next window then had only a workspace listing. The
-    briefing writer is the part that fabricates progress; this is the part cria owns. Each line is
-    cria's own template over structured fields — the tool name, the target path, the command string
-    the coder issued, and whether the paired result CONFIRMED the write (`write_landed`) — never a
-    sentence lifted from a tool's output, so it cannot carry an instruction and cannot claim more
-    than the tool confirmed. It says nothing about the task (the harness keeps the task in the
-    window) and nothing about what to do next.
+    briefing writer is the part that fabricates progress; this is the part cria owns. Each event is
+    cria's own template over structured fields — tool name, target path, the command the coder
+    issued, and what the PAIRED RESULT establishes (``write_landed`` for a confirmed write; cria's
+    own denial/edit-refusal marks for a call that did not run) — never a sentence lifted from a
+    tool's output, so it carries no instruction and claims no more than a tool confirmed. A tool
+    result that is neither is "no confirmation recorded": absence of a confirmation is not a refusal.
+    Events keep their ORDER (identical consecutive ones are counted), so a later outcome reads as later.
+    It says nothing about the task and nothing about what to do next.
 
-    A ledger an EARLIER handoff carried is read back out of the history (it rides there as the
-    harness's own summary turn) and merged in front, identical lines counted — otherwise every
-    compaction would forget everything before the previous one, the exact loss this exists to stop."""
-    head = _ledger_head()
-    counts: dict[str, int] = {}
+    ``carried`` is the ledger text of an EARLIER handoff, which the caller extracts from the harness's
+    own summary turn only (``server._carried_ledger``) — this function never goes looking in
+    arbitrary message text. ``root`` is the workspace, so one file is one path however it was spelled."""
+    events: list[tuple[str, int]] = list(parse_ledger(carried)) if carried else []
 
-    def add(line: str, n: int = 1) -> None:
-        counts[line] = counts.get(line, 0) + n
+    def add(event: str) -> None:
+        if events and events[-1][0] == event:
+            events[-1] = (event, events[-1][1] + 1)
+        else:
+            events.append((event, 1))
 
-    for m in msgs:  # carried-forward ledgers, oldest first
-        t = _text(m) if isinstance(m, dict) and not m.get("tool_calls") else ""
-        if head in t:
-            for raw in t.split(head, 1)[1].lstrip("\n").splitlines():
-                hit = _LEDGER_COUNT.match(raw.strip())
-                if not hit:
-                    break
-                add(hit.group(1), int(hit.group(2) or 1))
-    landed = _write_outcomes(msgs)
+    def rel(path: str) -> str:
+        return path[len(root) + 1:] if root and path.startswith(root.rstrip("/") + "/") else path
+
+    results = _results_by_call(msgs)
     for m in msgs:
         if not isinstance(m, dict):
             continue
         for tc in (m.get("tool_calls") or []):
             fn = (tc or {}).get("function") or {}
+            result = results.get(tc.get("id"))
+            refused = result is not None and (denial.is_denied(result) or _EDIT_MARK in result)
             path = toolargs.write_path(tc)
             if path:
-                outcome = landed.get(tc.get("id"))
-                state = {True: "confirmed written", False: "NOT written (the tool refused or failed it)",
-                         None: "no result recorded"}[outcome]
-                add(f"- {fn.get('name')} {path}: {state}")
+                if result is None:
+                    state = "no result recorded"
+                elif write_landed(result):
+                    state = "confirmed written"
+                elif refused:
+                    state = "refused, not written"
+                else:
+                    state = "no confirmation recorded"
+                add(_one_line(f"{fn.get('name')} {rel(path)}: {state}"))
                 continue
             args = toolargs.parse_args(fn.get("arguments"))
             cmd = next((str(args[k]) for k in _LEDGER_EXEC_ARGS if args.get(k)), "")
             if cmd and not writeproxy.is_crias_own(cmd):  # cria's own gate/lowering is not the coder's act
-                cmd = cmd.strip()
-                cmd = clip(cmd, _LEDGER_CMD_CAP, f" [command continues; {len(cmd)} characters in all]")
-                add("- ran: " + cmd.replace("\n", " \u23ce "))
-    if not counts:
+                cmd = _one_line(clip(cmd.strip(), _LEDGER_CMD_CAP,
+                                     f" [command continues; {len(cmd.strip())} characters in all]"))
+                add(("refused, did not run: " if refused else "ran: ") + cmd)
+    if not events:
         return ""
-    lines = "\n".join(f"{k} (x{n})" if n > 1 else k for k, n in counts.items())
+    lines = "\n".join(f"- ({n} times) {e}" if n > 1 else f"- {e}" for e, n in events)
     return prompts.render("compaction_work_ledger", lines=lines)
 
 

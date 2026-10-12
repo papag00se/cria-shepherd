@@ -589,6 +589,30 @@ def _completion_text(c: dict) -> str:
     return ""
 
 
+def _carried_ledger(messages: list) -> str:
+    """The text of the tool ledger an EARLIER dropped-prose handoff carried, or "".
+
+    Only the LATEST user turn that is a harness handoff counts, in one of the two shapes cria itself
+    leaves for it: the re-attributed continuation (CONTEXT_FIXES and above — cria's own template,
+    recognised by its fixed lead) or, below that rung, the harness's own summary turn whose summary
+    BEGINS with the ledger header. Model prose, tool results and an accepted briefing that quotes the
+    header are never read: the ledger is authoritative, so only cria's own turn may supply it."""
+    from .loop import _COMPACTION_BOUNDARY, _COMPACTION_MARKER, _DROPPED_PROSE_LEAD
+    from .loop import CONTINUATION_MARKER
+    head = selfcompact._ledger_head()
+    for m in reversed(messages):
+        if not isinstance(m, dict) or m.get("role") != "user":
+            continue
+        text = _text_of_msg(m)
+        if text.lstrip().startswith(CONTINUATION_MARKER) and _DROPPED_PROSE_LEAD in text:
+            return text[text.index(head):] if head in text else ""
+        if _COMPACTION_MARKER in text and _COMPACTION_BOUNDARY in text:
+            summary = text.split(_COMPACTION_BOUNDARY, 1)[1].lstrip("\n")
+            summary = summary.removeprefix(_PROSE_DROPPED_MARKER).lstrip("\n")
+            return summary if summary.startswith(head) else ""
+    return ""
+
+
 def _harden_compaction_reply(comp: dict, body: dict, provider, server, rlog, sess_key: str = "") -> dict:
     """The harness stores this reply as the session's ENTIRE remembered past — everything not in it
     is gone (self-compaction's anchors cannot protect messages the harness itself discards). Two
@@ -741,9 +765,12 @@ def _harden_compaction_reply(comp: dict, body: dict, provider, server, rlog, ses
     # the part that fabricates progress; the record of calls and their confirmed outcomes is the part
     # cria owns (`selfcompact.work_ledger` — cria's own templates over structured fields, so it carries
     # no instruction and no claim beyond what a tool confirmed).
-    ledger = (selfcompact.work_ledger(_compaction_messages(body.get("messages", [])))
+    ledger = (selfcompact.work_ledger(_compaction_messages(body.get("messages", [])),
+                                      carried=_carried_ledger(body.get("messages", [])), root=ws or "")
               if not text else "")
-    facts = "\n\n".join(t for t in (facts, inventory, ledger, checks) if t)
+    # The ledger LEADS the appendix: `_carried_ledger` recognises a later window's carry by the header
+    # opening the harness summary, which is what keeps a quoted header elsewhere from being read.
+    facts = "\n\n".join(t for t in (ledger, facts, inventory, checks) if t)
     # Rewrite when there is anything to append OR when the reply's own prose was DROPPED above —
     # otherwise a dropped summary silently survives as the untouched original content.
     if facts or text != _text_of(comp).strip():
