@@ -94,3 +94,24 @@ def test_no_rewrite_is_offered_for_any_shape():
 def test_decision_unchanged_for_writes_into_the_root():
     for c in (f"cd {REPO} && rm -rf .", f"echo x > {REPO}/a", f"JAR={REPO}/a.jar; rm $JAR"):
         assert _r(c), c
+
+
+def test_mixed_quote_words_never_invent_a_variable():
+    """Reviewer probes: concatenation in ANY word must not make a wholly single-quoted `$` look live."""
+    import shutil, subprocess
+    for tail in ("'$JAR'foo", "'$JAR' 'x'y", "'$JAR'\"x\" 'a'b", "x'$JAR'", "\\$JAR 'q'r", "\"\\$JAR\" 'q'r"):
+        r = _r(f"ls {REPO} {tail} | tar cf - -T -")
+        assert r, tail                                   # decision unchanged: still refused
+        assert "the shell variable" not in r, (tail, r)  # …and no variable is claimed
+        assert "pipe into `tar`" in r, tail
+    if shutil.which("bash"):
+        for tail, want in (("'$JAR'foo", "$JARfoo"), ("'$JAR' 'x'y", "$JAR\nxy")):
+            out = subprocess.run(["/bin/bash", "--noprofile", "--norc", "-c", f"printf '%s\\n' {tail}"],
+                                 env={"JAR": "EXPANDED"}, capture_output=True, text=True).stdout
+            assert out.strip() == want
+
+
+def test_live_dollar_is_still_named_beside_quoted_concatenation():
+    for tail in ('"$JAR"', "$JAR", '"${JAR}x"', "'a'b $JAR"):
+        r = _r(f"ls {REPO} {tail} | tar cf - -T -")
+        assert r and "the shell variable" in r, (tail, r)

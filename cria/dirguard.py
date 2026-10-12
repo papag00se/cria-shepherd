@@ -1274,9 +1274,9 @@ def _unproven_element(command: str, workspace: str | None):
     words = _words_of(command)
     if not words:
         return None
-    raw = _words_of(command, posix=False)
-    if raw is None or len(raw) != len(words):
-        raw = words  # quoting unknown: the single-quote test below then cannot clear a word
+    flags = _word_liveness(command)
+    if len(flags) != len(words):
+        flags = [False] * len(words)  # provenance not established: never claim a variable
     seg: list[str] = []
     live: list[bool] = []
     after_pipe = False
@@ -1304,25 +1304,57 @@ def _unproven_element(command: str, workspace: str | None):
             live = []
         else:
             seg.append(w)
-            live.append(_has_live_dollar(raw[i]) if raw is not words else "$" in w)
+            live.append(flags[i])
         i += 1
     return None
 
 
-def _has_live_dollar(raw_word: str) -> bool:
-    """True when a ``$`` in the word (quotes still attached) is outside single quotes — only then is it
-    a variable expansion; ``'$NAME'`` is literal text."""
-    quote = None
-    for c in raw_word:
-        if quote == "'":
-            quote = None if c == "'" else quote
-        elif c == "'" and quote is None:
-            quote = "'"
-        elif c == '"':
-            quote = None if quote == '"' else '"'
-        elif c == "$":
-            return True
-    return False
+def _word_liveness(command: str) -> list[bool]:
+    """One flag per word/operator token, in command order: does the word contain a ``$`` that bash would
+    expand — outside single quotes and not backslash-escaped. A real quote-aware scan of the command
+    itself (never a comparison of two tokenizations): ``'$NAME'foo`` is literal text, ``"$NAME"`` is live."""
+    out: list[bool] = []
+    cur = None  # None = between words; else the live flag of the word being built
+    punct = False
+    i, n = 0, len(command)
+    while i < n:
+        c = command[i]
+        if c in " \t\r":
+            if cur is not None:
+                out.append(cur)
+                cur = None
+            punct = False
+        elif c in ";&|()<>\n":
+            if not punct:
+                if cur is not None:
+                    out.append(cur)
+                cur = False
+                punct = True
+        else:
+            if punct:
+                out.append(False)
+                cur, punct = None, False
+            if cur is None:
+                cur = False
+            if c == "\\":
+                i += 1
+            elif c == "$":
+                cur = True
+            elif c == "'":
+                j = command.find("'", i + 1)
+                i = n if j < 0 else j
+            elif c == '"':
+                i += 1
+                while i < n and command[i] != '"':
+                    if command[i] == "\\":
+                        i += 1
+                    elif command[i] == "$":
+                        cur = True
+                    i += 1
+        i += 1
+    if cur is not None:
+        out.append(cur)
+    return out
 
 
 def _segment_element(seg: list[str], workspace, after_pipe: bool, live: list[bool]):
