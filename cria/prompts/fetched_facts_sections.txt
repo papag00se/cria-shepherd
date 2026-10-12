@@ -109,6 +109,10 @@ read_range = lines {{RANGE}} only — {{SIZE}}
 # file the coder's edits had grown to 243): it is dated, and replaced by a fresh count when the body is held.
 read_changed = {{THEN}} when you last read or wrote it — the file has changed since
 read_changed_now = {{NOW}} lines now — {{THEN}} when you last read or wrote it, so the file has changed since
+# When the coder's latest touch (a window of the file, an edit whose result gave no size) left no size cria can
+# establish, nothing is said about "when you last read or wrote it" — only the current count, or that none is known.
+read_now_only = {{NOW}} lines now
+read_basis_unknown = line count when you last read or edited it not established
 # FILES THE CODER WORKED ON WHOSE TEXT IS NO LONGER IN THE CONVERSATION. The ledger above says you
 # looked; after the harness folded the history the text itself is gone, and an edit or a rewrite is then
 # composed from memory. The block below is its own message (⟦ctx:current⟧) so the floor can shed it, with a

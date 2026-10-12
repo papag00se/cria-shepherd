@@ -9532,18 +9532,97 @@ def _raw_read_bytes(start, end, c: str):
     return len(c.encode("utf-8", "replace"))
 
 
+class _Counted(str):
+    """A ledger label ``"N lines"`` whose basis is a LINE COUNT (a landed edit's echo, ranged reads that cover the
+    file) rather than a read's bytes — :func:`_dated_count` can compare it with the workspace's own count."""
+    __slots__ = ()
+
+
+class _Unestablished(str):
+    """A ledger label that is NOT the file's state at the coder's latest touch: a window that did not complete
+    the file was read (or an edit landed with no size reported) after the whole reading it carries. The text is
+    kept for what it was; :func:`_dated_count` never states it as the count when the coder last read or wrote."""
+    __slots__ = ()
+
+
+def _edit_total_pattern():
+    """The regex that reads the file's size off cria's own edit echo, cut from the echo templates themselves
+    (``{{PATH}} now has {{TOTAL}} lines; …``) so the two cannot drift."""
+    tpl = prompts.load("edit_echo")
+    mid = tpl.partition("{{PATH}}")[2].partition("{{TOTAL}}")[0]
+    after = tpl.partition("{{TOTAL}}")[2].split(";")[0]
+    return re.compile(r"^(?P<path>.+?)" + re.escape(mid) + r"(\d+)" + re.escape(after) + ";", re.M)
+
+
+def _edit_landings(messages: list[dict]):
+    """``(position, id, path, total lines or None)`` of every edit that LANDED. The total is the post-edit size the
+    edit echo reported for the path — a tool result, never assistant text — or None when no echo carried one."""
+    pat = _edit_total_pattern()
+    for idx, tid, path, res in _edit_results(messages):
+        total = next((int(m.group(2)) for m in pat.finditer(res) if m.group("path").strip() == path), None)
+        yield idx, tid, path, total
+
+
 def _file_events(messages: list[dict]) -> list:
-    """Every read and landed write in ``messages``, oldest first: ``(position, id, kind, path, nbytes,
-    label, partial)``. One ordered stream, because what the ledger says about a path is its NEWEST
+    """Every read, landed write and landed edit in ``messages``, oldest first: ``(position, id, kind, path,
+    nbytes, label, partial)``. One ordered stream, because what the ledger says about a path is its NEWEST
     state — a bigger OLD reading must never outrank a newer smaller one (phi4 A4 CALL 0270: `Importer.java
     (130 lines)` for the 106-line file the coder had since rewritten, `pom.xml (21 lines)` for a 12-line
-    one; both numbers were true once, of a file that no longer existed)."""
-    events = []
+    one; both numbers were true once, of a file that no longer existed).
+
+    THE BASIS IS THE LATEST TOUCH (O15). A landed edit is a touch (its echo reports the post-edit size), and
+    ranged reads that TOGETHER cover line 1 to the end of a file of known size are one whole reading, of that
+    size, at the position of the last page (ornith1.5_9b Java B3 0087: `246 lines when you last read or wrote
+    it` after the coder read the whole 267-line file in pages and landed two edits). A synthesized whole
+    event has id ``("c", tid)``; an edit has ``("e", tid)`` and kind ``edit``."""
+    raw = []
     for idx, tid, path, start, end, c in _read_results_ordered(messages):
-        nbytes, label = _raw_read_bytes(start, end, c), _read_label(start, end, c)
-        events.append((idx, ("r", tid), "read", path, nbytes, label, not _read_is_whole(start, end, c)))
+        raw.append((idx, "read", tid, path, start, end, c))
     for idx, tid, path, nbytes, label in _write_events(messages):
-        events.append((idx, ("w", tid), "write", path, nbytes, label, False))
+        raw.append((idx, "write", tid, path, nbytes, label))
+    for idx, tid, path, total in _edit_landings(messages):
+        raw.append((idx, "edit", tid, path, total))
+    for idx, path, n in _refused_line_counts_ordered(messages):
+        raw.append((idx, "refuse", None, path, n))
+    raw.sort(key=lambda e: e[0])
+    events = []
+    spans: dict = {}            # path -> {"spans": [(a, b)], "eof": bool, "done": bool}
+    known: dict = {}            # path -> size cria's own refusal reported since the path last changed
+    for e in raw:
+        idx, kind, tid, path = e[:4]
+        if kind == "refuse":
+            known[path] = e[4]
+        elif kind == "write":
+            spans.pop(path, None)
+            known.pop(path, None)
+            events.append((idx, ("w", tid), "write", path, e[4], e[5], False))
+        elif kind == "edit":
+            spans.pop(path, None)
+            known.pop(path, None)
+            events.append((idx, ("e", tid), "edit", path, None, _Counted(f"{e[4]} lines") if e[4] is not None else None, False))
+        else:
+            _k, _t, _p, start, end, c = e[1:]
+            whole = _read_is_whole(start, end, c)
+            events.append((idx, ("r", tid), "read", path, _raw_read_bytes(start, end, c),
+                           _read_label(start, end, c), not whole))
+            span = _read_span(start, end, c)
+            if span is None:
+                continue
+            if span[1] is None:
+                spans.pop(path, None)
+                continue
+            st = spans.setdefault(path, {"spans": [], "eof": False, "done": False})
+            st["spans"].append((span[0], span[1]))
+            st["eof"] = st["eof"] or span[2]
+            covered = 0
+            for a_, b_ in sorted(st["spans"]):
+                if a_ > covered + 1:
+                    break
+                covered = max(covered, b_)
+            size = covered if st["eof"] else known.get(path)
+            if not whole and not st["done"] and covered and size is not None and covered >= size:
+                st["done"] = True
+                events.append((idx, ("c", tid), "read", path, None, _Counted(f"{size} lines"), False))
     events.sort(key=lambda e: e[0])
     return events
 
@@ -9555,9 +9634,15 @@ def _apply_ledger_event(d: dict, ev, key=None) -> None:
     _idx, _id, kind, path, nbytes, label, partial = ev
     path = key(path) if key else path
     prev = d.get(path)
-    if kind == "write" and prev is None:
+    if kind in ("write", "edit") and prev is None:
         return                       # a write is not a read; written_files owns it
+    if kind == "edit":
+        d[path] = (None, label) if label is not None else (None, _Unestablished(prev[1]))
+        return
     if partial and prev is not None and not prev[1].startswith("lines "):
+        # The window is the coder's latest touch and it does not say how big the whole file is: the whole
+        # reading it keeps is no longer the state at the latest touch, and is not claimed to be (O15).
+        d[path] = (None, prev[1] if isinstance(prev[1], _Unestablished) else _Unestablished(prev[1]))
         return
     d[path] = (nbytes, label)
 
@@ -9629,7 +9714,12 @@ def _read_span(start, end, text: str):
 
 
 def _refused_line_counts(messages: list[dict]) -> dict:
-    """``path -> lines`` from cria's own over-size refusals still in ``messages`` (`large_read_steer`: "X is N
+    """``path -> lines`` from cria's own over-size refusals (newest wins) — see :func:`_refused_line_counts_ordered`."""
+    return {p: n for _i, p, n in _refused_line_counts_ordered(messages)}
+
+
+def _refused_line_counts_ordered(messages: list[dict]):
+    """``(position, path, lines)`` from cria's own over-size refusals still in ``messages`` (`large_read_steer`: "X is N
     lines, which is larger than can be returned in one read"), for a read — or a write answered with one.
     The regex is cut from that prompt's own words, so the two cannot drift."""
     from . import denial
@@ -9637,8 +9727,7 @@ def _refused_line_counts(messages: list[dict]) -> dict:
     mid, _, rest = tpl.partition("{{PATH}}")[2].partition("{{LINES}}")
     pat = re.compile(re.escape(mid) + r"(\d+)" + re.escape(rest.split("{{")[0]))
     calls: dict = {}
-    out: dict = {}
-    for m in messages or []:
+    for idx, m in enumerate(messages or []):
         if not isinstance(m, dict):
             continue
         for tc in m.get("tool_calls") or []:
@@ -9649,8 +9738,7 @@ def _refused_line_counts(messages: list[dict]) -> dict:
         tid = m.get("tool_call_id") or m.get("call_id")
         c = m.get("content") if m.get("content") is not None else m.get("output")
         if tid in calls and isinstance(c, str) and denial.is_denied(c) and (hit := pat.search(c)):
-            out[calls[tid]] = int(hit.group(1))
-    return out
+            yield idx, calls[tid], int(hit.group(1))
 
 
 def _extract_whole_reads(messages: list[dict], view=None) -> set:
@@ -9782,7 +9870,6 @@ def _track_read_files(sess, messages: list[dict]) -> None:
     if getattr(sess, "file_touch", None) is None:
         sess.file_touch = {}                          # rel -> sequence of the last read / write / landed edit
     touched = [(ev[0], ev[1], ev[3]) for ev in _file_events(messages)]
-    touched += [(i, ("e", t), p) for i, t, p in _edit_events(messages)]
     for _pos, tid, path in sorted(touched, key=lambda e: e[0]):
         if tid not in sess.read_ledger_seen:
             sess.file_touch[key(path)] = 1 + max(sess.file_touch.values(), default=0)
@@ -9861,16 +9948,39 @@ def _dated_count(view, rel: str, nbytes: int, label: str, labels: dict) -> str:
     by a measured one when the view holds the current body. A reading of a window, or a workspace nothing is known
     of, is left as it is (it claims nothing about the whole file / nothing can contradict it). A 1-byte gap is the
     read tool's stripped trailing newline, never a change (`_read_label`)."""
-    if view is None or nbytes is None or not _WHOLE_COUNT.fullmatch(label):
+    if isinstance(label, _Unestablished):
+        # The latest touch (a window, or an edit with no size reported) left no known size: claim nothing about
+        # "when you last read or wrote it" — say only what the workspace's own copy says now, or that it is not known.
+        now = _current_line_count(view, rel)
+        return prompts.fill(labels["read_now_only"], now=now) if now is not None else labels["read_basis_unknown"]
+    if view is None or not _WHOLE_COUNT.fullmatch(label):
         return label
+    if isinstance(label, _Counted):
+        # A basis established as a LINE COUNT (a landed edit's echo, ranged reads that together cover the file):
+        # compare the count with the workspace's own, when it holds the current body.
+        now = _current_line_count(view, rel)
+        if now is None or f"{now} lines" == label:
+            return label
+        return prompts.fill(labels["read_changed_now"], now=now, then=label)
     size = view.size(rel)
-    if size is None or abs(size - nbytes) <= 1:
+    if nbytes is None or size is None or abs(size - nbytes) <= 1:
         return label
     raw = None if view.may_have_changed else view.read_bytes(rel)
     if raw is not None and len(raw) == size:
         return prompts.fill(labels["read_changed_now"], now=_count_lines(raw.decode("utf-8", "replace")),
                             then=label)
     return prompts.fill(labels["read_changed"], then=label)
+
+
+def _current_line_count(view, rel: str):
+    """Lines in the workspace view's copy of ``rel`` when that copy is the file as it is NOW (the view's own size
+    agrees with the body, and no command that may have changed files ran since), else None."""
+    if view is None or view.may_have_changed:
+        return None
+    size, raw = view.size(rel), view.read_bytes(rel)
+    if raw is None or size is None or len(raw) != size:
+        return None
+    return _count_lines(raw.decode("utf-8", "replace"))
 
 
 def _restored_text_message(sess, messages: list[dict]) -> tuple[dict | None, dict]:
@@ -10007,6 +10117,12 @@ def _write_events_paths(messages: list[dict]):
 
 def _edit_events(messages: list[dict]):
     """``(position, id, path)`` of every edit that LANDED in ``messages``."""
+    for idx, tid, path, _res in _edit_results(messages):
+        yield idx, tid, path
+
+
+def _edit_results(messages: list[dict]):
+    """``(position, id, path, result text)`` of every edit that LANDED in ``messages``."""
     calls: dict = {}
     for idx, m in enumerate(messages or []):
         if not isinstance(m, dict):
@@ -10020,7 +10136,7 @@ def _edit_events(messages: list[dict]):
         if tid in calls:
             res = m.get("content") if m.get("content") is not None else m.get("output")
             if isinstance(res, str) and selfcompact.write_landed(res) and not denial.is_denied(res):
-                yield idx, tid, calls[tid]
+                yield idx, tid, calls[tid], res
 
 
 def _render_restored(view, rels: list[str], touch: dict) -> tuple[str, dict, list[str]]:
