@@ -1,0 +1,3 @@
+
+Literal-path form of this command, which is permitted:
+{{COMMAND}}
