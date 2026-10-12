@@ -21,7 +21,7 @@ import uuid
 from dataclasses import replace
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import bodykeys
+from . import bodykeys, dirguard
 from . import (callcapture, compat, focustrim, groundtruth, massage, modelview, probegate, prompts,
                responses, rumination, selfcompact)
 from .classify import Classifier
@@ -1290,6 +1290,7 @@ class CriaHandler(BaseHTTPRequestHandler):
             if learned:
                 self._workspace_root = _remember_session_cwd(sess_key, learned)
                 rlog.emit("wsview.root_adopted", level="info", root=learned)
+        self._declared_roots = dirguard.declared_roots(body.get("messages", []))
         if self._shell_tool is not None:
             self._native_search = native_search_name(body.get("tools"))
             self._synthetic = advertise(body, rlog, brave_key=self._brave_key)
@@ -1326,6 +1327,7 @@ class CriaHandler(BaseHTTPRequestHandler):
                                native_search=getattr(self, "_native_search", None), session=sess_key,
                                workspace_root=getattr(self, "_workspace_root", None),
                                external_dir_permission=self.server.cfg.safety.external_dir_permission,
+                               declared_roots=getattr(self, "_declared_roots", ()),
                                unread_target=getattr(self, "_unread_target", None),
                                shrink_check=getattr(self, "_shrink_check", None),
                                # N2: harness-side plumbing is packed only at the gate's rung (L4+, N1's scope);

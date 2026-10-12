@@ -1,0 +1,1 @@
+ This directory is one the harness lists as writable for this run, so a command that only READS it (find, ls, cat, grep, javap) is permitted — only writing or deleting there, from outside the project, is refused.

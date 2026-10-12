@@ -603,6 +603,165 @@ _DEP_CACHE_MARKERS = (
 )
 
 
+# The roots the HARNESS itself declares writable ("The writable roots are `a`, `b`." in Codex's
+# permissions text). The harness has already decided those directories are the run's own — cwd plus
+# the install/scratch dir its build tools are configured to use (JAVA_TOOL_OPTIONS
+# -Dmaven.repo.local, GOMODCACHE, CARGO_HOME ...). Walked: feed-pipeline-java x ornith1.5_9b
+# 1791513868 ran a read-only `find <install>/m2/repository -iname '*opencsv*'` to learn which jar
+# the build resolved and was refused "outside the working directory" on every try (the hard-coded
+# dependency-cache markers know `~/.m2/repository`, not a cache the build is told to keep elsewhere);
+# it never read the real OpenCSV API and wrote classes that do not exist. Derived from the request,
+# never a hard-coded path.
+_WRITABLE_ROOTS_SENTENCE = re.compile(r"writable[ _]roots?\b[^`\n]{0,40}?((?:\s*`[^`\n]+`[\s,.]*(?:and\s+)?)+)",
+                                      re.IGNORECASE)
+_BACKTICKED = re.compile(r"`([^`\n]+)`")
+
+
+def declared_roots(messages) -> tuple[str, ...]:
+    """Absolute directories the harness declares writable in its system/developer permission text,
+    else (). The sentence is the harness's own; cria only reads it back."""
+    roots: list[str] = []
+    for m in messages or []:
+        if not isinstance(m, dict) or m.get("role") not in ("system", "developer"):
+            continue
+        c = m.get("content")
+        text = c if isinstance(c, str) else " ".join(
+            str(part.get("text", "")) for part in (c or []) if isinstance(part, dict))
+        for sent in _WRITABLE_ROOTS_SENTENCE.finditer(text):
+            for r in _BACKTICKED.findall(sent.group(1)):
+                r = r.strip()
+                r = os.path.normpath(r)
+                home = os.path.normpath(os.path.expanduser("~"))
+                # $HOME and every ancestor of it would expose the whole account: not a run root.
+                if (os.path.isabs(r) and r != os.sep and r not in roots
+                        and not (home == r or home.startswith(r + os.sep))):
+                    roots.append(r)
+    return tuple(roots)
+
+
+def _in_declared_root(path: str, roots) -> bool:
+    if not roots or not path or not path.strip():
+        return False
+    p = os.path.normpath(os.path.expanduser(path.strip()))
+    return os.path.isabs(p) and any(p == r or p.startswith(r + os.sep) for r in roots)
+
+
+# --- Proving a command READS ---------------------------------------------------------------
+# `shelltool.writes_something` is deliberately GENEROUS toward "this might have written" — right for
+# its callers, wrong as proof of safety: `find … | xargs rm`, `1>file`, `curl -o`, `tar -C` all read
+# as read-only to it. Letting a command touch a harness-declared root needs the opposite stance, a
+# POSITIVE allow-list: every pipeline segment must be a known reader, and anything else — xargs,
+# a shell or interpreter, an unknown program, a substitution — is NOT proven and is refused.
+_PUNCT = set(";&|()<>\n")
+_READERS = {"cd", "echo", "printf", "pwd", "true", "ls", "cat", "head", "tail", "wc", "grep", "egrep",
+            "fgrep", "rg", "stat", "file", "du", "find", "sort", "unzip", "jar", "javap", "readlink",
+            "realpath", "basename", "dirname", "cut", "tr"}
+_FIND_ACTIONS = {"-delete", "-exec", "-execdir", "-ok", "-okdir", "-fprint", "-fprint0", "-fprintf", "-fls"}
+
+
+_SEPARATORS = {";", "&&", "||", "|", "&", "\n"}
+_REDIRECTS = {">", ">>", "<", ">&", "<&", "&>", "&>>", ">|"}
+
+
+def _short_flags(args) -> str:
+    return "".join(a.lstrip("-") for a in args if a.startswith("-") and not a.startswith("--"))
+
+
+def _segment_reads(words: list[str], workspace: str | None = None) -> bool:
+    cmd, args = words[0], words[1:]
+    if cmd == "cd":  # moves the REAL cwd, which relative redirect targets resolve against
+        return len(args) == 1 and _plain_project_path(args[0], workspace)
+    if cmd == "tee":  # a copy of stdin: harmless exactly when every file it writes is in the project
+        return all(not a.startswith("-") and _plain_project_path(a, workspace, allow_devnull=True)
+                   for a in args)
+    if cmd not in _READERS:
+        return False
+    if cmd == "find":
+        return not any(a in _FIND_ACTIONS for a in args)
+    # GNU getopt accepts ANY unambiguous prefix of a long option (`sort --outp=f` is --output,
+    # `--comp=prog` runs a program), so a denylist of spellings is unsound: sort and file take no
+    # long option at all.
+    if cmd in ("sort", "file"):
+        return (not any(a.startswith("--") for a in args)
+                and not set(_short_flags(args)) & set("oTCm" if cmd == "file" else "oT"))
+    if cmd == "rg":  # --pre / --hostname-bin run programs; refuse them and every prefix of them
+        longs = [a.split("=", 1)[0] for a in args if a.startswith("--") and a != "--"]
+        return not any(o.startswith(("--pre", "--hostname-bin")) or "--pre".startswith(o)
+                       or "--hostname-bin".startswith(o) for o in longs)
+    if cmd == "unzip":  # a LISTING flag is mandatory: bare `unzip x.zip` extracts
+        flags = set(_short_flags(args))
+        return bool(flags & set("lpvtZ")) and flags <= set("lpvqtZ1") and not any(a.startswith("--") for a in args)
+    if cmd == "jar":  # `jar tf x.jar`: the table of contents, never create/extract/update
+        first = args[0].lstrip("-") if args else ""
+        return bool(first) and "t" in first and set(first) <= set("tvf")
+    return True
+
+
+def _plain_project_path(path: str, workspace: str | None, allow_devnull: bool = False) -> bool:
+    """A literal path inside the project: no expansion (`$`, braces, globs, `~`) can make it name
+    anything else, and it is not outside the workspace."""
+    if not path or any(c in path for c in "${}*?[~`") or path == "-":
+        return False
+    return (allow_devnull and _exempt(path)) or not is_external(path, workspace)
+
+
+def _redirect_ok(op: str, target: str | None, workspace: str | None) -> bool:
+    """A redirect is harmless when it writes nothing outside the project: an fd duplication
+    (`2>&1`), /dev/null, or a file inside the workspace. `&>`, `>|`, `1>` all reduce to this."""
+    if ">" not in op:
+        return True  # `<` input: reading, judged by the path scan like any other operand
+    if "&" in op and op.rstrip("&|").endswith(">&") and target is not None and target.lstrip("&").isdigit():
+        return True
+    if target is None or "<" in op or "(" in op:
+        return False
+    return _plain_project_path(target, workspace, allow_devnull=True)
+
+
+def command_only_reads(command: str, workspace: str | None) -> bool:
+    """True only when EVERY segment of ``command`` is a known reader and every redirect stays inside
+    the project (or /dev/null). Unknown ⇒ False."""
+    if not command or "<<" in command or "`" in command or "$(" in command:
+        return False
+    lexer = shlex.shlex(command, posix=True, punctuation_chars=";&|()<>\n")
+    lexer.whitespace = " \t\r"
+    lexer.commenters = ""
+    # punctuation_chars strips most symbols from wordchars, so `x[12]` or `{a,b}` would split into
+    # separate "words" and a glob/brace target could look like a plain one. Keep every other
+    # printable character inside the word so the target is judged whole.
+    lexer.wordchars += "".join(c for c in "[]{}$,:@%+!^#=" if c not in lexer.wordchars)
+    try:
+        words = list(lexer)
+    except ValueError:
+        return False
+    seg: list[str] = []
+    i = 0
+    while i <= len(words):
+        w = words[i] if i < len(words) else ";"
+        if w and set(w) <= _PUNCT:
+            # shlex glues adjacent operator characters into ONE token (`;>`, `|<`, `&&>`, `\n>`), which
+            # would hide a separator inside what looks like a redirect. Only a token that is exactly
+            # one known operator is understood; any other combination is unproven.
+            if w not in _SEPARATORS and w not in _REDIRECTS and set(w) != {"\n"}:
+                return False
+            if w in _REDIRECTS:
+                if seg and seg[-1].isdigit():
+                    seg.pop()  # the fd number of `2>file`
+                nxt = words[i + 1] if i + 1 < len(words) else None
+                if nxt is not None and set(nxt) <= _PUNCT:
+                    nxt = None
+                if not _redirect_ok(w, nxt, workspace):
+                    return False
+                i += 2 if nxt is not None else 1
+                continue
+            if seg and not _segment_reads(seg, workspace):
+                return False
+            seg = []
+        else:
+            seg.append(w)
+        i += 1
+    return True
+
+
 def _is_dependency_cache(path: str) -> bool:
     """True when ``path`` is inside a package manager's read-only dependency-artifact cache — the
     ground truth for an installed dependency's API. The artifact subtree only, so a manager's
@@ -732,7 +891,7 @@ def _case_typo_of_workspace(path: str, workspace: str | None) -> bool:
     return False
 
 
-def _refusal(verb: str, path: str, workspace: str | None = None) -> str:
+def _refusal(verb: str, path: str, workspace: str | None = None, roots=()) -> str:
     # prompts/external_path_refusal.txt — {{PATH}} takes the quoted repr, matching the old f"{path!r}".
     # {{ROOT}} names the ACTUAL project directory when known: the anonymous "the project directory"
     # left a blocked model inventing roots (/tmp/src, /tmp/project) for whole runs — the refusal is
@@ -740,6 +899,9 @@ def _refusal(verb: str, path: str, workspace: str | None = None) -> str:
     root = f" ({workspace})" if workspace else ""
     if _case_typo_of_workspace(path, workspace):
         note = prompts.load("external_path_case_note")
+    elif _in_declared_root(path, roots):
+        # A WRITE into a harness-declared root: reads of it are allowed, so say what the rule is.
+        note = prompts.load("external_path_declared_root_note")
     else:
         # A refused package-manager cache root (~/.m2, ~/.gradle, ...) draws the offline-misdiagnosis
         # note: the artifact subtree IS readable and this is not a network limit.
@@ -750,18 +912,18 @@ def _refusal(verb: str, path: str, workspace: str | None = None) -> str:
                         casenote=note)
 
 
-def path_refusal(path: str, is_write: bool, level: str, workspace: str | None) -> str | None:
+def path_refusal(path: str, is_write: bool, level: str, workspace: str | None, roots=()) -> str | None:
     """The refusal for a synthetic file tool's EXPLICIT path, or None when allowed. read_file/list_dir
     are reads; write_file/edit_file are writes."""
     if level == "write" or _exempt(path) or not is_external(path, workspace):
         return None
     # A READ of a dependency-artifact cache is grounding, not exfiltration — allowed at every level.
     # A WRITE into it is refused unless the operator chose `write` (falls through below).
-    if not is_write and _is_dependency_cache(path):
+    if not is_write and (_is_dependency_cache(path) or _in_declared_root(path, roots)):
         return None
     if level == "read" and not is_write:
         return None
-    return _refusal("Writing" if is_write else "Reading", path, workspace)
+    return _refusal("Writing" if is_write else "Reading", path, workspace, roots)
 
 
 def root_recursive_delete_refusal(command: str) -> str | None:
@@ -796,7 +958,7 @@ def root_recursive_delete_refusal(command: str) -> str | None:
     return None
 
 
-def command_refusal(command: str, level: str, workspace: str | None) -> str | None:
+def command_refusal(command: str, level: str, workspace: str | None, roots=()) -> str | None:
     """The refusal for a RAW shell command, or None when allowed — heuristic: refuse when the command
     names an external absolute/``~`` path, weighed against whether it looks like a write. Under
     ``none`` any external path is refused; under ``read`` only an external WRITE is."""
@@ -817,6 +979,9 @@ def command_refusal(command: str, level: str, workspace: str | None) -> str | No
     killing = kill_refusal(command, level)
     if killing:
         return killing
+    # A command that changes nothing (shelltool's classifier, generous toward "writes") may read a
+    # root the harness declared writable; one that might write there stays under the normal rule.
+    read_only = bool(roots) and command_only_reads(command, workspace)
     network = bool(_NETWORK_CMD.search(command))
     search_cmd = bool(_TEXT_SEARCH_LEAD.search(command))
     spans = _quoted_spans(command)
@@ -849,6 +1014,10 @@ def command_refusal(command: str, level: str, workspace: str | None) -> str | No
         # In a network request, a rooted path token is a URL fragment, not a file access — exempt it
         # unless it is an explicit write TARGET (curl -o /etc/x, > /tmp/y), which is a real external write.
         is_write = _is_write_target(command, m.start())
+        # A harness-declared root may be READ by a command PROVEN to only read; the write-target
+        # checks above/below always run first.
+        if read_only and not is_write and _in_declared_root(tok, roots):
+            continue
         if network and not is_write:
             continue
         external = tok
@@ -862,4 +1031,9 @@ def command_refusal(command: str, level: str, workspace: str | None) -> str | No
     # it as "Writing", also misnaming the action).
     if level == "read" and not (ext_is_write or _MUTATING_VERB.search(command)):
         return None
-    return _refusal("Writing/reading" if level == "none" else "Writing", external, workspace)
+    if _in_declared_root(external, roots):
+        # Say exactly what was refused: a write TARGET there, or a command not proven to only read.
+        if ext_is_write:
+            return _refusal("Writing", external, workspace, roots)
+        return prompts.fill(prompts.load("external_path_declared_root_unproven"), path=repr(external))
+    return _refusal("Writing/reading" if level == "none" else "Writing", external, workspace, roots)
