@@ -1,0 +1,3 @@
+The latest check of the repo reported this, from the checker itself:
+{{FINDING}}
+None of your file edit/write tool calls has landed since that check, and a read of {{PATH}} that includes line {{LINE}} was returned to you earlier. The smallest grounded step is an edit that addresses what that line names, rather than reconstructing or replacing a file from memory.

@@ -333,6 +333,14 @@ class GuardState:
     write_call_ids: list = None
     refused_write_ids: set = None
     stall_edit_marks: list = None
+    # Is the write registry LIVE for this session — has the forwarded-completion tracker ever run? It is
+    # filled from cria's own outbound completions (never from the window, so compaction cannot take an
+    # entry back out), but only on an assists-on acting turn; where it never ran, "no write is on record"
+    # would be an absence of bookkeeping, not an absence of writes.
+    write_tracking: bool = False
+    # len(write_call_ids) when the last gate's verdict was read — the position "since that check" is
+    # measured from (`gate_unedited`). None = cria cannot say.
+    gate_write_mark: int | None = None
     last_gate_testless: bool = False  # the last GREEN gate ran NO tests (0 collected / no test probe) — a
     last_gate_skipped: int = 0        # tool-reported SKIPPED count from the last gate's test run — a suite
     # can pass while SKIPPING the checks that matter (0728-m11: live tests skipTest() on the exact 404
@@ -716,6 +724,7 @@ def track_gate_progress(gs: GuardState, finding: str, messages=None) -> None:
     one that did)."""
     gs.last_gate_flag = finding or ""
     gs.last_gate_seq = gs.action_seq
+    gs.gate_write_mark = len(gs.write_call_ids or []) if gs.write_tracking else None
     if not finding:
         gs.gate_stall = 0
         gs.gate_sig = ""
@@ -3258,7 +3267,8 @@ class Loop:
         coder = self._recover_text_write(sess, coder, framed, body, rlog)
         coder = _normalize_completion(coder, rlog)  # a task_complete call → step 'done' (or dropped)
         coder = guard_rumination(coder, framed, self._ctx.coder_chat, rlog, step=step,
-                                 phase=f"coder-s{step}", coder_role=self._ctx.coder_role)
+                                 phase=f"coder-s{step}", coder_role=self._ctx.coder_role,
+                                 gs=sess)
         coder = guard_truncation(coder, framed, self._ctx.coder_chat, rlog, step=step, phase=f"coder-s{step}")
         _strip_completion_banners(coder)  # scrub cria's own banners the coder parroted
         if self._ctx.coder_role is not None:  # strip leaked reasoning from the coder's content when off
@@ -7810,6 +7820,7 @@ def guard_track_write_streak(gs: GuardState, coder: dict, rlog, *, step=None, me
         gs.recent_write_ids = []
     if gs.write_call_ids is None:
         gs.write_call_ids = []
+    gs.write_tracking = True
     seen_ids = set(gs.write_call_ids)
     for ch in coder.get("choices", []):
         for tc in (ch.get("message") or {}).get("tool_calls") or []:
@@ -8877,6 +8888,38 @@ def newer_own_run(sess) -> str:
                         exit=f", and that run exited with code {code}" if code is not None else "")
 
 
+def gate_unedited(sess) -> bool:
+    """True only when cria's own record shows NO file edit/write tool call of the coder's has been
+    forwarded since the last gate's verdict was read — and not one that is not known to have failed.
+
+    This claims what cria observed and nothing about the disk: a shell command can change files and
+    is not in the registry (the wording built on this says so). The registry (`write_call_ids`) is
+    filled from cria's own outbound completions, so it holds across requests and across compaction,
+    and it counts every write-class call (write_file, edit_file/str_replace and native apply_patch
+    lowered to it, and shell redirects) — a pending one is a write until its result says it did not
+    run. False whenever cria cannot tell: no live registry, no mark, a registry shorter than the mark."""
+    if sess is None or not getattr(sess, "last_gate_flag", ""):
+        return False
+    mark = getattr(sess, "gate_write_mark", None)
+    ids = getattr(sess, "write_call_ids", None)
+    if mark is None or not getattr(sess, "write_tracking", False) or ids is None or len(ids) < mark:
+        return False
+    refused = getattr(sess, "refused_write_ids", None) or set()
+    return all(cid in refused for cid in ids[mark:])
+
+
+class GateAge(int):
+    """The gate's age in the coder's own calls — an int to every existing reader — that also carries
+    whether no edit/write tool call has landed in that time (``unedited``). One value, so the two
+    halves of the fact (the writer's input framing and the handoff appendix) cannot decide it twice."""
+    unedited: bool = False
+
+    def __new__(cls, age: int, unedited: bool = False):
+        obj = super().__new__(cls, age)
+        obj.unedited = bool(unedited)
+        return obj
+
+
 def gate_age(sess) -> int:
     """How many of the coder's OWN calls have run since the last gate. 0 when cria cannot say.
 
@@ -8885,8 +8928,9 @@ def gate_age(sess) -> int:
     appendix (`server._last_checks_note`) — and each one says how current it is. They must not be
     able to disagree about the age, so neither of them computes it."""
     if sess is None:
-        return 0
-    return max(0, getattr(sess, "action_seq", 0) - getattr(sess, "last_gate_seq", 0))
+        return GateAge(0)
+    return GateAge(max(0, getattr(sess, "action_seq", 0) - getattr(sess, "last_gate_seq", 0)),
+                   gate_unedited(sess))
 
 
 def passing_test_regression(sess, report) -> str:
@@ -12596,8 +12640,65 @@ def guard_probe_steer(gs: GuardState, body: dict, rlog, *, author, step=None) ->
     return authored or canned
 
 
+_CHECK_FILE_LINE = re.compile(r"(?P<path>[^\s:]+\.[A-Za-z0-9_]+):(?P<line>\d+)(?::\d+)?:")
+
+
+def _same_workspace_file(a: str, b: str, root: str) -> bool:
+    """Do two spellings (absolute / workspace-relative) name one path? Compared as paths, never as substrings."""
+    if not a or not b:
+        return False
+    if root:
+        a, b = os.path.join(root, a), os.path.join(root, b)
+    return os.path.normpath(a) == os.path.normpath(b)
+
+
+def grounded_rumination_step(gs, messages: list[dict]) -> str:
+    """The rumination notice's next-step sentence when cria can ground it, else "" (the default text).
+
+    Fires only when ALL of: the last gate is red; no file edit/write tool call of the coder's has been
+    forwarded since it (`gate_unedited`); the gate's own output has a line naming ``file:line``; and
+    `messages` — the conversation the notice is attached to — holds a read RESULT for that same path
+    (compared as paths, through cria's own read parse) whose returned lines include that line, with no
+    write-class call to the path after it. Everything stated is observed: the checker's own line is quoted
+    as stored, and nothing is said about the disk. A read the wire later reduces away is still one that
+    "was returned to you earlier", which is all the sentence says."""
+    if gs is None or not gate_unedited(gs):
+        return ""
+    flag = getattr(gs, "last_gate_flag", "") or ""
+    root = getattr(gs, "workspace_root", None) or _extract_cwd(messages) or ""
+    for raw in flag.splitlines():
+        m = _CHECK_FILE_LINE.search(raw)
+        if m is None:
+            continue
+        path, line = m.group("path"), int(m.group("line"))
+        for idx, _tid, rpath, start, end, text in _read_results_ordered(messages):
+            if not _same_workspace_file(rpath, path, root):
+                continue
+            span = _read_span(start, end, text)
+            if span is None:
+                continue
+            last = span[1] if span[1] is not None else len(text.rstrip("\n").split("\n"))
+            if not (span[0] <= line <= last):
+                continue
+            if any(_same_workspace_file(wp, path, root) for wp in _write_paths_after(messages, idx)):
+                continue
+            return prompts.render("rumination_next_step_grounded", finding=raw.strip(),
+                                  path=f"`{rpath}`", line=line)
+        return ""   # the first file:line the checker named is the one this speaks of
+    return ""
+
+
+def _write_paths_after(messages: list[dict], idx: int):
+    """Paths of every write-class call (landed or not, shell redirects included) after position ``idx``."""
+    for m in (messages or [])[idx + 1:]:
+        if isinstance(m, dict) and m.get("role") == "assistant":
+            for tc in m.get("tool_calls") or []:
+                if (p := _write_path(tc.get("function") or {})) is not None:
+                    yield p
+
+
 def guard_rumination(coder: dict, body: dict, coder_chat, rlog, *, step=None, phase: str = "coder",
-                     coder_role=None) -> dict:
+                     coder_role=None, gs=None) -> dict:
     """Rumination guard (ported from codex-local §19). The streaming coder aborted this turn as
     a reasoning loop (``finish_reason == "rumination"``) — the model was second-guessing itself
     into the ground and would otherwise return an empty turn or run to truncation. Re-prompt to
@@ -12637,6 +12738,8 @@ def guard_rumination(coder: dict, body: dict, coder_chat, rlog, *, step=None, ph
         # THREE detectors abort a turn now, and a third failure gets a third notice for the reason
         # the comment above gives. A dead stream produced NOTHING — telling it to stop re-examining,
         # or to stop repeating a passage, would name a behaviour that did not happen (5b).
+        grounded = grounded_rumination_step(gs, conv)
+        step_fill = {"rumination_next_step": grounded} if grounded else {}
         notice = {"role": "user", "content": (
             prompts.render("rumination_guard_window",
                            percent=int(WINDOW_EXHAUSTED_FRACTION * 100))
@@ -12651,10 +12754,10 @@ def guard_rumination(coder: dict, body: dict, coder_chat, rlog, *, step=None, ph
             # can already make, and wrong for one circling because it has not read the thing it needs
             # (feed-pipeline-java 1787436645 — `CSVParserBuilder` appears in the turn after it).
             prompts.render("rumination_guard_length",
-                           tokens=v.get("reasoning_tokens", "many"))
+                           tokens=v.get("reasoning_tokens", "many"), **step_fill)
             if v.get("arm") == "length" else
             prompts.render("rumination_guard", hits=v.get("hits", "several"),
-                           tokens=v.get("reasoning_tokens", "many")))}
+                           tokens=v.get("reasoning_tokens", "many"), **step_fill))}
         # ONE NOTICE, REPLACED — never a stack. Each retry used to APPEND, so attempt 3 carried three
         # copies of the same paragraph and the prompt grew with every failure. Walked on
         # `shipping-rates-rb x ternary-bonsai` 1787111689, whose last four calls all died the same

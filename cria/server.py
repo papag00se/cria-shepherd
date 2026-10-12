@@ -371,7 +371,11 @@ def _last_checks_note(server, sess_key: str) -> str:
     # reads as current; when the coder's own build has gone green since, the block is cria asserting
     # a state the coder has already disproved. It cost a green build once — see `last_gate_seq`.
     since = _gate_age(server, sess_key)
-    stale = (prompts.fill(prompts.load("checks_note_staleness"), calls=str(since))
+    # `since` is a loop.GateAge: the age AND whether no edit/write tool call has landed in it. Only when
+    # cria's own record shows none does the note say so; otherwise (or when it cannot tell) it is the
+    # unconditional wording.
+    stale = (prompts.fill(prompts.load("checks_note_staleness_unedited" if getattr(since, "unedited", False)
+                                       else "checks_note_staleness"), calls=str(since))
              if since >= _CHECKS_STALE_AFTER else "")
     # Anchored to the HANDOFF, never to "now": this text is baked into the briefing the harness keeps
     # in its history, so a "N calls ago" would stay N for every later call while the truth moved on
