@@ -12757,18 +12757,111 @@ def _mutation_targets(fn: dict):
         text = _command_text(args)
         if text is None:
             return _ANY_PATH   # an undecodable fragment: nothing can be said about its targets
-        # Read from the UNMASKED text: `echo hi > "src/A.java"` is a real redirect the quote-masking
-        # matcher cannot see. A `>` inside a string only adds a harmless extra target.
-        targets = [m.group(1) for m in _REDIRECT_QUOTED_RE.finditer(text)] + \
-                  [m.group(1) for m in _TEE_TARGET_RE.finditer(text)]
-        rest = _TEE_TARGET_RE.sub(" ", _REDIRECT_QUOTED_RE.sub(" ", text))
-        if not targets and not writes_something(name, text):
-            return []
-        # anything else the classifier still flags (cp, sed -i, git checkout …) has unknown targets
-        if targets and not writes_something(name, rest):
-            return targets
-        return _ANY_PATH
+        return _shell_mutation_targets(name, text)
     return []
+
+
+_SHELL_OPS = ("&&", "||", ";;", "|&", "|", ";", "&", "\n", "(", ")")
+_LITERAL_TARGET_RE = re.compile(r"[\w./~-]+\Z")
+_REDIRECT_OP_RE = re.compile(r"(?:\d*>>?|&>>?|>\|)\Z")
+
+
+def _shell_tokens(text: str):
+    """Split a shell line into ``(raw, value, kind)`` tokens, kind ``op`` (control operator), ``redir``
+    (a ``>``/``>>`` with optional fd) or ``word``. None when it cannot be tokenised (unbalanced quote)."""
+    toks, i, n = [], 0, len(text)
+    while i < n:
+        ch = text[i]
+        if ch in " \t\r":
+            i += 1
+            continue
+        op = next((o for o in _SHELL_OPS if text.startswith(o, i)), None)
+        if op:
+            toks.append((op, op, "op"))
+            i += len(op)
+            continue
+        raw, val, quote = [], [], ""
+        while i < n:
+            ch = text[i]
+            if quote:
+                raw.append(ch)
+                if ch == quote:
+                    quote = ""
+                elif ch == "\\" and quote == '"' and i + 1 < n:
+                    i += 1
+                    raw.append(text[i]); val.append(text[i])
+                else:
+                    val.append(ch if quote == "'" or ch not in "$`" else "\0")
+                i += 1
+                continue
+            if ch in "'\"":
+                quote = ch; raw.append(ch); i += 1
+                continue
+            if ch in " \t\r\n" or any(text.startswith(o, i) for o in _SHELL_OPS):
+                break
+            if ch == ">" or ch == "<":   # a redirect operator ends a bare word unless it is the word's fd prefix
+                if ch == ">" and all(c.isdigit() for c in raw) or ch == "<":
+                    raw.append(ch); val.append(ch); i += 1
+                    if ch == ">" and i < n and text[i] in ">|":
+                        raw.append(text[i]); val.append(text[i]); i += 1
+                    break
+                break
+            if ch == "\\" and i + 1 < n:
+                raw.append(ch); i += 1; raw.append(text[i]); val.append(text[i]); i += 1
+                continue
+            raw.append(ch); val.append(ch if ch not in "$`" else "\0"); i += 1
+        if quote:
+            return None
+        r, v = "".join(raw), "".join(val)
+        toks.append((r, v, "redir" if _REDIRECT_OP_RE.match(r) else "word"))
+    return toks
+
+
+def _shell_mutation_targets(name, text):
+    """Targets of a shell command: a list ONLY when every write in it is a simple redirect (``>``/``>>``,
+    one literal target) or a ``tee`` whose operands are all literal (``-a`` the only option understood);
+    ``[]`` for a non-writer; otherwise ``_ANY_PATH``. Nothing outside those shapes is guessed at."""
+    toks = _shell_tokens(text)
+    if toks is None or any(k == "redir" and r.startswith("&") for r, _v, k in toks):
+        return _ANY_PATH if writes_something(name, text) or toks is None else []
+    targets, keep, unresolved, i = [], [], False, 0
+    while i < len(toks):
+        raw, val, kind = toks[i]
+        if kind == "redir":
+            nxt = toks[i + 1] if i + 1 < len(toks) else None
+            if (nxt is not None and nxt[2] == "op" and nxt[0] == "&" and i + 2 < len(toks)
+                    and toks[i + 2][2] == "word" and re.fullmatch(r"\d+|-", toks[i + 2][1])):
+                i += 3   # `2>&1` / `>&-`: an fd duplication, no file
+                continue
+            if nxt is None or nxt[2] != "word":
+                unresolved = True
+            elif nxt[1] == "/dev/null" or (nxt[1].startswith("&")):
+                pass
+            elif _LITERAL_TARGET_RE.match(nxt[1]):
+                targets.append(nxt[1])
+            else:
+                unresolved = True
+            i += 2
+            continue
+        if kind == "word" and raw == "tee":
+            i += 1
+            while i < len(toks) and toks[i][2] == "word":
+                r, v, _k = toks[i]
+                if v in ("-a", "--append"):
+                    pass
+                elif v.startswith("-") or not _LITERAL_TARGET_RE.match(v):
+                    unresolved = True
+                else:
+                    targets.append(v)
+                i += 1
+            continue
+        keep.append(raw if kind != "op" else " ; ")
+        i += 1
+    if unresolved:
+        return _ANY_PATH
+    if writes_something(name, " ".join(keep)):
+        return _ANY_PATH
+    return targets
 
 
 _REDIRECT_QUOTED_RE = re.compile(r'(?<![-=<>\d&])>{1,2}\s*(?!/dev/|&)["\']?([\w./~$-]+)["\']?')

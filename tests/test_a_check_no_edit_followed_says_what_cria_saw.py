@@ -259,6 +259,31 @@ class TheRuminationStepIsGroundedOnlyWhenItIsTrue(unittest.TestCase):
             msgs = self._after_read([("s", "exec_command", {"cmd": cmd})])
             self.assertEqual(self.step(msgs), "", cmd)
 
+    def test_every_target_of_a_multi_write_shell_command_defeats_it(self):
+        for cmd in (f"echo hi | tee other.txt {REL}", f"echo hi | tee -a other.txt {REL}",
+                    f"echo hi | tee other.txt {REL} -a", f"echo hi | tee other.txt {REL} -p",
+                    f"echo hi > a.txt 2> {REL}", f"echo hi > a.txt; echo yo > {REL}",
+                    f"echo hi | tee a.txt && tee {REL}", f"echo hi | tee $F {REL}", f"echo hi | tee *.txt {REL}"):
+            msgs = self._after_read([("s", "exec_command", {"cmd": cmd})])
+            self.assertEqual(self.step(msgs), "", cmd)
+
+    def test_mutation_targets_is_complete_or_unresolved(self):
+        mt = lambda c: loop._mutation_targets({"name": "exec_command", "arguments": json.dumps({"cmd": c})})
+        self.assertEqual(mt("echo | tee a.txt b.txt"), ["a.txt", "b.txt"])
+        self.assertEqual(mt("echo | tee -a a.txt b.txt"), ["a.txt", "b.txt"])
+        self.assertEqual(mt("echo | tee a.txt b.txt -a"), ["a.txt", "b.txt"])
+        self.assertEqual(mt("cmd > a 2> b"), ["a", "b"])
+        self.assertEqual(mt("cmd > a; cmd2 > b"), ["a", "b"])
+        self.assertEqual(mt("cmd > 'a b'"), loop._ANY_PATH)
+        for c in ("echo | tee -x a b", "echo | tee `x` b", "echo | tee ${X}", "echo hi > {a,b}", "echo hi > $F"):
+            self.assertIs(mt(c), loop._ANY_PATH, c)
+        self.assertEqual(mt("mvn -q compile 2>&1 | tail -5"), [])
+
+    def test_resolved_unrelated_multi_writes_do_not(self):
+        for cmd in ("echo hi | tee a.txt b.txt", "echo hi > a.txt 2> b.txt", "echo hi > a.txt; echo y > b.txt"):
+            msgs = self._after_read([("s", "exec_command", {"cmd": cmd})])
+            self.assertTrue(self.step(msgs), cmd)
+
     def test_a_fully_resolved_write_to_another_file_and_a_plain_command_do_not(self):
         msgs = self._after_read([("s", "exec_command", {"cmd": "echo x > other.txt"}),
                                  ("c", "exec_command", {"cmd": "mvn -q compile"})])
