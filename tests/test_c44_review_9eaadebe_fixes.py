@@ -120,8 +120,8 @@ class B1AppendixOnlyTruthfulFrameTests(unittest.TestCase):
             def chat(self, body, rlog):
                 msgs = body.get("messages", [])
                 all_text = json.dumps(msgs)
-                if "PLAN or RETROSPECTIVE" in all_text:
-                    return json.dumps({"choices": [{"message": {"content": "RETROSPECTIVE"}}]}).encode()
+                if "PLAN or STATE" in all_text:
+                    return json.dumps({"choices": [{"message": {"content": "STATE"}}]}).encode()
                 if "NARROWS or PRESERVES" in all_text:
                     return json.dumps({"choices": [{"message": {"content": "PRESERVES"}}]}).encode()
                 if "UNFAITHFUL or FAITHFUL" in all_text:

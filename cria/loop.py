@@ -8226,6 +8226,25 @@ def _composed_closed_ask(chat_fn, role, rlog, *, phase: str):
     return ask
 
 
+def briefing_sentences(briefing: str) -> list[str]:
+    """The briefing's sentences in order — structural split only (lines, then sentence ends), so
+    each is judged whole, however short ("Run mvn test." is a plan). Markdown headings, a bare
+    "Label:" line, and code fences (quoted tool output, not the writer's words) are skipped."""
+    out: list[str] = []
+    fenced = False
+    for line in briefing.splitlines():
+        if line.strip().startswith("```"):
+            fenced = not fenced
+            continue
+        if fenced or line.strip().startswith("#"):
+            continue
+        line = line.strip(" -*\t").strip()
+        if not line or line.endswith(":") or not re.search(r"\w", line):
+            continue
+        out.extend(p.strip() for p in re.split(r"(?<=[.!?])\s+(?=[A-Z`*])", line) if p.strip())
+    return out
+
+
 def validate_compaction_briefing(chat_fn, role, briefing: str, *, files: str, checks: str,
                                   transcript_blocks: list[str], rlog, task: str = "",
                                   phase: str = "compaction-validate") -> bool:
@@ -8255,10 +8274,36 @@ def validate_compaction_briefing(chat_fn, role, briefing: str, *, files: str, ch
         answers[lens] = answer.strip()[:40]
         return answer.strip().upper() == accepted_word
 
-    # Candidate-only on purpose. In the captured false accepts, an obvious "Next step" section was
-    # buried behind 12K-32K tokens of history and the judge overlooked the simplest invariant.
-    accepted = judge("retrospective", prompts.load("compaction_validate_retrospective"),
-                     [candidate], "RETROSPECTIVE")
+    # The plan lens is asked ONE SENTENCE AT A TIME. As a single whole-candidate verdict with "if
+    # uncertain, answer PLAN" it was a coin weighted to PLAN: measured on a labelled replay (O4),
+    # it called PLAN on 24/24 true plans AND on 7/10 briefings that only restated the task's
+    # requirements ("Implement X", "Fix the failing tests"), so 29/29 and 16/16 real handoffs were
+    # rejected. Asked about one sentence at a time, with the task beside it, the judge separates
+    # "names a repair the task does not" from "reports state / restates the task" (23/24 plans
+    # kept, restatement false-rejects 7/10 -> 3/10). A sentence is a plan only if it reads as a
+    # prescription AND the second question — is this already in the original task? — says NEW.
+    # Splitting is structural (lines, then sentence ends), never semantic; every sentence the
+    # candidate contains is judged, so nothing is clipped. Anything unreadable fails closed.
+    def retrospective() -> bool:
+        seen: set[str] = set()
+        for sentence in briefing_sentences(briefing):
+            if sentence in seen:
+                continue
+            seen.add(sentence)
+            evid = ([prompts.render("compaction_sentence_task", task=task.strip())]
+                    if task.strip() else [])
+            evid.append(prompts.render("compaction_sentence", sentence=sentence))
+            if judge("retrospective", prompts.load("compaction_validate_retrospective"),
+                     evid, "STATE"):
+                continue
+            if task.strip() and judge("restated", prompts.load("compaction_validate_restated"),
+                                      evid, "TASK"):
+                continue
+            answers["retrospective-plan"] = sentence[:160]
+            return False
+        return True
+
+    accepted = retrospective()
     task_fact = (prompts.render("compaction_task_fact", task=task.strip()) if task.strip() else "")
     if accepted and task_fact:
         accepted = judge("scope", prompts.load("compaction_validate_scope"),

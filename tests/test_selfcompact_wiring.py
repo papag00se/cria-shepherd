@@ -14,8 +14,8 @@ class _Rlog:
 
 
 def _validation_reply(system):
-    if "PLAN or RETROSPECTIVE" in system:
-        return "RETROSPECTIVE"
+    if "PLAN or STATE" in system:
+        return "STATE"
     if "NARROWS or PRESERVES" in system:
         return "PRESERVES"
     if "UNFAITHFUL or FAITHFUL" in system:

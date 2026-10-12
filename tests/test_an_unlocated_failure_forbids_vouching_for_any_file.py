@@ -7,6 +7,7 @@ fact now go to the focused validator instead.
 import json
 import unittest
 
+from lens_script import Judge
 from cria import loop
 from cria.config import Role
 
@@ -22,10 +23,8 @@ class UnlocatedFailureValidationTests(unittest.TestCase):
         seen = []
         failure = "Could not find artifact org.opencsv:opencsv:jar:5.9.3"
         candidate = "pom.xml is fine; do not change it."
-        def chat(body, rlog):
-            seen.append(body)
-            verdict = "RETROSPECTIVE" if len(seen) == 1 else "UNFAITHFUL"
-            return json.dumps({"choices": [{"message": {"content": verdict}}]}).encode()
+        chat = Judge(["UNFAITHFUL"])
+        seen = chat.bodies
 
         accepted = loop.validate_compaction_briefing(
             chat,

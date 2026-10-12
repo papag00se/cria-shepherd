@@ -8,6 +8,7 @@ candidate, transcript, disk inventory, and check facts; it cannot author a repla
 import json
 import unittest
 
+from lens_script import Judge
 from cria import loop
 from cria.config import Role
 
@@ -35,12 +36,9 @@ class CompactionBriefingValidationTests(unittest.TestCase):
         self.checks = "Importer.java:10: package net.opencsv does not exist\nBUILD EXIT: 1"
 
     def test_the_java_falsehood_is_withheld_when_the_judge_rejects_it(self):
-        seen = []
-
-        def chat(body, _rlog):
-            seen.append(body)
-            # The candidate is retrospective; the independent fidelity lens catches its false fact.
-            return _reply("RETROSPECTIVE" if len(seen) == 1 else "UNFAITHFUL")
+        # The candidate is retrospective; the independent fidelity lens catches its false fact.
+        chat = Judge(["UNFAITHFUL"])
+        seen = chat.bodies
 
         accepted = loop.validate_compaction_briefing(
             chat, self.role, self.candidate, files="pom.xml\nsrc/main/java/pipeline/Importer.java",
@@ -52,16 +50,15 @@ class CompactionBriefingValidationTests(unittest.TestCase):
         self.assertNotIn("checks do NOT report a problem", rendered)
 
     def test_only_unanimous_focused_accept_verdicts_adopt_the_briefing(self):
-        seen = []
+        judge = Judge(["PRESERVES", "FAITHFUL"])
         self.assertTrue(loop.validate_compaction_briefing(
-            lambda body, rlog: seen.append(body) or _reply(
-                ("RETROSPECTIVE", "PRESERVES", "FAITHFUL")[len(seen) - 1]), self.role,
+            judge, self.role,
             "Importer.java was edited.", files="Importer.java", checks="BUILD EXIT: 1",
             transcript_blocks=["assistant: edited Importer.java"],
             task="Repair the importer and document its risks.", rlog=self.rlog))
-        self.assertEqual(len(seen), 3)
-        systems = [call["messages"][0]["content"] for call in seen]
-        self.assertIn("PLAN or RETROSPECTIVE", systems[0])
+        systems = [call["messages"][0]["content"] for call in judge.bodies]
+        self.assertEqual(len(systems), 3)    # one sentence (STATE), then scope, then fidelity
+        self.assertIn("PLAN or STATE", systems[0])
         self.assertIn("NARROWS or PRESERVES", systems[1])
         self.assertIn("UNFAITHFUL or FAITHFUL", systems[2])
 
@@ -77,15 +74,15 @@ class CompactionBriefingValidationTests(unittest.TestCase):
             files="Importer.java", checks=self.checks,
             transcript_blocks=["X" * 10000], task="Repair the importer.", rlog=self.rlog)
         self.assertFalse(accepted)
-        self.assertEqual(len(seen), 1)
+        self.assertEqual(len(seen), 2)    # the sentence is a prescription AND not in the task
         rendered = "\n".join(m["content"] for m in seen[0]["messages"])
         self.assertIn("Next step", rendered)
         self.assertNotIn("X" * 100, rendered,
-                         "the candidate-only retrospective lens must not bury the defect in history")
+                         "the sentence-only plan lens must not bury the defect in history")
 
     def test_ambiguous_or_unavailable_judgment_fails_closed(self):
         self.assertFalse(loop.validate_compaction_briefing(
-            lambda body, rlog: _reply("RETROSPECTIVE, but consider checking it"), self.role,
+            lambda body, rlog: _reply("STATE, but consider checking it"), self.role,
             self.candidate, files="Importer.java", checks=self.checks,
             transcript_blocks=[], rlog=self.rlog))
         self.assertFalse(loop.validate_compaction_briefing(
@@ -94,9 +91,8 @@ class CompactionBriefingValidationTests(unittest.TestCase):
 
     def test_the_question_keeps_evidence_in_independently_reducible_turns(self):
         seen = []
-        def chat(body, rlog):
-            seen.append(body)
-            return _reply("RETROSPECTIVE" if len(seen) == 1 else "UNFAITHFUL")
+        chat = Judge(["UNFAITHFUL"])
+        seen = chat.bodies
 
         loop.validate_compaction_briefing(
             chat, self.role, self.candidate, files="Importer.java", checks=self.checks,

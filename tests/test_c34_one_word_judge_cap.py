@@ -137,7 +137,7 @@ class CompactionValidationLensTests(unittest.TestCase):
         self.assertFalse(accepted)
 
     def test_judge_max_tokens_the_briefing_is_accepted(self):
-        chat = _CapSensitiveChat(["RETROSPECTIVE", "FAITHFUL"])
+        chat = _CapSensitiveChat(["STATE", "FAITHFUL"])
         rlog = _Rlog()
 
         accepted = loop.validate_compaction_briefing(

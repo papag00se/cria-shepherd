@@ -39,7 +39,7 @@ def _provider(plan_word):
         @staticmethod
         def chat(pb, rlog):
             system = pb["messages"][0]["content"]
-            text = plan_word if "PLAN or RETROSPECTIVE" in system else "PRESERVES"
+            text = plan_word if "PLAN or STATE" in system else "PRESERVES"
             if "UNFAITHFUL or FAITHFUL" in system:
                 text = "FAITHFUL"
             return json.dumps({"choices": [{"message": {"role": "assistant", "content": text}}]})
@@ -73,7 +73,7 @@ class RejectedHandoffTests(unittest.TestCase):
         self.assertNotIn("ctx:gate", ledger)
 
     def test_an_accepted_briefing_ships_without_a_ledger(self):
-        text = _harden("Importer.java was written.", "RETROSPECTIVE")
+        text = _harden("Importer.java was written.", "STATE")
         self.assertTrue(text.startswith("Importer.java was written."))
         self.assertNotIn("WHAT THE TOOLS DID", text)
 

@@ -1,0 +1,5 @@
+You are checking ONE sentence from a coding-session briefing against the original task shown before it. Question: is the requirement or action this sentence names already stated in the original task (the same requirement, even if reworded or shortened)?
+
+Answer TASK if the original task already asks for it. Answer NEW if the sentence names something the original task does not ask for — a particular import, edit, fix, command, library, file, or approach the writer introduced.
+
+Your entire answer must be exactly one word: TASK or NEW.

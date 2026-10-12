@@ -9,6 +9,7 @@ import inspect
 import json
 import unittest
 
+from lens_script import Judge
 from cria import loop
 from cria.config import Role
 
@@ -34,10 +35,8 @@ class BriefingConflictUsesJudgmentTests(unittest.TestCase):
 
     def test_the_focused_judge_sees_the_complete_dotted_names_and_checks(self):
         seen = []
-        def chat(body, rlog):
-            seen.append(body)
-            verdict = "RETROSPECTIVE" if len(seen) == 1 else "UNFAITHFUL"
-            return json.dumps({"choices": [{"message": {"content": verdict}}]}).encode()
+        chat = Judge(["UNFAITHFUL"])
+        seen = chat.bodies
         accepted = loop.validate_compaction_briefing(
             chat, Role(name="reasoner", backend="local"), BRIEFING, files="cart.go",
             checks=FINDINGS, transcript_blocks=["tool: " + FINDINGS], rlog=_Rlog())
@@ -49,10 +48,8 @@ class BriefingConflictUsesJudgmentTests(unittest.TestCase):
 
     def test_no_check_output_is_explicitly_absent_not_lexically_inferred(self):
         seen = []
-        def chat(body, rlog):
-            seen.append(body)
-            verdict = "RETROSPECTIVE" if len(seen) == 1 else "UNFAITHFUL"
-            return json.dumps({"choices": [{"message": {"content": verdict}}]}).encode()
+        chat = Judge(["UNFAITHFUL"])
+        seen = chat.bodies
 
         loop.validate_compaction_briefing(
             chat,

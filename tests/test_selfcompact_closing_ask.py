@@ -17,8 +17,8 @@ class _RLog:
 
 
 def _validation_answer(system):
-    if "PLAN or RETROSPECTIVE" in system:
-        return "RETROSPECTIVE"
+    if "PLAN or STATE" in system:
+        return "STATE"
     if "NARROWS or PRESERVES" in system:
         return "PRESERVES"
     if "UNFAITHFUL or FAITHFUL" in system:
