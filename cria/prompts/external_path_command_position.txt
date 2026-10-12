@@ -1,1 +1,0 @@
-Not run: {{PATH}} is the program this command runs, not a file it reads or writes. That program is outside the project directory{{ROOT}}, and running a program by its absolute path is not permitted here.
