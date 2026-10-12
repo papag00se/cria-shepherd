@@ -503,6 +503,190 @@ def _after_unresolved_expansion(command: str, start: int) -> bool:
     return False
 
 
+def _segment_spans(command: str) -> list[tuple[int, int]]:
+    """(start, end) of each shell segment — text between UNQUOTED ``; & | ( )`` and newlines."""
+    spans, start, quote = [], 0, ""
+    for i, c in enumerate(command):
+        if quote:
+            if c == quote:
+                quote = ""
+        elif c in "\"'":
+            quote = c
+        elif c in ";&|()\n":
+            spans.append((start, i)); start = i + 1
+    spans.append((start, len(command)))
+    return spans
+
+
+_SEGMENT_SEARCH_LEAD = re.compile(
+    r"^\s*(?:\w+=\S*\s+)*(?:(?:sudo|env|time|nohup|xargs|command)\s+(?:-\S+\s+)*)*"
+    r"(?:e?grep|fgrep|rg|ag|ack|sed|awk|gawk)\b", re.IGNORECASE)
+
+
+def _segment_is_text_search(command: str, segments, pos: int) -> bool:
+    """Is the segment containing ``pos`` itself a text-search / stream-edit command?"""
+    for s, e in segments:
+        if s <= pos <= e:
+            return bool(_SEGMENT_SEARCH_LEAD.match(command[s:e]))
+    return False
+
+
+_HEREDOC = re.compile(r"<<-?\s*(['\"]?)(\w+)\1[^\n]*\n.*?(?:\n\s*\2\s*(?=\n|$)|\Z)", re.DOTALL)
+_PREFIX_WORDS = {"sudo", "env", "command", "nohup", "time", "exec", "nice", "xargs"}
+_SHELLS = {"bash", "sh", "zsh", "dash", "ksh"}
+_DEST_LAST = {"cp", "ln", "install", "rsync"}
+_ALL_OPERANDS = {"mv", "rm", "rmdir", "touch", "mkdir", "tee", "unlink", "shred"}
+_SKIP_FIRST = {"chmod", "chown", "chgrp"}
+
+
+def _operands(args: list[str]) -> list[str]:
+    out, rest = [], False
+    for a in args:
+        if rest or not a.startswith("-") or a == "-":
+            out.append(a)
+        elif a == "--":
+            rest = True
+    return out
+
+
+def _segment_write_targets(words: list[str]) -> tuple[list[str], list[str]]:
+    """(paths this one simple command WRITES or deletes, nested shell scripts it runs)."""
+    while words and (re.match(r"^\w+=", words[0]) or words[0] in _PREFIX_WORDS):
+        was_prefix = words[0] in _PREFIX_WORDS
+        words = words[1:]
+        while was_prefix and words and words[0].startswith("-"):
+            words = words[1:]
+    if not words:
+        return [], []
+    cmd, args = os.path.basename(words[0]), words[1:]
+    if cmd in _SHELLS:
+        for i, a in enumerate(args):
+            if a.startswith("-") and not a.startswith("--") and "c" in a and i + 1 < len(args):
+                return [], [args[i + 1]]
+        return [], []
+    ops = _operands(args)
+    targets: list[str] = []
+    if cmd in ("cp", "mv", "install", "ln"):  # -t DIR names the destination directly
+        for i, a in enumerate(args):
+            if a in ("-t", "--target-directory") and i + 1 < len(args):
+                targets.append(args[i + 1])
+                ops = [o for o in ops if o != args[i + 1]]
+            elif a.startswith("--target-directory="):
+                targets.append(a.split("=", 1)[1])
+    if cmd in _DEST_LAST:
+        targets += ops[-1:] if ops and not targets else []
+        if cmd == "mv":
+            targets += ops
+    elif cmd in _ALL_OPERANDS:
+        targets += ops
+    elif cmd in _SKIP_FIRST:
+        targets += ops[1:]
+    elif cmd == "sed":
+        shorts = _short_flags(args)
+        if "i" in shorts or any(a.startswith("--in-place") for a in args):
+            scripted = "e" in shorts or "f" in shorts or any(a.startswith(("--expression", "--file")) for a in args)
+            targets += ops if scripted else ops[1:]
+    elif cmd == "dd":
+        targets += [a[3:] for a in args if a.startswith("of=")]
+    elif cmd == "truncate":
+        targets += ops
+    elif cmd in ("curl", "wget"):
+        for i, a in enumerate(args):
+            if (a in ("-o", "--output") or (cmd == "wget" and a in ("-O", "-P"))) and i + 1 < len(args):
+                targets.append(args[i + 1])
+    return targets, []
+
+
+def _escaping_write_target(command: str, workspace: str | None, _cwd="", _depth=0) -> str | None:
+    """The first path a write/delete in ``command`` would touch OUTSIDE the workspace, resolved
+    lexically (normpath, like :func:`is_external`) against the workspace — or None.
+
+    The path scan in :func:`command_refusal` judges ROOTED tokens; a relative `../root/out` is
+    not rooted, and a path inside a `bash -c "…"` string is read as a quoted pattern, so both walked
+    through. Only write TARGETS are judged — redirects, tee/cp/mv/rm/ln/install/touch/mkdir/sed -i
+    operands and the like. Relative READS (`cat ../x`) are deliberately unchanged. Any target built
+    from an expansion cria cannot resolve abstains; so does a relative target after a `cd` it cannot
+    follow."""
+    if not workspace or _depth > 3:
+        return None
+    cwd = os.path.normpath(os.path.expanduser(workspace)) if not _cwd else _cwd
+    command = _HEREDOC.sub(" ", command)
+    lexer = shlex.shlex(command, posix=True, punctuation_chars=";&|()<>\n")
+    lexer.whitespace = " \t\r"
+    lexer.commenters = ""
+    lexer.wordchars += "".join(c for c in "[]{}$,:@%+!^#=" if c not in lexer.wordchars)
+    try:
+        words = list(lexer)
+    except ValueError:
+        return None
+    parens = "(" in command
+    cur: str | None = cwd
+    seg: list[str] = []
+
+    def judge(tok: str) -> str | None:
+        if not tok or tok == "-" or any(c in tok for c in "$`") or re.match(r"^~[^/]", tok):
+            return None
+        p = os.path.expanduser(tok)
+        rooted = os.path.isabs(p)
+        if not rooted:
+            if cur is None:
+                return None
+            p = os.path.join(cur, p)
+        # A top-level ABSOLUTE target is the path scan's to judge (its dependency-cache and
+        # declared-root policy lives there); only a relative one, or one inside a nested shell
+        # string the scan reads as a quoted pattern, is judged here.
+        if rooted and _depth == 0:
+            return None
+        full = os.path.normpath(p)
+        return full if is_external(full, workspace) and not _exempt(full) else None
+
+    def flush() -> str | None:
+        nonlocal cur, seg
+        words_, seg = seg, []
+        if not words_:
+            return None
+        if words_[0] == "cd":
+            tgt = words_[1] if len(words_) == 2 else None
+            if tgt is None or parens or tgt == "-" or any(c in tgt for c in "$`~"):
+                cur = None
+            elif cur is not None:
+                cur = os.path.normpath(tgt if os.path.isabs(tgt) else os.path.join(cur, tgt))
+            return None
+        targets, inner = _segment_write_targets(words_)
+        for t in targets:
+            hit = judge(t)
+            if hit:
+                return hit
+        for script in inner:
+            hit = _escaping_write_target(script, workspace, cur or "", _depth + 1) if cur else None
+            if hit:
+                return hit
+        return None
+
+    i = 0
+    while i < len(words):
+        w = words[i]
+        if w and set(w) <= _PUNCT:
+            if ">" in w and "<" not in w:
+                nxt = words[i + 1] if i + 1 < len(words) else None
+                if nxt is not None and not set(nxt) <= _PUNCT and not (
+                        "&" in w and w.endswith("&") and nxt.lstrip("&").isdigit()):
+                    hit = judge(nxt)
+                    if hit:
+                        return hit
+                    i += 1
+                if seg and seg[-1].isdigit():
+                    seg.pop()
+            if any(c in w for c in ";&|\n()") and not w.endswith(">&"):
+                hit = flush()
+                if hit:
+                    return hit
+        else:
+            seg.append(w)
+        i += 1
+    return flush()
+
+
 def normalize_level(value: str | None) -> str:
     v = (value or "none").strip().lower()
     return v if v in LEVELS else "none"
@@ -1054,7 +1238,7 @@ def command_refusal(command: str, level: str, workspace: str | None, roots=()) -
     # root the harness declared writable; one that might write there stays under the normal rule.
     read_only = bool(roots) and command_only_reads(command, workspace)
     network = bool(_NETWORK_CMD.search(command))
-    search_cmd = bool(_TEXT_SEARCH_LEAD.search(command))
+    segments = _segment_spans(command)
     spans = _quoted_spans(command)
     external = None
     ext_is_write = False
@@ -1066,8 +1250,14 @@ def command_refusal(command: str, level: str, workspace: str | None, roots=()) -
         # search term, not a file). A quoted path that opens the quote for a FILE command (`cat "/etc/x"`)
         # is still checked. Files for grep/sed are bare path args, which the scan still catches.
         inside = next((s for s, e in spans if s <= m.start() < e), None)
-        if inside is not None and (m.start() != inside or search_cmd
-                                   or _is_param_value_quote(command, inside)):
+        # The pattern exemption belongs to the SEGMENT whose command owns the quote: `cp in "/tmp/o";
+        # grep x in` must not hide the cp's destination behind the grep that follows it. And a quoted
+        # string that is itself a write TARGET (`grep x in > "/tmp/o"`) is a file, never a pattern.
+        wstart = m.start() if inside is None else inside - 1
+        quoted_write = inside is not None and _is_write_target(command, wstart)
+        if inside is not None and not quoted_write and (
+                m.start() != inside or _segment_is_text_search(command, segments, m.start())
+                or _is_param_value_quote(command, inside)):
             continue
         if _after_unresolved_expansion(command, m.start()):
             continue
@@ -1080,11 +1270,11 @@ def command_refusal(command: str, level: str, workspace: str | None, roots=()) -
         # read a module's source); it writes nothing outside the workspace, so allow it even at
         # `none` and keep scanning for a MORE serious external token. A WRITE targeting the cache is
         # not skipped — it falls through and is refused.
-        if _is_dependency_cache(tok) and not _is_write_target(command, m.start()):
+        if _is_dependency_cache(tok) and not _is_write_target(command, wstart):
             continue
         # In a network request, a rooted path token is a URL fragment, not a file access — exempt it
         # unless it is an explicit write TARGET (curl -o /etc/x, > /tmp/y), which is a real external write.
-        is_write = _is_write_target(command, m.start())
+        is_write = _is_write_target(command, wstart)
         # A harness-declared root may be READ by a command PROVEN to only read; the write-target
         # checks above/below always run first.
         if read_only and not is_write and _in_declared_root(tok, roots):
@@ -1095,7 +1285,12 @@ def command_refusal(command: str, level: str, workspace: str | None, roots=()) -
         ext_is_write = is_write
         break
     if external is None:
-        return None
+        # Nothing ABSOLUTE tripped the scan. A WRITE can still leave the workspace by a relative
+        # `..` path, or by an absolute one hidden inside a `bash -c` string; resolve each write target.
+        escaped = _escaping_write_target(command, workspace)
+        if escaped is None:
+            return None
+        return _refusal("Writing", escaped, workspace, roots, level)
     # Under `read` level an external READ is allowed; refuse only when the EXTERNAL TOKEN ITSELF is a
     # write target — NOT when any write verb appears elsewhere (`grep /etc/hosts > local.txt` reads the
     # external file but writes LOCALLY, and must pass; the old whole-command _WRITE_VERB scan false-refused
