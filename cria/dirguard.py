@@ -22,7 +22,7 @@ import os
 import re
 import shlex
 
-from . import prompts, shelltool, toolpath
+from . import prompts, toolpath
 
 LEVELS = ("none", "read", "write")
 
@@ -630,8 +630,12 @@ def declared_roots(messages) -> tuple[str, ...]:
         for sent in _WRITABLE_ROOTS_SENTENCE.finditer(text):
             for r in _BACKTICKED.findall(sent.group(1)):
                 r = r.strip()
-                if os.path.isabs(r) and os.path.normpath(r) != os.sep and r not in roots:
-                    roots.append(os.path.normpath(r))
+                r = os.path.normpath(r)
+                home = os.path.normpath(os.path.expanduser("~"))
+                # $HOME and every ancestor of it would expose the whole account: not a run root.
+                if (os.path.isabs(r) and r != os.sep and r not in roots
+                        and not (home == r or home.startswith(r + os.sep))):
+                    roots.append(r)
     return tuple(roots)
 
 
@@ -640,6 +644,97 @@ def _in_declared_root(path: str, roots) -> bool:
         return False
     p = os.path.normpath(os.path.expanduser(path.strip()))
     return os.path.isabs(p) and any(p == r or p.startswith(r + os.sep) for r in roots)
+
+
+# --- Proving a command READS ---------------------------------------------------------------
+# `shelltool.writes_something` is deliberately GENEROUS toward "this might have written" — right for
+# its callers, wrong as proof of safety: `find … | xargs rm`, `1>file`, `curl -o`, `tar -C` all read
+# as read-only to it. Letting a command touch a harness-declared root needs the opposite stance, a
+# POSITIVE allow-list: every pipeline segment must be a known reader, and anything else — xargs,
+# a shell or interpreter, an unknown program, a substitution — is NOT proven and is refused.
+_PUNCT = set(";&|()<>\n")
+_READERS = {"cd", "echo", "printf", "pwd", "true", "ls", "cat", "head", "tail", "wc", "grep", "egrep",
+            "fgrep", "rg", "stat", "file", "du", "find", "sort", "unzip", "jar", "javap", "readlink",
+            "realpath", "basename", "dirname", "cut", "tr"}
+_FIND_ACTIONS = {"-delete", "-exec", "-execdir", "-ok", "-okdir", "-fprint", "-fprint0", "-fprintf", "-fls"}
+
+
+def _short_flags(args) -> str:
+    return "".join(a.lstrip("-") for a in args if a.startswith("-") and not a.startswith("--"))
+
+
+def _segment_reads(words: list[str], workspace: str | None = None) -> bool:
+    cmd, args = words[0], words[1:]
+    if cmd == "tee":  # a copy of stdin: harmless exactly when every file it writes is in the project
+        return all(not a.startswith("-") and "$" not in a and (_exempt(a) or not is_external(a, workspace))
+                   for a in args)
+    if cmd not in _READERS:
+        return False
+    if cmd == "find":
+        return not any(a in _FIND_ACTIONS for a in args)
+    if cmd == "sort":
+        return "o" not in _short_flags(args) and not any(a.startswith(("--output", "--compress")) for a in args)
+    if cmd == "rg":
+        return not any(a.startswith(("--pre", "--hostname-bin")) for a in args)
+    if cmd == "file":
+        return "C" not in _short_flags(args)
+    if cmd == "unzip":  # list / print / test only: no -d, -o, -x, -j extraction
+        return set(_short_flags(args)) <= set("lpvqtZ1") and not any(a.startswith("--") for a in args)
+    if cmd == "jar":  # `jar tf x.jar`: the table of contents, never create/extract/update
+        first = args[0].lstrip("-") if args else ""
+        return bool(first) and "t" in first and set(first) <= set("tvf")
+    return True
+
+
+def _redirect_ok(op: str, target: str | None, workspace: str | None) -> bool:
+    """A redirect is harmless when it writes nothing outside the project: an fd duplication
+    (`2>&1`), /dev/null, or a file inside the workspace. `&>`, `>|`, `1>` all reduce to this."""
+    if ">" not in op:
+        return True  # `<` input: reading, judged by the path scan like any other operand
+    if "&" in op and op.rstrip("&|").endswith(">&") and target is not None and target.lstrip("&").isdigit():
+        return True
+    if target is None or "<" in op or "(" in op:
+        return False
+    return _exempt(target) or (not _after_unresolved_expansion(target, 0) and "$" not in target
+                               and not is_external(target, workspace))
+
+
+def command_only_reads(command: str, workspace: str | None) -> bool:
+    """True only when EVERY segment of ``command`` is a known reader and every redirect stays inside
+    the project (or /dev/null). Unknown ⇒ False."""
+    if not command or "<<" in command or "`" in command or "$(" in command:
+        return False
+    lexer = shlex.shlex(command, posix=True, punctuation_chars=";&|()<>\n")
+    lexer.whitespace = " \t\r"
+    lexer.commenters = ""
+    try:
+        words = list(lexer)
+    except ValueError:
+        return False
+    seg: list[str] = []
+    i = 0
+    while i <= len(words):
+        w = words[i] if i < len(words) else ";"
+        if w and set(w) <= _PUNCT:
+            if "(" in w or ")" in w:
+                return False
+            if ">" in w or "<" in w:
+                if seg and seg[-1].isdigit():
+                    seg.pop()  # the fd number of `2>file`
+                nxt = words[i + 1] if i + 1 < len(words) else None
+                if nxt is not None and set(nxt) <= _PUNCT:
+                    nxt = None
+                if not _redirect_ok(w, nxt, workspace):
+                    return False
+                i += 2 if nxt is not None else 1
+                continue
+            if seg and not _segment_reads(seg, workspace):
+                return False
+            seg = []
+        else:
+            seg.append(w)
+        i += 1
+    return True
 
 
 def _is_dependency_cache(path: str) -> bool:
@@ -861,7 +956,7 @@ def command_refusal(command: str, level: str, workspace: str | None, roots=()) -
         return killing
     # A command that changes nothing (shelltool's classifier, generous toward "writes") may read a
     # root the harness declared writable; one that might write there stays under the normal rule.
-    read_only = bool(roots) and not shelltool.writes_something("shell", command)
+    read_only = bool(roots) and command_only_reads(command, workspace)
     network = bool(_NETWORK_CMD.search(command))
     search_cmd = bool(_TEXT_SEARCH_LEAD.search(command))
     spans = _quoted_spans(command)
@@ -891,11 +986,13 @@ def command_refusal(command: str, level: str, workspace: str | None, roots=()) -
         # not skipped — it falls through and is refused.
         if _is_dependency_cache(tok) and not _is_write_target(command, m.start()):
             continue
-        if read_only and _in_declared_root(tok, roots):
-            continue
         # In a network request, a rooted path token is a URL fragment, not a file access — exempt it
         # unless it is an explicit write TARGET (curl -o /etc/x, > /tmp/y), which is a real external write.
         is_write = _is_write_target(command, m.start())
+        # A harness-declared root may be READ by a command PROVEN to only read; the write-target
+        # checks above/below always run first.
+        if read_only and not is_write and _in_declared_root(tok, roots):
+            continue
         if network and not is_write:
             continue
         external = tok
@@ -909,4 +1006,9 @@ def command_refusal(command: str, level: str, workspace: str | None, roots=()) -
     # it as "Writing", also misnaming the action).
     if level == "read" and not (ext_is_write or _MUTATING_VERB.search(command)):
         return None
+    if _in_declared_root(external, roots):
+        # Say exactly what was refused: a write TARGET there, or a command not proven to only read.
+        if ext_is_write:
+            return _refusal("Writing", external, workspace, roots)
+        return prompts.fill(prompts.load("external_path_declared_root_unproven"), path=repr(external))
     return _refusal("Writing/reading" if level == "none" else "Writing", external, workspace, roots)
