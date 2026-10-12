@@ -2154,6 +2154,20 @@ def _scrub(v, secrets: list[str]):
     return v
 
 
+def _redact_carrying_boundary(m: dict, key: str, reds: list[str]):
+    """Scrub ``m[key]``; when cria stamped a payload boundary on it, scrub payload and annotation SEPARATELY and
+    re-stamp over the redacted payload, so provenance survives the rewrite (a rewrite that changes the content
+    must carry the boundary forward). An unverifiable boundary is left as it is — the reader abstains."""
+    v = m[key]
+    if key == "content" and isinstance(v, str) and bodykeys.PAYLOAD_BOUNDARY in m:
+        pay = payload_of(m, v)
+        if pay is not None:
+            head = _scrub(pay, reds)
+            m[bodykeys.PAYLOAD_BOUNDARY] = (len(head), _digest(head))
+            return head + _scrub(v[len(pay):], reds)
+    return _scrub(v, reds)
+
+
 def redact_secrets(messages: list[dict], secrets: list[str]) -> list[dict]:
     """SECURITY backstop: strip cria's own credentials out of everything the model sees, on EVERY path.
     A lowered web_search curl carries the Brave API key (X-Subscription-Token); the harness echoes that
@@ -2173,7 +2187,7 @@ def redact_secrets(messages: list[dict], secrets: list[str]) -> list[dict]:
         m2 = dict(m)
         for key in ("content", "output"):
             if key in m2:
-                m2[key] = _scrub(m2[key], reds)
+                m2[key] = _redact_carrying_boundary(m2, key, reds)
         if m2.get("tool_calls"):
             m2["tool_calls"] = [
                 {**tc, "function": {**(tc.get("function") or {}),
@@ -2781,14 +2795,18 @@ def append_note(m: dict, note: str, content: str | None = None) -> None:
     m["content"] = c + "\n\n" + note
 
 
-def payload_of(m: dict, content: str) -> str:
-    """The tool's own payload within ``content``: cut at the producer's recorded boundary when it is still
-    true of these bytes (length AND digest), else the whole content — never a guess from marker text."""
-    b = m.get(bodykeys.PAYLOAD_BOUNDARY)
+def payload_of(m: dict, content: str) -> str | None:
+    """The tool's own payload within ``content``. No boundary ever stamped: the whole content (nothing was
+    appended). A boundary still true of these bytes (length AND digest): the content cut there. A boundary
+    that no longer verifies: None — the payload is UNKNOWN and a reader must abstain, never count the
+    annotated carrier and never guess from marker text."""
+    if bodykeys.PAYLOAD_BOUNDARY not in m:
+        return content
+    b = m[bodykeys.PAYLOAD_BOUNDARY]
     if isinstance(b, (tuple, list)) and len(b) == 2 and isinstance(b[0], int) \
             and 0 <= b[0] <= len(content) and _digest(content[:b[0]]) == b[1]:
         return content[:b[0]]
-    return content
+    return None
 
 
 def _note_missing_dependency(messages: list[dict], workspace_root, rlog) -> None:

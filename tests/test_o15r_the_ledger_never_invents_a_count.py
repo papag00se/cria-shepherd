@@ -8,7 +8,7 @@ import pathlib
 
 import pytest
 
-from cria import loop, prompts, wsview, writeproxy
+from cria import denial, loop, prompts, wsview, writeproxy
 from tests.test_o15_the_ledger_basis_is_the_latest_touch import (
     JAVA, WHOLE, _call, _ledger, _line_with, _numbered, _res, _view_of)
 from tests.test_c13b_the_wire_claims_are_true import ROOT
@@ -133,11 +133,11 @@ def test_the_represent_inbound_appenders_record_the_boundary():
     assert writeproxy.payload_of(tool, tool["content"]) == tool["content"][:-len("\n\n" + prompts.load("pep668_remedy"))]
 
 
-def test_a_boundary_that_no_longer_matches_the_bytes_counts_the_whole_content():
+def test_a_boundary_that_no_longer_matches_the_bytes_is_unknown_not_the_whole_content():
     m = {"role": "tool", "tool_call_id": "t", "content": "a\nb\n"}
     writeproxy.append_note(m, "note")
     m["content"] = "X" + m["content"][1:]
-    assert writeproxy.payload_of(m, m["content"]) == m["content"]
+    assert writeproxy.payload_of(m, m["content"]) is None
 
 
 def test_the_boundary_hint_never_reaches_the_wire_and_plain_bodies_are_unchanged():
@@ -199,3 +199,41 @@ def test_a_command_that_only_says_it_is_a_gate_is_not_exempt_but_a_stamped_one_i
     stamped = f"# {probegate.GATE_SENTINEL}{stamp}\necho hi > f.txt"
     msgs = WHOLE + _sh("sh", stamped)
     assert not isinstance(_entry(msgs)[1][1], loop._Unestablished)
+
+
+# ---- third repair: the boundary's lifecycle (reviewer probes, /tmp/o15-rereview2-additional.py) ----
+def test_a_read_instead_result_is_counted_inside_the_recorded_boundary():
+    from cria import bodykeys, writeproxy
+    from tests.test_o15_the_ledger_basis_is_the_latest_touch import _call, _res
+    payload = "ModuleNotFoundError: No module named 'example_pkg'\n"
+    content = denial.mark("write did not run\n") + "\n" + denial.READ_INSTEAD_MARKER + "\n" + payload
+    msgs = [_call("w", name="write_file", path="error.log", content="new"), _res("w", content)]
+    got = writeproxy.represent_inbound(msgs, None, tools_present=False)
+    assert bodykeys.PAYLOAD_BOUNDARY in got[-1]
+    assert loop._extract_reads(got)["error.log"][1] == "1 lines"
+
+
+def test_redaction_carries_the_boundary_forward_and_the_note_is_not_counted():
+    from cria import writeproxy
+    from tests.test_o15_the_ledger_basis_is_the_latest_touch import _call, _res
+    payload = "ModuleNotFoundError: No module named 'example_pkg'\n"
+    msgs = [_call("r", path="error.log"), _res("r", payload)]
+    writeproxy._note_missing_dependency(msgs, None, None)
+    assert msgs[-1]["content"] != payload
+    red = writeproxy.redact_secrets(msgs, ["example_pkg"])
+    assert "***" in red[-1]["content"] and "example_pkg" not in red[-1]["content"]
+    assert loop._extract_reads(red)["error.log"][1] == "1 lines"
+
+
+def test_an_unverifiable_boundary_abstains_instead_of_counting_the_annotation():
+    from cria import bodykeys
+    from tests.test_o15_the_ledger_basis_is_the_latest_touch import _call, _res
+    whole = [_call("a", path="f.txt"), _res("a", "x\n" * 9 + "x")]
+    broken = _res("b", "y\nNOTE\n\nlong cria note\nsecond\n")
+    broken[bodykeys.PAYLOAD_BOUNDARY] = (1, "wrong")
+    msgs = whole + [_call("b", path="f.txt"), broken]
+    ent = loop._extract_reads(msgs)["f.txt"]
+    assert isinstance(ent[1], loop._Unestablished)
+    # a message with no boundary ever stamped is the whole carrier, counted
+    plain = loop._extract_reads([_call("c", path="g.txt"), _res("c", "a\nb\nc")])
+    assert plain["g.txt"][1] == "3 lines"

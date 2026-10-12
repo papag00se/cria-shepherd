@@ -9489,7 +9489,7 @@ def _extract_reads(messages: list[dict]) -> dict:
     file it came out of."""
     out: dict = {}
     for ev in _file_events(messages):
-        if ev[2] == "read":
+        if ev[2] in ("read", "shell"):      # a shell event is also how an unverifiable result abstains
             _apply_ledger_event(out, ev)
     return out
 
@@ -9578,6 +9578,9 @@ def _file_events(messages: list[dict], key=None) -> list:
     norm = key or (lambda p: p)       # ONE spelling per file BEFORE anything is grouped, invalidated or merged
     raw = []
     for idx, tid, path, start, end, c in _read_results_ordered(messages):
+        if c is None:       # the payload's provenance is unverifiable: whatever was known of this path is now unestablished
+            raw.append((idx, "shell", tid, norm(path)))
+            continue
         raw.append((idx, "read", tid, norm(path), start, end, c))
     for idx, tid, path, nbytes, label in _write_events(messages):
         raw.append((idx, "write", tid, norm(path), nbytes, label))
@@ -9672,7 +9675,8 @@ def _read_results(messages: list[dict]):
     """``(path, start_line, end_line, result text)`` for every workspace read that returned content —
     the one parse :func:`_extract_reads` and :func:`_extract_whole_reads` share."""
     for _idx, _tid, *rest in _read_results_ordered(messages):
-        yield tuple(rest)
+        if rest[-1] is not None:            # None: a provenance that cannot be verified — no file text to parse
+            yield tuple(rest)
 
 
 def _read_results_ordered(messages: list[dict]):
@@ -9697,20 +9701,29 @@ def _read_results_ordered(messages: list[dict]):
         tid = m.get("tool_call_id") or m.get("call_id")
         if tid in calls:
             c = m.get("content") if m.get("content") is not None else m.get("output")
+            unverified = False
+            if isinstance(c, str):
+                # What cria APPENDED to this result is not the file. The producer recorded where the payload
+                # ended over the COMPLETE message (`writeproxy.payload_of`): consume it FIRST, then look inside
+                # the payload (a read-instead envelope). A boundary that no longer verifies means the payload
+                # is unknown — the ledger abstains (None), it never counts the annotated carrier.
+                c = writeproxy.payload_of(m, c)
+                unverified = c is None
             if tid in answered_by_read:
                 # A write_file the coder sent for a file it never read, ANSWERED with that file (H1):
                 # the result is a whole read of the path. Any other result of a write is not a read.
-                c = denial.read_instead_payload(c) if isinstance(c, str) else None
-                if not c:
-                    continue
+                if unverified:
+                    if denial.READ_INSTEAD_MARKER not in (m.get("content") or m.get("output") or ""):
+                        continue            # an ordinary write result: not a read, nothing to abstain from
+                    c = None
+                else:
+                    c = denial.read_instead_payload(c) if isinstance(c, str) else None
+                    if not c or not c.strip():
+                        continue
+            elif unverified:
+                pass
             elif not isinstance(c, str) or not c.strip() or denial.is_denied(c):
                 continue
-            if isinstance(c, str):
-                # What cria APPENDED to this result is not the file. The producer recorded where the payload
-                # ended (`writeproxy.payload_of`); with no record the whole content is counted — no marker guessing.
-                c = writeproxy.payload_of(m, c)
-                if not c.strip():
-                    continue
             yield (idx, tid, *calls[tid], c)
 
 
