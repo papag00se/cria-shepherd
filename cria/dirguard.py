@@ -640,9 +640,10 @@ def declared_roots(messages) -> tuple[str, ...]:
     return tuple(roots)
 
 
-# The build's OWN dependency location, when its tool output or environment printed it (a JVM option
-# echoed by the launcher). Only a location inside a declared root is reported: that is the one case
-# where cria knows the read is allowed.
+# The build's OWN dependency location, when a TOOL result printed it (a JVM option the launcher echoes).
+# Only a location that, with symlinks resolved on BOTH sides, stays inside a declared root counts: that
+# is the one case where cria knows the read is allowed. Assistant text is the model's guess and never
+# a source.
 _BUILD_REPO_FLAG = re.compile(r"-Dmaven\.repo\.local=([^\s\"',;]+)")
 
 
@@ -652,25 +653,56 @@ def _text_of(m) -> str:
         str(part.get("text", "")) for part in (c or []) if isinstance(part, dict))
 
 
-def readable_roots_note(messages, workspace: str | None) -> str:
-    """The deterministic FACT of which directories outside the project the coder may READ (read-only
-    commands), from the roots the harness declared writable — plus the build's own dependency
-    location when its output printed one. "" when the harness declared nothing beyond the project,
-    so every other session's prompt is unchanged."""
+def _really_inside(path: str, roots) -> bool:
+    """``path`` lies in one of ``roots`` after resolving symlinks on both sides."""
+    rp = os.path.realpath(path)
+    return any(rp == rr or rp.startswith(rr + os.sep) for rr in (os.path.realpath(r) for r in roots))
+
+
+def _run_roots(messages, workspace: str | None) -> tuple[str, ...]:
+    """Declared roots other than the project itself (the workspace is the model's own writing: never a
+    dependency's real surface, and it is always readable anyway)."""
     ws = os.path.normpath(workspace) if workspace else ""
-    roots = [r for r in declared_roots(messages)
-             if not (ws and (ws == r or ws.startswith(r + os.sep)))]
+    return tuple(r for r in declared_roots(messages)
+                 if not (ws and (ws == r or ws.startswith(r + os.sep))))
+
+
+def build_dependency_locations(messages, roots) -> tuple[str, ...]:
+    """Locations a TOOL result shows the build was told to keep dependencies in, accepted only when
+    they really (symlinks resolved) stay inside ``roots``. The single source for both what the model
+    is told and where cria searches."""
+    deps: list[str] = []
     if not roots:
-        return ""
-    deps = []
+        return ()
     for m in messages or []:
-        # Only TOOL results: the launcher's own echo is a fact; assistant text is the model's guess and
-        # must never become cria's stated fact.
+        # Only TOOL results: the launcher's own echo is a fact; assistant text is a guess.
         if isinstance(m, dict) and m.get("role") == "tool":
             for loc in _BUILD_REPO_FLAG.findall(_text_of(m)):
-                loc = os.path.normpath(loc)
-                if loc not in deps and _in_declared_root(loc, roots):
+                loc = os.path.normpath(os.path.expanduser(loc))
+                if os.path.isabs(loc) and loc not in deps and _really_inside(loc, roots):
                     deps.append(loc)
+    return tuple(deps)
+
+
+def dependency_roots(messages, workspace: str | None = None) -> tuple[str, ...]:
+    """The directories cria searches for this run's dependencies, and exactly the ones
+    `readable_roots_note` tells the model about: the exact build locations first, then the declared
+    non-workspace roots. () when the harness declared nothing beyond the project."""
+    roots = _run_roots(messages, workspace)
+    if not roots:
+        return ()
+    deps = build_dependency_locations(messages, roots)
+    return (*deps, *(r for r in roots if r not in deps))
+
+
+def readable_roots_note(messages, workspace: str | None) -> str:
+    """The deterministic FACT of which directories outside the project the coder may READ (read-only
+    commands). "" when the harness declared nothing beyond the project, so every other session's
+    prompt is unchanged."""
+    roots = _run_roots(messages, workspace)
+    if not roots:
+        return ""
+    deps = build_dependency_locations(messages, roots)
     build = (prompts.fill(prompts.load("readable_roots_build"), deps=", ".join(deps)) if deps else "")
     return prompts.fill(prompts.load("readable_roots"), roots=", ".join(roots), build=build)
 
