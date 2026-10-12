@@ -1000,8 +1000,8 @@ def _compacted_note(dropped_msgs: list[dict], dropped: int, msg_budget: int) -> 
 
     files = _modified_files(dropped_msgs)
     if files:
-        parts.append("Files modified in them (still on disk — re-read one if you need its current "
-                     "contents): " + ", ".join(files) + ".")
+        parts.append("Files modified in them (still on disk — if no later copy of one is in "
+                     "this conversation, read it to get its current contents): " + ", ".join(files) + ".")
     # …AND SAY IT EVEN WHEN THE DROPPED TURNS ONLY READ. The line above fires only when the dropped
     # span itself contains a WRITE, but staleness does not depend on that: a turn that merely READ a
     # file is summarised here with that file's contents, and any LATER turn can have rewritten it.
@@ -1015,8 +1015,9 @@ def _compacted_note(dropped_msgs: list[dict], dropped: int, msg_budget: int) -> 
     # The caveat is unconditional because it is unconditionally true: this note describes the PAST.
     if digests:
         parts.append("Everything above describes turns that have already happened. Where it quotes a "
-                     "file, that is what the file said THEN — the workspace has moved on since, and "
-                     "read_file is the only current answer.")
+                     "file, that is what the file said THEN — the workspace has moved on since, so "
+                     "its current text is what read_file returns now, or a later copy of it in "
+                     "this conversation if there is one.")
     return {"role": "user", "content": "\n".join(parts)}
 
 

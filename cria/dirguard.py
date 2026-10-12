@@ -639,6 +639,39 @@ def declared_roots(messages) -> tuple[str, ...]:
     return tuple(roots)
 
 
+# The build's OWN dependency location, when its tool output or environment printed it (a JVM option
+# echoed by the launcher). Only a location inside a declared root is reported: that is the one case
+# where cria knows the read is allowed.
+_BUILD_REPO_FLAG = re.compile(r"-Dmaven\.repo\.local=([^\s\"',;]+)")
+
+
+def _text_of(m) -> str:
+    c = m.get("content") if isinstance(m, dict) else None
+    return c if isinstance(c, str) else " ".join(
+        str(part.get("text", "")) for part in (c or []) if isinstance(part, dict))
+
+
+def readable_roots_note(messages, workspace: str | None) -> str:
+    """The deterministic FACT of which directories outside the project the coder may READ (read-only
+    commands), from the roots the harness declared writable — plus the build's own dependency
+    location when its output printed one. "" when the harness declared nothing beyond the project,
+    so every other session's prompt is unchanged."""
+    ws = os.path.normpath(workspace) if workspace else ""
+    roots = [r for r in declared_roots(messages)
+             if not (ws and (ws == r or ws.startswith(r + os.sep)))]
+    if not roots:
+        return ""
+    deps = []
+    for m in messages or []:
+        if isinstance(m, dict) and m.get("role") not in ("system", "developer"):
+            for loc in _BUILD_REPO_FLAG.findall(_text_of(m)):
+                loc = os.path.normpath(loc)
+                if loc not in deps and _in_declared_root(loc, roots):
+                    deps.append(loc)
+    build = (prompts.fill(prompts.load("readable_roots_build"), deps=", ".join(deps)) if deps else "")
+    return prompts.fill(prompts.load("readable_roots"), roots=", ".join(roots), build=build)
+
+
 def _in_declared_root(path: str, roots) -> bool:
     if not roots or not path or not path.strip():
         return False

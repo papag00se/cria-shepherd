@@ -57,8 +57,10 @@ def test_the_callers_own_instructions_are_kept_whole():
 
 def test_the_size_saved_is_the_block_the_incident_carried_twice():
     system = (FIX / "0042-coder-s1.system.txt").read_text()
-    block = toolmenu.cheatsheet(_tools())
-    assert block is not None and block in system
+    # The block AS THE INCIDENT CARRIED IT (its second copy), not today's wording: the menu text is
+    # free to change; what this pins is the size of the duplicate.
+    block = system[system.index(HEADER, system.index(HEADER) + 1):]
+    assert block in system
     once = system.replace("\n\n" + block, "", 1)
     assert system.count(HEADER) - once.count(HEADER) == 1
     assert len(system) - len(once) == len(block) + 2 > 1500

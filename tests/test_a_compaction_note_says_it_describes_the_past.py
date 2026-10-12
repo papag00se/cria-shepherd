@@ -41,7 +41,7 @@ class TheNoteAdmitsItIsHistoryTests(unittest.TestCase):
         dropped = [{"role": "tool", "tool_call_id": "c1",
                     "content": "<html><body>" + "<div class='x'>hello world</div>" * 200 + "</body></html>"}]
         note = self._note(dropped)
-        self.assertIn("read_file is the only current answer", note)
+        self.assertIn("later copy of it in this conversation", note)
         self.assertIn("what the file said THEN", note)
 
     def test_a_dropped_write_keeps_its_own_file_list_too(self):
@@ -55,12 +55,12 @@ class TheNoteAdmitsItIsHistoryTests(unittest.TestCase):
         note = self._note(dropped)
         self.assertIn("Files modified in them", note)
         self.assertIn("lib/x.rb", note)
-        self.assertIn("read_file is the only current answer", note)
+        self.assertIn("later copy of it in this conversation", note)
 
     def test_a_note_with_nothing_summarised_makes_no_claim(self):
         """#3 — no digests, nothing to caveat."""
         note = self._note([{"role": "user", "content": ""}])
-        self.assertNotIn("read_file is the only current answer", note)
+        self.assertNotIn("later copy of it in this conversation", note)
 
 
 class TheBulletsReadAsToolCallsTests(unittest.TestCase):

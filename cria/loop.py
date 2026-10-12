@@ -48,7 +48,7 @@ from enum import Enum, auto
 from pathlib import Path
 
 from .upstream import UpstreamProtocolError
-from . import bodykeys, generation, modelview, wsview
+from . import bodykeys, dirguard, generation, modelview, wsview
 from . import callcapture, dedup, denial, editrecovery, execcheck, filefacts, focustrim, groundtruth, indicators, massage, participation, probediscovery, probegate, probeparse, proberun, prompts, reasoning, selfcompact, shellshape, toolmenu, urlgrounding, verifytools, webfetch
 from .upstream import CallerContextRetryNoChange, ContextRefitNoChange
 from .classify import JUDGE_MAX_TOKENS, _task_key, latest_user_text
@@ -6604,6 +6604,10 @@ def _frame_for_item(messages: list[dict], item: str, summary: str, idx: int, tot
     # failure it is instead of "no error-class problems".
     messages = probegate.clean_gate_results(messages, gate_plan)  # strip raw gate plumbing/advisory
     hint = toolmenu.cheatsheet(tools)
+    # Where installed libraries may be READ (the harness's declared roots, the build's own dependency
+    # location) — a fact the model otherwise only meets as a refusal. "" unless the harness declared roots.
+    roots_note = dirguard.readable_roots_note(messages, workspace_root)
+    caller_block += f"\n\n{roots_note}" if roots_note else ""
     done_block = (prompts.render("done_block", prior_work=prior_work) + "\n\n") if prior_work else ""
     if synthetic:
         # RAW-TASK MODE (plan-off / degenerate 1-item plan): cria's coder_system + the menu-derived
