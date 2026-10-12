@@ -12677,15 +12677,13 @@ def guard_truncation(coder: dict, body: dict, coder_chat, rlog, *, step=None, ph
         _refusal_turn(body, prompts.load_map("call_refused")["incomplete_args"] + also)
         return coder
     attempt = 0
-    _last_write_path_seen = False   # did any pass of this turn actually carry a mid-write cut?
-    _last_also = ""                 # the other withheld calls of the last cut pass (named in the closing refusal)
-    _last_whole_file_seen = False   # ...and was any such cut a whole-file write's own content?
+    _write_seen = False   # did any pass of this turn carry a mid-write cut? (a retry can lose the path)
     conv = list(body.get("messages") or [])
     while _cut_off(coder) and attempt < MAX_TRUNCATION_RETRIES:
         # a self-cut reply is cut in ITS cut call, whatever the family — not in the first write it carries
         path = _truncated_write_path(coder) if massage.is_truncated(coder) else _cut_target(coder)[2]
-        _last_also = _also_withheld(coder)
-        _last_write_path_seen = _last_write_path_seen or path is not None
+        also = _also_withheld(coder)
+        _write_seen = _write_seen or path is not None
         out_tok = _output_tokens(coder)
         # A SELF-cut write used to fall out here with only a ⟦cria⟧ note — which is HUMAN-facing and
         # stripped before the model, so the coder was told nothing at all: its write silently never
@@ -12700,12 +12698,11 @@ def guard_truncation(coder: dict, body: dict, coder_chat, rlog, *, step=None, ph
         attempt += 1
         rlog.phase = f"{phase}-continue{attempt}"
         whole = _whole_file_cut(coder)
-        _last_whole_file_seen = _last_whole_file_seen or whole
         remedy = ((prompts.render("truncation_guard_selfcut", path=_cut_target(coder)[2] or path,
-                                  also=_last_also) if whole else
+                                  also=also) if whole else
                    prompts.fill(prompts.load_map("truncation_withheld")["selfcut"],
                                 tool=_cut_target(coder)[0], path=_cut_target(coder)[2] or path,
-                                also=_last_also)) if selfcut else
+                                also=also)) if selfcut else
                   _length_cut_notice(coder, path, out_tok))
         conv = conv + [{"role": "user", "content": remedy}]
         coder = massage.apply(
@@ -12716,6 +12713,14 @@ def guard_truncation(coder: dict, body: dict, coder_chat, rlog, *, step=None, ph
         # write_file lowered to disk is exactly the corruption. Drop the tool call; the turn then
         # reads as non-acting and the caller gates on ground truth rather than a corrupt file.
         rlog.emit("loop.truncated_dropped", step=step)
+        # EVERYTHING THE CLOSING REFUSAL SAYS DESCRIBES THE REPLY BEING DROPPED — the one the loop
+        # never examined when retries ran out (the reply to the last retry), not an earlier pass.
+        # Read it here, before the calls are gone.
+        selfcut = not massage.is_truncated(coder)
+        _closing_target = _cut_target(coder)[2] if selfcut else _truncated_write_path(coder)
+        was_write = _closing_target is not None or _write_seen
+        _closing_whole = was_write and _whole_file_cut(coder)
+        _closing_also = _also_withheld(coder)
         _drop_tool_calls(coder)
     coder.pop(bodykeys.RUMINATION, None)  # a retry may itself ruminate — never forward the marker
     for ch in coder.get("choices", []):
@@ -12732,8 +12737,7 @@ def guard_truncation(coder: dict, body: dict, coder_chat, rlog, *, step=None, ph
         # finding that this was not a write — and then fell into the write wording regardless.
         # Measured over five days: all 17 truncations had `path is None`, so 17 of 17 told the model
         # its last write was refused and that it stopped "partway through writing the file" (#5b).
-        was_write = _truncated_write_path(coder) is not None or _last_write_path_seen
-        key = (("selfcut_write" if _last_whole_file_seen else "selfcut_edit") if selfcut else
+        key = (("selfcut_write" if _closing_whole else "selfcut_edit") if selfcut else
                "truncated_write") if was_write else "truncated_call"
         _add_note(coder, ("reply incomplete — actions withheld" if generation.incomplete(coder) else
                           "output stopped early mid-write — partial write refused (retry in smaller pieces)"
@@ -12742,7 +12746,7 @@ def guard_truncation(coder: dict, body: dict, coder_chat, rlog, *, step=None, ph
                           if was_write else
                           "output ended before the call was complete — partial call refused"))
         _refusal_turn(body, prompts.load("generation_incomplete_refused") if generation.incomplete(coder)
-                      else prompts.load_map("call_refused")[key] + _last_also)
+                      else prompts.load_map("call_refused")[key] + _closing_also)
         # WHICH SENTENCE WENT OUT, in the event that produced it (#12). The `path`/`selfcut` fields on
         # `loop.truncated` describe the DETECTION; nothing recorded the wording, so the incident this
         # branch was written for — 17 of 17 truncations telling the model its WRITE was refused when

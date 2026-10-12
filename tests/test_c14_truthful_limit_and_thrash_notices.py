@@ -320,3 +320,43 @@ class AlsoListKeepsAnIdenticalCallTests(unittest.TestCase):
             self.assertIn("SMALL pieces", t)
             self.assertIn("also carried", t)
             self.assertIn("`write_file` on `B.java`", t)     # the identical first call, by position
+
+
+class ClosingRefusalDescribesTheDroppedReplyTests(unittest.TestCase):
+    """When retries run out the reply dropped is the one answering the LAST retry, which the loop never
+    examined; the closing refusal must describe THAT reply, not an earlier pass."""
+    EDIT_A = _call("a", "edit_file", {"path": "A.java", "old_string": "x", "new_string": "y"})
+
+    def _run(self, first, later):
+        body = {"messages": [{"role": "user", "content": "go"}]}
+        n = [0]
+
+        def chat(b, rlog):
+            n[0] += 1
+            r = later if n[0] > loop.MAX_TRUNCATION_RETRIES - 1 else first
+            return json.dumps(copy.deepcopy(r)).encode()
+        loop.guard_truncation(copy.deepcopy(first), body, chat, _Rlog(), step=1)
+        self.assertEqual(n[0], loop.MAX_TRUNCATION_RETRIES)
+        return body["messages"][-1]["content"]
+
+    def test_dropped_reply_without_the_edit_does_not_name_it(self):
+        wf = _call("w", "write_file", '{"path": "B.java", "content": "<project>')
+        cut_c = _call("c", "write_file", '{"path": "C.java", "content": "<project>')
+        closing = self._run(_reply([copy.deepcopy(self.EDIT_A), wf], "tool_calls"),
+                            _reply([cut_c], "tool_calls"))
+        self.assertNotIn("A.java", closing)
+        self.assertNotIn("also carried", closing)
+
+    def test_dropped_reply_with_the_edit_names_it_though_earlier_passes_did_not(self):
+        cut_c = _call("c", "write_file", '{"path": "C.java", "content": "<project>')
+        wf = _call("w", "write_file", '{"path": "B.java", "content": "<project>')
+        closing = self._run(_reply([cut_c], "tool_calls"),
+                            _reply([copy.deepcopy(self.EDIT_A), wf], "tool_calls"))
+        self.assertIn("`edit_file` on `A.java`", closing)
+
+    def test_closing_wording_follows_the_dropped_reply_not_an_earlier_one(self):
+        edit_cut = _call("e", "edit_file", '{"path": "B.java", "old_string": "<a')
+        wf = _call("w", "write_file", '{"path": "B.java", "content": "<project>')
+        closing = self._run(_reply([edit_cut], "tool_calls"), _reply([wf], "tool_calls"))
+        key_whole = loop.prompts.load_map("call_refused")["selfcut_write"]
+        self.assertTrue(closing.startswith(key_whole))
