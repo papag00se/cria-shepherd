@@ -1678,7 +1678,8 @@ def _cria_measured_facts(sess) -> str:
     return "\n\n".join(part for part in (offline, observed) if part)
 
 
-def _exact_form_blocks_completion(task: str, evidence: str, reasoner_chat, reasoner_role, rlog) -> str:
+def _exact_form_blocks_completion(task: str, evidence: str, reasoner_chat, reasoner_role, rlog,
+                                  workspace_root: str = "") -> str:
     """The coder-facing text that blocks an approval, or "" when it may stand.
 
     The broad satisfaction verdict is one JSON object whose first field is the verdict, so a weak
@@ -1695,32 +1696,48 @@ def _exact_form_blocks_completion(task: str, evidence: str, reasoner_chat, reaso
     facts = filefacts.extract(evidence)
     if not facts:
         return ""
-    answer = ask_closed(reasoner_chat, reasoner_role,
-                        prompts.render("exact_form_requirement", task=task, facts=facts), rlog,
-                        phase="exact-form-requirement", retry_off=False)
-    obj = extract_json_object(reasoner_role.clean_content(answer) if reasoner_role is not None else answer)
-    if not isinstance(obj, dict) or not {"bytes", "ends_with_line_break"} <= obj.keys():
+    def ask(name: str, **tokens) -> dict | None:
+        """One focused closed question → its JSON object; ONE re-ask on an unreadable answer (as
+        _confirm_completion does) before the caller fails closed."""
+        for _ in range(2):
+            raw = ask_closed(reasoner_chat, reasoner_role, prompts.render(name, **tokens), rlog,
+                             phase=name.replace("_", "-"), retry_off=False)
+            got = extract_json_object(reasoner_role.clean_content(raw) if reasoner_role is not None else raw)
+            if isinstance(got, dict):
+                return got
+        return None
+
+    obj = ask("exact_form_requirement", task=task, facts=facts)
+    if obj is None or not {"bytes", "ends_with_line_break"} <= obj.keys():
         if rlog is not None:
             rlog.emit("loop.exact_form_requirement", contradicted="unknown")
         return prompts.load("unverified_step")
-    # The judge only EXTRACTS what the task fixes; the comparison is arithmetic on measured counts.
-    # An extraction is believed only when its quote is in the task and its file is a counted file —
-    # a requirement the task never made, or about a file nobody counted, cannot veto (the false
-    # positives of the first focused question were exactly these).
+    # The judge only EXTRACTS what the task fixes; the comparison is arithmetic on measured counts,
+    # and a FIGURE vetoes only when the quote itself fixes it.  A quote not in the task, a file nobody
+    # counted, a byte count the quote does not contain, or an ending the quote does not state cannot
+    # veto (the false positives of the first focused question were exactly these).
     quote = " ".join(str(obj.get("quote") or "").split())
     grounded = bool(quote) and quote in " ".join(task.split())
-    counted = {p: (n, e) for p, n, e in filefacts.parse(evidence)}
     want_file = str(obj.get("file") or "").strip()
-    measured = counted.get(want_file)
-    contradicted = False
+    measured = next(((n, e) for p, n, e in filefacts.parse(evidence)
+                     if want_file and _same_workspace_path(p, want_file, workspace_root)), None)
+    contradicted = unreadable = False
     if grounded and measured is not None:
         n, ends = measured
         want_bytes, want_end = obj.get("bytes"), obj.get("ends_with_line_break")
-        contradicted = ((isinstance(want_bytes, int) and not isinstance(want_bytes, bool) and want_bytes != n)
-                        or (isinstance(want_end, bool) and want_end != ends))
+        if isinstance(want_bytes, int) and not isinstance(want_bytes, bool) and want_bytes != n:
+            contradicted = want_bytes in {int(x.replace(",", "")) for x in re.findall(r"\d[\d,]*", quote)}
+        if isinstance(want_end, bool) and want_end != ends and not contradicted:
+            said = ask("exact_form_ending_confirm", quote=quote)
+            if said is None:
+                unreadable = True
+            else:
+                contradicted = said.get("states") == ("ends_with_break" if want_end else "ends_without_break")
     if rlog is not None:
         rlog.emit("loop.exact_form_requirement", contradicted=contradicted, grounded=grounded,
-                  counted=measured is not None)
+                  counted=measured is not None, unreadable=unreadable)
+    if unreadable:
+        return prompts.load("unverified_step")
     return prompts.render("exact_form_unmet", facts=facts) if contradicted else ""
 
 
@@ -2212,7 +2229,8 @@ def judge_satisfaction(task: str, evidence: str, reasoner_chat, reasoner_role, r
                 workspace_root=workspace_root):
             return False, prompts.load("required_test_unverified"), ""
         if satisfied:
-            blocked = _exact_form_blocks_completion(task, evidence, reasoner_chat, reasoner_role, rlog)
+            blocked = _exact_form_blocks_completion(task, evidence, reasoner_chat, reasoner_role, rlog,
+                                                 workspace_root=workspace_root)
             if blocked:
                 return False, blocked, ""
         if satisfied and workspace_root:
@@ -9752,26 +9770,32 @@ def _written_file_facts(messages: list[dict], workspace_root: str = "") -> list:
                 whole = body if isinstance(body, str) else None
             patch_ok = name not in writeproxy_names and name not in writeproxy._EDIT_NAMES
             events.append((idx, name, _path_of_args(args, patch_ok=patch_ok), whole))
-    paths = list(dict.fromkeys(p for _i, n, p, _w in events if p and n in _WRITE_TOOLS))
+    paths: list[str] = []
+    for _i, n, p, _w in events:
+        if p and n in _WRITE_TOOLS and not any(_same_workspace_path(p, q, workspace_root) for q in paths):
+            paths.append(p)
     view = wsview.current(workspace_root) if workspace_root else None
     use_view = view is not None and view.usable and not view.may_have_changed
     facts = []
     for path in paths:
+        last = max((i for i, (_ix, n, p, w) in enumerate(events)
+                    if p and w is not None and _same_workspace_path(p, path, workspace_root)), default=None)
+        if last is None:
+            continue
+        # ANYTHING AFTER THE NEWEST WHOLE WRITE that could have changed THIS file silences the fact —
+        # for the view's body as much as for the write's payload: a native patch / edit / harness
+        # Edit does not teach the view anything, so its body is the pre-edit file.
+        touched = any(n in _WRITE_TOOLS and w is None and (p is None or _same_workspace_path(p, path, workspace_root))
+                      or n not in _WRITE_TOOLS
+                      for _ix, n, p, w in events[last + 1:])
+        if touched:
+            continue
         if use_view:
             raw = view.read_bytes(path)
             if raw is not None:
                 facts.append(filefacts.FileFact(view.rel(path) or path, raw, True))
                 continue
-        last = max((i for i, (_ix, n, p, w) in enumerate(events)
-                    if p == path and w is not None), default=None)
-        if last is None:
-            continue
-        # anything after the newest whole write that could have changed THIS file silences the fact
-        touched = any(n in _WRITE_TOOLS and (p == path or p is None) and w is None
-                      or n not in _WRITE_TOOLS
-                      for _ix, n, p, w in events[last + 1:])
-        if not touched:
-            facts.append(filefacts.FileFact(path, events[last][3].encode("utf-8", "replace"), False))
+        facts.append(filefacts.FileFact(path, events[last][3].encode("utf-8", "replace"), False))
     return facts
 
 

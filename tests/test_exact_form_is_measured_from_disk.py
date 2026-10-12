@@ -50,13 +50,22 @@ class _Rlog:
         pass
 
 
+CONFIRM = "QUESTION: does the quote itself state"
+
+
 class _Chat:
-    def __init__(self, focused):
-        self.focused, self.bodies = focused, []
+    def __init__(self, focused, states="ends_with_break"):
+        self.focused, self.states, self.bodies = focused, states, []
 
     def __call__(self, body, _rlog):
         self.bodies.append(body)
-        content = self.focused if Q in body["messages"][0]["content"] else APPROVE
+        system = body["messages"][0]["content"]
+        if CONFIRM in system:
+            content = json.dumps({"states": self.states}) if self.states else "no idea"
+        elif Q in system:
+            content = self.focused.pop(0) if isinstance(self.focused, list) else self.focused
+        else:
+            content = APPROVE
         return json.dumps({"choices": [{"message": {"content": content}}]}).encode()
 
     def asked(self):
@@ -71,10 +80,10 @@ def extraction(file="probe.txt", quote="including the final newline", bytes_=Non
 REQUIRES_FINAL_LF = extraction()
 
 
-def judge(messages, focused=REQUIRES_FINAL_LF, root=""):
-    chat = _Chat(focused)
+def judge(messages, focused=REQUIRES_FINAL_LF, root="", task=TASK, states="ends_with_break"):
+    chat = _Chat(focused, states)
     ev = loop._satisfaction_evidence(messages, workspace_root=root)
-    sat, reason, _ = loop.judge_satisfaction(TASK, ev, chat, None, _Rlog(), workspace_root="")
+    sat, reason, _ = loop.judge_satisfaction(task, ev, chat, None, _Rlog(), workspace_root="")
     return sat, reason, chat, ev
 
 
@@ -136,12 +145,60 @@ class FactsAreOfCurrentContent(unittest.TestCase):
         msgs = [_call("s", "exec_command", {"cmd": "python3 hello.py"}), _res("s", "Hello, World!\n")]
         self.assertEqual(filefacts.extract(loop._satisfaction_evidence(msgs)), "")
 
-    def test_the_comparison_is_arithmetic_on_the_counts(self):
-        sat, _, _, _ = judge(write("w", C30), extraction(bytes_=30, ends=True))
-        self.assertTrue(sat)
-        sat, reason, _, _ = judge(write("w", C29), extraction(bytes_=30, ends=None))
+    def test_the_byte_comparison_is_arithmetic_on_the_counts(self):
+        task = "Create probe.txt of exactly 30 bytes."
+        ok = extraction(quote="exactly 30 bytes", bytes_=30, ends=None)
+        self.assertTrue(judge(write("w", C30), ok, task=task)[0])
+        sat, reason, _, _ = judge(write("w", C29), ok, task=task)
         self.assertFalse(sat)
         self.assertIn("29 bytes", reason)
+
+    def test_F3_a_byte_count_the_quote_does_not_contain_cannot_veto(self):
+        # the quote fixes nothing; the judge mis-copied a count into `bytes`
+        task = "Add probe.txt describing the risks."
+        sat, _, _, _ = judge(write("w", C29), extraction(quote="describing the risks", bytes_=30, ends=None), task=task)
+        self.assertTrue(sat)
+
+    def test_F3_an_ending_the_quote_does_not_state_cannot_veto(self):
+        task = "Add probe.txt describing the risks."
+        sat, _, _, _ = judge(write("w", C29), extraction(quote="describing the risks", ends=True),
+                             task=task, states="neither")
+        self.assertTrue(sat)
+
+    def test_F3_a_confirmed_ending_requirement_vetoes(self):
+        self.assertFalse(judge(write("w", C29), states="ends_with_break")[0])
+
+    def test_F3_a_confirmation_that_says_the_opposite_cannot_veto(self):
+        self.assertTrue(judge(write("w", C29), states="ends_without_break")[0])
+
+    def test_F2_one_reask_recovers_an_unreadable_extraction(self):
+        sat, _, chat, _ = judge(write("w", C29), ["garbage", REQUIRES_FINAL_LF])
+        self.assertFalse(sat)
+        self.assertEqual(chat.asked(), 2)
+
+    def test_F2_two_unreadable_answers_fail_closed(self):
+        sat, _, chat, _ = judge(write("w", C30), ["garbage", "still garbage"])
+        self.assertFalse(sat)
+        self.assertEqual(chat.asked(), 2)
+
+    def test_F2_an_unreadable_confirmation_fails_closed(self):
+        self.assertFalse(judge(write("w", C29), states=None)[0])
+
+    def test_F4_dot_slash_and_bare_spellings_are_one_path(self):
+        sat, _, _, _ = judge(write("w", C29, path="./probe.txt"))
+        self.assertFalse(sat)
+        msgs = write("w1", C29, path="./probe.txt") + write("w2", C30, path="probe.txt")
+        facts = filefacts.extract(loop._satisfaction_evidence(msgs))
+        self.assertEqual(facts.count("\n- "), 1)
+        self.assertIn("30 bytes", facts)
+
+    def test_F1_a_native_patch_after_the_write_silences_the_fact(self):
+        patch = "*** Begin Patch\n*** Update File: probe.txt\n@@\n-x\n+y\n*** End Patch"
+        for name, args in (("apply_patch", {"input": patch}),
+                           ("Edit", {"file_path": "probe.txt", "old_string": "a", "new_string": "b"}),
+                           ("edit_file", {"path": "probe.txt", "old_string": "a", "new_string": "b"})):
+            msgs = write("w", C29) + [_call("p", name, args), _res("p", "ok")]
+            self.assertEqual(filefacts.extract(loop._satisfaction_evidence(msgs)), "", name)
 
     def test_a_quote_the_task_never_made_cannot_veto(self):
         sat, _, _, _ = judge(write("w", C29), extraction(quote="the file must be 3219 bytes"))
@@ -175,6 +232,13 @@ class TheViewIsTheDiskProbe(unittest.TestCase):
         self.assertIn("(on disk): 30 bytes, 3 line break(s)", facts)
         sat, _, _, _ = judge(msgs, extraction(self.path), root=self.tmp.name)
         self.assertTrue(sat)
+
+    def test_F1_the_view_body_is_not_trusted_after_a_native_patch(self):
+        Path(self.path).write_bytes(C29.encode())          # the view still holds the pre-patch bytes
+        msgs = write("w", C29, path=self.path) + [
+            _call("p", "apply_patch", {"input": f"*** Begin Patch\n*** Update File: {self.path}\n@@\n-x\n+y\n*** End Patch"}),
+            _res("p", "ok")]
+        self.assertEqual(filefacts.extract(loop._satisfaction_evidence(msgs, workspace_root=self.tmp.name)), "")
 
     def test_a_disk_that_is_wrong_is_stated_and_blocks(self):
         Path(self.path).write_bytes(C29.encode())
