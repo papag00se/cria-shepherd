@@ -511,7 +511,10 @@ class AbstainMemoizationTests(_WorkspaceCase):
 
     def test_a_cache_miss_is_not_re_probed_every_request(self):
         self._write_go_mod(module="example.invalid/nonexistent")
-        # No module cache written -- gather() abstains every time it is actually called.
+        # The module cache IS on disk but holds nothing readable: located, yet gather() abstains
+        # every time it is actually called (the costly decode is what the back-off protects).
+        d = os.path.join(self.home, "go", "pkg", "mod", "example.invalid", "nonexistent@v1.4.0")
+        os.makedirs(d)
         calls = {"n": 0}
         real_gather = depsurface.gather
 
@@ -528,6 +531,23 @@ class AbstainMemoizationTests(_WorkspaceCase):
         finally:
             depsurface.gather = real_gather
         self.assertEqual(calls["n"], 1, "a cache miss must not re-run gather() every request")
+
+    def test_a_dependency_not_on_disk_yet_is_not_decoded_but_is_looked_for_every_request(self):
+        """O8 live (B2): pom.xml named opencsv before the build downloaded it; the first miss must not
+        start a 20-request blind spot. Absence costs stat calls only, so it is re-checked every time."""
+        self._write_go_mod(module="example.invalid/nonexistent")
+        calls = {"n": 0}
+        real_gather = depsurface.gather
+        depsurface.gather = lambda *a, **kw: (calls.__setitem__("n", calls["n"] + 1), real_gather(*a, **kw))[1]
+        try:
+            self.represent([tool("t1", call_id="c1")])
+            self.represent([tool("t1", call_id="c1"), tool("t2", call_id="c2")])
+            self.assertEqual(calls["n"], 0)
+            self._write_module_cache(module="example.invalid/nonexistent")
+            out = self.represent([tool("t1", call_id="c1"), tool("t2", call_id="c2"), tool("t3", call_id="c3")])
+        finally:
+            depsurface.gather = real_gather
+        self.assertIn(ANCHOR_TEXT, "".join(m["content"] for m in out))
 
     def test_a_later_successful_gather_is_not_permanently_blocked(self):
         self._write_go_mod(module="example.invalid/nonexistent")

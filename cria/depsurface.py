@@ -537,6 +537,35 @@ _PROBES = {
 }
 
 
+def _jvm_jar(coordinate: str, version: str, _ws, cache_roots=()):
+    group, _, artifact = coordinate.partition(":")
+    return _m2_jar(group.strip(), artifact.strip(), version, cache_roots) if artifact else None
+
+
+# The cheap half of each probe: where the dependency's real files are, if they are on disk at all.
+_LOCATORS = {
+    "go": lambda package, version, _ws, roots: _go_module_dir(package, version, roots),
+    "rust": lambda package, version, _ws, roots: _rust_crate_dir(package, version, roots),
+    "ruby": lambda package, version, ws, roots: _ruby_gem_dir(package, version, ws, roots),
+    "jvm": _jvm_jar,
+}
+
+
+def source_located(ecosystem: str, package: str, version: str, workspace_root: str | None = None,
+                   cache_roots=()) -> bool:
+    """True when the declared coordinate's real files are on disk. A manifest is written BEFORE the
+    build resolves it (live: pom.xml declared opencsv 2m32s before the jar landed), so "declared but
+    not downloaded yet" is the normal first state, not a verdict: the caller must keep asking (stat
+    calls only) rather than back off like it does after a decode that really failed."""
+    locate = _LOCATORS.get((ecosystem or "").lower())
+    if locate is None or not package or not version:
+        return False
+    try:
+        return bool(locate(package, version, workspace_root, tuple(cache_roots)))
+    except OSError:
+        return False
+
+
 def gather(ecosystem: str, package: str, version: str, workspace_root: str | None = None,
            cache_roots=()) -> DependencySurface | None:
     """The real exported surface for one resolved coordinate, or ``None`` to abstain.

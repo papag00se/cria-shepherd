@@ -2663,6 +2663,9 @@ def _note_dependency_surface(messages: list[dict], workspace_root, sess_key: str
             continue   # permanently withheld -- NEVER gathered again
         if new_gathers >= _MAX_NOTES_PER_REQUEST:
             continue
+        if not depsurface.source_located(eco, package, version, workspace_root, build_roots):
+            continue   # declared but not on disk YET (the build resolves after the manifest is written):
+            #            ask again next request, for stat calls only -- no abstain back-off, no decode
         if not depsurface.should_retry_gather(sess_key, coordinate_key):
             continue   # abstained recently (cache absent / go doc/javap failed) -- not retried yet
         cid = newest_tool.get("tool_call_id")
