@@ -1,7 +1,13 @@
-"""O11: a command word that is an existing system program is not a data path. O10: `cd <declared-root
-subdir> && find .` and `NAME=<literal path>; jar tf "$NAME"` are provably read-only. Incident: ornith1.5_9b /
+"""O11: a command word that is a program in a root-owned system bin dir is not a data path. O10: `cd <declared-root
+subdir> && find .` is provably read-only when the command can write nothing at all (no redirect/tee/variable/quote
+trick/second cd). NAME=<path> expansion was REMOVED after review (single quotes, escaped `;`, line continuations
+and `tee 1` each made bash write outside the workspace). Incident: ornith1.5_9b /
 Java B3 walk (`/usr/bin/time -v java ...` refused as 'Writing/reading outside'; `jar tf "$JAR"` and
 `cd <root>/x && find .` refused 'could not be shown to only read'). Every write bypass must stay refused."""
+import os
+import shutil
+import subprocess
+
 import pytest
 
 from cria import dirguard
@@ -36,10 +42,75 @@ def test_inner_args_and_non_commands_stay_refused(cmd):
 
 def test_b3_shapes_are_now_allowed():
     for c in (f"cd {R} && find . -name '*csv*'", f"cd {R}/sub; find . -iname '*opencsv*' | head",
-              f"JAR={R}/a.jar; jar tf \"$JAR\"; javap -cp \"$JAR\" com.X", f"JAR={R}/a.jar\njar tf $JAR | grep csv",
-              f"cd {R} && find . -name '*.jar' > {WS}/jars.txt", f"cd {R} && ls 2>/dev/null | tee {WS}/o",
-              f"D={R}; ls \"$D/com\"; cd $D && ls"):
+              f"cd {R} && find . -name '*.jar' | sort | head -5"):
         assert not refused(c), c
+
+
+# every command from the independent review that made bash write/delete outside the workspace
+REVIEW = [
+    f"B={WS}/out; cd {R}; echo changed > '$B'",
+    f"A={WS} \\;; cd {R}; echo x > \"$A/out3\"",
+    f"A={WS} \\\n true; cd {R}; echo x > \"$A/out5\"",
+    f"cd {R}; ls | tee 1",
+    f"cd {R}; ls | tee 1 > /dev/null",
+    f"rm \\; {I}/bin/agent-program",
+    f"rm \\; /usr/bin/env",
+    f"cd {R}; echo x > $HOME/.local/bin/p; ~/.local/bin/p",
+    f"cd {R}; echo x > out; ~/.local/bin/p",
+    f"cd {R}; echo x > rel",
+    f"cd {R}; cd ..; echo x > rel",
+    f"cd {R}; pushd ..; ls",
+    f"cd {R}; popd",
+]
+
+
+@pytest.mark.parametrize("cmd", REVIEW)
+def test_review_reproductions_stay_refused(cmd):
+    assert refused(cmd), cmd
+    assert dirguard.command_only_reads(cmd, WS, ROOTS) is False
+
+
+def test_path_directories_are_not_trusted(tmp_path, monkeypatch):
+    d = tmp_path / "bin"
+    d.mkdir()
+    prog = d / "agent-program"
+    prog.write_text("#!/bin/sh\n")
+    prog.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{d}:{os.environ.get('PATH', '')}")
+    assert refused(f"rm {prog}", ()) and refused(str(prog), ())
+
+
+def test_system_dir_must_be_root_owned_and_unwritable(monkeypatch):
+    monkeypatch.setattr(dirguard, "_root_owned_unwritable", lambda d: False)
+    assert refused(f"{ENV} true", ())
+
+
+@pytest.mark.skipif(shutil.which("bash") is None, reason="needs real bash")
+def test_allowed_new_shapes_write_nothing_outside_the_workspace(tmp_path, monkeypatch):
+    ws, root = tmp_path / "ws", tmp_path / "install" / "m2"
+    (root / "sub").mkdir(parents=True)
+    ws.mkdir()
+    (root / "sub" / "x.csv").write_text("a")
+    roots = (str(tmp_path / "install"),)
+    cmds = [f"cd {root} && find . -name '*csv*'", f"cd {root}/sub; find . -iname '*CSV*' | head",
+            f"{ENV} true", f"cd {root} && find . -name '*.jar' | sort | head -5"]
+    monkeypatch.setenv("A", str(ws))
+    before = sorted(str(p) for p in tmp_path.rglob("*"))
+    for c in cmds:
+        assert dirguard.command_refusal(c, "none", str(ws), roots) is None, c
+        subprocess.run(["bash", "-c", c], cwd=ws, capture_output=True, timeout=20)
+    assert sorted(str(p) for p in tmp_path.rglob("*")) == before
+
+
+@pytest.mark.skipif(shutil.which("bash") is None, reason="needs real bash")
+def test_reviewer_shapes_are_refused_for_a_real_tree(tmp_path):
+    ws, root = tmp_path / "ws", tmp_path / "install" / "m2"
+    root.mkdir(parents=True)
+    ws.mkdir()
+    roots = (str(tmp_path / "install"),)
+    for c in (f"B={ws}/out; cd {root}; echo changed > '$B'", f"A={ws} \\;; cd {root}; echo x > \"$A/o\"",
+              f"A={ws} \\\n true; cd {root}; echo x > \"$A/o\"", f"cd {root}; ls | tee 1"):
+        assert dirguard.command_refusal(c, "none", str(ws), roots) is not None, c
 
 
 ATTACKS = [
@@ -69,7 +140,8 @@ ATTACKS = [
     # conditional / lost assignments: an unset $NAME makes `cd` go HOME
     f"true || NAME=sub; cd $NAME; echo x > rel", f"false && NAME=sub; cd $NAME; echo x > rel",
     f"ls | NAME=sub; cd $NAME; echo x > rel", f"NAME=sub & cd $NAME; echo x > rel", f"NAME=sub || cd $NAME; echo x > rel",
-    f"NAME=sub | cd $NAME", f"(NAME=sub; cd $NAME); echo x > rel", f"NAME=sub\n\n&& cd $NAME",
+    f"NAME=sub | cd $NAME", f"JAR={R}/a.jar; jar tf \"$JAR\"", f"D={R}; ls \"$D/com\"", f"cd {R} && find . -name '*;*'",
+    f"cd {R} && echo 'a' > f", f"cd {R} && echo a>f", f"cd {R} && ls $(echo)", f"cd {R} && ls \\\n.", f"(NAME=sub; cd $NAME); echo x > rel", f"NAME=sub\n\n&& cd $NAME",
     # $ in the command word / re-expansion
     f"NAME=rm; $NAME -rf {R}", f"NAME=rm; ${{NAME}} x", f"A={R}; B=rm; $B $A",
 ]
@@ -83,5 +155,5 @@ def test_new_attack_shapes_stay_unproven_and_refused(cmd):
 
 
 def test_without_declared_roots_nothing_new_is_allowed():
-    for c in (f"cd {R} && find . -name x", f"JAR={R}/a.jar; jar tf \"$JAR\""):
+    for c in (f"cd {R} && find . -name x",):
         assert refused(c, ()), c
