@@ -597,7 +597,8 @@ _DEP_CACHE_MARKERS = (
     "/go/pkg/mod/",           # Go module cache (read-only by design)
     "/site-packages/",        # Python installed packages
     "/dist-packages/",
-    "/gem/ruby/",             # Ruby gems: ~/.gem/ruby/, ~/.local/share/gem/ruby/ (not ~/.gem/credentials)
+    "/.gem/ruby/",            # Ruby gems: ~/.gem/ruby/ (not ~/.gem/credentials)
+    "/gem/ruby/",             # Ruby gems: ~/.local/share/gem/ruby/
     "/ruby/gems/",            # Ruby gems: /usr/lib/ruby/gems/, rbenv/rvm, bundler .../ruby/gems/
     "/node_modules/",         # Node packages: any node_modules holds public JS source, never secrets
 )
@@ -945,7 +946,9 @@ def _refusal(verb: str, path: str, workspace: str | None = None, roots=(), level
                 if subtree else "")
     return prompts.fill(prompts.load("external_path_refusal"), verb=verb, path=repr(path), root=root,
                         casenote=note,
-                        reads=("" if level == "read" else prompts.load("external_path_reads_allowed")))
+                        reads=("" if level == "read" else prompts.fill(
+                            prompts.load("external_path_reads_allowed"),
+                            caches=", ".join(sub for _m, sub in _DEP_CACHE_ROOTS))))
 
 
 def path_refusal(path: str, is_write: bool, level: str, workspace: str | None, roots=()) -> str | None:

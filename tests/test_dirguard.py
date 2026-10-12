@@ -350,6 +350,32 @@ class WorkspaceTypoIsOneGlyph(unittest.TestCase):
                 self.assertFalse(self._fires(path), label)
 
 
+class ReadsAllowedSentenceTruthTests(unittest.TestCase):
+    """The 'READS of ... are allowed' sentence must name only locations a read really clears."""
+
+    def _sentence(self):
+        msg = dirguard.path_refusal("/etc/passwd", False, "none", "/work/proj")
+        return msg[msg.index("Outside it, READS"):]
+
+    def test_every_named_location_is_readable(self):
+        sent = self._sentence()
+        named = [sub.split(" ")[0] for _m, sub in dirguard._DEP_CACHE_ROOTS if sub.startswith("~")]
+        self.assertGreaterEqual(len(named), 4)
+        for loc in named:
+            self.assertIn(loc, sent)
+            self.assertIsNone(dirguard.path_refusal(loc + "/x", False, "none", "/work/proj"), loc)
+        self.assertNotIn("(~/.m2, ~/.gradle", sent)
+
+    def test_refusal_of_cache_root_does_not_claim_it_readable(self):
+        for msg in (dirguard.path_refusal("~/.m2", False, "none", "/work/proj"),
+                    dirguard.command_refusal("find ~/.m2 -name settings.xml", "none", "/work/proj"),
+                    dirguard.command_refusal("cat ~/.cargo/config.toml", "none", "/work/proj")):
+            self.assertIsNotNone(msg)
+            for root in ("~/.m2", "~/.cargo", "~/.gradle"):
+                self.assertNotIn("READS of example dependency caches (" + root, msg)
+            self.assertNotRegex(msg, r"READS[^.]*\(~/\.m2,")
+
+
 if __name__ == "__main__":
     unittest.main()
 

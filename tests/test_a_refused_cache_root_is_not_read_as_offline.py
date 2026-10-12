@@ -68,7 +68,7 @@ def test_the_artifact_subtree_itself_is_still_allowed_not_noted():
 def test_a_plain_external_path_gets_no_depcache_note():
     msg = _msg("cat /etc/passwd")
     assert msg is not None
-    assert "network" not in msg and "repository" not in msg
+    assert "network" not in msg and "package manager's cache" not in msg
 
 
 def test_reading_a_credential_under_m2_still_refused_but_points_at_the_cache():

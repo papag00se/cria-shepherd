@@ -99,7 +99,7 @@ def test_every_command_the_note_names_is_allowed_on_a_declared_root():
 
 def test_the_refusal_claims_reads_only_where_reads_are_refused():
     r = dirguard.path_refusal("/etc/x/y", True, "none", RUNS)
-    assert r and "example dependency caches" in r and "installed-library" not in r
+    assert r and "dependency-artifact folders" in r and "installed-library" not in r
     w = dirguard.path_refusal("/etc/x/y", True, "read", RUNS)
     assert w and "READS" not in w and "Writes must stay inside" in w
     assert dirguard.path_refusal("/usr/share/java/x.jar", False, "none", RUNS) is not None
