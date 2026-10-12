@@ -1,8 +1,6 @@
 # Which element of a command made it impossible to show it only reads a readable outside directory.
 cd = the `cd` into a directory ({{WORD}}) — it changes where later paths resolve
 pushd = the `pushd` into a directory ({{WORD}}) — it changes where later paths resolve
-assign = the shell variable assignment ({{WORD}}) — what the variable expands to is not known when the command is checked
-variable = the shell variable ({{WORD}}) — what it expands to is not known when the command is checked
 redirect = a redirect whose destination could not be shown to be inside the project
 xargs = the `xargs` stage — it runs another command on what it is given
 interpreter = the shell or interpreter ({{WORD}}) — what it runs is not visible to the check

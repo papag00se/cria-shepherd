@@ -1267,18 +1267,15 @@ def _words_of(command: str, posix: bool = True):
 
 def _unproven_element(command: str, workspace: str | None):
     """(kind, word) for the FIRST element that stopped ``command_only_reads`` from proving a read —
-    a cd/pushd, a shell variable, a redirect, a pipe into a non-reader, xargs, an interpreter — or
-    None when it is none of those (today's generic wording then stands)."""
+    a cd/pushd, a redirect, a pipe into a non-reader, xargs, an interpreter — or
+    None when it is none of those (today's generic wording then stands — a shell variable or expansion is
+    never named: what it expands to is not an element the check can state truthfully)."""
     if not command or "<<" in command or "`" in command or "$(" in command:
         return None
     words = _words_of(command)
     if not words:
         return None
-    flags = _word_liveness(command)
-    if len(flags) != len(words):
-        flags = [None] * len(words)  # provenance not established: never claim a variable
     seg: list[str] = []
-    live: list = []
     after_pipe = False
     i = 0
     while i <= len(words):
@@ -1287,7 +1284,6 @@ def _unproven_element(command: str, workspace: str | None):
             if w in _REDIRECTS:
                 if seg and seg[-1].isdigit():
                     seg.pop()
-                    live.pop()
                 nxt = words[i + 1] if i + 1 < len(words) else None
                 if nxt is not None and set(nxt) <= _PUNCT:
                     nxt = None
@@ -1296,88 +1292,21 @@ def _unproven_element(command: str, workspace: str | None):
                 i += 2 if nxt is not None else 1
                 continue
             if seg:
-                found = _segment_element(seg, workspace, after_pipe, live)
+                found = _segment_element(seg, workspace, after_pipe)
                 if found:
                     return found
             after_pipe = (w == "|")
             seg = []
-            live = []
         else:
             seg.append(w)
-            live.append(flags[i])
         i += 1
     return None
 
 
-_VAR_AT = re.compile(r"\$(?:[A-Za-z_]\w*|\{[A-Za-z_]\w*\})")
-
-
-def _word_liveness(command: str) -> list[str | None]:
-    """One entry per word/operator token, in command order: the exact ``$NAME`` / ``${NAME}`` text of the
-    first ``$`` in the word that bash would expand (outside single quotes, not backslash-escaped,
-    immediately followed by a name), else None. A positive whitelist, not a bash grammar: any command
-    with ``$'``, ``$"``, a backtick, ``$(`` or a heredoc never names a variable."""
-    if any(t in command for t in ("$'", '$"', "`", "$(", "<<")):
-        return [None] * len(_words_of(command) or [])
-    out: list[str | None] = []
-    cur: str | None = None
-    inword = False
-    punct = False
-    i, n = 0, len(command)
-
-    def live_at(k):
-        nonlocal cur
-        if cur is None:
-            m = _VAR_AT.match(command, k)
-            if m:
-                cur = m.group(0)
-
-    while i < n:
-        c = command[i]
-        if c in " \t\r":
-            if inword:
-                out.append(cur)
-            inword, cur, punct = False, None, False
-        elif c in ";&|()<>\n":
-            if not punct:
-                if inword:
-                    out.append(cur)
-                inword, cur, punct = True, None, True
-        else:
-            if punct:
-                out.append(None)
-                inword, cur, punct = False, None, False
-            inword = True
-            if c == "\\":
-                i += 1
-            elif c == "$":
-                live_at(i)
-            elif c == "'":
-                j = command.find("'", i + 1)
-                i = n if j < 0 else j
-            elif c == '"':
-                i += 1
-                while i < n and command[i] != '"':
-                    if command[i] == "\\":
-                        i += 1
-                    elif command[i] == "$":
-                        live_at(i)
-                    i += 1
-        i += 1
-    if inword:
-        out.append(cur)
-    return out
-
-
-def _segment_element(seg: list[str], workspace, after_pipe: bool, live: list):
+def _segment_element(seg: list[str], workspace, after_pipe: bool):
     cmd = seg[0]
-    if re.match(r"^[A-Za-z_]\w*=", cmd):
-        return ("assign", cmd)
     if cmd in ("cd", "pushd") and not _segment_reads(seg, workspace):
         return (cmd, seg[1] if len(seg) > 1 else "")
-    for name in live[1:]:
-        if name:
-            return ("variable", name)
     if cmd == "xargs":
         return ("xargs", cmd)
     if cmd in _INTERPRETERS:

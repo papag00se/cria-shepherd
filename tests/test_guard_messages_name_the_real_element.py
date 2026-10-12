@@ -56,19 +56,33 @@ def test_cd_into_root_is_named_and_no_rewrite_offered():
     assert "something other than plain readers" not in r
 
 
-def test_shell_variable_is_named_and_no_rewrite_offered():
-    r = _r(f'JAR={INSTALL}/m2/x.jar; jar tf "$JAR"')
-    assert r and "could not be shown to only read" in r and "shell variable assignment" in r
-    assert "literal-path form" not in r and "\njar tf" not in r
+GENERIC = "could not be shown to only read"
 
 
-def test_single_quoted_dollar_is_not_named_a_variable():
+def _no_variable_wording(r, ctx):
+    low = r.lower()
+    assert "shell variable" not in low and "variable assignment" not in low, (ctx, r)
+    assert "contains the shell" not in low, (ctx, r)
+
+
+def test_variable_only_command_gets_generic_wording_and_is_still_refused():
+    for c in (f'JAR={INSTALL}/m2/x.jar; jar tf "$JAR"', f'JAR={REPO}/a.jar && jar tf "${{JAR}}"'):
+        r = _r(c)
+        assert r, c
+        _no_variable_wording(r, c)
+        assert "literal-path form" not in r and "\njar tf" not in r, c
+
+
+def test_single_quoted_dollar_names_no_variable():
     r = _r(f"JAR={INSTALL}/m2/x.jar; jar tf '$JAR'")
-    assert r and "the shell variable ($JAR)" not in r and "shell variable assignment" in r
+    assert r
+    _no_variable_wording(r, "single-quoted")
     r2 = _r(f"ls {REPO} '$HOME/x' | tar cf - -T -")
-    assert r2 and "the shell variable" not in r2 and "pipe into `tar`" in r2
+    assert r2 and "pipe into `tar`" in r2
+    _no_variable_wording(r2, "pipe")
     r3 = _r(f'ls {REPO} "$HOME/x" | xargs rm')
-    assert r3 and "the shell variable ($HOME)" in r3 and "$HOME/x" not in r3
+    assert r3 and "$HOME/x" not in r3
+    _no_variable_wording(r3, "xargs")
 
 
 def test_printf_v_absolute_program_gets_no_builtin_rewrite():
@@ -80,6 +94,7 @@ def test_redirect_is_not_claimed_to_write_outside():
     r = _r(f'ls {REPO} > "$NAME"')
     assert r and "could not be shown to be inside the project" in r
     assert "writes somewhere other" not in r
+    _no_variable_wording(r, "redirect")
 
 
 def test_no_rewrite_is_offered_for_any_shape():
@@ -89,6 +104,7 @@ def test_no_rewrite_is_offered_for_any_shape():
         r = _r(c)
         assert r, c                                   # the decision is unchanged: still refused
         assert "literal-path form" not in r and "bare program name" not in r, c
+        _no_variable_wording(r, c)
 
 
 def test_decision_unchanged_for_writes_into_the_root():
@@ -102,7 +118,7 @@ def test_mixed_quote_words_never_invent_a_variable():
     for tail in ("'$JAR'foo", "'$JAR' 'x'y", "'$JAR'\"x\" 'a'b", "x'$JAR'", "\\$JAR 'q'r", "\"\\$JAR\" 'q'r"):
         r = _r(f"ls {REPO} {tail} | tar cf - -T -")
         assert r, tail                                   # decision unchanged: still refused
-        assert "the shell variable" not in r, (tail, r)  # …and no variable is claimed
+        _no_variable_wording(r, tail)  # …and no variable is claimed
         assert "pipe into `tar`" in r, tail
     if shutil.which("bash"):
         for tail, want in (("'$JAR'foo", "$JARfoo"), ("'$JAR' 'x'y", "$JAR\nxy")):
@@ -117,12 +133,22 @@ def test_dollar_prefixed_quoting_never_names_a_variable():
                  '$"$JAR"', '$"plain"', "$'a' $JAR"):
         r = _r(f"ls {REPO} {tail} | tar cf - -T -")
         assert r, tail
-        assert "the shell variable" not in r, (tail, r)
+        _no_variable_wording(r, tail)
         assert "pipe into `tar`" in r, tail
 
 
-def test_live_dollar_is_named_with_exactly_the_variable_text():
-    for tail, name in (('"$JAR"', "$JAR"), ("$JAR", "$JAR"), ("${JAR}x", "${JAR}"), ('"${JAR}x"', "${JAR}"),
-                       ("'a'b $JAR", "$JAR"), ("$JAR/sub", "$JAR")):
+def test_live_dollar_is_never_named():
+    for tail in ('"$JAR"', "$JAR", "${JAR}x", '"${JAR}x"', "'a'b $JAR", "$JAR/sub"):
         r = _r(f"ls {REPO} {tail} | tar cf - -T -")
-        assert r and f"the shell variable ({name})" in r, (tail, r)
+        assert r, tail
+        _no_variable_wording(r, tail)
+        assert "$JAR" not in r and "${JAR}" not in r, (tail, r)
+
+
+def test_rereview3_cases_name_no_variable():
+    """Re-review 3: a `$` in a comment, `$$NAME` (the PID), a non-ASCII suffix — none is claimed a variable."""
+    for tail in ("# $JAR", "$$JAR", '"$$JAR"', "$$NAME", "$JAR\u00e9", "${JAR\u00e9}"):
+        r = _r(f"ls {REPO} {tail} | tar cf - -T -")
+        assert r, tail
+        _no_variable_wording(r, tail)
+        assert "$JAR" not in r and "$NAME" not in r, (tail, r)
