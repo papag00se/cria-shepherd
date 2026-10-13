@@ -1611,3 +1611,17 @@ L5/qwen3.8_9b_distill: tok/s6/6; sources shipping-rates-rb_qwen3.8_9b_distill_co
 L5/ling3.0_tiny: tok/s6/6; sources shipping-rates-rb_ling3.0_tiny_codex_poff_1791555838, cart-billing-go_ling3.0_tiny_codex_poff_1791558266, orders-api-py_ling3.0_tiny_codex_poff_1791562057, feed-pipeline-java_ling3.0_tiny_codex_poff_1791565367, handles-cli-node_ling3.0_tiny_codex_poff_1791567873, rust-toml-cli_ling3.0_tiny_codex_poff_1791570450
 L5/nemotron-elastic: tok/s6/6; sources shipping-rates-rb_nemotron-elastic_codex_poff_1791537786, cart-billing-go_nemotron-elastic_codex_poff_1791540718, orders-api-py_nemotron-elastic_codex_poff_1791543461, feed-pipeline-java_nemotron-elastic_codex_poff_1791546209, handles-cli-node_nemotron-elastic_codex_poff_1791548860, rust-toml-cli_nemotron-elastic_codex_poff_1791551788
 L5/phi4: tok/s6/6; sources shipping-rates-rb_phi4_codex_poff_1791611979, cart-billing-go_phi4_codex_poff_1791614298, orders-api-py_phi4_codex_poff_1791616698, feed-pipeline-java_phi4_codex_poff_1791646575, handles-cli-node_phi4_codex_poff_1791649376, rust-toml-cli_phi4_codex_poff_1791652038
+
+
+## Standing update — java-column-focused-20261012 — L5
+
+ornith1.5_9b: usefulness6/6, minutes6/6, calls6/6.
+Pending cells retain prior standings; metrics use matching authoritative judged result rows only, never historical rounded row means. Unknown metrics are excluded.
+
+ ornith1.5_9b: usefulness1/1, minutes1/1, calls1/1, tok/s1/1.
+Means use selected independently judged logical cells once; zeros count, pending/unjudged cells and failed originals do not. Missing, non-numeric or invalid metrics are excluded, not fabricated as zero. Minutes are authoritative wall_seconds/60, including judge waits (not active-work minutes); operator-ended measurement basis remains in attempt provenance. Token rate is the arithmetic mean of known per-task avg_tok_s values, displayed to one decimal; each run rate uses timed output tokens over timed generation seconds across all captured phases, not coder-only speed or wall-time throughput. A mean with incomplete coverage is a partial known-metric mean.
+
+
+Throughput coverage and authoritative source runs:
+L5/ornith1.5_9b: tok/s6/6; sources shipping-rates-rb_ornith1.5_9b_codex_poff_1791502183, cart-billing-go_ornith1.5_9b_codex_poff_1791506005, orders-api-py_ornith1.5_9b_codex_poff_1791509968, feed-pipeline-java_ornith1.5_9b_codex_poff_1791845497, handles-cli-node_ornith1.5_9b_codex_poff_1791516530, rust-toml-cli_ornith1.5_9b_codex_poff_1791518629
+Standing metric sources L5/ornith1.5_9b: {"cart-billing-go": "cart-billing-go_ornith1.5_9b_codex_poff_1791506005", "feed-pipeline-java": "feed-pipeline-java_ornith1.5_9b_codex_poff_1791845497", "handles-cli-node": "handles-cli-node_ornith1.5_9b_codex_poff_1791516530", "orders-api-py": "orders-api-py_ornith1.5_9b_codex_poff_1791509968", "rust-toml-cli": "rust-toml-cli_ornith1.5_9b_codex_poff_1791518629", "shipping-rates-rb": "shipping-rates-rb_ornith1.5_9b_codex_poff_1791502183"}

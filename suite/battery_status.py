@@ -410,6 +410,64 @@ def order_by_l5(text: str) -> str:
     return ''.join(sections)
 
 
+def _standing_metric_sources(evidence: str, rs: list[dict], level: int, model: str) -> dict:
+    """Read the last published run bindings, not the latest/best judged attempts.
+
+    Legacy throughput disclosures bind only tasks with known timing. New disclosures
+    bind every task, including explicit unknowns, so a later unselected attempt cannot
+    silently fill a measurement gap. Both formats identify exact authoritative runs.
+    """
+    sources = {}
+    prefix = f'Standing metric sources L{level}/{model}: '
+    legacy = f'L{level}/{model}: tok/s'
+    for line in reversed(evidence.splitlines()):
+        if line.startswith(prefix):
+            sources = json.loads(line[len(prefix):])
+            if (not isinstance(sources, dict) or set(sources) != set(TASKS)
+                    or any(value is not None and (not isinstance(value, str) or not value)
+                           for value in sources.values())):
+                raise ValueError('malformed standing metric source bindings')
+            return sources
+        elif line.startswith(legacy):
+            match = re.fullmatch(re.escape(legacy) + r'\d+/\d+; sources (.+)', line)
+            if not match:
+                raise ValueError('malformed standing throughput source bindings')
+            sources = {}
+            if match.group(1) == 'none':
+                return sources
+            for run_id in match.group(1).split(', '):
+                found = [r for r in rs if r.get('run_id') == run_id]
+                if (len(found) != 1 or found[0].get('level') != level
+                        or canonical_name(found[0].get('model', '')) != model
+                        or found[0].get('task') not in TASKS or found[0]['task'] in sources):
+                    raise ValueError('missing or ambiguous standing metric source')
+                sources[found[0]['task']] = run_id
+            return sources
+    return sources
+
+
+def _retained_metric_row(rs: list[dict], sources: dict, level: int,
+                         model: str, task: str, score: int) -> dict | None:
+    if task not in sources:
+        # Legacy reports did not bind unknown-rate tasks. Bootstrap only the latest
+        # matching standing row, never search older judgments by percentage.
+        row = level_cell([r for r in rs if judged(r) and not r.get('aborted')
+                          and r.get('terminal') != 'harness-error'], level, model, task)
+        return row if (row and type(row.get('usefulness_percent')) is int
+                       and row['usefulness_percent'] == score) else None
+    run_id = sources[task]
+    if run_id is None:
+        return None  # an explicit published gap stays unknown until selected
+    found = [r for r in rs if r.get('run_id') == run_id]
+    if (len(found) != 1 or found[0].get('level') != level
+            or canonical_name(found[0].get('model', '')) != model
+            or found[0].get('task') != task or type(found[0].get('usefulness_percent')) is not int
+            or found[0]['usefulness_percent'] != score or found[0].get('aborted')
+            or found[0].get('terminal') == 'harness-error' or found[0].get('superseded')):
+        raise ValueError('invalid retained standing metric source')
+    return found[0]
+
+
 def write_report(rs: list[dict], *, campaign: dict | None = None) -> Path:
     path = SUITE.parent / 'docs' / 'battery-report.md'
     existing = path.read_text() if path.exists() else ''
@@ -444,7 +502,9 @@ def write_report(rs: list[dict], *, campaign: dict | None = None) -> Path:
             if len(fields) not in (10, 11) or fields[0] in old_rows:
                 raise ValueError('malformed or duplicate model row')
             old_rows[fields[0]] = fields
-    coverage = []
+    evidence = path.with_name('battery-report-evidence.md')
+    prior_evidence = evidence.read_text() if evidence.exists() else ''
+    coverage, rate_coverage, source_coverage = [], [], []
     for line in table.splitlines()[2:]:
         fields = [field.strip() for field in line.strip('|').split('|')]
         model = fields[0]
@@ -457,6 +517,10 @@ def write_report(rs: list[dict], *, campaign: dict | None = None) -> Path:
         scores = [int(re.search(r'(\d+)%$', v).group(1)) for v in target[1:7] if v and v != '·']
         target[7] = f'{round(sum(scores) / len(scores))}%'
         metrics = []
+        retains_scores = any(not fresh and standing not in ('', '·')
+                             for fresh, standing in zip(fields[1:7], target[1:7]))
+        sources = _standing_metric_sources(prior_evidence, rs, level, model) if retains_scores else {}
+        bindings = dict.fromkeys(TASKS)
         for column, task in enumerate(TASKS, 1):
             if not target[column] or target[column] == '·':
                 continue
@@ -473,16 +537,21 @@ def write_report(rs: list[dict], *, campaign: dict | None = None) -> Path:
                 if row.get('level') != level:
                     raise ValueError('selected result engagement differs from campaign')
             else:
-                # Reuse only a matching authoritative standing result, not a rounded old mean.
-                row = level_cell([r for r in rs if judged(r) and r.get('terminal') != 'harness-error'],
-                                 level, model, task)
-                if row is None or row.get('usefulness_percent') != score:
+                row = _retained_metric_row(rs, sources, level, model, task, score)
+                if row is None:
                     continue
             metrics.append(row)
+            bindings[task] = row['run_id']
         minutes = [r['wall_seconds'] / 60 for r in metrics if _measurement(r.get('wall_seconds'))]
         calls = [r['calls'] for r in metrics if _measurement(r.get('calls'))]
         target[8:10] = [str(round(sum(v) / len(v))) if v else '·' for v in (minutes, calls)]
+        timed = [r for r in metrics if _measurement(r.get('avg_tok_s'))]
+        target[10:] = [_rate_mean([r['avg_tok_s'] for r in timed])]
         coverage.append(f'{model}: usefulness{len(scores)}/6, minutes{len(minutes)}/6, calls{len(calls)}/6')
+        rate_coverage.append(f'L{level}/{model}: tok/s{len(timed)}/{len(scores)}; sources '
+                             + (', '.join(r['run_id'] for r in timed) if timed else 'none'))
+        source_coverage.append(f'Standing metric sources L{level}/{model}: '
+                               + json.dumps(bindings, sort_keys=True))
     all_scores = [int(re.search(r'(\d+)%$', v).group(1))
                   for fields in old_rows.values() for v in fields[1:7] if v and v != '·']
     title = re.sub(r'\d+%$', f'{round(sum(all_scores) / len(all_scores))}%' if all_scores else '0%', lines[0])
@@ -491,7 +560,10 @@ def write_report(rs: list[dict], *, campaign: dict | None = None) -> Path:
     tail = '\n\nLegend:' + existing.split('Legend:', 1)[1] if level == 5 else '\n\n'
     sections[level + 1] = title + '\n\n' + '\n'.join([header, separator] +
         ['| ' + ' | '.join(fields) + ' |' for fields in old_rows.values()]) + tail
-    text, rate_coverage = add_throughput_column(''.join(sections), rs, refresh_levels={level})
+    # Selected models' aggregates already use selected + retained exact run bindings.
+    # Never refresh unselected standings. Only legacy rows lacking a timing column
+    # enter the explicit column-migration path; existing metrics remain byte-identical.
+    text, migration_coverage = add_throughput_column(''.join(sections), rs, refresh_levels=set())
     # Shared ranking is finalized after the standing overlay, even on non-L5 updates.
     text = order_by_l5(text)
     # Normalize legacy average labels in every table without touching measurements.
@@ -503,12 +575,13 @@ def write_report(rs: list[dict], *, campaign: dict | None = None) -> Path:
             display_lines[index] = '|'.join(fields)
     text = ''.join(display_lines)
     # Measurement gaps and campaign provenance belong outside the score report.
-    evidence = path.with_name('battery-report-evidence.md')
     note = ('\n\n## Standing update — ' + campaign['campaign_id'] + f' — L{level}\n\n'
             + '; '.join(coverage) + '.\nPending cells retain prior standings; metrics use matching authoritative '
             'judged result rows only, never historical rounded row means. Unknown metrics are excluded.\n\n'
             + fresh_table(campaign, rs).split('**Row-average coverage:**', 1)[1]
-            + '\n\nThroughput coverage and authoritative source runs:\n' + rate_coverage + '\n')
+            + '\n\nThroughput coverage and authoritative source runs:\n'
+            + '\n'.join(rate_coverage + ([migration_coverage] if migration_coverage else []))
+            + '\n' + '\n'.join(source_coverage) + '\n')
     with evidence.open('a') as stream:
         stream.write(note)
     temp = path.with_suffix('.tmp')
