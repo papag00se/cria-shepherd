@@ -143,3 +143,67 @@ The judge infers usefulness only from the original `prompt.txt` and the archived
 ## Replays and walks
 
 `replay.py` re-sends real captured calls under a settings or wording matrix and evaluates protocol behavior with cria's own parsers. `walk.py` materializes a call-by-call transcript for manual causal analysis.
+
+## Closed walk and fix retention
+
+Operator policy (2026-10-13): after all fixes associated with a walk/validation unit settle
+**ACCEPTED or REJECTED**, delete its walk, proof outputs, reviews, scratch copies and supporting
+artifacts. Durable outputs are **repository changes (including genuine regression tests) and
+actual model-call logs**, not permanent bug/score archives or hash/tombstone warehouses.
+Old assistant-authored archival instructions and incidental citations do not extend closed-work
+retention. Keep active owners, unresolved failures, necessary current inputs/deadlines and unique
+unapplied source/tests until disposition/application makes those copies unnecessary. Never infer
+closure from a finished model run, usefulness judgment, missing findings or an empty fix list.
+
+The current workflow has no automatic fix-acceptance event: `walk.py` creates reading assignments;
+`milestones.py` records task continuation, not fix dispositions. The coordinating owner therefore
+runs the concrete closure command immediately after the last authoritative fix disposition:
+
+```bash
+python -B suite/close_walk.py /path/to/temporary-closure.json --dry-run
+python -B suite/close_walk.py /path/to/temporary-closure.json
+```
+
+Dry-run is optional, not another operator approval step. The temporary declaration is the complete
+operator closure event for that unit, not a second permanent registry. Example (absolute paths):
+
+```json
+{"unit":"walk-example","owner":"coordinator","closure":"final operator dispositions",
+ "closed":true,"fixes":[{"id":"fix-1","disposition":"ACCEPTED","changes":[
+ {"source":"/tmp/example/test_regression.py",
+  "worktree":"/home/operator/src/cria-shepherd/tests/test_regression.py"}]}],
+ "scratch":["/tmp/example"],"protected_paths":[],"call_logs":[]}
+```
+
+Declare every fix; only the exact two settled dispositions qualify. Declare each necessary unique
+source/test copy; identical regular-file bytes must already exist inside this worktree before
+scratch removal. Rejected alternatives that are not needed are disposable, not tests to port.
+Explicit `changes: []` means no necessary unique changes, not an unexamined directory. A genuinely
+closed walk with no findings requires `fixes: []` AND `no_findings: true`. Unknown/ambiguous
+ownership or dispositions deny cleanup. No blanket glob: list only attributable paths strictly
+below `/tmp`, `~/.cria/validation` or `~/.cria/walk-findings`. Root deletion/escape, overlapping
+paths, missing targets, symlinks/special entries and protected intersections are refused before
+any batch deletion. An absent path is not reported as a previously successful deletion.
+
+Declare active dependencies/gates/other-owner inputs in `protected_paths` and ALL misplaced
+experimental captures in `call_logs`; an overlap denies the containing-root deletion. Canonical
+`~/.cria/calls`, `~/.cria/logs`, this repository and `~/Documents` are always protected. Move actual
+experimental call logs to `~/.cria/calls` with explicit original-path provenance and verified full
+byte custody before deleting any otherwise eligible containing root. Never move operative gates.
+Synthetic CPU-fixture captures are not new model calls, but establish that from actual producer
+and transport ownership, never filename resemblance alone. Keep pending runtime candidates,
+unique unapplied tests/code, quarantined workspaces and other projects untouched.
+
+The command validates the supplied declaration; it cannot judge whether the coordinator omitted
+an active dependency or misclassified arbitrary bytes as scratch. It is not a general garbage
+collector, permission sandbox or technical barrier to independent destructive shell commands.
+Deletion uses no-follow parent descriptors and the platform's symlink-safe tree remover; stale
+inode identity denies deletion. Directory traversal errors deny the whole batch, rather than
+silently treating an unreadable subtree as empty. Target directories must belong to the current
+process's Unix user; target parents must already allow removal. After full admission, only owned
+directories INSIDE the admitted targets gain owner-write permission when necessary (for example,
+read-only copied module caches). No file permissions change: a hard-linked original elsewhere
+must retain its mode and bytes. No permissions outside admitted trees change. Filesystem failures
+can still leave a partially removed batch: inspect and report the actual error, never relabel it
+as complete. Temporary closure/cleanup/review records
+are themselves disposable after this unit settles; do not keep another permanent archive.
