@@ -21,7 +21,7 @@ import json
 import pathlib
 import tempfile
 import unittest
-from unittest import mock
+from memory_http import MemoryTransport, stream_reply
 
 from cria.upstream import Upstream
 
@@ -43,25 +43,6 @@ def sse(delta=None, usage=None, finish=None):
     return b"data: " + json.dumps(payload).encode() + b"\n"
 
 
-class Resp:
-    """A stream that dies the way a killed process dies: no exception, no more lines, no aftermath."""
-
-    def __init__(self, lines, die_after=None):
-        self.lines, self.closed, self._die = lines, False, die_after
-
-    def __iter__(self):
-        for i, ln in enumerate(self.lines):
-            if self._die is not None and i == self._die:
-                raise KeyboardInterrupt("SIGINT/SIGTERM mid-stream")
-            yield ln
-
-    def close(self):
-        self.closed = True
-
-    def read(self):
-        return b""
-
-
 def partials(tmp):
     return sorted(pathlib.Path(tmp).rglob("*.reasoning.partial.txt"))
 
@@ -71,25 +52,45 @@ def finals(tmp):
 
 
 class ThePartialSurvivesADeathWithNoAftermathTests(unittest.TestCase):
-    def drive(self, lines, die_after=None):
-        tmp = tempfile.mkdtemp()
-        up = Upstream("http://x", context_window=8192, capture_dir=tmp, capture_rendered=False)
-        resp = Resp(lines, die_after=die_after)
-        with mock.patch("cria.upstream.urllib.request.urlopen", return_value=resp):
-            try:
-                up.chat_watched({"model": "m", "messages": [{"role": "user", "content": "go"}]}, Rlog())
-            except BaseException:      # noqa: BLE001 — the kill itself is not what is under test
-                pass
+    def drive(self, lines, die_after=None, before_interrupt=None, root=None):
+        tmp = root if root is not None else tempfile.mkdtemp()
+        interruption = KeyboardInterrupt("SIGINT/SIGTERM mid-stream")
+        transport = MemoryTransport(lambda req: stream_reply(
+            lines, interrupt_at=die_after, interruption=interruption,
+            before_interrupt=before_interrupt))
+        up = Upstream("http://fixture.invalid", context_window=8192, capture_dir=tmp,
+                      capture_rendered=False, open_request=transport)
+        try:
+            up.chat_watched({"model": "m", "messages": [{"role": "user", "content": "go"}]}, Rlog())
+        except KeyboardInterrupt as error:
+            self.assertIs(error, interruption)
+        transport.assert_served()
+        if die_after is not None:
+            self.assertEqual(transport.interruptions, [interruption])
         return tmp
 
     def test_the_thinking_is_on_disk_before_the_stream_ends(self):
         """The whole point: bytes that reached the disk during the turn, not after it."""
-        big = "the totals are merged per SKU, not under one TOTAL key. " * 60
+        # Varied reasoning reaches the interruption; a repeated sentence is correctly
+        # aborted by the degeneration guard before the kill seam can execute.
+        big = "".join(f"Step {i}: handle {i} totals are merged per SKU, not under one TOTAL key. "
+                      for i in range(60))
+        seen_before_kill = []
+        def before_interrupt(error):
+            # Inspect the real disk write BEFORE the interruption, not its aftermath.
+            paths = sorted(pathlib.Path(root).rglob("*.reasoning.partial.txt"))
+            self.assertEqual(len(paths), 1)
+            self.assertEqual(paths[0].read_text(), big)
+            seen_before_kill.append(error)
+        # drive owns a fresh root; bind it without replacing any persistence code.
+        root = tempfile.mkdtemp()
         tmp = self.drive([sse({"reasoning_content": big}), sse({"reasoning_content": "x"})],
-                         die_after=1)
+                         die_after=1, before_interrupt=before_interrupt, root=root)
+        self.assertEqual(len(seen_before_kill), 1)
         files = partials(tmp) or finals(tmp)
         self.assertTrue(files, "a killed turn left nothing behind at all")
         self.assertIn("merged per SKU", files[0].read_text())
+        self.assertEqual(files[0].read_text().count(big), 1)
 
     def test_a_clean_turn_leaves_only_the_real_file(self):
         """The partial is scaffolding; it must not survive a normal turn and be walked as evidence."""

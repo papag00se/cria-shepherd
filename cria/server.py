@@ -38,6 +38,7 @@ from .loop import (
     _briefing_disk_truth,
     _drop_harness_frame,
     _PROSE_DROPPED_MARKER,
+    _HandoffOrigin,
     LoopContext,
     LoopStore,
     _fetch_ground_truth,
@@ -599,27 +600,26 @@ def _completion_text(c: dict) -> str:
     return ""
 
 
-def _carried_ledger(messages: list) -> str:
-    """The text of the tool ledger an EARLIER dropped-prose handoff carried, or "".
+def _carried_ledger(messages: list, *, origin: _HandoffOrigin | None = None) -> str:
+    """Carry only this session's actual deterministic hardener output.
 
-    Only the LATEST user turn that is a harness handoff counts, in one of the two shapes cria itself
-    leaves for it: the re-attributed continuation (CONTEXT_FIXES and above — cria's own template,
-    recognised by its fixed lead) or, below that rung, the harness's own summary turn whose summary
-    BEGINS with the ledger header. Model prose, tool results and an accepted briefing that quotes the
-    header are never read: the ledger is authoritative, so only cria's own turn may supply it."""
-    from .loop import _COMPACTION_BOUNDARY, _COMPACTION_MARKER, _DROPPED_PROSE_LEAD
-    from .loop import CONTINUATION_MARKER
-    head = selfcompact._ledger_head()
+    A role, lead, private marker or even a full historical producer signature
+    locates a candidate; none proves its origin. Missing session grounding (also
+    after a restart) abstains. The ledger itself comes from the producer record,
+    never from a quoted account's heading or an invented event in its payload.
+    """
+    from .loop import _COMPACTION_BOUNDARY, _COMPACTION_MARKER, CONTINUATION_MARKER
+    if not isinstance(origin, _HandoffOrigin) or not origin.dropped:
+        return ""
     for m in reversed(messages):
         if not isinstance(m, dict) or m.get("role") != "user":
             continue
         text = _text_of_msg(m)
-        if text.lstrip().startswith(CONTINUATION_MARKER) and _DROPPED_PROSE_LEAD in text:
-            return text[text.index(head):] if head in text else ""
+        if text.lstrip().startswith(CONTINUATION_MARKER):
+            return origin.ledger if origin.matches_continuation(text.strip()) else ""
         if _COMPACTION_MARKER in text and _COMPACTION_BOUNDARY in text:
             summary = text.split(_COMPACTION_BOUNDARY, 1)[1].lstrip("\n")
-            summary = summary.removeprefix(_PROSE_DROPPED_MARKER).lstrip("\n")
-            return summary if summary.startswith(head) else ""
+            return origin.ledger if origin.matches_summary(summary) else ""
     return ""
 
 
@@ -784,10 +784,11 @@ def _harden_compaction_reply(comp: dict, body: dict, provider, server, rlog, ses
     # cria owns (`selfcompact.work_ledger` — cria's own templates over structured fields, so it carries
     # no instruction and no claim beyond what a tool confirmed).
     ledger = (selfcompact.work_ledger(_compaction_messages(body.get("messages", [])),
-                                      carried=_carried_ledger(body.get("messages", [])), root=ws or "")
+                                      carried=_carried_ledger(body.get("messages", []),
+                                                              origin=getattr(_sess, "handoff_origin", None)), root=ws or "")
               if not text else "")
-    # The ledger LEADS the appendix: `_carried_ledger` recognises a later window's carry by the header
-    # opening the harness summary, which is what keeps a quoted header elsewhere from being read.
+    # Keep the historical signature and event rendering unchanged. Authority for
+    # the next window comes from the session's actual producer record, not this heading.
     facts = "\n\n".join(t for t in (ledger, facts, inventory, checks) if t)
     # Rewrite when there is anything to append OR when the reply's own prose was DROPPED above —
     # otherwise a dropped summary silently survives as the untouched original content.
@@ -805,6 +806,8 @@ def _harden_compaction_reply(comp: dict, body: dict, provider, server, rlog, ses
         if chs:
             chs[0] = {**chs[0], "message": {**(chs[0].get("message") or {}), "content": merged}}
             comp = {**comp, "choices": chs}
+    if _sess is not None:
+        _sess.handoff_origin = _HandoffOrigin(reply=_text_of(comp), ledger=ledger, dropped=not bool(text))
     return comp
 
 
@@ -1222,7 +1225,9 @@ class CriaHandler(BaseHTTPRequestHandler):
         # to fire cannot be proven gated by a test that sends one short request.
         reframed = 0
         if self.server.cfg.routing.context_fixes:
-            cleaned, reframed = reframe_compaction(cleaned)
+            live_loop = getattr(self.server, "loop", None)
+            sess = live_loop._store.get(sess_key) if live_loop is not None else None
+            cleaned, reframed = reframe_compaction(cleaned, origin=getattr(sess, "handoff_origin", None))
         # C44 R1 (review 9eaadebe): UNCONDITIONAL, every level — `reframe_compaction` above is the
         # interpreter (picks the right template) for the shapes it recognizes, gated on CONTEXT_FIXES
         # by the same "reattribution is surgery" rule as the reframe itself; this is the blanket net

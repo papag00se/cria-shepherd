@@ -8,15 +8,13 @@ fake is transport only; it supplies model discovery, a server context error, and
 
 from __future__ import annotations
 
-import io
 import json
 import tempfile
 import types
 import unittest
-import urllib.error
 from dataclasses import replace
 from pathlib import Path
-from unittest import mock
+from memory_http import MemoryTransport, Reply, json_reply, stream_reply
 
 from cria import bodykeys, loop, tokenratio
 from cria.config import Backend, Role
@@ -43,51 +41,24 @@ class _Rlog:
         return [kwargs for name, kwargs in self.events if name == kind]
 
 
-class _BytesResponse:
-    def __init__(self, value):
-        self._raw = json.dumps(value).encode("utf-8")
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *unused):
-        return False
-
-    def read(self):
-        return self._raw
-
-
-class _SSE:
-    def __init__(self, lines):
-        self._lines = lines
-
-    def __iter__(self):
-        return iter(self._lines)
-
-    def close(self):
-        pass
-
-
 def _sse(value):
     return b"data: " + json.dumps(value).encode("utf-8") + b"\n"
 
 
 def _reply(text):
-    return _SSE([_sse({"choices": [{"delta": {"content": text}, "finish_reason": "stop"}]}),
-                 b"data: [DONE]\n"])
+    return stream_reply([_sse({"choices": [{"delta": {"content": text}, "finish_reason": "stop"}]}),
+                         b"data: [DONE]\n"])
 
 
 def _context(url):
-    return urllib.error.HTTPError(url, 400, "Bad Request", {}, io.BytesIO(json.dumps({"error": {
+    return json_reply({"error": {
         "n_prompt_tokens": 90_000, "n_ctx": WINDOW,
         "message": "request exceeds available context",
-    }}).encode("utf-8")))
+    }}, status=400)
 
 
 def _other_400(url):
-    return urllib.error.HTTPError(url, 400, "Bad Request", {}, io.BytesIO(json.dumps({"error": {
-        "message": "malformed request",
-    }}).encode("utf-8")))
+    return json_reply({"error": {"message": "malformed request"}}, status=400)
 
 
 class _Transport:
@@ -99,25 +70,25 @@ class _Transport:
     def open(self, req, timeout=None):
         url = req.full_url
         if url.endswith("/v1/models"):
-            return _BytesResponse({"data": [{"id": MODEL}]})
+            return json_reply({"data": [{"id": MODEL}]})
         if url.endswith("/props"):
-            return _BytesResponse({"default_generation_settings": {}})
+            return json_reply({"default_generation_settings": {}})
         if not url.endswith("/v1/chat/completions"):
             raise AssertionError(url)
         self.posts.append(bytes(req.data or b""))
         self.calls += 1
         if self.mode == "context":
-            raise _context(url)
+            return _context(url)
         if self.mode == "context_then_summary":
             if self.calls == 1:
-                raise _context(url)
+                return _context(url)
             return _reply("recovered summary")
         if self.mode == "context_refit_empty_then_outer_summary":
             # Initial outer POST overflows.  Real _open_with_refit sends a changed
             # inner body after normal floor state evolves; its empty successful
             # answer makes summarize open the ordinary same-role outer retry.
             if self.calls == 1:
-                raise _context(url)
+                return _context(url)
             if self.calls == 2:
                 return _reply("")
             if self.calls == 3:
@@ -127,11 +98,11 @@ class _Transport:
             return _reply("") if self.calls == 1 else _reply("recovered summary")
         if self.mode == "transient_then_summary":
             if self.calls == 1:
-                raise urllib.error.URLError("temporary fixture failure")
+                return Reply(b"", connect_error=OSError("temporary fixture failure"))
             return _reply("recovered summary")
         if self.mode == "other_400_then_summary":
             if self.calls == 1:
-                raise _other_400(url)
+                return _other_400(url)
             return _reply("recovered summary")
         if self.mode == "summary":
             return _reply("recovered summary")
@@ -151,17 +122,20 @@ def _messages():
 class CallerContextNoopRetryTests(unittest.TestCase):
     def setUp(self):
         tokenratio.reset()
-        self.captures = Path(tempfile.mkdtemp(prefix="cria-context-retry-"))
+        self.captures = Path(tempfile.mkdtemp(prefix="context-retry-"))
 
     def tearDown(self):
         tokenratio.reset()
 
     def _upstream(self):
+        transport = MemoryTransport()
+        self.addCleanup(transport.assert_served)
         return Upstream(BACKEND.base_url, timeout_seconds=1, context_window=None,
-                        capture_dir=self.captures, capture_rendered=False, engagement_level=5)
+                        capture_dir=self.captures, capture_rendered=False, engagement_level=5,
+                        open_request=transport)
 
     def _satisfaction(self, up, tr, rlog, role=OFF):
-        with mock.patch("cria.upstream.urllib.request.urlopen", tr.open):
+        with up._receive_open.respond_with(tr.open):
             return loop._satisfaction_evidence(_messages(), rlog=rlog,
                                                chat_fn=up.chat_watched, role=role)
 
@@ -172,13 +146,14 @@ class CallerContextNoopRetryTests(unittest.TestCase):
                                         compactor_role=OFF)
         sess = loop.PlanSession(plan=Plan(id="p", task="t", created="now", items=[]))
         sess.workspace_root = ""
-        with mock.patch("cria.upstream.urllib.request.urlopen", tr.open):
+        with up._receive_open.respond_with(tr.open):
             return lp._grounded_evidence(sess, {"messages": _messages()}, rlog)
 
-    def _captured_bodies(self):
-        return [json.loads(path.read_text(encoding="utf-8"))["body"]
-                for path in sorted(self.captures.rglob("*.json"))
-                if not path.name.endswith(".response.json")]
+    def _captured_bodies(self, rlog):
+        # Receive receipts are JSON too, but are not model request captures.
+        # The authoritative dump event also includes unsent retry preflights.
+        return [json.loads(Path(event["path"]).read_text(encoding="utf-8"))["body"]
+                for event in rlog.named("upstream.dump")]
 
     def _assert_suppressed_context(self, evidence, tr, rlog):
         self.assertEqual(len(tr.posts), 1)
@@ -189,7 +164,7 @@ class CallerContextNoopRetryTests(unittest.TestCase):
         self.assertTrue(rlog.named("summarize.context_retry_no_change"))
         self.assertEqual(len(rlog.named("upstream.error")), 1)  # original rejected POST remains recorded
         self.assertEqual(len(rlog.named("summarize.error")), 1)
-        bodies = self._captured_bodies()
+        bodies = self._captured_bodies(rlog)
         self.assertGreaterEqual(len(bodies), 2)  # sent initial + unsent inner/outer preflights
         self.assertTrue(all(bodykeys.CONTEXT_REFIT_NO_CHANGE not in body for body in bodies))
         self.assertEqual(json.loads(tr.posts[0]), bodies[0])
@@ -229,7 +204,7 @@ class CallerContextNoopRetryTests(unittest.TestCase):
             "historical evidence alpha\n" + "A" * 36_000,
             "historical evidence beta\n" + "B" * 36_000,
         ]
-        with mock.patch("cria.upstream.urllib.request.urlopen", tr.open):
+        with up._receive_open.respond_with(tr.open):
             evidence = loop.summarize(
                 up.chat_watched, OFF,
                 "Summarize the supplied historical evidence without adding facts.",
@@ -252,7 +227,7 @@ class CallerContextNoopRetryTests(unittest.TestCase):
         self.assertEqual([event["turns_dropped"] for event in rlog.named("context.floor")], [2, 1])
         self.assertIn("recovered summary", evidence)
         final_bodies = [json.loads(post) for post in tr.posts]
-        self.assertEqual(final_bodies, self._captured_bodies())
+        self.assertEqual(final_bodies, self._captured_bodies(rlog))
         self.assertTrue(all(body["chat_template_kwargs"]["enable_thinking"] is False
                             for body in final_bodies))
         self.assertTrue(all(body["temperature"] == 0.0 for body in final_bodies))

@@ -1,0 +1,2 @@
+RETAINED EARLIER CONTEXT (source framing and time qualifiers belong to each record; this wrapper does not change them):
+{{HISTORY}}

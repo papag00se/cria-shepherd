@@ -72,6 +72,10 @@ COMPLETION_REMEDIATION = "cria_completion_remediation"
 #: is not, and only delivery counts as a whole read.  Stripped from the message at the wire.
 RESTORED_FILES = "cria_restored_files"
 
+#: On a superseded-write notice: the producer's private typed obligation for the exact
+#: historical replacement pairs. Settled after the floor and stripped from each message.
+SUPERSEDED_WRITES = "cria_superseded_writes"
+
 # --- response-body hints: cria's own annotations on a completion --------------------------------
 
 #: Human-facing notes cria attaches to a completion for the operator's display, stripped before the
@@ -95,4 +99,4 @@ PAYLOAD_BOUNDARY = "cria_payload_boundary"
 #: Every key above. The wire strips this set wholesale, so adding a key here is all it takes to keep
 #: it off the API — the thing five scattered literals could not guarantee.
 ALL = (MERGE_TURNS, OUTPUT_RESERVE, LOST_CALL, PINNED_TASK, CONTEXT_REFIT_NO_CHANGE,
-       CALLER_INSTRUCTIONS, CALLER_PERSONA, CALLER_SPAN, RESTORED_FILES, COMPLETION_REMEDIATION, NOTES, RUMINATION, FENCED_REFUSED, PAYLOAD_BOUNDARY)
+       CALLER_INSTRUCTIONS, CALLER_PERSONA, CALLER_SPAN, RESTORED_FILES, COMPLETION_REMEDIATION, NOTES, RUMINATION, FENCED_REFUSED, PAYLOAD_BOUNDARY, SUPERSEDED_WRITES)

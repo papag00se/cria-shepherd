@@ -24,6 +24,7 @@ from .claude_cli import ClaudeCliProvider
 from .config import Backend, RoutingConfig
 from .envfile import env_secret
 from .upstream import Upstream
+from . import receivecapture
 
 
 @dataclass
@@ -56,7 +57,12 @@ class Router:
             # the arm would be contaminated by the thing it exists to isolate.
             lambda base_url, key: Upstream(base_url, timeout, api_key=key,
                                            context_window=context_window or None,
-                                           engagement_level=cfg.engagement_level)
+                                           engagement_level=cfg.engagement_level,
+                                           capture_dir=getattr(local_provider, '_capture_dir', None),
+                                           capture_rendered=getattr(local_provider, '_capture_rendered', True),
+                                           open_request=(getattr(local_provider, '_receive_open', None)
+                                                         or receivecapture.DefaultTransport())
+                                           if getattr(local_provider, '_capture_dir', None) is not None else None)
         )
         self._claude_factory = claude_factory or (
             lambda b: ClaudeCliProvider(b.binary, b.cwd, timeout)

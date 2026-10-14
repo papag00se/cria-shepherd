@@ -15,7 +15,7 @@ import sys
 from dataclasses import replace
 
 from . import __version__, brave
-from . import prompts
+from . import prompts, receivecapture
 from .config import Config
 from .envfile import load_env_file
 from .events import EventLog
@@ -75,6 +75,7 @@ def main(argv: list[str] | None = None) -> int:
         capture_dir=cfg.logging.capture_dir_path if cfg.logging.capture_calls else None,
         capture_rendered=cfg.logging.capture_rendered,
         engagement_level=cfg.routing.engagement_level,
+        open_request=receivecapture.DefaultTransport() if cfg.logging.capture_calls else None,
     )
     if cfg.logging.capture_calls:
         log.emit("capture.enabled", dir=str(cfg.logging.capture_dir_path))

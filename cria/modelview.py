@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import re
 
-from . import contextfloor, dedup, probegate, prompts, selfcompact
+from . import bodykeys, contextfloor, dedup, focustrim, probegate, prompts, selfcompact
 
 # The messages that carry the repo's own check evidence into the model's view, each rendered by a
 # different owner: the compaction continuation freezes the gate's findings into the harness's history
@@ -163,6 +163,41 @@ def retained_results_truth(messages: list[dict]) -> list[dict]:
         if out is None:
             out = list(messages)
         out[i] = {**m, "content": c[:at] + section + (("\n" + rest) if rest else "")}
+    return out if out is not None else messages
+
+
+def superseded_writes_truth(messages: list[dict]) -> list[dict]:
+    """Qualify only producer-authenticated promises falsified by the final body.
+
+    A read, current-text block or edit is not the promised historical whole write.
+    Compare exact pairs after all floor/argument/integrity/evidence transforms;
+    never recreate missing content or change the supersession selection rule.
+    """
+    notices = []
+    for i, m in enumerate(messages):
+        hint = m.get(bodykeys.SUPERSEDED_WRITES) if isinstance(m, dict) else None
+        if (isinstance(hint, focustrim.SupersededWriteNotice)
+                and m.get("role") == "user" and m.get("content") == hint.text):
+            notices.append((i, m, hint))
+    if not notices:
+        return messages
+    answers = {m.get("tool_call_id"): m for m in messages
+               if isinstance(m, dict) and m.get("role") == "tool"}
+    pairs = {focustrim.superseded_pair_identity(tc, answers.get(tc.get("id")))
+             for m in messages if isinstance(m, dict) and m.get("role") == "assistant"
+             for tc in m.get("tool_calls") or [] if tc.get("id") in answers}
+    out = None
+    for i, m, hint in notices:
+        missing = [path for path, call, answer in hint.replacements
+                   if answer is None or (call, answer) not in pairs]
+        if not missing:
+            continue
+        text = prompts.render("superseded_writes_unavailable", count=str(hint.count),
+                              paths=prompts.named_list(hint.paths),
+                              missing=prompts.named_list(missing))
+        if out is None:
+            out = list(messages)
+        out[i] = {**m, "content": text}
     return out if out is not None else messages
 
 

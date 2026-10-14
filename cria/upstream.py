@@ -149,7 +149,7 @@ class Upstream:
 
     def __init__(self, base_url: str, timeout_seconds: int = 600, api_key: str | None = None,
                  context_window: int | None = None, capture_dir=None, capture_rendered: bool = True,
-                 engagement_level: int = config.MAX_ENGAGEMENT_LEVEL) -> None:
+                 engagement_level: int = config.MAX_ENGAGEMENT_LEVEL, open_request=None) -> None:
         # THE ENGAGEMENT LADDER reaches in here because two of its rungs live on this path: the
         # tool-call repairs are level 1 and the context floor is level 3. Passed as a number rather
         # than a Config so the transport keeps knowing nothing about roles, backends or the loop.
@@ -162,6 +162,10 @@ class Upstream:
         self._api_key = api_key
         # When set, capture the EXACT body of every model call to a file here (opt-in).
         self._capture_dir = capture_dir
+        if open_request is None and capture_dir is not None:
+            from .receivecapture import DefaultTransport
+            open_request = DefaultTransport()
+        self._receive_open = open_request
         # Also capture the rendered prompt (chat template applied) — only for a local server
         # (cloud has no /apply-template). The true string the model tokenizes.
         self._capture_rendered = capture_rendered and api_key is None
@@ -202,6 +206,11 @@ class Upstream:
             h["Authorization"] = f"Bearer {self._api_key}"
         return h
 
+    def _ordinary_open(self, req, *, timeout):
+        # Preparation and captured dispatch share cache provenance at construction.
+        opening = getattr(self._receive_open, 'ordinary', urllib.request.urlopen)
+        return opening(req, timeout=timeout)
+
     def loaded_model(self, rlog) -> str | None:
         """The model id ACTUALLY loaded at this local server — llama.cpp's /v1/models returns its
         ``--alias``. Discovered once and cached, so cria's banner can show the TRUTH (what's really
@@ -223,7 +232,7 @@ class Upstream:
         self._loaded_model = None
         try:
             req = urllib.request.Request(self._base_url + "/v1/models", method="GET")
-            with urllib.request.urlopen(req, timeout=5) as resp:
+            with self._ordinary_open(req, timeout=5) as resp:
                 data = json.loads(resp.read())
             models = data.get("data") if isinstance(data, dict) else None
             if models and isinstance(models[0], dict):
@@ -258,7 +267,7 @@ class Upstream:
             return None
         try:
             req = urllib.request.Request(self._base_url + "/props", method="GET")
-            with urllib.request.urlopen(req, timeout=5) as resp:
+            with self._ordinary_open(req, timeout=5) as resp:
                 self._props = json.loads(resp.read())
             self._props_seen = True
         except (urllib.error.URLError, ValueError, OSError) as e:
@@ -278,7 +287,7 @@ class Upstream:
             return self._window          # backed off: the committed fallback, without a probe
         try:
             req = urllib.request.Request(self._base_url + "/props", method="GET")
-            with urllib.request.urlopen(req, timeout=5) as resp:
+            with self._ordinary_open(req, timeout=5) as resp:
                 props = json.loads(resp.read())
             self._props, self._props_seen = props, True   # the compat banner reads this — no 2nd probe
             n_ctx = (props.get("default_generation_settings") or {}).get("n_ctx")
@@ -489,6 +498,10 @@ class Upstream:
                     rlog.restored_on_wire = on_wire
                 except AttributeError:
                     pass
+            if self._context_fixes:
+                # Supersession ran before the floor. Settle over exact pairs after
+                # all content repairs/folds, before lossless role concatenation.
+                msgs = modelview.superseded_writes_truth(msgs)
             msgs = _merge_consecutive_assistant(msgs)
             # THE LAST message transform, and last is the point. A template that enforces strict
             # user/assistant alternation ({user,tool} vs {assistant}) rejects the body outright, and
@@ -514,7 +527,7 @@ class Upstream:
             out["messages"] = [{k: v for k, v in m.items()
                                 if k not in (bodykeys.CALLER_INSTRUCTIONS, bodykeys.CALLER_PERSONA,
                                              bodykeys.CALLER_SPAN, bodykeys.RESTORED_FILES,
-                                             bodykeys.PAYLOAD_BOUNDARY)}
+                                             bodykeys.PAYLOAD_BOUNDARY, bodykeys.SUPERSEDED_WRITES)}
                                if isinstance(m, dict) else m for m in out["messages"]]
         sent_estimate = contextfloor.est_total(out.get("messages"), out.get("tools"))
         # The pre-frame observer never rides in ``out``.  It is correlated here, after every wire
@@ -666,6 +679,7 @@ class Upstream:
             req = urllib.request.Request(self._chat_url, data=data, method="POST", headers=self._headers(sse=stream))
             rlog.emit("upstream.request", url=self._chat_url, model=body.get("model"),
                       stream=stream, n_messages=len(body.get("messages", [])), refit=(attempt > 0))
+            receipt = None
             try:
                 # THE DEAD-STREAM DEADLINE LIVES AT THE WIRE, FOR STREAMING OPENS.
                 #
@@ -690,17 +704,43 @@ class Upstream:
                 # Buffered POSTs keep the long timeout: their whole generation arrives as one read,
                 # so a short deadline there would cut a working call.
                 read_deadline = rumination.WIRE_SILENCE_SECONDS if stream else self._timeout
-                return (urllib.request.urlopen(req, timeout=max(read_deadline, 1.0)),
-                        sent_estimate, capture_path)
+                from . import receivecapture
+                if self._capture_dir is not None and capture_path is None:
+                    raise receivecapture.CaptureFailure('configured request capture unavailable; no dispatch')
+                receipt = (receivecapture.Receipt(capture_path, request_sha256=hashlib.sha256(data).hexdigest())
+                           if capture_path is not None else None)
+                opening = self._receive_open or receivecapture.default_open_request
+                try:
+                    if self._receive_open is None and self._capture_dir is None:
+                        # Capture-off retains the actual installed urllib policy unchanged.
+                        resp = urllib.request.urlopen(req, timeout=max(read_deadline, 1.0))
+                    else:
+                        resp = opening(req, timeout=max(read_deadline, 1.0), receipt=receipt)
+                except BaseException as exc:
+                    if receipt is not None:
+                        receipt.partial(exc)
+                        if not isinstance(exc, urllib.error.HTTPError):
+                            receipt.finish(exc)
+                    raise
+                return resp, sent_estimate, capture_path
             except urllib.error.URLError as e:
                 last_err = e
+                failed_custody = False
                 if isinstance(e, urllib.error.HTTPError):
+                    from .receivecapture import finalize_http_error
                     try:
                         rejected = _http_error_body(e)
                         callcapture.capture_response(capture_path, rejected, rlog)
-                    except (OSError, AttributeError):
-                        pass  # Missing error bytes must not replace the original rejection.
-                refit = self._overflow_refit(e, sent_estimate, body.get("model"), rlog) if attempt == 0 else None
+                    except BaseException as secondary:
+                        # Retain the rejection as primary, but never refit after lost evidence.
+                        failed_custody = True
+                        e.add_note('secondary HTTP rejection evidence failure: ' + str(secondary))
+                        if receipt is not None:
+                            receipt.partial(secondary)
+                    finally:
+                        failed_custody = finalize_http_error(e, receipt) or failed_custody
+                refit = (self._overflow_refit(e, sent_estimate, body.get("model"), rlog)
+                         if attempt == 0 and not failed_custody else None)
                 if refit is not None:
                     safety_override = refit  # re-prep tighter against the server's real count, retry
                     continue
@@ -736,7 +776,7 @@ class Upstream:
             # it must never stall the actual call. When the slot is free it's ~4ms; if it can't
             # return quickly the slot is busy, so skip (best-effort) — the JSON body is still
             # captured and the prompt is reconstructable offline from it.
-            with urllib.request.urlopen(req, timeout=_RENDER_TIMEOUT_S) as resp:
+            with self._ordinary_open(req, timeout=_RENDER_TIMEOUT_S) as resp:
                 p = json.loads(resp.read()).get("prompt")
                 return p if isinstance(p, str) else None
         except (urllib.error.URLError, ValueError, OSError):
@@ -749,7 +789,7 @@ class Upstream:
                 self._base_url + "/tokenize",
                 data=json.dumps({"content": prompt, "add_special": False}).encode("utf-8"),
                 method="POST", headers={"Content-Type": "application/json"})
-            with urllib.request.urlopen(req, timeout=_RENDER_TIMEOUT_S) as resp:
+            with self._ordinary_open(req, timeout=_RENDER_TIMEOUT_S) as resp:
                 tokens = json.loads(resp.read()).get("tokens")
             return len(tokens) if isinstance(tokens, list) else None
         except (urllib.error.URLError, ValueError, OSError):

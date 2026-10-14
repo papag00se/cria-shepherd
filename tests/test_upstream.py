@@ -276,10 +276,13 @@ class ChatWatchedTests(unittest.TestCase):
             # window-exhaustion guard landed (2026-08-16) that inconsistency aborted the turn and
             # this test failed for a reason that had nothing to do with what it asserts. The point
             # here is capture fidelity, not window arithmetic.
-            up = Upstream("http://x", context_window=65536, capture_dir=tmp, capture_rendered=False)
+            from memory_http import MemoryTransport, stream_reply
+            transport = MemoryTransport(lambda req: stream_reply(lines))
+            up = Upstream("http://fixture.invalid", context_window=65536, capture_dir=tmp,
+                          capture_rendered=False, open_request=transport)
             rlog = _Rlog()
-            with mock.patch("cria.upstream.urllib.request.urlopen", return_value=_FakeResp(lines)):
-                up.chat_watched({"model": "m", "messages": [{"role": "user", "content": "go"}]}, rlog, watch=det.check)
+            up.chat_watched({"model": "m", "messages": [{"role": "user", "content": "go"}]}, rlog, watch=det.check)
+            transport.assert_served()
             files = list(Path(tmp).rglob("*.reasoning.txt"))
             self.assertEqual(len(files), 1)                       # one reasoning file per coder call
             self.assertEqual(files[0].read_text(), big)          # the WHOLE block, byte-for-byte, untruncated
@@ -292,9 +295,12 @@ class ChatWatchedTests(unittest.TestCase):
         chunk = "actually wait hmm let me reconsider on second thought " * 10
         lines = [_sse(_delta(reasoning_content=chunk)) for _ in range(20)] + [b"data: [DONE]\n"]
         with tempfile.TemporaryDirectory() as tmp:
-            up = Upstream("http://x", context_window=8192, capture_dir=tmp, capture_rendered=False)
-            with mock.patch("cria.upstream.urllib.request.urlopen", return_value=_FakeResp(lines)):
-                up.chat_watched({"model": "m", "messages": [{"role": "user", "content": "go"}]}, _Rlog(), watch=det.check)
+            from memory_http import MemoryTransport, stream_reply
+            transport = MemoryTransport(lambda req: stream_reply(lines))
+            up = Upstream("http://fixture.invalid", context_window=8192, capture_dir=tmp,
+                          capture_rendered=False, open_request=transport)
+            up.chat_watched({"model": "m", "messages": [{"role": "user", "content": "go"}]}, _Rlog(), watch=det.check)
+            transport.assert_served()
             saved = list(Path(tmp).rglob("*.reasoning.txt"))[0].read_text()
             # A repeated sentence trips the DEGENERATE-RUN backstop first, and the header names the
             # guard that fired rather than always naming the rumination one (which would print its

@@ -12,6 +12,7 @@ import unittest
 
 from cria import selfcompact, server
 from cria.config import Role
+from tests.handoff_runtime import attach_session
 
 FIX = os.path.join(os.path.dirname(__file__), "fixtures", "c13a_a10_first_compaction_history.json")
 IMPORTER = "src/main/java/pipeline/Importer.java"
@@ -46,10 +47,10 @@ def _provider(plan_word):
     return P
 
 
-def _harden(briefing, verdict, history=None):
+def _harden(briefing, verdict, history=None, *, runtime=None, sess_key=""):
     comp = {"choices": [{"message": {"role": "assistant", "content": briefing}}]}
     out = server._harden_compaction_reply(
-        comp, {"messages": history or _history()}, _provider(verdict), _Srv, _Rlog())
+        comp, {"messages": history or _history()}, _provider(verdict), runtime or _Srv, _Rlog(), sess_key)
     return out["choices"][0]["message"]["content"]
 
 
@@ -113,8 +114,11 @@ class RejectedHandoffTests(unittest.TestCase):
                                             f"{_COMPACTION_BOUNDARY}\n{reply}"}
 
     def test_the_ledger_a_dropped_handoff_shipped_is_carried_into_the_next(self):
-        from cria.loop import reframe_compaction
-        reply = _harden("x", "PLAN")                                  # carries the prose-dropped marker
+        from cria.loop import reframe_compaction, _history_root
+        runtime = _Srv()
+        key = "sid:c13-positive"
+        sess = attach_session(runtime, key, _history_root(_history())[0])
+        reply = _harden("x", "PLAN", runtime=runtime, sess_key=key)     # actual producer records origin
         ledger_text = reply[reply.index(selfcompact._ledger_head()):]
         later = [{"role": "user", "content": "task"}, self._stored_handoff(reply),
                  {"role": "assistant", "content": "", "tool_calls": [
@@ -122,8 +126,8 @@ class RejectedHandoffTests(unittest.TestCase):
                          "name": "write_file", "arguments": json.dumps({"path": "REVIEW.md", "content": "x"})}}]},
                  {"role": "tool", "tool_call_id": "c1", "content": "Wrote REVIEW.md"},
                  {"role": "user", "content": "<<<LOCAL_COMPACT>>> Summarize"}]
-        for shape in (later, [*reframe_compaction(later)[0]]):       # below CONTEXT_FIXES, and reframed
-            carried = server._carried_ledger(shape)
+        for shape in (later, reframe_compaction(later, origin=sess.handoff_origin)[0]):
+            carried = server._carried_ledger(shape, origin=sess.handoff_origin)
             self.assertTrue(carried, shape[1]["content"][:200])
             ledger = selfcompact.work_ledger(server._compaction_messages(shape), carried=carried)
             self.assertIn(f"{IMPORTER}: confirmed written", ledger)

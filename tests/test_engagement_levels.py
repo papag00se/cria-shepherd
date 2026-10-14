@@ -114,16 +114,22 @@ def owning_rung(kind: str) -> int | None:
 class _Harness:
     """A real cria server in front of a fake upstream, at one level, planner on or off."""
 
-    def __init__(self, level: int, planner: bool):
+    def __init__(self, level: int, planner: bool, *, capture=False, memory=False):
         self.tmp = TemporaryDirectory()
-        self.fake = ThreadingHTTPServer(("127.0.0.1", 0), _FakeUpstream)
-        _serve(self.fake)
-        port = self.fake.server_address[1]
+        self.memory = memory
+        self.transport = None
+        if memory:
+            from memory_http import backend
+            self.fake, self.transport = backend(_FakeUpstream)
+            base = "http://fixture.invalid"
+        else:
+            self.fake = ThreadingHTTPServer(("127.0.0.1", 0), _FakeUpstream)
+            _serve(self.fake)
+            base = f"http://127.0.0.1:{self.fake.server_address[1]}"
         # A coder AND a reasoner role, both pointed at the fake upstream, because the loop is only
         # built when a coder exists (and, with the planner on, a reasoner too). Without these the
         # top two rungs are unreachable and the test would pass by never running them — which is the
         # failure mode this whole file exists to prevent.
-        base = f"http://127.0.0.1:{port}"
         backend = Backend(name="local", transport="http", base_url=base)
         # A classifier too: without one `_classify` returns None and a fresh turn never enters the
         # loop, so levels 4 and 5 would silently measure the proxy and report "this rung adds
@@ -134,7 +140,8 @@ class _Harness:
         cfg = Config(
             server=ServerConfig(host="127.0.0.1", port=0),
             upstream=UpstreamConfig(base_url=base),
-            logging=LoggingConfig(dir=self.tmp.name, capture_dir=self.tmp.name, console=False),
+            logging=LoggingConfig(dir=self.tmp.name, capture_dir=self.tmp.name,
+                                  capture_calls=capture, capture_rendered=not memory, console=False),
             indicators=IndicatorsConfig(enabled=False),
             planner=PlannerConfig(enabled=planner),
             # The periodic satisfaction check starts at drive 100 in production. A fixture that
@@ -148,12 +155,37 @@ class _Harness:
         self.log = EventLog(dir=cfg.logging.dir, console=False)
         # Built the way __main__ builds it: the level rides INTO the transport, because two rungs
         # (tool-call repair at 1, the context floor at 3) live on that path.
-        self.cria = CriaServer(cfg, self.log,
-                               Upstream(cfg.upstream.base_url, engagement_level=level))
-        _serve(self.cria)
-        self.base = f"http://127.0.0.1:{self.cria.server_address[1]}"
+        upstream = Upstream(cfg.upstream.base_url, engagement_level=level,
+                            capture_dir=self.tmp.name if capture else None,
+                            capture_rendered=not memory, open_request=self.transport)
+        if memory:
+            from memory_http import memory_server
+            self.cria = memory_server(cfg, self.log, upstream)
+            self.base = "http://client.fixture.invalid"
+        else:
+            self.cria = CriaServer(cfg, self.log, upstream)
+            _serve(self.cria)
+            self.base = f"http://127.0.0.1:{self.cria.server_address[1]}"
+
+    def open(self, req, *, timeout=20):
+        if not self.memory:
+            return urllib.request.urlopen(req, timeout=timeout)
+        from cria.server import CriaHandler
+        from memory_http import handler_open
+        try:
+            return handler_open(CriaHandler, self.cria, req, timeout=timeout)
+        finally:
+            self.transport.assert_served()
 
     def close(self):
+        if self.memory:
+            try:
+                self.transport.assert_closed()
+                assert not self.cria.active_streams
+            finally:
+                self.log.close()
+                self.tmp.cleanup()
+            return
         for shut in (self.cria.shutdown, self.cria.server_close,
                      self.fake.shutdown, self.fake.server_close, self.log.close, self.tmp.cleanup):
             try:
@@ -166,7 +198,7 @@ class _Harness:
             self.base + "/v1/chat/completions",
             data=json.dumps(body).encode(), method="POST",
             headers={"Content-Type": "application/json", "X-Cria-Session-Id": session})
-        with urllib.request.urlopen(req, timeout=20) as r:
+        with self.open(req, timeout=20) as r:
             return r.read()
 
     def kinds(self) -> set[str]:

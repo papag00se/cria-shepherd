@@ -419,6 +419,7 @@ class SurveyBootstrap(GuardState):
 @dataclass
 class PlanSession(GuardState):
     plan: Plan = field(kw_only=True)  # required; kw_only so it may follow GuardState's defaulted fields
+    handoff_origin: _HandoffOrigin | None = None  # producer-owned, never decoded from client text
     # Single-item plan-off mode: the whole task is ONE implicit step. When set, the driver uses
     # raw-task framing (no "step k/n") and runs the off-ramp a finite multi-step plan doesn't need
     # (the task-level satisfaction/done-critic). The explicit flag — NOT len(items)==1 —
@@ -805,73 +806,68 @@ def thrash_edits_clause(gs: GuardState) -> str:
     return clause
 
 
-def _satisfaction_verdict(system: str, user: str, reasoner_chat, reasoner_role, rlog, *, reasoning_off: bool, workspace_root: str = "",
-                          evidence_blocks: list[str] | None = None) -> dict | None:
-    """One critic call → the parsed {"satisfied": …} dict, or None if the model produced no parseable
-    JSON. Mirrors the plan-path _verdict: NOT summarize() — summarize returns free text and only retries
-    on EMPTY, but a reasoning-ON critic pass here does not go empty, it ROLE-PLAYS THE CODER (reasons
-    'reinstall and run tests', leaking a Bash/Read tool call) and returns non-empty non-JSON, so the
-    retry never fired and every verdict failed closed. Parse the completion directly and let the caller
-    retry reasoning-OFF on a parse miss — reasoning-off makes the model answer the JSON verdict directly
-    instead of thinking itself into the coder's seat."""
+def _critic_verdict(system: str, user: str, reasoner_chat, reasoner_role, rlog, *,
+                    reasoning_off: bool, workspace_root: str = "", verdict_key: str = "",
+                    evidence_blocks: list[str] | None = None) -> tuple[dict | None, str]:
+    """F37: shared critic answer reading; recovery can only say keep working.
+
+    Empty ``verdict_key`` preserves the step critic's existing wire declaration;
+    its recovery key is ``done``. Whole-task judging explicitly declares
+    ``satisfied`` even on a toolless retry, so forced closure never asks the wrong
+    question. Inspection and lossless evidence remain owned by _judge_completion
+    (F33/F71); this function neither clips input nor adds a judge call on success.
+    """
+    satisfaction = verdict_key == "satisfied"
+    key = verdict_key or "done"
+    phase = ("satisfaction" if satisfaction else "critic") + ("-noreason" if reasoning_off else "")
+    event = "satisfaction" if satisfaction else "verify"
     role = reasoner_role
     if reasoning_off:
         role = replace(role, reasoning="off") if role is not None else None
-        # the retry is TOOLLESS, but the system prompt opens "You have exactly two READ-ONLY
-        # inspection tools" — tell this pass the truth (the steer_diagnose stale-line lesson).
-        system = system + "\n\n" + prompts.load("judge_toolless_note")
+        system += "\n\n" + prompts.load("judge_toolless_note")
     try:
-        # The careful pass may INSPECT (the shared judge loop; operator directive) — the completion
-        # critic authors corrective steps the coder must obey, and blind it theorized a wrong
-        # endpoint from a field-name collision. The reasoning-off retry stays toolless.
         comp = _judge_completion(
-            reasoner_chat, role, system, user, rlog,
-            phase="satisfaction" + ("-noreason" if reasoning_off else ""),
+            reasoner_chat, role, system, user, rlog, phase=phase,
             workspace_root="" if reasoning_off else workspace_root,
-            # The careful pass may answer through the verdict tool — same channel it inspects on.
-            # The toolless retry has no channel but text, and gets no tool either way (`inspectable`
-            # is False without a workspace_root) — but it still DECLARES the key, because the key is
-            # also what the forced-answer closer asks for. Withholding it here is how the retry ended
-            # up being told to answer `{"done": …}` under a prompt that specifies `satisfied`.
-            verdict_key="satisfied",
-            seed_files=True,
-            evidence_blocks=evidence_blocks,
-            evidence_intro=None,   # the question (satisfaction_user_composed) says where the record is
-            force_think_off=reasoning_off)
-        if massage.is_truncated(comp):
-            # Cut at the cap → not a verdict. Parsing it risks a partial object that happened to
-            # close, and the caller's retry/fail-closed path is the honest answer.
-            rlog.emit("loop.satisfaction_truncated", level="warn")
-            return None
+            verdict_key=verdict_key, seed_files=True, evidence_blocks=evidence_blocks,
+            evidence_intro=None, force_think_off=reasoning_off)
         vtext = _completion_text(comp)
-        if reasoner_role is not None:
-            vtext = reasoner_role.clean_content(vtext)  # drop leaked reasoning when off
+        if role is not None:
+            # Use the effective call role, not the original reasoning-ON role.
+            # An unopened pre-</think> JSON object is deliberation, not the answer.
+            vtext = role.clean_content(vtext)
+        if massage.is_truncated(comp):
+            # Even a balanced object in a cut reply cannot authorize completion.
+            fields = {} if satisfaction else {"chars": len(vtext)}
+            rlog.emit(f"loop.{event}_truncated", level="warn", **fields)
+            return None, vtext
         obj = extract_json_object(vtext)
         if obj is not None:
-            return obj
-        ph = "satisfaction" + ("-noreason" if reasoning_off else "")
-        bogus = leaked_judge_tool(vtext)
-        if bogus:
-            # Not "unparseable" — the judge called a tool it does not have. Recorded by name so the
-            # record says what actually happened.
-            rlog.emit("loop.judge_phantom_tool", level="warn", phase=ph, tool=bogus)
-        # The answer was not a verdict — but the judge's own THINKING, or its PROSE answer, may carry
-        # one. Recovers a NOT-satisfied ruling only: of 46 unparseable replies on this box, 20 held a
-        # clear judgment in the reasoning and 4 more stated one in plain prose ("The claim is
-        # inconsistent... Fix: add src/__init__.py"), all of it discarded.
-        #
-        # The judge's OWN object comes first when one absent brace is all that is wrong with it
-        # (verdict_from_unclosed) — same one-way NOT-satisfied contract, but it carries the reason
-        # and proposed_fix the judge actually wrote. 3 of this phase's replies on this box.
+            return obj, vtext
+        if satisfaction and (bogus := leaked_judge_tool(vtext)):
+            rlog.emit("loop.judge_phantom_tool", level="warn", phase=phase, tool=bogus)
+        # Preserve the judge's own negative object first, then ask the existing
+        # focused negative-only reader about recorded reasoning or answer prose.
+        # Never recover an approval, and never second-guess a readable verdict.
         recover = ((lambda sysm: ask_closed(reasoner_chat, reasoner_role, sysm, rlog,
-                                            phase=ph + "-recover"))
+                                            phase=phase + "-recover"))
                    if reasoner_role is not None else None)
-        return (verdict_from_unclosed(vtext, "satisfied", rlog, ph)
-                or verdict_from_reasoning(_reasoning_of(comp), "satisfied", rlog, ph, recover)
-                or verdict_from_reasoning(vtext, "satisfied", rlog, ph + "-prose", recover))
+        obj = (verdict_from_unclosed(vtext, key, rlog, phase)
+               or verdict_from_reasoning(_reasoning_of(comp), key, rlog, phase, recover)
+               or verdict_from_reasoning(vtext, key, rlog, phase + "-prose", recover))
+        return obj, vtext
     except Exception as e:
-        rlog.emit("loop.satisfaction_error", level="warn", error=str(e))
-        return None
+        rlog.emit(f"loop.{event}_error", level="warn", error=str(e))
+        return None, ""
+
+
+def _satisfaction_verdict(system: str, user: str, reasoner_chat, reasoner_role, rlog, *, reasoning_off: bool, workspace_root: str = "",
+                          evidence_blocks: list[str] | None = None) -> dict | None:
+    """Whole-task critic adapter: the shared F37 pipeline, with the satisfied key."""
+    obj, _ = _critic_verdict(system, user, reasoner_chat, reasoner_role, rlog,
+                            reasoning_off=reasoning_off, workspace_root=workspace_root,
+                            verdict_key="satisfied", evidence_blocks=evidence_blocks)
+    return obj
 
 
 def judge_query(reasoner_chat, reasoner_role, task: str, query: str, rlog, coder_tools: str = "",
@@ -1175,6 +1171,11 @@ def _judge_completion(chat_fn, role, system: str, user: str, rlog, *, phase: str
     authored a corrective step steering the coder to /stats ("total handles" BY FIELD NAME — the
     GLOBAL count, not the holder's) because it could not read the spec section that distinguishes
     them, and it ruled a run satisfied while the inventory in its prompt showed no README."""
+    # A path does not grant inspection reach. Keep this conditional on the ACTUAL menu,
+    # including toolless retries/forced rounds and any later floor reduction: no positive
+    # availability promise is made here that would need a second wire settlement.
+    if workspace_root or verdict_key:  # an inspection/verdict seat; plain authors keep their contract
+        system = system + "\n\n" + prompts.load("judge_capability")
     messages = [
         {"role": "system", "content": system},
         {"role": "user", "content": user},
@@ -2764,6 +2765,7 @@ class LoopStore:
                 sess.fetched_pages = _merge_fetches(dict(sess.fetched_pages or {}),
                                                     prev.fetched_pages)
             if prev is not None and _stable_session(key):
+                sess.handoff_origin = prev.handoff_origin
                 previous_refusals = _session_refusals(prev)
                 current_refusals = _session_refusals(sess)
                 if isinstance(previous_refusals, refusalledger.RefusalLedger):
@@ -3821,7 +3823,8 @@ class Loop:
         ev = _satisfaction_evidence(body.get("messages", []), rlog=rlog,
                      chat_fn=self._reasoner()[0], role=self._reasoner()[1],
                      gate_plan=getattr(sess, "gate_plan", None),
-                     workspace_root=getattr(sess, "workspace_root", "") or "")
+                     workspace_root=getattr(sess, "workspace_root", "") or "",
+                     origin=getattr(sess, "handoff_origin", None))
         ev += _gate_notes(sess)
         # RUN THE DELIVERABLE. The repo's own checks prove a workspace compiles, lints and passes its
         # tests; none of that can tell you the delivered program does anything. This check existed and
@@ -5101,74 +5104,14 @@ class Loop:
 
     def _verdict(self, system: str, user: str, rlog, *, reasoning_off: bool,
                  workspace_root: str = "") -> tuple[dict | None, str]:
-        """One critic judgement → (parsed verdict dict OR None if the model produced no parseable
-        JSON / the call failed, RAW response text). The raw text is dumped alongside the verdict so a
-        human can see the verifier's ACTUAL output — the parrot (an echoed instruction) or an
-        empty/rambling non-verdict is invisible in the parsed reason alone. `reasoning_off` forces
-        enable_thinking=false so a reasoning model can't exhaust its token budget before the verdict.
+        """Optional step critic adapter; retain cleaned raw text for the verifier record.
 
-        With a ``workspace_root``, the judge gets cria-executed READ-ONLY inspection tools
-        (verifytools: list_dir/read_file) and this becomes a bounded tool loop — the same protocol
-        as the planner's gather (structured assistant tool_calls turn, then role:tool results).
-        Observed need: the toolless judge REACHED for these ("list_dir would show this" in its own
-        reasoning) and asserted the imagined result. The reasoning-off retry stays toolless — its
-        one job is "just answer the JSON"."""
-        role = self._ctx.reasoner_role
-        if reasoning_off:
-            role = replace(role, reasoning="off") if role is not None else None
-            # toolless pass → the system prompt's tool claim would be false; disclose it.
-            system = system + "\n\n" + prompts.load("judge_toolless_note")
-        try:
-            # max_tokens bounds the output generously: the verdict's `reason` feeds the coder
-            # re-nudge, so it must never be truncated at generation — the cap stays only as a
-            # runaway backstop. The reasoning-off retry stays toolless (workspace_root dropped).
-            comp = _judge_completion(
-                self._ctx.reasoner_chat, role, system, user, rlog,
-                phase="critic" + ("-noreason" if reasoning_off else ""),
-                workspace_root="" if reasoning_off else workspace_root,
-                seed_files=True, force_think_off=reasoning_off)
-            vtext = _completion_text(comp)
-            if role is not None:
-                vtext = role.clean_content(vtext)  # drop leaked reasoning when off
-            if massage.is_truncated(comp):
-                # Cut at the cap → not a verdict (measured: 3 critic calls in one day came back
-                # finish_reason=length with content). The reasoning-off retry above has the whole
-                # budget for content; if that is also cut, _verify fails closed as it already does.
-                rlog.emit("loop.verify_truncated", level="warn", chars=len(vtext))
-                return None, vtext
-            obj = extract_json_object(vtext)
-            if obj is not None:
-                return obj, vtext
-            # THE SAME RECOVERY THE SATISFACTION JUDGE HAS HAD SINCE 08-01, which this phase never got.
-            # Measured 2026-08-02 over every captured step-critic call on this box (n=493, replayed
-            # through cria's own reading path — extract_json_object then _fill_missing_verdict_flag):
-            # 175 were unreadable, and 7 of those carry a clear NOT-done in the thinking cria threw
-            # away. Four are one shape — the judge spent its inspection rounds calling tools and never
-            # answered (finish_reason=tool_calls, content ""), e.g. "So the step 'Write a live test
-            # that runs resolve_handle.py with handle goose' is not done — there is no test for
-            # 'goose' in the file." What the coder got instead was `unverified_step`, a generic
-            # keep-working line carrying none of that.
-            #
-            # ONE DIRECTION ONLY, and for the same reason given at verdict_from_reasoning: a recovered
-            # NOT-done can only ever mean "keep working", so a false positive costs a turn and never a
-            # false finish (principle 13). The mirror case was measured and DELIBERATELY not built —
-            # see the note in _verify.
-            ph = "critic" + ("-noreason" if reasoning_off else "")
-            # ...and BEFORE that: the judge's own verdict object when one absent closing brace is
-            # the only thing wrong with it (verdict_from_unclosed — 8 of this phase's replies on this
-            # box, every one a NOT-done with a written proposed_fix). Same one direction, for the
-            # same reason; it just recovers what the judge wrote instead of paraphrasing it. Mostly
-            # this spares the reasoning-off retry below and lets the CAREFUL pass speak; twice in the
-            # corpus both passes were unclosed and the coder read nothing at all.
-            recover = ((lambda sysm: ask_closed(self._ctx.reasoner_chat, self._ctx.reasoner_role,
-                                                sysm, rlog, phase=ph + "-recover"))
-                        if self._ctx.reasoner_role is not None else None)
-            return (verdict_from_unclosed(vtext, "done", rlog, ph)
-                    or verdict_from_reasoning(_reasoning_of(comp), "done", rlog, ph, recover)
-                    or verdict_from_reasoning(vtext, "done", rlog, ph + "-prose", recover)), vtext
-        except Exception as e:
-            rlog.emit("loop.verify_error", level="warn", error=str(e))
-            return None, ""
+        F37 shares response handling, not the step question or completion authority.
+        No planner is enabled here. Empty wire declaration retains the existing
+        step-critic body contract; _judge_completion defaults closure to done.
+        """
+        return _critic_verdict(system, user, self._ctx.reasoner_chat, self._ctx.reasoner_role,
+                               rlog, reasoning_off=reasoning_off, workspace_root=workspace_root)
 
     def _persist_plan(self, plan: Plan, rlog) -> None:
         """Mirror the plan markdown to cria's OWN state dir (`~/.cria/plans/<id>.md`) for human
@@ -5290,7 +5233,8 @@ class Loop:
         evidence = _satisfaction_evidence(body.get("messages", []), rlog=rlog,
                      chat_fn=self._reasoner()[0], role=self._reasoner()[1],
                            gate_plan=getattr(sess, "gate_plan", None),
-                           workspace_root=getattr(sess, "workspace_root", "") or "")
+                           workspace_root=getattr(sess, "workspace_root", "") or "",
+                           origin=getattr(sess, "handoff_origin", None))
         evidence += _gate_notes(sess)
         # RUN THE DELIVERABLE, BEFORE the verdict. This check existed on this path already — but only
         # AFTER the judge had said "satisfied", where it can decorate a completion and never inform
@@ -5721,7 +5665,8 @@ class Loop:
         ev = _satisfaction_evidence(body.get("messages", []), rlog=rlog,
                      chat_fn=self._reasoner()[0], role=self._reasoner()[1],
                      gate_plan=getattr(sess, "gate_plan", None),
-                     workspace_root=getattr(sess, "workspace_root", "") or "")
+                     workspace_root=getattr(sess, "workspace_root", "") or "",
+                     origin=getattr(sess, "handoff_origin", None))
         ev += _gate_notes(sess)
         # RUN THE DELIVERABLE — the THIRD sibling of the same wiring. The marker was added to
         # _periodic_satisfaction and _reopen_if_unsatisfied on 2026-08-02 and this path was missed, and
@@ -6211,7 +6156,8 @@ def _is_cria_scaffolding(text: str, *, keep_checks: bool = False) -> bool:
 
 
 def _satisfaction_evidence(messages: list[dict], rlog=None, gate_plan=None,
-                           chat_fn=None, role=None, workspace_root: str = "") -> str:
+                           chat_fn=None, role=None, workspace_root: str = "",
+                           origin: _HandoffOrigin | None = None) -> str:
     """Evidence for the whole-task satisfaction judge. Beyond the structured tool-action log
     (_work_log), it MUST include cria's summary-marker prose — continuation / rollup / briefing —
     because a HARNESS or self compaction REPLACES the structured tool history with that prose. On the
@@ -6231,22 +6177,32 @@ def _satisfaction_evidence(messages: list[dict], rlog=None, gate_plan=None,
     measured = filefacts.render(_written_file_facts(messages, workspace_root))
     if measured:
         log = f"{log}\n\n{measured}"
-    # The marker must START the message, and the message must not be an ASSISTANT turn. cria authors
-    # these blocks as user/system turns; matching a bare substring in ANY role meant a coder that merely
+    # The marker must START a user/system message. A tool can quote the same bytes,
+    # but that is its result payload, not a handoff; keep it only in the paired work log.
+    # Matching a bare substring in ANY role meant a coder that merely
     # parroted "⟦ctx:rollup⟧" — a marker it reads in its own context every turn — got its own claim
     # hoisted under "treat this as a record of what was already built" and handed to the done-judge as
     # authoritative history.
     summaries = [c.strip() for m in messages
-                 if m.get("role") != "assistant"
+                 if m.get("role") in ("user", "system")
                  and (c := _msg_text_content(m)).lstrip().startswith(
                      (CONTINUATION_MARKER, selfcompact.SUMMARY_MARKER, BRIEFING_OPEN))]
     if not summaries:
         return log
-    head = ("SUMMARY OF EARLIER WORK (the detailed tool log was compacted to fit the window — treat "
-            "this as a record of what was already built, then check it against the recent actions):\n"
-            + "\n\n".join(summaries))
-    tail = ("\n\nRECENT VERBATIM ACTIONS:\n" + log) if log.strip() else ""
-    return head + tail
+    # These records are heterogeneous. Only the session's actual hardener record
+    # identifies a dropped-prose continuation or accepted model account. Unknown
+    # history remains visible, but its own headings cannot authenticate it. If the
+    # sole floor sheds the introducing source statement, the active question abstains.
+    records = []
+    for summary in summaries:
+        known = isinstance(origin, _HandoffOrigin) and origin.matches_continuation(summary)
+        records.append(prompts.render("satisfaction_history_source", record=summary,
+                                      source=prompts.load("satisfaction_source_dropped" if known and origin.dropped
+                                                          else "satisfaction_source_model" if known
+                                                          else "satisfaction_source_unknown")))
+    head = prompts.render("satisfaction_history", history="\n\n".join(records))
+    tail = prompts.render("satisfaction_recent_actions", actions=log) if log.strip() else ""
+    return "\n\n".join(part for part in (head, tail) if part)
 
 
 # A line that OPENS in cria's voice: the human-facing `⟦cria⟧` banner, or anything in the
@@ -6426,6 +6382,26 @@ _PROSE_DROPPED_MARKER = indicators.PROSE_DROPPED_MARKER
 strip_prose_dropped_marker = indicators.strip_prose_dropped_marker
 
 
+@dataclass
+class _HandoffOrigin:
+    """One session's last actual hardener output, not an assertion supplied on the wire."""
+    reply: str
+    ledger: str
+    dropped: bool
+    continuation: str = ""
+
+    def matches_summary(self, summary: str) -> bool:
+        return summary == self.reply or (self.dropped and summary == self.reply.removeprefix(_PROSE_DROPPED_MARKER + "\n"))
+
+    def matches_continuation(self, text: str) -> bool:
+        # The final wire can truthfully withdraw the paired-result footer. That
+        # footer is not the handoff or its ledger; compare the exact produced core.
+        header = "\n" + modelview.RETAINED_HEADER
+        withdrawn = "\n" + prompts.load("continuation_no_retained_results").strip()
+        core = text.removesuffix(withdrawn) if text.endswith(withdrawn) else text.rsplit(header, 1)[0]
+        return bool(self.continuation) and core == self.continuation.rsplit(header, 1)[0]
+
+
 def _workspace_is_empty(cwd: str) -> bool:
     """True when the advertised workspace does not exist or is empty. The continuation reframe's
     'the files that should already exist / do NOT recreate' claim is then objectively FALSE — the
@@ -6479,7 +6455,7 @@ def _paired_tool_provenance(messages: list[dict]) -> str:
     return "\n".join(retained)
 
 
-def reframe_compaction(messages: list[dict]) -> tuple[list[dict], bool]:
+def reframe_compaction(messages: list[dict], *, origin: _HandoffOrigin | None = None) -> tuple[list[dict], bool]:
     """Reattribute the harness's 'another language model' compaction turn to the model itself and
     re-anchor it, keeping the summary. Returns (messages, reframed?) — the SAME list (no copy) when
     no compaction turn is present. Idempotent per turn: the reframed content no longer carries the
@@ -6507,12 +6483,15 @@ def reframe_compaction(messages: list[dict]) -> tuple[list[dict], bool]:
             # C44 B1: `summary` reads non-blank whenever the deterministic appendices (fetch facts,
             # workspace inventory, checks) survived even though NO model prose did — the common
             # shape (13 of 18 real row-p28 rejections), not the rarer fully-blank one. Detect that
-            # via the marker `_harden_compaction_reply` prepends in exactly that case, strip it before
-            # the model ever sees it (#17), and route to the appendix-aware dropped template so the
+            # from the session's actual hardener output, not a marker copied into prose. Strip the
+            # private plumbing marker before the model reads it (#17), and route a confirmed drop so the
             # re-derived ground truth is presented as retained fact, never as "the handoff below is an
             # ungrounded account" (#5b) — that sentence is true only when a model actually wrote one.
-            prose_dropped = _PROSE_DROPPED_MARKER in summary
-            if prose_dropped:
+            known = isinstance(origin, _HandoffOrigin) and origin.matches_summary(summary)
+            prose_dropped = bool(known and origin.dropped)
+            # The private spelling is plumbing, NOT authentication. An unknown or
+            # model-authored copy cannot select the deterministic source branch.
+            if _PROSE_DROPPED_MARKER in summary:
                 summary = summary.replace(_PROSE_DROPPED_MARKER, "", 1).lstrip("\n")
             if prose_dropped and summary.strip():
                 tmpl = "compaction_reframe_dropped_facts"
@@ -6524,7 +6503,10 @@ def reframe_compaction(messages: list[dict]) -> tuple[list[dict], bool]:
             # scaffolding, not the user's task; classifying it flips a coding session onto the reasoner.
             reframe = prompts.render(tmpl, summary=summary, cwd=cwd,
                                      tool_results=_paired_tool_provenance(messages) or "(none)")
-            out.append({**m, "content": f"{CONTINUATION_MARKER} {reframe}"})
+            content = f"{CONTINUATION_MARKER} {reframe}"
+            if known:
+                origin.continuation = content
+            out.append({**m, "content": content})
             reframed = True
         else:
             out.append(m)
@@ -11001,6 +10983,7 @@ def author_steer(reasoner_chat, reasoner_role, workspace_root, gs, body: dict, r
     root_context, _ = _history_root(body.get("messages", []))
     if root_context:
         user = prompts.render("steer_session_root", root=root_context) + "\n\n" + user
+    historical_request = prompts.render("steer_historical_author_request", request=user)
     coder_tools = _coder_tools_summary(body.get("tools"))
     # The one-shot reasoner the dictated-code check uses. Toolless and phase-tagged so it is
     # visible in the captures as its own call, never mistaken for the authoring pass.
@@ -11059,7 +11042,7 @@ def author_steer(reasoner_chat, reasoner_role, workspace_root, gs, body: dict, r
         if _ruminating_reply(text):
             rlog.emit("loop.steer_degenerate", level="warn", phase="reasoner", chars=len(text))
             return None
-        evidence = session + "\n\n" + user + "\n\n" + "\n".join(
+        evidence = session + "\n\n" + historical_request + "\n\n" + "\n".join(
             str(m.get("content") or "") for m in transcript if m.get("role") == "tool")
         # The generic massage layer preserves a finished reasoner's words by copying an otherwise
         # empty answer out of `reasoning_content`. For answer-vs-thinking recovery that is still
@@ -11098,7 +11081,7 @@ def author_steer(reasoner_chat, reasoner_role, workspace_root, gs, body: dict, r
             and authored.state is not _AuthoredActionState.STRUCTURAL_REFUSAL):
         directive = _authored_action(
             _steer_from_reasoning(passes[0], raw_answer, _recover_ask, rlog) or "", rlog).action
-    return _grounded_steer_or_none(directive, session + "\n\n" + user, rlog, ask=_steer_ask,
+    return _grounded_steer_or_none(directive, session + "\n\n" + historical_request, rlog, ask=_steer_ask,
                                    sess=gs, messages=body.get("messages", []),
                                    workspace_root=workspace_root)
 
@@ -12253,8 +12236,10 @@ def _vet_steer(directive: str | None, evidence: str, rlog, ask=None,
                 return None, "diagnostic_stale"
             verdict = _diagnostic_action_verdict(
                 directive, findings, refusals, rlog,
-                (lambda sysm: ask(sysm, "")) if ask else None, grounding=evidence,
-                ask_with_evidence=((lambda sysm, blocks: ask(sysm, "", blocks))
+                (lambda sysm: ask(sysm, prompts.load("steer_diagnostic_answer"))) if ask else None,
+                grounding=evidence,
+                ask_with_evidence=((lambda sysm, blocks: ask(
+                    sysm, prompts.load("steer_diagnostic_answer"), blocks))
                                    if getattr(ask, "composes_evidence", False) else None))
             if verdict != "SUPPORTED":
                 return None, "diagnostic_" + verdict.lower()
