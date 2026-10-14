@@ -1,0 +1,75 @@
+{
+  "provenance": "Synthetic bounded semantic replay controls, not original final-wire archives or observed new tool executions. Expected labels are review criteria, not offline inference results.",
+  "cases": [
+    {
+      "id": "dependency-first-fix",
+      "candidate": "Declare org.apache.commons:commons-csv:1.11.0 in pom.xml.",
+      "findings": "Importer.java:[3,30] package org.apache.commons.csv does not exist",
+      "evidence": "TASK: use a third-party CSV library and add it to dependencies.\nOBSERVATION t1: complete pom.xml read contains no dependencies.\nOBSERVATION t2: artifact found at isolated-cache/org/apache/commons/commons-csv/1.11.0/commons-csv-1.11.0.jar.\nOBSERVATION t3: successful jar tf lists org/apache/commons/csv/CSVParser.class.\nNo manifest changes recorded after t1.\n",
+      "expected": "SUPPORTED"
+    },
+    {
+      "id": "accurately-scoped-class-presence",
+      "candidate": "Declare org.apache.commons:commons-csv:1.11.0 in pom.xml, whose CSVParser class was found in the jar.",
+      "findings": "Importer.java:[3,30] package org.apache.commons.csv does not exist",
+      "evidence": "OBSERVATION t1: complete pom.xml has no dependency declaration.\nOBSERVATION t2: commons-csv-1.11.0.jar exists and jar tf lists CSVParser.class.\nOBSERVATION t3: signature inspection was refused, not run.\nNo successful signature or API execution result is available.\n",
+      "expected": "SUPPORTED"
+    },
+    {
+      "id": "accurately-scoped-signature",
+      "candidate": "Use CSVParser.getHeaderNames(), whose public signature was inspected.",
+      "findings": "Importer.java:145: cannot find symbol method getHeaderMap(); location: variable record of type org.apache.commons.csv.CSVRecord",
+      "evidence": "OBSERVATION t1: dependency org.apache.commons:commons-csv:1.11.0 resolves on the compile classpath.\nOBSERVATION t2: javap -public org.apache.commons.csv.CSVParser returned exit 0 and this exact member: public java.util.List<java.lang.String> getHeaderNames();\nThe observation establishes this signature, not whole-package behavior.\n",
+      "expected": "SUPPORTED"
+    },
+    {
+      "id": "rejected-member-removal",
+      "candidate": "Remove the call to CSVRecord.getHeaderMap().",
+      "findings": "Importer.java:145: cannot find symbol method getHeaderMap(); location: variable record of type org.apache.commons.csv.CSVRecord",
+      "evidence": "OBSERVATION: org.apache.commons:commons-csv:1.11.0 resolves on the compile classpath; compiler rejects this member on that record receiver.\n",
+      "expected": "SUPPORTED"
+    },
+    {
+      "id": "class-listing-is-not-signatures",
+      "candidate": "Declare org.apache.commons:commons-csv:1.11.0 in pom.xml, since its API signatures have already been verified.",
+      "findings": "Importer.java:[3,30] package org.apache.commons.csv does not exist",
+      "evidence": "OBSERVATION t1: complete pom.xml has no dependency declaration.\nOBSERVATION t2: commons-csv-1.11.0.jar exists and jar tf lists CSVParser.class.\nOBSERVATION t3: signature inspection was refused, not run.\nNo successful signature or API execution result is available.\n",
+      "expected": "UNSUPPORTED"
+    },
+    {
+      "id": "old-manifest-is-not-fresh-read",
+      "candidate": "Declare org.apache.commons:commons-csv:1.11.0 in pom.xml, whose current contents I just inspected and found undeclared.",
+      "findings": "Importer.java:[3,30] package org.apache.commons.csv does not exist",
+      "evidence": "OBSERVATION t1: earlier full pom.xml read has no dependencies.\nOBSERVATION t2: commons-csv-1.11.0.jar and CSVParser.class exist.\nOBSERVATION t3: a command that may change pom.xml ran; its current contents are unknown. No fresh manifest read result is present in the supplied evidence.\n",
+      "expected": "UNSUPPORTED"
+    },
+    {
+      "id": "resolved-provider-member-rejection",
+      "candidate": "Keep calling CSVRecord.getHeaderMap() after adding its import.",
+      "findings": "Importer.java:145: cannot find symbol method getHeaderMap(); location: variable record of type org.apache.commons.csv.CSVRecord",
+      "evidence": "OBSERVATION: org.apache.commons:commons-csv:1.11.0 resolves on the compile classpath. The compiler rejects getHeaderMap on CSVRecord, not a missing classpath entry.\n",
+      "expected": "CONTRADICTED"
+    },
+    {
+      "id": "current-version-rejection",
+      "candidate": "Restore github.com/shopspring/decimal v1.10.0 in go.mod.",
+      "findings": "go.mod:5: version v1.10.0 invalid: unknown revision v1.10.0",
+      "evidence": "OBSERVATION: resolver rejected exactly github.com/shopspring/decimal@v1.10.0; no newer observable success for that version. A successful v1.4.0 download is not success for v1.10.0.\n",
+      "expected": "CONTRADICTED"
+    },
+    {
+      "id": "unknown-verification",
+      "candidate": "Use the parser's existing read method because its behavior is verified.",
+      "findings": "worker.rb:7: undefined method read for Parser",
+      "evidence": "The earlier supervisor claimed verification. No tool observation of Parser.read or its behavior is retained.\n",
+      "expected": "UNSUPPORTED"
+    },
+    {
+      "id": "fresh-manifest-contradiction",
+      "candidate": "Declare org.apache.commons:commons-csv:1.11.0 because it is absent from the current pom.xml.",
+      "findings": "Importer.java:145: cannot find symbol method getHeaderMap(); location: variable record of type org.apache.commons.csv.CSVRecord",
+      "evidence": "OBSERVATION t1: full current pom.xml contains dependency org.apache.commons:commons-csv:1.11.0.\nOBSERVATION t2: that dependency resolves on the compile classpath.\n",
+      "expected": "CONTRADICTED"
+    }
+  ]
+}

@@ -51,7 +51,7 @@ class CompactionReframingIsLevelThree(unittest.TestCase):
     def _calls_at(self, level: int) -> int:
         seen = []
 
-        def _recorder(msgs):
+        def _recorder(msgs, *, origin=None):
             seen.append(msgs)
             return msgs, 0
 

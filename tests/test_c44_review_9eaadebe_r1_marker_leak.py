@@ -33,6 +33,7 @@ from cria import loop
 from cria import server as srv
 from cria.config import Config, RoutingConfig
 from cria.upstream import Upstream
+from tests.handoff_runtime import attach_session
 
 
 class _Rlog:
@@ -120,9 +121,20 @@ class MarkerNeverReachesTheModelTests(unittest.TestCase):
         truth" framing, not merely a silent removal of the marker leaving the normal "ungrounded
         account" claim."""
         h = _handler(level=cfgmod.MAX_ENGAGEMENT_LEVEL)
-        body = {"messages": [{"role": "user", "content": PRE + SHIPPED_APPENDIX_ONLY}]}
+        key = "sid:c44-marker-positive"
+        attach_session(h.server, key, "Continue the work.")
+        # Generate the same appendix through the real hardener. Text and a role
+        # alone no longer supply proof that this session's producer authored it.
+        with mock.patch.object(srv, "_workspace_listing", return_value=SHIPPED_APPENDIX_ONLY.split("\n", 1)[1]):
+            out = srv._harden_compaction_reply(
+                {"choices": [{"message": {"content": "Add a new feature."}}]},
+                {"messages": [{"role": "user", "content": "Continue the work."}]},
+                None, h.server, _Rlog(), key)
+        shipped = out["choices"][0]["message"]["content"]
+        self.assertEqual(shipped, SHIPPED_APPENDIX_ONLY)
+        body = {"messages": [{"role": "user", "content": PRE + shipped}]}
         with mock.patch.object(h, "_bind_workspace_view", lambda *a, **k: None):
-            srv.CriaHandler._strip_and_reframe_inbound(h, body, "sid:test", _Rlog())
+            srv.CriaHandler._strip_and_reframe_inbound(h, body, key, _Rlog())
         final = body["messages"][0]["content"]
         _assert_never_reaches_the_model(self, final)
         self.assertNotIn("ungrounded account", final)

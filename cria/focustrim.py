@@ -34,12 +34,14 @@ already-focused view.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
 from dataclasses import dataclass
+from typing import NamedTuple
 
-from . import dedup, denial, editrecovery, jsontext, toolargs
+from . import bodykeys, dedup, denial, editrecovery, jsontext, toolargs
 from . import probegate, proberun, prompts
 
 # cria's OWN ground-truth gate probe tags its output with these section markers. Such a probe
@@ -425,6 +427,28 @@ def _squash_failures(messages: list[dict]) -> tuple[list[dict], TrimReport]:
     return out, rep
 
 
+class SupersededWriteNotice(NamedTuple):
+    """Producer-only identity of a notice and the exact historical pairs it promises.
+
+    A JSON hint or marker-looking quote is not this in-process provenance. The
+    immutable byte-identity digests survive framing copies without retaining
+    mutable references or duplicating the source payload. A tuple remains JSON
+    serializable for existing focused-view callers; a round-tripped JSON list
+    deliberately has no producer authority.
+    """
+    text: str
+    count: int
+    paths: tuple[str, ...]
+    replacements: tuple[tuple[str, str, str | None], ...]
+
+
+def superseded_pair_identity(call: dict, result: dict | None) -> tuple[str, str | None]:
+    """Exact call (including argument spelling) and paired output, not a landing judgment."""
+    def digest(value):
+        return hashlib.sha256(json.dumps(value, sort_keys=True).encode("utf-8")).hexdigest()
+    return (digest(call), digest(result.get("content")) if result is not None else None)
+
+
 def _drop_superseded_writes(messages: list[dict]) -> tuple[list[dict], int]:
     """A write payload that a LATER write to the same path replaced is carried once, as a pointer.
 
@@ -526,14 +550,29 @@ def _drop_superseded_writes(messages: list[dict]) -> tuple[list[dict], int]:
     # that concludes the file was never written and starts again (the disown-your-own-work failure
     # the re-orientation seat exists for).
     if dropped:
+        answers = {m.get("tool_call_id"): m for m in messages
+                   if isinstance(m, dict) and m.get("role") == "tool"}
+        replacements = []
+        for path in dropped_paths:
+            # Same selection as the deletion owner above; never infer a success from
+            # English or promote an unanswered call to a landed write.
+            candidates = [tc for tc in messages[last[path]].get("tool_calls") or []
+                          if toolargs.write_target(tc)[1]
+                          and key(toolargs.write_path(tc)) == path and tc.get("id") not in failed]
+            tc = candidates[-1]
+            call_text, answer_text = superseded_pair_identity(tc, answers.get(tc.get("id")))
+            replacements.append((path, call_text, answer_text))
+        text = prompts.render("superseded_writes_dropped", count=str(dropped),
+                              paths=prompts.named_list(dropped_paths))
         out.append({"role": "user",
                     # THE REMAINDER IS NAMED. `paths` was cut at six with no marker, so a note could
                     # read "9 earlier write(s) removed … : a, b, c, d, e, f" and the model had no
                     # way to learn which files the missing bytes belonged to. The two units in the
                     # sentence are deliberate — N writes were removed, ACROSS these files — and the
                     # count stays a count of calls.
-                    "content": prompts.render("superseded_writes_dropped", count=str(dropped),
-                                              paths=prompts.named_list(dropped_paths))})
+                    "content": text,
+                    bodykeys.SUPERSEDED_WRITES: SupersededWriteNotice(
+                        text, dropped, tuple(dropped_paths), tuple(replacements))})
     return (out if dropped else messages), dropped
 
 

@@ -489,6 +489,10 @@ class Upstream:
                     rlog.restored_on_wire = on_wire
                 except AttributeError:
                     pass
+            if self._context_fixes:
+                # Supersession ran before the floor. Settle over exact pairs after
+                # all content repairs/folds, before lossless role concatenation.
+                msgs = modelview.superseded_writes_truth(msgs)
             msgs = _merge_consecutive_assistant(msgs)
             # THE LAST message transform, and last is the point. A template that enforces strict
             # user/assistant alternation ({user,tool} vs {assistant}) rejects the body outright, and
@@ -514,7 +518,7 @@ class Upstream:
             out["messages"] = [{k: v for k, v in m.items()
                                 if k not in (bodykeys.CALLER_INSTRUCTIONS, bodykeys.CALLER_PERSONA,
                                              bodykeys.CALLER_SPAN, bodykeys.RESTORED_FILES,
-                                             bodykeys.PAYLOAD_BOUNDARY)}
+                                             bodykeys.PAYLOAD_BOUNDARY, bodykeys.SUPERSEDED_WRITES)}
                                if isinstance(m, dict) else m for m in out["messages"]]
         sent_estimate = contextfloor.est_total(out.get("messages"), out.get("tools"))
         # The pre-frame observer never rides in ``out``.  It is correlated here, after every wire

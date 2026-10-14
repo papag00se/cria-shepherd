@@ -90,7 +90,7 @@ class GoCalls0075And0076ReplayTests(unittest.TestCase):
         validator = validator_calls[0]
         self.assertIn(GO_FINDING, validator)
         proposed = re.search(
-            r"A supervisor proposes this one action:\n\n(.*?)\n\nJudge the relationship",
+            r"COMPLETE proposed guidance being considered for delivery:\n\n(.*?)\n\nCan this exact COMPLETE message",
             validator, re.S)
         self.assertIsNotNone(proposed)
         self.assertEqual(proposed.group(1), GO_ACTION)

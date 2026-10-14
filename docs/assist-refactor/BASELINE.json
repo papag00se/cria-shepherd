@@ -1,0 +1,187 @@
+{
+  "base": "6e91333a6e5dd298527c3c2c5008e4646f08bfe4",
+  "inherited_pending_paths": [
+    {
+      "path": "cria/bodykeys.py",
+      "sha256": "5ba9080ebb3d593cb00f072b5562f8c0dbaae829833a7b4a17f760dc4d68a6d7",
+      "provenance": "Inherited Super pending snapshot, not Recovery refactor or deployment acceptance"
+    },
+    {
+      "path": "cria/focustrim.py",
+      "sha256": "832c42522022902c42a223ccf24adf3b2f76adfcd772f8101554bc1b8b1a6b2c",
+      "provenance": "Inherited Super pending snapshot, not Recovery refactor or deployment acceptance"
+    },
+    {
+      "path": "cria/loop.py",
+      "sha256": "83e320fd6cc000ca3018d042fdb66f27312b8420d213a077f7948cfee6bda7e4",
+      "provenance": "Inherited Super pending snapshot, not Recovery refactor or deployment acceptance"
+    },
+    {
+      "path": "cria/modelview.py",
+      "sha256": "6d8d4f3e49366d7d035b2c91d7fbe75f85bc982600ac3234f2dc58d76da33c9c",
+      "provenance": "Inherited Super pending snapshot, not Recovery refactor or deployment acceptance"
+    },
+    {
+      "path": "cria/prompts/judge_capability.txt",
+      "sha256": "2277ad2dc22d8d64c35baedf0dcdac300bb5b64aafe05b255a2ebad451ea3de3",
+      "provenance": "Inherited Super pending snapshot, not Recovery refactor or deployment acceptance"
+    },
+    {
+      "path": "cria/prompts/satisfaction.txt",
+      "sha256": "78645cec0a3e5b21055a1ef91735012b8142747887c99eeabfe7af3dd77fa54b",
+      "provenance": "Inherited Super pending snapshot, not Recovery refactor or deployment acceptance"
+    },
+    {
+      "path": "cria/prompts/satisfaction_history.txt",
+      "sha256": "881273fef950e277f448dc5bbf6116b13c4a25cd8d4ef43db6eae72c1c8e3d42",
+      "provenance": "Inherited Super pending snapshot, not Recovery refactor or deployment acceptance"
+    },
+    {
+      "path": "cria/prompts/satisfaction_history_rule.txt",
+      "sha256": "5b9764341020e5b98c5f34606c7f24b6fd87322567cfef2d02f1fb59cd6c07bd",
+      "provenance": "Inherited Super pending snapshot, not Recovery refactor or deployment acceptance"
+    },
+    {
+      "path": "cria/prompts/satisfaction_history_source.txt",
+      "sha256": "3a385214a8af5190f4a35a1f20e206b190671a284a194a1dc7ecc1d0b8dc4519",
+      "provenance": "Inherited Super pending snapshot, not Recovery refactor or deployment acceptance"
+    },
+    {
+      "path": "cria/prompts/satisfaction_recent_actions.txt",
+      "sha256": "dc57e6c2fa7cb3c9b1b8cebad0ea72fc567bb2c5d206ff4f6532688feaddf0cd",
+      "provenance": "Inherited Super pending snapshot, not Recovery refactor or deployment acceptance"
+    },
+    {
+      "path": "cria/prompts/satisfaction_source_dropped.txt",
+      "sha256": "b2d9e87b2e4ffc9519e95734a763583ffe8578dec68347f2d71cfc930852fae1",
+      "provenance": "Inherited Super pending snapshot, not Recovery refactor or deployment acceptance"
+    },
+    {
+      "path": "cria/prompts/satisfaction_source_model.txt",
+      "sha256": "7d2bbdd0acba941973c6b5e2e0f1859eecd3565df7f44363ec47b6f2c9e78a54",
+      "provenance": "Inherited Super pending snapshot, not Recovery refactor or deployment acceptance"
+    },
+    {
+      "path": "cria/prompts/satisfaction_source_unknown.txt",
+      "sha256": "76ceff0c5b6b06d66c478bc7e32c11d9d36e8677c33de7c0b9c99ef3056bdeae",
+      "provenance": "Inherited Super pending snapshot, not Recovery refactor or deployment acceptance"
+    },
+    {
+      "path": "cria/prompts/satisfaction_user.txt",
+      "sha256": "29d0cca0e2de8d1ff7de62731eed86efde34654ee2b8f8cf4602fb2eb836894c",
+      "provenance": "Inherited Super pending snapshot, not Recovery refactor or deployment acceptance"
+    },
+    {
+      "path": "cria/prompts/satisfaction_user_composed.txt",
+      "sha256": "8161680eeed6b7ef99f4feac720efed802706294c56237a45c4dbd48800f3b6a",
+      "provenance": "Inherited Super pending snapshot, not Recovery refactor or deployment acceptance"
+    },
+    {
+      "path": "cria/prompts/steer_diagnostic_action.txt",
+      "sha256": "42fa8b1329241e56f6c2d396f205853c07578388d777d289a476fe9e65c00c11",
+      "provenance": "Inherited Super pending snapshot, not Recovery refactor or deployment acceptance"
+    },
+    {
+      "path": "cria/prompts/steer_diagnostic_answer.txt",
+      "sha256": "ca1565fb92e3a53b1a94d94c3d7b908cf4cb7c34f21228f4a7e66b8a118a48b1",
+      "provenance": "Inherited Super pending snapshot, not Recovery refactor or deployment acceptance"
+    },
+    {
+      "path": "cria/prompts/steer_historical_author_request.txt",
+      "sha256": "f841ce2214f4141683c78e8ca856bd6318e2c9c7d1fb871b51ed88b826a73db1",
+      "provenance": "Inherited Super pending snapshot, not Recovery refactor or deployment acceptance"
+    },
+    {
+      "path": "cria/prompts/superseded_writes_unavailable.txt",
+      "sha256": "24b4244c29834dc31f120c223939f8b10f5a35610c90ac03c373b2dc21e375eb",
+      "provenance": "Inherited Super pending snapshot, not Recovery refactor or deployment acceptance"
+    },
+    {
+      "path": "cria/server.py",
+      "sha256": "5518d852304b5dd6e0b9be6233f70dc4ae819b53079edb2d5218e873d460e2f6",
+      "provenance": "Inherited Super pending snapshot, not Recovery refactor or deployment acceptance"
+    },
+    {
+      "path": "cria/upstream.py",
+      "sha256": "18428fa4116cf676e3f465dac55816f860151c13636a3fd0a0695add5a593355",
+      "provenance": "Inherited Super pending snapshot, not Recovery refactor or deployment acceptance"
+    },
+    {
+      "path": "tests/fixtures/c21_completion_replies.json",
+      "sha256": "f9dcf0abfc5934caa1435b9507d37eb76019f03d6f9fe6055da216b005727199",
+      "provenance": "Inherited Super pending snapshot, not Recovery refactor or deployment acceptance"
+    },
+    {
+      "path": "tests/fixtures/c21_u2_historical_pair.json",
+      "sha256": "088b7d04c8de37128d14148e066b203ad6e2f9a2b11796c9f3d56e0980829a39",
+      "provenance": "Inherited Super pending snapshot, not Recovery refactor or deployment acceptance"
+    },
+    {
+      "path": "tests/fixtures/c21_u3a_question_controls.json",
+      "sha256": "f27cc669ebb1047569925148198a743ed9e4f1d52781ad3b2492b6489e0e9cea",
+      "provenance": "Inherited Super pending snapshot, not Recovery refactor or deployment acceptance"
+    },
+    {
+      "path": "tests/handoff_runtime.py",
+      "sha256": "6448a9d53189ba2040910b652d8a3f07de75f23ababf13efa412e2c04c1d841a",
+      "provenance": "Inherited Super pending snapshot, not Recovery refactor or deployment acceptance"
+    },
+    {
+      "path": "tests/test_a_briefing_may_not_invent_a_requirement.py",
+      "sha256": "83b65d379eccedbff9e59cfe23e2118fb55c67761319c7bc6946d6fa52bde29b",
+      "provenance": "Inherited Super pending snapshot, not Recovery refactor or deployment acceptance"
+    },
+    {
+      "path": "tests/test_a_cadence_mechanism_is_gated_where_it_is_called.py",
+      "sha256": "4c2d7d41744eb6ab957ebf15ea209327a02074053932289656583f67075fa38b",
+      "provenance": "Inherited Super pending snapshot, not Recovery refactor or deployment acceptance"
+    },
+    {
+      "path": "tests/test_c13a_rejected_handoff_keeps_the_tool_ledger.py",
+      "sha256": "62d599e342de618e7cf6dbda5b1daa5c16aca317fe4d52c6ceca0c4432ea7f6a",
+      "provenance": "Inherited Super pending snapshot, not Recovery refactor or deployment acceptance"
+    },
+    {
+      "path": "tests/test_c20_facts_and_ledger_provenance.py",
+      "sha256": "3ce4858983aab4fd95c77dd22028e9cadeb23aa7aedfd80779ea7324e49163c2",
+      "provenance": "Inherited Super pending snapshot, not Recovery refactor or deployment acceptance"
+    },
+    {
+      "path": "tests/test_c21_completion_packet_origin.py",
+      "sha256": "258e3c96a431e203cc33ddbf8d82eb1d145bf62ed4e0ac84724926685e56db41",
+      "provenance": "Inherited Super pending snapshot, not Recovery refactor or deployment acceptance"
+    },
+    {
+      "path": "tests/test_c21_superseded_preservation_wire.py",
+      "sha256": "3257c5e2c31c5de779400e06e4c30bf4ab5a4db426c58d944b4654384ab34b7a",
+      "provenance": "Inherited Super pending snapshot, not Recovery refactor or deployment acceptance"
+    },
+    {
+      "path": "tests/test_c21_u3a_support_packet_transport.py",
+      "sha256": "9374851019b39b9f66ca2208a91894622fe6e186e6ca7adfce44160c339f1f26",
+      "provenance": "Inherited Super pending snapshot, not Recovery refactor or deployment acceptance"
+    },
+    {
+      "path": "tests/test_c44_review_9eaadebe_fixes.py",
+      "sha256": "874642d37e622a960c2508b7f7dd0e287d6014025fbc8224ad02dc30621fc8b4",
+      "provenance": "Inherited Super pending snapshot, not Recovery refactor or deployment acceptance"
+    },
+    {
+      "path": "tests/test_c44_review_9eaadebe_r1_marker_leak.py",
+      "sha256": "6e574c3b09a37aa783b600197c66e3ab555dd708a3cdc0f22d398475575b763a",
+      "provenance": "Inherited Super pending snapshot, not Recovery refactor or deployment acceptance"
+    },
+    {
+      "path": "tests/test_loop.py",
+      "sha256": "a3e9664eaf3c0064b647c328b4f3b8a20c6a8cf119d8002d84f6646856625987",
+      "provenance": "Inherited Super pending snapshot, not Recovery refactor or deployment acceptance"
+    },
+    {
+      "path": "tests/test_steer_action_contract.py",
+      "sha256": "b5b09b339b1c02ea227a9c820fdbd7cca2c8ee02cfbd90cd19ccdfec53cbf0cb",
+      "provenance": "Inherited Super pending snapshot, not Recovery refactor or deployment acceptance"
+    }
+  ],
+  "excluded_retention_test": "tests/test_close_walk.py",
+  "status": "Pending source/test baseline only; not accepted deployment"
+}
