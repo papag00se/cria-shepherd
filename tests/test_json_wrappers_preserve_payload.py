@@ -49,6 +49,22 @@ def test_repairable_tail_literal_is_preserved_not_promoted_to_complete_answer(fl
     assert close_unclosed_object(tail[:-1]) is None  # missing quote is NOT missing braces
 
 
+@pytest.mark.parametrize("flag", ["done", "satisfied"])
+@pytest.mark.parametrize("fenced", [False, True])
+def test_repairable_outer_boundary_does_not_promote_complete_descendant(flag, fenced):
+    answer = {flag:False, "reason":"Required literal <think> is missing",
+              "example":{flag:True, "reason":"illustration only"},
+              "detail":"Required literal </think> is missing"}
+    tail = json.dumps(answer)[:-1]
+    text = "```json\n" + tail + "\n```" if fenced else tail
+    assert denoise(text).strip() == tail
+    assert extract_json_object(text) is None
+    assert close_unclosed_object(text) == answer
+    private = json.dumps({flag:True})
+    assert extract_json_object(private + "</think>" + text) is None
+    assert close_unclosed_object(private + "</think>" + text) == answer
+
+
 def test_think_block_around_a_private_object_is_removed_not_promoted():
     private = json.dumps({"done":True, "reason":"quoted </think> is not the closing frame"})
     answer = {"done":False, "reason":"actual ruling"}

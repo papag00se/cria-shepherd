@@ -128,6 +128,25 @@ def test_literal_closer_in_repairable_tail_recovers_negative_only(flag, reasonin
 
 
 @pytest.mark.parametrize("flag", ["satisfied", "done"])
+@pytest.mark.parametrize("reasoning_off", [False, True])
+@pytest.mark.parametrize("fenced", [False, True])
+@pytest.mark.parametrize("prefix", ["", "<think>deliberation without a closer\n"])
+def test_nested_example_cannot_become_a_verdict_from_repairable_outer_tail(flag, reasoning_off, fenced, prefix):
+    def wrapped(answer):
+        tail = json.dumps(answer)[:-1]
+        text = "```json\n" + tail + "\n```" if fenced else tail
+        return prefix + text
+    answer = {flag:False, "reason":"Required literal <think> is missing",
+              "example":{flag:True, "reason":"illustration only"},
+              "detail":"Required literal </think> is missing"}
+    verdict, bodies, _, _ = invoke(flag, [completion(wrapped(answer))], reasoning_off=reasoning_off)
+    assert verdict == answer and len(bodies) == 1
+    positive = {**answer, flag:True, "example":{flag:False, "reason":"illustration only"}}
+    verdict, _, _, _ = invoke(flag, [completion(wrapped(positive)), completion("no recoverable ruling")], reasoning_off=reasoning_off)
+    assert verdict is None
+
+
+@pytest.mark.parametrize("flag", ["satisfied", "done"])
 def test_transport_exception_is_unknown_not_approval(flag):
     verdict, _, log, _ = invoke(flag, [RuntimeError("upstream unavailable")])
     assert verdict is None

@@ -65,7 +65,7 @@ def strip_think(text: str) -> str:
     lower = _mask_json_objects(text).lower()
     idx = lower.rfind("<think")
     if idx != -1 and "</think" not in lower[idx:]:
-        if _scan_object(text[idx:]) is None:
+        if next(_json_objects(text[idx:], include_repairable=True), None) is None:
             text = text[:idx]
     return text
 
@@ -258,13 +258,15 @@ def _json_objects(s: str, *, include_repairable: bool = False):
                 yield obj, start, stop
                 start = s.find("{", stop)
                 continue
-        if include_repairable:
-            repaired = _repairable_tail_span(s, start)
-            if repaired is not None:
-                obj, stop = repaired
+        repaired = _repairable_tail_span(s, start)
+        if repaired is not None:
+            obj, stop = repaired
+            if include_repairable:
                 yield obj, start, stop
-                start = s.find("{", stop)
-                continue
+            # Normal extraction must skip the WHOLE repairable outer candidate,
+            # not promote a nested example into a complete/positive answer.
+            start = s.find("{", stop)
+            continue
         start = s.find("{", start + 1)
 
 
