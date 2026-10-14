@@ -67,6 +67,16 @@ Planning was deliberately retired from normal operation. Keep its implementation
 - **Every fix needs a fails-before / passes-after test**; run `python -m pytest` (stdlib-only, fake upstream, no GPU/network).
 - **Commits** — branch off `main` for changes; commit + push per unit of work; end commit messages with the co-author trailer.
 
+## Walk/fix retention — operator policy (2026-10-13)
+
+Durable outputs are repository changes (including necessary behavioral regressions) and actual
+model-call logs. After ALL associated fixes settle ACCEPTED or REJECTED, remove the walk,
+validation and supporting scratch; do not archive it indefinitely for bug explanations or scores.
+Keep only necessary unresolved inputs, unique unapplied code/tests, active owners and operative
+gates until their work closes. Incidental old report/hash links do not extend retention.
+Follow [the explicit closure lifecycle](suite/README.md#closed-walk-and-fix-retention);
+`suite/close_walk.py` validates a complete operator closure declaration, not model completion.
+
 ## Live testing (the running service)
 
 cria runs as `cria.service` in front of the local model on `:18084`; cria serves on `:18085`. After landing a behavior change: restart it (`sudo systemctl restart cria.service`, passwordless) and say what went live. Swap models via `scripts/live_model.py` / `scripts/swap_and_test.sh`. The live model is **ternary-bonsai** (`ternary_bonsai_27b_q2_0`). Every decision logs a structured event to `~/.cria/logs/cria-YYYYMMDD.jsonl` (`cria-tail -f`); per-call captures (exact body + rendered prompt
