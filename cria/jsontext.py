@@ -16,13 +16,15 @@ _FENCE = re.compile(r"```(?:json)?\s*", re.IGNORECASE)
 
 
 def _mask_json_objects(text: str) -> str:
-    """Same-length framing view: complete parsed objects are payload, never tags.
+    """Same-length framing view: parsed literal bytes are payload, never tags.
 
-    Reuse the balanced-object/first-nonempty parser below. Masking is used ONLY
-    to locate wrappers; the returned answer always comes from the original bytes.
+    Complete objects and tails validated by the existing missing-closers owner
+    are protected. Repaired objects are NOT exposed by normal extraction. Reuse
+    the balanced-object/first-nonempty parser below; masking ONLY locates wrappers
+    and the returned answer always comes from the original bytes.
     """
     parts, end = [], 0
-    for _, start, stop in _json_objects(text):
+    for _, start, stop in _json_objects(text, include_repairable=True):
         parts.extend((text[end:start], "\0" * (stop - start)))
         end = stop
     parts.append(text[end:])
@@ -120,15 +122,45 @@ def close_unclosed_object(text: str) -> dict | None:
     cleaned = denoise(text)
     start = cleaned.find("{")
     while start != -1:
-        closers = _unclosed_tail(cleaned, start)
-        if closers:
-            try:
-                obj = loads(cleaned[start:] + closers)
-            except json.JSONDecodeError:
-                obj = None
-            if isinstance(obj, dict):
-                return obj
+        obj = _repair_unclosed_object(cleaned, start)
+        if obj is not None:
+            return obj
         start = cleaned.find("{", start + 1)
+    return None
+
+
+def _repair_unclosed_object(s: str, start: int) -> dict | None:
+    """The existing missing-closers check, without wrapper preprocessing/recursion."""
+    closers = _unclosed_tail(s, start)
+    if closers:
+        try:
+            obj = loads(s[start:] + closers)
+        except json.JSONDecodeError:
+            return None
+        if isinstance(obj, dict):
+            return obj
+    return None
+
+
+def _repairable_tail_span(s: str, start: int):
+    """Original bytes whose only defect is missing closers, possibly outer fences.
+
+    The real repair owner validates each candidate. A fence inside a value ends
+    mid-string, so it cannot create a valid candidate or steal literal bytes.
+    No repaired object is exposed by normal extraction; these spans protect data
+    during framing only. Verdict callers still reject positive/mid-string/length
+    recovery independently.
+    """
+    obj = _repair_unclosed_object(s, start)
+    if obj is not None:
+        return obj, len(s)
+    for fence in _FENCE.finditer(s, start):
+        end = fence.start()
+        if _FENCE.sub("", s[end:]).strip():
+            continue  # not just an outer fence tail; do not invent away trailing text
+        obj = _repair_unclosed_object(s[:end], start)
+        if obj is not None:
+            return obj, end
     return None
 
 
@@ -211,8 +243,8 @@ def loads(text: str, *, strict: bool = True):
     return json.loads(text, object_pairs_hook=_first_wins, strict=strict)
 
 
-def _json_objects(s: str):
-    """Complete objects and their original spans, using the one model-JSON parser."""
+def _json_objects(s: str, *, include_repairable: bool = False):
+    """Object spans using the one parser; repairable tails are framing-only opt-in."""
     start = s.find("{")
     while start != -1:
         span = _balanced_object(s, start)
@@ -223,6 +255,13 @@ def _json_objects(s: str):
                 obj = None
             if isinstance(obj, dict):
                 stop = start + len(span)
+                yield obj, start, stop
+                start = s.find("{", stop)
+                continue
+        if include_repairable:
+            repaired = _repairable_tail_span(s, start)
+            if repaired is not None:
+                obj, stop = repaired
                 yield obj, start, stop
                 start = s.find("{", stop)
                 continue

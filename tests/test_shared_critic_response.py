@@ -105,6 +105,29 @@ def test_missing_closer_recovers_only_negative_ruling(flag):
 
 
 @pytest.mark.parametrize("flag", ["satisfied", "done"])
+@pytest.mark.parametrize("reasoning_off", [False, True])
+@pytest.mark.parametrize("fenced", [False, True])
+def test_literal_closer_in_repairable_tail_recovers_negative_only(flag, reasoning_off, fenced):
+    reason = "Required output containing literal </think> is missing"
+    answer = {flag:False, "reason":reason}
+    tail = json.dumps(answer)[:-1]
+    private = json.dumps({flag:True, "reason":"private </think> quote"})
+    text = "```json\n" + tail + "\n```" if fenced else tail
+    for text in [text, private + "</think>" + text]:
+        verdict, bodies, _, _ = invoke(flag, [completion(text)], reasoning_off=reasoning_off)
+        assert verdict == answer and len(bodies) == 1
+    def wrapped(value):
+        return "```json\n" + value + "\n```" if fenced else value
+    positive = wrapped(json.dumps({flag:True, "reason":reason})[:-1])
+    verdict, _, _, _ = invoke(flag, [completion(positive), completion("no recoverable ruling")], reasoning_off=reasoning_off)
+    assert verdict is None
+    verdict, bodies, _, _ = invoke(flag, [completion(wrapped(tail), finish="length")], reasoning_off=reasoning_off)
+    assert verdict is None and len(bodies) == 1
+    verdict, _, _, _ = invoke(flag, [completion(wrapped(tail[:-1])), completion("no recoverable ruling")], reasoning_off=reasoning_off)
+    assert verdict is None
+
+
+@pytest.mark.parametrize("flag", ["satisfied", "done"])
 def test_transport_exception_is_unknown_not_approval(flag):
     verdict, _, log, _ = invoke(flag, [RuntimeError("upstream unavailable")])
     assert verdict is None

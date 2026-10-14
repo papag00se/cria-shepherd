@@ -193,8 +193,8 @@ One shared model-JSON parser and wrapper reader. Complete object literal bytes a
 **Scope:** Runtime/config gates owned by the implementation; related opt-in variants remain separate.
 
 **Principal implementation owners:**
-- [`cria/jsontext.py:extract_json_object`](../../cria/jsontext.py#L71)
-- [`cria/jsontext.py:loads`](../../cria/jsontext.py#L206)
+- [`cria/jsontext.py:extract_json_object`](../../cria/jsontext.py#L73)
+- [`cria/jsontext.py:loads`](../../cria/jsontext.py#L238)
 - [`cria/massage.py:repair_tool_args`](../../cria/massage.py#L2132)
 
 **Historical contract IDs:** `A31`, `A32`, `A119`, `A121`.
@@ -636,8 +636,8 @@ One shared critic response pipeline: effective-role cleanup with JSON-literal-sa
 - [`cria/loop.py:verdict_from_unclosed`](../../cria/loop.py#L2194)
 - [`cria/loop.py:verdict_from_reasoning`](../../cria/loop.py#L2287)
 - [`cria/loop.py:_fill_missing_verdict_flag`](../../cria/loop.py#L2336)
-- [`cria/jsontext.py:close_unclosed_object`](../../cria/jsontext.py#L90)
-- [`cria/jsontext.py:strip_reasoning_prefix`](../../cria/jsontext.py#L41)
+- [`cria/jsontext.py:close_unclosed_object`](../../cria/jsontext.py#L92)
+- [`cria/jsontext.py:strip_reasoning_prefix`](../../cria/jsontext.py#L43)
 - [`cria/config.py:Role.clean_content`](../../cria/config.py#L372)
 
 **Historical contract IDs:** `J18`, `J19`, `J20`, `J21`.

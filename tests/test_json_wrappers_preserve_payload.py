@@ -4,7 +4,7 @@ import json
 import pytest
 
 from cria.config import Role
-from cria.jsontext import denoise, extract_json_object, strip_think
+from cria.jsontext import close_unclosed_object, denoise, extract_json_object, strip_think
 
 
 @pytest.mark.parametrize("literal", ["</think>", "<think>payload</think>", "```json payload```", "<think>unclosed", 'escaped "quotes" and </think>'])
@@ -33,6 +33,22 @@ def test_common_parser_discards_earlier_private_json_before_real_outside_close(m
     assert extract_json_object(private + middle + public) == {"done": False, "reason": "actual answer"}
 
 
+@pytest.mark.parametrize("flag", ["done", "satisfied"])
+@pytest.mark.parametrize("value", [False, True])
+@pytest.mark.parametrize("fenced", [False, True])
+def test_repairable_tail_literal_is_preserved_not_promoted_to_complete_answer(flag, value, fenced):
+    answer = {flag:value, "reason":"Required output containing literal </think> and ```json is missing"}
+    tail = json.dumps(answer)[:-1]
+    text = "```json\n" + tail + "\n```" if fenced else tail
+    assert denoise(text).strip() == tail
+    assert Role(name="judge", backend="local", reasoning="off").clean_content(text) == text
+    assert close_unclosed_object(text) == answer
+    assert extract_json_object(text) is None
+    private = json.dumps({flag:True, "reason":"private approval </think> quoted"})
+    assert close_unclosed_object(private + "</think>" + text) == answer
+    assert close_unclosed_object(tail[:-1]) is None  # missing quote is NOT missing braces
+
+
 def test_think_block_around_a_private_object_is_removed_not_promoted():
     private = json.dumps({"done":True, "reason":"quoted </think> is not the closing frame"})
     answer = {"done":False, "reason":"actual ruling"}
@@ -53,6 +69,6 @@ def test_off_role_keeps_literal_markers_but_discards_real_unopened_prefix():
     answer = json.dumps({"done":False,"reason":"</think> literal"})
     assert role.clean_content(answer) == answer
     assert role.clean_content('private thinking</think>' + answer) == answer
-    # Existing convention remains exact/case-sensitive at the role boundary.
+    # Ordinary text and reasoning-ON role pass-through remain unchanged.
     assert role.clean_content('ordinary answer') == 'ordinary answer'
     assert Role(name="judge", backend="local", reasoning="on").clean_content('thinking</think>' + answer) == 'thinking</think>' + answer
