@@ -24,6 +24,15 @@ def test_nested_escapes_braces_fences_and_duplicate_keys_keep_exact_literal_byte
     assert denoise("```json\n" + literal + "\n```") == literal + "\n"
 
 
+@pytest.mark.parametrize("middle", ["</think>", "<think>private deliberation</think>",
+                                     "</thinking>", "</THINK >",
+                                     "<THINKING>private deliberation</THINKING>"])
+def test_common_parser_discards_earlier_private_json_before_real_outside_close(middle):
+    private = json.dumps({"done": True, "reason": "private quote </think> is just data"})
+    public = json.dumps({"done": False, "reason": "actual answer"})
+    assert extract_json_object(private + middle + public) == {"done": False, "reason": "actual answer"}
+
+
 def test_think_block_around_a_private_object_is_removed_not_promoted():
     private = json.dumps({"done":True, "reason":"quoted </think> is not the closing frame"})
     answer = {"done":False, "reason":"actual ruling"}

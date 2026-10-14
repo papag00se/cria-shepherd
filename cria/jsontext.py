@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 import re
 
-_THINK = re.compile(r"<think(?:ing)?\b[^>]*>.*?</think(?:ing)?\s*>", re.DOTALL | re.IGNORECASE)
+_CLOSE_THINK = re.compile(r"</think(?:ing)?\s*>", re.IGNORECASE)
 _FENCE = re.compile(r"```(?:json)?\s*", re.IGNORECASE)
 
 
@@ -29,9 +29,9 @@ def _mask_json_objects(text: str) -> str:
     return "".join(parts)
 
 
-def _strip_wrappers(text: str, pattern: re.Pattern) -> str:
+def _strip_fences(text: str) -> str:
     parts, end = [], 0
-    for match in pattern.finditer(_mask_json_objects(text)):
+    for match in _FENCE.finditer(_mask_json_objects(text)):
         parts.append(text[end:match.start()])
         end = match.end()
     parts.append(text[end:])
@@ -39,25 +39,27 @@ def _strip_wrappers(text: str, pattern: re.Pattern) -> str:
 
 
 def strip_reasoning_prefix(text: str) -> str:
-    """OFF-role convention: drop through the last real </think>, not a JSON value.
+    """Drop through the last real closing frame, never through a JSON value.
 
     A valid private object before an OUTSIDE closing marker is still discarded.
     No verdict is inferred or recovered here; this only recognizes framing.
     """
-    marker = "</think>"
-    closing = _mask_json_objects(text).rfind(marker)
-    return text[closing + len(marker):] if closing != -1 else text
+    end = 0
+    for closing in _CLOSE_THINK.finditer(_mask_json_objects(text)):
+        end = closing.end()
+    return text[end:]
 
 
 def strip_think(text: str) -> str:
-    """Remove ``<think>…</think>`` blocks (reasoning models emit these before the
-    answer). Also drops a dangling unclosed ``<think>`` and everything after it —
+    """Drop through the last real closing frame before selecting an answer.
+    An earlier complete object is still private when an OUTSIDE closing marker
+    follows it. Also drops a dangling unclosed ``<think>`` and everything after it —
     UNLESS a parseable JSON object follows the tag. A model that forgot to close
     its ``<think>`` before emitting the answer (``<think>deciding…\n{"x":1}``)
     still has a real object in the tail; blindly slicing from ``<think`` to the
     end would silently discard that answer, so we keep the tail when it parses.
     """
-    text = _strip_wrappers(text, _THINK)
+    text = strip_reasoning_prefix(text)
     lower = _mask_json_objects(text).lower()
     idx = lower.rfind("<think")
     if idx != -1 and "</think" not in lower[idx:]:
@@ -82,7 +84,7 @@ def denoise(text: str) -> str:
     """The reply with a model's habitual wrappers removed — ``<think>`` preambles and ```` ``` ````
     fences. The ONE place that preprocessing lives, so :func:`extract_json_object` and
     :func:`close_unclosed_object` never disagree about what "the text" is."""
-    return _strip_wrappers(strip_think(text), _FENCE)
+    return _strip_fences(strip_think(text))
 
 
 def close_unclosed_object(text: str) -> dict | None:

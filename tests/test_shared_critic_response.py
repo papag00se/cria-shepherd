@@ -71,10 +71,11 @@ def test_protocol_strings_inside_public_json_are_data_not_framing(flag, reason, 
 
 
 @pytest.mark.parametrize("flag", ["satisfied", "done"])
-def test_private_json_quoting_delimiters_still_loses_to_real_closing_marker(flag):
+@pytest.mark.parametrize("closing", ["</think>", "</thinking>", "</THINK >"])
+def test_private_json_quoting_delimiters_still_loses_to_real_closing_marker(flag, closing):
     private = json.dumps({flag:True, "reason":"private </think> and <think>quoted</think>"})
     answer = {flag:False, "reason":"actual public negative"}
-    verdict, _, _, _ = invoke(flag, [completion(private + "</think>" + json.dumps(answer))], reasoning_off=True)
+    verdict, _, _, _ = invoke(flag, [completion(private + closing + json.dumps(answer))], reasoning_off=True)
     assert verdict == answer
 
 
