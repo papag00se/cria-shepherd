@@ -3995,7 +3995,7 @@ class Loop:
                 rlog.emit("context.focus_trim", reshape="focus-trim", step=idx,
                           dropped_calls=rep.dropped_calls, dropped_msgs=rep.dropped_msgs)
         if self._ctx.coder_role is not None:  # the coder role's sampling/reasoning from cria.toml
-            self._ctx.coder_role.apply(framed)
+            self._ctx.coder_role.apply(framed, rlog=rlog)
         rlog.emit("loop.item", step=idx, total=total, text=item.text)
 
         coder = self._coder_turn(sess, framed, body, step=idx, rlog=rlog)  # SHARED coder turn (see _drive_single_item)
@@ -5542,7 +5542,7 @@ class Loop:
         elif restore is not None:
             framed = {**framed, "messages": framed["messages"] + [restore]}
         if self._ctx.coder_role is not None:  # the coder role's sampling/reasoning from cria.toml
-            self._ctx.coder_role.apply(framed)
+            self._ctx.coder_role.apply(framed, rlog=rlog)
         if self._ctx.focus_trim:  # focus the OUTBOUND view (logged, not bannered — routine housekeeping)
             trimmed, rep = focustrim.trim(framed["messages"])
             if rep.applied:
@@ -13171,7 +13171,7 @@ def guard_rumination(coder: dict, body: dict, coder_chat, rlog, *, step=None, ph
         # message-prefill is gated on no-tools), never a message rewrite.
         if coder_role is not None and getattr(coder_role, "reasoning", None) not in (None, "off"):
             retry_body["chat_template_kwargs"] = dict(retry_body.get("chat_template_kwargs") or {})
-            reasoning.apply_reasoning(retry_body, "off", coder_role.think_protocol)
+            reasoning.apply_reasoning(retry_body, "off", coder_role.think_protocol, rlog)
             rlog.emit("loop.rumination_reasoning_off", attempt=attempt, guard=which,
                       protocol=coder_role.think_protocol)
         coder = massage.apply(

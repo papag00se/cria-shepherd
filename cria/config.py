@@ -343,7 +343,7 @@ class Role:
             body[bodykeys.OUTPUT_RESERVE] = self.output_reserve
         # Translate the ONE portable reasoning value into this backend's convention. reasoning.py
         # is the shared translator — same function for local template models and remote providers.
-        reasoning.apply_reasoning(body, self.reasoning, self.think_protocol)
+        reasoning.apply_reasoning(body, self.reasoning, self.think_protocol, rlog)
         if self.reasoning == "off" and self.think_protocol == "chat_template" and not body.get("tools"):
             # The empty-`<think></think>` prefill suppresses thinking on models TRAINED for it
             # (Qwen/gemma/mellum) but is inert for the LFM2 template family (retired fleet), which then

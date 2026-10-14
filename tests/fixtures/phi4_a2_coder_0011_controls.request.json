@@ -1,0 +1,44 @@
+{
+ "model": "phi4",
+ "messages": [
+  {
+   "role": "user",
+   "content": "\u27e6ctx:steer\u27e7 your last message contained the file's contents as text, but no write tool call was made, so nothing reached the disk \u2014 send that same content again as a write tool call"
+  }
+ ],
+ "stream": true,
+ "tools": [
+  {
+   "type": "function",
+   "function": {
+    "name": "write_file",
+    "description": "Create or completely overwrite a file with its FULL content. The most reliable way to write a file \u2014 you supply the whole file, nothing to escape.",
+    "parameters": {
+     "type": "object",
+     "properties": {
+      "path": {
+       "type": "string"
+      },
+      "content": {
+       "type": "string"
+      }
+     },
+     "required": [
+      "path",
+      "content"
+     ]
+    }
+   }
+  }
+ ],
+ "tool_choice": "auto",
+ "parallel_tool_calls": true,
+ "temperature": 0.0,
+ "reasoning_effort": "none",
+ "chat_template_kwargs": {
+  "enable_thinking": true
+ },
+ "stream_options": {
+  "include_usage": true
+ }
+}

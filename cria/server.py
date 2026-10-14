@@ -708,7 +708,7 @@ def _harden_compaction_reply(comp: dict, body: dict, provider, server, rlog, ses
         if not isinstance(pb.get("max_tokens"), int):
             pb["max_tokens"] = SUMMARIZE_MAX_TOKENS
         if role is not None:
-            replace(role, reasoning="off").apply(pb)
+            replace(role, reasoning="off").apply(pb, rlog=rlog)
         else:
             pb.setdefault("chat_template_kwargs", {})["enable_thinking"] = False
         rlog.emit("route.compaction_retry", level="info", had_leak=bool(text), truncated=truncated,
@@ -1485,7 +1485,7 @@ class CriaHandler(BaseHTTPRequestHandler):
         except (AttributeError, KeyError):
             return self.server.upstream
 
-    def _apply_route_role(self, pbody: dict, indic) -> dict:
+    def _apply_route_role(self, pbody: dict, indic, rlog=None) -> dict:
         """Attach the routed role's sampling + reasoning (temp/top_p/top_k/repeat_penalty + the
         reasoning toggle, translated to its backend's convention) to a proxy-path body, in place.
         WITHOUT this a model on the proxy path runs on the server's defaults — no repeat_penalty
@@ -1497,7 +1497,7 @@ class CriaHandler(BaseHTTPRequestHandler):
             return pbody
         role = self.server.cfg.routing.roles.get(indic.role) if getattr(indic, "role", None) else None
         if role is not None:
-            role.apply(pbody)
+            role.apply(pbody, rlog=rlog)
         return pbody
 
     def _respond_stream(self, body: dict, rlog) -> None:
@@ -1573,7 +1573,7 @@ class CriaHandler(BaseHTTPRequestHandler):
                                          _session_gate_plan(server, sk),
                                          _last_gate_flag(server, sk), _gate_age(server, sk))
             stream = massage.massage_stream(
-                provider.stream_chat(self._apply_route_role(sbody, indic), rlog),
+                provider.stream_chat(self._apply_route_role(sbody, indic, rlog), rlog),
                 body.get("model", ""),
                 body.get("tools"),
                 rlog,
@@ -1617,7 +1617,7 @@ class CriaHandler(BaseHTTPRequestHandler):
             pbody = _compaction_body(pbody, _session_cwd(sess_key, body.get("messages", []), rlog),
                                      _session_gate_plan(server, sess_key),
                                      _last_gate_flag(server, sess_key), _gate_age(server, sess_key))
-        pbody, _ = self._focus_trim(self._apply_route_role(pbody, indic), rlog)
+        pbody, _ = self._focus_trim(self._apply_route_role(pbody, indic, rlog), rlog)
         raw = provider.chat(pbody, rlog)
         try:
             comp = massage.apply(json.loads(raw), body.get("tools"), rlog)

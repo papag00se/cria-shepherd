@@ -85,7 +85,49 @@ def _effort_for(reasoning: str) -> str | None:
     return None  # "auto"/None/unknown → don't touch the request
 
 
-def apply_reasoning(body: dict, reasoning: str | None, style: str) -> None:
+def _says_on(key: str, value) -> bool | None:
+    """Whether an inherited control asks for reasoning ON (None when it cannot be read)."""
+    if key == "enable_thinking":
+        return bool(value)
+    if key == "reasoning_effort":
+        return value not in ("none", "minimal", None)
+    if key == "reasoning" and isinstance(value, dict):
+        return value.get("enabled") is not False and value.get("effort", "") not in ("none", None)
+    return None
+
+
+def _drop_inherited_foreign(body: dict, style: str, rlog, want_on: bool) -> None:
+    """The role's explicit reasoning setting is AUTHORITATIVE over a control the harness inherited
+    in a DIFFERENT convention. Writing only the role's own convention is not enough: llama.cpp
+    reads `reasoning_effort` AFTER `chat_template_kwargs.enable_thinking` (server-common.cpp), so an
+    inherited `reasoning_effort: "none"` (Codex) silently beat a configured `enable_thinking: true`
+    — the role setting lost at the backend (phi4 A2 coder call 0011). The inherited foreign key is
+    DROPPED, not rewritten to a consistent value: the role's own key already states the intent, and
+    inventing a second spelling of it would re-create the very two-controls-one-body hazard.
+    Same-convention keys need no drop — the role's write overwrites them."""
+    dropped: dict = {}
+    if style != "chat_template":
+        ctk = body.get("chat_template_kwargs")
+        if isinstance(ctk, dict) and "enable_thinking" in ctk:
+            ctk = dict(ctk)     # the inherited dict may be shared with the stored inbound body
+            dropped["enable_thinking"] = ctk.pop("enable_thinking")
+            if ctk:
+                body["chat_template_kwargs"] = ctk
+            else:
+                body.pop("chat_template_kwargs")
+    if style != "openai" and "reasoning_effort" in body:
+        dropped["reasoning_effort"] = body.pop("reasoning_effort")
+    if style != "openrouter" and "reasoning" in body:
+        dropped["reasoning"] = body.pop("reasoning")
+    if dropped and rlog is not None:
+        # `agreed`: every dropped control already pointed the role's way (routine); a dropped
+        # control that CONTRADICTED the role is the incident this exists for → warn.
+        agreed = all(_says_on(k, v) is want_on for k, v in dropped.items())
+        rlog.emit("reasoning.inherited_control_overridden", level="info" if agreed else "warn",
+                  style=style, role_reasoning_on=want_on, agreed=agreed, dropped=dropped)
+
+
+def apply_reasoning(body: dict, reasoning: str | None, style: str, rlog=None) -> None:
     """Attach ``reasoning`` to ``body`` in the given backend's convention, in place. A no-op when
     reasoning is unset/"auto" or the style is ``none``. Only ONE convention's keys are written,
     so a body never carries a mix that a strict endpoint would reject.
@@ -98,13 +140,16 @@ def apply_reasoning(body: dict, reasoning: str | None, style: str) -> None:
     if style == "none":
         return
     if style == "chat_template":
-        body.setdefault("chat_template_kwargs", {})["enable_thinking"] = reasoning != "off"
+        _drop_inherited_foreign(body, style, rlog, reasoning != "off")
+        body["chat_template_kwargs"] = {**(body.get("chat_template_kwargs") or {}),
+                                        "enable_thinking": reasoning != "off"}
         return
     if style == "system_directive":
         return      # a MESSAGE mutation, not a parameter — Role.apply owns it (see SYSTEM_DIRECTIVE)
     effort = _effort_for(reasoning)
     if effort is None:
         return
+    _drop_inherited_foreign(body, style, rlog, effort != "none")
     if style == "openrouter":
         body["reasoning"] = {"enabled": False} if effort == "none" else {"effort": effort}
     else:  # "openai" and any other effort-shaped OpenAI-compatible gateway
