@@ -15,6 +15,40 @@ _THINK = re.compile(r"<think(?:ing)?\b[^>]*>.*?</think(?:ing)?\s*>", re.DOTALL |
 _FENCE = re.compile(r"```(?:json)?\s*", re.IGNORECASE)
 
 
+def _mask_json_objects(text: str) -> str:
+    """Same-length framing view: complete parsed objects are payload, never tags.
+
+    Reuse the balanced-object/first-nonempty parser below. Masking is used ONLY
+    to locate wrappers; the returned answer always comes from the original bytes.
+    """
+    parts, end = [], 0
+    for _, start, stop in _json_objects(text):
+        parts.extend((text[end:start], "\0" * (stop - start)))
+        end = stop
+    parts.append(text[end:])
+    return "".join(parts)
+
+
+def _strip_wrappers(text: str, pattern: re.Pattern) -> str:
+    parts, end = [], 0
+    for match in pattern.finditer(_mask_json_objects(text)):
+        parts.append(text[end:match.start()])
+        end = match.end()
+    parts.append(text[end:])
+    return "".join(parts)
+
+
+def strip_reasoning_prefix(text: str) -> str:
+    """OFF-role convention: drop through the last real </think>, not a JSON value.
+
+    A valid private object before an OUTSIDE closing marker is still discarded.
+    No verdict is inferred or recovered here; this only recognizes framing.
+    """
+    marker = "</think>"
+    closing = _mask_json_objects(text).rfind(marker)
+    return text[closing + len(marker):] if closing != -1 else text
+
+
 def strip_think(text: str) -> str:
     """Remove ``<think>…</think>`` blocks (reasoning models emit these before the
     answer). Also drops a dangling unclosed ``<think>`` and everything after it —
@@ -23,8 +57,8 @@ def strip_think(text: str) -> str:
     still has a real object in the tail; blindly slicing from ``<think`` to the
     end would silently discard that answer, so we keep the tail when it parses.
     """
-    text = _THINK.sub("", text)
-    lower = text.lower()
+    text = _strip_wrappers(text, _THINK)
+    lower = _mask_json_objects(text).lower()
     idx = lower.rfind("<think")
     if idx != -1 and "</think" not in lower[idx:]:
         if _scan_object(text[idx:]) is None:
@@ -48,7 +82,7 @@ def denoise(text: str) -> str:
     """The reply with a model's habitual wrappers removed — ``<think>`` preambles and ```` ``` ````
     fences. The ONE place that preprocessing lives, so :func:`extract_json_object` and
     :func:`close_unclosed_object` never disagree about what "the text" is."""
-    return _FENCE.sub("", strip_think(text)).replace("```", "")
+    return _strip_wrappers(strip_think(text), _FENCE)
 
 
 def close_unclosed_object(text: str) -> dict | None:
@@ -175,8 +209,8 @@ def loads(text: str, *, strict: bool = True):
     return json.loads(text, object_pairs_hook=_first_wins, strict=strict)
 
 
-def _scan_object(s: str) -> dict | None:
-    """First brace-balanced span in ``s`` that parses to a ``dict``, else ``None``."""
+def _json_objects(s: str):
+    """Complete objects and their original spans, using the one model-JSON parser."""
     start = s.find("{")
     while start != -1:
         span = _balanced_object(s, start)
@@ -186,9 +220,16 @@ def _scan_object(s: str) -> dict | None:
             except json.JSONDecodeError:
                 obj = None
             if isinstance(obj, dict):
-                return obj
+                stop = start + len(span)
+                yield obj, start, stop
+                start = s.find("{", stop)
+                continue
         start = s.find("{", start + 1)
-    return None
+
+
+def _scan_object(s: str) -> dict | None:
+    """First brace-balanced span in ``s`` that parses to a ``dict``, else ``None``."""
+    return next((obj for obj, _, _ in _json_objects(s)), None)
 
 
 def _balanced_object(s: str, start: int) -> str | None:

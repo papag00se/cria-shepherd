@@ -52,31 +52,54 @@ class OneOwnerTests(unittest.TestCase):
             if "printf %s" in line and "refus" in line.lower():
                 self.fail(f"a refusal still bypasses _refusal_command: {line.strip()}")
 
-    def test_every_guard_goes_through_it(self):
-        # +1: edit_file with no new_string. +1: write_file with no content.
-        # +2 (2026-08-04): write/edit with no usable PATH — malformed-argument calls used to fall
-        # through un-lowered and draw the harness's opaque "unsupported call" reply.
-        # (The read-path refusals — large range, large whole read, inverted range — live in the
-        # _read_command/_ranged_read helpers, outside this function's source; InvertedRangeTests
-        # holds their exit-code contract.)
-        # +1 (2026-08-05, nemotron poff 1785946072): write content that is fused-call protocol
-        # debris — the soup cria once wrote as a file named `tests`, blocking the real directory.
-        #
-        # AST rather than a text count: a docstring or comment that happened to spell
-        # "_refusal_command(" would inflate a raw substring count without adding a real call site.
-        import ast
-        import inspect
-        tree = ast.parse(inspect.getsource(writeproxy.translate_outbound))
-        calls = sum(1 for n in ast.walk(tree)
-                   if isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
-                   and n.func.id == "_refusal_command")
-        # +3: generated cleanup refusal on write/edit, plus stale reviewed-edit refusal.
-        # G4 added +1 for a whole-file write naming an unread existing file; H1 REPLACED it with an
-        # answer that is the file itself (`_read_in_place_of_write`, outside this function's source —
-        # like the read-path guards above, it rides the read owner, not a refusal exit).
-        # H2 +1: a whole-file write that would gut a file the coder read and the judge did not rule whole.
-        # K2 +1: edit_file with an EMPTY old_string (it names no text; was "matches N places").
-        self.assertEqual(calls, 15)
+    def test_mutation_guards_delegate_to_one_refusal_owner(self):
+        # The old fixed count of15 direct calls broke when F13 centralized guards.
+        # Keep the actual one-owner invariant, not the number of places spelling it.
+        # Incidents: absent new_string became deletion; absent/null content became
+        # truncation; missing paths drew opaque unsupported-tool replies; fused
+        # protocol soup became a file named tests (nemotron1785946072); empty old
+        # text drew a false matches-N-places diagnosis (phi4 A4).
+        # This matrix covers affected mutation routes. Other refusal families keep
+        # RefusalCommandTests, fetch tests, InvertedRangeTests and their own suites;
+        # this is NOT a claim to exercise every guard through mutation arguments.
+        import json
+        import tempfile
+        from pathlib import Path
+        from unittest import mock
+        shell = {"name":"exec_command", "schema":{"properties":{"cmd":{"type":"string"}}}}
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "data.txt"
+            original = b"original token\n"
+            writes = [{"content":"new"}, {"path":str(path)},
+                      {"path":str(path), "content":None},
+                      {"path":str(path), "content":"<tool_call>\n</tool_call>"}]
+            edits = [{"old_string":"token", "new_string":"new"},
+                     {"path":str(path), "new_string":"new"},
+                     {"path":str(path), "old_string":None, "new_string":"new"},
+                     {"path":str(path), "old_string":"token"},
+                     {"path":str(path), "old_string":"token", "new_string":None},
+                     {"path":str(path), "old_string":"", "new_string":"new"}]
+            for names, cases in [(('write_file','create_file'), writes),
+                                 (('edit_file','str_replace'), edits)]:
+                for name in names:
+                    for args in cases:
+                        with self.subTest(tool=name, args=args):
+                            path.write_bytes(original)
+                            comp = {"choices":[{"message":{"tool_calls":[{
+                                "id":"guard", "type":"function", "function":{
+                                    "name":name, "arguments":json.dumps(args)}}]}}]}
+                            with mock.patch.object(writeproxy, "_refusal_command",
+                                                   wraps=writeproxy._refusal_command) as owner:
+                                writeproxy.translate_outbound(comp, shell, injected={name},
+                                                              workspace_root=directory)
+                                owner.assert_called_once()
+                            lowered = comp["choices"][0]["message"]["tool_calls"][0]
+                            command = json.loads(lowered["function"]["arguments"])["cmd"]
+                            result = subprocess.run(["bash","-c",command], cwd=directory,
+                                                    capture_output=True, text=True)
+                            self.assertTrue(denial.is_denied(result.stdout + result.stderr))
+                            self.assertNotEqual(result.returncode, 0)
+                            self.assertEqual(path.read_bytes(), original)
 
     @staticmethod
     def _lower_fetch(result):

@@ -27,6 +27,7 @@ import uuid
 import json
 import os
 import re
+from dataclasses import dataclass
 from pathlib import Path
 from shlex import quote as _qbash  # one bash-quoting rule (was a hand-rolled _qbash)
 
@@ -156,6 +157,63 @@ _WRITE_NAMES = {"write_file", "create_file"}
 _EDIT_NAMES = {"edit_file", "str_replace"}
 _READ_NAMES = {"read_file"}
 _LIST_NAMES = {"list_dir"}
+
+
+@dataclass(frozen=True)
+class _FileMutation:
+    path: str
+    content: str = ""
+    old: str = ""
+    new: str = ""
+    error: str = ""
+
+
+def _prepare_file_mutation(name: str, args: dict) -> _FileMutation:
+    """F13: validate required values before lowering; empty is an explicit value.
+
+    Whole writes accept the legacy contents alias only when content is absent/null.
+    Exact edits require both snippets, and an empty old snippet names no place.
+    Preserve real falsy values as text, not an accidental deletion/empty write.
+    This prepares arguments only: syntax, debris and candidate safety keep their
+    separate owners and cannot be inferred from argument validity.
+    """
+    path = _tool_path(args) or ""
+    if not path:
+        return _FileMutation(path, error="path")
+    if name in _WRITE_NAMES:
+        body = args.get("content")
+        if body is None:
+            body = args.get("contents")
+        return (_FileMutation(path, error="content") if body is None
+                else _FileMutation(path, content=str(body)))
+    if args.get("old_string") is None:
+        return _FileMutation(path, error="old_string")
+    if args.get("new_string") is None:
+        return _FileMutation(path, error="new_string")
+    if args["old_string"] == "":
+        return _FileMutation(path, error="empty_old_string")
+    return _FileMutation(path, old=str(args["old_string"]), new=str(args["new_string"]))
+
+
+def _file_mutation_refusal(name: str, mutation: _FileMutation, injected: set, rlog) -> str:
+    """One truthful refusal path; retain tool-specific prompts and event identity."""
+    error = mutation.error
+    if error == "empty_old_string":
+        whole = sorted(injected & _WRITE_NAMES)
+        message = prompts.load("edit_empty_old_string") + (
+            " " + prompts.fill(prompts.load("edit_empty_old_string_write"), tool=f"`{whole[0]}`")
+            if whole else "")
+        if rlog is not None:
+            rlog.emit("writeproxy.edit_empty_old_string", tool=name, path=mutation.path)
+    else:
+        write = name in _WRITE_NAMES
+        prompt = (("write_missing_path" if error == "path" else "write_missing_content") if write
+                  else ("edit_missing_new_string" if error == "new_string" else "edit_missing_path"))
+        message = prompts.load(prompt)
+        if rlog is not None:
+            rlog.emit("writeproxy.write_missing_arg" if write else "writeproxy.edit_missing_arg",
+                      tool=name, arg=error)
+    return _refusal_command(message)
 
 # cria's own private dir is off-limits to the driven model — no reading (it holds cria's .env
 # credentials and config) and no writing (a stray file, or worse an overwrite of cria.toml /
@@ -1736,32 +1794,13 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
                     rlog.emit("writeproxy.spill_read_gated" if name in _READ_NAMES
                               else "writeproxy.blocked_spill", tool=name, path=str(sp))
             elif name in _WRITE_NAMES and name in injected:
-                path = _tool_path(args)
-                if not path:
-                    # No usable path — the arguments arrived malformed (gemma4 re-measure run
-                    # 1785893473 call 0007: path fused into another key). Before this branch the
-                    # un-lowerable call fell through RAW to the harness, whose reply —
-                    # "unsupported call: write_file" — the coder read as "writes are unsupported".
-                    # cria advertised this tool; cria owns the refusal that explains it.
-                    cmd = _refusal_command(prompts.load("write_missing_path"))
-                    if rlog is not None:
-                        rlog.emit("writeproxy.write_missing_arg", tool=name, arg="path")
-                if path:
-                    # The `new_string` lesson below, for the tool that carries whole files. `content`
-                    # is declared required, and `args.get("content") or ""` turned its ABSENCE — and
-                    # its explicit `null` — into an empty string, which the byte-exact write then put
-                    # on disk: a working file truncated to zero bytes, reported to the coder as a
-                    # successful write. Validate-before-lower does not catch it either, because an
-                    # empty file parses. Only a MISSING/NULL value is refused; an intentional empty
-                    # string still writes, and a falsy-but-real value (0) is no longer discarded.
-                    body = args.get("content")
-                    if body is None:
-                        body = args.get("contents")
-                    if body is None:
-                        cmd = _refusal_command(prompts.load("write_missing_content"))
-                        if rlog is not None:
-                            rlog.emit("writeproxy.write_missing_arg", tool=name, arg="content")
-                    elif _protocol_debris(str(body)):
+                mutation = _prepare_file_mutation(name, args)
+                path = mutation.path
+                if mutation.error:
+                    cmd = _file_mutation_refusal(name, mutation, injected, rlog)
+                else:
+                    body = mutation.content
+                    if _protocol_debris(body):
                         # Content that is NOTHING BUT tool-protocol tags (plus at most a bare
                         # path token) is the mis-split half of a FUSED call, not a file. Walked
                         # on nemotron poff 1785946072: cria wrote that soup as a file named
@@ -1823,70 +1862,36 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
                                 if rlog is not None:
                                     rlog.emit("writeproxy.write_shrink_held", tool=name, path=str(path))
             elif name in _EDIT_NAMES and name in injected:
-                path = _tool_path(args)
-                if not path or args.get("old_string") is None:
-                    # Same malformed-arguments hole as the write branch (run 1785893473 calls
-                    # 0059/0184: path+old_string fused into new_string). Un-lowered, the raw call
-                    # drew the harness's opaque "unsupported call: edit_file", which the coder
-                    # misread as edits being unsupported and rerouted through whole-file rewrites.
-                    cmd = _refusal_command(prompts.load("edit_missing_path"))
-                    if rlog is not None:
-                        rlog.emit("writeproxy.edit_missing_arg", tool=name,
-                                  arg="path" if not path else "old_string")
-                if path and args.get("old_string") is not None:
-                    # A MISSING required argument is not an empty one. `new_string` is declared
-                    # required, and `args.get(...) or ""` turned its ABSENCE — the shape a truncated
-                    # tool call has — into "delete this text". cria then applied that deletion, saw
-                    # the wreckage, and reported it to the coder as a fact about ITS file:
-                    #   "your edit would break handle_resolver.py — unmatched ')' (line 15)"
-                    # Walked on ada-handles_fabliq_codex_pon_1785721353 call 0165-0166: that file
-                    # compiles cleanly. The syntax error was cria's own artifact, handed over with a
-                    # file:line citation — and it named the exact phantom (a missing closing paren)
-                    # the run had already been chasing for a hundred calls. An intentional empty
-                    # new_string is still fine; only an ABSENT key is refused.
-                    if "new_string" not in args:
-                        cmd = _refusal_command(prompts.load("edit_missing_new_string"))
-                        if rlog is not None:
-                            rlog.emit("writeproxy.edit_missing_arg", tool=name, arg="new_string")
-                    elif args.get("old_string") == "":
-                        # AN EMPTY old_string IS NOT A PLACE. It "matched" len(file)+1 boundaries, so the
-                        # edit report said "matches 191 places — add surrounding lines" about a snippet
-                        # with no lines to add to (phi4 A4 0024/0026/0027: a whole-file intent sent through
-                        # the edit tool, four times). It names no text, so the call is refused here — as a
-                        # call that did not run, so no edit-failure or rewrite counter hears of it. cria
-                        # authors nothing: no content is chosen and the file is untouched.
-                        whole = sorted(injected & _WRITE_NAMES)   # name a write tool only when it is certainly on the menu
-                        cmd = _refusal_command(prompts.load("edit_empty_old_string") + (
-                            " " + prompts.fill(prompts.load("edit_empty_old_string_write"), tool=f"`{whole[0]}`")
-                            if whole else ""))
-                        if rlog is not None:
-                            rlog.emit("writeproxy.edit_empty_old_string", tool=name, path=str(path))
-                    else:
-                        old, new = str(args.get("old_string") or ""), str(args.get("new_string") or "")
-                        cmd = _edit_command(str(path), old, new, pack=pack, echo=edit_echo, seq=edit_seq.get(ti))
-                        from . import cleanupsafety
-                        raw = wsview.current().read_bytes(str(path))
-                        try:
-                            previous = raw.decode() if raw is not None else None
-                        except UnicodeError:
-                            previous = None
-                        # Exact edits only: never invent the candidate when the
-                        # harness hasn't supplied the file or matching is ambiguous.
-                        if previous is not None and old and previous.count(old) == 1:
-                            refusal = cleanupsafety.review(str(path), previous.replace(old, new, 1),
-                                                           previous, workspace_root, rlog, permission=external_dir_permission)
-                            if refusal:
-                                # Bind the finding to the reviewed bytes. If they changed,
-                                # ask for a fresh read, never bypass a known unsafe finding.
-                                check = ("import base64,pathlib,sys; "
-                                         "p=pathlib.Path(base64.b64decode(" + repr(_b64(str(path))) + ").decode()); "
-                                         "sys.exit(0 if p.read_bytes()==base64.b64decode(" + repr(_b64(previous)) + ") else 1)")
-                                stale = _refusal_command(prompts.load('cleanup_stale'))
-                                cmd = (f"if python3 -c {_qbash(check)}; then\n"
-                                       f"{_refusal_command(refusal)}\nelse\n{stale}\nfi")
-                        elif rlog is not None:
-                            rlog.emit('safety.cleanup_review', path=str(path), verdict='UNKNOWN',
-                                      reason='complete exact edit candidate unavailable')
+                mutation = _prepare_file_mutation(name, args)
+                path = mutation.path
+                if mutation.error:
+                    cmd = _file_mutation_refusal(name, mutation, injected, rlog)
+                else:
+                    old, new = mutation.old, mutation.new
+                    cmd = _edit_command(str(path), old, new, pack=pack, echo=edit_echo, seq=edit_seq.get(ti))
+                    from . import cleanupsafety
+                    raw = wsview.current().read_bytes(str(path))
+                    try:
+                        previous = raw.decode() if raw is not None else None
+                    except UnicodeError:
+                        previous = None
+                    # Exact edits only: never invent the candidate when the
+                    # harness hasn't supplied the file or matching is ambiguous.
+                    if previous is not None and old and previous.count(old) == 1:
+                        refusal = cleanupsafety.review(str(path), previous.replace(old, new, 1),
+                                                       previous, workspace_root, rlog, permission=external_dir_permission)
+                        if refusal:
+                            # Bind the finding to the reviewed bytes. If they changed,
+                            # ask for a fresh read, never bypass a known unsafe finding.
+                            check = ("import base64,pathlib,sys; "
+                                     "p=pathlib.Path(base64.b64decode(" + repr(_b64(str(path))) + ").decode()); "
+                                     "sys.exit(0 if p.read_bytes()==base64.b64decode(" + repr(_b64(previous)) + ") else 1)")
+                            stale = _refusal_command(prompts.load('cleanup_stale'))
+                            cmd = (f"if python3 -c {_qbash(check)}; then\n"
+                                   f"{_refusal_command(refusal)}\nelse\n{stale}\nfi")
+                    elif rlog is not None:
+                        rlog.emit('safety.cleanup_review', path=str(path), verdict='UNKNOWN',
+                                  reason='complete exact edit candidate unavailable')
             elif name in _READ_NAMES and name in injected:
                 cmd = _read_command(args)
             elif name in _LIST_NAMES and name in injected:

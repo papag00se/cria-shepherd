@@ -1,0 +1,49 @@
+"""F06/F37: protocol framing cannot eat reserved strings inside valid JSON."""
+import json
+
+import pytest
+
+from cria.config import Role
+from cria.jsontext import denoise, extract_json_object, strip_think
+
+
+@pytest.mark.parametrize("literal", ["</think>", "<think>payload</think>", "```json payload```", "<think>unclosed", 'escaped "quotes" and </think>'])
+@pytest.mark.parametrize("wrapper", ["{}", "```json\n{}\n```", "<think>private deliberation</think> {}"])
+def test_actual_json_payload_bytes_survive_wrapper_removal(literal, wrapper):
+    answer = {"done":False, "reason":literal, "nested":{"value":literal}}
+    assert extract_json_object(wrapper.format(json.dumps(answer))) == answer
+
+
+def test_nested_escapes_braces_fences_and_duplicate_keys_keep_exact_literal_bytes():
+    literal = ('{\n  "done":false, "reason":"\\\"quoted\\\" {brace} </think> and '
+               '<think>literal</think> ```json code```", "nested":{"items":["} </think>", '
+               '"\\\\escaped", "<think>unclosed"]}, "done":true\n}')
+    assert denoise(literal) == literal
+    assert Role(name="judge", backend="local", reasoning="off").clean_content(literal) == literal
+    assert extract_json_object(literal)["done"] is False
+    assert denoise("```json\n" + literal + "\n```") == literal + "\n"
+
+
+def test_think_block_around_a_private_object_is_removed_not_promoted():
+    private = json.dumps({"done":True, "reason":"quoted </think> is not the closing frame"})
+    answer = {"done":False, "reason":"actual ruling"}
+    text = "<think>" + private + "</think>" + json.dumps(answer)
+    assert extract_json_object(text) == answer
+    assert strip_think(text) == json.dumps(answer)
+
+
+def test_repeated_boolean_keys_still_use_the_shared_first_nonempty_parser():
+    text = '{"done":false,"reason":"literal </think>","done":true}'
+    answer = {"done":False, "reason":"literal </think>"}
+    cleaned = Role(name="judge", backend="local", reasoning="off").clean_content(text)
+    assert extract_json_object(cleaned) == answer
+
+
+def test_off_role_keeps_literal_markers_but_discards_real_unopened_prefix():
+    role = Role(name="judge", backend="local", reasoning="off")
+    answer = json.dumps({"done":False,"reason":"</think> literal"})
+    assert role.clean_content(answer) == answer
+    assert role.clean_content('private thinking</think>' + answer) == answer
+    # Existing convention remains exact/case-sensitive at the role boundary.
+    assert role.clean_content('ordinary answer') == 'ordinary answer'
+    assert Role(name="judge", backend="local", reasoning="on").clean_content('thinking</think>' + answer) == 'thinking</think>' + answer
