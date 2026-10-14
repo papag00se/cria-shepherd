@@ -22,7 +22,9 @@ and this prompt has had a trim reverted before.
 
 import unittest
 
-from cria import prompts
+import json
+
+from cria import loop, prompts
 
 
 class TheOutstandingBulletCarriesTheEvidenceRuleTests(unittest.TestCase):
@@ -69,7 +71,18 @@ class TheOutstandingBulletCarriesTheEvidenceRuleTests(unittest.TestCase):
 
 class AModelsSummaryIsNotGroundTruthTests(unittest.TestCase):
     def setUp(self):
-        self.user = prompts.load("satisfaction_user")
+        # The surviving contract is the actual completion packet, not an unexpanded
+        # template. C21 shares the source rule between inline grounding and composed
+        # calls without reclassifying deterministic handoff effects as model prose.
+        sent = []
+        def chat(body, log):
+            sent.append(body)
+            return json.dumps({"choices": [{"message": {"content": '{"satisfied": false}'}}]}).encode()
+        class Log:
+            def emit(self, *args, **kwargs):
+                pass
+        loop.judge_satisfaction("Implement discounts.", "logged tool output", chat, None, Log())
+        self.user = sent[0]["messages"][-1]["content"]
 
     def test_the_header_no_longer_calls_the_evidence_block_ground_truth_outright(self):
         head = self.user.split("{{EVIDENCE}}")[0]

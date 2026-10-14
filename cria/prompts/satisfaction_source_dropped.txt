@@ -1,0 +1,1 @@
+Source of this retained record: the session's producer-confirmed dropped-prose handoff. It carries deterministic historical observations, not model-written prose. Retain their recorded scope, time and uncertainty; tool effects are not proof of correct behavior or current contents.

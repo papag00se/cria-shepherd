@@ -1323,7 +1323,10 @@ class CompactionTests(unittest.TestCase):
         ev = _satisfaction_evidence(compacted)
         self.assertIn("resolve_handle.py", ev)                    # the real work is now visible
         self.assertIn("README", ev)
-        self.assertIn("SUMMARY OF EARLIER WORK", ev)
+        # Preserve the complete retrospective account, not a categorical wrapper
+        # that confuses a model account with deterministic dropped-prose effects.
+        self.assertIn(compacted[1]["content"], ev)
+        self.assertIn("RETAINED EARLIER CONTEXT", ev)
 
     def test_satisfaction_evidence_is_just_the_log_when_uncompacted(self):
         # No summary markers → identical to _work_log (no spurious header).

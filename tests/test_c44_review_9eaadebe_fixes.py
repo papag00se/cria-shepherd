@@ -24,6 +24,7 @@ from unittest import mock
 from cria import loop
 from cria import server as srv
 from cria.config import Role
+from tests.handoff_runtime import attach_session
 
 
 class _Rlog:
@@ -79,6 +80,9 @@ class B1AppendixOnlyTruthfulFrameTests(unittest.TestCase):
     is not a handoff at all — cria's own re-derived workspace listing."""
 
     def test_prose_dropped_but_appendix_present_never_claims_an_account(self):
+        runtime = _NoRoleSrv()
+        key = "sid:c44-positive"
+        sess = attach_session(runtime, key, "Add EU zone detection.")
         comp = {"choices": [{"message": {"role": "assistant", "content":
                              "Chose the foo_gem for EU detection. Next step: add it."}}]}
         with mock.patch.object(
@@ -86,7 +90,7 @@ class B1AppendixOnlyTruthfulFrameTests(unittest.TestCase):
                 return_value=("FILES ALREADY IN THIS WORKSPACE (on disk right now — do not "
                              "re-create them):\n  README.md\n  orders/")):
             out = srv._harden_compaction_reply(comp, {"messages": _base_messages()},
-                                               _NoRoleProvider(), _NoRoleSrv, _Rlog())
+                                               _NoRoleProvider(), runtime, _Rlog(), key)
         shipped = out["choices"][0]["message"]["content"]
         self.assertTrue(shipped.strip(), "the appendix must still ship — never destroy re-derivable facts")
 
@@ -96,7 +100,7 @@ class B1AppendixOnlyTruthfulFrameTests(unittest.TestCase):
         # survived) so the OLD blank-only check chose the NORMAL template, and the very first
         # assertion below fails with a real AssertionError ("ungrounded account" unexpectedly found).
         wrapped = [{"role": "user", "content": PRE + shipped}]
-        out2, hit = loop.reframe_compaction(wrapped)
+        out2, hit = loop.reframe_compaction(wrapped, origin=sess.handoff_origin)
         self.assertTrue(hit)
         final = out2[0]["content"]
         self.assertNotIn("ungrounded account", final)                # #5b: not a handoff, never claimed as one

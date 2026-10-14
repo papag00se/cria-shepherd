@@ -33,14 +33,11 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from cria import upstream  # noqa: E402
 
 
-class _FakeUpstream:
-    """Just enough of Upstream to exercise _render_prompt's payload construction."""
+class _FakeUpstream(upstream.Upstream):
+    """Use the real preparation owner; only the remote HTTP response is supplied."""
 
     def __init__(self):
-        self.seen: dict | None = None
-        self._base_url = "http://127.0.0.1:0"
-
-    _render_prompt = upstream.Upstream._render_prompt
+        super().__init__("http://fixture.invalid")
 
 
 def _payload_for(body: dict, monkeypatch) -> dict:

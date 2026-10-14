@@ -17,6 +17,7 @@ from cria import bodykeys, contextfloor as cf, denial, loop, modelview, response
 from tests.test_a_judges_doubt_is_not_an_order import _session
 from tests.test_c13a_rejected_handoff_keeps_the_tool_ledger import _Srv, _Rlog, _harden
 from tests.wsfixture import survey
+from tests.handoff_runtime import attach_session
 
 FX = json.loads((Path(__file__).parent / 'fixtures/c20_provenance.json').read_text())
 PATH = 'data/feed_messy.csv'
@@ -24,6 +25,15 @@ READ_ID = FX['read_exchange'][2]['tool_call_id']
 UNKNOWN = 'availability of its read text is not established here'
 ISSUED = 'issued (result recorded; execution not established): '
 NO_RESULT = 'issued (no result recorded; execution not established): '
+
+
+def _producer_session(history):
+    # This starts with NO origin. Only the actual hardener may populate it;
+    # a signature-shaped string or a manually constructed typed record cannot.
+    runtime = _Srv()
+    key = 'sid:c20-producer'
+    sess = attach_session(runtime, key, loop._history_root(history)[0])
+    return runtime, key, sess
 
 
 def _sess():
@@ -174,19 +184,20 @@ def test_real_native_refusal_survives_rejected_handoff_and_0191_shape_to_wire():
             return json.dumps({'choices': [{'message': {'role': 'assistant', 'content': next(verdicts)}}]})
 
     comp = {'choices': [{'message': {'role': 'assistant', 'content': 'Debug file removed.'}}]}
-    out = server._harden_compaction_reply(comp, {'messages': history}, Provider, _Srv, _Rlog())
+    runtime, key, sess = _producer_session(history)
+    out = server._harden_compaction_reply(comp, {'messages': history}, Provider, runtime, _Rlog(), key)
     reply = out['choices'][0]['message']['content']
     assert 'Debug file removed.' not in reply
     cmd = json.loads(FX['refusal_input'][0]['arguments'])['cmd']
     assert '- ' + ISSUED + cmd in reply
     assert '- ran:' not in reply and 'refused, did not run:' not in reply
     stored = {'role': 'user', 'content': FX['summary_preamble'] + reply}
-    reframed, _ = loop.reframe_compaction([{'role': 'user', 'content': 'task'}, stored])
+    reframed, _ = loop.reframe_compaction([{'role': 'user', 'content': 'task'}, stored], origin=sess.handoff_origin)
     sent, _ = _wire([{'role': 'system', 'content': 'Coding agent'}, *reframed])
     continuation = next(m['content'] for m in sent if m.get('content', '').startswith('⟦ctx:continuation⟧'))
     assert ISSUED in continuation and '- ran:' not in continuation
     assert not any(m.get('role') == 'tool' for m in sent)  # 0191 retains only the ledger
-    carried = server._carried_ledger(sent)
+    carried = server._carried_ledger(sent, origin=sess.handoff_origin)
     assert selfcompact.parse_ledger(carried) == selfcompact.parse_ledger(selfcompact.work_ledger(history))
 
 
@@ -253,9 +264,26 @@ def test_older_handoff_events_are_not_discarded_when_header_wording_changes():
     old = ('WHAT THE TOOLS DID IN THE EARLIER TURNS (derived from the recorded tool calls and their results '
            '— a record of events, not a claim about whether the work is correct):\n'
            '- ran: legacy command\n- write_file old.py: confirmed written')
-    stored = {'role': 'user', 'content': FX['summary_preamble'] + server._PROSE_DROPPED_MARKER + '\n' + old}
-    for shape in ([stored], loop.reframe_compaction([stored])[0]):
-        carried = server._carried_ledger(shape)
+    # Reproduce the historical renderer's inputs/style, not a fabricated origin.
+    # The old `ran` wording is a preserved event, never a new execution judgment.
+    hist = [{'role': 'assistant', 'tool_calls': [_call('legacy', 'legacy command')]},
+            {'role': 'tool', 'tool_call_id': 'legacy', 'content': 'legacy result'},
+            {'role': 'assistant', 'tool_calls': [{'id': 'old-write', 'type': 'function',
+             'function': {'name': 'write_file', 'arguments': json.dumps({'path': 'old.py', 'content': 'old'})}}]},
+            {'role': 'tool', 'tool_call_id': 'old-write', 'content': 'Wrote old.py'}]
+    runtime, key, sess = _producer_session(hist)
+    load_map = selfcompact.prompts.load_map
+    historical_labels = dict(load_map('compaction_work_ledger'))
+    historical_labels['header'] = '{{SIGNATURE}}\n{{LINES}}'
+    historical_labels['shell_answered'] = 'ran: {{COMMAND}}'
+    with patch.object(selfcompact.prompts, 'load_map', side_effect=lambda name:
+                      historical_labels if name == 'compaction_work_ledger' else load_map(name)):
+        reply = _harden('Do the next edit.', 'PLAN', hist, runtime=runtime, sess_key=key)
+    assert sess.handoff_origin.ledger == old  # exact original historical fixture bytes
+    stored = {'role': 'user', 'content': FX['summary_preamble'] + reply}
+    for shape in ([stored], loop.reframe_compaction([stored], origin=sess.handoff_origin)[0]):
+        sent, _ = _wire([{'role': 'system', 'content': 'Coding agent'}, *shape])
+        carried = server._carried_ledger(sent, origin=sess.handoff_origin)
         assert selfcompact.parse_ledger(carried) == [('ran: legacy command', 1),
                                                     ('write_file old.py: confirmed written', 1)]
         new = selfcompact.work_ledger([{'role': 'assistant', 'tool_calls': [_call('n', 'ls')]}], carried=carried)
@@ -269,19 +297,31 @@ def test_genuine_signature_carry_order_folding_and_wire(scoped):
     assert selfcompact._ledger_head() == signature  # complete historical producer signature
     # Distinct outcomes stay ordered; only the last identical event folds with the next call.
     events = [('refused, did not run: ls', 1), (ISSUED + 'ls', 1), (NO_RESULT + 'ls', 2)]
+    hist = [{'role': 'assistant', 'tool_calls': [_call('a', 'ls'), _call('b', 'ls'),
+                                              _call('c', 'ls'), _call('d', 'ls')]},
+            {'role': 'tool', 'tool_call_id': 'b', 'content': 'a.txt'},
+            {'role': 'tool', 'tool_call_id': 'a', 'content': denial.mark('nope')}]
     if scoped:
-        hist = [{'role': 'assistant', 'tool_calls': [_call('a', 'ls'), _call('b', 'ls'),
-                                                  _call('c', 'ls'), _call('d', 'ls')]},
-                {'role': 'tool', 'tool_call_id': 'b', 'content': 'a.txt'},
-                {'role': 'tool', 'tool_call_id': 'a', 'content': denial.mark('nope')}]
         ledger = selfcompact.work_ledger(hist)
     else:
         ledger = signature + '\n- refused, did not run: ls\n- ' + ISSUED + 'ls\n- (2 times) ' + NO_RESULT + 'ls'
     assert selfcompact.parse_ledger(ledger) == events
-    stored = {'role': 'user', 'content': FX['summary_preamble'] + server._PROSE_DROPPED_MARKER + '\n' + ledger}
-    for shape in ([stored], loop.reframe_compaction([stored])[0]):
+    runtime, key, sess = _producer_session(hist)
+    if scoped:
+        reply = _harden('Do the next edit.', 'PLAN', hist, runtime=runtime, sess_key=key)
+    else:
+        # The pre-scope historical layout still originates in real structured calls.
+        load_map = selfcompact.prompts.load_map
+        historical_labels = dict(load_map('compaction_work_ledger'))
+        historical_labels['header'] = '{{SIGNATURE}}\n{{LINES}}'
+        with patch.object(selfcompact.prompts, 'load_map', side_effect=lambda name:
+                          historical_labels if name == 'compaction_work_ledger' else load_map(name)):
+            reply = _harden('Do the next edit.', 'PLAN', hist, runtime=runtime, sess_key=key)
+    assert sess.handoff_origin.ledger == ledger  # scope/layout is the sole fixture difference
+    stored = {'role': 'user', 'content': FX['summary_preamble'] + reply}
+    for shape in ([stored], loop.reframe_compaction([stored], origin=sess.handoff_origin)[0]):
         sent, _ = _wire([{'role': 'system', 'content': 'Coding agent'}, *shape])
-        carried = server._carried_ledger(sent)
+        carried = server._carried_ledger(sent, origin=sess.handoff_origin)
         assert selfcompact.parse_ledger(carried) == events
         next_ledger = selfcompact.work_ledger([{'role': 'assistant', 'tool_calls': [_call('next', 'ls')]}],
                                              carried=carried)
