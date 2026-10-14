@@ -24,12 +24,12 @@ def test_l0_responses_preserves_measured_usage_and_cached_input(monkeypatch, str
         handler._json(json.dumps({'choices': [{'message': {'role': 'assistant', 'content': '73'},
             'finish_reason': 'stop'}], 'usage': usage}).encode())
     monkeypatch.setattr(_FakeUpstream, 'do_POST', post)
-    h = _Harness(0, False)
+    h = _Harness(0, False, memory=True)
     try:
         body = {'model': 'm', 'input': [{'role': 'user', 'content': '73'}], 'stream': stream}
         req = urllib.request.Request(h.base + '/v1/responses', data=json.dumps(body).encode(),
                                      headers={'Content-Type': 'application/json'})
-        with urllib.request.urlopen(req, timeout=20) as response:
+        with h.open(req, timeout=20) as response:
             raw = response.read()
         if stream:
             events = [json.loads(line[6:]) for line in raw.decode().splitlines() if line.startswith('data: ')]
@@ -61,15 +61,13 @@ def test_responses_retains_typed_error_and_captures_rejection(monkeypatch, strea
         handler.end_headers()
         handler.wfile.write(raw_error)
     monkeypatch.setattr(_FakeUpstream, 'do_POST', post)
-    h = _Harness(0, False)
-    h.cria.upstream._capture_dir = h.tmp.name
-    h.cria.upstream._capture_rendered = False
+    h = _Harness(0, False, capture=True, memory=True)
     try:
         body = {'model': 'm', 'input': [{'role': 'user', 'content': 'keep the entire request'}], 'stream': stream}
         req = urllib.request.Request(h.base + '/v1/responses', data=json.dumps(body).encode(),
                                      headers={'Content-Type': 'application/json'})
         try:
-            with urllib.request.urlopen(req, timeout=20) as response:
+            with h.open(req, timeout=20) as response:
                 raw = response.read()
         except urllib.error.HTTPError as exc:
             assert not stream and exc.code == 400

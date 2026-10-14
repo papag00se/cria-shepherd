@@ -7,11 +7,11 @@ Separate tests cover the real existing driver truncation policy and prefix reade
 import copy
 from dataclasses import replace
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+import http.client
 import io
 import json
 import os
 from pathlib import Path
-import threading
 import types
 import urllib.error
 import urllib.request
@@ -21,7 +21,7 @@ import pytest
 from cria import bodykeys, failover, loop, massage, responses
 from cria.config import Config, IndicatorsConfig, LoggingConfig, RoutingConfig, ServerConfig, UpstreamConfig
 from cria.events import EventLog
-from cria.server import CriaServer
+from cria.server import CriaServer, CriaHandler
 from cria.upstream import Upstream, UpstreamError
 from test_upstream import _FakeResp, _Rlog, _delta, _sse
 
@@ -126,23 +126,53 @@ def handlers(tmp_path_factory):
             else:
                 self.send_response(200); self.end_headers(); self.wfile.write(json.dumps(value).encode())
 
-    fake = ThreadingHTTPServer(('127.0.0.1', 0), Fake)
-    fake.posts = []
-    fake.completion = completion()
+    # Both HTTP endpoints parse and emit real wire bytes. Only their socket IO is memory-backed.
+    class MemorySocket:
+        def __init__(self, incoming):
+            self.incoming = incoming
+            self.sent = []
+        def makefile(self, mode, buffering=-1):
+            assert mode == 'rb'
+            return io.BytesIO(self.incoming)
+        def sendall(self, data):
+            self.sent.append(bytes(data))
+
+    def request(handler, target, method, path, data=b'', headers=()):
+        fields = dict(headers)
+        fields['Content-Length'] = str(len(data))
+        wire = (f'{method} {path} HTTP/1.0\r\n' +
+                ''.join(f'{k}: {v}\r\n' for k, v in fields.items()) + '\r\n').encode() + data
+        connection = MemorySocket(wire)
+        handler(connection, ('fixture.invalid', 0), target)
+        response = http.client.HTTPResponse(MemorySocket(b''.join(connection.sent)))
+        response.begin()
+        return response
+
+    fake = types.SimpleNamespace(posts=[], completion=completion())
     case_number = 0
-    thread = threading.Thread(target=fake.serve_forever, daemon=True); thread.start()
     directory = tmp_path_factory.mktemp('generation-wire')
     cfg = Config(server=ServerConfig(host='127.0.0.1', port=0),
-                 upstream=UpstreamConfig(base_url=f'http://127.0.0.1:{fake.server_address[1]}'),
+                 upstream=UpstreamConfig(base_url='http://fixture.invalid'),
                  routing=RoutingConfig(engagement_level=0),
                  indicators=IndicatorsConfig(enabled=False, reasoning_transcript=False),
                  logging=LoggingConfig(dir=str(directory), capture_dir=str(directory), console=False))
     log = EventLog(dir=str(directory), console=False)
     up = Upstream(cfg.upstream.base_url, context_window=16384, capture_rendered=False, capture_dir=None)
-    server = CriaServer(cfg, log, up)
-    thread2 = threading.Thread(target=server.serve_forever, daemon=True); thread2.start()
+    assert not cfg.planner.enabled
+    with mock.patch.object(ThreadingHTTPServer, '__init__', return_value=None):
+        server = CriaServer(cfg, log, up)
+
+    def open_upstream(req, timeout=None):
+        response = request(Fake, fake, req.get_method(), req.selector, req.data or b'', req.header_items())
+        if response.status >= 400:
+            raise urllib.error.HTTPError(req.full_url, response.status, response.reason,
+                                         response.headers, response)
+        return response
 
     class Driver:
+        # The real driver owns session state; inbound handoff-origin checks consult it.
+        def __init__(self):
+            self._store = server.loop_store
         def knows_session(self, key): return True
         def visible_context_tokens(self, *args, **kwargs): return 0
         def drive(self, body, *args):
@@ -166,13 +196,9 @@ def handlers(tmp_path_factory):
                 'tools': [{'type': 'function', **chat['tools'][0]['function']}], 'stream': stream}
         body.update(body_overrides or {})
         first_post = len(fake.posts)
-        req = urllib.request.Request(f'http://127.0.0.1:{server.server_address[1]}/v1/' +
-                                     ('chat/completions' if api == 'chat' else 'responses'),
-                                     data=json.dumps(body).encode(), headers={'Content-Type': 'application/json'})
-        try:
-            with urllib.request.urlopen(req, timeout=30) as reply:
-                raw = reply.read()
-        except urllib.error.HTTPError as reply:
+        with request(CriaHandler, server, 'POST', '/v1/' +
+                     ('chat/completions' if api == 'chat' else 'responses'),
+                     json.dumps(body).encode(), {'Content-Type': 'application/json'}.items()) as reply:
             raw = reply.read()
         if os.environ.get('GENERATION_WIRE_RECEIPTS'):
             directory = Path(os.environ['GENERATION_WIRE_RECEIPTS']); directory.mkdir(parents=True, exist_ok=True)
@@ -183,9 +209,12 @@ def handlers(tmp_path_factory):
             prefix.with_suffix('.response.raw').write_bytes(raw)
             prefix.with_suffix('.expected-source.json').write_text(json.dumps(value, ensure_ascii=False, indent=2))
         return events(raw) if stream else [json.loads(raw)]
-    yield post
-    server.shutdown(); server.server_close(); fake.shutdown(); fake.server_close(); log.close()
-    massage.set_tool_call_fixes(previous_fixes)
+    try:
+        with mock.patch('urllib.request.urlopen', side_effect=open_upstream):
+            yield post
+    finally:
+        log.close()
+        massage.set_tool_call_fixes(previous_fixes)
 
 
 @pytest.mark.parametrize('level', range(6))

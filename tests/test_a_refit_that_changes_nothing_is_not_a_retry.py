@@ -52,10 +52,8 @@ class _Up(upstream.Upstream):
     """A real Upstream whose prep is pinned and whose POST always overflows."""
 
     def __init__(self, *, shrinks):
-        self._chat_url = "http://x/v1/chat/completions"
-        self._base_url = "http://x"
-        self._timeout = 5.0
-        self._window = 49152
+        super().__init__("http://x", timeout_seconds=5, context_window=49152,
+                         capture_dir=None, capture_rendered=False)
         self._window_final = False
         self._window_guessed = False
         self._shrinks = shrinks

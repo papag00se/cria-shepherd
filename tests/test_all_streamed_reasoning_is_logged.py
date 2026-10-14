@@ -28,7 +28,7 @@ import json
 import pathlib
 import tempfile
 import unittest
-from unittest import mock
+from memory_http import MemoryTransport, stream_reply
 
 from cria.upstream import Upstream
 
@@ -50,23 +50,6 @@ def sse(delta=None, usage=None, finish=None):
     return b"data: " + json.dumps(payload).encode() + b"\n"
 
 
-class Resp:
-    def __init__(self, lines, raise_at=None):
-        self.lines, self.closed, self._raise_at = lines, False, raise_at
-
-    def __iter__(self):
-        for i, ln in enumerate(self.lines):
-            if self._raise_at is not None and i == self._raise_at:
-                raise OSError("connection reset by peer")
-            yield ln
-
-    def close(self):
-        self.closed = True
-
-    def read(self):
-        return b""
-
-
 def files(tmp):
     return sorted(pathlib.Path(tmp).rglob("*.reasoning.txt"))
 
@@ -74,10 +57,12 @@ def files(tmp):
 class TheProxyPathLogsItsReasoningTests(unittest.TestCase):
     def drive(self, lines):
         tmp = tempfile.mkdtemp()
-        up = Upstream("http://x", context_window=8192, capture_dir=tmp, capture_rendered=False)
+        transport = MemoryTransport(lambda req: stream_reply(lines))
+        up = Upstream("http://fixture.invalid", context_window=8192, capture_dir=tmp,
+                      capture_rendered=False, open_request=transport)
         rlog = Rlog()
-        with mock.patch("cria.upstream.urllib.request.urlopen", return_value=Resp(lines)):
-            list(up.stream_chat({"model": "m", "messages": [{"role": "user", "content": "go"}]}, rlog))
+        list(up.stream_chat({"model": "m", "messages": [{"role": "user", "content": "go"}]}, rlog))
+        transport.assert_served()
         return tmp, rlog
 
     def test_the_thinking_lands_on_disk(self):
@@ -111,14 +96,19 @@ class TheProxyPathLogsItsReasoningTests(unittest.TestCase):
 class AnUnfinishedStreamIsStillLoggedTests(unittest.TestCase):
     def drive_watched(self, lines, raise_at=None):
         tmp = tempfile.mkdtemp()
-        up = Upstream("http://x", context_window=8192, capture_dir=tmp, capture_rendered=False)
+        interruption = OSError("connection reset by peer")
+        transport = MemoryTransport(lambda req: stream_reply(
+            lines, interrupt_at=raise_at, interruption=interruption))
+        up = Upstream("http://fixture.invalid", context_window=8192, capture_dir=tmp,
+                      capture_rendered=False, open_request=transport)
         rlog = Rlog()
-        resp = Resp(lines, raise_at=raise_at)
-        with mock.patch("cria.upstream.urllib.request.urlopen", return_value=resp):
-            try:
-                up.chat_watched({"model": "m", "messages": [{"role": "user", "content": "go"}]}, rlog)
-            except Exception:
-                pass
+        try:
+            up.chat_watched({"model": "m", "messages": [{"role": "user", "content": "go"}]}, rlog)
+        except OSError as error:
+            self.assertIs(error, interruption)
+        transport.assert_served()
+        if raise_at is not None:
+            self.assertEqual(transport.interruptions, [interruption])
         return tmp, rlog
 
     def test_an_exception_mid_read_still_saves_what_was_thought(self):
@@ -167,10 +157,12 @@ class TheAbortMarkerIsUnchangedTests(unittest.TestCase):
         det = rumination.Detector(budget=1000, rate_per_1k=3)
         chunk = "actually wait hmm let me reconsider on second thought " * 10
         lines = [sse({"reasoning_content": chunk}) for _ in range(20)] + [b"data: [DONE]\n"]
-        up = Upstream("http://x", context_window=8192, capture_dir=tmp, capture_rendered=False)
-        with mock.patch("cria.upstream.urllib.request.urlopen", return_value=Resp(lines)):
-            up.chat_watched({"model": "m", "messages": [{"role": "user", "content": "go"}]},
-                            Rlog(), watch=det.check)
+        transport = MemoryTransport(lambda req: stream_reply(lines))
+        up = Upstream("http://fixture.invalid", context_window=8192, capture_dir=tmp,
+                      capture_rendered=False, open_request=transport)
+        up.chat_watched({"model": "m", "messages": [{"role": "user", "content": "go"}]},
+                        Rlog(), watch=det.check)
+        transport.assert_served()
         body = files(tmp)[0].read_text()
         # THE GUARD THAT ACTUALLY FIRED. This fixture repeats one sentence, so the DEGENERATE-RUN
         # backstop reaches it before the rumination watcher's marker gate does — and the header used

@@ -512,29 +512,30 @@ class ResponsesInboundCaptureTests(unittest.TestCase):
     """Raw Responses evidence is retained before its lossy chat conversion."""
 
     def setUp(self):
+        from memory_http import backend, memory_server
         self._tmp = TemporaryDirectory()
         self.addCleanup(self._tmp.cleanup)
-        self.fake = ThreadingHTTPServer(("127.0.0.1", 0), _FakeUpstream)
-        self.fake.request_bodies = []
-        _serve(self.fake)
-        self.addCleanup(self.fake.server_close)
-        self.addCleanup(self.fake.shutdown)
+        self.fake, self.transport = backend(_FakeUpstream)
+        self.addCleanup(self.transport.assert_served)
         cfg = Config(
             server=ServerConfig(host="127.0.0.1", port=0),
-            upstream=UpstreamConfig(base_url=f"http://127.0.0.1:{self.fake.server_address[1]}"),
+            upstream=UpstreamConfig(base_url="http://fixture.invalid"),
             logging=LoggingConfig(dir=self._tmp.name, capture_calls=True,
                                   capture_dir=self._tmp.name, capture_rendered=False, console=False),
             indicators=IndicatorsConfig(enabled=False),
         )
+        self.assertFalse(cfg.planner.enabled)
         self.log = EventLog(dir=cfg.logging.dir, console=False)
         self.addCleanup(self.log.close)
-        self.cria = CriaServer(cfg, self.log, Upstream(
+        self.cria = memory_server(cfg, self.log, Upstream(
             cfg.upstream.base_url, capture_dir=cfg.logging.capture_dir_path,
-            capture_rendered=cfg.logging.capture_rendered))
-        _serve(self.cria)
-        self.addCleanup(self.cria.server_close)
-        self.addCleanup(self.cria.shutdown)
-        self.base = f"http://127.0.0.1:{self.cria.server_address[1]}"
+            capture_rendered=cfg.logging.capture_rendered, open_request=self.transport))
+        self.base = "http://client.fixture.invalid"
+
+    def _open(self, req):
+        from cria.server import CriaHandler
+        from memory_http import handler_open
+        return handler_open(CriaHandler, self.cria, req, timeout=10)
 
     def _events(self) -> list[dict]:
         assert self.log.path is not None
@@ -554,7 +555,7 @@ class ResponsesInboundCaptureTests(unittest.TestCase):
 }'''
         req = urllib.request.Request(self.base + "/v1/responses", data=raw, method="POST",
                                      headers={"Content-Type": "application/json"})
-        with urllib.request.urlopen(req, timeout=10):
+        with self._open(req):
             pass
 
         events = self._events()
@@ -587,7 +588,7 @@ class ResponsesInboundCaptureTests(unittest.TestCase):
 
         req = urllib.request.Request(self.base + "/v1/responses", data=raw, method="POST",
                                      headers={"Content-Type": "application/json"})
-        with urllib.request.urlopen(req, timeout=10) as response:
+        with self._open(req) as response:
             response.read()
 
         events = self._events()

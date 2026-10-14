@@ -11,23 +11,61 @@ from __future__ import annotations
 import json
 import re
 
-_THINK = re.compile(r"<think(?:ing)?\b[^>]*>.*?</think(?:ing)?\s*>", re.DOTALL | re.IGNORECASE)
+_CLOSE_THINK = re.compile(r"</think(?:ing)?\s*>", re.IGNORECASE)
 _FENCE = re.compile(r"```(?:json)?\s*", re.IGNORECASE)
 
 
+def _mask_json_objects(text: str) -> str:
+    """Same-length framing view: parsed literal bytes are payload, never tags.
+
+    Complete objects and tails validated by the existing missing-closers owner
+    are protected. Repaired objects are NOT exposed by normal extraction. Reuse
+    the balanced-object/first-nonempty parser below; masking ONLY locates wrappers
+    and the returned answer always comes from the original bytes.
+    """
+    parts, end = [], 0
+    for _, start, stop in _json_objects(text, include_repairable=True):
+        parts.extend((text[end:start], "\0" * (stop - start)))
+        end = stop
+    parts.append(text[end:])
+    return "".join(parts)
+
+
+def _strip_fences(text: str) -> str:
+    parts, end = [], 0
+    for match in _FENCE.finditer(_mask_json_objects(text)):
+        parts.append(text[end:match.start()])
+        end = match.end()
+    parts.append(text[end:])
+    return "".join(parts)
+
+
+def strip_reasoning_prefix(text: str) -> str:
+    """Drop through the last real closing frame, never through a JSON value.
+
+    A valid private object before an OUTSIDE closing marker is still discarded.
+    No verdict is inferred or recovered here; this only recognizes framing.
+    """
+    end = 0
+    for closing in _CLOSE_THINK.finditer(_mask_json_objects(text)):
+        end = closing.end()
+    return text[end:]
+
+
 def strip_think(text: str) -> str:
-    """Remove ``<think>…</think>`` blocks (reasoning models emit these before the
-    answer). Also drops a dangling unclosed ``<think>`` and everything after it —
+    """Drop through the last real closing frame before selecting an answer.
+    An earlier complete object is still private when an OUTSIDE closing marker
+    follows it. Also drops a dangling unclosed ``<think>`` and everything after it —
     UNLESS a parseable JSON object follows the tag. A model that forgot to close
     its ``<think>`` before emitting the answer (``<think>deciding…\n{"x":1}``)
     still has a real object in the tail; blindly slicing from ``<think`` to the
     end would silently discard that answer, so we keep the tail when it parses.
     """
-    text = _THINK.sub("", text)
-    lower = text.lower()
+    text = strip_reasoning_prefix(text)
+    lower = _mask_json_objects(text).lower()
     idx = lower.rfind("<think")
     if idx != -1 and "</think" not in lower[idx:]:
-        if _scan_object(text[idx:]) is None:
+        if next(_json_objects(text[idx:], include_repairable=True), None) is None:
             text = text[:idx]
     return text
 
@@ -48,7 +86,7 @@ def denoise(text: str) -> str:
     """The reply with a model's habitual wrappers removed — ``<think>`` preambles and ```` ``` ````
     fences. The ONE place that preprocessing lives, so :func:`extract_json_object` and
     :func:`close_unclosed_object` never disagree about what "the text" is."""
-    return _FENCE.sub("", strip_think(text)).replace("```", "")
+    return _strip_fences(strip_think(text))
 
 
 def close_unclosed_object(text: str) -> dict | None:
@@ -84,15 +122,45 @@ def close_unclosed_object(text: str) -> dict | None:
     cleaned = denoise(text)
     start = cleaned.find("{")
     while start != -1:
-        closers = _unclosed_tail(cleaned, start)
-        if closers:
-            try:
-                obj = loads(cleaned[start:] + closers)
-            except json.JSONDecodeError:
-                obj = None
-            if isinstance(obj, dict):
-                return obj
+        obj = _repair_unclosed_object(cleaned, start)
+        if obj is not None:
+            return obj
         start = cleaned.find("{", start + 1)
+    return None
+
+
+def _repair_unclosed_object(s: str, start: int) -> dict | None:
+    """The existing missing-closers check, without wrapper preprocessing/recursion."""
+    closers = _unclosed_tail(s, start)
+    if closers:
+        try:
+            obj = loads(s[start:] + closers)
+        except json.JSONDecodeError:
+            return None
+        if isinstance(obj, dict):
+            return obj
+    return None
+
+
+def _repairable_tail_span(s: str, start: int):
+    """Original bytes whose only defect is missing closers, possibly outer fences.
+
+    The real repair owner validates each candidate. A fence inside a value ends
+    mid-string, so it cannot create a valid candidate or steal literal bytes.
+    No repaired object is exposed by normal extraction; these spans protect data
+    during framing only. Verdict callers still reject positive/mid-string/length
+    recovery independently.
+    """
+    obj = _repair_unclosed_object(s, start)
+    if obj is not None:
+        return obj, len(s)
+    for fence in _FENCE.finditer(s, start):
+        end = fence.start()
+        if _FENCE.sub("", s[end:]).strip():
+            continue  # not just an outer fence tail; do not invent away trailing text
+        obj = _repair_unclosed_object(s[:end], start)
+        if obj is not None:
+            return obj, end
     return None
 
 
@@ -175,8 +243,8 @@ def loads(text: str, *, strict: bool = True):
     return json.loads(text, object_pairs_hook=_first_wins, strict=strict)
 
 
-def _scan_object(s: str) -> dict | None:
-    """First brace-balanced span in ``s`` that parses to a ``dict``, else ``None``."""
+def _json_objects(s: str, *, include_repairable: bool = False):
+    """Object spans using the one parser; repairable tails are framing-only opt-in."""
     start = s.find("{")
     while start != -1:
         span = _balanced_object(s, start)
@@ -186,9 +254,25 @@ def _scan_object(s: str) -> dict | None:
             except json.JSONDecodeError:
                 obj = None
             if isinstance(obj, dict):
-                return obj
+                stop = start + len(span)
+                yield obj, start, stop
+                start = s.find("{", stop)
+                continue
+        repaired = _repairable_tail_span(s, start)
+        if repaired is not None:
+            obj, stop = repaired
+            if include_repairable:
+                yield obj, start, stop
+            # Normal extraction must skip the WHOLE repairable outer candidate,
+            # not promote a nested example into a complete/positive answer.
+            start = s.find("{", stop)
+            continue
         start = s.find("{", start + 1)
-    return None
+
+
+def _scan_object(s: str) -> dict | None:
+    """First brace-balanced span in ``s`` that parses to a ``dict``, else ``None``."""
+    return next((obj for obj, _, _ in _json_objects(s)), None)
 
 
 def _balanced_object(s: str, start: int) -> str | None:

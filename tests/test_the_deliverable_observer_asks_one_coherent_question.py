@@ -101,7 +101,9 @@ def test_the_observer_is_handed_the_listing_its_question_turns_on(surveyed):
     assert prompts.load_map("workspace_inventory")["stale"] not in user
     assert "README.md (370 B)" in user and "REVIEW.md" not in user.split("THE USER'S ORIGINAL TASK")[0]
     assert user.index("WORKSPACE FILES") > user.index(FX["task"][:40])    # facts after the task, before the ask
-    assert seen[0]["messages"][0]["content"] == prompts.load("deliverable_observation")
+    # The question remains exact; the shared boundary additionally discloses actual reach.
+    assert seen[0]["messages"][0]["content"] == (prompts.load("deliverable_observation") +
+                                               "\n\n" + prompts.load("judge_capability"))
     assert [t["function"]["name"] for t in seen[0]["tools"]] == ["list_dir", "read_file", "verdict"]
     assert "is absent from the workspace" in _props(seen[0]["tools"])["missing_file"]["description"]
 

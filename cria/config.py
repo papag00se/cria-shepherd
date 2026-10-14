@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from . import bodykeys
-from . import prompts, reasoning
+from . import jsontext, prompts, reasoning
 
 # --- The engagement ladder ---------------------------------------------------------------
 # Named here rather than as bare integers at every call site: a level test reads as
@@ -375,9 +375,9 @@ class Role:
         when reasoning isn't off or there's nothing to strip."""
         if self.reasoning != "off" or not text:
             return text or ""
-        if "</think>" in text:
-            text = text.split("</think>")[-1]
-        return text.strip()
+        # Protocol delimiters inside complete public JSON are data. The shared
+        # parser owns framing, so the role adapter cannot cut a quoted reason.
+        return jsontext.strip_reasoning_prefix(text).strip()
 
 
 @dataclass(frozen=True)
