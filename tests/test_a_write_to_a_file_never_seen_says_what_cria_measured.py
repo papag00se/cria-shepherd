@@ -359,9 +359,20 @@ def test_the_pasted_file_recovery_refusal_reaches_the_nudge(view):
         _ch, calls, _asked, log, sess = t.turn(content, tools, read=False, sess=sess)
         assert calls == [] and log.get("loop.text_write_refused")["reason"] == "unread_existing_file"
         # … and the fact it refused on rides on the nudge that follows, once.
-        lp = _single_loop(lambda b, r: b"{}", workspace_root=t.view.root)
+        anonymous = "```java\n" + "\n".join(f"line {i};" for i in range(14)) + "\n```"
+        coder = _Recorder([_call("read_file", {"path": JAVA}), _completion(anonymous)])
+        lp = _single_loop(coder, workspace_root=t.view.root)
         nudge = lp._unexecuted_nudge_text(sess)
         assert "already exists on disk" in nudge and "no read of its whole text is in this conversation" in nudge
+        # Reading a pending offer must not consume it: only the retained coder frame can.
+        assert lp._unexecuted_nudge_text(sess) == nudge
+        retained = lp._coder_turn(sess, {"messages": [], "tools": tools}, {"messages": []},
+                                  step=1, rlog=log)
+        assert nudge in coder.bodies[0]["messages"][-1]["content"]
+        lp._retain_pasted_reply(sess, retained, prepared=None, consumed=sess.pasted_consumed)
+        assert lp._unexecuted_nudge_text(sess) == ""
+        # A fresh anonymous block still earns the generic nudge, without the old file fact.
+        lp._coder_turn(sess, {"messages": [], "tools": tools}, {"messages": []}, step=1, rlog=log)
         assert lp._unexecuted_nudge_text(sess) == loop.prompts.load("unexecuted_write_nudge")
     finally:
         t.doCleanups()
