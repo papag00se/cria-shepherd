@@ -976,13 +976,13 @@ def split_sections(text: str) -> dict[str, str]:
         stripped = line.strip()
         if stripped.startswith(SECTION_PREFIX) and stripped.endswith(SECTION_SUFFIX):
             if current is not None:
-                sections[current] = "\n".join(buf).strip()
+                sections[current] = "\n".join(buf).strip("\r\n")
             current = stripped[len(SECTION_PREFIX):-len(SECTION_SUFFIX)]
             buf = []
         elif current is not None:
             buf.append(line)
     if current is not None:
-        sections[current] = "\n".join(buf).strip()
+        sections[current] = "\n".join(buf).strip("\r\n")
     return sections
 
 
@@ -1403,7 +1403,8 @@ def clean_gate_output(raw: str, plan: "GatePlan | None" = None, *, annotate: boo
     RELIABLE per-section EXIT code (not fragile text sniffing), reports one honest state: error-class
     findings; a check that FAILED with no parseable location; checks that could NOT run (launch failure
     / timeout — cria's own setup gap, a neutral non-signal, never a pass); or the checks that ran found
-    nothing (framed "no error-class problems", explicitly NOT "done"). Returns ``None`` when ``raw`` is
+    nothing (their own output and measured exit status, never an authored success verdict).
+    Returns ``None`` when ``raw`` is
     not a gate result (untouched)."""
     if SECTION_PREFIX not in (raw or ""):
         return None
@@ -1424,6 +1425,7 @@ def clean_gate_output(raw: str, plan: "GatePlan | None" = None, *, annotate: boo
     saw_probe = False
     timed_out_output: list[str] = []
     timeout_notes: list[str] = []   # one per genuinely-timed-out (EXIT 124) section, ALWAYS populated
+    completed_output: list[str] = []
     _sections = split_sections(raw)
     for sid, body in _sections.items():
         # `git` is no longer EMITTED (see plan_gate), but a gate result already in a session's
@@ -1473,6 +1475,12 @@ def clean_gate_output(raw: str, plan: "GatePlan | None" = None, *, annotate: boo
             could_not_run = True
             timeout_notes.append(_timeout_note(plan, sid, text.strip()))
             continue
+        # Keep successful/zero-test output as evidence. An exit code describes this command,
+        # not the task or another source tree; never replace the checker's words with ours.
+        if code == 0 or proberun.is_no_tests_collected(code, output=text):
+            completed_output.append(prompts.render("checks_completed_section",
+                command=_command_for_sid(plan, sid) or sid, code=code,
+                output=text if text else prompts.load("checks_no_output").rstrip("\n")))
         # pytest exit 5 = no tests collected (a fresh/testless project). The runner ran fine and had
         # nothing to assess — a benign non-signal. Skip the section so its "no tests ran" line isn't
         # scraped as an error-class finding AND it doesn't set failed_no_detail; the OTHER probes that
@@ -1681,11 +1689,10 @@ def clean_gate_output(raw: str, plan: "GatePlan | None" = None, *, annotate: boo
         # NOT a pass (never claim clean), NOT a fix request (the model can't fix cria's absent tool),
         # NOT a specific confession — just a non-actionable placeholder so the model relies on itself.
         return CHECKS_MARKER + " " + prompts.load("checks_no_usable_result")
-    # Report the clean result as a FACT — no "but this doesn't mean it's correct / doesn't mean done"
-    # hedge. That caveat is unactionable doubt (it names nothing to fix) and a weak model latches onto
-    # it and spirals; completion is guarded by the actual gate + satisfaction check, not by nagging the
-    # coder that a green check might still be wrong. (Operator directive, twice.)
-    clean = "⟦ctx:checks⟧ the repo's own checks that ran reported no error-class problems."
+    # This is evidence, not an authored success verdict. Preserve all completed checker output;
+    # only the final wire floor owns size pressure. Scope/zero-test lines must survive even when
+    # later discovery metadata changes or a historical transport no longer has its live plan.
+    clean = prompts.render("checks_completed", results="\n".join(completed_output))
     # ...but "the checks reported no problems" is half a sentence when NO test ran. g20 (gemma4,
     # ada-handles) returned exactly this line fifty-four times over a project whose unittest classes
     # sat inside resolve_handle.py — unmatched by any naming convention, so no test probe was ever
@@ -1887,7 +1894,9 @@ def _checks_payload(m) -> tuple[str, str] | None:
     return (key, c) if isinstance(c, str) and c.startswith(CHECKS_MARKER) else None
 
 
-_NO_SIGNAL_CHECK = "no usable result"   # the ⟦ctx:checks⟧ non-signal — nothing to act on
+def _is_no_signal_check(text: str) -> bool:
+    """Only our complete placeholder is non-signal; checker quotations remain evidence."""
+    return text == CHECKS_MARKER + " " + prompts.load("checks_no_usable_result")
 
 # WHAT THE MODEL MAY SEE OF A GATE, CARRIED AS DATA — not re-derived by matching cria's own text.
 #
@@ -2172,7 +2181,7 @@ def clean_gate_results(messages: list, plan: "GatePlan | None" = None, *,
                     c = None
                 else:
                     c = prompts.load("probe_transport_unknown")
-                if c is None or _NO_SIGNAL_CHECK in c:
+                if c is None or _is_no_signal_check(c):
                     if tid:
                         drop_ids.add(tid)
                     continue
@@ -2209,7 +2218,7 @@ def clean_gate_results(messages: list, plan: "GatePlan | None" = None, *,
                     checks_reran=(i == last_gate
                                   and _probe_reran_after_last_change(messages, i, plan)))
                 if cleaned is not None:
-                    if _NO_SIGNAL_CHECK in cleaned:   # no signal → drop the result AND its command turn
+                    if _is_no_signal_check(cleaned):   # no signal → drop result AND its command turn
                         tid = m.get("tool_call_id") or m.get("call_id")
                         if tid:
                             drop_ids.add(tid)

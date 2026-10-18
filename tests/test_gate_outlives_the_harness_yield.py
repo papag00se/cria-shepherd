@@ -389,7 +389,8 @@ class WireCleaningTests(unittest.TestCase):
         # No raw plumbing anywhere, and the clean summary landed exactly once.
         self.assertNotIn(probegate.SECTION_PREFIX, joined)
         self.assertNotIn(probegate.TRANSPORT_PREFIX, joined)
-        self.assertEqual(joined.count("no error-class problems"), 1)
+        self.assertEqual(joined.count("Recorded checker results"), 1)
+        self.assertEqual(joined.count("exit 0"), 1)
 
 
 class ConsecutiveOpenerlessBoundTests(unittest.TestCase):

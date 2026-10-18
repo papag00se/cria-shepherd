@@ -1,0 +1,2 @@
+{{COMMAND}} — exit {{CODE}}
+{{OUTPUT}}

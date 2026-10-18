@@ -41,10 +41,12 @@ class TheStrandedSentenceNeedsThePlanTests(unittest.TestCase):
         self.assertIn("testFooBar.py", out)
         self.assertIn("will not run", out)
 
-    def test_without_it_the_same_gate_reads_as_a_clean_bill_of_health(self):
+    def test_without_it_the_same_gate_lacks_the_stranded_file_fact(self):
         """Pinned so the regression is visible if a call site ever drops the plan again."""
         out = probegate.clean_gate_output(RAW, None) or ""
-        self.assertIn("no error-class problems", out)
+        self.assertIn("exit 5", out)
+        self.assertIn("no tests ran in 0.00s", out)
+        self.assertNotIn("report these error-class problems", out)
         self.assertNotIn("testFooBar.py", out)
 
 

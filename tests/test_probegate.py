@@ -200,7 +200,8 @@ class PyflakesDroppedWhenAbsentTests(unittest.TestCase):
         checks = probegate.clean_gate_output(raw, plan=plan)
         self.assertIsNotNone(checks)
         self.assertNotIn("pyflakes", checks)
-        self.assertIn("no error-class problems", checks.lower())
+        self.assertIn("exit 0", checks.lower())
+        self.assertNotIn("report these error-class problems", checks)
 
     def test_present_and_failing_pyflakes_is_still_reported(self):
         # A fake `pyflakes` EXECUTABLE prepended to PATH stands in for a REAL, installed-and-failing
@@ -319,12 +320,13 @@ class CleanGateOutputTests(unittest.TestCase):
         self.assertNotIn("deadbeef", out)                     # git hash dropped
         self.assertNotIn("Chunk ID", out)                     # exec wrapper dropped
 
-    def test_clean_is_reported_as_a_plain_fact_no_doubt_hedge(self):
+    def test_clean_keeps_tool_output_without_a_doubt_hedge(self):
         raw = self._raw("x.py:1:1 'os' imported but unused\nEXIT:0")
         out = probegate.clean_gate_output(raw)
         self.assertIsNotNone(out)
-        self.assertIn("no error-class", out.lower())
-        self.assertNotIn("imported but unused", out)         # advisory still filtered
+        self.assertIn("exit 0", out.lower())
+        self.assertIn("x.py:1:1 'os' imported but unused", out)  # real successful output, not a finding
+        self.assertNotIn("report these error-class problems", out)
         self.assertNotIn("all pass", out.lower())            # not a false "done"/verified claim
         # and NO unactionable "but this might still be wrong / doesn't mean done" hedge (operator dir.)
         self.assertNotIn("does not verify", out.lower())
@@ -336,8 +338,9 @@ class CleanGateOutputTests(unittest.TestCase):
         # once clean_gate_output strips that prefix.
         raw = self._raw("x.py:80:1: E501 line too long (99 > 88 characters)\nEXIT:0")
         out = probegate.clean_gate_output(raw)
-        self.assertIn("no error-class", out.lower())
-        self.assertNotIn("E501", out)
+        self.assertIn("exit 0", out.lower())
+        self.assertIn("x.py:80:1: E501 line too long (99 > 88 characters)", out)
+        self.assertNotIn("report these error-class problems", out)
 
     def test_solo_launch_failure_is_neutral_not_an_error_to_fix_nor_a_pass(self):
         # A probe that couldn't launch (`python` absent) with NOTHING else in the gate is cria's OWN
@@ -487,8 +490,9 @@ class CleanGateOutputTests(unittest.TestCase):
         # clean-ish ("no error-class problems"), NEVER "one of the checks FAILED".
         raw = self._raw("no tests ran in 0.01s\nEXIT:5")
         out = probegate.clean_gate_output(raw)
-        self.assertIn("no error-class", out.lower())
-        self.assertNotIn("no tests ran", out.lower())      # benign line not surfaced as a finding
+        self.assertIn("exit 5", out.lower())
+        self.assertIn("no tests ran in 0.01s", out.lower())  # evidence, not a finding
+        self.assertNotIn("report these error-class problems", out)
         self.assertNotIn("failed", out.lower())            # not the failure message
         self.assertNotIn("run it yourself", out.lower())
 
@@ -507,10 +511,10 @@ class CleanGateOutputTests(unittest.TestCase):
         # passed". A passing check's stdout is not a finding.
         raw = self._raw("....                                    [100%]\n4 passed in 0.06s\nEXIT:0")
         out = probegate.clean_gate_output(raw)
-        self.assertIn("no error-class", out.lower())          # reads clean-ish, not red
-        self.assertNotIn("4 passed", out)                     # the passing summary is not a finding
-        self.assertNotIn("checker's own message", out.lower())
-        self.assertNotIn("[100%]", out)
+        self.assertIn("exit 0", out.lower())
+        self.assertIn("4 passed in 0.06s", out)
+        self.assertNotIn("report these error-class problems", out)
+        self.assertIn("[100%]", out)
 
     def test_passing_section_does_not_mask_a_failing_one(self):
         # A passing pytest section is skipped, but a REAL failing section still surfaces.
@@ -528,9 +532,10 @@ class CleanGateOutputTests(unittest.TestCase):
         # advisory-clean, NEVER "a check failed" — that's the footgun the user cares about.
         raw = self._raw("x.py:1:1 'os' imported but unused\nEXIT:1")
         out = probegate.clean_gate_output(raw)
-        self.assertIn("no error-class", out.lower())
+        self.assertIn("exit 0", out.lower())  # the sibling syntax probe completed
         self.assertNotIn("failed", out.lower())
         self.assertNotIn("imported but unused", out)
+        self.assertIn("advisory line(s)", out)
 
     def test_all_error_class_findings_shown_no_40_line_clip(self):
         # A 40-line clip once hid findings 41+, so the model "fixed" the visible ones and claimed done
@@ -848,7 +853,7 @@ class NoTestsFoundNoteTests(unittest.TestCase):
                                   "import unittest\nclass T(unittest.TestCase):\n    def test_a(self): pass\n"})
             plan = probegate.plan_gate(ws)
             out = probegate.clean_gate_output(self.CLEAN, plan)
-        self.assertIn("no error-class problems", out)      # the original fact is unchanged...
+        self.assertIn("exit 0", out)  # successful syntax status is retained
         self.assertIn("no test command was composed", out)            # ...and no longer half a sentence
         self.assertIn("test_*.py or *_test.py", out)       # the convention cria SEARCHED by
         self.assertNotIn("required", out)                  # cria cannot know whether this task wants tests
@@ -859,7 +864,9 @@ class NoTestsFoundNoteTests(unittest.TestCase):
                                   "tests|test_resolve.py": "def test_ok():\n    assert True\n"})
             out = probegate.clean_gate_output(self.CLEAN, probegate.plan_gate(ws))
         self.assertNotIn("No tests ran", out)
-        self.assertEqual(out, "⟦ctx:checks⟧ the repo's own checks that ran reported no error-class problems.")
+        self.assertIn("exit 0", out)
+        self.assertIn("[no output recorded]", out)
+        self.assertNotIn("no error-class problems", out)
 
     def test_a_decoration_language_is_silent_when_its_tests_exist(self):
         # Rust puts tests in #[cfg(test)] modules INSIDE the source file — no test FILE exists even

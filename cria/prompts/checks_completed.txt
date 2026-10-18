@@ -1,0 +1,2 @@
+⟦ctx:checks⟧ Recorded checker results (command when known, otherwise section ID; measured exit status; checker's own output):
+{{RESULTS}}

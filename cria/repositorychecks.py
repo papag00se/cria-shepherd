@@ -457,7 +457,8 @@ class Definition:
 
 DEFINITION = Definition(Policy(
     "repository-check-lifecycle", "repository-checks", 4, family_id="F40", triggers=(("periodic", 5),),
-    prompts=("periodic_gate", "probe_transport_unknown", "tests_regressed"),
+    prompts=("periodic_gate", "probe_transport_unknown", "tests_regressed",
+             "checks_completed", "checks_completed_section", "checks_no_output"),
     state="existing task/session probe id/plan, helper readiness, periodic flags/cadence/replan/reissue counters, check mirror and per-command passing highs; fresh session on a new task",
     services=("probe-plan", "shell-schema", "raw-tool-result", "gate-reader", "checker-findings", "shared-progress", "selected-runner-judgment", "selected-module-judgment"),
     hooks=tuple(Reference("cria/loop.py", name) for name in (

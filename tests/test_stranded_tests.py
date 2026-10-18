@@ -88,7 +88,8 @@ class GateWiringTests(unittest.TestCase):
         ws = _ws({"app.py": "def resolve():\n    return 1\n"})
         raw = self._raw("no tests ran in 0.01s\nEXIT:5")
         out = probegate.clean_gate_output(raw, GatePlan(workspace=ws))
-        self.assertIn("no error-class", out.lower())
+        self.assertIn("exit 5\nno tests ran in 0.01s", out)
+        self.assertNotIn("report these error-class problems", out)
 
     def test_a_green_go_run_with_no_test_files_and_a_stranded_suite_is_flagged(self):
         ws = _ws({"resolver_tests.go": _GO_TESTS})

@@ -111,7 +111,7 @@ class ItReachesTheCoderTests(unittest.TestCase):
             untested=["Test files for jest/vitest are present, but no command to run them was "
                       "found in this project — nothing here has run them."])
         out = probegate.clean_gate_output("___CRIA_GATE_probe-0___\nclean\nEXIT:0\n", plan)
-        self.assertIn("no error-class problems", out)
+        self.assertIn("exit 0\nclean", out)
         self.assertIn("no command to run them", out)
 
 

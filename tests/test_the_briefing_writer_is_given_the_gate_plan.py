@@ -214,15 +214,19 @@ class WhatThePlanWouldChangeIfItArrivedTests(unittest.TestCase):
         self.assertIn("FAILED", out)
         self.assertNotIn("no error-class problems", out)
 
-    def test_without_it_the_same_bytes_read_as_clean(self):
-        self.assertIn("no error-class problems", selfcompact.compaction_request(self.msgs))
+    def test_without_it_the_same_bytes_remain_advisory_without_a_kind(self):
+        out = selfcompact.compaction_request(self.msgs)
+        self.assertIn("advisory line(s)", out)
+        self.assertNotIn("FAILED", out)
 
     def test_a_lint_probe_keeps_its_advisory_reading(self):
         """Not a blanket "non-zero means failed" — the probe KIND is the grounded distinction, and a
         lint exit on advisory-shaped output must still not send the coder chasing style."""
         lint = probegate.GatePlan(workspace=tempfile.gettempdir(),
                                   candidates=[cand(ProbeKind.Lint)])
-        self.assertIn("no error-class problems", selfcompact.compaction_request(self.msgs, "", lint))
+        out = selfcompact.compaction_request(self.msgs, "", lint)
+        self.assertIn("advisory line(s)", out)
+        self.assertNotIn("FAILED", out)
 
     def test_the_untested_qualifier_travels_with_it(self):
         """"the checks reported no problems" is half a sentence when no test could be found."""

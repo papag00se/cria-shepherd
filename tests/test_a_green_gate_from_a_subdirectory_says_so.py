@@ -95,7 +95,7 @@ class ItReachesTheCoderOnTheGreenBranchTests(unittest.TestCase):
 
     def test_the_folder_is_named(self):
         out = self._out("toml-cli")
-        self.assertIn("no error-class problems", out)
+        self.assertIn("exit 0\nclean", out)
         self.assertIn("toml-cli", out)
         self.assertIn("working directory", out)
 

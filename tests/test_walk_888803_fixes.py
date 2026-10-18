@@ -909,7 +909,7 @@ class OfflineSectionIsNeverScrapedAsAFindingTests(unittest.TestCase):
         out = probegate.clean_gate_output(raw, self._plan()) or ""
         self.assertNotIn("Network is unreachable", out)
         self.assertNotIn("test_resolve.py:31", out)
-        self.assertIn("no error-class problems", out)
+        self.assertIn("exit 0\n2 passed in 0.4s", out)
 
     def test_an_empty_offline_section_does_not_wedge_the_gate(self):
         # the kernel refused the namespace: the leg prints nothing, and that is not "could not run"
@@ -917,7 +917,7 @@ class OfflineSectionIsNeverScrapedAsAFindingTests(unittest.TestCase):
                f"{self.P}offline{self.S}\n"
                f"{self.P}git{self.S}\nabc123\n")
         out = probegate.clean_gate_output(raw, self._plan()) or ""
-        self.assertIn("no error-class problems", out)
+        self.assertIn("exit 0\n2 passed in 0.4s", out)
         self.assertNotIn("could not", out.lower())
         self.assertNotIn("network switched off", out)
 

@@ -27,7 +27,8 @@ class OnlyTheCheckersOwnLinesTests(unittest.TestCase):
     def test_a_real_advisory_diagnostic_is_still_filtered(self):
         out = probegate.clean_gate_output(_raw("x.py:1:1 'os' imported but unused"))
         self.assertNotIn("imported but unused", out)
-        self.assertIn("no error-class", out.lower())
+        self.assertIn("1 advisory line(s)", out)
+        self.assertNotIn("report these error-class problems", out)
 
     def test_the_drop_is_counted(self):
         out = probegate.clean_gate_output(_raw(
