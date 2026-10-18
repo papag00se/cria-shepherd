@@ -20,16 +20,52 @@ apostrophe, so the `python3 -c '...'` body closed early and bash died on the rem
 
 import json
 import os
-import shutil
 import subprocess
 import unittest
+from uuid import uuid4
 
-from cria import content_reduce, writeproxy
+import pytest
+
+from cria import assistruntime, content_reduce, writeproxy
+from cria.loop import LoopStore
 
 
-def fragment(query="go decimal library"):
-    cmd = writeproxy._search_command({"query": query}, "KEY")
-    return cmd[cmd.index("python3 -c '"):cmd.rindex("' || printf") + 1]
+@pytest.fixture(autouse=True)
+def isolated_search_workspace(tmp_path, monkeypatch):
+    # Never create or remove ./tmp in the shared repository checkout.
+    monkeypatch.chdir(tmp_path)
+
+
+def run_search(body, query="go decimal library", *, cwd=None, session=None):
+    """Lower through the selected public lifecycle, then run the real emitted parser.
+
+    Only the provider/network leg is replaced with Brave-shaped stdin. Retention and
+    storage are settled from the actual completion and actual harness result.
+    """
+    session = session or "sid:search-test-" + uuid4().hex
+    store = LoopStore()
+    owner = store.get_guard(session, create=True)
+    completion = {"choices": [{"message": {"role": "assistant", "content": None,
+        "tool_calls": [{"id": "search-call", "type": "function", "function": {
+            "name": "web_search", "arguments": json.dumps({"query": query})}}]}}]}
+    shell = {"name": "exec_command", "schema": {"properties": {"cmd": {"type": "string"}}}}
+    with assistruntime.bound(assistruntime.AssistRuntime.select(level=2)):
+        lowered = writeproxy.translate_outbound(completion, shell, injected={"web_search"},
+            brave_key="test-key", session=session, externalization_owner=owner)
+        writeproxy.retain_externalizations(owner, lowered)
+        command = json.loads(lowered["choices"][0]["message"]["tool_calls"][0]["function"]["arguments"])["cmd"]
+        # Execute the emitted shell quoting verbatim: an apostrophe in the note
+        # once broke the command even though the Python program itself was valid.
+        _, separator, parser = command.partition(" | ")
+        parser, fallback, _ = parser.rpartition(" || printf")
+        assert separator and fallback and parser.startswith("python3 -c "), "update emitted-parser adapter"
+        result = subprocess.run(["bash", "-c", parser], input=body,
+            capture_output=True, text=True, timeout=60, cwd=cwd)
+        history = [lowered["choices"][0]["message"], {"role": "tool",
+            "tool_call_id": "search-call", "content": result.stdout}]
+        writeproxy.observe_externalization_results(owner, history)
+        visible = writeproxy.represent_inbound(history, sess_key=session)
+    return result.returncode, visible[-1]["content"], result.stderr
 
 
 def brave(n, desc_len=200, title="decimal package - github.com/shopspring/decimal - Go Packages"):
@@ -39,15 +75,10 @@ def brave(n, desc_len=200, title="decimal package - github.com/shopspring/decima
 
 
 def run(body, query="go decimal library"):
-    p = subprocess.run(["bash", "-c", fragment(query)], input=body,
-                       capture_output=True, text=True, timeout=60)
-    return p.returncode, p.stdout, p.stderr
+    return run_search(body, query)
 
 
 class TheComposedCommandActuallyRunsTests(unittest.TestCase):
-    def tearDown(self):
-        shutil.rmtree("./tmp", ignore_errors=True)
-
     def test_it_is_not_a_shell_syntax_error(self):
         rc, _, err = run(brave(3))
         self.assertEqual(rc, 0, err)
@@ -60,9 +91,6 @@ class TheComposedCommandActuallyRunsTests(unittest.TestCase):
 
 
 class ResultsTheModelCanActOnTests(unittest.TestCase):
-    def tearDown(self):
-        shutil.rmtree("./tmp", ignore_errors=True)
-
     def test_the_titles_and_links_are_inline(self):
         rc, out, _ = run(brave(5))
         self.assertEqual(rc, 0)
@@ -89,9 +117,6 @@ class ResultsTheModelCanActOnTests(unittest.TestCase):
 
 
 class WhenItGenuinelyDoesNotFitTests(unittest.TestCase):
-    def tearDown(self):
-        shutil.rmtree("./tmp", ignore_errors=True)
-
     def huge(self):
         return json.dumps({"web": {"results": [
             {"title": "T" * 400, "url": "https://x/" + "u" * 300, "description": "d"}
@@ -108,9 +133,6 @@ class WhenItGenuinelyDoesNotFitTests(unittest.TestCase):
 
 
 class TheSpillFileIsWrittenEitherWayTests(unittest.TestCase):
-    def tearDown(self):
-        shutil.rmtree("./tmp", ignore_errors=True)
-
     def test_the_full_text_lands_on_disk_even_when_inlined(self):
         """The grep route and the ledger entry are unchanged — only what is SHOWN changed."""
         run(brave(5, desc_len=500))
@@ -122,9 +144,6 @@ class TheSpillFileIsWrittenEitherWayTests(unittest.TestCase):
 
 
 class TheOtherOutcomesAreUnchangedTests(unittest.TestCase):
-    def tearDown(self):
-        shutil.rmtree("./tmp", ignore_errors=True)
-
     def test_an_empty_result_set_says_no_results(self):
         self.assertEqual(run(json.dumps({"web": {"results": []}}))[1].strip(), "no results")
 

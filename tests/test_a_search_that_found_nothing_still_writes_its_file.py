@@ -29,8 +29,6 @@ a shell one-liner that no unit test could see by reading Python.
 from __future__ import annotations
 
 import json
-import shutil
-import subprocess
 import sys
 from pathlib import Path
 
@@ -39,25 +37,17 @@ import pytest
 _ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(_ROOT))
 
-from cria import webfetch, writeproxy  # noqa: E402
+from cria import webfetch  # noqa: E402
+from test_search_results_reach_the_model import run_search  # noqa: E402
 
 
-def _run_composed_search(tmp_path: Path, payload: dict, query: str) -> tuple[str, Path]:
+def _run_composed_search(tmp_path: Path, payload: dict, query: str, *, session=None) -> tuple[str, Path]:
     """Build the command cria really lowers, feed it `payload` instead of Brave, and run it in a
     throwaway workspace. Returns (stdout, the spill path cria recorded for this query)."""
-    cmd = writeproxy._search_command({"query": query}, brave_key="test-key")
     target = Path(webfetch.search_spill_name(query))
-
-    # Keep the network out of it: replace the curl with a cat of the stubbed payload. Everything
-    # after the first pipe — the parse, the spill write, the printed brief — is cria's real code.
-    parse = cmd.split("|", 1)[1]
-    stub = tmp_path / "payload.json"
-    stub.write_text(json.dumps(payload))
-
-    r = subprocess.run(["bash", "-c", f"cat {stub} |{parse}"], cwd=tmp_path,
-                       capture_output=True, text=True, timeout=60)
-    assert r.returncode == 0, f"composed command failed: {r.stderr[-500:]}"
-    return r.stdout, tmp_path / target
+    rc, stdout, stderr = run_search(json.dumps(payload), query, cwd=tmp_path, session=session)
+    assert rc == 0, f"composed command failed: {stderr}"
+    return stdout, tmp_path / target
 
 
 def test_a_search_with_no_results_still_leaves_the_file_cria_named(tmp_path):
@@ -94,9 +84,11 @@ def test_the_recorded_warrant_and_the_written_file_agree(tmp_path):
     for payload in ({"web": {"results": []}},
                     {"web": {"results": [{"title": "t", "url": "u", "description": "d"}]}}):
         q = f"query for {len(payload['web']['results'])} results"
-        _, spill = _run_composed_search(tmp_path, payload, q)
-        # `search_spill_name` returns a workspace-relative "./tmp/reference/..." path; compare the
-        # normalized forms so the assertion is about the FILE, not about a leading "./".
-        remembered = Path(webfetch.search_spill_name(q))
+        session = f"sid:empty-search-warrant-{len(payload['web']['results'])}"
+        _, spill = _run_composed_search(tmp_path, payload, q, session=session)
+        # Read the actual ledger committed after delivery AND storage, not the naming helper.
+        recorded = webfetch.spilled_path(session, q)
+        assert recorded, "the delivered and stored search must have a usable warrant"
+        remembered = Path(recorded)
         assert spill.is_file(), f"remembered {remembered}, wrote nothing"
         assert spill == tmp_path / remembered, f"wrote {spill}, remembered {tmp_path / remembered}"

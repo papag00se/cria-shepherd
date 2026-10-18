@@ -27,6 +27,7 @@ import unittest
 
 from cria import server as srv
 from cria import wsview
+from cria.loop import LoopStore
 
 
 class _Rlog:
@@ -64,7 +65,7 @@ class ARootlessHarnessStillLearnsItsWorkspaceTests(unittest.TestCase):
         # A real default Config: `_setup_translation` reads the engagement level (the tool layer
         # is level 2) and the tool-menu flags, so a double without one is an object that cannot
         # exist in production. The subject here is workspace-root adoption, at the full level.
-        handler.server = type("S", (), {"cfg": _Config()})()
+        handler.server = type("S", (), {"cfg": _Config(), "loop_store": LoopStore()})()
         body = {"messages": [
             {"role": "user", "content": "build the shipping module"},
             {"role": "assistant", "tool_calls": [{"id": "t1", "type": "function", "function": {
@@ -72,10 +73,11 @@ class ARootlessHarnessStillLearnsItsWorkspaceTests(unittest.TestCase):
             {"role": "tool", "tool_call_id": "t1", "content": "lib\n" + _survey(self.ROOT)},
         ], "tools": []}
         rlog = _Rlog()
+        token = wsview.bind(wsview.View("", sess_key))
         try:
             handler._setup_translation(body, sess_key, rlog)
         finally:
-            pass
+            wsview.unbind(token)
         return handler, rlog
 
     def test_the_root_the_survey_reported_becomes_the_session_workspace(self):
@@ -96,7 +98,7 @@ class ARootlessHarnessStillLearnsItsWorkspaceTests(unittest.TestCase):
         cmd = writeproxy._sentinel("list_dir", '{"path": "."}') + "\nls -la"
         handler = srv.CriaHandler.__new__(srv.CriaHandler)
         handler.headers = {}
-        handler.server = type("S", (), {"cfg": _Config()})()
+        handler.server = type("S", (), {"cfg": _Config(), "loop_store": LoopStore()})()
         body = {"messages": [
             {"role": "user", "content": "<environment_context><cwd>/announced/ws</cwd>"
                                         "</environment_context>"},
@@ -104,7 +106,11 @@ class ARootlessHarnessStillLearnsItsWorkspaceTests(unittest.TestCase):
                 "name": "exec_command", "arguments": json.dumps({"cmd": cmd})}}]},
             {"role": "tool", "tool_call_id": "t1", "content": _survey(self.ROOT)},
         ], "tools": []}
-        handler._setup_translation(body, "sid:announced", _Rlog())
+        token = wsview.bind(wsview.View("", "sid:announced"))
+        try:
+            handler._setup_translation(body, "sid:announced", _Rlog())
+        finally:
+            wsview.unbind(token)
         self.assertEqual(handler._workspace_root, "/announced/ws")
 
     def test_the_external_guard_can_now_bound_a_rootless_session(self):

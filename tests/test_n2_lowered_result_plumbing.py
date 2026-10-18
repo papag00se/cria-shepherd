@@ -129,11 +129,14 @@ class PackIsGatedToTheGatesRungTests(unittest.TestCase):
     def _lowered(self, level: int, tool: str, args: dict) -> str:
         from types import SimpleNamespace
         from unittest.mock import Mock
-        from cria.config import RoutingConfig
+        from cria.config import Config, RoutingConfig, SafetyConfig
+        from cria.loop import LoopStore
+        from cria import assistruntime
         from cria.server import CriaHandler
         h = object.__new__(CriaHandler)
-        h.server = SimpleNamespace(cfg=SimpleNamespace(safety=SimpleNamespace(external_dir_permission="write"),
-                                                       routing=RoutingConfig(engagement_level=level)))
+        cfg = Config(routing=RoutingConfig(engagement_level=level),
+                     safety=SafetyConfig(external_dir_permission="write"))
+        h.server = SimpleNamespace(cfg=cfg, loop_store=LoopStore())
         h._shell_tool = {"name": "exec_command", "schema": {"properties": {"cmd": {"type": "string"}}}}
         h._synthetic = {tool}
         h._workspace_root = "/w"
@@ -141,7 +144,8 @@ class PackIsGatedToTheGatesRungTests(unittest.TestCase):
             "name": tool, "arguments": json.dumps(args)}}]}}]}
         sess = "n2-level-%d-%s" % (level, tool)
         self.addCleanup(wsview.unbind, wsview.bind(wsview.View("/w", sess)))
-        out = h._translate_out(comp, sess, Mock())
+        with assistruntime.bound(assistruntime.AssistRuntime.select(level=level)):
+            out = h._translate_out(comp, sess, Mock())
         return json.loads(out["choices"][0]["message"]["tool_calls"][0]["function"]["arguments"])["cmd"]
 
     def test_levels_below_the_gate_send_unpacked_commands(self):

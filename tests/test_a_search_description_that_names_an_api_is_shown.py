@@ -21,10 +21,10 @@ Java, Rust and Python all write a callable.
 
 import json
 import re
-import subprocess
 import unittest
 
 from cria import writeproxy
+from test_search_results_reach_the_model import run_search
 
 
 NAMES_AN_API = [
@@ -73,10 +73,9 @@ class TheLoweredCommandDoesItTests(unittest.TestCase):
 
     def _run(self, cwd):
         """The parse half of cria's real lowered command, fed the body curl would have fetched."""
-        cmd = writeproxy._search_command({"query": "country gem eu membership ruby"}, "KEY")
-        parse = cmd.split("| ", 1)[1].split(" || printf", 1)[0]
-        return subprocess.run(["bash", "-lc", parse], input=json.dumps(self.BODY),
-                              capture_output=True, text=True, cwd=cwd)
+        from types import SimpleNamespace
+        rc, stdout, stderr = run_search(json.dumps(self.BODY), "country gem eu membership ruby", cwd=cwd)
+        return SimpleNamespace(returncode=rc, stdout=stdout, stderr=stderr)
 
     def test_the_api_description_is_inline_and_the_noise_is_not(self):
         import tempfile

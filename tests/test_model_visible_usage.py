@@ -166,7 +166,7 @@ def test_a_gate_transport_turn_with_no_upstream_call_reports_the_model_visible_s
     poll = loop._completion_toolcalls([{"id": "call_poll", "type": "function",
                                          "function": {"name": "exec_command",
                                                       "arguments": json.dumps({"cmd": "true"})}}])
-    monkeypatch.setattr(loop.Loop, "drive", lambda self, body, sk, cls, rlog: json.loads(json.dumps(poll)))
+    monkeypatch.setattr(loop.Loop, "drive", lambda self, body, sk, cls, rlog, *, pasted_delivery=None: json.loads(json.dumps(poll)))
     h = _Harness(5, False)
     try:
         result = _post_responses(h, _inbound("7cc1bf39"), stream)
