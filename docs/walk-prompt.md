@@ -1,21 +1,19 @@
-Launch no more than 10 agents to walk the latest suite results. line-by-line, no shortcuts like grep'ing. We're looking for subtleties (or obvious footgun) in the context that could steer a weak model wrongly. We should see evidence of it in the model's thinking (also walked line-by-line). 
+# Walk supervisor
 
-DO NOT LET THE SIZE AND NUMBER OF FILES PUSH YOU INTO SHORTCUTTING. EVEN WITH THOUSANDS OF LARGE FILES I AM STILL ASKING YOU TO DO IT PROPERLY!!!
+Coordinate a complete chronological reading of the selected run. Every prompt, recorded reasoning trace, reply, tool call and result must be read line-by-line. No sampling, grep-based substitutes, or summaries of unread material. Even thousands of large files do not justify shortcuts. Look for subtle or obvious context footguns and whether recent fixes help or introduce problems.
 
-We're also looking for evidence that the recent fixes are behaving as expected or causing more issues.
+## Assign the reading
 
-A faithful walk must never compact unread findings. Split the capture into segments each reader can finish without compaction. Use a fresh reader per segment; never reuse one. Each writes durable findings (context, action, consequence, exact call/chunk citations). Verify findings against source artifacts before continuing. Disk files, not reader memory, track progress.
+Use `suite/walk.py <session> --out <dir> --reader-context-tokens <reader-window> --label <cell>` to produce lossless chunks and one `assignments.json`. Alternatively use an explicitly sized `--segment-bytes` budget; 250000 bytes is intended for a large-context reader, not automatically for a smaller cheap model.
 
-Run `suite/walk.py <session> --out <dir> --segment-bytes 250000 --label <cell>` to generate lossless segments, `assignments.json`, and `WALK-PLAN.md`. The 250 kB default requires roughly 200k+ context tokens. For smaller readers, use `--reader-context-tokens <window>`. If segments exceed the agent cap, dispatch fresh readers in waves, verifying each wave.
+Assign each manifest section to one fresh reader, with its ordered chunk paths, finding path, and [reader prompt](walk-reader.md). Use no more than ten simultaneous readers; dispatch further sections as capacity becomes available. Readers may run independently and in parallel. The same reader reads all chunks in its section, in order, without compaction. Do not split a section among readers or let a reader skip its initial context. An oversized call must be paged completely; if the section cannot fit a reader's context, assign a reader that can hold it rather than silently compacting.
 
-Suggestions from subagents are signals and evidence only. Never take them at their word. Double check yourself.
+Each section supplies its own initial context. Later calls explicitly reference exact prompt lines that reader already read; all new or changed text is printed. COPY references preserve the current ordering, and DELETE/REPLACE markers describe context changes. No reference depends on another reader's section. `--full-prompts` remains available when every prompt must be printed independently.
 
-`A` leads to `B` which causes `C` to break. Don't jump to fix `B`. `A` led to `B`, so you should look at `A` to see if you can get `B` in a better state so `C` doesn't break. That is a pattern that I'd like you to keep in mind whenever looking at fixes.
+## Use findings, not another reading bureaucracy
 
-Suggest fixes that comply with the following:
+Require completed reading coverage and actual cited observations, including uncertainty or an explicit no-findings result. An assignment or empty file is not completed reading. Reading coverage does not depend on finding a bug. Notes track progress on disk, not in reader memory; they are temporary working material, not a permanent proof archive.
 
-1. Candidate fixes should comply with @docs/principles.md 
-1. Check those fixes against commit history to ensure we aren't reintroducing previous footguns. 
-1. Run the fixes through adversarial reasoning. 
-1. Replay the fixes against the model using real call logs to see if the fix is effective.
-1. Do not duplicate similar assist/fix logic. This is similar to the A, B, C thread above. Be aware of other similar assists/fixes in cria, so you can adjust or build on them instead of duplicating assist logic - causing trips and footguns.
+Give findings and cross-section questions to the [investigator/fixer](walk-investigator.md). Reader suggestions are leads, not established causes. The investigator checks cited original interactions and source before acting; it need not repeat every reader's entire section. Check neighboring sections when needed to establish a causal chain across their boundary. Reuse completed readings; do not restart a whole walk merely to verify one finding.
+
+Keep the role boundary clear: cheap readers read and observe; investigators diagnose and fix; the supervisor ensures complete coverage, integrates results, and continues the run/walk/fix goal. Multiple agents should do useful non-conflicting work, not create approval chains. Preserve necessary regression inputs in the repository and actual model-call logs in their canonical location. Remove settled temporary walk material under the repository's retention policy.

@@ -142,7 +142,9 @@ The judge infers usefulness only from the original `prompt.txt` and the archived
 
 ## Replays and walks
 
-`replay.py` re-sends real captured calls under a settings or wording matrix and evaluates protocol behavior with cria's own parsers. `walk.py` materializes a call-by-call transcript for manual causal analysis.
+`replay.py` re-sends real captured calls under a settings or wording matrix and evaluates protocol behavior with cria's own parsers. `walk.py` materializes a call-by-call transcript for manual causal analysis. With `--segment-bytes` or `--reader-context-tokens`, each assignment section supplies its own initial prompt per phase, then references exact already-read prompt lines within that section. Readers consume assigned chunks in order; chunks never cross section boundaries. New/changed prompt text and every response/reasoning/tool argument remain whole. References explicitly identify source calls and line ranges; context removals/replacements are marked. `--full-prompts` disables line reuse. Section byte budgets include actual emitted UTF-8 text and reference framing; a single oversized call is flagged rather than split.
+
+Role instructions are separated: [supervisor](../docs/walk-prompt.md) assigns complete independent sections, [reader](../docs/walk-reader.md) performs exhaustive line-by-line observation without coding/diagnosis, and [investigator/fixer](../docs/walk-investigator.md) verifies causal findings and handles history, adversarial checks, replays, code and tests.
 
 ## Closed walk and fix retention
 
