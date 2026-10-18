@@ -2,8 +2,8 @@
 
 The failure these guard: a prior multi-agent walk handed each reader too large a slice; the
 reader's context filled and compacted mid-walk, and the walk silently degraded into a summarized
-skim. The fix batches chunks under a measured byte ceiling, one fresh reader per segment, and forces
-self-contained (undeduped) segments so a fresh reader never references a prefix it did not see.
+skim. Each section has its own complete initial context and exact local line references, so a
+fresh reader never depends on another section. Chunking preserves those reader boundaries.
 """
 import json
 from pathlib import Path

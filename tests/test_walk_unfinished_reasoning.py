@@ -88,9 +88,14 @@ def test_multiple_calls_are_ordered_and_partial_does_not_break_prompt_reconstruc
     assert [num for num, _, _ in calls] == ["0002", "0003", "0010"]
     prev = {}
     a, b, c = emit(first, prev), emit(other, prev), emit(second, prev)
-    assert "--- PROMPT Δ ---\nsecond" in c
+    assert "second\n" in c and "shared prompt\n" not in c
+    assert "PROMPT COPY [CALL 0002 [coder-s1] lines 1-1 -> lines 1-1]" in c
+    assert "PROMPT REPLACE" in c
     assert "shared prompt\nfirst" in a
-    assert prev == {"coder-s1": "shared prompt\nsecond\n", "satisfaction": "other phase\n"}
+    assert {phase: state[:2] for phase, state in prev.items()} == {
+        "coder-s1": ("0010", "shared prompt\nsecond\n"),
+        "satisfaction": ("0003", "other phase\n")}
+
     assert "first fragment\n" in a and "other fragment" in b
     assert "UNFINISHED" not in c
 
@@ -140,7 +145,8 @@ def test_utf8_bytes_not_character_count_decide_chunk_and_segment_boundaries(tmp_
     assert sum(len(b) for b in blocks) <= budget
     outdir = tmp_path / "walk"
     with mock.patch("sys.argv", ["walk.py", str(root), "--out", str(outdir),
-                                  "--chunk-bytes", str(budget), "--segment-bytes", str(budget)]):
+                                  "--chunk-bytes", str(budget), "--segment-bytes", str(budget),
+                                  "--full-prompts"]):
         walk.main()
     chunks = sorted(outdir.glob("chunk*.txt"))
     assert len(chunks) == 2

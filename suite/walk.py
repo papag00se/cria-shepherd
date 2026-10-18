@@ -10,13 +10,13 @@ one permitted way to materialize a capture for that reading, and it NEVER trunca
 For each call NNNN-<phase> in the capture directory it prints:
 
   CALL NNNN [phase]
-  --- PROMPT ---            the full prompt the FIRST time each phase appears; after that, only
-                            the suffix beyond the byte-identical common prefix with the previous
-                            prompt of the SAME phase (nothing is lost: the omitted bytes were
-                            already printed verbatim). When a prompt is recomposed — shorter than
-                            or diverging from its predecessor — that is flagged with the char
-                            count and, by default, the divergent remainder is printed IN FULL.
-                            --full-prompts disables prefix-dedup entirely.
+  --- PROMPT ---            complete initial context for each phase in each reader's section.
+                            Later prompts reference exact whole lines already read in that
+                            section, naming the source CALL/phase and 1-based inclusive line
+                            ranges. New/changed text is printed verbatim; deletions, replacements
+                            and the current positions of reused lines are explicit. Moved or
+                            reintroduced lines can reference an earlier prompt in the section.
+                            --full-prompts prints every prompt in full instead.
   --- UNFINISHED STREAMED REASONING ---  any saved .json.reasoning.partial.txt, verbatim,
                             labelled with its artifact name and byte count; never a completed
                             response. Included even when a completed response also exists.
@@ -34,10 +34,16 @@ head and moved on, and 2,406 lines went unwalked without anything saying so.
     python3 suite/walk.py <session-name> --out ~/.cria/walk-findings/<date>/<cell>   # chunkNN.txt; never /tmp
     python3 suite/walk.py <session-name> --full-prompts      # no prefix-dedup at all
 
-There is deliberately NO flag to shorten, sample, or filter content. If a walk needs less than
-this, it is not a walk.
+With --segment-bytes or --reader-context-tokens, assignments.json assigns independent sections.
+Each section starts with its own complete context, reuses text ONLY within that section, and must
+be read in chunk order by one reader. Chunk boundaries do not reset a reader's context; section
+boundaries do. Budgets count actual emitted UTF-8 bytes, including references and complete new
+reasoning/results. No call is split; an oversized single call is explicitly flagged.
+
+There is deliberately NO flag to shorten, sample, or filter content.
 """
 import argparse
+from difflib import SequenceMatcher
 import json
 import os
 import re
@@ -103,7 +109,7 @@ def group_by_budget(sizes, budget):
     return groups
 
 
-def write_assignments(outdir, chunk_names, chunk_sizes, budget, findings_dir, label):
+def write_assignments(outdir, chunk_names, chunk_sizes, budget, findings_dir, label, *, groups=None):
     """Batch already-written chunk files into compaction-safe reading assignments.
 
     assignments.json is the sole coordination record. Readers write actual findings at its
@@ -114,7 +120,11 @@ def write_assignments(outdir, chunk_names, chunk_sizes, budget, findings_dir, la
     if not findings_dir.resolve().is_relative_to(Path(outdir).resolve()):
         raise ValueError("findings must stay inside the walk directory")
     findings_dir.mkdir(parents=True, exist_ok=True)
-    groups = group_by_budget(chunk_sizes, budget)
+    # Explicit groups preserve the context resets chosen BEFORE chunking. Never
+    # regroup delta chunks into sections whose readers lack their referenced calls.
+    groups = group_by_budget(chunk_sizes, budget) if groups is None else groups
+    if [i for group in groups for i in group] != list(range(len(chunk_names))):
+        raise ValueError("section groups must cover every chunk once in order")
     width = max(2, len(str(len(groups))))
     segments = []
     for idx, group in enumerate(groups, 1):
@@ -125,7 +135,7 @@ def write_assignments(outdir, chunk_names, chunk_sizes, budget, findings_dir, la
             "index": idx,
             "chunks": names,
             "bytes": seg_bytes,
-            "oversized": len(group) == 1 and seg_bytes > budget,
+            "oversized": seg_bytes > budget,
             "finding_file": str(finding),
         })
     manifest = {
@@ -133,6 +143,7 @@ def write_assignments(outdir, chunk_names, chunk_sizes, budget, findings_dir, la
         "label": label,
         "segment_bytes_budget": budget,
         "chunks_total": len(chunk_names),
+        "prompt_references": "section-local; read assigned chunks in order; line ranges are 1-based and inclusive",
         "segments": segments,
     }
     (outdir / "assignments.json").write_text(json.dumps(manifest, indent=2) + "\n")
@@ -165,30 +176,66 @@ def list_calls(cap: Path):
 
 
 def emit_call(num: str, phase: str, stem: Path, prev_prompts: dict, full_prompts: bool):
-    """Render one call as text. prev_prompts maps phase -> previous full prompt text."""
+    """Render a call; prev_prompts holds phase-local prompt and already-read lines.
+
+    Only exact whole lines from the same reader's earlier prompts may be omitted.
+    References preserve their placement; deletions/replacements name the old ranges.
+    A section resets this map, so each phase starts with complete context.
+    """
     lines = []
     lines.append("=" * 90)
     lines.append(f"CALL {num} [{phase}]")
     lines.append("=" * 90)
 
     prompt_file = stem.parent / f"{num}-{phase}.prompt.txt"
-    prompt = prompt_file.read_text(errors="replace") if prompt_file.exists() else ""
+    prompt = prompt_file.read_bytes().decode("utf-8") if prompt_file.exists() else ""
     prev = prev_prompts.get(phase)
     if full_prompts or prev is None:
-        tag = "" if full_prompts else f" (FULL, first {phase})"
+        tag = "" if full_prompts else f" (FULL, first {phase} in this section)"
         lines.append(f"--- PROMPT{tag} ---")
-        lines.append(prompt.rstrip("\n"))
+        lines.append(prompt)
     else:
-        i = 0
-        limit = min(len(prev), len(prompt))
-        while i < limit and prev[i] == prompt[i]:
-            i += 1
-        if len(prompt) < len(prev):
-            lines.append(f"--- PROMPT Δ [prompt SHRANK by {len(prev) - len(prompt)} chars — recomposed] ---")
-        else:
-            lines.append("--- PROMPT Δ ---")
-        lines.append(prompt[i:].rstrip("\n"))
-    prev_prompts[phase] = prompt
+        previous_number, previous_prompt, known = prev
+        old, new = previous_prompt.splitlines(keepends=True), prompt.splitlines(keepends=True)
+        source = f"CALL {previous_number} [{phase}]"
+        lines.append(f"--- PROMPT Δ [against {source}; line ranges are 1-based and inclusive] ---")
+        if not old and not new:
+            lines.append("--- PROMPT EMPTY ---")
+        for kind, a, b, c, d in SequenceMatcher(None, old, new, autojunk=False).get_opcodes():
+            if kind == "equal":
+                lines.append(f"--- PROMPT COPY [{source} lines {a + 1}-{b} -> lines {c + 1}-{d}] ---")
+            elif kind == "delete":
+                lines.append(f"--- PROMPT DELETE [{source} lines {a + 1}-{b}; before current line {c + 1}] ---")
+            else:
+                if kind == "replace":
+                    lines.append(f"--- PROMPT REPLACE [{source} lines {a + 1}-{b} -> lines {c + 1}-{d}] ---")
+                else:
+                    lines.append(f"--- PROMPT INSERT [lines {c + 1}-{d}] ---")
+                # A moved or reintroduced line is not new reading. References
+                # point to where its literal bytes were FIRST supplied, even if
+                # the immediately previous prompt no longer contains them.
+                cursor = c
+                while cursor < d:
+                    match = known.get(new[cursor])
+                    end = cursor + 1
+                    if match is not None:
+                        source_number, offset, source_lines = match
+                        while (end < d and offset + end - cursor < len(source_lines)
+                               and new[end] == source_lines[offset + end - cursor]):
+                            end += 1
+                        lines.append(f"--- PROMPT COPY [CALL {source_number} [{phase}] lines {offset + 1}-{offset + end - cursor} -> lines {cursor + 1}-{end}] ---")
+                    else:
+                        while end < d and new[end] not in known:
+                            end += 1
+                        lines.append("".join(new[cursor:end]))
+                    cursor = end
+    # Trial rendering during section packing must never mutate the previous
+    # reader's dictionary: a rejected trial cannot make unread lines 'known'.
+    known = {} if prev is None else prev[2].copy()
+    prompt_lines = prompt.splitlines(keepends=True)
+    for index, line in enumerate(prompt_lines):
+        known.setdefault(line, (num, index, prompt_lines))
+    prev_prompts[phase] = (num, prompt, known)
 
     # Upstream._partial_path appends to the FULL metadata filename (including .json). A killed
     # stream can leave only this artifact. Coexistence with a response does not erase the fragment:
@@ -204,14 +251,14 @@ def emit_call(num: str, phase: str, stem: Path, prev_prompts: dict, full_prompts
 
     resp_file = stem.parent / f"{num}-{phase}.response.json"
     if resp_file.exists():
-        resp = json.loads(resp_file.read_text(errors="replace"))
+        resp = json.loads(resp_file.read_bytes())
         for choice in resp.get("choices", []):
             msg = choice.get("message", {})
-            think = (msg.get("reasoning_content") or "").rstrip("\n")
+            think = msg.get("reasoning_content") or ""
             if think:
                 lines.append("--- THINK (full) ---")
                 lines.append(think)
-            say = (msg.get("content") or "").rstrip("\n")
+            say = msg.get("content") or ""
             if say:
                 lines.append("--- SAY (full) ---")
                 lines.append(say)
@@ -226,6 +273,54 @@ def emit_call(num: str, phase: str, stem: Path, prev_prompts: dict, full_prompts
     return "\n".join(lines) + "\n"
 
 
+def render_sections(calls, budget, full_prompts=False):
+    """Greedily pack whole calls using their actual section-local rendered bytes.
+
+    Test a delta with a copy of the current reader state. If it does not fit,
+    reset and render that same call with full initial context for the next reader.
+    An oversized call stands alone and is reported, never clipped or split.
+    A zero budget is the original single-reader, unbounded stream.
+    """
+    if budget < 0:
+        raise ValueError("section budget must not be negative")
+    sections, current, state, size = [], [], {}, 0
+    for call in calls:
+        candidate_state = state.copy()
+        block = emit_call(*call, candidate_state, full_prompts)
+        block_size = len(block.encode("utf-8"))
+        if budget and current and size + block_size > budget:
+            sections.append(current)
+            current, state, size = [], {}, 0
+            candidate_state = {}
+            block = emit_call(*call, candidate_state, full_prompts)
+            block_size = len(block.encode("utf-8"))
+        current.append(block)
+        state, size = candidate_state, size + block_size
+        if budget and size > budget:
+            sections.append(current)
+            current, state, size = [], {}, 0
+    if current:
+        sections.append(current)
+    return sections
+
+
+def chunk_blocks(blocks, byte_budget, line_budget):
+    """Keep calls whole, and never mix blocks from separate reader sections."""
+    chunks, current, size, lines = [], [], 0, 0
+    for block in blocks:
+        n = block.count("\n") + 1
+        block_bytes = len(block.encode("utf-8"))
+        if current and (size + block_bytes > byte_budget or lines + n > line_budget):
+            chunks.append("".join(current))
+            current, size, lines = [], 0, 0
+        current.append(block)
+        size += block_bytes
+        lines += n
+    if current:
+        chunks.append("".join(current))
+    return chunks
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("capture", help="capture dir path, session name, or unique fragment of one")
@@ -235,12 +330,12 @@ def main():
     ap.add_argument("--chunk-lines", type=int, default=CHUNK_LINES_DEFAULT,
                     help=f"target lines per chunk file with --out (default {CHUNK_LINES_DEFAULT})")
     ap.add_argument("--full-prompts", action="store_true",
-                    help="print every prompt whole; no common-prefix dedup")
+                    help="print every prompt whole; no section-local line reuse")
     ap.add_argument("--segment-bytes", type=int, default=0,
                     help="with --out, batch chunks into compaction-safe segments and emit "
                          f"assignments.json (suggested {SEGMENT_BYTES_DEFAULT} for a "
-                         "large-context reader); 0 disables. Implies --full-prompts so each segment "
-                         "is self-contained. Overrides --reader-context-tokens.")
+                         "large-context reader); 0 disables. Each segment starts with complete "
+                         "context and deduplicates only within itself. Overrides --reader-context-tokens.")
     ap.add_argument("--reader-context-tokens", type=int, default=0,
                     help="the token window of the model that will READ the segments; the segment "
                          "byte budget is derived from it. Use this instead of --segment-bytes when "
@@ -249,6 +344,10 @@ def main():
                     help="where readers write findings inside --out (default <out>/findings)")
     ap.add_argument("--label", default=None, help="a label (e.g. the cell/run) for assignments")
     args = ap.parse_args()
+    if args.chunk_bytes <= 0 or args.chunk_lines <= 0:
+        ap.error("chunk byte and line budgets must be positive")
+    if args.segment_bytes < 0 or args.reader_context_tokens < 0:
+        ap.error("section byte and reader context budgets must not be negative")
 
     # Resolve the segment budget: explicit bytes win, else derive from the reader's window, else a
     # default that assumes a large-context reader (and says so, so a small reader is not silently
@@ -268,36 +367,19 @@ def main():
     if not calls:
         sys.exit(f"no captured calls in {cap}")
 
-    # Segments go to independent fresh readers, so each must stand alone: prefix-dedup is lossless
-    # ONLY for a single reader taking every chunk in order. Force whole prompts when segmenting.
-    full_prompts = args.full_prompts or bool(segment_bytes)
-    if segment_bytes and not args.full_prompts:
-        print("note: segmenting forces whole prompts so each segment is self-contained")
-
-    prev_prompts = {}
-    blocks = [emit_call(num, phase, stem, prev_prompts, full_prompts)
-              for num, phase, stem in calls]
+    sections = render_sections(calls, segment_bytes, args.full_prompts)
 
     if not args.out:
-        sys.stdout.write("".join(blocks))
+        sys.stdout.write("".join(sections[0]))
         return
 
     outdir = Path(os.path.expanduser(args.out))
     outdir.mkdir(parents=True, exist_ok=True)
-    chunks, cur, size, lines = [], [], 0, 0
-    for b in blocks:
-        n = b.count("\n") + 1
-        block_bytes = len(b.encode("utf-8"))
-        # A call never splits across chunks — every chunk is a whole number of calls. Both budgets
-        # bind: bytes so a chunk stays loadable, lines so it stays READABLE by a line-capped reader.
-        if cur and (size + block_bytes > args.chunk_bytes or lines + n > args.chunk_lines):
-            chunks.append("".join(cur))
-            cur, size, lines = [], 0, 0
-        cur.append(b)
-        size += block_bytes
-        lines += n
-    if cur:
-        chunks.append("".join(cur))
+    chunks, groups = [], []
+    for section in sections:
+        section_chunks = chunk_blocks(section, args.chunk_bytes, args.chunk_lines)
+        groups.append(list(range(len(chunks), len(chunks) + len(section_chunks))))
+        chunks.extend(section_chunks)
     width = max(2, len(str(len(chunks))))
     over = []
     for i, text in enumerate(chunks, 1):
@@ -312,7 +394,8 @@ def main():
     if segment_bytes:
         names = [f"chunk{i:0{width}d}.txt" for i in range(1, len(chunks) + 1)]
         findings_dir = args.findings_dir or (outdir / "findings")
-        segments = write_assignments(outdir, names, sizes, segment_bytes, findings_dir, args.label)
+        segments = write_assignments(outdir, names, sizes, segment_bytes, findings_dir, args.label,
+                                     groups=groups)
         oversized = sum(1 for s in segments if s["oversized"])
         if not args.segment_bytes and args.reader_context_tokens:
             print(f"  note: {segment_bytes:,} bytes derived from a "
