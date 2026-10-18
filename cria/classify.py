@@ -21,8 +21,11 @@ import hashlib
 import json
 import threading
 from dataclasses import dataclass, replace
+from enum import Enum
+from typing import Protocol
 
 from . import prompts
+from .assistcontract import Policy, Reference
 from .jsontext import extract_json_object
 
 _ENGAGEMENTS = ("question", "simple", "task")
@@ -59,27 +62,90 @@ _ESCALATE_AFTER = 3  # consecutive classify failures before the fallback escalat
 # The classifier prompt lives in cria/prompts/classify.txt (edit it there).
 
 
+class Disposition(Enum):
+    """Where the route decision came from, independently of its cached flag.
+
+    Unknown inference is DEFAULTED, not approval or a withheld route: existing
+    behavior deliberately returns the configured bias. Disabled or unselected
+    execution returns no decision (None), before history or instance state.
+    """
+    CLASSIFIED = "classified"
+    DEFAULTED = "defaulted"
+    AUXILIARY = "auxiliary"
+
+
+class ClassificationLog(Protocol):
+    phase: str | None
+
+    def emit(self, kind: str, **fields) -> None: ...
+    def decide(self, name: str, choice: str, reason: str, **fields) -> None: ...
+
+
+class ClassificationRole(Protocol):
+    """Role surface consumed here; implementations support dataclass replacement
+    of ``reasoning`` for the existing retry. Role behavior stays with its owner.
+    """
+    @property
+    def reasoning(self) -> str: ...
+
+    def apply(self, body: dict, *, internal: bool = False,
+              rlog: ClassificationLog | None = None) -> None: ...
+    def clean_content(self, text: str) -> str: ...
+
+
+class ClassificationProvider(Protocol):
+    def chat(self, body: dict, rlog: ClassificationLog) -> bytes: ...
+
+
 @dataclass(frozen=True)
 class Classification:
     engagement: str  # question | simple | task
     task_type: str  # coding | reasoning | question
     reason: str
     cached: bool = False
+    disposition: Disposition = Disposition.CLASSIFIED
 
 
 class Classifier:
-    def __init__(self, provider, bias: str = "task", role=None) -> None:
+    """One configured service's complete classification lifecycle.
+
+    The bounded cache is keyed by normalized latest task text, not a session ID.
+    Cache and failure streak belong to this instance, survive ordinary requests,
+    and reset when it is reconstructed. They are not serialized or copied to a
+    new instance. Preserve this existing scope; it is not coder guard memory.
+    """
+    def __init__(self, provider: ClassificationProvider, bias: str = "task",
+                 role: ClassificationRole | None = None) -> None:
         self._provider = provider  # an Upstream-like with .chat(body, rlog)
         # No model: the classify body carries no `model`, so the upstream fills the server's loaded
         # model (the single-loaded-model posture — cria never pins an alias).
         self._bias = bias if bias in _ENGAGEMENTS else "task"
-        self._role = role  # Role | None — this role's per-request sampling/reasoning
+        self._role = role  # this role's per-request sampling/reasoning
         self._cache: dict[str, Classification] = {}
         self._lock = threading.Lock()
         self._consec_fail = 0  # consecutive classify failures → escalate (a broken classifier
         #                        otherwise hides behind the engage-biased fallback, silently)
 
-    def classify(self, messages: list[dict], rlog) -> Classification:
+    def classify(self, messages: list[dict], rlog: ClassificationLog, *,
+                 enabled: bool = True) -> Classification | None:
+        """Public compatibility entry: honor exact bound selection before facts.
+
+        Unbound library callers retain the built-in lifecycle. An explicitly
+        bound empty/disabled selection never resurrects that library default.
+        Server availability and request-kind bypasses remain caller guards.
+        """
+        if not enabled:
+            return None
+        definition = selected_definition()
+        if definition is None:
+            return None
+        return definition.execute(self, messages, rlog, enabled=enabled)
+
+    def _execute(self, messages: list[dict], rlog: ClassificationLog, *,
+                 enabled: bool = True) -> Classification | None:
+        """Definition-owned classification, cache, recovery and effect lifecycle."""
+        if not enabled:
+            return None
         task = latest_user_text(messages)
         if is_title_request(task):
             # Codex's UI title-generation aux request EMBEDS the real task ("provide a short title
@@ -87,7 +153,8 @@ class Classifier:
             # and cria plans it — the title instruction then leaks into every planner prompt.
             # Route it to a plain answer (proxy), never the plan loop.
             rlog.emit("route.classify", aux="title", engagement="question")
-            return Classification("question", "question", "Codex title-generation aux request")
+            return Classification("question", "question", "Codex title-generation aux request",
+                                  disposition=Disposition.AUXILIARY)
         key = _task_key(task)
         with self._lock:
             hit = self._cache.get(key)
@@ -182,7 +249,63 @@ class Classifier:
         # usually the fenced-JSON/reasoning-leak bug) must not stay invisible: escalate past a few.
         if rlog is not None and streak >= _ESCALATE_AFTER:
             rlog.emit("route.classify_degraded", level="error", consecutive=streak, why=why)
-        return Classification(engagement=eng, task_type=_default_task_type(eng), reason=f"fallback: {why}")
+        return Classification(engagement=eng, task_type=_default_task_type(eng), reason=f"fallback: {why}",
+                              disposition=Disposition.DEFAULTED)
+
+
+class ClassificationExecutor(Protocol):
+    def __call__(self, classifier: Classifier, messages: list[dict], rlog: ClassificationLog, *,
+                 enabled: bool = True) -> Classification | None: ...
+
+
+@dataclass(frozen=True)
+class ClassificationDefinition:
+    policy: Policy
+    execute: ClassificationExecutor
+
+
+# The unbound real implementation owns detection, cache lookup/insertion, provider
+# retries, effective-role cleanup and defaults. No forwarding policy or second
+# router. The public compatibility entry projects selection; it is not the
+# implementation. Configured provider resolution and L0 construction stay with the server.
+DEFINITION = ClassificationDefinition(
+    Policy("task-classification", "task-classification", 1, family_id="F54",
+           prompts=("classify",),
+           state="configured Classifier instance; bounded task-text cache; failure streak; reset on reconstruction",
+           services=("configured-classifier-provider", "effective-classifier-role", "request-history"),
+           hooks=(Reference("cria/server.py", "CriaServer.__init__"),
+                  Reference("cria/server.py", "CriaHandler._classify"),
+                  Reference("cria/classify.py", "Classifier.classify")),
+           regressions=(Reference("tests/test_classification_policy.py", "test_registered_method_executes_real_history_extraction_and_cache_lifecycle"),
+                        Reference("tests/test_classification_policy.py", "test_disabled_registered_execution_has_no_detection_calls_cache_or_log_changes"),
+                        Reference("tests/test_classification_policy.py", "test_unknown_output_retries_once_defaults_without_cache_and_later_recovers"),
+                        Reference("tests/test_classification_policy.py", "test_retry_cleans_with_effective_off_role_not_original_on_role"),
+                        Reference("tests/test_classification_policy.py", "test_public_classifier_obeys_real_bound_root_before_reading_history_or_state"),
+                        Reference("tests/test_classification_policy.py", "test_public_classifier_runs_exact_real_root_replacement_even_when_it_returns_none"),
+                        Reference("tests/test_classification_policy.py", "test_bound_selection_and_shared_instance_state_are_thread_local_and_safe")),
+           migrated=False),
+    Classifier._execute)
+
+
+def selected_definition() -> ClassificationDefinition | None:
+    """Project the canonical classifier from the real request-local selection.
+
+    Selection is not availability: callers still honor configured absence and
+    auxiliary request bypasses. Only UNBOUND preserves the standalone library
+    default; bound absence never does. Storage owns no catalog or defaults.
+    """
+    from . import assistbinding
+
+    selection = assistbinding.current()
+    if selection is assistbinding.UNBOUND:
+        return DEFINITION
+    selected = tuple(d for d in selection.definitions
+                     if d.policy.id == DEFINITION.policy.id)
+    if not selected:
+        return None
+    if len(selected) != 1 or not isinstance(selected[0], ClassificationDefinition):
+        raise TypeError("Classifier selection requires one ClassificationDefinition")
+    return selected[0]
 
 
 # ------------------------------------------------------------------ helpers

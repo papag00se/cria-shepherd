@@ -26,7 +26,7 @@ they are consumed by that probe — once, on whichever way it exits.
 
 import unittest
 
-from cria import loop
+from cria import assistruntime, loop
 
 
 class _Rlog:
@@ -74,7 +74,8 @@ def _drive(*, errors, parts=("the reasoner said so",)):
         body = {"messages": [{"role": "user", "content": "t"},
                              {"role": "tool", "tool_call_id": "probe1", "content": "gate output"}],
                 "tools": []}
-        return lp._drive_single_item(sess, body, "k1", _Rlog()), sess
+        with assistruntime.bound(assistruntime.current()):
+            return lp._drive_single_item(sess, body, "k1", _Rlog()), sess
     finally:
         loop.guard_gate_verdict = saved
 
@@ -114,7 +115,8 @@ class TheHeldPiecesAreConsumedByTheirOwnProbeTests(unittest.TestCase):
                 body = {"messages": [{"role": "user", "content": "t"},
                                      {"role": "tool", "tool_call_id": "probe1", "content": "out"}],
                         "tools": []}
-                return lp._drive_single_item(sess, body, "k1", _Rlog())
+                with assistruntime.bound(assistruntime.current()):
+                    return lp._drive_single_item(sess, body, "k1", _Rlog())
 
             turn("cart.go:9: undefined: total", "first claim")     # RED
             out = turn(None, "I fixed the cart and the tests pass now.")   # later GREEN

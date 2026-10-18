@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 from cria import cleanupsafety, writeproxy
+from cria.loop import LoopStore
 from cria.server import CriaHandler
 
 INCIDENT = (Path(__file__).parent / 'fixtures/incident_parent_cleanup.py.txt').read_text()
@@ -14,7 +15,8 @@ def test_incident_blocks_without_a_reasoner():
     handler = object.__new__(CriaHandler)
     handler.server = SimpleNamespace(reasoner_role=None, cfg=SimpleNamespace(
         safety=SimpleNamespace(external_dir_permission='none'),
-        routing=SimpleNamespace(done_refusals=False, assists_enabled=False)))
+        routing=SimpleNamespace(done_refusals=False, assists_enabled=False)),
+        loop_store=LoopStore())
     handler._shell_tool = {'name': 'exec_command', 'schema': {'properties': {'cmd': {'type': 'string'}}}}
     handler._synthetic = {'write_file'}
     handler._workspace_root = '/remote/project'

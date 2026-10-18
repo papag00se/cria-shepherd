@@ -145,12 +145,15 @@ def capture_inbound(raw: bytes, rlog, *, calls_dir, api: str) -> str | None:
 
 
 def capture(body: dict, rlog, *, calls_dir, phase: str | None = None, url: str = "",
-            rendered: str | None = None, coder_preframe: dict | None = None) -> str | None:
+            rendered: str | None = None, coder_preframe: dict | None = None,
+            assist_selection: dict | None = None) -> str | None:
     """Write the EXACT outbound ``body`` to a per-call file and emit ``upstream.dump``. When
     ``rendered`` (the flat prompt the model tokenizes, chat template applied) is given, also write
     it as a readable sibling ``.prompt.txt`` — the literal 'what the model sees'. ``coder_preframe``
-    is an out-of-band live-state receipt supplied by the final wire owner. Returns the JSON
-    file path, or ``None`` on failure. Best-effort — never breaks the request."""
+    is an out-of-band live-state receipt supplied by the final wire owner. ``assist_selection``
+    records that caller's effective selection separately from the model body; absence stays
+    unknown, never inferred from defaults. Selection does not claim a policy fired. Returns
+    the JSON file path, or ``None`` on failure. Best-effort — never breaks the request."""
     try:
         session = getattr(rlog, "session", None)
         turn = getattr(rlog, "_turn", None) or getattr(rlog, "turn", None)
@@ -171,6 +174,8 @@ def capture(body: dict, rlog, *, calls_dir, phase: str | None = None, url: str =
             "stats": stats,
             "body": body,  # EXACTLY what cria serializes and POSTs to the server
         }
+        if assist_selection is not None:
+            record["assist_selection"] = assist_selection
         if coder_preframe is not None:
             # A separate observation receipt: never a request-body field and therefore incapable
             # of changing what the model sees.  The wire owner supplies its final byte identity.

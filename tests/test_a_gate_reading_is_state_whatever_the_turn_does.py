@@ -33,10 +33,10 @@ import os
 import tempfile
 import unittest
 
-from cria import loop, proberun
+from cria import assistruntime, loop, proberun
 from cria.loop import GuardState, Loop, LoopContext, gate_error_text, record_gate_state
 from cria.plan import Plan, PlanItem
-from cria.probegate import GateOutcome, SECTION_PREFIX, SECTION_SUFFIX
+from cria.probegate import GateOutcome, GatePlan, SECTION_PREFIX, SECTION_SUFFIX
 
 
 class _Report:
@@ -99,8 +99,8 @@ class TheGuardProbeTurnRecordsItTests(unittest.TestCase):
         gs.gate_plan = object()          # any non-None plan; read_gate is patched below
         gs.probe_call_id = "c1"
         gs.spin_path = "handler.py"
-        gs.spin_probe = spin
-        gs.redirect_probe = not spin
+        gs.spin_probe_due = spin
+        gs.redirect_due = not spin
         gs.last_gate_red = False         # the PREVIOUS gate was green — this is what used to survive
         gs.gate_fresh = True
         return gs
@@ -117,7 +117,14 @@ class TheGuardProbeTurnRecordsItTests(unittest.TestCase):
         real_read, real_find = loop.read_gate, loop.gate_error_text
         loop.read_gate, loop.gate_error_text = fake_read_gate, fake_findings
         try:
-            return loop.guard_probe_steer(gs, {"messages": []}, _Rlog(), author=loop.CANNED, step=1)
+            from tests.test_loop import _admit_guard_probe
+            body = {"messages": [{"role": "tool", "tool_call_id": gs.probe_call_id,
+                                  "content": "gate output"}]}
+            rlog = _Rlog()
+            _admit_guard_probe(gs, body, rlog, redirect=gs.redirect_due)
+            steer = loop.guard_probe_steer(gs, body, rlog, author=loop.CANNED, step=1)
+            self.assertIsNone(gs.stalled_probe)
+            return steer
         finally:
             loop.read_gate, loop.gate_error_text = real_read, real_find
 
@@ -176,31 +183,95 @@ class TheRednessDecisionHasOneOwnerTests(unittest.TestCase):
         self.assertIn("mvn -q compile", out)
 
     def test_no_reader_writes_the_state_inline_any_more(self):
-        """Each reader delegates to the shared mirror rather than keeping its own copy of the
-        assignment. Checked by AST rather than string search — a reformatted line, or a comment that
-        happens to quote the old assignment (this file's own module docstring does, twice), must not
-        be able to fool it either way."""
+        """Readers reach one real recorder through selected policy or required factual settlement.
+
+        AST checks protect organization, including the intermediate delegates. Real parsed readings
+        protect execution: an unused recorder reference or a mock mirror cannot satisfy this guard.
+        """
         import ast
         import inspect
         import textwrap
+        from dataclasses import replace
+        from unittest import mock
+        from cria import repositorychecks
+        from cria.probediscovery import ProbeCandidate, ProbeCost, ProbeKind
+        from cria.probegate import GatePlan
 
-        def calls_the_owner(fn) -> bool:
+        runtime = assistruntime.current()  # actual existing library selection, not a new config
+        definition = runtime.repository_checks
+        self.assertIsNotNone(definition)
+
+        def calls(fn, name):
             tree = ast.parse(textwrap.dedent(inspect.getsource(fn)))
-            return any(isinstance(n, ast.Call) and isinstance(n.func, ast.Name)
-                      and n.func.id == "record_gate_state" for n in ast.walk(tree))
+            return any(isinstance(node, ast.Call) and (
+                isinstance(node.func, ast.Name) and node.func.id == name or
+                isinstance(node.func, ast.Attribute) and node.func.attr == name)
+                for node in ast.walk(tree))
 
-        def assigns_state_inline(fn) -> bool:
+        def assigns_state_inline(fn):
             tree = ast.parse(textwrap.dedent(inspect.getsource(fn)))
-            return any(isinstance(t, ast.Attribute) and t.attr == "last_gate_red"
-                      for node in ast.walk(tree) if isinstance(node, ast.Assign)
-                      for t in node.targets)
+            return any(
+                isinstance(node, ast.Attribute) and node.attr == "last_gate_red"
+                and isinstance(node.ctx, ast.Store) or
+                isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+                and node.func.id == "setattr" and len(node.args) > 1
+                and isinstance(node.args[1], ast.Constant) and node.args[1].value == "last_gate_red"
+                for node in ast.walk(tree))
 
-        for fn in (loop.guard_gate_verdict, loop.guard_probe_steer, loop.Loop._verify_after_probe,
-                   loop.guard_periodic_result):
+        # Keep all four original reader subcases; delegate spelling alone is no longer the rule.
+        edges = (
+            (loop.guard_gate_verdict, ("completion", "_record_repository_evidence")),
+            (loop.guard_probe_steer, ("record_gate_state",)),
+            (loop.Loop._verify_after_probe, ("record_gate_state",)),
+            (loop.guard_periodic_result, ("_resume_repository_checks",)),
+            (repositorychecks.Selected.completion, ("completion",)),
+            (definition.completion, ("record",)),
+            (loop._resume_repository_checks, ("resume", "_record_repository_evidence")),
+            (repositorychecks.Selected.resume, ("resume",)),
+            (definition.resume, ("periodic_result",)),
+            (repositorychecks.periodic_result, ("record",)),
+            (loop._record_repository_evidence, ("record_gate_state",)),
+            (loop.record_gate_state, ("record",)),
+        )
+        for fn, delegates in edges:
             with self.subTest(fn=fn.__name__):
-                self.assertTrue(calls_the_owner(fn), f"{fn.__name__} never calls record_gate_state")
+                self.assertTrue(all(calls(fn, name) for name in delegates),
+                                f"{fn.__name__} bypasses its route to the shared recorder")
                 self.assertFalse(assigns_state_inline(fn),
                                  f"{fn.__name__} still assigns last_gate_red itself")
+
+        without_checks = replace(runtime, ordered_stages=tuple(
+            stage for stage in runtime.ordered_stages if stage is not definition))
+        self.assertIsNone(without_checks.repository_checks)
+        for selected in (runtime, without_checks):
+            for periodic in (False, True):
+                with self.subTest(selected=selected.repository_checks is not None, periodic=periodic):
+                    candidate = ProbeCandidate(kind=ProbeKind.Test,
+                        command=["python3", "-m", "pytest", "-q"], working_dir="/workspace",
+                        confidence=90, expected_value=80, cost=ProbeCost.Cheap,
+                        mutates_code=False, may_hang=False, may_need_services=False, reason="fixture")
+                    gs = GuardState(probe_call_id="record-probe", periodic_probe=periodic,
+                                    done_probe=not periodic, awaiting_probe=True)
+                    gs.gate_plan = GatePlan(workspace="/workspace", candidates=[candidate])
+                    body = {"messages": [{"role": "tool", "tool_call_id": "record-probe",
+                        "content": f"{SECTION_PREFIX}probe-0{SECTION_SUFFIX}\n1 failed\nEXIT:1\n"
+                                   f"{SECTION_PREFIX}git{SECTION_SUFFIX}\nabc\n"}]}
+                    reader = loop.guard_periodic_result if periodic else loop.guard_gate_verdict
+                    with assistruntime.bound(selected), \
+                         mock.patch.object(repositorychecks, "record", wraps=repositorychecks.record) as recorder:
+                        result = reader(gs, body, _Rlog())
+                    self.assertEqual(recorder.call_count, 1, "the reading bypassed canonical settlement")
+                    self.assertIs(recorder.call_args.args[1], gs)
+                    self.assertIsInstance(recorder.call_args.args[2].report, proberun.ProbeReport)
+                    self.assertTrue(gs.last_gate_red)
+                    self.assertTrue(gs.last_gate_ran)
+                    self.assertFalse(gs.gate_fresh)
+                    self.assertEqual(gs.gate_stall, 1)
+                    self.assertIn("pytest", gs.last_gate_flag)
+                    if selected.repository_checks is None:
+                        self.assertIsNone(result)  # required facts do not resurrect optional presentation
+                    else:
+                        self.assertIn("pytest", result)
 
 
 class _Rlog:
@@ -332,7 +403,10 @@ class TheStallComparisonReadsThePreviousFlagTests(unittest.TestCase):
         ws = _ws()
         coder = _Recorder([_toolcall(), _done()])   # keeps claiming done, never actually fixes it
         reasoner = _Scripted([_verdict(True)])
-        run = Loop(_ctx(coder, reasoner, _plan(1), ws))
+        from tests.test_loop import _enable_test_planning, _select_test_planning
+        from cria import stepreview
+        run = Loop(_select_test_planning(_enable_test_planning(_ctx(coder, reasoner, _plan(1), ws)),
+                                         stepreview.DEFINITION))
         rlog = _Rlog()
         c = run.drive(_body(), "k", _Classification(), rlog)
         c = run.drive(_body(), "k", _Classification(), rlog)             # claims done → gate probe
@@ -356,7 +430,7 @@ class TheWheelSpinMetricIsAMeasurementTests(unittest.TestCase):
         gs.gate_plan = object()
         gs.probe_call_id = "c1"
         gs.spin_path = "handler.py"
-        gs.spin_probe = True
+        gs.spin_probe_due = True
         return gs
 
     def _run(self, gs, *, truth, authored):
@@ -366,8 +440,24 @@ class TheWheelSpinMetricIsAMeasurementTests(unittest.TestCase):
         loop.guard_ground_truth = lambda o: truth
         rlog = _Rlog()
         try:
-            author = loop.CANNED if authored is None else (lambda *a, **k: authored)
-            steer = loop.guard_probe_steer(gs, {"messages": []}, rlog, author=author, step=1)
+            from dataclasses import replace
+            from tests.test_loop import _admit_guard_probe
+            runtime = assistruntime.current()
+            definition = runtime.stalled_work
+            replacement = replace(definition, actions=replace(definition.actions,
+                author=lambda *args, **kwargs: authored))
+            selected = replace(runtime, ordered_stages=tuple(
+                replacement if stage is definition else stage for stage in runtime.ordered_stages))
+            body = {"messages": [{"role": "tool", "tool_call_id": gs.probe_call_id,
+                                  "content": "gate output"}]}
+            def author(condition, owner, observed, actual_body, log):
+                return loop._stalled_author(owner, actual_body, log, lambda *args: None, None,
+                                            condition=condition, outcome=observed)
+            with assistruntime.bound(selected):
+                _admit_guard_probe(gs, body, rlog)
+                steer = loop.guard_probe_steer(gs, body, rlog,
+                    author=loop.CANNED if authored is None else author, step=1)
+            self.assertIsNone(gs.stalled_probe)
         finally:
             loop.read_gate, loop.guard_ground_truth = real_read, real_truth
         return steer, next(kw for k, kw in rlog.events if k == "loop.spin_probe_result")
@@ -400,17 +490,18 @@ class ThePeriodicCheckInKeepsItsOneDifferenceTests(unittest.TestCase):
     def _gs(self):
         gs = GuardState()
         gs.periodic_probe = True
-        gs.gate_plan = object()
+        gs.gate_plan = GatePlan(workspace="")
         gs.probe_call_id = "c1"
         return gs
 
     def _run(self, gs, err, ran=True):
-        got = outcome(ran=ran)
+        got = GateOutcome(ran=ran, report=proberun.ProbeReport())
         real_read, real_err = loop.read_gate, loop.gate_error_text
         loop.read_gate = lambda plan, probe, rlog: got
         loop.gate_error_text = lambda o: err
         try:
-            return loop.guard_periodic_result(gs, {"messages": []}, _Rlog())
+            with assistruntime.bound(assistruntime.current()):
+                return loop.guard_periodic_result(gs, {"messages": []}, _Rlog())
         finally:
             loop.read_gate, loop.gate_error_text = real_read, real_err
 

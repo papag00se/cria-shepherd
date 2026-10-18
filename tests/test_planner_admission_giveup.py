@@ -25,6 +25,7 @@ from unittest.mock import patch
 from cria.config import Role
 from cria.loop import Loop, LoopContext
 from cria.planner import ADMISSION_EXHAUSTION_GIVEUP, PlanOutcome, Planner
+from tests.test_loop import _enable_test_planning
 
 
 class _Rlog:
@@ -171,7 +172,7 @@ class AdmissionGiveUpTests(unittest.TestCase):
             coder_bodies.append(body)
             return json.dumps(_tool_resp("shell", {"command": "pwd"})).encode()
 
-        loop = Loop(LoopContext(planner=planner, coder_chat=coder, reasoner_chat=lambda *_: b"", runs_dir=""))
+        loop = Loop(_enable_test_planning(LoopContext(planner=planner, coder_chat=coder, reasoner_chat=lambda *_: b"", runs_dir="")))
         rlog = _Rlog()
         shell = {"type": "function", "function": {"name": "shell", "parameters": {
             "type": "object", "properties": {"command": {"type": "array"}}}}}
@@ -324,8 +325,8 @@ class LoopSurveyDeferralGiveUpTests(unittest.TestCase):
 
     def _loop_and_planner(self):
         planner = Planner(object(), role=_role(), clock=lambda: _FIXED)
-        return Loop(LoopContext(planner=planner, coder_chat=lambda body, _rlog: _toolcall_completion(),
-                                reasoner_chat=lambda *_: b"", runs_dir="")), planner
+        return Loop(_enable_test_planning(LoopContext(planner=planner, coder_chat=lambda body, _rlog: _toolcall_completion(),
+                                reasoner_chat=lambda *_: b"", runs_dir=""))), planner
 
     def _body(self):
         return {"messages": [{"role": "user", "content": _CART_TASK}], "tools": [_SHELL]}
@@ -341,7 +342,8 @@ class LoopSurveyDeferralGiveUpTests(unittest.TestCase):
         loop, planner = self._loop_and_planner()
         calls = {"n": 0}
 
-        def fake_gather(task, cwd, rlog, prior_work="", rewrite_summary="", outcome=None):
+        def fake_gather(task, cwd, rlog, prior_work="", rewrite_summary="", outcome=None, *, policies):
+            self.assertIs(policies, loop._ctx.pilot_runtime.initial_planning)
             calls["n"] += 1
             if calls["n"] % 2 == 1:            # every gather's FIRST attempt: admission-exhausts
                 planner._retriable_failure = True
@@ -377,7 +379,8 @@ class LoopSurveyDeferralGiveUpTests(unittest.TestCase):
         loop, planner = self._loop_and_planner()
         calls = {"n": 0}
 
-        def fake_gather(task, cwd, rlog, prior_work="", rewrite_summary="", outcome=None):
+        def fake_gather(task, cwd, rlog, prior_work="", rewrite_summary="", outcome=None, *, policies):
+            self.assertIs(policies, loop._ctx.pilot_runtime.initial_planning)
             calls["n"] += 1
             if calls["n"] % 2 == 1:
                 planner._retriable_failure = True
@@ -397,7 +400,8 @@ class LoopSurveyDeferralGiveUpTests(unittest.TestCase):
         self.assertTrue(any(k == "plan.admission_given_up" for k, _ in rlog.events))
 
         # Session B: the SAME shared Planner, the SAME task text, a session that plans cleanly.
-        def admitting_gather(task, cwd, rlog, prior_work="", rewrite_summary="", outcome=None):
+        def admitting_gather(task, cwd, rlog, prior_work="", rewrite_summary="", outcome=None, *, policies):
+            self.assertIs(policies, loop._ctx.pilot_runtime.initial_planning)
             rlog.emit("plan.submitted", steps=2)
             return ["Add the promo discount rule to discounts.json",
                     "Update the module requirement in go.mod"]

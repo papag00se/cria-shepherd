@@ -13,7 +13,7 @@ These rules come from failures traced to exact causes. Evidence lives in [`audit
 ### 1. Every assist can become a footgun
 A weak model cannot distinguish cria injections from its own reasoning. Every injected string is another possible falsehood. Before adding an assist, ask how it can mislead. Default to removal; additions require strong justification.
 
-**An assist outlives its cause.** Each one was built for a defect that was real at the time. Fix the defect upstream — better context shaping, a truer prompt, a floor that catches it earlier — and the assist keeps firing against a world that no longer needs it, where its only remaining effect is to mislead. So an assist is re-measured against the system it runs in NOW, not the one it was born in. The test is not "was this justified when written" but "does removing it today cost anything". Measure both arms before answering: an assist that fires just as often in the runs that succeed is not what is making them succeed.
+**An assist outlives its cause.** Each one was built for a defect that was real at the time. Fix the defect upstream — better context shaping, a truer prompt, a floor that catches it earlier — and the assist keeps firing against a world that no longer needs it, where its only remaining effect is to mislead. So an assist is re-measured against the system it runs in NOW, not the one it was born in. The test is not "was this justified when written" but "does removing it today cost anything". Compare the relevant captured boundary with and without it, including legitimate nearby cases and repetitions appropriate to variance. Firing in successful runs does not establish benefit; staying silent does not establish redundancy. Prefer removing a demonstrated harmful intervention to wrapping it in another guard. Reconsider symptom guards when their upstream cause is fixed.
 
 ### 2. Interventions are additive, regression-only, and cria never AUTHORS work
 Intervene only to prevent existing progress from regressing. Deletion, redirection, and blocking a first attempt can trap loops.
@@ -74,6 +74,8 @@ Keep answer-window sizing separate from runaway protection. Handle runaways with
 cria writes only inside its own directory. Workspace artifacts become visible to the coder and contaminate its context.
 
 File access remains bounded to the workspace even under `--yolo`. This is a weak-model backstop, not a security sandbox.
+
+**Investigation scratch is temporary, not a second product.** One owned working directory, one reading-assignment record and actual findings are enough to coordinate a walk. Keep only necessary unresolved inputs, working changes and test output needed for the current review. Do not generate duplicate reports, recursive proof inventories, source mirrors, hash/approval/preservation warehouses or archives of earlier drafts. Inspect authoritative source, runtime state and captures directly when a check genuinely needs them. Tests and follow-on tools must not depend on disposable investigation outputs; preserve necessary inputs as small repository fixtures or genuine operative state instead. After all associated fixes settle ACCEPTED or REJECTED and necessary changes are secured, remove the scratch without another review or permanent closure receipt. Old citations, bug explanations, score substantiation and hypothetical future investigations do not extend retention. Repository changes and actual model-call logs are the durable outputs; unresolved rate limits, active owners and unique unapplied code remain protected. See `suite/README.md` for the concrete closure command.
 
 ---
 
@@ -148,6 +150,8 @@ A cria turn without a tool call is interpreted as completion, so a red session m
 
 ### 15. Measure prevalence before building a heuristic
 Measure a suspected pattern across real captures before building a detector. One replayed pathological event is not evidence of a systemic problem.
+
+**Local causal evidence is sufficient for a local repair, not a universal claim.** Walks and replays can demonstrate a particular misleading context, harmful refusal or broken transition, and test a correction at that boundary. Repeated whole tasks diverge; they cannot attribute every outcome to individual assists or combinations. State the bounded conclusion and relevant uncertainty. Do not require universal benefit proof, exhaustive interaction accounting, or another evidence registry to accept a demonstrated repair with relevant regression coverage. Aggregate task results describe delivered work, not the necessity of each assist.
 
 ### 16. It is always cria's fault. "The model's fault" is not a finding.
 

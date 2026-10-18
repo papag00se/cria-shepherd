@@ -134,6 +134,48 @@ class SteerAuthClaimTests(unittest.TestCase):
         self.assertFalse(_steer_auth_refuted(STEER_0191, "", sess, self._ask("REFUTED"), _Rlog()))
         self.assertEqual(self.asked, "")               # the claim has a source — no call spent
 
+    def test_real_plan_session_keeps_credential_task_authority_without_a_question(self):
+        from cria.loop import PlanSession
+        from cria.plan import Plan, PlanItem
+        task = TASK + ' Use the api key I gave you.'
+        sess = PlanSession(plan=Plan(id='auth-task-owner', task=task, created='now',
+                                     items=[PlanItem(task)]))
+        sess.fetched_pages = {'https://api.handle.me/openapi.json': ('HTTP 200', '', '', '')}
+        self.assertFalse(_steer_auth_refuted(STEER_0191, 'all fetches clean', sess,
+                                            self._ask('REFUTED'), _Rlog()))
+        self.assertEqual(self.asked, '')
+
+    def test_adapter_normalizes_raw_facts_but_preserves_an_existing_evidence_owner(self):
+        from unittest.mock import patch
+        from cria import groundedaction
+        pages = {'https://api.handle.me/openapi.json': ('HTTP 200', '', '', '')}
+        raw = _Sess(TASK, pages)
+        normalized = groundedaction.ActionEvidence(original_task='Explicit original task',
+            fetched_pages=pages, last_gate_flag='EXACT unrelated session fact')
+        seen = []
+        with patch('cria.loop._grounded_actions') as actions:
+            def observe(directive, evidence, owner, ask, log):
+                seen.append(owner)
+                return False
+            actions.return_value._steer_auth_refuted.side_effect = observe
+            self.assertFalse(_steer_auth_refuted(STEER_0191, 'facts', raw, None, _Rlog()))
+            self.assertFalse(_steer_auth_refuted(STEER_0191, 'facts', normalized, None, _Rlog()))
+        self.assertIsInstance(seen[0], groundedaction.ActionEvidence)
+        self.assertEqual(seen[0].original_task, TASK)
+        self.assertIs(seen[0].fetched_pages, pages)
+        self.assertIs(seen[1], normalized)
+        self.assertEqual(seen[1].last_gate_flag, 'EXACT unrelated session fact')
+
+    def test_explicit_original_task_is_not_replaced_by_a_different_plan_task(self):
+        for original_task in (TASK, ''):
+            with self.subTest(original_task=original_task):
+                sess = _Sess(TASK + ' Use the api key I gave you.',
+                             {'https://api.handle.me/openapi.json': ('HTTP 200', '', '', '')})
+                sess.original_task = original_task
+                self.assertTrue(_steer_auth_refuted(STEER_0191, 'all fetches clean', sess,
+                                                   self._ask('REFUTED'), _Rlog()))
+                self.assertIn('HTTP 200', self.asked)
+
     def test_no_auth_shape_never_asks(self):
         sess = _Sess(TASK)
         self.assertFalse(_steer_auth_refuted("Rename the file to test_resolve.py and rerun.",

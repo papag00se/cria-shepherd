@@ -295,6 +295,43 @@ def _scrub_clock_on_tally_lines(text: str) -> str:
     """Erase a clock reading only on a line that is a runner's own tally."""
     return _TALLY_LINE.sub(lambda m: _A_SUBSECOND.sub("", _A_TIME.sub("", m.group(0))), text)
 
+_JVM_HASH = re.compile(r"@[0-9a-fA-F]{4,}\b(?!\.)")
+
+
+def _scrub_jvm_identities(text: str) -> str:
+    """Remove only hashes with an accepted JVM type suffix, in linear work.
+
+    Start at hash delimiters, not every possible start of a greedy type prefix.
+    The old class grammar accepts any suffix starting with ASCII A-Z followed
+    by Unicode word characters or '$'; dotted/inner prefixes remain verbatim.
+    An array suffix starts at '[' then ASCII A-Z and permits word/$/;./.
+    Each backward scan stops at the preceding delimiter (or earlier match end),
+    so scans cannot overlap. Keep the old substitution's non-overlapping search:
+    a consumed hash cannot become the type prefix for the next identity.
+    """
+    parts: list[str] = []
+    end = 0
+    for match in _JVM_HASH.finditer(text):
+        i = match.start() - 1
+        word_suffix, valid = True, False
+        while i >= end:
+            char = text[i]
+            if char.isalnum() or char in "_$":
+                if word_suffix and "A" <= char <= "Z":
+                    valid = True
+                    break
+            elif char in ";./":
+                word_suffix = False
+            else:
+                valid = char == "[" and i + 1 < match.start() and "A" <= text[i + 1] <= "Z"
+                break
+            i -= 1
+        if valid:
+            parts.append(text[end:match.start() + 1])
+            end = match.end()
+    return "".join(parts) + text[end:] if parts else text
+
+
 _VOLATILE = (
     # the harness exec envelope's per-run fields (whole lines)
     (re.compile(r"(?im)^\s*(?:Chunk ID:|Wall time:|Original token count:)\s*\S.*$\n?"), ""),
@@ -308,8 +345,7 @@ _VOLATILE = (
     # The type must look like a JVM type (an array descriptor, a dotted package, or a Capitalized
     # class) and the hash must not be followed by a dot. Without that, `user@abcdef.com` is 6 hex
     # digits ending on a word boundary and an email address becomes `user.com`.
-    (re.compile(r"((?:\[+[A-Z][\w$;./]*|(?:[\w$]+\.)*[A-Z][\w$]*(?:\$[\w$]+)*)@)[0-9a-fA-F]{4,}\b(?!\.)"),
-     r"\1"),
+    (_JVM_HASH, _scrub_jvm_identities),
     # python's mock prints a DECIMAL identity, no `0x` — `<MagicMock id='125997213614208'>`. The most
     # common address in these suites, since every mocked test that fails prints one. Anchored to the
     # `id=` key: a bare long number is content (a lovelace amount, an epoch) and must survive.
@@ -360,8 +396,7 @@ def volatile_key(content) -> str:
     if not isinstance(content, str):
         return ""
     for pat, repl in _VOLATILE:
-        content = repl(content) if callable(repl) and repl is _scrub_clock_on_tally_lines \
-            else pat.sub(repl, content)
+        content = repl(content) if callable(repl) else pat.sub(repl, content)
     return content.strip()
 
 

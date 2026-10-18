@@ -94,11 +94,13 @@ class ProxyPathLogs(unittest.TestCase):
     def test_produce_completion_applies_role_with_rlog(self):
         from cria import server as srv
         from cria.server import CriaHandler
+        from cria.assistruntime import AssistRuntime
         role = Role(name="coder", backend="local", reasoning="on")
         h = CriaHandler.__new__(CriaHandler)
         h.server = types.SimpleNamespace(
             cfg=types.SimpleNamespace(routing=types.SimpleNamespace(
-                roles={"coder": role}, context_fixes=False, engagement_level=1)))
+                roles={"coder": role}, context_fixes=False, engagement_level=1)),
+            pilot_runtime=AssistRuntime.select(level=1))
         sent = []
 
         class _Provider:

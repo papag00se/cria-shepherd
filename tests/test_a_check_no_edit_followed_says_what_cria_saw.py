@@ -37,7 +37,6 @@ def forward(s, name, args, cid):
     coder = {"choices": [{"message": {"tool_calls": [
         {"id": cid, "type": "function", "function": {"name": name, "arguments": json.dumps(args)}}]}}]}
     loop.guard_track_refusals(s, coder, _Log(), step=1, messages=[])
-    loop.guard_track_write_streak(s, coder, _Log(), step=1, messages=[])
 
 
 def session(calls_before=2, calls_after=3, flag=FLAG):

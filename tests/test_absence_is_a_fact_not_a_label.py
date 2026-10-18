@@ -9,7 +9,8 @@ import json
 import unittest
 from unittest import mock
 
-from cria import loop, prompts, wsview
+from cria import completiondiagnosis, loop, prompts, wsview
+from tests.test_a_gap_the_disk_can_settle_is_not_an_opinion import _selected_observer
 from tests.test_a_judges_doubt_is_not_an_order import _Rlog as _LoopRlog, _body, _loop, _session
 from tests.test_negative_diagnosis_provenance import _Ask, _Rlog, _diagnosis
 from tests.wsfixture import survey
@@ -120,9 +121,15 @@ class PlanOffObserverTests(unittest.TestCase):
         else:
             token = wsview.bind(wsview.View(ROOT, "x"))
             self.addCleanup(wsview.unbind, token)
+        typed_gap = (completiondiagnosis.DiagnosisResult(completiondiagnosis.DiagnosisStatus.GROUNDED,
+            gap.evidence,gap.action,gap.diagnosis_kind,gap.subject) if gap else
+            completiondiagnosis.DiagnosisResult(completiondiagnosis.DiagnosisStatus.NOT_APPLICABLE))
+        obs = mock.Mock(return_value=typed_gap)
         with mock.patch.object(loop, "judge_satisfaction", lambda *a, **k: (False, "", "")), \
-             mock.patch.object(loop, "observe_task_missing_file", return_value=gap) as obs:
+             _selected_observer(obs):
             reason = _loop(lambda *a: b"{}")._done_critic_reason(s, _body(), _LoopRlog())
+        if surveyed:
+            obs.assert_called_once_with(completiondiagnosis.ObservationInput(TASK,True),mock.ANY)
         return reason, obs
 
     def test_a_suppressed_verdict_over_an_absent_named_file_reaches_the_coder_typed(self):
@@ -149,8 +156,9 @@ class PlanOffObserverTests(unittest.TestCase):
         s = _session()
         s.workspace_root = ROOT
         _bind(self, "F\t1\t980\tpom.xml")
+        obs = mock.Mock(side_effect=AssertionError("typed verdict must not ask the selected observer"))
         with mock.patch.object(loop, "judge_satisfaction", lambda *a, **k: (False, typed, "")), \
-             mock.patch.object(loop, "observe_task_missing_file") as obs:
+             _selected_observer(obs):
             reason = _loop(lambda *a: b"{}")._done_critic_reason(s, _body(), _LoopRlog())
         self.assertEqual(reason, typed)
         obs.assert_not_called()

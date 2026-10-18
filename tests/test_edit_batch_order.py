@@ -145,7 +145,9 @@ class BatchOrderTests(unittest.TestCase):
         cmds = _lower([{"old_string": "a", "new_string": "b"}], path="f.txt")
         self.assertNotIn(writeproxy.EDIT_SEQ_DIR, cmds[0])
         two = _lower([{"old_string": "a", "new_string": "b"}], path="g.txt")
-        self.assertEqual(cmds[0].count("python3"), two[0].count("python3"))
+        # A workspace survey may independently add another Python program.
+        # Queue absence is the sequencing invariant, not total program count.
+        self.assertNotIn(writeproxy.EDIT_SEQ_DIR, two[0])
 
 
 if __name__ == "__main__":

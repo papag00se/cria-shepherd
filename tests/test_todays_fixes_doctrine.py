@@ -13,7 +13,7 @@ import inspect
 import json
 import unittest
 
-from cria import execcheck, loop, prompts
+from cria import execcheck, loop, prompts, steppreparation
 from tests.test_loop import _SHELL, _Recorder, _Rlog, _ctx, _plan, _single_loop, _synth, _toolcall
 
 TODAYS_PROMPTS = ("step_repair_note", "steer_checks_repeat", "gate_oscillating",
@@ -77,7 +77,7 @@ class Rule15_MeasureFirst(unittest.TestCase):
     that can itself misfire."""
 
     def test_every_new_detector_cites_its_base_rate_in_the_source(self):
-        for fn, needle in ((loop._repair_note, "33"),          # 33 prompts vs 15 corrections
+        for fn, needle in ((steppreparation.prepare_step, "33"),  # 33 standing prompts; 15 carried findings
                            (loop._checks_already_visible, "176"),  # 129 of 176
                            (execcheck.entrypoints, "")):
             src = inspect.getsource(fn) if fn is not execcheck.entrypoints \

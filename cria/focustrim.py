@@ -39,10 +39,12 @@ import json
 import os
 import re
 from dataclasses import dataclass
-from typing import NamedTuple
+from typing import Callable, NamedTuple
 
 from . import bodykeys, dedup, denial, editrecovery, jsontext, toolargs
-from . import probegate, proberun, prompts
+from . import probegate, proberun, prompts, research, shelltool
+from .assistcontract import Policy, Reference
+from .memoryeffects import Effect, MessageEffect
 
 # cria's OWN ground-truth gate probe tags its output with these section markers. Such a probe
 # exits NON-ZERO by design (a failing check is the signal), so it trips the fail signatures — but it
@@ -110,8 +112,9 @@ def _single_call(m: dict) -> dict | None:
     return tcs[0] if m.get("role") == "assistant" and len(tcs) == 1 else None
 
 
-# The FILE tools. Their result is a PAYLOAD (a file's bytes, a directory listing, "Wrote <path>"),
-# never a lookup envelope — so a soft phrase inside one is the user's own source code, not a dead end.
+# Legacy name-only API compatibility set. Read-only operations carry file DATA;
+# write/edit members report outcomes and do NOT gain that exemption. The shared
+# read/write/shell classifiers below make that distinction before reading words.
 # Walked on ada-handles_nemotron-elastic_codex_pon_1785888803 calls 0159-0165: the coder's resolver
 # raises `ValueError("Handle not found or no holder address")`, so EVERY read_file of it, and every
 # ⟦ctx:edit⟧ recovery dump carrying its exact bytes, matched `\bnot found\b` and was squashed into a
@@ -137,15 +140,31 @@ _FILE_TOOLS = frozenset({"read_file", "write_file", "edit_file", "list_dir", "vi
 _result_key = dedup.volatile_key
 
 
-def _is_failure(content, tool_name: str = "") -> bool:
+def _is_failure(content, tool_name: str = "", *, arguments=None) -> bool:
     if not isinstance(content, str):
         return False
+    # Status and payload usefulness are independent. Preserve the public hard
+    # status contract even for readers; hard failures are retained by the trim.
     if any(p.search(content) for p in _HARD_FAIL_SIGNATURES):
         return True
+    # Only READ-ONLY file operations return file DATA. Write/edit operations
+    # report mutation outcomes, not the submitted content; a path alone cannot
+    # make their failure reports into data. Preserve the legacy name-only API
+    # for known readers, and require the shared path shape for other families.
+    mutates = shelltool.is_write_tool_name(tool_name)
+    if (not mutates and not shelltool.is_shell_tool_name(tool_name)
+            and shelltool.is_read_tool_name(tool_name)
+            and (tool_name in _FILE_TOOLS or tool_name in research._READ_TOOLS
+                 or (shelltool.is_file_tool_name(tool_name) and toolargs.tool_path(arguments)))):
+        return False
     if any(p.search(content) for p in _SUCCESS_MARKERS):
         return False   # the tool exited 0 / returned 2xx → a success whose body just mentions "not found"
-    if tool_name in _FILE_TOOLS:
-        return False   # a file payload: the phrase is the file's content, not the tool's verdict
+    if mutates:
+        # Reuse the actual write-confirmation reader: a filename containing
+        # failure words does not turn a confirmed write into a failed one.
+        from .selfcompact import write_landed
+        if write_landed(content):
+            return False
     if _is_a_payload(content):
         return False   # a service's own structured answer: the phrase is DATA, not a verdict
     return any(p.search(content) for p in _SOFT_FAIL_SIGNATURES)
@@ -390,10 +409,19 @@ def _squash_failures(messages: list[dict]) -> tuple[list[dict], TrimReport]:
     while i < n - 1:
         tc = _single_call(messages[i])
         nxt = messages[i + 1]
+        fn = (tc or {}).get("function") or {}
         if (tc is not None and nxt.get("role") == "tool"
                 and nxt.get("tool_call_id") == tc.get("id")
-                and _is_failure(nxt.get("content"), str((tc.get("function") or {}).get("name") or ""))
+                and _is_failure(nxt.get("content"), str(fn.get("name") or ""),
+                                arguments=fn.get("arguments"))
                 and not _is_hard_failure(nxt.get("content"))  # hard fail carries diagnostics — keep in full
+                # Authored recovery reports can carry exact current file bytes
+                # or repair windows AND a failed-edit status. Preserve the whole
+                # report, not a prose-derived guess at its data extent. This
+                # does not grant success: _failed_write_ids independently reads
+                # the same producer marker and excludes the mutation.
+                and not any(marker in str(nxt.get("content") or "")
+                            for marker in (editrecovery.EDIT_MARK, editrecovery.EDITFAIL))
                 and not _is_gate_probe(tc, nxt)):  # never squash cria's own ground-truth probe
             failed.append((i, i + 1, tc))
             i += 2
@@ -612,17 +640,26 @@ def _path_identity(paths: list[str]):
 
 
 def _failed_write_ids(messages: list[dict]) -> set[str]:
-    """tool_call_ids whose write/edit result came back as a refusal — the payload never hit disk.
+    """Correlated mutation failures, including native reports and owned refusals.
 
-    Read from cria's OWN markers on the result, not from the prose of it: `denial.mark` prefixes
-    every call cria refused, and `editrecovery.compose` prefixes every edit-failure directive. Both
-    are structural, so this asks the event rather than pattern-matching an error sentence."""
+    Supersession must reject failed writes independently of whether soft-failure
+    trimming ran first. Keep structural refusal handling even without a call;
+    interpret native reports only with their actual write/edit operation.
+    """
+    calls = {tc.get("id"): tc.get("function") or {}
+             for m in messages if isinstance(m, dict) and m.get("role") == "assistant"
+             for tc in m.get("tool_calls") or []
+             if shelltool.is_write_tool_name(str((tc.get("function") or {}).get("name") or ""))}
     ids: set[str] = set()
     for m in messages:
         if not isinstance(m, dict) or m.get("role") != "tool" or not m.get("tool_call_id"):
             continue
         body = str(m.get("content") or "")
-        if denial.is_denied(body) or editrecovery.EDIT_MARK in body:
+        fn = calls.get(m["tool_call_id"])
+        if (denial.is_denied(body)
+                or any(marker in body for marker in (editrecovery.EDIT_MARK, editrecovery.EDITFAIL))
+                or (fn is not None and _is_failure(body, fn.get("name") or "",
+                                                  arguments=fn.get("arguments")))):
             ids.add(m["tool_call_id"])
     return ids
 
@@ -655,19 +692,177 @@ def _payload_chars(tc: dict) -> int:
 _STUB_MIN_CHARS = 400
 
 
+def superseded_writes_truth(messages: list[dict]) -> list[dict]:
+    """Settle producer-authenticated promises ONLY on the final surviving body.
+
+    Reads and edits cannot stand in for a promised historical whole-write pair.
+    The driver must run this after floor, argument and evidence transforms, before
+    role concatenation. Removing selection cannot make an existing notice truthful.
+    """
+    notices = []
+    for i, m in enumerate(messages):
+        hint = m.get(bodykeys.SUPERSEDED_WRITES) if isinstance(m, dict) else None
+        if (isinstance(hint, SupersededWriteNotice)
+                and m.get("role") == "user" and m.get("content") == hint.text):
+            notices.append((i, m, hint))
+    if not notices:
+        return messages
+    answers = {m.get("tool_call_id"): m for m in messages
+               if isinstance(m, dict) and m.get("role") == "tool"}
+    pairs = {superseded_pair_identity(tc, answers.get(tc.get("id")))
+             for m in messages if isinstance(m, dict) and m.get("role") == "assistant"
+             for tc in m.get("tool_calls") or [] if tc.get("id") in answers}
+    out = None
+    for i, m, hint in notices:
+        missing = [path for path, call, answer in hint.replacements
+                   if answer is None or (call, answer) not in pairs]
+        if not missing:
+            continue
+        text = prompts.render("superseded_writes_unavailable", count=str(hint.count),
+                              paths=prompts.named_list(hint.paths),
+                              missing=prompts.named_list(missing))
+        if out is None:
+            out = list(messages)
+        out[i] = {**m, "content": text}
+    return out if out is not None else messages
+
+
+@dataclass(frozen=True)
+class FocusDefinition:
+    policy: Policy
+    # The existing supersession count is a call count, not a failure-run count.
+    execute: Callable[[list[dict]], tuple[list[dict], TrimReport | int]]
+    settle: Callable[[list[dict]], list[dict]] | None = None
+
+
+@dataclass(frozen=True)
+class FocusInput:
+    messages: list[dict]
+
+
+@dataclass(frozen=True)
+class FocusResult:
+    messages: list[dict]
+    report: TrimReport
+    effect: Effect
+    applied_ids: tuple[str, ...] = ()
+    # Producer notices remain in messages; no copied payload or global pending store.
+    pending_settlement: tuple[SupersededWriteNotice, ...] = ()
+    superseded_calls: int = 0
+    stage_reports: tuple[tuple[str, TrimReport], ...] = ()
+
+
+def focus(source: FocusInput, definitions: tuple[FocusDefinition, ...] | None = None) -> FocusResult:
+    """Run selected focus decisions in declared order; empty selection is exact bypass.
+
+    Replacement definitions use the same typed stage contract. Validation of IDs,
+    levels and dependencies belongs to the shared runtime, not a second selector.
+    """
+    stages = FOCUS_STAGE if definitions is None else definitions
+    messages = source.messages
+    if not stages or not isinstance(messages, list):
+        return FocusResult(messages, TrimReport(), Effect.NO_OP)
+    total = TrimReport()
+    applied = []
+    superseded = 0
+    stage_reports = []
+    for definition in stages:
+        out, report = definition.execute(messages)
+        if isinstance(report, int):
+            superseded += report
+            report = TrimReport(squashed_runs=report)
+        stage_reports.append((definition.policy.id, report))
+        if report.applied:
+            applied.append(definition.policy.id)
+            messages = out
+            total.dropped_calls += report.dropped_calls
+            total.dropped_msgs += report.dropped_msgs
+            total.squashed_runs += report.squashed_runs
+    pending = (tuple(m[bodykeys.SUPERSEDED_WRITES] for m in messages
+                     if isinstance(m, dict) and isinstance(m.get(bodykeys.SUPERSEDED_WRITES),
+                                                         SupersededWriteNotice))
+               if any(d.settle is not None for d in stages) else ())
+    return FocusResult(messages, total, Effect.REDUCED if applied else Effect.NO_OP,
+                       tuple(applied), pending, superseded, tuple(stage_reports))
+
+
+DUPLICATES = FocusDefinition(
+    Policy("focus-duplicate-pairs", "coder-focus", 3, family_id="F69",
+           prompts=("trim_repeat_collapsed", "trim_repeat_collapsed_failed"),
+           services=("paired-tool-history",),
+           hooks=(Reference("cria/loop.py", "Loop._prepare_coder_context"),
+                  Reference("cria/loop.py", "Loop._work_item"),
+                  Reference("cria/loop.py", "Loop._drive_single_item"),
+                  Reference("cria/server.py", "CriaHandler._focus_trim")),
+           regressions=(Reference("tests/test_context_memory_migration.py", "test_focus_order_selection_and_replacement_are_real_execution"),
+                        Reference("tests/test_context_memory_migration.py", "test_disabled_focus_does_not_scan_history"),
+                        Reference("tests/test_context_memory_migration.py", "test_real_focus_keeps_different_outputs_mutations_and_hard_failures"),
+                        Reference("tests/test_common_context_preparation.py", "test_absent_context_selection_never_runs_optional_leaf_detection")),
+           migrated=False), _collapse_duplicates)
+FAILURES = FocusDefinition(
+    Policy("focus-soft-failure-history", "coder-focus", 3, family_id="F73",
+           prompts=("trim_error_squash",), services=("paired-tool-history",),
+           hooks=(Reference("cria/loop.py", "Loop._prepare_coder_context"),
+                  Reference("cria/loop.py", "Loop._work_item"),
+                  Reference("cria/loop.py", "Loop._drive_single_item"),
+                  Reference("cria/server.py", "CriaHandler._focus_trim")),
+           regressions=(Reference("tests/test_context_memory_migration.py", "test_focus_order_selection_and_replacement_are_real_execution"),
+                        Reference("tests/test_context_memory_migration.py", "test_disabled_focus_does_not_scan_history"),
+                        Reference("tests/test_focustrim.py", "ErrorSquashTests.test_squashes_a_run_of_distinct_failures_keeping_recent"),
+                        Reference("tests/test_focustrim.py", "HardFailKeptTests.test_hard_failures_are_never_squashed"),
+                        Reference("tests/test_common_context_preparation.py", "test_absent_context_selection_never_runs_optional_leaf_detection")),
+           migrated=False), _squash_failures)
+SUPERSESSION = FocusDefinition(
+    Policy("superseded-write-history", "coder-focus", 3, family_id="F73",
+           prompts=("superseded_writes_dropped", "superseded_writes_unavailable"),
+           state="producer notice in framed messages; settle exact pairs at final wire; no durable state",
+           services=("paired-tool-history", "final-surviving-messages"),
+           hooks=(Reference("cria/loop.py", "Loop._prepare_coder_context"),
+                  Reference("cria/loop.py", "Loop._work_item"),
+                  Reference("cria/loop.py", "Loop._drive_single_item"),
+                  Reference("cria/server.py", "CriaHandler._focus_trim"),
+                  Reference("cria/upstream.py", "Upstream._prep")),
+           regressions=(Reference("tests/test_context_memory_migration.py", "test_supersession_producer_and_final_settlement_have_one_definition"),
+                        Reference("tests/test_c21_superseded_preservation_wire.py", "test_real_floor_pressure_qualifies_the_missing_write_not_the_later_source"),
+                        Reference("tests/test_c21_superseded_preservation_wire.py", "test_refused_newest_never_displaces_landed_content_or_rejected_bytes"),
+                        Reference("tests/test_common_context_preparation.py", "test_absent_context_selection_never_runs_optional_leaf_detection")),
+           migrated=False),
+    _drop_superseded_writes, superseded_writes_truth)
+# One order shared by the whole-stage compatibility API and the typed entry.
+FOCUS_STAGE = (DUPLICATES, FAILURES, SUPERSESSION)
+
+
+def settle_focus(source: FocusInput,
+                 definitions: tuple[FocusDefinition, ...] | None = None) -> MessageEffect:
+    """Settle selected producer obligations at Upstream._prep, never before fit.
+
+    Use the same task-stable selection that produced the view. Selection cannot
+    change while notices are pending. This only qualifies claims; it does not
+    restore removed writes or infer landed state from replacement prose.
+    """
+    messages = source.messages
+    count = 0
+    for definition in FOCUS_STAGE if definitions is None else definitions:
+        if definition.settle is None:
+            continue
+        out = definition.settle(messages)
+        if out is not messages and out != messages:
+            count += 1
+            messages = out
+    return MessageEffect(messages, Effect.SETTLED if count else Effect.NO_OP, count)
+
+
 def trim(messages: list[dict]) -> tuple[list[dict], TrimReport]:
-    """Focus the outbound view. Returns (messages, report) — the SAME list object (no copy) when
-    nothing is trimmed."""
-    if not isinstance(messages, list):
-        return messages, TrimReport()
-    out, rep_a = _collapse_duplicates(messages)
-    out, rep_b = _squash_failures(out)
-    out, superseded = _drop_superseded_writes(out)
-    rep_b = TrimReport(dropped_calls=rep_b.dropped_calls, dropped_msgs=rep_b.dropped_msgs,
-                       squashed_runs=rep_b.squashed_runs + superseded)
-    total = TrimReport(
-        dropped_calls=rep_a.dropped_calls + rep_b.dropped_calls,
-        dropped_msgs=rep_a.dropped_msgs + rep_b.dropped_msgs,
-        squashed_runs=rep_b.squashed_runs,
-    )
-    return (out if total.applied else messages), total
+    """Legacy whole-stage API; drivers can migrate to focus() without changing bytes.
+
+    Preserve historical aggregate counters; the typed API also exposes superseded
+    call counts independently rather than hiding ownership in a failure-run tally.
+    """
+    result = focus(FocusInput(messages))
+    # The legacy aggregate excludes duplicate-repeat notices from squashed_runs;
+    # preserve it exactly. Typed consumers can read each authoritative stage's
+    # report rather than reconstructing counts from the rendered note.
+    duplicate_notices = sum(report.squashed_runs for ident, report in result.stage_reports
+                            if ident == DUPLICATES.policy.id)
+    return result.messages, TrimReport(result.report.dropped_calls, result.report.dropped_msgs,
+                                      result.report.squashed_runs - duplicate_notices)

@@ -6,9 +6,10 @@ import json
 import unittest
 from pathlib import Path
 
-from cria import probediscovery
+from cria import assistruntime, probediscovery
 from cria.config import Role
-from cria.loop import GuardState, guard_periodic_result, module_state_steer
+from cria.loop import GuardState, guard_periodic_result
+from pilot_support import module_result
 from cria.probegate import GateOutcome, GatePlan, SECTION_PREFIX, SECTION_SUFFIX
 from cria.probeparse import ProbeResult
 from cria.proberun import ProbeReport
@@ -61,9 +62,10 @@ class C10ModuleStateResetTests(unittest.TestCase):
         raw = (f"{SECTION_PREFIX}probe-1{SECTION_SUFFIX}\n"
                "billing/money.go:8: missing go.sum entry\nEXIT:1\n"
                f"{SECTION_PREFIX}git{SECTION_SUFFIX}\nabc\n")
-        steer = guard_periodic_result(
-            state, _body(({"role": "tool", "tool_call_id": "c10-gate", "content": raw},)),
-            _Log(), reasoner_chat=reasoner, reasoner_role=Role(name="reasoner", backend="local"))
+        with assistruntime.bound(assistruntime.current()):
+            steer = guard_periodic_result(
+                state, _body(({"role": "tool", "tool_call_id": "c10-gate", "content": raw},)),
+                _Log(), reasoner_chat=reasoner, reasoner_role=Role(name="reasoner", backend="local"))
 
         self.assertFalse(state.periodic_probe)
         self.assertEqual(len(seen), 1)
@@ -78,9 +80,9 @@ class C10ModuleStateResetTests(unittest.TestCase):
                         _outcome(probediscovery.Ecosystem.JsTs), _outcome(exit_code=0)):
             def reasoner(*_args):
                 raise AssertionError("out-of-scope gate reached module-state reasoner")
-            self.assertIsNone(module_state_steer(
+            self.assertIsNone(module_result(
                 GuardState(), outcome, _body(), _Log(), reasoner_chat=reasoner,
-                reasoner_role=Role(name="reasoner", backend="local")))
+                reasoner_role=Role(name="reasoner", backend="local")).steer)
 
     def test_identical_failure_is_judged_once(self):
         calls = 0
@@ -90,6 +92,6 @@ class C10ModuleStateResetTests(unittest.TestCase):
             return json.dumps({"choices": [{"message": {"content": "ON_TRACK"}}]}).encode()
         state = GuardState()
         for _ in range(2):
-            self.assertIsNone(module_state_steer(state, _outcome(), _body(), _Log(),
-                reasoner_chat=reasoner, reasoner_role=Role(name="reasoner", backend="local")))
+            self.assertIsNone(module_result(state, _outcome(), _body(), _Log(),
+                reasoner_chat=reasoner, reasoner_role=Role(name="reasoner", backend="local")).steer)
         self.assertEqual(calls, 1)

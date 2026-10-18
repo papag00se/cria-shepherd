@@ -51,7 +51,7 @@ def test_a_nonpositive_budget_is_rejected():
         raise AssertionError(f"budget {bad} should have been rejected")
 
 
-def test_assignments_manifest_batches_chunks_and_scaffolds_findings(tmp_path):
+def test_assignments_are_the_only_coordination_artifact(tmp_path):
     outdir = tmp_path / "walk"
     outdir.mkdir()
     names = ["chunk1.txt", "chunk2.txt", "chunk3.txt"]
@@ -65,20 +65,30 @@ def test_assignments_manifest_batches_chunks_and_scaffolds_findings(tmp_path):
     assert manifest["chunks_total"] == 3
     assert manifest["segment_bytes_budget"] == 250_000
     assert len(manifest["segments"]) == 2
-    plan = (outdir / "WALK-PLAN.md").read_text()
-    assert "One FRESH reader per segment" in plan
-    # A finding stub exists per segment and carries the context->action->consequence instruction.
-    stubs = sorted(findings.glob("seg-*.md"))
-    assert len(stubs) == 2
-    assert "consequence" in stubs[0].read_text()
+    assert [s["finding_file"] for s in manifest["segments"]] == [
+        str(findings / "seg-01.md"), str(findings / "seg-02.md")]
+    # An assignment is not a completed reading. Only the reader creates its actual findings.
+    assert not list(findings.iterdir())
+    assert sorted(p.name for p in outdir.iterdir()) == ["assignments.json", "findings"]
 
 
-def test_an_existing_finding_stub_is_never_overwritten(tmp_path):
+def test_finding_paths_cannot_scatter_work_outside_the_walk(tmp_path):
+    outdir = tmp_path / "walk"
+    outdir.mkdir()
+    outside = tmp_path / "second-proof-tree"
+    import pytest
+    with pytest.raises(ValueError, match="inside the walk"):
+        write_assignments(outdir, ["chunk1.txt"], [1000], 250_000, outside, None)
+    assert not outside.exists()
+    assert not list(outdir.iterdir())
+
+
+def test_an_existing_reader_finding_is_never_overwritten(tmp_path):
     outdir = tmp_path / "walk"
     outdir.mkdir()
     findings = outdir / "findings"
     findings.mkdir()
-    existing = findings / "seg-1.md"
+    existing = findings / "seg-01.md"
     existing.write_text("real reader findings, do not clobber")
 
     write_assignments(outdir, ["chunk1.txt"], [1000], 250_000, findings, None)
@@ -115,4 +125,6 @@ def test_an_oversized_segment_is_flagged_for_paging(tmp_path):
         outdir, ["chunk1.txt"], [400_000], 250_000, outdir / "findings", None
     )
     assert segments[0]["oversized"] is True
-    assert "OVERSIZED" in (outdir / "WALK-PLAN.md").read_text()
+    manifest = json.loads((outdir / "assignments.json").read_text())
+    assert manifest["segments"][0]["oversized"] is True
+    assert manifest["segments"][0]["chunks"] == ["chunk1.txt"]

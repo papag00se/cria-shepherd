@@ -30,7 +30,7 @@ Context shaping keeps the original task and current work in view as the conversa
 
 ## L0 vs L5
 
-L0 handles wire translation only; L5 uses the full assist layer. The grids show inferred usefulness across six repository tasks, using the best retained L5 score for each model/task.
+L0 retains proxy/wire and transport-recovery contracts without higher-level coding assistance; L5 enables level-eligible assists. Experimental planning remains separately opt-in. The grids show inferred usefulness across six repository tasks, using the best retained L5 score for each model/task.
 
 ![L0 wire translation usefulness scores](docs/media/battery-l0.png)
 
@@ -56,6 +56,21 @@ python -m cria --config ./cria.toml
 ```
 
 The example uses a model server at `http://127.0.0.1:18084` and serves cria on port `18085`. Point your harness at `http://127.0.0.1:18085/v1`. For Codex, follow the [setup and context-window instructions](docs/codex-context-window.md).
+
+### Disable individual registered assists
+
+Use `[assists]` in your TOML configuration to opt out of specific registered policies:
+
+```toml
+[assists]
+disabled = ["schema-argument-conversion", "historical-argument-recovery"]
+```
+
+These stable IDs come from the actual [argument-conversion](cria/argumentconversion.py) and [historical-recovery](cria/historyarguments.py) definitions. Omitting this section, or using `disabled = []`, adds no opt-outs; existing engagement levels and applicability still apply. This control cannot enable a policy above its existing level.
+
+Only `disabled` is supported here, as an array of strings. Unknown IDs, duplicate IDs, unknown keys, wrong value types and disabling a dependency of a still-selected policy are configuration errors, not ignored requests. Family labels are not selection IDs. See the [generated source map](docs/assist-inventory/REPORT.md) for current registrations and pending coverage; not every legacy family has migrated.
+
+Required wire-validity, privacy and fitting contracts retain their existing applicability independently of optional selections. For example, disabling historical recovery still preserves malformed argument bytes in a valid, lossless envelope. Experimental planning remains OFF by default and requires separate explicit `enabled = true` under `[planner]`; assist selection does not enable it. Developer boundaries are documented in the [architecture contract](docs/shephard.md#assist-and-family-boundaries).
 
 ### Logs and captures
 

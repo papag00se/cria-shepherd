@@ -104,13 +104,15 @@ def group_by_budget(sizes, budget):
 
 
 def write_assignments(outdir, chunk_names, chunk_sizes, budget, findings_dir, label):
-    """Batch already-written chunk files into compaction-safe segments and emit the plan.
+    """Batch already-written chunk files into compaction-safe reading assignments.
 
-    Writes assignments.json (machine-readable), WALK-PLAN.md (coordinator protocol), and one
-    empty finding-file stub per segment (never overwriting an existing one, so a reader's work
-    is preserved across reruns). Returns the segment list.
+    assignments.json is the sole coordination record. Readers write actual findings at its
+    named paths; generating assignments creates no finding stubs or duplicate protocol document.
+    All working files stay in the same disposable walk directory. Returns the segment list.
     """
     findings_dir = Path(findings_dir)
+    if not findings_dir.resolve().is_relative_to(Path(outdir).resolve()):
+        raise ValueError("findings must stay inside the walk directory")
     findings_dir.mkdir(parents=True, exist_ok=True)
     groups = group_by_budget(chunk_sizes, budget)
     width = max(2, len(str(len(groups))))
@@ -126,13 +128,6 @@ def write_assignments(outdir, chunk_names, chunk_sizes, budget, findings_dir, la
             "oversized": len(group) == 1 and seg_bytes > budget,
             "finding_file": str(finding),
         })
-        if not finding.exists():
-            head = f"# Walk findings — {label or outdir.name} — segment {idx:0{width}d}\n\n"
-            head += f"Chunks: {', '.join(names)}\n\n"
-            head += ("For each observation record: chunk + CALL number -> the context/event cria "
-                     "produced -> the coder reasoning/action it caused -> the disk/check consequence. "
-                     "Cite exact artifacts. A lead is not a finding until verified against the capture.\n")
-            finding.write_text(head)
     manifest = {
         "capture": str(outdir),
         "label": label,
@@ -141,31 +136,6 @@ def write_assignments(outdir, chunk_names, chunk_sizes, budget, findings_dir, la
         "segments": segments,
     }
     (outdir / "assignments.json").write_text(json.dumps(manifest, indent=2) + "\n")
-    plan = [
-        f"# Walk plan — {label or outdir.name}",
-        "",
-        f"{len(chunk_names)} chunks batched into {len(segments)} compaction-safe segments "
-        f"(<= {budget:,} bytes each). Segments are self-contained (prompts are not deduped), so a "
-        "fresh reader can take any one segment without having read an earlier one.",
-        "",
-        "## Protocol (the failure this prevents: one reader handed the whole capture, its context "
-        "fills, it compacts mid-walk, and the walk silently becomes a summarized skim)",
-        "",
-        "1. One FRESH reader per segment. Never continue a reader from memory onto a second segment "
-        "— a continued reader is exactly what compacts. Assign the next unstarted segment to a new reader.",
-        "2. The reader reads every line of its segment's chunks in order and writes its finding file "
-        "(context -> action -> consequence, citing chunk + CALL). The finding file is the unit of progress, not the reader's memory.",
-        "3. Before assigning segment K+1, verify segment K's finding file exists and cites real chunks/calls.",
-        "4. The walk is complete only when every segment has a verified finding file.",
-        "",
-        "## Segments",
-        "",
-    ]
-    for seg in segments:
-        flag = "  ** OVERSIZED: one call exceeds the budget — page it, read in parts **" if seg["oversized"] else ""
-        plan.append(f"- seg-{seg['index']:0{width}d}: {', '.join(seg['chunks'])}  "
-                    f"({seg['bytes']:,} bytes) -> {seg['finding_file']}{flag}")
-    (outdir / "WALK-PLAN.md").write_text("\n".join(plan) + "\n")
     return segments
 
 
@@ -268,7 +238,7 @@ def main():
                     help="print every prompt whole; no common-prefix dedup")
     ap.add_argument("--segment-bytes", type=int, default=0,
                     help="with --out, batch chunks into compaction-safe segments and emit "
-                         f"assignments.json + WALK-PLAN.md (suggested {SEGMENT_BYTES_DEFAULT} for a "
+                         f"assignments.json (suggested {SEGMENT_BYTES_DEFAULT} for a "
                          "large-context reader); 0 disables. Implies --full-prompts so each segment "
                          "is self-contained. Overrides --reader-context-tokens.")
     ap.add_argument("--reader-context-tokens", type=int, default=0,
@@ -276,8 +246,8 @@ def main():
                          "byte budget is derived from it. Use this instead of --segment-bytes when "
                          "the reader is not a large-context model (e.g. a 48000-token reader).")
     ap.add_argument("--findings-dir", default=None,
-                    help="where per-segment finding stubs go (default <out>/findings)")
-    ap.add_argument("--label", default=None, help="a label (e.g. the cell/run) for the plan header")
+                    help="where readers write findings inside --out (default <out>/findings)")
+    ap.add_argument("--label", default=None, help="a label (e.g. the cell/run) for assignments")
     args = ap.parse_args()
 
     # Resolve the segment budget: explicit bytes win, else derive from the reader's window, else a
@@ -347,8 +317,8 @@ def main():
         if not args.segment_bytes and args.reader_context_tokens:
             print(f"  note: {segment_bytes:,} bytes derived from a "
                   f"{args.reader_context_tokens:,}-token reader window")
-        print(f"  → {len(segments)} segments (<= {segment_bytes:,} bytes) in assignments.json / "
-              f"WALK-PLAN.md" + (f"; {oversized} oversized (page them)" if oversized else ""))
+        print(f"  → {len(segments)} segments (<= {segment_bytes:,} bytes) in assignments.json"
+              + (f"; {oversized} oversized (page them)" if oversized else ""))
     # One call can exceed the budget on its own, and splitting a call is worse than a long chunk.
     # Saying so is the difference between a reader paging it and a reader silently missing it.
     for name, n in over:

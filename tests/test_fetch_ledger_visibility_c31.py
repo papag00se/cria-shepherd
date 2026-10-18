@@ -18,6 +18,7 @@ instead of assuming every unspilled 2xx is still readable.
 """
 import unittest
 from types import SimpleNamespace
+from unittest.mock import patch
 
 from cria import loop, prompts, webfetch
 
@@ -205,9 +206,8 @@ class FrozenCompactionCopyMakesNoLocationClaimTests(unittest.TestCase):
                  "function": {"name": "web_fetch", "arguments": '{"url": "%s"}' % self.URL}}]},
                 {"role": "tool", "tool_call_id": "f1", "content": result}]
 
-    def _after_compaction_and_refetch(self, *, frozen_location: bool):
-        """Build the exact shape the reviewer's repro walks: a compaction appendix baked from the
-        fetch turn, then a later coder body where that same URL is visible again (re-fetched)."""
+    def _before_elision_after_compaction_and_refetch(self, *, frozen_location: bool):
+        """Stage the historical appendix and fresh live anchor before current elision."""
         fetch_turn = self._fetch_turn()
         appendix = loop._fetch_ground_truth(fetch_turn, location=frozen_location)
         session_key = "c31-frozen"
@@ -219,6 +219,10 @@ class FrozenCompactionCopyMakesNoLocationClaimTests(unittest.TestCase):
         webfetch.set_visible(session_key, [(self.URL, "", "")], [])   # re-fetched \u2192 visible again
         anchor = loop._fetched_facts_anchor(sess, msgs)
         out = loop._insert_after_system(msgs, anchor)
+        return out, sess
+
+    def _after_compaction_and_refetch(self, *, frozen_location: bool):
+        out, sess = self._before_elision_after_compaction_and_refetch(frozen_location=frozen_location)
         return loop._elide_ledger_copies(out, sess, None)
 
     def _location_lines(self, out):
@@ -234,12 +238,37 @@ class FrozenCompactionCopyMakesNoLocationClaimTests(unittest.TestCase):
         """Reproduces the reviewer's finding directly: with the OLD call shape (no `location` kwarg
         used, i.e. the default `True` that behaves like the pre-repair frozen call), the frozen
         compaction copy and the live anchor disagree about the SAME url."""
-        out = self._after_compaction_and_refetch(frozen_location=True)
+        out, sess = self._before_elision_after_compaction_and_refetch(frozen_location=True)
+        entry_prefix = ('- https://docs.rs/toml/latest/toml/ → HTTP 200 (this page answered, but no '
+                        'structured data could be parsed out of it — that status is a fact about what '
+                        'could be extracted, not about what the page contains.)')
+        live_line = entry_prefix + ' Its body is in this conversation above.'
+        absent_suffix = ' Its body is NOT in this conversation — fetching that URL again is not blocked and will return it.'
+        stale_line = entry_prefix + absent_suffix
+        history_header = ('⟦ctx:continuation⟧ summary...\n\nPAGES YOU HAVE ALREADY FETCHED — these SUCCEEDED. '
+                          'This is the recorded transcript of the actual tool results from this session:\n')
+        pointer = ('(identical fetched-spec content is shown once, IN FULL, in the fetch-record block '
+                   'of this conversation — it is not repeated here)')
         lines = self._location_lines(out)
         self.assertIn("NOT in this conversation", "\n".join(lines))
         self.assertIn("in this conversation above", "\n".join(lines))
-        # both claims about the SAME url reach the coder in the SAME body \u2014 the contradiction.
+        # The historical counterfactual contradicts the fresh anchor BEFORE current elision.
         self.assertGreaterEqual(len(lines), 2)
+        self.assertEqual(lines, [live_line, stale_line])
+        self.assertEqual(out[2]['content'], history_header + stale_line)
+
+        with patch.object(loop, '_format_fetches', wraps=loop._format_fetches) as formatter:
+            delivered = loop._elide_ledger_copies(out, sess, None)
+            formatter.assert_called_once_with(sess.fetched_pages, 'PAGES YOU HAVE ALREADY FETCHED',
+                                              visible=set(), location=False)
+        self.assertEqual(self._location_lines(delivered), [live_line])
+        # Byte-exact elision replaces the entry prefix, not its differing location suffix.
+        self.assertEqual(delivered[2], {'role': 'user', 'content': history_header + pointer + absent_suffix})
+        self.assertEqual(out[2]['content'], history_header + stale_line)
+        self.assertIsNot(delivered[2], out[2])
+        self.assertEqual(len(delivered), len(out))
+        for index in (0, 1, 3, 4):
+            self.assertIs(delivered[index], out[index])
 
     def test_passes_after_the_frozen_copy_makes_no_location_claim(self):
         out = self._after_compaction_and_refetch(frozen_location=False)

@@ -23,7 +23,7 @@ claims nothing else: the completion check is satisfied, and the repo's own check
 
 import unittest
 
-from cria import loop, prompts
+from cria import assistruntime, loop, prompts
 from cria.plan import Plan, PlanItem
 
 WORDS = prompts.load_map("satisfaction_done")
@@ -150,7 +150,8 @@ class TheHeldNoteIsRecomposedAtReleaseTests(unittest.TestCase):
             body = {"messages": [{"role": "user", "content": "t"},
                                  {"role": "tool", "tool_call_id": "probe1", "content": "gate ran clean"}],
                     "tools": []}
-            return lp._drive_single_item(sess, body, "k1", _Rlog())
+            with assistruntime.bound(assistruntime.current()):
+                return lp._drive_single_item(sess, body, "k1", _Rlog())
         finally:
             loop.guard_gate_verdict = saved
 

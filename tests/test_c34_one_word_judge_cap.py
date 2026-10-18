@@ -180,11 +180,12 @@ class ModuleStateAndRunnerResetTests(unittest.TestCase):
         self.assertEqual(answer, "")
 
     def test_module_state_reaches_reanchor_at_judge_max_tokens(self):
-        from cria.loop import GuardState, module_state_steer
+        from cria.loop import GuardState
+        from pilot_support import module_result
         chat = _CapSensitiveChat(["REANCHOR"])
         state = GuardState()
-        steer = module_state_steer(state, _go_outcome(), self._body(), _Rlog(),
-                                   reasoner_chat=chat, reasoner_role=ROLE)
+        steer = module_result(state, _go_outcome(), self._body(), _Rlog(),
+                              reasoner_chat=chat, reasoner_role=ROLE).steer
         self.assertIsNotNone(steer)
         self.assertIn("missing go.sum entry", steer)
         for body in chat.bodies:

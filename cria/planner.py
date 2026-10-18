@@ -19,7 +19,8 @@ import shutil
 import tempfile
 import threading
 import urllib.parse
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
+from typing import Callable, Protocol
 from datetime import datetime, timezone
 
 from . import groundtruth, massage, planner_tools, prompts, urlgrounding, wsview
@@ -27,6 +28,8 @@ from .classify import JUDGE_MAX_TOKENS, _task_key, latest_user_text
 from . import jsontext
 from .jsontext import extract_json_object, loads as jsontext_loads, strip_think
 from .plan import Plan, PlanItem
+from .assistcontract import Policy, Reference
+from .planningcontracts import EventLog, PlanOutcome
 
 _CWD_RE = re.compile(r"<cwd>\s*(.*?)\s*</cwd>", re.S)
 
@@ -49,12 +52,6 @@ ASK_MAX_TOKENS = JUDGE_MAX_TOKENS
 # never ping-pong: _MAX_FINAL_RETRIES bounds the drafting attempts, and a drafter that insists on its
 # plan gets a retriable fresh gather instead of admitting a draft cria has already rejected.
 MAX_PLAN_HANDBACKS = 2
-@dataclass
-class PlanOutcome:
-    """Per-``plan_for`` outcome, owned by the calling Loop session."""
-    survey_pending: bool = False
-
-
 # The plan-submission tool. gemma-fable is hardwired to emit tool CALLS, so instead of asking for
 # plain text (which it answers with a hallucinated `call:CreateNewProject{…}`), hand it ONE tool
 # that IS the plan and read the steps from the call.
@@ -766,7 +763,13 @@ def _parse_step_numbers(ans: str, n_steps: int) -> set:
 
 
 class Planner:
-    def __init__(self, provider, *, role=None, search_key: str = "", max_gather_rounds: int = 12, clock=None) -> None:
+    def __init__(self, provider, *, role=None, search_key: str = "", max_gather_rounds: int = 12, clock=None,
+                 policies: PlanningSelection | None = None) -> None:
+        # Legacy construction occurs behind the driver's explicit planner-on gate.
+        # New integrations pass task-stable bindings explicitly; never derive consent
+        # from engagement. PlanningSelection() is inert/off.
+        self._policies = policies if policies is not None else PlanningSelection.opt_in()
+        self._attempts = threading.local()
         self._provider = provider  # an Upstream-like with .chat(body, rlog)
         # No model: the planner's bodies carry no `model`, so the upstream fills the server's loaded
         # model (cria never pins an alias — the single-loaded-model posture).
@@ -780,12 +783,9 @@ class Planner:
         # re-run (e.g. after deleting the files) does the work rather than reusing a prior plan (a
         # cached MUTABLE Plan previously leaked all-`done` state across sessions → immediate exit).
         #
-        # #23 NOTE (reviewer follow-up, not fixed in this unit): this dict is keyed on task TEXT alone,
-        # with no session in the key, on the ONE Planner the whole server shares — so an unparseable
-        # verdict for one session's task also silences the reasoner for any LATER session whose task
-        # happens to hash the same, exactly the cross-session leak C30's admission give-up was found to
-        # have (below) and was fixed for. Scoping this one is out of scope here.
-        self._plans: dict[str, None] = {}
+        # Scoped by session AND frame-aware task key. Legacy unscoped callers
+        # share only this instance's empty-session namespace, not explicit sessions.
+        self._plans: dict[tuple[str, str], None] = {}
         self._retriable_failure = False  # set when a plan failure is a gather overrun, not unplannable
         # C30: an exhausted ADMISSION guard (url/host/coverage/test-execution rejected_exhausted, or
         # test-execution undecidable/not-applicable) is a distinct outcome from a transport/model error
@@ -802,12 +802,77 @@ class Planner:
         self._admission_exhaustions: dict[tuple[str, str], int] = {}
         self._lock = threading.Lock()
 
+    @property
+    def _attempt(self) -> PlanningAttempt:
+        if not hasattr(self._attempts, "state"):
+            self._attempts.state = PlanningAttempt()
+        return self._attempts.state
+
+    # Compatibility status consumed immediately by the legacy driver. Keeping
+    # the exchange thread-local prevents concurrent sessions sharing facts or
+    # failure direction while the server still shares one Planner instance.
+    @property
+    def _retriable_failure(self) -> bool:
+        return self._attempt.retriable
+
+    @_retriable_failure.setter
+    def _retriable_failure(self, value: bool) -> None:
+        self._attempt.retriable = value
+
+    @property
+    def _admission_exhausted_check(self) -> str | None:
+        return self._attempt.exhausted_check
+
+    @_admission_exhausted_check.setter
+    def _admission_exhausted_check(self, value: str | None) -> None:
+        self._attempt.exhausted_check = value
+
+    @property
+    def _gather_facts(self) -> dict:
+        return self._attempt.facts
+
+    @_gather_facts.setter
+    def _gather_facts(self, value: dict) -> None:
+        self._attempt.facts = value
+
+    def _selection(self, policies: PlanningSelection | None) -> PlanningSelection:
+        # None is ONLY the standalone compatibility route. Production supplies
+        # the immutable selection already pinned to its task; never swap this
+        # shared Planner's constructor selection or store a mutable ambient one.
+        if policies is None:
+            return self._policies
+        if not isinstance(policies, PlanningSelection):
+            raise ValueError("Per-call planning policies must be a PlanningSelection")
+        return policies
+
     def plan_for(self, messages: list[dict], rlog, prior_work: str = "",
                  rewrite_summary: str = "", outcome: PlanOutcome | None = None,
-                 session_key: str = "") -> Plan | None:
-        """Return the drafted plan for this task, drafting it the first time and
-        returning the cached one thereafter. ``None`` if there's no task text or the
-        reasoner produced no usable plan.
+                 session_key: str = "", *, policies: PlanningSelection | None = None) -> Plan | None:
+        """Use one immutable task selection without changing constructor defaults.
+
+        Root pins the supplied object across continuation/bootstrap/direct
+        consumers and owns task-boundary reset. Cache identity remains the
+        existing session/task/frame key; this is not an active-task hot swap.
+        None retains the standalone seven-positional replacement contract.
+        """
+        selected = self._selection(policies)
+        bindings = selected.bindings("experimental-plan-gather")
+        if not bindings:
+            return None
+        self._attempts.state = PlanningAttempt(session_key=session_key)
+        if policies is None:
+            # Preserve the public seven-positional standalone replacement API.
+            return bindings[0].execute(self, messages, rlog, prior_work, rewrite_summary,
+                                       outcome, session_key)
+        return bindings[0].execute(self, messages, rlog, prior_work, rewrite_summary,
+                                   outcome, session_key, policies=selected)
+
+    def _plan_for(self, messages: list[dict], rlog, prior_work: str = "",
+                  rewrite_summary: str = "", outcome: PlanOutcome | None = None,
+                  session_key: str = "", *, policies: PlanningSelection | None = None) -> Plan | None:
+        """Draft a fresh plan, or return a session/frame-scoped negative outcome.
+        The caller retains admitted plans; only unusable outcomes are cached.
+        ``None`` if there's no task text or the reasoner produced no usable plan.
 
         ``prior_work`` (the completion-compaction of an earlier finished plan on this session) grounds
         a FOLLOW-UP so the planner plans the new ask ON TOP of the done work — without it the planner
@@ -824,6 +889,7 @@ class Planner:
         session identifier, never a task hash. Its absence never widens any cache: the admission
         give-up never touches ``self._plans``, and with no session_key the exhaustion count is
         decided call-locally and never written to ``self._admission_exhaustions`` at all."""
+        selected = self._selection(policies)
         outcome = outcome or PlanOutcome()
         outcome.survey_pending = False
         task = latest_user_text(messages)
@@ -838,8 +904,9 @@ class Planner:
         # admission_key is None and the counter is decided purely from this call's local state (see
         # below); nothing is ever written to self._admission_exhaustions for an unscoped caller.
         admission_key = (session_key, key) if session_key else None
+        cache_key = (session_key, key)
         with self._lock:
-            if key in self._plans:  # negatively cached (unplannable) — don't re-call the reasoner every turn
+            if cache_key in self._plans:  # negatively cached (unplannable) — don't re-call the reasoner every turn
                 return None
         cwd = _extract_cwd(messages)
 
@@ -848,7 +915,8 @@ class Planner:
             self._admission_exhausted_check = None
             self._gather_facts = {}   # reset per draft: last run's findings are not this run's evidence
             return self._gather_and_plan(task, cwd, rlog, prior_work=prior_work,
-                                         rewrite_summary=rewrite_summary, outcome=outcome)
+                                         rewrite_summary=rewrite_summary, outcome=outcome,
+                                         **({"policies": selected} if policies is not None else {}))
 
         steps = attempt_gather()
         # A weak model sometimes drafts an EMPTY / unparseable plan (observed: the reasoner returned just
@@ -926,7 +994,7 @@ class Planner:
             # Negative cache: an unplannable task (unparsed prose, no plan) must not re-call the
             # reasoner on every subsequent turn of the session.
             with self._lock:
-                self._plans[key] = None
+                self._plans[cache_key] = None
             return None
         # A plan was submitted for this key — the admission-exhaustion count is per-attempt-at-this-key
         # history, not a permanent scar; a task that eventually plans should not carry a stale count
@@ -946,53 +1014,15 @@ class Planner:
         # from the real source). plan.txt already tells the drafter to avoid all of these; this is the
         # focused safety judgment for what slips through. Never empties the plan (an all-noise verdict is
         # kept as-is — the step critic still guards every step).
-        drop = self._reasoned_noise_indices(task, steps, rlog)
-        # Per-step, fail-closed: refuse just the deletions that would lose a deliverable and let the
-        # rest of the verdict stand (see planner.deliverable_lost_by_drop for what the broad coverage
-        # check below missed, and why this is a different question rather than a second opinion).
-        if drop and self._role is not None:
-            drop, refused = surviving_noise_drops(
-                lambda sysp, usr: self._ask(sysp, usr, rlog), task, steps, drop)
-            for i, lost in refused.items():
-                rlog.emit("plan.noise_refused", level="warn", lost=lost, step=steps[i][:160])
-        kept = [s for i, s in enumerate(steps) if i not in drop]
-        if drop and kept:
-            # ORDER MATTERS (run 0728-m10): coverage judges the plan at SUBMIT time, so a noise drop
-            # after it is an UNCHECKED deletion — the noise judge ate the script and test steps of a
-            # coverage-clean draft and a one-step README "plan" entered the loop. The same hole was
-            # closed in the living re-derivation (loop.reassess_remaining); this is the initial-draft
-            # side. A drop that uncovers deliverables is REFUSED — the plan keeps all its steps (the
-            # step critic still guards each one) and the refusal is traced, never silent.
-            if self._role is not None and missing_deliverables(
-                    lambda sysp, usr: self._ask(sysp, usr, rlog), task, kept):
-                rlog.emit("plan.noise_uncovered", count=len(drop), level="warn")
-            else:
-                rlog.emit("plan.noise_dropped", count=len(drop), level="info")
-                steps = kept
-        elif drop:
-            rlog.emit("plan.noise_all_kept", count=len(drop), level="info")  # dropping would empty it
-        # DETERMINISTIC SCRUB, after the reasoned noise pass. Both facts below are EXACT — a path
-        # either exists or it doesn't, a tool name either appears or it doesn't — so code gathers
-        # them and nothing here is a judgment. Only the tool-step REWRITE goes to the reasoner
-        # (principle 8), and it fails safe: an unusable answer keeps the step as drafted.
-        scrubbed: list[str] = []
-        for st in steps:
-            fixed, note = repoint_unusable_paths(st, cwd or "")
-            if note:
-                rlog.emit("plan.step_path_unusable", level="warn", fix=note, step=st[:160])
-            tool = step_names_tool(fixed, task, cwd or "")
-            if tool and self._role is not None:
-                asked = strip_think(self._ask(prompts.render("plan_step_outcome", step=fixed),
-                                              "", rlog) or "").strip().strip('"').splitlines()
-                cand = asked[0].strip() if asked else ""
-                if cand and not step_names_tool(cand, task, cwd or "") and len(cand) > 12:
-                    rlog.emit("plan.step_tool_rewritten", level="info", tool=tool,
-                              was=fixed[:120], now=cand[:120])
-                    fixed = cand
-                else:
-                    rlog.emit("plan.step_tool_kept", level="warn", tool=tool, step=fixed[:160])
-            scrubbed.append(fixed)
-        steps = [st for st in scrubbed if st.strip()] or steps
+        revision = selected.bindings("experimental-plan-revision")
+        if revision:
+            coverage = selected.bindings("experimental-plan-coverage")
+            revised = revision[0].execute(RevisionInput(
+                task, tuple(steps),
+                groundtruth.researched_facts(getattr(self, "_gather_facts", None) or {}),
+                (lambda sysp, usr: self._ask(sysp, usr, rlog)) if self._role is not None else None,
+                rlog, coverage[0].execute if coverage else None, cwd or ""))
+            steps = list(revised.steps)
         # The plan is the PLANNER's, minus the noise judgment above — cria adds no step of its own (see the
         # research-first note above the class).
         items = [PlanItem(text=s) for s in steps]
@@ -1007,6 +1037,24 @@ class Planner:
         )
         rlog.emit("plan.drafted", id=plan.id, steps=len(steps))
         return plan
+
+    def reset(self, session_key: str | None = None) -> None:
+        """Cancel task-owned failure memory, including continuation-frame keys.
+
+        A fork/new task must reset or use a fresh session key. An unscoped legacy
+        caller has instance-local memory; shared callers MUST supply session IDs.
+        No Plan/cursor or harness pending effect is retained by this owner.
+        """
+        with self._lock:
+            if session_key is None:
+                self._plans.clear()
+                self._admission_exhaustions.clear()
+            else:
+                self._plans = {k: v for k, v in self._plans.items() if k[0] != session_key}
+                self._admission_exhaustions = {k: v for k, v in self._admission_exhaustions.items()
+                                               if k[0] != session_key}
+        if session_key is None or self._attempt.session_key == session_key:
+            self._attempts.state = PlanningAttempt()
 
     def _ask(self, system_prompt: str, user: str, rlog) -> str:
         """One targeted, single-shot reasoner question → its cleaned text answer ("" on any failure).
@@ -1047,8 +1095,6 @@ class Planner:
                       used=(comp.get("usage") or {}).get("completion_tokens"))
         return content
 
-        return once(False) or once(True)
-
     def _hosts_needing_read(self, task: str, steps: list[str], facts: dict, rlog) -> list[str]:
         """Which hosts the plan names, but never read, does the work actually DEPEND on reading?
 
@@ -1068,7 +1114,8 @@ class Planner:
             rlog) or "")
         return _parse_unread_verdict(ans, candidates)
 
-    def _missing_deliverables(self, task: str, steps: list[str], rlog) -> list[str]:
+    def _missing_deliverables(self, task: str, steps: list[str], rlog, *,
+                              policies: PlanningSelection | None = None) -> list[str]:
         """Which things the REQUEST asks for does this plan not produce?
 
         The coder follows the plan and stops when its steps are done, so a plan that omits a
@@ -1083,30 +1130,26 @@ class Planner:
         and the planner writes the steps. No reasoner → no judgment."""
         if self._role is None or not steps:
             return []
-        return missing_deliverables(lambda sysp, usr: self._ask(sysp, usr, rlog), task, steps)
+        return self._selection(policies).coverage(
+            lambda sysp, usr: self._ask(sysp, usr, rlog), task, steps)
 
-    def _test_execution_readiness(self, task: str, steps: list[str], manifest: str, rlog) -> str:
-        if self._role is None:
-            return "UNDECIDABLE"
-        return test_execution_readiness(
-            lambda sysp, usr: self._ask(sysp, usr, rlog), task, steps, manifest)
+    def _reasoned_noise_indices(self, task: str, steps: list[str], rlog, *,
+                                policies: PlanningSelection | None = None) -> set:
+        """Compatibility evidence adapter; revision owns deletion and settlement.
 
-    def _reasoned_noise_indices(self, task: str, steps: list[str], rlog) -> set:
-        """Indices of NOISE steps to DROP, JUDGED by the reasoner (see ``reasoned_noise_indices``). No
-        reasoner configured → drop NOTHING (the plan is used as drafted); cria doesn't classify steps
-        without a reasoner to judge them.
-
-        The gather's OWN research ledger rides along: this judge is asked to spot a guessed endpoint or
-        field name, and ``_gather_facts`` is what the research phase actually read. It is populated by
-        the time this runs (``_gather_and_plan`` sets it before returning the steps)."""
-        if self._role is None:
+        Shared callers may ask only for candidate indices. This adapter carries
+        the authoritative gather ledger, and respects the revision-stage bypass.
+        It does not apply a second revision or mutate the plan.
+        """
+        if self._role is None or not self._selection(policies).bindings("experimental-plan-revision"):
             return set()
         return reasoned_noise_indices(
             lambda sysp, usr: self._ask(sysp, usr, rlog), task, steps,
             facts=groundtruth.researched_facts(getattr(self, "_gather_facts", None) or {}))
 
     def _gather_and_plan(self, task: str, cwd: str, rlog, prior_work: str = "",
-                         rewrite_summary: str = "", outcome: PlanOutcome | None = None) -> list[str] | None:
+                         rewrite_summary: str = "", outcome: PlanOutcome | None = None, *,
+                         policies: PlanningSelection | None = None) -> list[str] | None:
         """The gather loop: hand the reasoner READ-ONLY tools and let it investigate,
         feeding each round back as protocol, until it stops calling tools and answers with
         the plan. A repeated gather signature (looping) forces the plan; so does the round
@@ -1249,7 +1292,9 @@ class Planner:
                     result = done.get(ckey)
                     if result is None:
                         result = planner_tools.execute_tool(name, args, cwd, self._search_key, recent_searches,
-                                                            rlog, scratch=scratch, facts=facts)
+                                                            rlog, scratch=scratch, facts=facts,
+                                                            externalization_owner=getattr(outcome, 'externalization_owner', None),
+                                                            operation=cid)
                         done[ckey] = result
                         rlog.emit("plan.gather", tool=name)
                     else:
@@ -1259,6 +1304,9 @@ class Planner:
                     # planner draft from memory and invent an endpoint.
                     looked = looked or result.learned
                     messages.append({"role": "tool", "tool_call_id": cid, "content": result.text})
+                    current_owner = getattr(outcome, 'current_externalization_owner', None)
+                    if callable(current_owner):
+                        planner_tools.retain_tool_result(result, current_owner())
                 # An unknown body is an in-flight survey question, not an answered read. Preserve
                 # that third state so a later identical request consults wsview again; all ordinary
                 # results (including empty/missing files) retain the existing repeat policy.
@@ -1279,11 +1327,13 @@ class Planner:
                 rlog.emit("plan.gather_cap", rounds=self._max_rounds)  # investigated to the cap
             # ---- PHASE B: DRAFT, from what the research actually found.
             self._gather_facts = dict(facts)
-            return self._draft_plan(messages, task, facts, rlog, cwd)
+            return self._draft_plan(messages, task, facts, rlog, cwd,
+                                    **({"policies": policies} if policies is not None else {}))
         finally:
             shutil.rmtree(scratch, ignore_errors=True)
 
-    def _draft_plan(self, messages: list[dict], task: str, facts: dict, rlog, cwd: str) -> list[str] | None:
+    def _draft_plan(self, messages: list[dict], task: str, facts: dict, rlog, cwd: str, *,
+                    policies: PlanningSelection | None = None) -> list[str] | None:
         """PHASE B — draft the plan from what the research found. Offer ONLY submit_plan (the gather
         tools are gone), so its one move is to hand over the plan.
 
@@ -1312,7 +1362,12 @@ class Planner:
         # coverage check flags that plan 4 times out of 4; it simply never got to look.
         fired: set[str] = set()
         challenged_missing: set[str] = set()  # deliverables coverage has already handed back for
-        manifest_without_test_script = package_manifest_without_test_script(cwd)
+        readiness_bindings = self._selection(policies).bindings("experimental-plan-readiness")
+        # One current manifest fact per drafting exchange. Disabled readiness
+        # never reads the view or queues a demand. The selected source owns when
+        # that fact warrants judgment; no lexical runner inference lives here.
+        manifest_without_test_script = (package_manifest_without_test_script(cwd)
+                                        if readiness_bindings else None)
 
         def may_hand_back(which: str) -> bool:
             return which not in fired and len(fired) < MAX_PLAN_HANDBACKS
@@ -1401,7 +1456,8 @@ class Planner:
                 # back for total-handles, plan#2 restored that but silently DROPPED the live-test
                 # step, and was adopted with no look — the run then structurally could not score
                 # (run 0729-gemma4 pon1: the live test never had a plan step again).
-                missing = self._missing_deliverables(task, steps, rlog) \
+                missing = self._missing_deliverables(task, steps, rlog,
+                    **({"policies": policies} if policies is not None else {})) \
                     if (may_hand_back("coverage") or challenged_missing) else []
                 new_missing = [x for x in missing if x not in challenged_missing]
                 if missing:
@@ -1426,9 +1482,11 @@ class Planner:
                 # scripts.test enters. The focused judge, rather than a runner-name or filename
                 # matcher, decides whether this task requests tests and whether the plan supplies
                 # their execution path.
-                readiness = self._test_execution_readiness(
-                    task, steps, manifest_without_test_script, rlog) \
-                    if manifest_without_test_script is not None else "NOT_APPLICABLE"
+                readiness_result = (readiness_bindings[0].execute(ReadinessInput(
+                    (lambda sysp, usr: self._ask(sysp, usr, rlog)) if self._role is not None else None,
+                    task, tuple(steps), lambda: manifest_without_test_script))
+                    if readiness_bindings else ReadinessResult("NOT_SELECTED"))
+                readiness = readiness_result.verdict
                 if readiness == "UNDECIDABLE":
                     # The manifest fact says no script exists, but a missing/invalid judgment does
                     # not establish whether the task needs tests or a direct runner is planned.
@@ -1437,7 +1495,7 @@ class Planner:
                     self._retriable_failure = True
                     self._admission_exhausted_check = "test-execution-undecidable"
                     return None
-                if manifest_without_test_script is not None and readiness == "NOT_APPLICABLE":
+                if readiness_result.manifest_without_runner and readiness == "NOT_APPLICABLE":
                     rlog.emit("plan.test_execution_not_applicable", level="warn")
                     self._retriable_failure = True
                     self._admission_exhausted_check = "test-execution-not-applicable"
@@ -1791,3 +1849,276 @@ def _calls_signature(calls: list[tuple[str, str, dict]]) -> str:
     """A stable signature for a round's tool calls, so an A→B→A gather loop is caught
     (full set, order-independent)."""
     return "|".join(sorted(f"{name}:{json.dumps(args, sort_keys=True)}" for _id, name, args in calls))
+
+
+def plan_readiness(source: ReadinessInput) -> ReadinessResult:
+    """Current manifest evidence admits one narrow test-execution judgment.
+
+    Unknown/unread/malformed manifests cannot establish a missing runner. A
+    definitive missing-runner fact plus an unavailable judge is undecidable,
+    not a corrective instruction. Draft admission settles that typed outcome.
+    """
+    manifest = source.manifest()
+    if manifest is None:
+        return ReadinessResult("NOT_APPLICABLE")
+    verdict = (test_execution_readiness(source.ask, source.task, list(source.steps), manifest)
+               if source.ask is not None else "UNDECIDABLE")
+    return ReadinessResult(verdict, True)
+
+
+def revise_draft(source: RevisionInput) -> RevisionResult:
+    """Settle initial-draft deletions as one intervention, not one switch per helper.
+
+    Never empty a draft or delete a deliverable on an unreadable loss verdict.
+    Coverage is a selected source-stage service, not a hidden alternate call.
+    This owns draft revision; the living cursor/empty-tail approval and step
+    verification remain driver-owned until their complete integration is reviewed.
+    """
+    steps = list(source.steps)
+    withheld = source.ask is None
+    refused = {}
+    drop = (reasoned_noise_indices(source.ask, source.task, steps, facts=source.facts)
+            if source.ask is not None else set())
+    if drop:
+        drop, refused = surviving_noise_drops(source.ask, source.task, steps, drop)
+        withheld = bool(refused)
+        for i, lost in refused.items():
+            source.log.emit("plan.noise_refused", level="warn", lost=lost, step=steps[i][:160])
+    kept = [s for i, s in enumerate(steps) if i not in drop]
+    if drop and kept:
+        if source.coverage is None or source.coverage(source.ask, source.task, kept):
+            source.log.emit("plan.noise_uncovered", count=len(drop), level="warn")
+            withheld = True
+            drop = set()
+        else:
+            source.log.emit("plan.noise_dropped", count=len(drop), level="info")
+            steps = kept
+    elif drop:
+        source.log.emit("plan.noise_all_kept", count=len(drop), level="info")
+        drop = set()
+    scrubbed = []
+    for step in steps:
+        fixed, note = repoint_unusable_paths(step, source.root)
+        if note:
+            source.log.emit("plan.step_path_unusable", level="warn", fix=note, step=step[:160])
+        tool = step_names_tool(fixed, source.task, source.root)
+        if tool and source.ask is not None:
+            asked = strip_think(source.ask(prompts.render("plan_step_outcome", step=fixed), "")
+                               or "").strip().strip('"').splitlines()
+            candidate = asked[0].strip() if asked else ""
+            if candidate and not step_names_tool(candidate, source.task, source.root) and len(candidate) > 12:
+                source.log.emit("plan.step_tool_rewritten", level="info", tool=tool,
+                                was=fixed[:120], now=candidate[:120])
+                fixed = candidate
+            else:
+                source.log.emit("plan.step_tool_kept", level="warn", tool=tool, step=fixed[:160])
+        scrubbed.append(fixed)
+    return RevisionResult(tuple(s for s in scrubbed if s.strip()) or tuple(steps),
+                          frozenset(drop), withheld, tuple(sorted(refused.items())))
+
+
+# Order is explicit; none of these definitions is a normal L5 default. The
+# integration owner must teach shared selection about experimental consent before
+# adding these to assistruntime.DEFINITIONS. Helpers/parsers/wsview are support.
+# Hook references include the existing driver's direct coverage consumer, which
+# still needs shared selection wiring. migrated stays False until that complete
+# integration and the separate step/cursor lifecycle have been reviewed.
+@dataclass
+class PlanningAttempt:
+    """One gather/draft exchange plus its immediately consumed status.
+
+    This is not conversation state: it is replaced on each selected gather and
+    isolated from concurrent requests. Persistent negative outcomes are keyed
+    separately by session/task/frame in the source owner.
+    """
+    session_key: str = ""
+    retriable: bool = False
+    exhausted_check: str | None = None
+    facts: dict = field(default_factory=dict)
+
+
+class Ask(Protocol):
+    def __call__(self, system: str, user: str) -> str: ...
+
+
+class GatherCall(Protocol):
+    def __call__(self, owner: Planner, messages: list[dict], rlog,
+                 prior_work: str = "", rewrite_summary: str = "",
+                 outcome: PlanOutcome | None = None, session_key: str = "", *,
+                 policies: PlanningSelection | None = None) -> Plan | None: ...
+
+
+@dataclass(frozen=True)
+class GatherDefinition:
+    policy: Policy
+    execute: GatherCall
+
+
+@dataclass(frozen=True)
+class CoverageDefinition:
+    policy: Policy
+    execute: Callable[[Ask, str, list[str]], list[str]]
+
+
+@dataclass(frozen=True)
+class ReadinessInput:
+    ask: Ask | None
+    task: str
+    steps: tuple[str, ...]
+    manifest: Callable[[], str | None]
+
+
+@dataclass(frozen=True)
+class ReadinessResult:
+    verdict: str
+    manifest_without_runner: bool = False
+
+    def __post_init__(self):
+        if self.verdict not in {"READY", "MISSING", "NOT_APPLICABLE", "UNDECIDABLE", "NOT_SELECTED"}:
+            raise ValueError("Invalid experimental planning readiness verdict")
+
+
+@dataclass(frozen=True)
+class ReadinessDefinition:
+    policy: Policy
+    execute: Callable[[ReadinessInput], ReadinessResult]
+
+
+@dataclass(frozen=True)
+class RevisionInput:
+    task: str
+    steps: tuple[str, ...]
+    facts: str
+    ask: Ask | None
+    log: EventLog
+    coverage: Callable[[Ask, str, list[str]], list[str]] | None = None
+    root: str = ""
+
+
+@dataclass(frozen=True)
+class RevisionResult:
+    steps: tuple[str, ...]
+    dropped: frozenset[int] = frozenset()
+    withheld: bool = False
+    refused: tuple[tuple[int, str], ...] = ()
+
+
+@dataclass(frozen=True)
+class RevisionDefinition:
+    policy: Policy
+    execute: Callable[[RevisionInput], RevisionResult]
+
+
+PlanningDefinition = GatherDefinition | CoverageDefinition | ReadinessDefinition | RevisionDefinition
+
+
+@dataclass(frozen=True)
+class PlanningSelection:
+    """Explicit experimental bindings; OFF is the default even at L5.
+
+    Replacements preserve identity and contract. Missing stages do no detection,
+    calls, or settlement. This is a source-stage API, not a second global registry.
+    The shared integration owner registers planner.DEFINITIONS and carries the
+    same opt-in flag in task-stable assistruntime.bindings.
+    """
+    enabled: bool = False
+    definitions: tuple[PlanningDefinition, ...] = ()
+
+    def __post_init__(self):
+        if type(self.enabled) is not bool or not isinstance(self.definitions, tuple):
+            raise ValueError("Planning consent and bindings must be explicit and immutable")
+        if not self.enabled and self.definitions:
+            raise ValueError("Planning stages require explicit experimental opt-in")
+        canonical = {d.policy.id: d for d in DEFINITIONS}
+        ids = [d.policy.id for d in self.definitions]
+        if len(ids) != len(set(ids)):
+            raise ValueError("Duplicate experimental planning stage")
+        for definition in self.definitions:
+            original = canonical.get(definition.policy.id)
+            if (original is None or type(definition) is not type(original)
+                    or definition.policy != original.policy or not callable(definition.execute)):
+                raise ValueError("Unknown or incompatible experimental planning stage")
+        if any(not set(d.policy.dependencies) <= set(ids) for d in self.definitions):
+            raise ValueError("Disabled experimental planning dependency")
+        order = [d.policy.id for d in DEFINITIONS if d.policy.id in ids]
+        if ids != order:
+            raise ValueError("Experimental planning stages must retain registration order")
+
+    @classmethod
+    def opt_in(cls, *, disabled=(), replacements=()):
+        known = {d.policy.id for d in DEFINITIONS}
+        if len(set(disabled)) != len(disabled) or set(disabled) - known:
+            raise ValueError("Unknown or duplicate experimental planning selection")
+        replacements = tuple(replacements)
+        by_id = {d.policy.id: d for d in replacements}
+        if len(by_id) != len(replacements) or set(by_id) - known or set(by_id) & set(disabled):
+            raise ValueError("Invalid experimental planning replacement")
+        return cls(True, tuple(by_id.get(d.policy.id, d) for d in DEFINITIONS
+                               if d.policy.id not in disabled))
+
+    @classmethod
+    def from_definitions(cls, definitions, *, enabled: bool = False):
+        """Project actual task-bound registrations; never infer consent/defaults.
+
+        Root owns task lifetime and passes this SAME immutable object to every
+        consumer. OFF is lazy, including an unreadable definitions provider.
+        Existing constructor validation owns identity, order and dependencies.
+        """
+        if type(enabled) is not bool:
+            raise ValueError("Planning consent must be explicitly boolean")
+        if not enabled:
+            return cls()
+        known = {definition.policy.id for definition in DEFINITIONS}
+        return cls(True, tuple(definition for definition in definitions
+                               if definition.policy.id in known))
+
+    def coverage(self, ask: Ask, task: str, steps: list[str]) -> list[str]:
+        """Shared/direct consumer dispatch, not a fallback to canonical policy."""
+        bindings = self.bindings("experimental-plan-coverage")
+        return bindings[0].execute(ask, task, steps) if bindings else []
+
+    def bindings(self, stage: str) -> tuple[PlanningDefinition, ...]:
+        return tuple(d for d in self.definitions if d.policy.stage == stage)
+
+
+GATHER = GatherDefinition(Policy(
+    "experimental-plan-gather", "experimental-plan-gather", 5, family_id="F50",
+    scope="experimental", prompts=("plan", "plan_closing_ask", "plan_continuation",
+    "plan_rewritten", "plan_evidence", "planner_steers", "planner_tool_descs",
+    "plan_host_unread", "plan_host_unread_user"),
+    state="session/task/frame negative cache and admission exhaustion; gather-local signatures, research facts and scratch; reset on task/fork",
+    services=("reasoner", "workspace-view", "research-admission", "read-only-gather-tools"),
+    hooks=(Reference("cria/planner.py", "Planner.plan_for"), Reference("cria/loop.py", "Loop._plan_for")),
+    regressions=(Reference("tests/test_experimental_planning_stages.py", "test_off_bindings_never_detect_call_or_change_failure_memory"),
+                 Reference("tests/test_experimental_planning_stages.py", "test_opt_in_uses_registered_gather_replacement_not_old_body"),
+                 Reference("tests/test_experimental_planning_stages.py", "test_negative_failure_cache_is_scoped_resettable_and_fork_safe"),
+                 Reference("tests/test_experimental_planning_stages.py", "test_pending_workspace_read_is_deferred_not_negatively_cached"),
+                 Reference("tests/test_experimental_planning_stages.py", "test_concurrent_exchanges_do_not_share_failure_direction_or_research_facts"))), Planner._plan_for)
+COVERAGE = CoverageDefinition(Policy(
+    "experimental-plan-coverage", "experimental-plan-coverage", 5, family_id="F50",
+    scope="experimental", prompts=("plan_coverage", "plan_coverage_user"),
+    services=("reasoner", "original-task", "candidate-steps"),
+    hooks=(Reference("cria/planner.py", "Planner._missing_deliverables"),
+           Reference("cria/planner.py", "revise_draft"), Reference("cria/loop.py", "reassess_remaining")),
+    regressions=(Reference("tests/test_experimental_planning_stages.py", "test_real_draft_routes_coverage_readiness_and_revision_replacements"),
+                 Reference("tests/test_experimental_planning_stages.py", "test_revision_settles_coverage_refusal_and_accepted_deletion"))), missing_deliverables)
+READINESS = ReadinessDefinition(Policy(
+    "experimental-plan-readiness", "experimental-plan-readiness", 5, family_id="F50",
+    scope="experimental", prompts=("plan_test_execution_path", "plan_test_execution_path_user"),
+    services=("reasoner", "workspace-package-manifest", "candidate-steps"),
+    hooks=(Reference("cria/planner.py", "Planner._draft_plan"),),
+    regressions=(Reference("tests/test_experimental_planning_stages.py", "test_readiness_honors_only_typed_judgments"),
+                 Reference("tests/test_experimental_planning_stages.py", "test_readiness_unknown_manifest_and_withheld_judge_are_not_false_claims"),
+                 Reference("tests/test_experimental_planning_stages.py", "test_readiness_refusal_never_admits_a_draft_and_exhaustion_is_bounded"),
+                 Reference("tests/test_experimental_planning_stages.py", "test_selected_real_gather_builds_plan_and_disabled_stage_performs_no_work"))), plan_readiness)
+REVISION = RevisionDefinition(Policy(
+    "experimental-plan-revision", "experimental-plan-revision", 5, family_id="F50",
+    scope="experimental", prompts=("plan_noise_steps", "plan_drop_check", "plan_drop_check_user", "plan_step_outcome"),
+    services=("reasoner", "original-task", "research-facts", "workspace-view", "selected-coverage"),
+    dependencies=("experimental-plan-coverage",),
+    hooks=(Reference("cria/planner.py", "Planner._plan_for"),),
+    regressions=(Reference("tests/test_experimental_planning_stages.py", "test_real_draft_routes_coverage_readiness_and_revision_replacements"),
+                 Reference("tests/test_experimental_planning_stages.py", "test_revision_preserves_deliverable_on_unknown_deletion_judgment"),
+                 Reference("tests/test_experimental_planning_stages.py", "test_revision_settles_coverage_refusal_and_accepted_deletion"),
+                 Reference("tests/test_experimental_planning_stages.py", "test_revision_without_reasoner_keeps_plan_and_reports_withheld"))), revise_draft)
+DEFINITIONS = (GATHER, COVERAGE, READINESS, REVISION)

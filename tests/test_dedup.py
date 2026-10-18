@@ -155,7 +155,7 @@ class WiringTests(unittest.TestCase):
     def _framed_messages_for(self, drive_call):
         captured = {}
 
-        def _fake_coder_turn(self_loop, sess_, framed, body_, *, step, rlog):
+        def _fake_coder_turn(self_loop, sess_, framed, body_, *, step, rlog, delivery_receipts=None):
             captured["messages"] = framed["messages"]
             raise _StopAfterCoderTurn()
 

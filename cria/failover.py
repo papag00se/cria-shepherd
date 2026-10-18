@@ -14,52 +14,10 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass
-from enum import Enum
 from typing import Callable, Optional, Sequence
 
-from . import generation
-
-class Failure(Enum):
-    RATE_LIMIT = "rate_limit"            # F1: 429, retry-able
-    QUOTA_EXHAUSTED = "quota_exhausted"  # F2: 429 + quota/insufficient — waiting won't help
-    MODEL_UNAVAILABLE = "unavailable"    # F3: 502/503/504, connection refused/unreachable, unknown
-    MODEL_NOT_FOUND = "not_found"        # F4: 404 — config error
-    AUTH = "auth"                        # F5: 401/403 — hard-fail
-    TIMEOUT = "timeout"                  # F6: 408 or a timeout message
-    QUALITY = "quality"                  # F7: response failed a quality check
-    CONTEXT_OVERFLOW = "overflow"        # F8: too large for the window
-    ROLE_UNRESOLVABLE = "unresolvable"   # F9: a chain role didn't resolve (cloud off / undefined)
-
-
-@dataclass(frozen=True)
-class Behavior:
-    retry_same_attempts: int = 2          # rate-limit retries before walking the chain
-    rate_limit_default_wait_ms: int = 1000
-    rate_limit_max_wait_ms: int = 30000
-    retry_same_backoff_ms: int = 500      # the timeout retry-once backoff
-
-
-# --- actions (a small tagged union) --------------------------------------------------------
-@dataclass(frozen=True)
-class RetrySame:
-    wait_ms: int
-    attempt: int
-
-
-@dataclass(frozen=True)
-class NextInChain:
-    role: str
-    reason: str
-
-
-@dataclass(frozen=True)
-class HardFail:
-    reason: str
-
-
-@dataclass(frozen=True)
-class ChainExhausted:
-    chain_name: str
+from . import generation, transientpolicy
+from .transientpolicy import (Failure, Behavior, RetrySame, NextInChain, HardFail, ChainExhausted)
 
 
 def classify_failure(status_code: Optional[int], error_message: str,
@@ -92,40 +50,10 @@ def classify_failure(status_code: Optional[int], error_message: str,
 def decide_action(failure: Failure, current_role: str, chain_name: str, chain: Sequence[str],
                   attempt: int, retry_after_ms: Optional[int] = None,
                   behavior: Behavior = Behavior()):
-    """After a failure: RetrySame / NextInChain / HardFail / ChainExhausted (port of decide_action)."""
-    if failure is Failure.AUTH:
-        return HardFail(f"Authentication failed for {current_role}")
-    if failure is Failure.RATE_LIMIT:
-        if attempt < behavior.retry_same_attempts:
-            wait = min(behavior.rate_limit_default_wait_ms if retry_after_ms is None else retry_after_ms,
-                       behavior.rate_limit_max_wait_ms)
-            return RetrySame(wait, attempt + 1)
-        return _walk(current_role, chain_name, chain, "rate limit retries exhausted")
-    if failure is Failure.TIMEOUT:
-        if attempt < 1:
-            return RetrySame(behavior.retry_same_backoff_ms, attempt + 1)
-        return _walk(current_role, chain_name, chain, "timeout after retry")
-    reason = {
-        Failure.QUOTA_EXHAUSTED: "quota exhausted",
-        Failure.MODEL_UNAVAILABLE: "model unavailable",
-        Failure.MODEL_NOT_FOUND: "model not found (config error?)",
-        Failure.QUALITY: "quality check failed",
-        Failure.CONTEXT_OVERFLOW: "context overflow — need larger model",
-        Failure.ROLE_UNRESOLVABLE: "role not resolvable (cloud disabled or unconfigured)",
-    }[failure]
-    return _walk(current_role, chain_name, chain, reason)
-
-
-def _walk(current_role: str, chain_name: str, chain: Sequence[str], reason: str):
-    """The next role after ``current_role`` in ``chain``; a role not in the chain restarts at its
-    head; past the end → ChainExhausted. Port of failover.rs::walk_chain."""
-    chain = list(chain)
-    try:
-        pos = chain.index(current_role)
-        nxt = chain[pos + 1] if pos + 1 < len(chain) else None
-    except ValueError:
-        nxt = chain[0] if chain else None
-    return NextInChain(nxt, reason) if nxt is not None else ChainExhausted(chain_name)
+    """Legacy explicit policy API; optional execution uses its captured selection instead."""
+    facts = transientpolicy.FailureFacts(failure, current_role, chain_name, tuple(chain),
+                                         attempt, retry_after_ms)
+    return transientpolicy.choose(facts, behavior).action
 
 
 @dataclass
@@ -136,6 +64,16 @@ class Attempt:
 
 def run(chain_name: str, attempts: Sequence[Attempt], classify: Callable[[Exception], Failure],
         rlog, *, behavior: Behavior = Behavior(), sleep: Callable[[float], None] = time.sleep):
+    """Capture one synchronous operation's policy and services before invoking any route."""
+    from . import assistruntime
+    runtime = assistruntime.current()
+    captured = tuple(Attempt(a.role, a.call) for a in attempts)
+    with assistruntime.bound(runtime):
+        return _run(chain_name, captured, classify, rlog, behavior=behavior, sleep=sleep,
+                    definition=runtime.transient_recovery)
+
+
+def _run(chain_name, attempts, classify, rlog, *, behavior, sleep, definition):
     """Drive the failover state machine over an ordered list of resolvable routes (``attempts``),
     each a buffered call. Retries the same route (with backoff) or walks to the next per
     ``decide_action``; re-raises on HardFail / ChainExhausted. ``classify`` maps a raised exception
@@ -150,8 +88,12 @@ def run(chain_name: str, attempts: Sequence[Attempt], classify: Callable[[Except
         except Exception as e:  # noqa: BLE001 — classify decides what's retryable
             if generation.is_protocol_error(getattr(e, "response_error", None)):
                 raise
-            action = decide_action(classify(e), cur.role, chain_name, roles, attempt,
-                                   behavior=behavior)
+            choice = transientpolicy.selected_choice(definition,
+                lambda: transientpolicy.FailureFacts(classify(e), cur.role, chain_name,
+                                                       tuple(roles), attempt), behavior)
+            if choice is None:
+                raise
+            action = choice.action
             if isinstance(action, RetrySame):
                 attempt = action.attempt
                 rlog.emit("route.retry_same", role=cur.role, attempt=attempt, wait_ms=action.wait_ms)

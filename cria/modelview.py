@@ -24,6 +24,11 @@ token count; phi4's coder frames measure 10,388 est vs ~10,553 real (1.02x).
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
+from typing import Callable
+
+from .assistcontract import Policy, Reference
+from .memoryeffects import Effect
 
 from . import bodykeys, contextfloor, dedup, focustrim, probegate, prompts, selfcompact
 
@@ -81,7 +86,7 @@ def repeat_pointers(messages: list[dict]) -> int:
 def fold_evidence(messages: list[dict]) -> list[dict]:
     """Every wire-side fold: repeated payloads (`fold_repeats`) and the check carriers' runs
     (`fold_check_runs`). The sizing form the floor trial and `visible_tokens` use."""
-    return fold_check_runs(fold_repeats(messages)[0])
+    return fold_selected(WireInput(messages)).messages
 
 
 def fold_check_runs(messages: list[dict]) -> list[dict]:
@@ -96,11 +101,90 @@ def fold_check_runs(messages: list[dict]) -> list[dict]:
     return out
 
 
-def visible_tokens(messages: list[dict], tools, *, fold: bool = False) -> int:
-    """Pre-floor chars/4 size of ``messages`` + ``tools`` as the model would be shown them. ``fold``
-    is the engagement gate's answer (CONTEXT_FIXES and above), so the number is the wire's."""
+def visible_tokens(messages: list[dict], tools, *, fold: bool = False,
+                   definitions: tuple[WireDefinition, ...] | None = None) -> int:
+    """Pre-floor chars/4 size using the caller's exact wire-fold selection.
+
+    ``fold`` retains the engagement gate: False never executes folding. With
+    folding enabled, omitted definitions retain library defaults; explicit ()
+    executes none. Pass the same immutable tuple to trial and survivor folding.
+    This only estimates: it neither fits a window nor earns delivery credit.
+    """
     shown = wire_messages(messages)
-    return contextfloor.est_total(fold_evidence(shown) if fold else shown, tools)
+    if fold:
+        shown = fold_selected(WireInput(shown), definitions).messages
+    return contextfloor.est_total(shown, tools)
+
+
+@dataclass(frozen=True)
+class WireInput:
+    messages: list[dict]
+
+
+@dataclass(frozen=True)
+class WireDefinition:
+    policy: Policy
+    # Existing algorithms expose either a count or just the changed view. Neither
+    # needs a forwarding policy class or a second implementation to normalize it.
+    execute: Callable[[list[dict]], list[dict] | tuple[list[dict], int]]
+
+
+@dataclass(frozen=True)
+class WireResult:
+    messages: list[dict]
+    effect: Effect
+    applied_ids: tuple[str, ...] = ()
+    repeated_messages: int = 0
+
+
+REPEATED_PAYLOADS = WireDefinition(
+    Policy("wire-repeated-payloads", "wire-evidence-fold", 3, family_id="F69",
+           prompts=("repeated_message_note",),
+           services=("surviving-paired-tool-history",),
+           hooks=(Reference("cria/upstream.py", "Upstream._prep"),
+                  Reference("cria/modelview.py", "visible_tokens")),
+           regressions=(Reference("tests/test_context_memory_migration.py", "test_wire_stages_preserve_source_and_selection_without_gathering_on_bypass"),
+                        Reference("tests/test_a_repeat_pointer_never_outlives_its_target.py", "test_the_old_order_dangles_somewhere_and_the_wire_never_does"),
+                        Reference("tests/test_context_wire_selection.py", "test_wire_uses_exact_selected_fold_without_default_fallback"),
+                        Reference("tests/test_context_wire_selection.py", "test_changed_trial_refits_original_unfolded_history_with_identical_budgets")),
+           migrated=False), fold_repeats)
+REPEATED_CHECKS = WireDefinition(
+    Policy("wire-repeated-check-evidence", "wire-evidence-fold", 3, family_id="F69",
+           prompts=("repeated_message_note",),
+           services=("surviving-check-carriers",),
+           hooks=(Reference("cria/upstream.py", "Upstream._prep"),
+                  Reference("cria/modelview.py", "visible_tokens")),
+           regressions=(Reference("tests/test_context_memory_migration.py", "test_wire_check_runs_fold_only_when_the_later_exact_source_survives"),
+                        Reference("tests/test_c13b_the_wire_claims_are_true.py", "test_every_line_a_pointer_replaced_is_shown_in_the_body_sent"),
+                        Reference("tests/test_context_wire_selection.py", "test_changed_trial_refits_original_unfolded_history_with_identical_budgets")),
+           migrated=False), fold_check_runs)
+WIRE_FOLD_STAGE = (REPEATED_PAYLOADS, REPEATED_CHECKS)
+
+
+def fold_selected(source: WireInput,
+                  definitions: tuple[WireDefinition, ...] | None = None) -> WireResult:
+    """Fold only selected policies, in explicit order. Empty selection is identity.
+
+    Use the SAME selection for usage sizing and the floor's folded trial. A trial
+    is not delivery: discard it if the floor changes messages, refit original
+    unfolded input and run again over survivors in Upstream._prep. This stage
+    neither fits a window nor settles any claim about the body sent.
+    """
+    messages = source.messages
+    applied = []
+    repeats = 0
+    for definition in WIRE_FOLD_STAGE if definitions is None else definitions:
+        result = definition.execute(messages)
+        if isinstance(result, tuple):
+            out, count = result
+            repeats += count
+        else:
+            out = result
+        if out is not messages and out != messages:
+            applied.append(definition.policy.id)
+            messages = out
+    return WireResult(messages, Effect.REDUCED if applied else Effect.NO_OP,
+                      tuple(applied), repeats)
 
 
 # The continuation names, at the moment it is rendered, the paired tool results the harness handed
@@ -166,44 +250,45 @@ def retained_results_truth(messages: list[dict]) -> list[dict]:
     return out if out is not None else messages
 
 
-def superseded_writes_truth(messages: list[dict]) -> list[dict]:
-    """Qualify only producer-authenticated promises falsified by the final body.
-
-    A read, current-text block or edit is not the promised historical whole write.
-    Compare exact pairs after all floor/argument/integrity/evidence transforms;
-    never recreate missing content or change the supersession selection rule.
-    """
-    notices = []
-    for i, m in enumerate(messages):
-        hint = m.get(bodykeys.SUPERSEDED_WRITES) if isinstance(m, dict) else None
-        if (isinstance(hint, focustrim.SupersededWriteNotice)
-                and m.get("role") == "user" and m.get("content") == hint.text):
-            notices.append((i, m, hint))
-    if not notices:
-        return messages
-    answers = {m.get("tool_call_id"): m for m in messages
-               if isinstance(m, dict) and m.get("role") == "tool"}
-    pairs = {focustrim.superseded_pair_identity(tc, answers.get(tc.get("id")))
-             for m in messages if isinstance(m, dict) and m.get("role") == "assistant"
-             for tc in m.get("tool_calls") or [] if tc.get("id") in answers}
-    out = None
-    for i, m, hint in notices:
-        missing = [path for path, call, answer in hint.replacements
-                   if answer is None or (call, answer) not in pairs]
-        if not missing:
-            continue
-        text = prompts.render("superseded_writes_unavailable", count=str(hint.count),
-                              paths=prompts.named_list(hint.paths),
-                              missing=prompts.named_list(missing))
-        if out is None:
-            out = list(messages)
-        out[i] = {**m, "content": text}
-    return out if out is not None else messages
+# Compatibility import, not another implementation or independently selectable
+# assist. Producer and final-wire settlement belong to the same focus definition.
+superseded_writes_truth = focustrim.superseded_writes_truth
 
 
 # The ⟦ctx:current⟧ block of restored file text (`loop._restored_text_message`) and the ledger label that
 # points at it (`fetched_facts_sections.read_restored`).  modelview cannot import loop; a test pins the literal.
 RESTORED_MARKER = "⟦ctx:current⟧"
+
+
+@dataclass(frozen=True)
+class DeliveryInput:
+    messages: list[dict]
+    # Original offered hashes, not inferred from model-visible marker text.
+    offered: dict[str, str]
+    # Paths whose shared workspace view has already queued a harness demand.
+    pending_paths: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class DeliveryResult:
+    messages: list[dict]
+    effect: Effect
+    delivered: dict[str, str]
+    pending_paths: tuple[str, ...] = ()
+
+
+def settle_delivery(source: DeliveryInput) -> DeliveryResult:
+    """Final-wire foundation: offered text is not a whole-read credit.
+
+    The producer owns selection/demands. This API gathers nothing and never opens
+    a workspace path. Only surviving authenticated message hints earn delivery;
+    a labelled floor stand-in earns none. A queued demand remains pending even
+    when other files were delivered. Keep this after fit, not in a phase runner.
+    """
+    messages, delivered = settle_restored_text(source.messages)
+    effect = (Effect.DELIVERED if delivered else Effect.REDUCED if source.offered
+              else Effect.PENDING if source.pending_paths else Effect.NO_OP)
+    return DeliveryResult(messages, effect, delivered, source.pending_paths)
 
 
 def settle_restored_text(messages: list[dict]) -> tuple[list[dict], dict]:

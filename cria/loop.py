@@ -31,7 +31,6 @@ from __future__ import annotations
 import copy
 import difflib
 import hashlib
-from collections import Counter
 import inspect
 import json
 import os
@@ -42,19 +41,25 @@ import threading
 import time
 import urllib.parse
 import uuid
+from collections.abc import Callable, MutableMapping
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from enum import Enum, auto
 from pathlib import Path
 
 from .upstream import UpstreamProtocolError
-from . import bodykeys, dirguard, generation, modelview, wsview
+from . import bodykeys, dirguard, generation, generationguards, modelview, wsview, stalledwork, groundedaction, writeobservation, pastedfile, livingplan, stepreview, completedwork, completionredrive
 from . import callcapture, dedup, denial, editrecovery, execcheck, filefacts, focustrim, groundtruth, indicators, massage, participation, probediscovery, probegate, probeparse, proberun, prompts, reasoning, selfcompact, shellshape, toolmenu, urlgrounding, verifytools, webfetch
 from .upstream import CallerContextRetryNoChange, ContextRefitNoChange
 from .classify import JUDGE_MAX_TOKENS, _task_key, latest_user_text
 from . import jsontext, planner, refusalledger, writeproxy
 from .jsontext import extract_json_object, strip_think
-from . import research
+from . import research, researchpolicies, shrinkprotection, assistruntime, completionapproval, completionmeasure, completiondiagnosis, completionconfirmation, runnercontract, repositorychecks, evidencesummary, semanticquery
+from . import contextrestoration, ledgercopies, preamblepolicy, reorientation, steppreparation
+from .toolstages import policy_log
+from .modulestate import ModuleInput, ModuleState
+from .completionreview import (ReviewInput, ReviewResult, ReviewStatus, ReviewTrigger,
+                               record_satisfaction as _record_satisfaction)
 from .rumination import WINDOW_EXHAUSTED_FRACTION
 from .plan import Plan, PlanItem
 from .groundtruth import workspace_inventory
@@ -78,10 +83,10 @@ from .writeproxy import _WRITE_NAMES as writeproxy_names
 # Output-truncation guard retry budget. After this many incremental-write re-prompts a write is
 # still hitting the cap, so cria stops rewriting (each rewrite re-truncates at the same place) and
 # refuses the partial. Matches codex-local's MAX_BAIL_RETRIES.
-MAX_TRUNCATION_RETRIES = 3
+MAX_TRUNCATION_RETRIES = generationguards.MAX_TRUNCATION_RETRIES
 # Rumination guard retry budget — how many times to re-prompt a reasoning-loop turn to refocus
 # before accepting whatever it produced. Same MAX_BAIL_RETRIES ceiling.
-MAX_RUMINATION_RETRIES = 3
+MAX_RUMINATION_RETRIES = generationguards.MAX_RUMINATION_RETRIES
 # WHEEL-SPINNING trigger (operator, 2026-07-11; windowed 2026-07-12): the same file written this
 # many times — ANY content — within the last WRITE_WINDOW forwarded calls → run the gate mid-work
 # and INSERT the results into the coder's next turn. No done-claim needed, no judging — pure
@@ -90,7 +95,7 @@ MAX_RUMINATION_RETRIES = 3
 # (the repetition trigger) can't see it and a consecutive streak undercounts it (reads/tests/
 # other-file writes interleave). Byte-identical rewrites trip the (stricter, 3×) repetition
 # redirect first; this is the varying-content tier.
-WHEEL_SPIN_WRITES = 5
+WHEEL_SPIN_WRITES = stalledwork.WRITE_THRESHOLD
 # REPETITION REDIRECT (operator, 2026-07-12): the same tool call BY NATURE — not by exact
 # bytes; exact fingerprints were tried on the codex-local side and failed, because the model
 # jitters one flag or word without changing what it's doing — REPEAT_FINGERPRINT_N times within
@@ -109,13 +114,13 @@ WHEEL_SPIN_WRITES = 5
 # early noise.
 GATE_SIGNATURE_WINDOW = 8
 
-REPEAT_FINGERPRINT_N = 3
-REPEAT_WINDOW = 12
+REPEAT_FINGERPRINT_N = stalledwork.REFUSAL_THRESHOLD
+REPEAT_WINDOW = stalledwork.REFUSAL_WINDOW
 # Writes are counted over a window sized to five full write→read→test cycles (3 calls per
 # edit): the canonical tiny-edit spiral interleaves a cat and a pytest between edits, so five
 # edits span 13 calls — a 12-call window missed the incident's exact shape by ONE, permanently
 # (round 5). Sparser revisits (3+ calls between edits) still age out and stay silent.
-WRITE_WINDOW = WHEEL_SPIN_WRITES * 3
+WRITE_WINDOW = stalledwork.WRITE_WINDOW
 # The write class is ONE predicate (`_is_write_tool`, membership in _WRITE_TOOLS below) — shared by
 # the wheel-spin and truncation guards, so a route can't be a write to one and not the other. (A
 # loose substring regex was tried and split the two: it mis-classed `write_stdin` as a file write and
@@ -123,7 +128,7 @@ WRITE_WINDOW = WHEEL_SPIN_WRITES * 3
 # Probe re-issues after a history rewrite erased the result. A harness compacting EVERY turn
 # would otherwise re-issue forever; past the cap the absent result falls back to fail-open (the
 # pre-existing don't-wedge behavior).
-MAX_PROBE_REISSUES = 2
+MAX_PROBE_REISSUES = repositorychecks.MAX_PROBE_REISSUES
 # The completion briefing rides IN THE CONVERSATION (the plan-complete closing message), wrapped in
 # this envelope — so the harness stores it, its compactor summarizes FROM it, and cria re-reads it
 # from the history it's sent. No server-side copy of the summary. The envelope deliberately does
@@ -183,7 +188,8 @@ class Verification:
     """A step-critic result plus its actual approve-path confirmation, if one occurred."""
     done: bool
     reason: str
-    confirmation: Confirmation | None = None
+    confirmation: Confirmation | completionconfirmation.Result | None = None
+    step_result: stepreview.StepResult | None = None
 
     def __iter__(self):
         # `_verify` historically returned ``(ok, reason)``; ordinary callers retain that contract.
@@ -197,6 +203,8 @@ class GuardState:
     rolling action/write windows. Shared so ONE implementation of the guard drives both paths —
     ``PlanSession`` IS-A ``GuardState`` (the plan loop), and the plan-off direct path keeps a bare
     ``GuardState`` per session. The module-level ``guard_*`` functions operate on this state."""
+    externalization_state: object | None = field(default=None, repr=False)
+    externalization_offers: dict | None = field(default=None, repr=False)
     awaiting_probe: bool = False  # cria emitted a ground-truth probe; next request is its result
     probe_call_id: str = ""  # the id of the probe tool call, to find its result
     # The harness's workspace cwd (its OWN repo), persisted across turns: set from the env-context <cwd>
@@ -215,12 +223,13 @@ class GuardState:
     poisoned_search_files: set = None   # spill files judged off-target → strip their reads going forward
     search_recommend: str = ""          # the last recommended query to steer
     query_verdicts: dict = None         # outgoing query -> (on_target, recommendation); cached per query
-    rehunt_verdicts: dict = None        # outgoing query -> is it a NEW direction? (cached; see judge_rehunt)
+    rehunt_verdicts: MutableMapping[str, bool] | None = None  # Source-owned live judgment/grant cache
+    semantic_pending: semanticquery.PendingTurn | None = field(default=None, repr=False)
     web_session: str = ""               # the key webfetch's per-session search/fetch gates are keyed by,
     #                                     so the loop can ask about the pair those gates would act on
     probe_reissues: int = 0  # probes re-issued after a history rewrite erased their result (capped)
     # C28b: a SEPARATE cap for polling the CURRENT plan's still-open transport after a history
-    # rewrite (_poll_running_plan_after_rewrite) — sharing `probe_reissues` with new-gate reissues
+    # rewrite (the selected repository reissue hook) — sharing `probe_reissues` with new-gate reissues
     # would either starve a genuine new-gate need or let polling itself wedge a session whose harness
     # compacts EVERY turn (there is no real result to ingest in that path, so the plan's own
     # wall-clock deadline never gets a chance to fire). Bounded on its own, independently.
@@ -311,7 +320,10 @@ class GuardState:
     # consecutive survey-only result — on the replanned gate itself — stays silent instead of looping.
     periodic_replan_done: bool = False
     runner_reset_signature: str = ""  # one definitive JS runner judgment per unchanged failing gate
-    module_state_signature: str = ""  # one definitive module-state judgment per unchanged failing Go test gate
+    module_state: ModuleState = field(default_factory=ModuleState)
+    # Task-stable selection is durable; judgment signatures reset with transient gates.
+    pilot_selection: tuple[str, ...] | None = None
+    pilot_binding: assistruntime.AssistRuntime | None = field(default=None, repr=False)
     # A scheduled step critic returned done, but its approve-path brake had no surveyed workspace.
     # It is NOT an approval: acquire one bounded survey/gate round, then re-run the critic against
     # that observed view.  Keeping this separate from ``periodic_probe`` matters: that check-in
@@ -407,6 +419,10 @@ class GuardState:
     # the pin the tools rejected (walked: cart-billing-go 1788241229 0095->0096)
     refusal_events: object = None  # authoritative RefusalLedger: raw spelling, ecosystem, source,
     # event order and exact-success supersession. ``refused_names`` remains its compatibility view.
+    stalled_probe: stalledwork.PendingProbe | None = None
+    stalled_steer: stalledwork.Steer | None = None
+    stalled_delivered: stalledwork.Steer | None = None
+    stalled_reply: tuple | None = None  # invocation-local offer/reply, never serialized
     same_checks_relooked: bool = False  # the ONE second look at unchanged findings has been spent
     #                                     (rearms whenever the findings move; see author_steer)
 
@@ -462,6 +478,22 @@ class PlanSession(GuardState):
     # a temperature-0 model re-pastes the same file every turn, and a settled question is not re-asked.
     text_write_judged: dict = field(default_factory=dict)
     pasted_block_other: bool = False   # the pasted-file judge ruled THIS reply's block `OTHER` (not a whole file)
+    pasted_prepared: pastedfile.Prepared | None = None
+    pasted_pending_nudge: pastedfile.Nudge | None = None
+    pasted_delivered_nudge: pastedfile.Nudge | None = None
+    pasted_delivery: pastedfile.Delivery | None = None
+    pasted_deliveries: dict = field(default_factory=dict)
+    pasted_settlements: dict = field(default_factory=dict)
+    pasted_consumed: tuple | None = None
+    pasted_state_view: object = field(default=None, repr=False)
+    living_step_key: str = ''
+    living_plan_id: str = ''
+    living_task: str = ''
+    living_sequence: int = 0
+    living_pending: object = None
+    living_effects: object = None
+    living_raw_reply: dict | None = None
+    living_state_view: object = field(default=None, repr=False)
     # (path, sha1 of the content) of every native whole-file write_file that REPLACES most of a file the
     # judge ruled WHOLE_FILE for (`Loop.shrinking_write_check`). Only that positive ruling is remembered.
     shrink_write_judged: dict = field(default_factory=dict)
@@ -560,7 +592,7 @@ _MAX_SESSIONS = 256
 # for a long stretch with NO ground truth (it circled on a broken pyproject.toml for ~90 turns). Run
 # the checks every N acting coder turns too and INSERT the result (no verdict) so the model sees the
 # syntax/lint/test state early, not only when it thinks it's finished.
-GATE_EVERY_CODER_TURNS = 15
+GATE_EVERY_CODER_TURNS = repositorychecks.GATE_EVERY_CODER_TURNS
 
 # On a plan-ON completion (all steps verified individually), run the WHOLE-TASK satisfaction critic
 # before declaring done — a multi-step plan can pass every step yet not actually work (the milestone
@@ -622,21 +654,6 @@ def _satisfaction_blocker(*, steer, rewritten: bool, done_probe: bool, gate_red:
     return ""
 
 
-def _record_satisfaction(sess, satisfied: bool, evidence) -> None:
-    """Make every authoritative whole-task verdict part of the completion funnel.
-
-    A negative verdict is current evidence that the task is not complete.  It must invalidate any
-    held success wording as well as steer the next coder turn; otherwise a later gate/compactor can
-    certify precisely the work the judge just rejected.  A later true is deliberately the only
-    ordinary release.  The plan-on MAX_COMPLETION_CHECKS escape remains at its existing caller.
-    """
-    sess.latest_satisfaction = bool(satisfied)
-    sess.latest_satisfaction_evidence = evidence
-    if not satisfied:
-        sess.pending_done = ""
-        sess.pending_done_parts = ()
-
-
 def _satisfaction_blocks_completion(sess, *, bounded: bool = False) -> bool:
     """Whether the newest satisfaction evidence bars a completion-shaped response."""
     if getattr(sess, "latest_satisfaction", None) is not False:
@@ -684,7 +701,7 @@ def periodic_check_due(drive_count: int, start: int, every: int, last_ran: int =
 # thrash-diagnosis + one concrete next step to get the coder UNSTUCK. cria NEVER gives up on a
 # non-converging session (the stall terminator + human-escalation were removed — the mission is for the
 # model to succeed on its OWN); it just keeps trying to unstick it.
-THRASH_STALL_CYCLES = 2
+THRASH_STALL_CYCLES = stalledwork.STALL_ROUNDS
 
 # STUCK-STEP re-plan threshold. A step advances ONLY on a genuine pass — there is deliberately no
 # advance-on-unverified cap (real failing checks must be fixed, never skipped). But a MISCONCEIVED step
@@ -694,7 +711,7 @@ THRASH_STALL_CYCLES = 2
 # CRITIC verify-fails on one step (NOT gate/real-error fails), hand the living-plan reasoner the real
 # work done so it can RE-DERIVE that step from ground truth (or confirm the work already satisfies it).
 # Re-attempted every STUCK_STEP_REPLAN fails so a declining reasoner doesn't burn a call each turn.
-STUCK_STEP_REPLAN = 4
+STUCK_STEP_REPLAN = livingplan.STUCK_STEP_REPLAN
 
 # STUCK-STEP re-plan threshold for a TOOL-CALL thrash. The above triggers on CRITIC verify-fails, but a
 # coder can loop on tool calls for a whole step (write→exec→write…, ignoring the guards' steers) WITHOUT
@@ -703,7 +720,7 @@ STUCK_STEP_REPLAN = 4
 # ignored). After this many ACTING turns on one step without advancing, re-derive the step from ground
 # truth too (it may simplify an over-engineered step — e.g. a package scaffold → a flat script). Fired
 # periodically (every N turns) so a productive-but-long step that yields an unchanged plan isn't churned.
-STEP_THRASH_REPLAN = 12
+STEP_THRASH_REPLAN = livingplan.STEP_THRASH_REPLAN
 
 
 def _note_write_results(gs: GuardState, messages) -> None:
@@ -876,33 +893,16 @@ def judge_query(reasoner_chat, reasoner_role, task: str, query: str, rlog, coder
     (on_target, recommendation) — recommendation is the better search string OR a concrete URL to fetch
     instead (the caller substitutes a web_fetch when it's a URL). Fails OPEN (on_target True, no
     recommendation) on a parse miss or no reasoner — never derail a search we couldn't judge."""
-    if reasoner_role is None or not (task.strip() and query.strip()):
+    if assistruntime.current().query is None:
         return True, ""
-    # WHAT THIS SESSION HAS ALREADY LEARNED. The judge was given the task and the query and nothing
-    # else, so it could not know that the thing it was about to endorse had already 404'd. On
-    # cart-billing-go x nemotron-elastic it called a query for `github.com/mitchellh/decimal`
-    # on-target TWICE while cria's own record held two `remote: Repository not found` and two
-    # `404: Not Found` for that exact repo — and cria then substituted a fetch of it, charged the
-    # coder GitHub's 404 page, and told it the failure was its own. A judge that decides whether
-    # research is on target must see the research already done (#11b).
-    vtext = summarize(reasoner_chat, reasoner_role, prompts.load("search_query_judge"),
-                      prompts.render("search_query_judge_user", task=task, query=query,
-                                     tried=tried), rlog,
-                      phase="reasoner", coder_tools=coder_tools) or ""
-    obj = extract_json_object(strip_think(vtext))
-    if not isinstance(obj, dict):
-        return True, ""
-    return obj.get("on_target") is not False, str(obj.get("recommendation") or "").strip()
-
-
-_CALL_WRAPPED = re.compile(r"""\s*\w+\s*\(\s*(['"])(.+?)\1\s*\)\s*\Z""", re.S)
-_QUOTED_SPAN = re.compile(r"""(['"])([^'"]{2,})\1""")
+    return semanticquery.Judge(summarize, reasoner_chat, reasoner_role, rlog).query(
+        semanticquery.QuestionFacts(task, coder_tools), query, tried)
 
 
 def _same_query(a: str, b: str) -> bool:
     """Two search queries that would send the same thing to the search engine — case and surrounding
     whitespace are not a redirect."""
-    return " ".join((a or "").lower().split()) == " ".join((b or "").lower().split())
+    return semanticquery.same_query(a, b)
 
 
 def _usable_query(rec: str) -> str:
@@ -918,18 +918,7 @@ def _usable_query(rec: str) -> str:
     Shape, never keywords: a tool-call wrapper yields its argument; exactly ONE quoted span yields that
     span; TWO or more are ambiguous and yield "" so the caller leaves the coder's own query alone —
     cria substitutes only when it has a real query to substitute."""
-    rec = (rec or "").strip()
-    if not rec:
-        return ""
-    m = _CALL_WRAPPED.fullmatch(rec)
-    if m:
-        return m.group(2).strip()
-    spans = _QUOTED_SPAN.findall(rec)
-    if len(spans) > 1:
-        return ""              # "X" or "Y" — cria does not pick for the coder
-    if len(spans) == 1:
-        return spans[0][1].strip()
-    return rec
+    return semanticquery.usable_query(rec)
 
 
 def judge_rehunt(reasoner_chat, reasoner_role, task: str, query: str, prior: str, rlog,
@@ -945,13 +934,10 @@ def judge_rehunt(reasoner_chat, reasoner_role, task: str, query: str, prior: str
     Returns True only on a clear "different hunt". Anything else — no reasoner, an unparseable reply,
     an error — leaves the gate's own verdict standing, so this can only ever make cria refuse LESS,
     never more, and a session without a reasoner behaves exactly as before."""
-    if reasoner_role is None or not (query.strip() and prior.strip()):
+    if assistruntime.current().rehunt is None:
         return False
-    vtext = summarize(reasoner_chat, reasoner_role, prompts.load("search_rehunt_judge"),
-                      prompts.render("search_rehunt_judge_user", task=task, query=query, prior=prior),
-                      rlog, phase="reasoner", coder_tools=coder_tools) or ""
-    obj = extract_json_object(strip_think(vtext))
-    return isinstance(obj, dict) and obj.get("new_direction") is True
+    return semanticquery.Judge(summarize, reasoner_chat, reasoner_role, rlog).rehunt(
+        semanticquery.QuestionFacts(task, coder_tools), query, prior)
 
 
 def judge_search(reasoner_chat, reasoner_role, task: str, query: str, results: str, rlog, coder_tools: str = "") -> tuple[bool, bool, str]:
@@ -996,141 +982,25 @@ def _tool_names(coder_tools: str) -> list[str]:
 def reassess_remaining(reasoner_chat, reasoner_role, task: str, completed: str, remaining: str,
                        evidence: str, rlog, coder_tools: str = "",
                        trigger: str = REPLAN_TRIGGER_ADVANCE, facts: str = "",
-                       uncovered: list[str] | None = None) -> list[str] | None:
+                       uncovered: list[str] | None = None, *,
+                       policies: planner.PlanningSelection | None = None) -> list[str] | None:
     """Dedicated reasoner call for the LIVING plan: re-derive the REMAINING plan steps from the work
     ACTUALLY done (real tool evidence), so the plan adjusts to reality at each verification instead of
     marching a stale guess. Returns the refined remaining step-text list (may be shorter/reworded/
     reordered, or [] when the evidence shows nothing is left), or ``None`` to leave the plan UNCHANGED —
     the fail-safe on a parse miss / decline / no reasoner, because silently blowing away a plan on a bad
     parse is far worse than carrying a stale step (the step critic still guards every step)."""
-    if reasoner_role is None or not remaining.strip():
-        return None
-    # The trigger sentence must be TRUE: the stuck/thrash paths reuse this call, and the old
-    # hardcoded "A step just finished and was verified" asserted an event that had not happened
-    # (run 0729-gemma4 call 0048 — a thrash-triggered replan told the reasoner a step verified).
-    text = summarize(reasoner_chat, reasoner_role,
-                     prompts.render("replan", TRIGGER=trigger),
-                     prompts.render("replan_user", task=task, completed=completed or "(none)",
-                                    remaining=remaining, evidence=evidence or "(no actions recorded yet)"),
-                     rlog, phase="reasoner", coder_tools=coder_tools) or ""
-    # ONE READER for "a step list written as JSON" — planner.json_steps, the same function the
-    # initial draft reads through. This call used to require a dict with a literal `steps` key, and
-    # cria already owned every other shape the reasoner uses: a bare top-level array, a synonym key,
-    # a dict item per step. RE-MEASURED at review 2026-08-03 over 233 captured re-derivations, by
-    # replaying the OLD test (`isinstance(obj, dict) and isinstance(obj["steps"], list)`) against
-    # this new one: 11 replies main could not read and this reader can — 5 carrying real steps (run
-    # 20260727T234416 call 0024 returned a complete four-step re-derivation, its own thinking saying
-    # "I need to produce JSON steps only") and 6 the empty `[]`. The plan was left unchanged on all 11.
-    # (The commit that landed this said "13 … 7 with steps"; the empty half reproduces exactly and
-    # the steps half does not. The inflation came from a replay gate that tested `obj["steps"]` for
-    # TRUTHINESS rather than for being a list, which counts `{"steps": []}` — a shape main already
-    # handled — as a miss. Corrected here rather than left to the next walk: rule 23b.)
-    #
-    # JSON ONLY — deliberately NOT parse_steps, whose prose fallbacks read numbered and bulleted
-    # LINES. The re-derivation's replies are not drafts: run 20260728T101412 call 0121 answered with
-    # a README in markdown, and parse_steps reads four of its bullets as plan steps. Reading a
-    # README as the remaining plan is a worse outcome than reading nothing (principle 2 — the
-    # dangerous class of intervention is the one that REPLACES a correct prior).
-    cleaned = planner.json_steps(strip_think(text))
-    if cleaned is None:
-        return None  # unparseable / wrong shape → keep the plan exactly as it was
-    if not cleaned:
-        # The reasoner says nothing remains. replan.txt asks for exactly this ("Return [] ONLY when
-        # the evidence shows every remaining deliverable is already done") and this function's own
-        # contract defines it, so it is honoured whether it arrived as `{"steps": []}` or bare `[]`.
-        # NOT a false-finish path: the caller does not drop the tail on this alone — it re-asks
-        # judge_satisfaction against the same evidence first, and a not-satisfied answer keeps every
-        # remaining step (loop.replan_empty_declined).
-        return []
-    # Same reasoner NOISE judgment the INITIAL plan gets (reasoned_noise_indices): drop a re-derived step
-    # that codified a bare command, dictated literal code, or a speculative guess — a re-derivation
-    # grounded in the coder's FAILED work otherwise codifies its guessed endpoint into an authoritative
-    # step (observed: a research step re-derived into "call requests.get('<root>')", shipped as a 404/403).
-    # replan.txt already tells the reasoner to avoid these; this is the focused safety judgment. An
-    # all-noise re-derivation → None (keep the prior plan), never an empty plan.
-    _ask = lambda sysp, usr: summarize(reasoner_chat, reasoner_role, sysp, usr, rlog, phase="reasoner")
-    drop = reasoned_noise_indices(_ask, task, cleaned, facts=facts)
-    # PER-STEP, FAIL-CLOSED: a deletion that would lose a deliverable is refused on its own, and the
-    # rest of the verdict still applies (planner.surviving_noise_drops). The broad coverage check
-    # below is NOT this check — it ran in the walked run and passed a tail whose README step had just
-    # been deleted, because "does this plan cover everything?" over five steps skims where "does
-    # deleting THIS step lose something?" does not.
-    if drop:
-        drop, refused = surviving_noise_drops(_ask, task, cleaned, drop)
-        for i, lost in refused.items():
-            rlog.emit("loop.replan_noise_refused", level="warn", lost=lost, step=cleaned[i][:160])
-    kept = [s for i, s in enumerate(cleaned) if i not in drop]
-    # SAY WHAT THE JUDGE DID. The initial plan reports this (plan.noise_dropped / plan.noise_all_kept);
-    # the re-derivation ran the same judge and reported nothing, so a tail that came back carrying a
-    # bare shell command was indistinguishable from one the judge had cleaned. Measured (run
-    # 0727-164951): a good six-step plan — step 2 "Create a Python function resolve_handle(handle)" —
-    # was re-derived twice (5→8, then 7→3) into a plan whose step 2 was `grep -n 'resolved_addresses'
-    # <file>` and step 3 "Run unit tests": a bare command and plumbing, the two categories this judge
-    # deletes. Nothing in the log said whether it ran, kept them, or dropped something else.
-    # LOG WHAT WENT, not just how many. Measured across every log day: this fired 156 times, dropped
-    # at least one step 75 times, and left ZERO steps 37 times — and none of those events record
-    # WHICH steps were deleted, so "did the noise judge delete a deliverable?" cannot be answered
-    # from the logs at all. It happened twice in this ladder (runs 1785625253 and 1785659842, the
-    # second ending the session at 1/4 with "unit tests" and "live test" deleted from the plan), and
-    # both times the finding needed the raw captures to reconstruct. A count is not a reading.
-    rlog.emit("loop.replan_noise", dropped=len(drop), kept=len(kept),
-              dropped_steps=" | ".join(cleaned[i][:160] for i in sorted(drop)),
-              level="warn" if not kept else "info")
-    if not kept:
-        return None
-    # COVERAGE — the same ENFORCED check the initial draft gets (Planner._missing_deliverables), on
-    # the plan as it would stand: completed steps + the re-derived tail. replan.txt carries the rule
-    # as prose ("every deliverable ... must still be covered") and prose was not enough — measured
-    # (run 0728-m6): a coverage-checked six-step draft was thrash-re-derived into ONE step, silently
-    # dropping unit tests + the live test + the README, and the run ended "satisfied" with a named
-    # deliverable absent from the workspace. A tail that drops deliverables is REFUSED — the plan
-    # stays untouched (the same fail-safe as a parse miss; the step critic still guards every step
-    # and the done-critic still backstops), and the refusal is TRACED, never silent.
-    done_texts = [ln[2:].strip() for ln in (completed or "").splitlines() if ln.startswith("- ")]
-    missing = missing_deliverables(_ask, task, done_texts + kept)
-    if missing:
-        # The caller needs to distinguish this known, typed refusal from an unparseable/otherwise
-        # declined re-derivation.  Keep the public return contract: callers that only need the
-        # fail-safe ``None`` remain untouched, while the living-plan owner can release its cursor.
-        if uncovered is not None:
-            uncovered.extend(missing)
-        rlog.emit("loop.replan_uncovered", level="warn", missing=", ".join(missing))
-        return None
-    # A re-derived step must not name a CODER TOOL as code the deliverable calls or mocks. cria's
-    # harness is not a library the product may import. See urlgrounding.harness_tool_leaks: the
-    # initial plan said "mock the API call" and the re-derivation rewrote it to "mock web_fetch",
-    # after which the coder shipped `resp_text = web_fetch(url=url)` — an undefined name — and the
-    # run scored 0/4. REFUSE the tail; the step that was already correct stands. cria never rewrites
-    # a plan step.
-    leaked = urlgrounding.harness_tool_leaks("\n".join(kept), _tool_names(coder_tools))
-    if leaked:
-        rlog.emit("loop.replan_tool_leak", level="warn", tools=",".join(leaked))
-        return None
-    # NO research-first re-prepend here — and none at plan time either. cria does not AUTHOR plan steps:
-    # injecting "web_fetch the named source" was cria planning, and pinning it made a possibly-wrong step
-    # an inescapable mandate. The general mechanisms carry it instead — plan.txt tells the drafter to
-    # research first, the critic clears a research step on facts obtained, and the durable ⟦ctx:facts⟧
-    # ledger keeps the real endpoints in front of the coder across compaction.
-    #
-    # NO "this step claims an endpoint returns a field it does not" gate here either. MEASURED
-    # 2026-08-03 over all 86 recorded runs: 3,779 coder prompts carried a step, 71 of them named a
-    # route whose response FIELDS the ledger already held, and a token matcher over those flagged
-    # 15 — which are TWO distinct steps repeated, and BOTH state the truth outright ("`total_handles`
-    # is **not** in that response – it appears in `/holders/{address}`" and "…then GET
-    # /holders/{holder} to get total_handles"). Two of two false positives, zero true positives.
-    # The step that IS false — run 20260803T112245's "sends a GET request to
-    # https://api.handle.me/handles/{handle} … extracts … total handles held by the holder", carried
-    # into 20 coder prompts — names no field token at all, so no matcher over the sentence can see
-    # it. That is principle 9's table again: the difference is not in the sentence.
-    #
-    # And the facts were never the missing part. That run made SIX re-derivation calls and every one
-    # was handed the per-endpoint field list showing `/handles/{handle}` returns no `total_handles`;
-    # 105 of its 107 coder prompts carried the same list under "use these EXACT names and nesting; do
-    # not guess". The evidence, the instruction (line 5 of replan.txt) and the ability to rewrite the
-    # tail were all already here. A second surface saying it again is noise on a delivered fact
-    # (principle 3), and a deterministic trigger for it cannot be built from what the corpus holds
-    # (principle 15).
-    return kept
+    def question(system, user, **kwargs):
+        return summarize(reasoner_chat, reasoner_role, system, user, rlog,
+                         phase='reasoner', **kwargs)
+
+    return livingplan.reassess_compatibility(
+        question=None if reasoner_role is None else question,
+        task=task, completed=completed, remaining=remaining, evidence=evidence, log=rlog,
+        coder_tools=coder_tools, trigger=trigger, research=facts,
+        tool_names=tuple(_tool_names(coder_tools)),
+        coverage=missing_deliverables if policies is None else policies.coverage,
+        uncovered=uncovered)
 
 
 # HOW MANY TIMES THE JUDGE ACTUALLY LOOKED, carried on the completion it produced.
@@ -1428,25 +1298,7 @@ def step_names_absent_artifact(claim: str, workspace_root: str) -> str:
     Deliberately narrow. The other 4 approvals had a NON-empty workspace, where a named file may be
     one the step merely mentions (a README step naming the module it documents), and blocking those
     would be a guess. An empty workspace admits no such reading."""
-    if not workspace_root:
-        return ""
-    top = wsview.current(workspace_root).listdir(workspace_root)
-    if top is None:
-        return ""   # not surveyed → say nothing; the reasoned brake still runs
-    if any(not name.startswith(".") for name in top):
-        return ""
-    dom = (first_domain_in(claim or "") or "").lower()
-    for m in _STEP_ARTIFACT.finditer(claim or ""):
-        at = m.start()
-        if "://" in claim[max(0, at - 60):at]:   # a URL's path is not a workspace artifact
-            continue
-        # A DOMAIN the step names is not a workspace file ("api.handle.me" matches the file-token
-        # pattern — ".me" reads as an extension; first_domain_in is TLD-allowlisted and
-        # file-extension-aware, so real filenames never qualify).
-        if dom and m.group(1).lower() == dom:
-            continue
-        return m.group(1)
-    return ""
+    return completionconfirmation.absent_artifact(claim, workspace_root, _confirmation_facts())
 
 
 def _confirm_applies(claim: str, red_findings: str = "", *, gate_red: bool = False, ask=None,
@@ -1475,18 +1327,6 @@ def _confirm_applies(claim: str, red_findings: str = "", *, gate_red: bool = Fal
     return True   # YES, or anything unreadable → the brake runs
 
 
-# A negative verdict is not coder-facing evidence merely because its JSON parsed.  These are the
-# finite claim and source types the judge may choose.  The source names are deliberately about
-# authoritative inputs cria already owns — never the judge's own prose.  Exact quotes are checked
-# against the selected source below before any semantic question is asked.
-_NEGATIVE_DIAGNOSIS_KINDS = frozenset({
-    "missing_file", "missing_content", "failed_check", "unverified_requirement", "other",
-})
-_NEGATIVE_EVIDENCE_SOURCES = frozenset({
-    "workspace_absence", "workspace_file", "action_log", "checks", "participation",
-})
-
-
 # A FILE PATH or a VERSION in a directive — the two classes of invention the walks caught. Both are
 # checkable against the text the directive was written FROM, which is what makes them worth checking:
 # cria cannot judge whether a paraphrase is faithful, and can always tell whether a name was there.
@@ -1499,17 +1339,14 @@ _NEGATIVE_EVIDENCE_SOURCES = frozenset({
 #
 # So a path segment may not END on a separator or a dot, and a bare word/word with no dot and no
 # further separator is not a path.
-_GROUNDABLE_NAME = re.compile(
-    r"(?:[\w.-]*/(?:[\w.-]+/)*[\w-]+(?:\.[A-Za-z][\w-]*)?)"   # a path, ending on a real segment
-    r"|(?:\b[\w-]+\.(?:py|rb|go|java|js|ts|rs|php|json|toml|ya?ml|md|txt|cfg|ini|xml|lock)\b)"
-    r"|(?:\bv?\d+\.\d+(?:\.\d+)?\b)")
+_GROUNDABLE_NAME = reorientation._GROUNDABLE_NAME
 
 # A SLASH BETWEEN WORDS WITH NO DOT ANYWHERE IS PROSE, NOT A PATH. `I/O`, `trim/normalise`,
 # `problems/risks`, `blank/non-numeric`, `SKU/quantity/price` — cria cannot tell those from a real
 # dotless directory path like `test/fixtures`, and the measured cost of guessing is 41% of this
 # seat's refusals thrown away with a whole model call behind each. Abstaining is the safe direction:
 # the guard exists to catch an INVENTED FILE, and a file has an extension (#3 — silence over noise).
-_PROSE_PAIRING = re.compile(r"^[A-Za-z][\w-]*(?:/[A-Za-z][\w-]*)+$")
+_PROSE_PAIRING = reorientation._PROSE_PAIRING
 
 
 def _invented_names(text: str, source: str) -> list[str]:
@@ -1517,15 +1354,7 @@ def _invented_names(text: str, source: str) -> list[str]:
 
     Case-insensitive substring, so a directive may shorten `lib/shipping/rates.rb` to `rates.rb`
     (still grounded) but not lengthen `rates.rb` into `lib/shipping.rb` (not grounded)."""
-    hay = (source or "").lower()
-    out: list[str] = []
-    for m in _GROUNDABLE_NAME.finditer(text or ""):
-        tok = m.group(0)
-        if _PROSE_PAIRING.fullmatch(tok):
-            continue
-        if tok.lower() not in hay and tok not in out:
-            out.append(tok)
-    return out
+    return reorientation.invented_names(text, source)
 
 
 def _workspace_basename_matches(root: str, name: str) -> list[str] | None:
@@ -1578,65 +1407,7 @@ def _workspace_subject(root: str, subject: str) -> tuple[str, bool | None, str |
     return rel, present, body
 
 
-def _subject_is_exact_in_quote(subject: str, quote: str) -> bool:
-    """Whether ``subject`` occurs as a whole path/name token, not a dotted-name prefix."""
-    if not subject or not quote:
-        return False
-    token = re.escape(subject)
-    return re.search(rf"(?<![\w./-]){token}(?![\w/-])", quote) is not None
-
-
-def _required_output_span_names_subject(task: str, quote: str, subject: str) -> bool:
-    """Validate literal extraction and exact file identity against the ORIGINAL source boundaries.
-
-    This does not judge whether the file is an output or interpret literal/Markdown regions. The
-    focused question owns that judgment. Checking source boundaries (not a clipped extracted quote)
-    prevents a quote ending mid-path from turning REVIEW.md.bak into a requirement for REVIEW.md.
-    """
-    if not task or not quote or not subject:
-        return False
-    # Source-delimited literal names are whole values, not runs of characters from a filename
-    # blacklist. This is identity validation only: no decoding, normalization or output judgment.
-    literals = tuple(re.finditer(r"(?P<mark>[`\"'])(?P<value>.*?)(?P=mark)", task, re.DOTALL))
-
-    def source_end(pos: int, enclosed: bool = False) -> bool:
-        if pos == len(task) or task[pos].isspace():
-            return True
-        # A closed literal has already proved the full name; following prose punctuation is
-        # separate only when followed by whitespace/end. Plain names admit the requested terminal
-        # sentence period only; any other ambiguous punctuation abstains.
-        punctuation = ".,;:!?" if enclosed else "."
-        return task[pos] in punctuation and (pos + 1 == len(task) or task[pos + 1].isspace())
-
-    at = task.find(quote)
-    while at >= 0:
-        if at and not task[at - 1].isspace():
-            at = task.find(quote, at + 1)
-            continue
-        for match in re.finditer(re.escape(subject), quote):
-            start, end = at + match.start(), at + match.end()
-            enclosing = next((unit for unit in literals
-                              if unit.start("value") <= start and end <= unit.end("value")), None)
-            if enclosing is not None:
-                if enclosing.group("value") != subject:
-                    continue
-                start, end = enclosing.span()
-                if start < at or end > at + len(quote):
-                    continue
-            elif ((start and task[start - 1] in ("`", '"', "'"))
-                  or (end < len(task) and task[end] in ("`", '"', "'"))):
-                continue  # an unmatched/partial literal boundary cannot prove full name identity
-            # Positive source separators, NOT a blacklist of filename punctuation. For an
-            # unenclosed name only whitespace/end or a terminal prose period proves its end.
-            # Anything ambiguous abstains; this does not interpret Markdown or output intent.
-            left = start == 0 or task[start - 1].isspace()
-            right = source_end(end, enclosed=enclosing is not None)
-            span_end = source_end(at + len(quote),
-                                  enclosed=enclosing is not None and end == at + len(quote))
-            if left and right and span_end:
-                return True
-        at = task.find(quote, at + 1)
-    return False
+_subject_is_exact_in_quote = completiondiagnosis.subject_is_exact_in_quote
 
 
 def _negative_diagnosis_nudge(obj: dict, *, task: str, action_log: str = "", checks: str = "",
@@ -1651,212 +1422,17 @@ def _negative_diagnosis_nudge(obj: dict, *, task: str, action_log: str = "", che
     initial judge's quote is not authority. Other kinds retain exact task/evidence source checks.
     File state comes only from wsview. Unsupported or undecidable relationships suppress delivery.
     """
-    kind = str(obj.get("diagnosis_kind") or "").strip()
-    subject = str(obj.get("subject") or "").strip()
-    task_quote = str(obj.get("task_quote") or "").strip()
-    source = str(obj.get("evidence_source") or "").strip()
-    evidence_quote = str(obj.get("evidence_quote") or "").strip()
-
-    def suppress(cause: str) -> VerdictNudge:
-        if rlog is not None:
-            rlog.emit("loop.negative_diagnosis_suppressed", level="info", phase=phase,
-                      cause=cause, diagnosis_kind=kind or "missing")
+    definition = assistruntime.current().completion_diagnosis
+    if definition is None:
         return VerdictNudge()
-
-    if kind not in _NEGATIVE_DIAGNOSIS_KINDS:
-        return suppress("unknown diagnosis kind")
-    if source not in _NEGATIVE_EVIDENCE_SOURCES:
-        return suppress("unknown evidence source")
-    if kind == "missing_file" and source == "workspace_absence":
-        # The initial judge's quote/essay/fix is NOT requirement authority, even when its quote is
-        # literal. Ask one focused question against the untouched root task for EVERY typed candidate.
-        authority = task if original_task is None else original_task
-        rel, present, _body = _workspace_subject(workspace_root, subject)
-        if present is not False or not rel:
-            return suppress("file exists or workspace state is unknown")
-        if not authority or ask is None:
-            return suppress("required-output grounding unavailable")
-        question = prompts.render("missing_output_requirement", task=authority, subject=subject)
-        try:
-            answer = ask(question)
-            grounded = extract_json_object(strip_think(answer or ""))
-        except Exception:
-            return suppress("required-output grounding unavailable")
-        if (not isinstance(grounded, dict) or grounded.get("required_output") is not True
-                or grounded.get("subject") != subject
-                or not isinstance(grounded.get("task_quote"), str)
-                or not _required_output_span_names_subject(authority, grounded["task_quote"], subject)):
-            return suppress("required-output grounding unsupported")
-        # A question can take time. A changed/unknown workspace or changed path identity cannot
-        # authorize delivery of a fact gathered before the question.
-        current_rel, current_present, _body = _workspace_subject(workspace_root, subject)
-        if current_present is not False or current_rel != rel:
-            return suppress("file exists or workspace state is unknown")
-        task_quote = grounded["task_quote"]
-        absence = prompts.render("negative_diagnosis_missing_file", subject=rel)
-        if rlog is not None:
-            rlog.emit("loop.negative_diagnosis_supported", level="info", phase=phase,
-                      diagnosis_kind=kind, evidence_source=source)
-        return VerdictNudge(prompts.render("negative_diagnosis", task_quote=task_quote,
-                                          source=source, evidence=absence),
-                            task_quote, diagnosis_kind=kind, subject=rel)
-    if not task_quote or task_quote not in (task or ""):
-        return suppress("task quote is not exact")
-    retyped = False
-    # THE LABEL IS THE JUDGE'S CLAIM; ABSENCE IS CRIA'S FACT. A verdict that cites `workspace_absence` as
-    # its evidence, over a subject that is a whole token of the EXACT task quote, and that the workspace
-    # view proves ABSENT, is a missing file whatever kind it chose. Walked on the A1 run (capture
-    # 20261010T212733 call 0021): kind `missing_content`, subject `REVIEW.md`, quote "Add `REVIEW.md`
-    # describing remaining problems…" (exact), source `workspace_absence` — every checkable field true —
-    # and it died on "missing-content source contract" because the label was the adjacent one. The
-    # `evidence_quote` of an absence has nothing to quote, so it is not consulted. Every check the
-    # missing_file branch below makes (task-named subject, view-proven absence) still runs on the
-    # canonical kind; a present, ambiguous or unknown-state file stays suppressed.
-    if (source == "workspace_absence" and kind != "missing_file" and subject
-            and _subject_is_exact_in_quote(subject, task_quote)
-            and _workspace_subject(workspace_root, subject)[1] is False):
-        if rlog is not None:
-            rlog.emit("loop.negative_diagnosis_canonicalised", level="info", phase=phase,
-                      was=kind, now="missing_file", subject=subject)
-        kind, evidence_quote, retyped = "missing_file", "", True
-    # MISSING_FILE ONLY. The claim "the task asked for this file and it is not there" is about a
-    # PATH, so the task had better name that path — that check stays.
-    #
-    # MISSING_CONTENT is a different claim: the task names a BEHAVIOUR and the subject is whatever
-    # file that behaviour belongs in. A feature request essentially never names its implementation
-    # file, so requiring one suppressed almost every true missing_content diagnosis before any of
-    # its real provenance ran — and that provenance is strictly stronger than a filename match:
-    # the subject must be a real workspace file with COMPLETE content, the evidence quote must occur
-    # EXACTLY in that content, and a focused semantic question must return SUPPORTED.
-    #
-    # Measured on shipping-rates-rb x ternary-bonsai-2 (session 01a0b798, call 0018). The judge
-    # returned, all four fields true and checkable:
-    #   subject        lib/shipping/rates.rb
-    #   task_quote     "Add an `express` service costing `14.99` base plus `2.50` per kilogram."
-    #   evidence_quote ZONE_BASE = { "domestic" => 4.99, "eu" => 9.99, "international" => 19.99 }
-    # The task quote is exact, the evidence line is the real current text on disk, and the coder had
-    # written nothing in 22 minutes. It was dropped for "workspace subject is not task-named",
-    # because the sentence about an express service does not contain the string `rates.rb`.
-    #
-    # That is the exact outcome the operator ruling above (loop.py, `if not satisfied`) exists to
-    # prevent, ON THIS TASK: four not-satisfied verdicts naming `Shipping.zone_for` went unheard and
-    # the cell ended with the method absent. The ruling fixed the delivery path; this check voided
-    # it one layer down.
-    if kind == "missing_file":
-        named = (_subject_is_exact_in_quote(subject, task_quote)
-                 or _subject_is_exact_in_quote(os.path.basename(subject), task_quote))
-        if not subject or not named:
-            return suppress("workspace subject is not task-named")
-    elif kind == "missing_content" and not subject:
-        return suppress("missing-content has no workspace subject")
-
-    workspace_fact = ""
-    source_text = ""
-    if kind == "missing_file":
-        # An absence has nothing to quote: whatever the judge put in `evidence_quote` is not consulted.
-        # The absence is established only by the wsview resolution below.
-        if source != "workspace_absence":
-            return suppress("missing-file source contract")
-        rel, present, _body = _workspace_subject(workspace_root, subject)
-        if present is not False:
-            return suppress("file exists or workspace state is unknown")
-        evidence = prompts.render("negative_diagnosis_missing_file", subject=rel or subject)
-        if rlog is not None:
-            rlog.emit("loop.negative_diagnosis_supported", level="info", phase=phase,
-                      diagnosis_kind=kind, evidence_source=source)
-        # A diagnosis the judge itself typed `missing_file` keeps that type (and so the "create it" remediation
-        # downstream). One cria RE-typed from an absence fact only says the named file is not there: it does not
-        # establish that the file is a DELIVERABLE (a task can name an INPUT that is absent), so it carries a
-        # kind no remediation site acts on.
-        return VerdictNudge(prompts.render(
-            "negative_diagnosis", task_quote=task_quote, source=source, evidence=evidence),
-            task_quote, diagnosis_kind=("absent_named_file" if retyped else kind), subject=rel or subject)
-
-    if kind == "missing_content" and source != "workspace_file":
-        return suppress("missing-content source contract")
-    if kind == "failed_check" and source != "checks":
-        return suppress("failed-check source contract")
-    if source == "workspace_absence":
-        return suppress("absence source is only valid for a missing file")
-    if source == "workspace_file":
-        if not subject:
-            return suppress("workspace-file source has no subject")
-        rel, present, body = _workspace_subject(workspace_root, subject)
-        if present is not True or body is None:
-            return suppress("workspace file or complete content is unknown")
-        source_text = body
-        workspace_fact = prompts.render("negative_diagnosis_existing_file", subject=rel or subject)
-    elif source == "action_log":
-        source_text = action_log or ""
-    elif source == "checks":
-        source_text = checks or ""
-    elif source == "participation":
-        source_text = participation_facts or ""
-    if not evidence_quote or evidence_quote not in source_text:
-        return suppress("evidence quote is not exact")
-    if ask is None:
-        return suppress("semantic support unavailable")
-
-    # The action log is the unbounded input: composed blocks the floor can reduce, not one protected
-    # message (see `_diagnostic_action_verdict`).
-    composed = bool(action_log.strip()) and getattr(ask, "composes_evidence", False)
-    question = prompts.render(
-        "negative_diagnosis_support",
-        diagnosis_kind=kind,
-        subject=subject or "(none)",
-        task_quote=task_quote,
-        evidence_source=source,
-        evidence_quote=evidence_quote,
-        diagnosis=str(obj.get("reason") or obj.get("why") or "").strip() or "(none)",
-        proposed_fix=_fix_text(obj) or "(none)",
-        workspace_facts=workspace_fact or "(none available)",
-        checks=checks or "(none available)",
-        participation=participation_facts or "(none available)",
-        action_log=(prompts.load("negative_diagnosis_log_above") if composed
-                    else (action_log or "(none available)")))
-    answer = strip_think((ask(question, _evidence_blocks(action_log)) if composed
-                          else ask(question)) or "")
-    head = answer.upper().split()[0].strip(".,:;`*\"'") if answer.split() else ""
-    if head != "SUPPORTED":
-        return suppress("semantic support absent or undecidable")
-    if rlog is not None:
-        rlog.emit("loop.negative_diagnosis_supported", level="info", phase=phase,
-                  diagnosis_kind=kind, evidence_source=source)
-    return VerdictNudge(prompts.render(
-        "negative_diagnosis", task_quote=task_quote, source=source, evidence=evidence_quote),
-        task_quote)
+    result = definition.execute(completiondiagnosis.DiagnosisInput(
+        lambda: obj, task, action_log, checks, participation_facts, original_task, phase),
+        completiondiagnosis.GroundingServices(
+            lambda subject: _workspace_subject(workspace_root, subject), _evidence_blocks, _fix_text, ask, rlog))
+    return _diagnosis_nudge(result)
 
 
-def _restates_the_verdict(why: str, reason: str) -> bool:
-    """True when a confirm verdict's stated `why` IS the done-reason it was handed, word for word.
-
-    A verdict that says `consistent: false` and then gives, as its whole justification, the very
-    sentence that argued the step was DONE has not contradicted anything — it has echoed the
-    question. cria used to read the boolean and forward that sentence to the coder as the reason it
-    is NOT done, so the coder read "the coder successfully fetched the specification and extracted
-    all required endpoints" printed directly under "Do ONLY this step, then stop".
-
-    MEASURED across all 124 captured sessions on the box (288 confirm invocations parsed with cria's
-    own verdict reader, both phases): 125 answered false, and **40 of those 125 restate the done
-    reason verbatim** — 14% of every confirm ever run. All 40 are fabliq, which is also the model
-    that called an inspection tool 0 times in 87 confirm invocations; a judge that never looks has
-    nothing in its context but the reason it was handed, and hands it straight back. One run
-    (20260802T195958) contributed 36 of the 40 and never left step 1 in 255 calls; another
-    (20260802T214153) held step 1 of 5 from call 0037 to 0209 on work its own evidence had finished.
-    Verbatim example, both fields byte-identical: {"consistent": false, "why": "The coder
-    successfully fetched the Ada Handles API specification from https://api.handle.me/openapi.json
-    and extracted all required endpoints, request formats, and response structures."}
-
-    An EQUALITY test, not a similarity ratio — the same shape `_dedupe_doubled` uses on a doubled
-    steer, and for the same reason: "substantially a restatement" is a judgment, and a tuned ratio is
-    the pattern principle 9's corollary says to replace with a question rather than tune. The
-    normalisation is whitespace + case only. The remaining 85 falses were read: every one names a
-    real absence or contradiction, so a *non*-verbatim affirming why has zero measured instances and
-    no detector is built for it (principle 1 — the bar to ADD is high; principle 15 — base-rate it
-    first)."""
-    a = re.sub(r"\s+", " ", (why or "").strip()).casefold()
-    b = re.sub(r"\s+", " ", (reason or "").strip()).casefold()
-    return bool(a) and a == b
+_restates_the_verdict = completionconfirmation.restates_claim
 
 
 def _cria_measured_facts(sess) -> str:
@@ -1873,131 +1449,69 @@ def _cria_measured_facts(sess) -> str:
     return "\n\n".join(part for part in (offline, observed) if part)
 
 
-def _exact_form_blocks_completion(task: str, evidence: str, reasoner_chat, reasoner_role, rlog,
-                                  workspace_root: str = "") -> str:
-    """The coder-facing text that blocks an approval, or "" when it may stand.
+@dataclass(frozen=True)
+class _ApprovalQuestions:
+    """Transport/read services only; selected source definitions own approval."""
+    chat: Callable
+    role: object
+    log: object
+    workspace_root: str
 
-    The broad satisfaction verdict is one JSON object whose first field is the verdict, so a weak
-    judge commits to ``satisfied`` before it has compared anything.  C13-C: it approved a 29-byte
-    file for a task that required 30 (a final line break), with the task, the write and the read all
-    intact in its prompt — 3 of 3 replays, and again with exact counts appended to the broad prompt.
-    Deterministic code GATHERS the counts of the CURRENT content of the files the session wrote or
-    edited (:func:`_written_file_facts`, never a command or path string); ONE focused question asks
-    whether the task states an exact requirement those counts contradict, requirement quoted before
-    the verdict.  Only ``contradicted: false`` lets the approval stand; an unreadable answer fails
-    CLOSED.  What the coder is told is cria's own measurement, never the judge's words.  A fact the
-    disk can no longer vouch for is never stated (a veto the disk can settle is settled by the disk),
-    so with no counts there is nothing to ask."""
-    facts = filefacts.extract(evidence)
-    if not facts:
-        return ""
-    def ask(name: str, need: tuple = (), **tokens) -> dict | None:
-        """One focused closed question → its JSON object; ONE re-ask on an unreadable answer (as
-        _confirm_completion does) before the caller fails closed."""
-        for _ in range(2):
-            raw = ask_closed(reasoner_chat, reasoner_role, prompts.render(name, **tokens), rlog,
-                             phase=name.replace("_", "-"), retry_off=False)
-            got = extract_json_object(reasoner_role.clean_content(raw) if reasoner_role is not None else raw)
-            if isinstance(got, dict) and set(need) <= got.keys():
-                return got
-        return None
+    def closed(self, prompt: str, *, phase: str) -> str:
+        return ask_closed(self.chat, self.role, prompt, self.log, phase=phase, retry_off=False)
 
-    obj = ask("exact_form_requirement", need=("bytes", "ends_with_line_break"), task=task, facts=facts)
-    if obj is None:
-        if rlog is not None:
-            rlog.emit("loop.exact_form_requirement", contradicted="unknown")
-        return prompts.load("unverified_step")
-    # The judge only EXTRACTS what the task fixes; the comparison is arithmetic on measured counts,
-    # and a FIGURE vetoes only when the quote itself fixes it.  A quote not in the task, a file nobody
-    # counted, a byte count the quote does not contain, or an ending the quote does not state cannot
-    # veto (the false positives of the first focused question were exactly these).
-    quote = " ".join(str(obj.get("quote") or "").split())
-    grounded = bool(quote) and quote in " ".join(task.split())
-    want_file = str(obj.get("file") or "").strip()
-    measured = next(((n, e) for p, n, e in filefacts.parse(evidence)
-                     if want_file and _same_workspace_path(p, want_file, workspace_root)), None)
-    contradicted = unreadable = False
-    if grounded and measured is not None:
-        n, ends = measured
-        want_bytes, want_end = obj.get("bytes"), obj.get("ends_with_line_break")
-        if isinstance(want_bytes, int) and not isinstance(want_bytes, bool) and want_bytes != n:
-            # A number in the quote is not a byte size ("at most 200 words", "under 100 lines", a value
-            # inside a config): ONE focused question about the quote alone settles what it fixes.
-            said = ask("exact_form_bytes_confirm", need=("exact_bytes",), quote=quote)
-            if said is None:
-                unreadable = True
-            else:
-                fixed = said["exact_bytes"]
-                contradicted = (isinstance(fixed, int) and not isinstance(fixed, bool)
-                                and fixed == want_bytes)
-        if isinstance(want_end, bool) and want_end != ends and not contradicted and not unreadable:
-            said = ask("exact_form_ending_confirm", need=("states",), quote=quote)
-            if said is None:
-                unreadable = True
-            else:
-                contradicted = said.get("states") == ("ends_with_break" if want_end else "ends_without_break")
-    if rlog is not None:
-        rlog.emit("loop.exact_form_requirement", contradicted=contradicted, grounded=grounded,
-                  counted=measured is not None, unreadable=unreadable)
-    if unreadable:
-        return prompts.load("unverified_step")
-    return prompts.render("exact_form_unmet", facts=facts) if contradicted else ""
+    def clean(self, raw: str) -> str:
+        return self.role.clean_content(raw) if self.role is not None else raw
+
+    def object(self, raw: str) -> dict | None:
+        return extract_json_object(raw)
+
+    def inspect_tests(self, system: str, user: str) -> str:
+        return _completion_text(_judge_completion(
+            self.chat, self.role, system, user, self.log, phase="test-e2e-participation",
+            workspace_root=self.workspace_root, max_tokens=JUDGE_MAX_TOKENS, force_think_off=True))
 
 
-def _test_participation_blocks_completion(task: str, report, reasoner_chat, reasoner_role, rlog,
-                                          *, workspace_root: str = "") -> bool:
-    """Whether a task-required test remains unverified by this gate event.
+def _confirmation_facts():
+    return completionconfirmation.Facts(
+        surveyed=lambda root: bool(wsview.current(root).surveyed),
+        top_names=lambda root: wsview.current(root).listdir(root))
 
-    The participation report is the sole deterministic authority for what the gate executed.
-    Whether the original task requires a test deliverable, or specifically an end-to-end CLI/tool
-    test, is semantic.  A proven test run only clears the former: for the latter, a focused judge
-    reads the inspected test source and decides whether the executed test reaches the requested
-    executable boundary.  Missing or unreadable judgments cannot approve completion.
-    """
-    if report is None:
-        return False
-    support = report.support("test")
-    facts = participation.render_for_judge(report)
-    if support is not participation.Support.PROVEN:
-        answer = ask_closed(
-            reasoner_chat, reasoner_role,
-            prompts.render("test_participation_requirement", task=task, participation=facts), rlog,
-            phase="test-participation-requirement", retry_off=False).strip().upper()
-        required = answer == "REQUIRED"
-        if rlog is not None:
-            rlog.emit("loop.test_participation_requirement", support=support.value,
-                      required=required if answer else "unknown")
-        return answer != "NOT_REQUIRED"
 
-    requirement = ask_closed(
-        reasoner_chat, reasoner_role,
-        prompts.render("test_e2e_requirement", task=task), rlog,
-        phase="test-e2e-requirement", retry_off=False).strip().upper()
-    if rlog is not None:
-        rlog.emit("loop.test_e2e_requirement", required=(requirement == "E2E_REQUIRED")
-                  if requirement else "unknown")
-    if requirement == "NOT_REQUIRED":
-        return False
-    if requirement != "E2E_REQUIRED":
-        return True
-    sources = report.executed_test_sources()
-    if not sources or any(item.body is None for item in sources):
-        if rlog is not None:
-            rlog.emit("loop.test_e2e_participation", verdict="unverified-source")
-        return True
-    verdict = _completion_text(_judge_completion(
-        reasoner_chat, reasoner_role, prompts.load("test_e2e_participation"),
-        prompts.render("test_e2e_participation", task=task, participation=facts), rlog,
-        phase="test-e2e-participation", workspace_root=workspace_root, max_tokens=JUDGE_MAX_TOKENS,
-        force_think_off=True)).strip().upper()
-    if rlog is not None:
-        rlog.emit("loop.test_e2e_participation", verdict=verdict or "unknown")
-    return verdict != "PROVEN"
+def _confirmation_services(chat, role, log, diagnosis):
+    def inspect(request):
+        off_role = replace(role, reasoning="off") if role is not None else None
+        comp = _judge_completion(chat, off_role, request.system, request.user, log,
+            phase=request.phase, force_think_off=request.force_think_off,
+            workspace_root=request.workspace_root, answer_now_simple=request.answer_now_simple)
+        pending = tuple(call.get("id") or "" for choice in comp.get("choices", [])
+                        for call in (choice.get("message") or {}).get("tool_calls") or [])
+        return completionconfirmation.InspectionReply(comp, inspection_rounds(comp), pending)
+
+    def diagnose(request):
+        if diagnosis is None:
+            return ""
+        off_role = replace(role, reasoning="off") if role is not None else None
+        ask = (_composed_closed_ask(chat, off_role, log, phase=request.phase)
+               if role is not None else None)
+        result = diagnosis.execute(completiondiagnosis.DiagnosisInput(
+            candidate=lambda: request.verdict, task=request.claim, checks=request.checks,
+            original_task=request.original_task, phase=request.phase),
+            completiondiagnosis.GroundingServices(
+                lambda subject: _workspace_subject(request.workspace_root, subject),
+                _evidence_blocks, _fix_text, ask, log))
+        return str(_diagnosis_nudge(result))
+
+    return completionconfirmation.Services(_confirmation_facts(), inspect,
+        completionconfirmation.Readers(_completion_text,
+            role.clean_content if role is not None else lambda text: text,
+            _consistent_word, verdict_from_unclosed), diagnose)
 
 
 def _confirm_completion(claim: str, reason: str, workspace_root: str, reasoner_chat, reasoner_role,
-                        rlog, *, phase: str, cria_facts: str = "",
-                        original_task: str = "") -> Confirmation:
+                        rlog, *, phase: str, cria_facts: str | Callable[[], str] = "",
+                        original_task: str = "", authority=completionconfirmation.Authority.TASK,
+                        planning_enabled: bool = False) -> completionconfirmation.Result:
     """The APPROVE-path brake — one narrow, reasoning-off check run ONLY on a done/satisfied verdict:
     is the completion claim CONSISTENT with (a) the fresh on-disk listing and (b) the verdict's own
     reason? Measured need (n=3 in one day, both judges): a judge holding contrary ground truth in its
@@ -2030,125 +1544,24 @@ def _confirm_completion(claim: str, reason: str, workspace_root: str, reasoner_c
     the checker's own prompt), quoting it back would be a fair veto — and cria's response here is
     still to withhold approval. The only thing lost is the specific wording; the boolean is
     identical. Nothing can advance that would not have advanced before."""
-    if not workspace_root or not wsview.current(workspace_root).surveyed:
-        # THE BRAKE LETS GO, AND IT USED TO DO SO IN SILENCE. This function's own docstring calls a
-        # fail-open here "the fail-open on missing ground truth this whole file treats as the root of
-        # early exits", and `True` is CONFIRMED. The same condition also strips the judge's tools and
-        # its seeded files one screen down (`inspectable`), so the seat that approves the work is
-        # blinded by the same fact that disables its brake.
-        #
-        # It is still the right call — cria's own inability must not veto a real completion — but an
-        # unmeasurable one is not (#12). An unsurveyed view is a state cria can be IN for a whole
-        # session: the gate's survey used to overrun the shared result on a third of real workspaces
-        # and be refused wholesale, and `linterprobe.collect_files` then found nothing to probe.
-        rlog.emit("loop.confirm_unchecked", level="warn", phase=phase,
-                  why="no workspace root" if not workspace_root else "workspace not surveyed")
-        return Confirmation(True, False)
-    absent = step_names_absent_artifact(claim, workspace_root)
-    if absent:
-        rlog.emit("loop.confirm_absent_artifact", level="info", phase=phase, artifact=absent)
-        return Confirmation(False, True, prompts.render("confirm_absent_artifact", artifact=absent))
-    labels = prompts.load_map("verify_confirm")
-    role = replace(reasoner_role, reasoning="off") if reasoner_role is not None else None
-    looked: list[int] = [0]          # inspection rounds spent by the most recent `ask`
-
-    def ask(extra: str = "") -> tuple[bool | None, str, dict | None]:
-        """One confirm judgement → (consistent, why, object), or unknown when unreadable."""
-        user = prompts.fill(labels["user"], step=claim, reason=reason or "(none stated)")
-        # CRIA'S OWN MEASUREMENTS, which this judge deliberately does without the coder's narrative
-        # but should never do without. `_offline_fact` — the suite passed, and passed again with the
-        # network taken away — reached the coder in 20 prompts of L5 handles-cli-node x qwen35 and
-        # 0 of its 24 satisfaction-confirm prompts. The confirmer is the last word before the run is
-        # allowed to end; that run shipped seven tests that all pass before an assertion runs and
-        # cria approved it. This is a fact cria gathered by running things (#8), not a claim.
-        if cria_facts:
-            user += prompts.fill(prompts.load("confirm_cria_facts"), facts=cria_facts)
-        user += extra
-        comp = _judge_completion(reasoner_chat, role, labels["system"], user, rlog,
-                                 phase=phase, force_think_off=True, workspace_root=workspace_root,
-                                 answer_now_simple=verifytools.ANSWER_NOW_CONSISTENT)
-        looked[0] = inspection_rounds(comp)
-        vtext = _completion_text(comp)
-        if reasoner_role is not None:
-            vtext = reasoner_role.clean_content(vtext)
-        cleaned = strip_think(vtext)
-        word = _consistent_word(cleaned)
-        if word is not None:
-            # The one-word answer, plus whatever reason line followed it.
-            return word, "\n".join(cleaned.strip().splitlines()[1:]).strip(), None
-        obj = extract_json_object(cleaned)
-        if not isinstance(obj, dict) or not isinstance(obj.get("consistent"), bool):
-            # One absent closing brace is not "no answer" — but only a NOT-consistent one is
-            # recovered (verdict_from_unclosed). This is the APPROVE-path brake: recovering a
-            # `consistent: true` out of a defect in the bytes would confirm a done, which is the
-            # one direction principle 13 forbids; recovering the false costs a work turn.
-            # Truncation is refused HERE because this site, unlike the other two judges, has no
-            # is_truncated guard of its own: a reply cut at the cap is not an answer even when its
-            # bytes happen to balance once closed (rule #5).
-            recovered = (None if massage.is_truncated(comp)
-                         else verdict_from_unclosed(vtext, "consistent", rlog, phase))
-            if recovered is not None:
-                return (False,
-                        str(recovered.get("why") or recovered.get("reason") or "").strip(),
-                        recovered)
-            rlog.emit("loop.confirm_unparsed", level="warn", phase=phase)
-            return None, "", None
-        return obj["consistent"], str(obj.get("why") or obj.get("reason") or "").strip(), obj
-
-    verdict, why, diagnosis_obj = ask()
-    # AN APPROVAL FROM A JUDGE THAT NEVER LOOKED IS NOT AN APPROVAL.
-    #
-    # This seat's entire justification, in the docstring above, is that "a judge that must look
-    # cannot rubber-stamp a narrative" — and nothing made it look. Walked on handles-cli-node x
-    # nemotron-elastic 1787348728: the brake was handed the task and the satisfied verdict's own
-    # optimistic reason in 4,095 bytes, with reasoning off, and answered `{"consistent": true}` in
-    # fifteen tokens having called no tool at all. The workspace it approved held a CLI that dies on
-    # `ReferenceError: json is not defined` before it reads its first argument. Given only a claim
-    # and a task, agreeing is the only reachable answer.
-    #
-    # The old note here says cria "cannot see whether it looked". It can: the inspection round count
-    # is on the completion, and it is the authoritative event (#12). One escalated re-ask, pointing
-    # it back at the tools it holds — the same bounded shape the restate path below already uses —
-    # and if it still answers without opening anything, the approval does not stand. Fail CLOSED is
-    # the safe direction on completion (#13): the cost is a work turn cria has already paid for.
-    if verdict is True and not looked[0]:
-        rlog.emit("loop.confirm_without_looking", level="warn", phase=phase)
-        verdict, why, diagnosis_obj = ask("\n\n" + labels["restate"])
-        if verdict is True and not looked[0]:
-            rlog.emit("loop.confirm_without_looking_twice", level="warn", phase=phase)
-            verdict = None
-    if verdict is False and _restates_the_verdict(why, reason):
-        # ONE re-ask, escalated — the checker is told that echoing the reason answers nothing and
-        # pointed back at the tools it holds. A plain repeat would be worthless: the judge call runs
-        # at temperature 0, so the identical prompt returns the identical echo. The escalation is
-        # neutral on the answer (it demands the missing artifact OR the contradiction OR consistent)
-        # and asserts nothing about what the judge did — cria cannot see whether it looked, and a
-        # "you did not look" it cannot check would be the false fact principle 5b forbids.
-        rlog.emit("loop.confirm_restated_claim", level="warn", phase=phase, head=_clip(why, 120))
-        verdict, why, diagnosis_obj = ask("\n\n" + labels["restate"])
-        if verdict is False and _restates_the_verdict(why, reason):
-            rlog.emit("loop.confirm_restated_twice", level="warn", phase=phase)
-            verdict = None
-    if verdict is None:
-        # The coder-facing reason is the plain keep-working instruction, never cria's bookkeeping and
-        # never the satisfied-verdict's own reason (which argues the opposite of what the caller is
-        # about to say) — same wording the satisfaction path already uses when it fails closed. That
-        # rule was written for the unparseable case and the echo is exactly the case it names: the
-        # done-reason arriving back as the not-done reason, only this time through a verdict that
-        # parsed. Both callers (_verify and judge_satisfaction) inject this string verbatim.
-        return Confirmation(False, True, prompts.load("unverified_step"))
-    if verdict is False:
-        # A refuted or undecidable diagnosis cannot approve the task and cannot be forwarded. The
-        # boolean remains false; only a typed, current-evidence-backed explanation may accompany it.
-        semantic_ask = (_composed_closed_ask(reasoner_chat, role, rlog,
-                                             phase=phase + "-diagnosis")
-                        if reasoner_role is not None else None)
-        nudge = _negative_diagnosis_nudge(
-            diagnosis_obj or {}, task=claim, original_task=original_task, checks=cria_facts,
-            workspace_root=workspace_root, ask=semantic_ask, rlog=rlog,
-            phase=phase + "-diagnosis")
-        return Confirmation(False, True, str(nudge))
-    return Confirmation(bool(verdict), True, why)
+    root = assistruntime.current()
+    selection = completionconfirmation.Selection(root.completion_confirmation, root.engagement_level,
+                                                 planning_enabled=planning_enabled)
+    result = selection.run(authority,
+        lambda: completionconfirmation.Input(claim, reason, workspace_root, rlog, phase, authority,
+            cria_facts() if callable(cria_facts) else cria_facts, original_task),
+        lambda: _confirmation_services(reasoner_chat, reasoner_role, rlog, root.completion_diagnosis))
+    if (not isinstance(result, completionconfirmation.Result)
+            or not isinstance(result.status, completionconfirmation.Status)
+            or result.authority is not authority or not isinstance(result.reason, str)
+            or result.confirmed is not (result.status in (completionconfirmation.Status.CONFIRMED,
+                                                         completionconfirmation.Status.UNCHECKED))
+            or type(result.observed) is not bool
+            or result.status is completionconfirmation.Status.CONFIRMED and not result.observed
+            or result.status in (completionconfirmation.Status.NOT_SELECTED,
+                                 completionconfirmation.Status.UNCHECKED) and result.observed):
+        raise ValueError("Completion confirmation replacement must return matching Result")
+    return result
 
 
 # A judge's own THINKING, when its final answer was not a verdict. Recovers ONLY a NOT-satisfied
@@ -2435,26 +1848,36 @@ def judge_satisfaction(task: str, evidence: str, reasoner_chat, reasoner_role, r
         # (catching a placeholder/mocked "solution" — e.g. hardcoding the task's example handles so the
         # unit tests pass while nothing really resolves).
         satisfied = bool(obj.get("satisfied"))
-        if satisfied and _test_participation_blocks_completion(
-                task, getattr(sess, "last_gate_participation", None), reasoner_chat, reasoner_role, rlog,
-                workspace_root=workspace_root):
-            return False, prompts.load("required_test_unverified"), ""
         if satisfied:
-            blocked = _exact_form_blocks_completion(task, evidence, reasoner_chat, reasoner_role, rlog,
-                                                 workspace_root=workspace_root)
-            if blocked:
-                return False, blocked, ""
+            questions = _ApprovalQuestions(reasoner_chat, reasoner_role, rlog, workspace_root)
+            for definition in assistruntime.current().pre_release:
+                if isinstance(definition, completionapproval.ParticipationDefinition):
+                    source = completionapproval.ParticipationInput(
+                        task, lambda: getattr(sess, "last_gate_participation", None), questions, rlog)
+                    withheld = "required_test_unverified"
+                else:
+                    source = completionapproval.ExactFormInput(
+                        task, lambda: evidence,
+                        lambda a, b: _same_workspace_path(a, b, workspace_root), questions, rlog)
+                    withheld = "unverified_step"
+                result = definition.execute(source)
+                if (not isinstance(result, completionapproval.ApprovalResult)
+                        or not isinstance(result.status, completionapproval.ApprovalStatus)):
+                    raise ValueError("Completion approval replacement must return ApprovalResult")
+                if result.blocks:
+                    return False, result.text or prompts.load(withheld), ""
         if satisfied and workspace_root:
             # The approve-path brake (see _confirm_completion): "satisfied" must be consistent with
             # the FRESH on-disk listing and with its own stated reason (m6 ended a run with no README
             # while the listing in the judge's prompt proved its absence).
-            confirmed, why = _confirm_completion(task, str(obj.get("reason") or ""), workspace_root,
+            confirmation = _confirm_completion(task, str(obj.get("reason") or ""), workspace_root,
                                                  reasoner_chat, reasoner_role, rlog,
                                                  phase="satisfaction-confirm", original_task=task,
-                                                 cria_facts=_cria_measured_facts(sess))
-            rlog.emit("loop.satisfaction_confirm", confirmed=confirmed)
-            if not confirmed:
-                return False, why, ""
+                                                 cria_facts=lambda: _cria_measured_facts(sess))
+            if confirmation.status is not completionconfirmation.Status.NOT_SELECTED:
+                rlog.emit("loop.satisfaction_confirm", confirmed=confirmation.confirmed)
+                if not confirmation.confirmed:
+                    return False, confirmation.reason, ""
         # The ACTION comes back separately so a caller building a plan step can use the fix alone —
         # the old single string (framing + reason essay + fix) became a whole step verbatim
         # (run 0729-mellum2: a diagnostic paragraph as step 3, held for 118 calls).
@@ -2514,40 +1937,56 @@ def observe_task_missing_file(task: str, *, workspace_root: str, reasoner_chat, 
     negative-diagnosis owner independently grounds required-output status in the original task
     and re-checks current wsview absence before the pre-frame owner can arm a remediation.
     """
-    if not (task.strip() and workspace_root and reasoner_chat is not None):
+    definition = assistruntime.current().completion_diagnosis
+    if definition is None:
         return VerdictNudge()
-    inventory = workspace_inventory(workspace_root)
-    try:
-        comp = _judge_completion(
-            reasoner_chat, reasoner_role, prompts.load("deliverable_observation"),
-            # THE FACT THE QUESTION TURNS ON, handed over rather than left to be asked for. The only
-            # workspace evidence this prompt carried was the readable files' contents plus a "named, not
-            # shown" list — no statement of what the directory holds, so "absent" was never establishable
-            # and an observer obeying its own "only when completely established" rule answered false
-            # over a REVIEW.md the task names and the disk lacks (A2 call 0008). Gathering a listing is
-            # deterministic code's job (#8); the inventory withholds its "not listed = does not exist"
-            # clause itself whenever the survey is partial, folded or overtaken (#11b).
-            prompts.render("deliverable_observation_user", task=task,
-                           inventory=f"{inventory}\n\n" if inventory else ""), rlog,
-            phase="deliverable-observation", workspace_root=workspace_root,
-            verdict_key="missing_file", verdict_schema="observation", seed_files=True)
-    except Exception as e:
-        rlog.emit("loop.deliverable_observation_error", level="warn", error=str(e))
-        return VerdictNudge()
-    if massage.is_truncated(comp):
-        rlog.emit("loop.deliverable_observation_truncated", level="warn")
-        return VerdictNudge()
-    text = _completion_text(comp)
-    if reasoner_role is not None:
-        text = reasoner_role.clean_content(text)
-    obj = extract_json_object(text)
-    if not isinstance(obj, dict) or obj.get("missing_file") is not True:
-        return VerdictNudge()
-    return _negative_diagnosis_nudge(
-        obj, task=task, original_task=task, workspace_root=workspace_root, rlog=rlog,
-        ask=(_composed_closed_ask(reasoner_chat, reasoner_role, rlog,
-                                 phase="deliverable-observation-requirement")
-             if reasoner_role is not None else None), phase="deliverable-observation")
+    return _diagnosis_nudge(definition.observe(
+        completiondiagnosis.ObservationInput(task, bool(workspace_root and reasoner_chat is not None)),
+        _diagnosis_observation_services(definition, workspace_root, reasoner_chat, reasoner_role, rlog)))
+
+
+def _diagnosis_nudge(result) -> VerdictNudge:
+    result = completiondiagnosis._diagnosis_result(result)
+    nudge = (VerdictNudge(result.evidence, result.action,
+                         diagnosis_kind=result.diagnosis_kind, subject=result.subject)
+             if result.status is completiondiagnosis.DiagnosisStatus.GROUNDED else VerdictNudge())
+    nudge.diagnosis_result = result
+    return nudge
+
+
+def _diagnosis_observation_services(definition, root, chat, role, log):
+    grounding = completiondiagnosis.GroundingServices(
+        lambda subject: _workspace_subject(root, subject), _evidence_blocks, _fix_text,
+        _composed_closed_ask(chat, role, log, phase="deliverable-observation-requirement")
+        if role is not None else None, log)
+    return completiondiagnosis.ObservationServices(
+        inventory=lambda: workspace_inventory(root),
+        judge=lambda system, user: _judge_completion(chat, role, system, user, log,
+            phase="deliverable-observation", workspace_root=root, verdict_key="missing_file",
+            verdict_schema="observation", seed_files=True),
+        truncated=massage.is_truncated, text=_completion_text,
+        clean=role.clean_content if role is not None else lambda text: text,
+        grounding=grounding, execute=definition.execute)
+
+
+def _diagnosis_delivery_services(definition, root, log):
+    def observation():
+        view = wsview.current(root) if root else None
+        return view.observation_fingerprint if view is not None else None
+    return completiondiagnosis.DeliveryServices(
+        observation=observation, event_head=_clip, arm=definition.arm, log=log)
+
+
+def _diagnosis_lifecycle_services(definition, root, chat, role, log):
+    return completiondiagnosis.ObservationLifecycleServices(
+        observer=_diagnosis_observation_services(definition, root, chat, role, log),
+        delivery=_diagnosis_delivery_services(definition, root, log), due=periodic_check_due,
+        observe=definition.observe, deliver=definition.deliver)
+
+
+def _diagnosis_remediation_services(root="", log=None):
+    return completiondiagnosis.RemediationServices(
+        _write_path, lambda a, b: _same_workspace_path(a, b, root), _command_text, log)
 
 
 def satisfaction_done_note(reason: str, *, checks_ran: bool = True) -> str:
@@ -2669,42 +2108,51 @@ def _evidence_blocks(text: str, limit: int = EVIDENCE_BLOCK_CHARS) -> list[str]:
     return blocks
 
 
-def _summarised_evidence(log: str, chat_fn, role, rlog) -> str:
-    """`log` condensed by the MODEL, labelled as a summary — never a clip. Returns the log unchanged
-    when there is no reasoner or the summary comes back empty: carrying too much is recoverable, and
-    a silent slice is not (#5, #13)."""
-    ready = chat_fn is not None and role is not None and rlog is not None
-    text = summarize(chat_fn, role, prompts.load("evidence_summary"), log, rlog,
-                     phase="compactor") if ready else ""
-    if not text.strip():
-        return log
-    if rlog is not None:
-        rlog.emit("evidence.summarised", level="info",
-                  chars_before=len(log), chars_after=len(text))
-    return prompts.render("evidence_summary_note", summary=text.strip())
+def _summarised_evidence(log: str, chat_fn, role, rlog, *, _consume=None) -> str:
+    """Bind one selected evidence lifecycle to the consumer's actual local slot.
+
+    Selection, folding, summary admission and labelling belong to the Source.
+    The consumer assembles its packet before settlement; this is not wire ACK.
+    No result or definition is cached across invocations or recursive consumers.
+    """
+    definition = assistruntime.current().evidence_summary
+    if definition is None:
+        return _consume(log) if _consume is not None else log
+    result = definition.execute(evidencesummary.Input(log, summarize, chat_fn, role, rlog))
+    if (not isinstance(result, evidencesummary.Result)
+            or not all(isinstance(value, str) for value in (result.raw, result.folded, result.selected))
+            or result.raw != log or not isinstance(result.selection, evidencesummary.Selection)
+            or type(result.folded_actions) is not int or result.folded_actions < 0
+            or result.summary is not None and not isinstance(result.summary, str)):
+        raise ValueError("Evidence summary replacement must return matching Result")
+    slot = result.selected
+    consumed = _consume(slot) if _consume is not None else slot
+    settled = definition.settle(result, slot)
+    if settled is None and result.selection is evidencesummary.Selection.DISABLED:
+        return consumed
+    if (not isinstance(settled, evidencesummary.Settlement) or settled.result is not result
+            or not isinstance(settled.delivered, str) or settled.delivered != slot
+            or type(settled.selected_delivered) is not bool
+            or settled.selected_delivered != (slot == result.selected)):
+        raise ValueError("Evidence summary replacement must return matching Settlement")
+    return consumed
 
 
-def _dedup_evidence(log: str, rlog=None, chat_fn=None, role=None) -> str:
-    """The work log with byte-identical repeated ACTION BLOCKS folded to one copy plus a pointer.
+def _dedup_evidence(log: str, rlog=None, chat_fn=None, role=None, *, _consume=None) -> str:
+    """Compatibility entry for selected evidence, never a separate folding policy.
 
-    THIS REPLACED A TAIL CLIP (`_bound_evidence`, 24,000 characters, head discarded). #5 now reads
-    "cria never truncates" for every reader — a judge's and a steer author's prompt included — with
-    de-duplication and a model-made summary as the only exceptions. The incident that justified the
-    old budget is the argument for folding rather than clipping: live on run 0726-203600, stuck on
-    step 5, the log grew 34KB -> 106KB -> 223KB across re-nudges on ONE step, which is the same
-    actions re-rendered. Folding removes exactly that redundancy and keeps every DISTINCT action; the
-    clip removed whichever happened to be oldest, which on a stuck step is the write that started it.
+    The former 24,000-character tail clip lost the write that began a stuck step;
+    its replacement retains distinct actions and labels model-made summaries.
+    The selected Source owns that choice; final fitting remains at the wire.
+    """
+    return _summarised_evidence(log, chat_fn, role, rlog, _consume=_consume)
 
-    What is left after folding is fitted by the context floor, which is the one lossless-first place
-    (#5) — and `_work_log`'s own docstring already said so: "a per-site clip here would just be a
-    dumber, undetectable slice of what the model reads"."""
-    out, folded = dedup.fold_repeated_actions(log, prompts.load(dedup.REPEAT_NOTE_KEY).strip())
-    if folded and rlog is not None:
-        rlog.emit("evidence.repeats_folded", level="info", folded=folded,
-                  chars_before=len(log), chars_after=len(out))
-    if len(out) > EVIDENCE_SUMMARY_TRIGGER_CHARS:
-        out = _summarised_evidence(out, chat_fn, role, rlog)
-    return out
+
+@dataclass(frozen=True)
+class RewriteObservation:
+    """One Store-owned pending event; never a model-authored or message-derived receipt."""
+    key: str
+    event_id: str
 
 
 class LoopStore:
@@ -2713,16 +2161,15 @@ class LoopStore:
     only — the completion BRIEFING is never stored here; it rides in the conversation (embedded
     in the closing message) and is re-read from the history the harness sends back.
 
-    ``state_path`` (optional) persists the shapes as one small JSON file so a cria restart
-    doesn't orphan detection. Live ``PlanSession``s are deliberately NOT persisted (a Plan
-    mid-flight has in-memory phases/flags; resuming one across a restart is future work,
-    recorded in docs/port-fidelity-audit.md)."""
+    ``state_path`` persists shapes and the durable subset of live sessions. Transient
+    gates and judgment signatures are not resumed; selection IDs are a task contract
+    and survive reconstruction, while executable callables never enter the state file."""
 
     def __init__(self, state_path: str | None = None) -> None:
-        self._sessions: dict[str, PlanSession] = {}
+        self._sessions: dict[str, GuardState] = {}
         # In-flight pre-plan survey state is not a plan and must not survive a restart.
         self._bootstraps: dict[str, SurveyBootstrap] = {}
-        # session key -> {"fp": sha1-of-root, "n": msg count, "pending": rewrite?, "done": completed a plan?}
+        # session key -> {fp, n, pending, done, rewrite_id}: opaque pending identity survives restart.
         # DETECTION state only — the completion briefing itself is never stored server-side; it
         # rides in the conversation (the closing message) and is re-read from history.
         self._shapes: dict[str, dict] = {}
@@ -2732,7 +2179,22 @@ class LoopStore:
 
     def get(self, key: str) -> PlanSession | None:
         with self._lock:
-            return self._sessions.get(key)
+            owner = self._sessions.get(key)
+            return owner if isinstance(owner, PlanSession) else None
+
+    def get_guard(self, key: str, *, create: bool = False) -> GuardState | None:
+        """Actual process-local task owner, also when no planning driver exists."""
+        with self._lock:
+            owner = self._sessions.get(key)
+            if owner is None and create:
+                owner = GuardState()
+                self._sessions[key] = owner
+                retired = self._bound_sessions_locked()
+            else:
+                retired = ()
+        for departed in retired:
+            self._retire_guard(departed)
+        return owner
 
     def get_bootstrap(self, key: str) -> SurveyBootstrap | None:
         with self._lock:
@@ -2765,7 +2227,7 @@ class LoopStore:
                 sess.fetched_pages = _merge_fetches(dict(sess.fetched_pages or {}),
                                                     prev.fetched_pages)
             if prev is not None and _stable_session(key):
-                sess.handoff_origin = prev.handoff_origin
+                sess.handoff_origin = getattr(prev, 'handoff_origin', None)
                 previous_refusals = _session_refusals(prev)
                 current_refusals = _session_refusals(sess)
                 if isinstance(previous_refusals, refusalledger.RefusalLedger):
@@ -2782,8 +2244,10 @@ class LoopStore:
                         sess.refused_names = set(current_refusals or set()) | set(previous_refusals)
             self._sessions.pop(key, None)          # re-put refreshes recency
             self._sessions[key] = sess
-            self._bound_sessions_locked()
+            retired = self._bound_sessions_locked()
             self._save_locked()
+        for departed in (([prev] if prev is not None and prev is not sess else []) + retired):
+            self._retire_guard(departed)
 
     def persist(self, key: str) -> None:
         """Re-save after in-place PlanSession mutations (step advanced, nudge recorded) — a cria
@@ -2793,7 +2257,7 @@ class LoopStore:
             if key in self._sessions:
                 self._save_locked()
 
-    def _bound_sessions_locked(self) -> None:
+    def _bound_sessions_locked(self) -> list[GuardState]:
         """Evict the least recently put sessions past the bound.
 
         `_shapes` is capped on write AND on load; `_sessions` was capped nowhere, and its only
@@ -2806,13 +2270,28 @@ class LoopStore:
 
         Bounded the way the shapes beside it are, oldest-put first, so a live session is never the
         one evicted."""
+        retired = []
         while len(self._sessions) > _MAX_SESSIONS:
-            self._sessions.pop(next(iter(self._sessions)))
+            retired.append(self._sessions.pop(next(iter(self._sessions))))
+        return retired
+
+    @staticmethod
+    def _retire_guard(owner) -> None:
+        # Invalidate through each obligation's actual captured Source owner, never a new selection.
+        for offered in (getattr(owner, 'externalization_offers', None) or {}).values():
+            delivery = getattr(offered, 'delivery', None) or getattr(offered, 'externalization', None)
+            if delivery is not None:
+                delivery.cancel()
+                delivery.reset()
+        owner.externalization_offers = None
+        owner.externalization_state = None
 
     def drop(self, key: str) -> None:
         with self._lock:
-            self._sessions.pop(key, None)
+            owner = self._sessions.pop(key, None)
             self._save_locked()
+        if owner is not None:
+            self._retire_guard(owner)
 
     def mark_done(self, key: str) -> None:
         """Record that this session COMPLETED a plan — a one-bit detection signal (the briefing
@@ -2830,7 +2309,11 @@ class LoopStore:
             return bool(shape and shape.get("done"))
 
     def observe_shape(self, key: str, fp: str, n_messages: int) -> bool:
-        """Record this session's conversation SHAPE; return True while a rewrite is PENDING — the
+        """Compatibility boolean over the same authoritative observation/update."""
+        return self.observe_shape_with_ticket(key, fp, n_messages) is not None
+
+    def observe_shape_with_ticket(self, key: str, fp: str, n_messages: int) -> RewriteObservation | None:
+        """Record this session's conversation SHAPE; return its pending event ticket — the
         harness REPLACED the history under a stable session key. Structural, no phrase-matching.
 
         TWO signals, because harnesses rewrite two different ways and cria only watched for one:
@@ -2849,25 +2332,43 @@ class LoopStore:
         a harness compaction — no false positives. 56 of the 60 compacting sessions show it (the
         other 4 ended on the compaction).
 
-        The signal is STICKY: a detected rewrite stays pending until ``clear_rewrite`` — so a
-        turn that couldn't act on it (planner failed, non-task decline) doesn't consume it; the
-        next turn still knows the history was rewritten."""
+        The signal is STICKY: a detected rewrite stays pending until its observed delivery is
+        acknowledged, or an explicit handled branch calls ``clear_rewrite``. A failed/deferred
+        turn doesn't consume it; append-only observations retain the same event identity."""
         if not fp:
-            return False
+            return None
         with self._lock:
             prev = self._shapes.get(key)
             shrank = prev is not None and n_messages < int(prev.get("n") or 0)
             changed = prev is not None and (prev.get("fp") != fp or shrank)
             pending = changed or bool(prev and prev.get("pending"))
+            event_id = prev.get("rewrite_id") if prev else None
+            assign_id = pending and (changed or not isinstance(event_id, str) or not event_id)
+            if assign_id:
+                event_id = uuid.uuid4().hex
             first_sight = prev is None
             self._shapes.pop(key, None)  # re-put refreshes recency
             self._shapes[key] = {"fp": fp, "n": n_messages, "pending": pending,
-                                 "done": bool(prev and prev.get("done"))}  # done bit survives re-puts
+                                 "done": bool(prev and prev.get("done")),
+                                 "rewrite_id": event_id}  # identity survives append-only updates/restarts
             while len(self._shapes) > _MAX_SHAPES:
                 self._shapes.pop(next(iter(self._shapes)))
-            if first_sight or changed:  # persist only on shape changes, not every turn
+            if first_sight or changed or assign_id:
                 self._save_locked()
-        return pending
+            return RewriteObservation(key, event_id) if pending else None
+
+    def ack_rewrite(self, observed: RewriteObservation | None) -> bool:
+        """Commit only the observed event, never a newer or another session's rewrite."""
+        if (not isinstance(observed, RewriteObservation)
+                or not isinstance(observed.event_id, str) or not observed.event_id):
+            return False
+        with self._lock:
+            shape = self._shapes.get(observed.key)
+            if not shape or not shape.get("pending") or shape.get("rewrite_id") != observed.event_id:
+                return False
+            shape["pending"] = False
+            self._save_locked()
+            return True
 
     def clear_rewrite(self, key: str) -> None:
         """The pending rewrite was ACTED on (continuation planned / probe re-issued / live turn
@@ -2883,7 +2384,8 @@ class LoopStore:
         shape. The server keeps routing known sessions through the loop so a post-compaction
         continuation can't be lost to a mis-classified turn."""
         with self._lock:
-            return key in self._sessions or key in self._bootstraps or key in self._shapes
+            return (isinstance(self._sessions.get(key), PlanSession)
+                    or key in self._bootstraps or key in self._shapes)
 
     # ------------------------------------------------------------- persistence
 
@@ -2917,7 +2419,8 @@ class LoopStore:
             tmp = self._state_path.with_suffix(".tmp")
             tmp.write_text(json.dumps({"shapes": self._shapes,
                                        "sessions": {k: _session_to_dict(v)
-                                                    for k, v in self._sessions.items()}},
+                                                    for k, v in self._sessions.items()
+                                                    if isinstance(v, PlanSession)}},
                                       ensure_ascii=False), encoding="utf-8")
             tmp.replace(self._state_path)
         except OSError:
@@ -2962,7 +2465,7 @@ class LoopContext:
     # cycle-1 captures took it. Read as "planner off means one item", it manufactures a bug report:
     # it did, on 2026-08-14.
     # The planner object above is then dormant (plan_for is never called on the synthetic path).
-    planner_enabled: bool = True
+    planner_enabled: bool = False
     # Periodic SATISFACTION check cadence for the single-item path — start at drive `start`, then every
     # `every` drives (operator-tunable [context]; 0 disables). Only the single-item off-ramps use these.
     satisfaction_check_start: int = 100
@@ -2984,6 +2487,7 @@ class LoopContext:
     # counter fired → level 5. So `done_critic` and the completion probe are 4 while
     # `satisfaction_check` and `periodic_gate` are 5, though they call the same functions.
     assists: bool = True
+    pilot_runtime: assistruntime.AssistRuntime = field(default_factory=assistruntime.AssistRuntime)
 
 
 class _IncompleteCoderTurn(Exception):
@@ -2991,6 +2495,42 @@ class _IncompleteCoderTurn(Exception):
     def __init__(self, completion: dict):
         super().__init__('Coder reply remains incomplete after existing guards')
         self.completion = completion
+
+
+class _LivingTailView:
+    """Source correlation and one-shots backed by the existing driver owner."""
+    _fields = {'step_key': 'living_step_key', 'plan_id': 'living_plan_id', 'task': 'living_task',
+               'critic_rescue_used': 'verify_replanned', 'thrash_rescue_used': 'thrash_replanned',
+               'sequence': 'living_sequence', 'pending': 'living_pending'}
+    reset = livingplan.TailState.reset
+    fork = livingplan.TailState.fork
+
+    def __init__(self, owner):
+        object.__setattr__(self, '_owner', owner)
+
+    def __getattr__(self, name):
+        return getattr(self._owner, self._fields[name])
+
+    def __setattr__(self, name, value):
+        setattr(self._owner, self._fields[name], value)
+
+
+class _PastedFileView:
+    """Borrow the task's actual memo and transient delivery fields, never copy them."""
+    _fields = {'judged': 'text_write_judged', 'other': 'pasted_block_other',
+               'unread_fact': 'unread_target_fact', 'prepared': 'pasted_prepared',
+               'pending_nudge': 'pasted_pending_nudge', 'delivered_nudge': 'pasted_delivered_nudge',
+               'delivery': 'pasted_delivery', 'deliveries': 'pasted_deliveries',
+               'settlements': 'pasted_settlements'}
+
+    def __init__(self, owner):
+        object.__setattr__(self, '_owner', owner)
+
+    def __getattr__(self, name):
+        return getattr(self._owner, self._fields[name], '' if name == 'unread_fact' else None)
+
+    def __setattr__(self, name, value):
+        setattr(self._owner, self._fields[name], value)
 
 
 class Loop:
@@ -3028,7 +2568,8 @@ class Loop:
         reaches the loop's structural rewrite detection instead of being proxied blind."""
         return self._store.knows(key)
 
-    def visible_context_tokens(self, body: dict, session_key: str, *, fold: bool = False) -> int:
+    def visible_context_tokens(self, body: dict, session_key: str, *, fold: bool = False,
+                               definitions: tuple[modelview.WireDefinition, ...] | None = None) -> int:
         """Pre-floor size of the conversation the CODER would be shown for this request — the number
         the server reports to the harness as usage (`server._report_context_usage`).
 
@@ -3048,14 +2589,23 @@ class Loop:
         bootstrap = getattr(self._store, "get_bootstrap", lambda _key: None)(session_key)
         gate_plan = (getattr(sess, "gate_plan", None) if sess is not None
                      else getattr(bootstrap, "gate_plan", None))
-        framed = _frame_for_item(
-            body.get("messages", []), "", getattr(sess, "summary", "") or "", 1, 1,
-            prior_work=getattr(sess, "prior_work", "") or "", tools=body.get("tools"),
-            synthetic=True, gate_plan=gate_plan,
-            workspace_root=getattr(sess, "workspace_root", None),
-            gate_red=bool(getattr(sess, "last_gate_red", False)),
-            suppress_plan_cursor=bool(getattr(sess, "replan_uncovered", False)))
-        return modelview.visible_tokens(framed, body.get("tools"), fold=fold)
+        runtime = self._ctx.pilot_runtime
+        definitions = runtime.wire_folds if definitions is None else definitions
+        with assistruntime.bound(runtime):
+            base = _required_coder_base(body.get("messages", []), tools=body.get("tools"),
+                prior_work=getattr(sess, "prior_work", "") or "", gate_plan=gate_plan,
+                workspace_root=getattr(sess, "workspace_root", None), reframe=True,
+                suspend_cursor=bool(getattr(sess, "replan_uncovered", False)))
+            framed = base.messages
+        return modelview.visible_tokens(framed, body.get("tools"), fold=fold, definitions=definitions)
+
+    def _initial_policies(self, session_key: str = '', *, owner=None) -> planner.PlanningSelection:
+        state = owner if owner is not None else (self._store.get(session_key)
+            or self._store.get_bootstrap(session_key))
+        if state is not None:
+            _pin_pilot_runtime(state, self._ctx.pilot_runtime)
+            return state.pilot_binding.initial_planning
+        return self._ctx.pilot_runtime.initial_planning
 
     def _plan_for(self, messages: list[dict], rlog, session_key: str = "", **frame) -> tuple[Plan | None, planner.PlanOutcome]:
         """Plan with outcome owned by this drive, not the shared Planner instance.
@@ -3066,18 +2616,47 @@ class Loop:
         task text happens to hash the same is silenced by a give-up that was never its own — see C30).
         """
         outcome = planner.PlanOutcome()
+        policies = self._initial_policies(session_key)
+        if not self._ctx.planner_enabled or not policies.bindings('experimental-plan-gather'):
+            return None, outcome
         source = self._ctx.planner
         if isinstance(source, planner.Planner):
-            return source.plan_for(messages, rlog, outcome=outcome, session_key=session_key, **frame), outcome
+            if assistruntime.current().externalization is not None:
+                outcome.externalization_owner = self._store.get_guard(session_key, create=True)
+                outcome.current_externalization_owner = lambda: self._store.get_guard(session_key)
+            return source.plan_for(messages, rlog, outcome=outcome, session_key=session_key,
+                                   policies=policies, **frame), outcome
         return source.plan_for(messages, rlog, **frame), outcome
+
+    def _new_bootstrap(self, session_key: str, messages: list[dict]) -> SurveyBootstrap:
+        state = SurveyBootstrap(workspace_root=_extract_cwd(messages) or self._ctx.workspace_root,
+                                web_session=session_key)
+        _pin_pilot_runtime(state, self._ctx.pilot_runtime, self._store.get_bootstrap(session_key))
+        return state
+
+    def _put_session(self, key: str, sess: PlanSession) -> None:
+        # Transfer existing provenance before publishing or consuming the bootstrap.
+        bootstrap = self._store.get_bootstrap(key)
+        _pin_pilot_runtime(sess, self._ctx.pilot_runtime, bootstrap)
+        self._store.put(key, sess)
+        if bootstrap is not None:
+            self._store.drop_bootstrap(key)
+
+    def _decline_bootstrap(self, key: str, completed: SurveyBootstrap | None,
+                           outcome: planner.PlanOutcome) -> None:
+        # Only a completed factual read followed by a definitive no-successor decision
+        # consumes this owner. Deferred/retriable planning and exceptions retain provenance.
+        if (completed is not None and not outcome.survey_pending
+                and not getattr(self._ctx.planner, "_retriable_failure", False)
+                and self._store.get_bootstrap(key) is completed):
+            self._store.drop_bootstrap(key)
 
     def _defer_planner_survey(self, outcome: planner.PlanOutcome, messages: list[dict],
                               body: dict, session_key: str, rlog) -> dict | None:
         """Return the one harness command that can answer a deferred planner read."""
         if not outcome.survey_pending:
             return None
-        bootstrap = SurveyBootstrap(workspace_root=_extract_cwd(messages) or self._ctx.workspace_root,
-                                    web_session=session_key)
+        bootstrap = self._new_bootstrap(session_key, messages)
         probe_tc = guard_gate_op(bootstrap, body, rlog, workspace_root=bootstrap.workspace_root)
         if probe_tc is None:
             return None
@@ -3086,42 +2665,112 @@ class Loop:
         rlog.emit("loop.planner_survey_deferred")
         return _completion_toolcalls([probe_tc])
 
-    def drive(self, body: dict, session_key: str, classification, rlog) -> dict | None:
+    def drive(self, body: dict, session_key: str, classification, rlog, *, pasted_delivery=None) -> dict | None:
         """Return the completion (OpenAI dict) cria should send, or ``None`` to fall
         through to the normal proxy (not a plan-driven task)."""
-        with self._session_lock(session_key):
+        with self._session_lock(session_key), assistruntime.bound(self._ctx.pilot_runtime):
+            # BOTH owners are checked outside the finally that may first-pin new state.
+            previous_session = self._store.get(session_key)
+            for previous in (previous_session, self._store.get_bootstrap(session_key)):
+                if previous is not None:
+                    _check_pilot_runtime(previous, self._ctx.pilot_runtime)
+            owners = [previous_session] if previous_session is not None else []
+            if previous_session is not None:
+                self._settle_pasted_results(previous_session, body.get('messages', []))
+            def report_owner(owner):
+                if not any(known is owner for known in owners):
+                    owners.append(owner)
+            pasted_offered = False
             try:
                 try:
-                    out = self._drive_locked(body, session_key, classification, rlog)
-                except UpstreamProtocolError as error:
-                    sess = self._store.get(session_key)
-                    if sess is None or not getattr(error, 'coder_turn', False):
-                        raise
-                    out = self._protocol_refused(sess, session_key, body, error, rlog)
-            except _IncompleteCoderTurn as result:
-                out = result.completion
-                rlog.emit('loop.generation_incomplete', evidence=out.get(generation.EVIDENCE, {}))
+                    try:
+                        out = self._drive_locked(body, session_key, classification, rlog,
+                                                 _semantic_owner=report_owner)
+                    except UpstreamProtocolError as error:
+                        sess = self._store.get(session_key)
+                        if sess is None or not getattr(error, 'coder_turn', False):
+                            raise
+                        out = self._protocol_refused(sess, session_key, body, error, rlog)
+                except _IncompleteCoderTurn as result:
+                    out = result.completion
+                    rlog.emit('loop.generation_incomplete', evidence=out.get(generation.EVIDENCE, {}))
+                finally:
+                    for active in (self._store.get(session_key), self._store.get_bootstrap(session_key)):
+                        if active is not None:
+                            _pin_pilot_runtime(active, self._ctx.pilot_runtime)
+                    self._store.persist(session_key)
+                current = self._store.get(session_key)
+                if current is not None and not any(owner is current for owner in owners):
+                    owners.append(current)
+                if out is not None:
+                    if current is not None and current.generation_errors:
+                        out.setdefault(generation.EVIDENCE, {})['prior_protocol_errors'] = list(current.generation_errors)
+                    # The loop's synthesized completions carry only object+choices; a plain
+                    # /v1/chat/completions client (non-Codex) needs a well-formed envelope. Codex's
+                    # Responses adapter rebuilds its own, so this is for the direct chat clients.
+                    out.setdefault("id", f"chatcmpl-{uuid.uuid4().hex}")
+                    out.setdefault("created", int(time.time()))
+                    out.setdefault("model", body.get("model") or "")
+                prepared = []
+                for owner in owners:
+                    if (owner is current or (current is None and previous_session is None
+                                             and not _stable_session(session_key))):
+                        prepared.append((owner, _prepare_stalled_reply(owner, out)))
+                for owner, pending in prepared:
+                    semanticquery.settle_turn(owner, out)
+                    _settle_stalled_reply(owner, pending)
+                retained_owners = tuple((owner, owner.pasted_prepared, owner.pasted_consumed)
+                                        for owner, _pending in prepared)
+                living_owners = tuple((owner, owner.living_effects, owner.living_raw_reply)
+                                      for owner, _pending in prepared)
+                pasted_finished = False
+                def finish_pasted(actual, admitted_writes=None):
+                    nonlocal pasted_finished
+                    if pasted_finished:
+                        return
+                    pasted_finished = True
+                    for owner, original_prepared, original_consumed in retained_owners:
+                        self._retain_pasted_reply(owner, actual, admitted_writes,
+                            prepared=original_prepared, consumed=original_consumed)
+                    for owner, effects, raw_reply in living_owners:
+                        if _stable_session(session_key) and self._store.get(session_key) is not owner:
+                            owner.living_pending = owner.living_effects = owner.living_raw_reply = None
+                            continue
+                        self._retain_living_reply(owner, effects, raw_reply, actual, out, rlog)
+                    if self._store.get(session_key) is current:
+                        self._store.persist(session_key)
+                if pasted_delivery is None:
+                    finish_pasted(out)
+                else:
+                    pasted_delivery(finish_pasted)
+                pasted_offered = True
+                return out
             finally:
-                self._store.persist(session_key)
-            if out is not None:
-                sess = self._store.get(session_key)
-                if sess is not None and sess.generation_errors:
-                    out.setdefault(generation.EVIDENCE, {})['prior_protocol_errors'] = list(sess.generation_errors)
-                # The loop's synthesized completions carry only object+choices; a plain
-                # /v1/chat/completions client (non-Codex) needs a well-formed envelope. Codex's
-                # Responses adapter rebuilds its own, so this is for the direct chat clients.
-                out.setdefault("id", f"chatcmpl-{uuid.uuid4().hex}")
-                out.setdefault("created", int(time.time()))
-                out.setdefault("model", body.get("model") or "")
-            return out
+                current = self._store.get(session_key)
+                if current is not None and not any(owner is current for owner in owners):
+                    owners.append(current)
+                for owner in owners:
+                    semanticquery.discard_turn(owner)
+                    owner.stalled_reply = None
+                    if not pasted_offered:
+                        definition = self._pasted_selection(owner)
+                        pending = owner.pasted_prepared
+                        if definition is not None and pending is not None:
+                            definition.forwarded(self._pasted_state(owner), pending,
+                                {'choices': [{'message': {'tool_calls': []}}]})
+                        owner.pasted_consumed = None
+                        owner.living_pending = None
 
-    def _drive_locked(self, body: dict, session_key: str, classification, rlog) -> dict | None:
+    def _drive_locked(self, body: dict, session_key: str, classification, rlog,
+                      *, _semantic_owner=None) -> dict | None:
         messages = body.get("messages", [])
         # Observe a structural harness rewrite before the tool-less compaction turn is deferred.
         # The pending state is consumed only by a later actionable continuation.
         stable = _stable_session(session_key)
         root_text, root_fp = _history_root(messages)
-        rewritten = stable and self._store.observe_shape(session_key, root_fp, len(messages))
+        rewrite_observation = (self._store.observe_shape_with_ticket(session_key, root_fp, len(messages))
+                               if stable else None)
+        rewritten = rewrite_observation is not None
         sess = self._store.get(session_key)
         bootstrap = getattr(self._store, "get_bootstrap", lambda _key: None)(session_key)
         if rewritten:
@@ -3138,7 +2787,9 @@ class Loop:
         # tool (the completion gate simply fails open on a native-write_file harness), so gating this
         # decline to planner-ON is load-bearing — otherwise the synthetic path silently loses every
         # rumination/truncation/repetition guard on a shell-less harness.
-        if self._ctx.planner_enabled and find_shell_tool(body.get("tools")) is None:
+        initial_enabled = (self._ctx.planner_enabled
+                           and bool(self._initial_policies(session_key).bindings('experimental-plan-gather')))
+        if initial_enabled and find_shell_tool(body.get("tools")) is None:
             live = self._store.get(session_key) is not None
             rlog.emit("loop.no_shell_tool", level="info", deferred=live)
             return None
@@ -3165,18 +2816,17 @@ class Loop:
 
         if bootstrap is not None:
             raw = _read_tool_result(messages, bootstrap.probe_call_id)
-            if not raw and rewritten and bootstrap.probe_reissues < MAX_PROBE_REISSUES:
-                probe_tc = guard_gate_op(bootstrap, body, rlog, workspace_root=bootstrap.workspace_root)
-                if probe_tc is not None:
-                    bootstrap.probe_reissues += 1
-                    bootstrap.probe_call_id = probe_tc["id"]
+            if rewritten:
+                recovered = _reissue_repository_checks(_NamedProbeState(bootstrap, "probe_call_id"),
+                    body, rlog, workspace_root=bootstrap.workspace_root, rewritten=True)
+                if recovered.call is not None:
                     rlog.emit("loop.survey_bootstrap_reissued", attempt=bootstrap.probe_reissues)
-                    return _completion_toolcalls([probe_tc])
+                    return _repository_completion(recovered)
             transport_tc = guard_gate_transport(bootstrap, body, rlog, call_id=bootstrap.probe_call_id)
             if transport_tc is not None:
                 return _completion_toolcalls([transport_tc])
             outcome = read_gate(bootstrap.gate_plan, raw, rlog)
-            self._store.drop_bootstrap(session_key)
+            # Keep provenance until a successor is published, including planner deferrals.
             bootstrap_finished = True
             messages = probegate.clean_gate_results(messages, bootstrap.gate_plan,
                                                     drop_private_results=True)
@@ -3190,7 +2840,7 @@ class Loop:
             # see _closing) — cria re-reads it from the history the harness sends back. Nothing is
             # stored server-side; the harness owns the transcript, cria owns the content.
             briefing = _briefing_from_history(messages)
-            if not self._ctx.planner_enabled:
+            if not initial_enabled:
                 # PLAN-OFF: the whole task is ONE implicit step — synthesize a degenerate 1-item plan
                 # and drive it through the single-item path (raw-task framing + the off-ramps). A
                 # non-coding turn is NOT ours (mirrors the old _produce_completion direct-coder gate) —
@@ -3205,7 +2855,11 @@ class Loop:
                 # A DEGENERATE plan is never mirrored to disk: it's just the raw task. One that gained
                 # a reading step is a real plan and mirrors like any other.
                 if _stable_session(session_key):
-                    self._store.put(session_key, sess)
+                    self._put_session(session_key, sess)
+                else:
+                    _pin_pilot_runtime(sess, self._ctx.pilot_runtime, bootstrap)
+                    if bootstrap is not None:
+                        self._store.drop_bootstrap(session_key)
                 if not sess.synthetic:
                     self._persist_plan(sess.plan, rlog)
                 rlog.emit("loop.start", id=sess.plan.id, steps=len(sess.plan.items),
@@ -3236,12 +2890,13 @@ class Loop:
                         deferred = self._defer_planner_survey(outcome, messages, body, session_key, rlog)
                         if deferred is not None:
                             return deferred
-                        return None  # rewrite stays PENDING (sticky) — the next turn can still continue
+                        return self._decline_bootstrap(session_key,
+                            bootstrap if bootstrap_finished else None, outcome)  # rewrite stays sticky
                     # The coder's protected prior-work context: cria's own briefing when we have one
                     # (compact, focused); else the harness summary TAIL, clipped — summaries put the
                     # current state / remaining work at the END, so the head is the droppable part.
                     sess = PlanSession(plan=plan, prior_work=briefing or summary_text)
-                    self._store.put(session_key, sess)
+                    self._put_session(session_key, sess)
                     self._store.clear_rewrite(session_key)  # acted on it
                     rlog.emit("loop.start", id=plan.id, steps=len(plan.items), continued=True, rewritten=True)
                     self._persist_plan(plan, rlog)
@@ -3252,8 +2907,7 @@ class Loop:
                     # before its view-backed gather; no shell and rootless paths retain their old route.
                     view = wsview.current(_extract_cwd(messages) or None)
                     if not bootstrap_finished and view.root and not view.surveyed:
-                        bootstrap = SurveyBootstrap(workspace_root=_extract_cwd(messages) or self._ctx.workspace_root,
-                                                     web_session=session_key)
+                        bootstrap = self._new_bootstrap(session_key, messages)
                         probe_tc = guard_gate_op(bootstrap, body, rlog,
                                                  workspace_root=bootstrap.workspace_root)
                         if probe_tc is not None:
@@ -3282,15 +2936,20 @@ class Loop:
                         # drive the whole task as ONE synthetic guarded step, keeping the gate/guards/steers.
                         if getattr(self._ctx.planner, "_retriable_failure", False) \
                                 or classification is None or classification.task_type != "coding":
-                            return None
+                            return self._decline_bootstrap(session_key,
+                                bootstrap if bootstrap_finished else None, outcome)
                         sess = _plan_off_session(_synthetic_plan(latest_user_text(messages)), briefing)
                         if _stable_session(session_key):
-                            self._store.put(session_key, sess)
+                            self._put_session(session_key, sess)
+                        else:
+                            _pin_pilot_runtime(sess, self._ctx.pilot_runtime, bootstrap)
+                            if bootstrap is not None:
+                                self._store.drop_bootstrap(session_key)
                         rlog.emit("loop.start", id=sess.plan.id, steps=len(sess.plan.items), synthetic=sess.synthetic,
                                   planner_fallback=True)
                     else:
                         sess = PlanSession(plan=plan, prior_work=briefing)
-                        self._store.put(session_key, sess)
+                        self._put_session(session_key, sess)
                         rlog.emit("loop.start", id=plan.id, steps=len(plan.items), continued=bool(briefing))
                         self._persist_plan(plan, rlog)  # mirror to cria's OWN dir (never the workspace)
 
@@ -3315,14 +2974,17 @@ class Loop:
             sess.synthetic = True
             rlog.emit("loop.plan_off_handback", id=sess.plan.id)
 
+        if _semantic_owner is not None:
+            _semantic_owner(sess)  # actual live owner, including never-persisted task: sessions
         if sess.synthetic:  # degenerate 1-item plan → the single-item driver (raw-task framing +
             # the off-ramps a finite multi-step plan doesn't need). Placed BEFORE the multi-item
             # awaiting_probe branch: the single-item path reads its own probe results internally.
-            return self._drive_single_item(sess, body, session_key, rlog, rewritten=rewritten)
+            return self._drive_single_item(sess, body, session_key, rlog, rewritten=rewritten,
+                                           rewrite_observation=rewrite_observation)
 
-        if sess.awaiting_probe:  # the ground-truth probe we emitted last turn has now run
-            sess.awaiting_probe = False
+        if sess.awaiting_probe:  # hand genuine pending ownership to its reader before consuming it
             if sess.periodic_observation:
+                sess.awaiting_probe = False
                 out = self._periodic_observation_after_probe(sess, session_key, body, rlog)
             else:
                 out = self._verify_after_probe(sess, session_key, body, rlog, rewritten=rewritten)
@@ -3334,81 +2996,113 @@ class Loop:
 
     # ------------------------------------------------------------------ work
 
-    def _coder_turn(self, sess: PlanSession, framed: dict, body: dict, *, step: int, rlog) -> dict:
+    def _coder_turn(self, sess: PlanSession, framed: dict, body: dict, *, step: int, rlog,
+                    delivery_receipts=None) -> dict:
         try:
-            completion = self._coder_turn_impl(sess, framed, body, step=step, rlog=rlog)
+            completion = self._coder_turn_impl(sess, framed, body, step=step, rlog=rlog,
+                                               delivery_receipts=delivery_receipts)
             if generation.incomplete(completion):
                 raise _IncompleteCoderTurn(completion)
             return completion
         except UpstreamProtocolError as error:
+            if delivery_receipts is not None:
+                delivery_receipts.clear()
             error.coder_turn = True
             raise
 
-    def _coder_turn_impl(self, sess: PlanSession, framed: dict, body: dict, *, step: int, rlog) -> dict:
+    def _coder_turn_impl(self, sess: PlanSession, framed: dict, body: dict, *, step: int, rlog,
+                         delivery_receipts=None) -> dict:
         """ONE guarded coder call — the shared core of BOTH driver halves (``_work`` multi-item and
         ``_drive_single_item`` synthetic/plan-off), so a coder-turn guard can NEVER land in one and
         silently miss the other (the divergence that killed the search-escape on the live path). The
         caller owns the framing (before) and the GATE (after — the ONE thing that legitimately differs:
         multi-step probe/`_verify` vs single `_gate_single_done`); this owns everything between:
         advertise the completion tool → call the coder → normalise a `task_complete` → rumination +
-        truncation guards → banner/reasoning hygiene → track repetition + write-streak on an acting turn
-        → the outgoing search's query judge. Returns the guarded completion ({} on a decode failure — a
+        truncation guards → banner/reasoning hygiene → selected outgoing search policy → shared write
+        facts and a pending Source observation. Public retention owns observation/delivery and the required
+        forwarded-call clock. Returns the guarded completion ({} on a decode failure — a
         no-tool 'done' the caller's gate then handles)."""
         # The context floor runs later, at the wire, where prose-based preamble detection is too
         # brittle to identify the real task. Carry the session's exact root task as an internal hint;
         # Upstream consumes and strips it before serialization.
+        stalled_offer = sess.stalled_reply
+        sess.stalled_reply = None
         framed[bodykeys.PINNED_TASK] = getattr(sess.plan, "task", "") or ""
-        # GROUND TRUTH AT THE TAIL: the live workspace listing rides the most-salient slot every turn,
-        # re-derived from disk, exactly one copy (older ⟦ctx:files⟧ folded out). Listing only — content
-        # grounding on a blind touch is editrecovery's job. The cwd is read from the body here (not just
-        # sess.workspace_root) because the plan-OFF driver never populates that field — _coder_turn is
-        # the shared core both driver halves reach, so the listing must not depend on a field only the
-        # plan-ON path sets. No-op when there is no cwd or the workspace has not been surveyed yet.
-        _ws = getattr(sess, "workspace_root", None) or _extract_cwd(body.get("messages", []))
-        if _ws:
-            framed["messages"] = _ground_coder_view(framed.get("messages", []), _ws)
-            _note_survey_baseline(sess, _ws)
-            _note_first_survey_files(sess, _ws, body.get("messages", []))
         _add_completion_tool(framed)  # advertise the explicit-done tool for THIS coder call
         rlog.phase = f"coder-s{step}"  # label the call capture with the role + step
         sess.restored_current = {}      # credit is earned per call, from what the wire says it delivered
-        coder = massage.apply(_parse_completion(self._ctx.coder_chat(framed, rlog)), framed.get("tools"), rlog)
-        # The restored-file-text block earns the whole-read credit only if it survived the floor into the
-        # body that was SENT (`modelview.settle_restored_text` reports it on `rlog`).
-        sess.restored_current = dict(getattr(rlog, "restored_on_wire", None) or {})
+        pending_paste = sess.pasted_pending_nudge
+        if pending_paste is not None and pending_paste.user_turn not in framed.get('messages', []):
+            carried = ([{'role': 'assistant', 'content': pending_paste.carried_reply}]
+                       if pending_paste.carried_reply else [])
+            framed = {**framed, 'messages': list(framed.get('messages', [])) + carried
+                      + [pending_paste.user_turn]}
+        replies = _CoderReplyReceipts(self._ctx.coder_chat)
+        coder = massage.apply(_parse_completion(replies.chat(framed, rlog)), framed.get("tools"), rlog)
+        initial_receipt = dict(replies.latest)
+        initial_remediation = replies.latest_remediation
+        # Initial paste provenance must see what THIS coder actually received,
+        # before any auxiliary judge can overwrite the shared log receipt.
+        sess.restored_current = dict(initial_receipt)
+        offered_paste = pending_paste
+        consumed_paste = (offered_paste is not None
+                          and offered_paste.user_turn in framed.get('messages', []))
+
         # BEFORE `_normalize_completion`: a turn that holds ANY call (a task_complete included) is not a
         # turn that pasted a file instead of writing it, and this must run ahead of every guard below so
         # a recovered write is tracked like a native one (truncation, write-streak, refusals).
         coder = self._recover_text_write(sess, coder, framed, body, rlog)
         coder = _normalize_completion(coder, rlog)  # a task_complete call → step 'done' (or dropped)
-        coder = guard_rumination(coder, framed, self._ctx.coder_chat, rlog, step=step,
-                                 phase=f"coder-s{step}", coder_role=self._ctx.coder_role,
-                                 gs=sess)
-        coder = guard_truncation(coder, framed, self._ctx.coder_chat, rlog, step=step, phase=f"coder-s{step}")
+        replies.record(coder, initial_receipt, remediation=initial_remediation)
+        coder = _generation_recovery(coder, framed, replies.chat, rlog,
+                                     step=step, phase=f"coder-s{step}",
+                                     coder_role=self._ctx.coder_role, gs=sess,
+                                     on_completion=replies.record).completion
+        # Credit follows this retained coder reply, never the last shared log
+        # receipt (which auxiliary calls and unsuccessful retries can overwrite).
+        sess.restored_current = replies.receipt(coder)
         _strip_completion_banners(coder)  # scrub cria's own banners the coder parroted
         if self._ctx.coder_role is not None:  # strip leaked reasoning from the coder's content when off
             _clean_completion(coder, self._ctx.coder_role)
         # Judge an outgoing web_search's query (off-target → a better query). Before the tracking, so the
         # repetition/write-streak guards see what's actually FORWARDED.
-        # LEVEL 5 — ASSISTS_ENABLED, and gated HERE rather than at each intervention. These are the
-        # DETECTORS: they judge an outgoing query, remember what was fetched and read, and arm
-        # `redirect_due` / `spin_probe_due` for the interventions downstream. Gating detection is
-        # what makes the whole family inert at level 4 — guard_intervene, the redirect probe, the
-        # wheel-spin probe and their steers all become no-ops because nothing ever arms them.
-        #
-        # Gating each intervention instead was tried first and leaked: the periodic gate was missed
-        # for two call sites, and the wheel-spin detector went on firing at level 4 in production.
-        # One chokepoint, at the point the state is SET, is the version that cannot be half-applied.
+        # Existing L5 query/history applicability stays here. Stalled-work policy is separately
+        # selected across its whole lifecycle; shared write facts and the forwarded-call clock
+        # below are required even when that optional source is absent.
+        if not coder.get(massage.LOST_CALL_KEY) and not coder.get(bodykeys.FENCED_REFUSED):
+            pasted_result = self._pasted_redrive(sess, coder, body, rlog, step=step,
+                                                plan_off=bool(sess.synthetic or sess.plan_off),
+                                                consumed=offered_paste if consumed_paste else None)
+            if pasted_result is not None and pasted_result.completion is not None:
+                coder = pasted_result.completion
         if self._ctx.assists:
-            coder = guard_search_query(sess, coder, body, self._ctx.reasoner_chat, self._ctx.reasoner_role, rlog)
+            coder = guard_search_query(sess, coder, body, self._ctx.reasoner_chat, self._ctx.reasoner_role,
+                                       rlog, _defer=True)
             _track_fetched_pages(sess, body.get("messages", []))  # durable fetch facts for later steers
             _track_refused_names(sess, body.get("messages", []))  # …and coordinates the toolchain refused
             _track_read_files(sess, body.get("messages", []))     # …and the files it opened on disk
             _track_own_checks(sess, body.get("messages", []))     # …and its own re-runs of the gate's checks
-            if _has_tool_calls(coder):  # the coder ACTED → track it for the refusal/spin guards
-                guard_track_refusals(sess, coder, rlog, step=step,
-                                     messages=body.get("messages"))
-                guard_track_write_streak(sess, coder, rlog, step=step, messages=framed.get("messages"))
+        observation = None
+        if _has_tool_calls(coder):
+            calls = tuple(writeobservation.ForwardedCall(tc.get('id'), _write_path(tc.get('function') or {}))
+                          for ch in coder.get('choices', [])
+                          for tc in (ch.get('message') or {}).get('tool_calls') or [])
+            messages = framed.get('messages', [])
+            observed = writeobservation.record(writeobservation.WriteInput(calls, messages,
+                frozenset(_unlanded_call_ids(messages)), sess, _note_write_results))
+            if self._ctx.assists:
+                observation = _stalled_observation(sess, coder, body.get('messages', []), rlog,
+                                                  step=step, observed=observed, sequence_start=sess.action_seq,
+                                                  write_messages=messages)
+        definition = _stalled_selection(sess)
+        steer = stalled_offer[3] if stalled_offer is not None else None
+        count = sum(len((ch.get('message') or {}).get('tool_calls') or [])
+                    for ch in coder.get('choices', []))
+        sess.stalled_reply = (coder, definition, observation, steer, sess.action_seq, count)
+        if consumed_paste:
+            sess.pasted_consumed = (coder, offered_paste, self._pasted_selection(sess))
+        if delivery_receipts is not None:
+            delivery_receipts.append((coder, replies.remediation_receipt(coder)))
         return coder
 
     # -------------------------------------------------- a call cria did not run must be SAID
@@ -3443,128 +3137,147 @@ class Loop:
             return unread_target_fact(sess, wsview.current(root), path, messages)
         return check
 
-    def shrinking_write_check(self, sess_key: str, messages: list[dict], root, rlog):
-        """``(path, content, edit_tool) -> held text`` for the write lowering, or None when this session
-        cannot ask (assists off, no workspace, no reasoner). The text is "" when the write may proceed.
-
-        TWO CLASSES, both structural and deterministic (`shrink_measure`), over a file that exists:
-
-        * FRAGMENT (candidate has at most half the file's non-blank lines AND repeats under half its distinct
-          lines) — HELD unless the judge rules the content the file's complete content. WHAT IT IS is the
-          same closed question the pasted-file recovery puts (`WHOLE_FILE` / `OTHER`, `whole_file_ruling`),
-          because a fragment sent as a whole-file write and a fragment pasted in chat are one confusion (phi4
-          A4: a 190-character `<dependencies>` excerpt replaced the 28-line pom.xml it had read; A3: a stub
-          replaced the 129-line Importer.java). Anything but a clear WHOLE_FILE holds the write — failing
-          toward NOT destroying. A hold is NOT remembered: an identical repeat is asked again, and the judge
-          runs at temperature 0, so a false `OTHER` holds the identical content indefinitely. Needs no
-          baseline: the fragment question is about the content, whoever made the file.
-        * REMOVAL (the write removes at least half the file's non-blank lines but the candidate is longer
-          than half the file — phi4 A9: a 69-line rewrite of the 114-line Importer.java lost `summarize`,
-          `Summary`, `totals`, `main`) — NEVER held and never asked: the candidate IS a whole file, so the
-          closed question's honest answer is WHOLE_FILE and a line threshold must not make that semantic call
-          (principle 8). The write LANDS and the check returns the measured facts for the writeproxy to
-          append to the write's own result (``"land": True``): how many lines it removed and the
-          least-indented removed lines that open a block, so the coder can see what it deleted. Only for a
-          file in `first_survey_files` (existed before the coder touched anything; principle 2 protects
-          progress the coder did not make — a deliverable it created, e.g. REVIEW.md, is rewritten freely).
-
-        MEASURED ON phi4 (2026-10-11, temperature 0): the judge answered `OTHER` on 22 of 22 runs of 11
-        legitimate shrinking rewrites (and held 14 of 14 runs of the fragments, A3/A4 included). For such a
-        model a drastic shrink of a file the coder has seen is therefore effectively HELD until it uses
-        `edit_file`, sends content that keeps more of the file, or uses the shell. Accepted trade: the
-        variants that let rewrites through also let the A3 stub through. Only the FRAGMENT class is held; the removal class
-        (4.1% of corpus big-file writes) is facts on a landed write — see docs/heuristic-assists.md H2.
-        THE HOLD IS BOUND TO THE BYTES MEASURED. The text above comes from the view, which a coder's own
-        shell command can leave behind the disk; the check therefore returns those bytes with the hold, and
-        the lowered command refuses only while the file on disk still equals them (otherwise it writes, as
-        before this assist existed — never a hold or a fact about bytes that are gone)."""
+    def shrinking_write_services(self, sess_key: str, messages: list[dict], root, rlog):
+        """Lazy factual/provider assembly; the selected source policy owns decisions."""
+        if not any(d.policy.id == shrinkprotection.DEFINITION.policy.id
+                   for d in self._ctx.pilot_runtime.definitions):
+            return None
         if not self._ctx.assists or not root or self._ctx.reasoner_chat is None or self._ctx.reasoner_role is None:
             return None
 
-        def check(path: str, content: str, edit_tool: str = "") -> dict | None:
-            """``{"text", "bytes"}`` (a hold) or ``{"text", "bytes", "land": True}`` (facts for the landed write's
-            result) — with the exact file bytes measured — or None."""
+        def session():
             sess = self._store.get(sess_key)
-            view = wsview.current(root)
-            if sess is None or not path or not getattr(view, "surveyed", False):
+            if sess is None:
                 return None
-            rel = view.rel(path)
-            if not rel or view.isfile(rel) is not True:
-                return None
-            raw = view.read_bytes(rel)
-            if raw is None:
-                return None
-            current = raw.decode("utf-8", "replace")
-            m = shrink_measure(current, content)
-            if m is None:
-                return None
-            labels = prompts.load_map("write_shrink_facts")
-            if not m["fragment"]:
-                # PROGRESS THE CODER DID NOT MAKE (principle 2): only a file that existed before the coder
-                # touched anything gets the removal facts; no first survey yet = nothing proves it = silence.
-                if rel not in (getattr(sess, "first_survey_files", None) or ()):
-                    return None
-                text = prompts.fill(labels["removed_landed"], path=rel, removed=m["removed_at_least"],
-                                    lines=m["current_lines"], cand_lines=m["cand_lines"])
-                if m["openers"]:
-                    text += " " + _openers_fact(labels, m)
-                rlog.emit("loop.write_removal_facts", path=rel, current_lines=m["current_lines"],
-                          cand_lines=m["cand_lines"], removed_at_least=m["removed_at_least"])
-                return {"text": text, "bytes": raw, "land": True}
-            key = (rel, hashlib.sha1(content.encode("utf-8", "replace")).hexdigest())
-            if sess.shrink_write_judged.get(key) == "WHOLE_FILE":
-                return None
-            fact = prompts.fill(labels["measured"], path=rel, bytes=len(current.encode("utf-8", "replace")),
-                                lines=m["current_lines"], distinct=m["distinct"],
-                                cand_bytes=len(content.encode("utf-8", "replace")),
-                                cand_lines=m["cand_lines"], kept=m["kept"])
-            answer = ask_closed(
-                self._ctx.reasoner_chat, self._ctx.reasoner_role,
-                prompts.load("write_call_judge") + "\n\n" + prompts.render(
-                    "write_call_judge_user", path=rel, fact=fact, content=content),
-                rlog, phase="write-shrink", max_tokens=JUDGE_MAX_TOKENS, retry_off=False)
-            verdict = whole_file_ruling(answer)
-            rlog.emit("loop.write_shrink_judged", path=rel, verdict=verdict[:40], current_lines=m["current_lines"],
-                      cand_lines=m["cand_lines"], distinct=m["distinct"], kept=m["kept"],
-                      removed_at_least=m["removed_at_least"])
-            if verdict == "WHOLE_FILE":
-                sess.shrink_write_judged[key] = verdict
-                return None
-            removed = m["first_removed"]
-            held = prompts.fill(
-                labels["held"], fact=fact, removed=m["removed_at_least"], lines=m["current_lines"],
-                line=removed[0], quoted=removed[1])
-            if m["openers"]:
-                held += " " + _openers_fact(labels, m)
-            if edit_tool:
-                held += " " + prompts.fill(labels["edit_on_menu"], tool=f"`{edit_tool}`")
-            return {"text": held, "bytes": raw}
-        return check
+            return shrinkprotection.ShrinkSession(
+                sess.first_survey_files, shrinkprotection.ShrinkState(sess.shrink_write_judged))
+
+        def ask(question, *, phase, max_tokens, retry_off):
+            return ask_closed(self._ctx.reasoner_chat, self._ctx.reasoner_role, question,
+                              rlog, phase=phase, max_tokens=max_tokens, retry_off=retry_off)
+
+        return shrinkprotection.ShrinkServices(session, lambda: wsview.current(root), ask, rlog)
+
+    def shrinking_write_check(self, sess_key: str, messages: list[dict], root, rlog):
+        """Compatibility entry for direct callers; production supplies typed services."""
+        from functools import partial
+        services = self.shrinking_write_services(sess_key, messages, root, rlog)
+        return partial(shrinkprotection.check_write, services) if services is not None else None
+
+    @staticmethod
+    def _pasted_result(result):
+        if (not isinstance(result, pastedfile.Result) or not isinstance(result.status, pastedfile.Status)
+                or result.completion is not None and not isinstance(result.completion, dict)
+                or result.prepared is not None and not isinstance(result.prepared, pastedfile.Prepared)
+                or result.nudge is not None and not isinstance(result.nudge, pastedfile.Nudge)
+                or result.delivery is not None and not isinstance(result.delivery, pastedfile.Delivery)
+                or result.settlement is not None and not isinstance(result.settlement, pastedfile.Settlement)
+                or result.status is pastedfile.Status.NUDGE and result.nudge is None):
+            raise ValueError('Pasted file replacement must return a typed Result')
+        return result
+
+    def _pasted_state(self, sess):
+        if getattr(sess, 'pasted_state_view', None) is None:
+            sess.pasted_state_view = _PastedFileView(sess)
+        return sess.pasted_state_view
+
+    def _settle_pasted_results(self, sess, messages):
+        definition = self._pasted_selection(sess)
+        if definition is None:
+            return
+        state = self._pasted_state(sess)
+        for message in messages:
+            if message.get('role') != 'tool':
+                continue
+            cid = message.get('tool_call_id')
+            delivery = sess.pasted_deliveries.get(cid)
+            if delivery is None:
+                continue
+            text = str(message.get('content') or '')
+            denied = denial.is_denied(text) or denial.read_instead_payload(text) is not None
+            landed = selfcompact.write_landed(text) if not denied else False
+            self._pasted_result(definition.settle(state, delivery, cid,
+                ran=False if denied else True if landed else None, changed=False if denied else None))
+
+    def _retain_pasted_reply(self, sess, retained, admitted_writes=None, *, prepared, consumed):
+        definition = self._pasted_selection(sess)
+        if definition is None:
+            return
+        state = self._pasted_state(sess)
+        if sess.pasted_consumed is consumed:
+            if consumed is not None and consumed[0] is retained and consumed[2] is definition:
+                self._pasted_result(definition.nudge_delivered(state, consumed[1], consumed=consumed[1]))
+            sess.pasted_consumed = None
+        if prepared is None or state.prepared is not prepared:
+            return
+        kept = []
+        root = getattr(sess, 'workspace_root', None) or ''
+        for choice in (retained or {}).get('choices', []):
+            for call in (choice.get('message') or {}).get('tool_calls') or []:
+                cid = call.get('id')
+                if cid not in prepared.call_ids:
+                    continue
+                if admitted_writes is not None:
+                    fact = admitted_writes.get(cid)
+                    admitted = (fact is not None and fact.content == prepared.content
+                                and posixpath.normpath(fact.path) == posixpath.normpath(
+                                    posixpath.join(root, prepared.path)))
+                else:
+                    fn = call.get('function') or {}
+                    args = _args_of(fn.get('arguments'))
+                    admitted = (fn.get('name') in writeproxy_names
+                                and args.get('content', args.get('contents')) == prepared.content
+                                and posixpath.normpath(_write_path(fn) or '') == posixpath.normpath(
+                                    posixpath.join(root, prepared.path)))
+                if admitted:
+                    kept.append(call)
+        result = definition.forwarded(state, prepared,
+            {'choices': [{'message': {'tool_calls': kept}}]})
+        self._pasted_result(result)
+
+    def _pasted_evidence(self, sess):
+        return pastedfile.Evidence(_completion_text, _has_tool_calls,
+            lambda messages: _injected_fence_texts(sess, messages), wsview.current, _extract_cwd,
+            lambda messages: _history_root(messages)[0], _subject_is_exact_in_quote,
+            lambda view, rel, messages: _coder_has_seen(view, rel, sess, messages),
+            lambda view, rel, messages: unread_target_fact(sess, view, rel, messages))
+
+    def _pasted_selection(self, sess):
+        runtime = getattr(sess, 'pilot_binding', None) or self._ctx.pilot_runtime
+        return runtime.pasted_file
+
+    def _pasted_redrive(self, sess, completion, body, rlog, *, step=None, plan_off=False,
+                        consumed=None):
+        definition = self._pasted_selection(sess)
+        if definition is None:
+            return None
+        result = definition.redrive(pastedfile.NudgeInput(completion, body.get('messages', []),
+            self._pasted_evidence(sess), sess, rlog,
+            reading_step=False if plan_off else _is_reading_step(sess, sess.plan.current()),
+            step=step, plan_off=plan_off, defer_unread_consumption=True,
+            consumed=consumed), self._pasted_state(sess))
+        return self._pasted_result(result)
+
+    @staticmethod
+    def _pasted_followup(sess, completion):
+        pending = sess.pasted_pending_nudge
+        consumed = sess.pasted_consumed
+        # Pending retains a transport obligation even after its coder frame ran.
+        # Re-enter only for a fresh offer, never to consume that same frame again.
+        if consumed is not None and consumed[0] is completion and consumed[1] is pending:
+            return None
+        return pending
 
     def _pasted_file_unsaved(self, sess: PlanSession, reply: str, body: dict) -> bool:
-        """Is this call-less reply a file pasted instead of written — the question the nudge answers?
+        # Compatibility query only; production admission and budget live in redrive.
+        if self._pasted_selection(sess) is None:
+            return False
+        other, sess.pasted_block_other = sess.pasted_block_other, False
+        return not other and pastedfile.unsaved_text(reply, _injected_fence_texts(sess, body.get('messages', [])))
 
-        `unexecuted_write` is the structural test (a code block of file length). The pasted-file recovery
-        has already put the one question that settles WHAT the block is, to a judge, when the model bound it
-        to a file; a block it ruled `OTHER` is a fragment, an excerpt or a plan's pseudo-code, and telling
-        the coder "the file's contents … send them again as a write" about it is a false claim that
-        induced a fabricated whole-file overwrite (phi4 A4 0079→0080: an 18-line REVIEW.md draft and a
-        5-line `<dependency>` excerpt, answered by a pom.xml write). No ruling, no suppression."""
-        ruled_other, sess.pasted_block_other = sess.pasted_block_other, False
-        return (not ruled_other
-                and unexecuted_write(reply, _injected_fence_texts(sess, body.get("messages", []))))
-
-    def _unexecuted_nudge_text(self, sess: PlanSession, reply: str = "") -> str:
-        """The unsaved-paste nudge, plus the measured fact the pasted-file recovery refused on (a file
-        that exists and was never read) — consumed once. It NAMES the file only when the model itself bound
-        the first file-length block to exactly one path (`massage.binding_paths`, the recovery's own
-        test); otherwise it says what is true — a block of code was sent as text — and claims no file."""
-        names = _pasted_block_paths(reply)
-        base = (prompts.fill(prompts.load("unexecuted_write_nudge_path"), path=f"`{names[0]}`")
-                if len(names) == 1 else prompts.load("unexecuted_write_nudge"))
-        fact = getattr(sess, "unread_target_fact", "") or ""
-        sess.unread_target_fact = ""
-        return f"{base}\n\n{fact}" if fact else base
+    def _unexecuted_nudge_text(self, sess: PlanSession, reply: str = '') -> str:
+        pending = sess.pasted_pending_nudge
+        return pending.text if pending is not None else ''
 
     # -------------------------------------------------- a file typed into chat → the write it should have been
 
@@ -3597,95 +3310,20 @@ class Loop:
         something the coder was shown nor already the file's content; and the judge answers the
         exact positive token. Only that one block is promoted; the tail (further blocks, invented
         results, a completion claim) is not forwarded and is counted in the event."""
-        if not generation.may_recover(comp):
+        definition = self._pasted_selection(sess)
+        if definition is None:
             return comp
-        sess.pasted_block_other = False      # the ruling below belongs to THIS reply only
-        if self._ctx.reasoner_chat is None or self._ctx.reasoner_role is None:
-            return comp
-        choice = (comp.get("choices") or [None])[0]
-        msg = (choice or {}).get("message")
-        if not isinstance(msg, dict) or msg.get("tool_calls") or choice.get("finish_reason") not in (None, "stop"):
-            return comp
-        text = _completion_text(comp)
-        if "```" not in text or _is_reading_step(sess, sess.plan.current()):
-            return comp
-        tools = framed.get("tools")
-        if massage.whole_file_write_call(tools, "x", "y") is None or massage.has_call_envelope(text):
-            return comp
-        block = next((b for b in massage.fenced_file_blocks(text)
-                      if b["closed"] and b["binding"]
-                      and sum(1 for l in b["lines"] if l.strip()) >= UNEXECUTED_WRITE_LINES), None)
-        if block is None:
-            return comp
-        names = massage.binding_paths(block["binding"])
-        if len(names) != 1:
-            return comp   # no name, or two — the model did not bind this block to one file
-
-        def refuse(why: str, **f) -> dict:
-            rlog.emit("loop.text_write_refused", reason=why, path=names[0], **f)
-            return comp
-
-        root = getattr(sess, "workspace_root", None) or _extract_cwd(body.get("messages", []))
-        view = wsview.current(root) if root else None
-        if view is None or not view.surveyed:
-            return refuse("workspace_unsurveyed")
-        task = getattr(sess.plan, "task", "") or _history_root(body.get("messages", []))[0]
-        target = _resolve_named_file(view, names[0], task)
-        if isinstance(target, str):
-            return refuse(target)
-        rel, exists = target
-        lines = block["lines"]
-        content = "\n".join(lines) + "\n"
-        injected = ["".join(t.split()) for t in _injected_fence_texts(sess, body.get("messages", [])) if t.strip()]
-        if fence_is_self_quote(lines, injected):
-            return refuse("quote_of_shown_text")
-        current = view.read(rel) if exists else None
-        if current is not None and "".join(current.split()) == "".join(content.split()):
-            return refuse("unchanged")
-        # AN EXISTING FILE THE CODER NEVER READ is not rewritten from a paste: the block is then not a
-        # revision of anything the coder saw, it is invention under a real file's name (live replay: a
-        # `lib/shipping.rb` class the coder had never opened was judged a whole file). Reads and the
-        # coder's own earlier writes both count as having seen it.
-        if exists and not _coder_has_seen(view, rel, sess, body.get("messages", [])):
-            # …AND SAY SO. The refusal used to be an event nobody reads, and the reply then drew the
-            # generic "send that same content again as a write tool call" — the coder resent the same
-            # paste. The measured fact rides on the nudge that follows (`_unexecuted_nudge_text`).
-            sess.unread_target_fact = unread_target_fact(sess, view, rel, body.get("messages", []))
-            return refuse("unread_existing_file")
-        key = (rel, hashlib.sha1(content.encode("utf-8", "replace")).hexdigest())
-        verdict = sess.text_write_judged.get(key)
-        if verdict is None:
-            facts = prompts.load_map("text_write_facts")
-            block_bytes = len(content.encode("utf-8", "replace"))
-            size = view.size(rel) if exists else None
-            fact = prompts.fill(
-                facts["new_file"] if not exists else facts["exists_sized"] if size is not None else facts["exists_unsized"],
-                bytes=size, block_bytes=block_bytes)
-            ordinal = 1 + next(i for i, b in enumerate(massage.fenced_file_blocks(text)) if b["start"] == block["start"])
-            answer = ask_closed(
-                self._ctx.reasoner_chat, self._ctx.reasoner_role,
-                prompts.load("text_write_judge") + "\n\n" + prompts.render(
-                    "text_write_judge_user", path=rel, fact=fact, ordinal=ordinal, lang=block["lang"] or "none",
-                    lines=sum(1 for l in lines if l.strip()), binding=block["binding"], reply=text),
-                rlog, phase="text-write", max_tokens=JUDGE_MAX_TOKENS, retry_off=False)
-            # The ruling is the answer's FIRST word, exactly (the convention `confirm_applies` and the
-            # negative-diagnosis support question already use): phi4 answers `WHOLE_FILE` and then explains
-            # itself in a paragraph, and demanding a bare reply would refuse a clear positive for its
-            # politeness. `WHOLE_FILE_MAYBE`, `NOT_WHOLE_FILE` and prose that merely mentions the word
-            # have a different first word and are no ruling.
-            verdict = whole_file_ruling(answer)
-            if verdict in ("WHOLE_FILE", "OTHER"):
-                # Only a RULING is remembered. An empty or malformed answer (a timeout, a half answer)
-                # settles nothing, and caching it would silence this file's block for the whole session.
-                sess.text_write_judged[key] = verdict
-            rlog.emit("loop.text_write_judged", path=rel, verdict=verdict[:40], exists=exists)
-        if verdict != "WHOLE_FILE":
-            sess.pasted_block_other = verdict == "OTHER"     # a RULING: the nudge must not call it the file
-            return refuse("judged_other" if verdict == "OTHER" else "judge_unanswered")
-        call = massage.whole_file_write_call(tools, view.abs(rel), content)
-        keep = text[:block["start"]].rstrip()
-        return massage.promote_call(comp, call, keep, tools, rlog, path=rel, exists=exists,
-                                    block_lines=len(lines), dropped_chars=len(text) - len(keep))
+        ask = None
+        if self._ctx.reasoner_chat is not None and self._ctx.reasoner_role is not None:
+            def ask(question, *, phase, max_tokens, retry_off):
+                return ask_closed(self._ctx.reasoner_chat, self._ctx.reasoner_role, question, rlog,
+                                  phase=phase, max_tokens=max_tokens, retry_off=retry_off)
+        result = definition.execute(pastedfile.RecoveryInput(comp, framed.get('tools'),
+            body.get('messages', []), getattr(sess.plan, 'task', '') or '',
+            getattr(sess, 'workspace_root', None), _is_reading_step(sess, sess.plan.current()),
+            self._pasted_evidence(sess), ask, rlog), self._pasted_state(sess))
+        result = self._pasted_result(result)
+        return result.completion if result.completion is not None else comp
 
     def _work(self, sess: PlanSession, key: str, body: dict, rlog, rewritten: bool = False) -> dict:
         # Persist the harness's workspace cwd on the SESSION: a fresh <cwd> updates it, a turn without one
@@ -3694,6 +3332,11 @@ class Loop:
         # workspace_root is shared across sessions/None in prod; the per-session copy is the live source.)
         sess.workspace_root = _extract_cwd(body.get("messages", [])) or sess.workspace_root or self._ctx.workspace_root
         body = {**body, "messages": self._judge_search_reads(sess, body, rlog)}  # strip off-target search reads
+        if sess.done_probe:
+            settled = self._settle_task_done_probe(sess, body, key, rlog,
+                                                  plan_off=False, rewritten=rewritten)
+            if settled is not None:
+                return settled
         item = sess.plan.current()
         if item is None:  # every step verified INDIVIDUALLY — but is the WHOLE task actually done?
             # OBJECTIVE completion backstop (parity with BOTH plan-off done paths, which always run
@@ -3708,23 +3351,10 @@ class Loop:
                 # A harness compaction can erase the probe's result between emit and read; that is a
                 # LOST result, not a declined one — re-issue rather than fail open (parity with
                 # guard_probe_reissue on the other two probe readers; audited 2026-08-04).
-                if (not _read_tool_result(body.get("messages", []), sess.completion_probe_id).strip()
-                        and rewritten):
-                    # C28b: poll the SAME plan first if its transport is still open, before ever
-                    # abandoning it for a new gate (_poll_running_plan_after_rewrite).
-                    poll = _poll_running_plan_after_rewrite(sess, body, rlog)
-                    if poll is not None:
-                        sess.completion_probe_id = poll["id"]
-                        return _completion_toolcalls(
-                            [poll], note="receiving complete check output (history was compacted)")
-                    if sess.probe_reissues < MAX_PROBE_REISSUES:
-                        probe_tc = guard_gate_op(sess, body, rlog, workspace_root=sess.workspace_root)
-                        if probe_tc is not None:
-                            sess.probe_reissues += 1
-                            sess.completion_probe_id = sess.probe_call_id = probe_tc["id"]
-                            rlog.emit("loop.probe_reissued", plan_off=False, attempt=sess.probe_reissues)
-                            return _completion_toolcalls(
-                                [probe_tc], note="re-running checks (history was compacted)")
+                recovered = _reissue_repository_checks(_NamedProbeState(sess, "completion_probe_id"),
+                    body, rlog, workspace_root=sess.workspace_root, rewritten=rewritten)
+                if recovered.call is not None:
+                    return _repository_completion(recovered)
                 transport_tc = guard_gate_transport(
                     sess, body, rlog, call_id=sess.completion_probe_id)
                 if transport_tc is not None:
@@ -3761,7 +3391,7 @@ class Loop:
                              prompts.render("gate_fail_steer", errors=errors))
                     return self._renudge(sess, key, body, steer, rlog)
             elif not sess.gate_fresh:
-                probe_tc = guard_gate_op(sess, body, rlog, workspace_root=sess.workspace_root)
+                probe_tc = _requested_repository_probe(sess, body, rlog, workspace_root=sess.workspace_root)
                 if probe_tc is not None:
                     sess.completion_probe_id = sess.probe_call_id = probe_tc["id"]
                     rlog.emit("loop.completion_probe", plan_off=False)
@@ -3788,11 +3418,12 @@ class Loop:
             # Never stored server-side; no cross-conversation leak possible. Only the one-bit
             # `done` marker lands in the shape (stable keys), for the post-compaction bypass.
             briefing = self._compact_done(sess, body, rlog)
+            closing = self._closing(sess, briefing)
             if _stable_session(key):
                 self._store.mark_done(key)
             self._store.drop(key)
             rlog.emit("loop.done", id=sess.plan.id)
-            return _completion_final(self._closing(sess, briefing))
+            return _completion_final(closing)
 
         idx = sess.plan.items.index(item) + 1
         return self._work_item(sess, key, body, rlog, item, idx)
@@ -3816,29 +3447,8 @@ class Loop:
             # that gave up still being told "not done". Say which it was.
             rlog.emit("loop.done_unverified", level="warn", checks=sess.completion_checks)
             return None
-        # The AUTHORITATIVE task is the plan's own — NOT _history_root, which after a harness compaction
-        # is the SUMMARY (it may have dropped a requirement), letting a green-but-incomplete finish pass.
-        # (Parity with _replan_tail, which already judges against sess.plan.task.)
-        task = sess.plan.task
-        ev = _satisfaction_evidence(body.get("messages", []), rlog=rlog,
-                     chat_fn=self._reasoner()[0], role=self._reasoner()[1],
-                     gate_plan=getattr(sess, "gate_plan", None),
-                     workspace_root=getattr(sess, "workspace_root", "") or "",
-                     origin=getattr(sess, "handoff_origin", None))
-        ev += _gate_notes(sess)
-        # RUN THE DELIVERABLE. The repo's own checks prove a workspace compiles, lints and passes its
-        # tests; none of that can tell you the delivered program does anything. This check existed and
-        # was wired only into _periodic_satisfaction — so the plan-ON path, where a session ends because
-        # every STEP verified, never ran what it was shipping. Judges twice wrote "Let me run it" into
-        # their reasoning and structurally could not. The marker is EVIDENCE, never a gate, and is empty
-        # on a confirmed run or a task that needs no run, so a clean signal stays silent.
-        satisfied, reason, fix_action = judge_satisfaction(task, ev, self._ctx.reasoner_chat, self._ctx.reasoner_role,
-                                               rlog, coder_tools=_coder_tools_summary(body.get("tools"), params=False),
-                                               workspace_root=sess.workspace_root or "",
-                                               routes=known_routes(body.get("messages", []), sess),
-                                               gate_findings=getattr(sess, "last_gate_flag", "") or "",
-                                               messages=body.get("messages", []), sess=sess)
-        _record_satisfaction(sess, satisfied, reason)
+        review = self._review_task(sess, body, rlog, trigger=ReviewTrigger.PLAN_EXHAUSTED)
+        satisfied, reason, fix_action = review.approved, review.reason, review.action
         rlog.emit("loop.done_critic", plan_off=False, satisfied=satisfied, check=sess.completion_checks)
         if satisfied:
             return None
@@ -3875,6 +3485,9 @@ class Loop:
         return reason
 
     def _work_item(self, sess: PlanSession, key: str, body: dict, rlog, item, idx: int) -> dict:
+        runtime = assistruntime.current()
+        act_first = (runtime.completion_act_first if self._ctx.planner_enabled
+                     and runtime.engagement_level >= 5 else None)
         # A remediation is released only by the harness's successful result for the exact typed
         # subject, never by the model proposing a write or by a turn that merely inspected it.
         _settle_completion_remediation(sess, body.get("messages", []), rlog)
@@ -3894,8 +3507,9 @@ class Loop:
         # model asked for nothing, which is the same trigger test that puts the periodic satisfaction
         # check at level 5 (see LoopContext.assists). The gate MACHINERY is shared with the level-4
         # completion probe; what decides the rung is who started it.
-        if self._ctx.assists and not sess.nudge_reason:
-            periodic = guard_periodic_gate(sess, body, rlog, workspace_root=sess.workspace_root)
+        if self._ctx.assists:
+            periodic = guard_periodic_gate(sess, body, rlog, workspace_root=sess.workspace_root,
+                driver=repositorychecks.Driver.STEP, steer=sess.nudge_reason, step=idx)
             if periodic is not None:
                 return periodic
         # PERIODIC STEP CHECK. A step moves only when the coder volunteers "done". Ask the real critic
@@ -3928,48 +3542,25 @@ class Loop:
         # red gate nor waits for the completion critic to be unblocked.  A pending ordinary steer is
         # deliberately replaced only by a provenance-validated remediation, so the final body has one
         # owner rather than a cursor plus two competing directives.
-        if (self._ctx.assists and not sess.completion_remediation_subject
-                and periodic_check_due(sess.drive_count, self._ctx.satisfaction_check_start,
-                                       self._ctx.satisfaction_check_every,
-                                       sess.deliverable_observation_last_drive)):
-            view = wsview.current(sess.workspace_root) if sess.workspace_root else None
-            if view is not None and view.observation_fingerprint is not None:
-                sess.deliverable_observation_last_drive = sess.drive_count
-                task = sess.plan.task
-                gap = observe_task_missing_file(
-                    task, workspace_root=sess.workspace_root or "",
-                    reasoner_chat=self._ctx.reasoner_chat, reasoner_role=self._ctx.reasoner_role,
-                    rlog=rlog)
-                if gap.diagnosis_kind == "missing_file" and gap.subject:
-                    sess.last_gap_named = str(gap)
-                    sess.last_gap_subject = gap.subject
-                    sess.last_gap_observation = view.observation_fingerprint
-                    sess.nudge_reason = prompts.render("periodic_missing_file_gap", reason=gap,
-                                                       subject=gap.subject)
-                    _arm_completion_remediation(sess, gap.subject, sess.nudge_reason)
-                    sess.steer_source = "deliverable observation"
-                    rlog.emit("loop.satisfaction_gap_named", level="info", head=_clip(str(gap), 120),
-                              subject=gap.subject, rearmed=False)
+        diagnosis = assistruntime.current().completion_diagnosis
+        if self._ctx.assists and diagnosis is not None:
+            observed = diagnosis.observe_scheduled(completiondiagnosis.ScheduledObservationInput(
+                sess.plan.task, sess.drive_count, self._ctx.satisfaction_check_start,
+                self._ctx.satisfaction_check_every,
+                bool(sess.workspace_root and self._ctx.reasoner_chat is not None)), sess,
+                _diagnosis_lifecycle_services(diagnosis, sess.workspace_root or "",
+                    self._ctx.reasoner_chat, self._ctx.reasoner_role, rlog))
+            if not isinstance(observed, completiondiagnosis.ObservationRun):
+                raise TypeError("scheduled diagnosis hook must return ObservationRun")
+            completiondiagnosis._diagnosis_result(observed.diagnosis)
+            completiondiagnosis._remediation_result(observed.delivery,
+                (completiondiagnosis.RemediationStatus.NOT_APPLICABLE, completiondiagnosis.RemediationStatus.DELIVERED))
         record_coder_preframe(rlog, sess, item, idx, total, driver="plan_on")
-        framed = dict(body)
-        framed.pop("model", None)  # no alias — the upstream fills the server's loaded model
-        framed["stream"] = False
         remediation = bool(sess.completion_remediation_subject)
-        msgs = _frame_for_item(body.get("messages", []), item.text, sess.summary, idx, total,
-                               prior_work=sess.prior_work, tools=body.get("tools"),
-                               gate_plan=getattr(sess, "gate_plan", None),
-                               workspace_root=sess.workspace_root,
-                               gate_red=bool(getattr(sess, "last_gate_red", False)),
-                               remediation=remediation)
-        restore, offered = _restored_text_message(sess, body.get("messages", []))
-        if restore is not None:              # its own reducible message — never inside the protected anchor
-            msgs = _insert_after_system(msgs, restore)
-        facts = _fetched_facts_anchor(sess, body.get("messages", []), offered)  # durable fetch ledger → the coder keeps the real endpoints it
-        if facts is not None:                # already fetched past a HARNESS compaction (re-injected from
-            msgs = _insert_after_system(msgs, facts)  # cria's own memory), so it stops re-fetching to rediscover
-            msgs = _elide_ledger_copies(msgs, sess, rlog)  # the anchor is the ONE copy — duplicates collapse
+        msgs = []  # current notes are never offered to historical reducers
         steered = ""
-        if sess.nudge_reason:  # re-driving after a failed check → tell the coder what's still wrong
+        if (sess.nudge_reason and not (sess.living_effects is not None
+                and sess.living_effects[1].clear_nudge)):  # a selected rescue replaces this offered nudge
             if sess.nudge_reply:  # the reply the nudge refers to rides in front of it, as itself
                 msgs = msgs + [{"role": "assistant", "content": sess.nudge_reply}]
                 sess.nudge_reply = ""
@@ -3982,35 +3573,26 @@ class Loop:
         if remediation:
             msgs = msgs + [{"role": "user", "content": prompts.render(
                 "nudge", reason=sess.completion_remediation_reason)}]
-            framed[bodykeys.COMPLETION_REMEDIATION] = sess.completion_remediation_subject
-        framed["messages"] = msgs
-        if self._ctx.self_compact:  # roll the old WORK-HISTORY middle into a rollup (the step framing
-            msgs = self._self_compact(msgs, sess, idx, rlog, force=sess.compact_pending)  # lives in the protected system msg
-            sess.compact_pending = False   # consumed the step-boundary force (a step just verified)
-            framed["messages"] = msgs
-        if self._ctx.focus_trim:  # focus the OUTBOUND coder view (never the history the guards read)
-            trimmed, rep = focustrim.trim(msgs)
-            if rep.applied:
-                framed["messages"] = trimmed
-                rlog.emit("context.focus_trim", reshape="focus-trim", step=idx,
-                          dropped_calls=rep.dropped_calls, dropped_msgs=rep.dropped_msgs)
-        if self._ctx.coder_role is not None:  # the coder role's sampling/reasoning from cria.toml
-            self._ctx.coder_role.apply(framed, rlog=rlog)
+        framed, _ = self._prepare_coder_context(sess, body, rlog, synthetic=False,
+            index=idx, total=total, item=item.text, notes=msgs)
+        _stalled_frame(sess, framed, msgs)
         rlog.emit("loop.item", step=idx, total=total, text=item.text)
 
-        coder = self._coder_turn(sess, framed, body, step=idx, rlog=rlog)  # SHARED coder turn (see _drive_single_item)
-        if remediation:
-            _record_remediation_delivery(sess, coder)
+        delivery_receipts = [] if remediation and diagnosis is not None else None
+        coder = self._coder_turn(sess, framed, body, step=idx, rlog=rlog,
+                                  delivery_receipts=delivery_receipts)  # shared retained coder reply
         if steered:  # no hidden guards: surface WHICH guard steered the coder (same note as plan-off)
             _add_note(coder, f"steered the coder — {steered}")
         if _has_tool_calls(coder):
             sess.step_tool_calls += 1  # the coder ACTED this step (the did-real-work leg's signal)
-            sess.coder_turns += 1      # M2: acting turn — drives the periodic check-in cadence (was plan-off only)
-            sess.gate_fresh = False    # the workspace may change → any prior gate result is stale
+            sess.gate_fresh = False    # independent required evidence freshness
             thrash = self._replan_if_thrashing(sess, key, body, idx, rlog)  # tool-call thrash escape
             if thrash is not None:
                 return thrash
-            return coder  # coder is acting → forward; the harness runs it, then loops back here
+            if (delivery_receipts and delivery_receipts[-1][0] is coder
+                    and delivery_receipts[-1][1] == sess.completion_remediation_subject):
+                _record_remediation_delivery(sess, coder)
+            return _forward_acting_coder(sess, coder)  # accepted after the thrash decision
 
         # coder produced no tool call → it thinks the step is done.
         # …unless cria ATE the call. massage recovers a tool call the model left in its reasoning
@@ -4061,27 +3643,17 @@ class Loop:
         # containment can never match — and loosening that to line-level would silence the nudge on
         # exactly the turns it earns its keep, where a model retypes a file it has just read. The
         # deterministic fact cria already holds is the better test (#8).
-        if (not _is_reading_step(sess, sess.plan.current())
-                and self._pasted_file_unsaved(sess, _completion_text(coder), body)
-                and sess.unexecuted_nudges < MAX_UNEXECUTED_NUDGES):
-            sess.unexecuted_nudges += 1
-            rlog.emit("loop.unexecuted_write", step=idx, attempt=sess.unexecuted_nudges)
-            # The nudge says "send that same content again" — so the content must be IN the frame.
-            # The re-framed view rebuilds from the harness body, which never saw this internal prose
-            # turn; without the reply the model is ordered to resend text it cannot see.
-            # …unless it was CUT OFF, in which case carrying it is the worse lie: "send that same
-            # content again as a write tool call" over a fragment asks for a COMPLETE write of
-            # incomplete content, and guard_truncation cannot catch that one — the tool call would
-            # be whole, only its payload short (the self-truncated-write footgun, from the other
-            # end). Measured: the truncated replies are also the two largest ever carried
-            # (15,044 and 33,638 est tokens), so skipping them removes the size risk with the lie.
-            sess.nudge_reply = "" if massage.is_truncated(coder) else _completion_text(coder)
-            return self._renudge(sess, key, body, self._unexecuted_nudge_text(sess, _completion_text(coder)), rlog)
-        if sess.step_tool_calls == 0 and not sess.leg0_nudged:
-            sess.leg0_nudged = True  # once per step; a coder that STILL won't act falls to the gate
-            sess.verify_fails += 1
-            rlog.emit("loop.step_incomplete", step=idx, reason="no tools used", attempt=sess.verify_fails)
-            return self._renudge(sess, key, body, prompts.load("leg0_nudge_step"), rlog)
+        pasted_nudge = self._pasted_followup(sess, coder)
+        if pasted_nudge is not None:
+            sess.nudge_reply = pasted_nudge.carried_reply
+            return self._renudge(sess, key, body, pasted_nudge.text, rlog)
+        redrive = (act_first.execute(completionredrive.Input(
+            completionredrive.Authority.STEP, sess.step_tool_calls, sess, rlog, idx))
+            if act_first is not None else None)
+        if redrive is not None:
+            if not isinstance(redrive, completionredrive.Result):
+                raise ValueError('Completion act-first replacement must return Result')
+            return self._renudge(sess, key, body, redrive.text, rlog)
         # LEG 2 setup: compose the completion gate (syntax floor + top probe + top TEST probe,
         # discovered fresh from the workspace) as ONE shell command the harness runs.
         probe_tc = self._gate_op(body, sess, rlog)
@@ -4095,7 +3667,7 @@ class Loop:
         participation_facts = participation.render_for_judge(
             getattr(sess, "last_gate_participation", None),
             fresh=getattr(sess, "gate_fresh", None))
-        ok, reason = self._verify(item.text, _completion_text(coder), "", evidence, rlog, idx=idx, total=total, key=key,
+        verification = self._verify(item.text, _completion_text(coder), "", evidence, rlog, idx=idx, total=total, key=key,
                                   coder_tools=_coder_tools_summary(body.get("tools")),
                                   routes=known_routes(body.get('messages', []), sess),
                                   sources_read=research.sources_read(
@@ -4104,7 +3676,10 @@ class Loop:
                                   gate_red=bool(sess.last_gate_red),
                                   messages=body.get("messages", []), sess=sess,
                                   participation_facts=participation_facts, original_task=sess.plan.task)
-        if ok:  # advance ONLY on a genuine pass — no fail cap (re-nudge forever otherwise)
+        if getattr(verification, 'step_result', None) is not None:
+            return self._consume_step_result(sess, key, body, idx, total, rlog, verification)
+        ok, reason = verification
+        if ok:  # standalone verifier-double compatibility only
             return self._advance(sess, key, body, idx, total, rlog)
         sess.verify_fails += 1
         sess.critic_fails += 1
@@ -4117,6 +3692,11 @@ class Loop:
         denial note that also steers the recommended query) and mark the file so any re-read is likewise
         stripped/denied. Judged once per file (cached). Returns the messages (rewritten where poisoned)."""
         msgs = body.get("messages", [])
+        selection = researchpolicies.current()
+        if selection.spill is None:
+            return msgs
+        provider_log = rlog  # provider calls require phase/capture state, not an emit-only adapter
+        rlog = policy_log(rlog, selection.spill.policy)
         if sess.judged_search_files is None:
             sess.judged_search_files = set()
         if sess.poisoned_search_files is None:
@@ -4135,59 +3715,39 @@ class Loop:
         # `_SEARCH_SPILLED`.
         q_of = {_search_key(f): q
                 for f, q in webfetch.spilled_search_files(sess.web_session).items()}
+        state = researchpolicies.SpillState(sess.judged_search_files,
+                                            sess.poisoned_search_files,
+                                            sess.search_recommend)
+
+        def ask(task, query, results):
+            _q, on_target, recommendation = judge_search(
+                self._ctx.reasoner_chat, self._ctx.reasoner_role, task, query, results, provider_log,
+                coder_tools=_coder_tools_summary(body.get("tools")))
+            return researchpolicies.SpillVerdict(on_target, recommendation)
+
+        def protected(task, results):
+            veto = _results_name_the_tasks_host(task, results)
+            if veto:
+                rlog.emit("loop.search_poison_refused", level="info", file=f)
+            return veto
+
         out: list[dict] = []
         for m in msgs:
             if isinstance(m, dict) and m.get("role") == "tool" and read_file_of.get(m.get("tool_call_id")):
                 f = read_file_of[m.get("tool_call_id")]
                 key = "content" if m.get("content") is not None else "output"
-                if _search_key(f) not in sess.judged_search_files:
-                    sess.judged_search_files.add(_search_key(f))
-                    # Judge the REAL results off disk — NOT the tool result, which for a spilled file is
-                    # cria's own "grep this instead" steer. Handing the judge that envelope and asking
-                    # "are the RESULTS on target?" gets a false for a search that was perfectly on target,
-                    # and a definite false DELETES it. Unreadable → judge nothing, strip nothing (the file
-                    # stays marked judged, so this can never become a per-turn reasoner call either).
-                    results = search_file_text(sess.workspace_root, f)
-                    query = q_of.get(_search_key(f), "")
-                    if not query:
-                        # NO QUERY, NO VERDICT. This judgement is destructive — a false DENIES the
-                        # coder a file that is still on disk, permanently — and without the query
-                        # there is nothing to judge the results against. Asked anyway, the judge
-                        # reasons from the literal "(none)" it was handed and rules false: walked on
-                        # shipping-rates-rb x nemotron-elastic 1787294328, where the file it deleted
-                        # held `ISO3166::Country#in_eu?`, the exact predicate the task required.
-                        # The host veto below cannot save that case — the task named no host.
-                        #
-                        # The cause is fixed upstream (both search pointers now carry their query),
-                        # and this is the floor under it: a pointer shape cria cannot read must cost
-                        # the model nothing (#13, and #8 — the deterministic half gathers the fact,
-                        # and there is no fact here).
-                        rlog.emit("loop.search_judge_skipped", level="info", file=f, why="no query")
-                        out.append(m)
-                        continue
-                    _q, r_ok, rec = judge_search(self._ctx.reasoner_chat, self._ctx.reasoner_role,
-                                                 latest_user_text(msgs), query, results, rlog,
-                                                 coder_tools=_coder_tools_summary(body.get("tools")))
-                    # DETERMINISTIC VETO over a destructive fuzzy verdict. Ruling the results
-                    # off-target DENIES the coder a file that is still on disk, permanently, on one
-                    # judgment call. Twice now that judgment has been wrong on this task and thrown
-                    # away the answer: on run 1785686596 the judge was asked about a query cria had
-                    # mangled to "(none)", and on run 1785714194 it had a clean query and STILL ruled
-                    # false while its own prompt carried a link described as "documentation on how to
-                    # resolve handles to addresses and get all handles by address", plus the official
-                    # api.handle.me swagger. The model gave up searching in the next turn.
-                    #
-                    # If the results name a host the TASK ITSELF names, they are on-target by
-                    # construction and no verdict can make them otherwise. That is exact — cria holds
-                    # both strings — and it only ever REFUSES a deletion, never causes one.
-                    if not r_ok and _results_name_the_tasks_host(latest_user_text(msgs), results):
-                        rlog.emit("loop.search_poison_refused", level="info", file=f)
-                        r_ok = True
-                    if not r_ok:
-                        sess.poisoned_search_files.add(_search_key(f))
-                        sess.search_recommend = rec
-                        rlog.emit("loop.search_read_poison", file=f, rec=rec)
-                if _search_key(f) in sess.poisoned_search_files:
+                path_key = _search_key(f)
+                was_poisoned = path_key in state.poisoned
+                settled = selection.spill_read(researchpolicies.SpillInput(
+                    path_key, lambda: q_of.get(path_key, ""),
+                    lambda: search_file_text(sess.workspace_root, f),
+                    lambda: latest_user_text(msgs), ask, protected), state)
+                sess.search_recommend = state.recommendation
+                if settled.reason:
+                    rlog.emit("loop.search_judge_skipped", level="info", file=f, why=settled.reason)
+                if settled.effect is researchpolicies.Effect.POISONED:
+                    if not was_poisoned:
+                        rlog.emit("loop.search_read_poison", file=f, rec=settled.recommendation)
                     # Marker-tagged and prompt-file-sourced: this note is cria's OWN voice written back
                     # into the message stream, so it must be identifiable — the work log and the critic
                     # were reading it as something the coder's tool returned.
@@ -4200,7 +3760,8 @@ class Loop:
                     # line at all: a call that looks like it returned nothing, on a file that is still
                     # on disk. Measured 2026-08-03: 229 coder turns across 9 runs. Labelled now, not
                     # deleted (#2 — never destroy, disclose).
-                    steer = f" Search instead for: {sess.search_recommend}." if sess.search_recommend else ""
+                    steer = (f" Search instead for: {settled.recommendation}."
+                             if settled.recommendation else "")
                     out.append({**m, key: prompts.render("search_read_denied",
                                                          marker=denial.DENIED_MARKER, steer=steer, file=f)})
                     continue
@@ -4208,7 +3769,7 @@ class Loop:
         return out
 
     def _self_compact(self, msgs: list[dict], sess: PlanSession, idx, rlog, *, force: bool = False,
-                      pinned_task: str | None = None) -> list[dict]:
+                      pinned_task: str | None = None, protected_prefix: bool = False) -> list[dict]:
         """THE self-compaction — one owner for BOTH drivers. Rolls the old work-history middle into a
         ⟦ctx:rollup⟧ summary via the shared summarize primitive. Orthogonal to sess.summary (the cheap
         completed-STEP axis in the protected system message). ``force`` (set at a step boundary)
@@ -4222,6 +3783,9 @@ class Loop:
         ``_briefing_gate_ground_truth`` — the override that stops a rollup laundering an unverified
         "the tests pass" past cria's real last check state. Each had a piece the other needed. That is
         what having two of something costs, every time."""
+        selected = next(iter(assistruntime.current().bindings(selfcompact.DEFINITION.policy.stage)), None)
+        if selected is None:
+            return msgs
         chat_fn = self._ctx.compactor_chat or self._ctx.reasoner_chat
         role = self._ctx.compactor_role or self._ctx.reasoner_role
         inventory_for_writer = workspace_inventory(sess.workspace_root or "", flavor="briefing")
@@ -4282,24 +3846,25 @@ class Loop:
                 return ""
             return candidate
 
-        out, sess.compact_state, applied = selfcompact.compact(
-            msgs, make_summary,
-            sess.compact_state, trigger_tokens=self._ctx.trigger_compaction, force=force,
-            # The task is a foldable history message in the plan frame (only the STEP is in the system
-            # message). Pin it as a ⟦ctx:task⟧ anchor so a boundary fold — which keeps NO verbatim tail —
-            # can't summarize the original requirements away.
-            pinned_task=root_task,
+        result = selected.execute(selfcompact.RollingInput(
+            msgs, make_summary, trigger_tokens=self._ctx.trigger_compaction, force=force,
+            # Common preparation holds required authority outside this historical scope.
+            # Standalone compatibility callers still ask the source to publish its task frame.
+            # The writer's task_fact above is grounding in either case, not output authority.
+            pinned_task="" if protected_prefix else root_task,
             # The coder-flavored files list (operator's design): the compacted view carries the LIST
             # of what exists; read_file is the road back to any content.
             files_list=inventory_for_coder,
             # The RARE fold-of-the-accumulated-summary is independently validated before adoption.
             refold=refold_summary,
-            rlog=rlog, with_grounding=True)
-        if applied:
+            rlog=rlog, with_grounding=True), sess.compact_state)
+        sess.compact_state = result.state
+        if idx is not None:
+            sess.compact_pending = result.force_pending
+        if result.applied:
             rlog.emit("context.self_compact", reshape="compact", step=idx, before=len(msgs),
-                      after=len(out), boundary=force)
-            return out
-        return msgs
+                      after=len(result.messages), boundary=force)
+        return result.messages
 
     def _verify_after_probe(self, sess: PlanSession, key: str, body: dict, rlog, *, rewritten: bool = False) -> dict:
         """The ground-truth probe cria emitted last turn has run — read its result and
@@ -4312,49 +3877,39 @@ class Loop:
         LOST — so re-issue the probe instead of letting the step pass with no ground truth."""
         item = sess.plan.current()
         if item is None:
+            sess.awaiting_probe = False
             return self._work(sess, key, body, rlog)
         idx = sess.plan.items.index(item) + 1
         total = len(sess.plan.items)
         if sess.periodic_probe:  # M2 parity: a mid-step PERIODIC check-in, NOT a completion gate. Inject any
             # ground-truth error and keep working; NEVER advance the step (the coder didn't claim done). A
             # CLEAN check-in stays silent (guard_periodic_result returns None), so this can't complete a step.
-            transport_tc = guard_gate_transport(sess, body, rlog)
-            if transport_tc is not None:
-                sess.awaiting_probe = True
-                return _completion_toolcalls(
-                    [transport_tc], note=f"receiving complete check output for step {idx}/{total}")
-            truth = guard_periodic_result(
-                sess, body, rlog, reasoner_chat=self._ctx.reasoner_chat,
-                reasoner_role=self._ctx.reasoner_role, workspace_root=sess.workspace_root)
-            if not truth:
-                probe_tc = guard_periodic_replan_after_survey(sess, body, rlog, workspace_root=sess.workspace_root)
-                if probe_tc is not None:
-                    return _completion_toolcalls(
-                        [probe_tc], note=f"periodic check-in for step {idx}/{total} — running checks")
+            result = _resume_repository_checks(sess, body, rlog,
+                driver=repositorychecks.Driver.STEP, rewritten=rewritten, step=idx,
+                reasoner_chat=self._ctx.reasoner_chat, reasoner_role=self._ctx.reasoner_role,
+                workspace_root=sess.workspace_root)
+            if result.call is not None:
+                note = (f"receiving complete check output for step {idx}/{total}"
+                        if result.pending_kind is repositorychecks.PendingKind.PAGE
+                        else f"periodic check-in for step {idx}/{total} — running checks")
+                return _completion_toolcalls([result.call], note=note)
+            truth = result.text
             return self._renudge(sess, key, body, truth, rlog) if truth else self._work(sess, key, body, rlog)
         probe = _read_tool_result(body.get("messages", []), sess.probe_call_id)
-        if not probe.strip() and rewritten:
-            # C28b: the result is lost, but the CHECK may still be running — poll the SAME plan
-            # before ever abandoning it for a new gate (_poll_running_plan_after_rewrite).
-            poll = _poll_running_plan_after_rewrite(sess, body, rlog)
-            if poll is not None:
-                return _completion_toolcalls(
-                    [poll],
-                    note=f"receiving complete check output for step {idx}/{total} (history was compacted)")
-            if sess.probe_reissues < MAX_PROBE_REISSUES:
-                probe_tc = self._gate_op(body, sess, rlog)
-                if probe_tc is not None:
-                    sess.awaiting_probe = True
-                    sess.probe_call_id = probe_tc["id"]
-                    sess.probe_reissues += 1
-                    rlog.emit("loop.probe_reissued", step=idx, attempt=sess.probe_reissues)
-                    return _completion_toolcalls(
-                        [probe_tc], note=f"re-running checks for step {idx}/{total} (history was compacted)")
+        recovered = _reissue_repository_checks(sess, body, rlog,
+            workspace_root=sess.workspace_root, driver=repositorychecks.Driver.STEP,
+            step=idx, rewritten=rewritten)
+        if recovered.call is not None:
+            note = (f"receiving complete check output for step {idx}/{total} (history was compacted)"
+                    if recovered.pending_kind is repositorychecks.PendingKind.REWRITE_POLL
+                    else f"re-running checks for step {idx}/{total} (history was compacted)")
+            return _completion_toolcalls([recovered.call], note=note)
         transport_tc = guard_gate_transport(sess, body, rlog)
         if transport_tc is not None:
             sess.awaiting_probe = True
             return _completion_toolcalls(
                 [transport_tc], note=f"receiving complete check output for step {idx}/{total}")
+        sess.awaiting_probe = False  # recovery/checked paging ended; consume the actual pending read
         sess.probe_reissues = sess.probe_poll_reissues = 0  # a result (or the capped fallback) resolves the streak
 
         # Interpret the gate output through the ported probe modules (floor + probes + git).
@@ -4363,9 +3918,14 @@ class Loop:
         # plan-off path via guard_probe_steer; the loop supplies its reasoner to author the redirect.
         # It records the reading itself (record_gate_state) before returning, so this early return
         # no longer discards a gate that the guard happened to be reading on the same turn.
+        guard_ticket = sess.stalled_probe
         steer = guard_probe_steer(sess, body, rlog, step=idx, author=self._probe_author)
         if steer is not None:
             return self._renudge(sess, key, body, steer, rlog)
+        if guard_ticket is not None:
+            # A guard reading never becomes a volunteered completion check merely
+            # because the selected settlement withheld its optional intervention.
+            return self._work(sess, key, body, rlog)
         # The reading is state whichever way this turn goes. Captured BEFORE the mirror overwrites it,
         # because the stall signal is "the same finding as last time" and comparing the new flag with
         # itself is always true.
@@ -4390,7 +3950,8 @@ class Loop:
                       transport_unknown=unknown)
             digest = gate_error_text(outcome) if unknown else prompts.load("probe_digest_none")
             evidence = self._grounded_evidence(sess, body, rlog)
-            ok, reason = self._verify(item.text, sess.pending_coder_text, digest, evidence, rlog, idx=idx, total=total, key=key,
+            verification = self._verify(item.text, sess.pending_coder_text, digest, evidence, rlog, idx=idx, total=total, key=key,
+                                      probe_unknown=unknown,
                                       coder_tools=_coder_tools_summary(body.get("tools")),
                                       routes=known_routes(body.get('messages', []), sess),
                                       sources_read=research.sources_read(
@@ -4399,6 +3960,9 @@ class Loop:
                                       gate_red=bool(sess.last_gate_red),
                                       messages=body.get("messages", []), sess=sess,
                                       participation_facts=participation_facts, original_task=sess.plan.task)
+            if getattr(verification, 'step_result', None) is not None:
+                return self._consume_step_result(sess, key, body, idx, total, rlog, verification)
+            ok, reason = verification
             if ok:
                 return self._advance(sess, key, body, idx, total, rlog)
             sess.verify_fails += 1
@@ -4476,7 +4040,8 @@ class Loop:
 
         digest = proberun.completion_probe_digest(outcome.report, missing=outcome.unran)
         evidence = self._grounded_evidence(sess, body, rlog)
-        ok, reason = self._verify(item.text, sess.pending_coder_text, digest, evidence, rlog, idx=idx, total=total, key=key,
+        verification = self._verify(item.text, sess.pending_coder_text, digest, evidence, rlog, idx=idx, total=total, key=key,
+                                  probe_ran=True, probe_blocked=nudge is not None, probe_repair=nudge or '',
                                   coder_tools=_coder_tools_summary(body.get("tools")),
                                   routes=known_routes(body.get('messages', []), sess),
                                   sources_read=research.sources_read(
@@ -4486,6 +4051,9 @@ class Loop:
                                   gate_red=bool(sess.last_gate_red),
                                   messages=body.get("messages", []), sess=sess,
                                   participation_facts=participation_facts, original_task=sess.plan.task)
+        if getattr(verification, 'step_result', None) is not None:
+            return self._consume_step_result(sess, key, body, idx, total, rlog, verification)
+        ok, reason = verification
         if nudge is not None:
             if ok:
                 # The critic read the findings and ruled they are not this step's goal. Loud by
@@ -4525,6 +4093,27 @@ class Loop:
             return self._work(sess, key, body, rlog)
         idx = sess.plan.items.index(item) + 1
         total = len(sess.plan.items)
+        raw = _read_tool_result(body.get('messages', []), sess.probe_call_id)
+        matched_result = any(message.get('role') == 'tool'
+                             and message.get('tool_call_id') == sess.probe_call_id
+                             for message in body.get('messages', []))
+        if not matched_result:
+            # An unrelated result is not an unavailable observation. Preserve the
+            # original pending question and repeat only its owned harness call.
+            call = next((tc for message in reversed(body.get('messages', []))
+                         if message.get('role') == 'assistant'
+                         for tc in message.get('tool_calls') or ()
+                         if tc.get('id') == sess.probe_call_id), None)
+            if call is None:
+                tool = find_shell_tool(body.get('tools'))
+                command = probegate.continue_transport_command(sess.gate_plan) if sess.gate_plan else ''
+                if tool is None or not command:
+                    raise ValueError('Pending STEP observation requires its correlated harness result')
+                call = repositorychecks._shell_call(_repository_input(body, rlog),
+                    _repository_probes(), tool, command)
+                sess.probe_call_id = call['id']
+            sess.awaiting_probe = True
+            return _completion_toolcalls([call], note=f'receiving workspace observation for step {idx}/{total}')
         transport_tc = guard_gate_transport(sess, body, rlog)
         if transport_tc is not None:
             sess.awaiting_probe = True
@@ -4574,6 +4163,9 @@ class Loop:
         ADDITIVE and bounded: a negative, unparseable, or unconfirmed result leaves the plan
         untouched. An unobserved positive schedules one workspace observation, then is discarded;
         only a fresh positive whose approve-path brake inspected that surveyed workspace advances."""
+        runtime = getattr(sess, 'pilot_binding', None) or self._ctx.pilot_runtime
+        if runtime.step_review.definition is None:
+            return None
         if not force and not periodic_check_due(sess.drive_count, STEP_CHECK_EVERY, STEP_CHECK_EVERY,
                                                 sess.step_checked_drive):
             return None
@@ -4611,7 +4203,10 @@ class Loop:
             red_findings=findings if sess.last_gate_red else "",
             gate_red=bool(sess.last_gate_red),
             messages=msgs, sess=sess,
-            participation_facts=participation_facts, original_task=sess.plan.task)
+            participation_facts=participation_facts, original_task=sess.plan.task,
+            trigger=stepreview.StepTrigger.SCHEDULED, probe_ran=sess.last_gate_ran)
+        step_result = getattr(verification, 'step_result', None)
+        review_done = step_result.review_done if step_result is not None else verification.done
         # SAY WHAT IT DID, always — a guard that is silent when it declines cannot be told apart from
         # one that never ran.
         rlog.emit("loop.periodic_step_check", step=idx, done=verification.done, drive=sess.drive_count,
@@ -4621,12 +4216,21 @@ class Loop:
         # `loop.confirm_unchecked` deliberately leaves ordinary coder-claimed advancement fail-open,
         # but it cannot grant this scheduled path new authority.
         confirmation = verification.confirmation
-        if (verification.done and confirmation is not None and confirmation.confirmed
+        effect = step_result.effect if step_result is not None else None
+        if effect is not None:
+            if effect.action is stepreview.StepAction.RENUDGE:
+                return self._consume_step_result(sess, key, body, idx, total, rlog, verification)
+            if effect.action in (stepreview.StepAction.NONE, stepreview.StepAction.KEEP_WORKING,
+                                 stepreview.StepAction.CONTINUE_UNREVIEWED):
+                return None
+        if ((effect is None or effect.action is stepreview.StepAction.ADVANCE)
+                and verification.done and confirmation is not None and confirmation.confirmed
                 and confirmation.observed):
             rlog.emit("loop.periodic_step_satisfied", level="warn", step=idx, drive=sess.drive_count,
                       turns=sess.coder_turns, step_text=item.text[:160])
             return self._advance(sess, key, body, idx, total, rlog)
-        if verification.done:
+        if ((effect is None and review_done)
+                or effect is not None and effect.action is stepreview.StepAction.OBSERVE_WORKSPACE):
             rlog.emit("loop.periodic_step_satisfied", level="warn", step=idx, drive=sess.drive_count,
                       turns=sess.coder_turns, observe_only=True, step_text=item.text[:160])
             # An unobserved positive cannot advance, but it must acquire the missing fact rather
@@ -4674,13 +4278,20 @@ class Loop:
         sess.verify_fails = sess.critic_fails = 0
         sess.pending_coder_text = ""
         sess.step_tool_calls = 0   # fresh step, fresh did-real-work signal
+        pasted_definition = self._pasted_selection(sess)
+        if pasted_definition is not None:
+            self._pasted_result(pasted_definition.cancel(self._pasted_state(sess)))
+        sess.pasted_consumed = None
         sess.unexecuted_nudges = 0
         sess.thrash_replanned = False  # a new step-position may earn its own one-shot thrash re-derive
         sess.verify_replanned = False  # ...and its own one-shot verify-fail re-derive
+        if sess.living_state_view is not None:
+            sess.living_state_view.reset()
+        sess.living_effects = sess.living_raw_reply = None
         sess.leg0_nudged = False
-        sess.recent_writes, sess.recent_write_ids, sess.spin_path = [], [], ""
-        sess.spin_probe_due = False
-        sess.redirect_due = False
+        stalled = _stalled_selection(sess)
+        if stalled is not None:
+            _stalled_result(stalled.reset_step(_StalledWorkView(sess)))
         # Convergence tracking is per step — EXCEPT while the repo is still RED. This string is the
         # only carrier of the failing findings into cria's rolling briefing
         # (_briefing_gate_ground_truth reads exactly this field) and into the completion judge's
@@ -4693,7 +4304,7 @@ class Loop:
         #                              step's raw work-signals don't distract the next step (operator ask)
         rlog.emit("loop.step_done", step=idx, verified=True)
         if not sess.plan_off:  # plan-off's tail IS the user's task — never re-derived into steps
-            self._replan_tail(sess, body, idx, rlog)  # living plan: refine the not-done steps from real work
+            self._replan_tail(sess, body, idx, rlog, session_key=key)  # selected living tail
         if sess.synthetic:
             # A coverage refusal released the old living-plan cursor.  Re-enter through the existing
             # raw-task driver immediately; `_work` would re-cage the task as a synthetic plan step.
@@ -4711,7 +4322,64 @@ class Loop:
         notice = prompts.render('generation_protocol_refused', attempt=sess.unexecuted_nudges)
         return self._renudge(sess, key, body, notice, rlog)
 
-    def _replan_tail(self, sess: PlanSession, body: dict, idx: int, rlog, *, trigger: str = REPLAN_TRIGGER_ADVANCE) -> None:
+    def _retain_living_reply(self, sess, effects, raw_reply, actual, offered, rlog):
+        if actual is None or actual is not offered:
+            return
+        if effects is not None and sess.living_effects is effects:
+            selected, result, plan, plan_id, task, items = effects
+            runtime = getattr(sess, 'pilot_binding', None) or self._ctx.pilot_runtime
+            if (runtime.living_plan is selected and sess.plan is plan and plan.id == plan_id
+                    and plan.task == task
+                    and tuple((it.text, it.done, it.note) for it in plan.items) == items):
+                if result.reset_failure_counts:
+                    sess.verify_fails = sess.critic_fails = 0
+                if result.clear_nudge:
+                    sess.nudge_reason = ''
+                if result.reset_acting_calls:
+                    sess.step_tool_calls = 0
+                sess.living_effects = None
+        if raw_reply is actual and sess.living_raw_reply is raw_reply and sess.replan_uncovered_pending:
+            sess.replan_uncovered_pending = False
+            sess.living_raw_reply = None
+            rlog.emit('loop.replan_uncovered_delivered', missing=', '.join(sess.replan_uncovered))
+
+    def _policy_epoch(self, sess):
+        """A value read from current fact authorities, not another event clock."""
+        gate = getattr(sess, 'gate_plan', None)
+        view = _surveyed_view(sess)
+        participation = getattr(sess, 'last_gate_participation', None)
+        return (sess.action_seq, id(gate), getattr(gate, 'transport_id', None),
+            sess.probe_call_id, getattr(gate, 'transport_path', None),
+            len(getattr(gate, 'transport_data', ())), getattr(gate, 'transport_total', None),
+            getattr(gate, 'transport_sha256', None), getattr(gate, 'transport_complete', None),
+            getattr(gate, 'transport_error', None), sess.last_gate_seq, sess.last_gate_ran,
+            sess.last_gate_red, sess.last_gate_flag, sess.gate_fresh,
+            sess.last_gate_testless, sess.last_gate_skipped, repr(participation),
+            tuple(sorted(sess.write_result_ids or ())), tuple(sorted(sess.refused_write_ids or ())),
+            repr(sess.own_check_runs), repr(getattr(sess, 'own_check_seen', None)),
+            view.observation_fingerprint if view is not None else None)
+
+    def _living_input(self, sess, body, idx, rlog, trigger):
+        runtime = getattr(sess, 'pilot_binding', None) or self._ctx.pilot_runtime
+        selected = runtime.living_plan
+        def question(system, user, *, coder_tools=''):
+            return summarize(self._ctx.reasoner_chat, self._ctx.reasoner_role,
+                system, user, rlog, phase='reasoner', coder_tools=coder_tools)
+        services = livingplan.TailServices(
+            question if self._ctx.reasoner_chat is not None and self._ctx.reasoner_role is not None else None,
+            lambda: livingplan.TailFacts(self._grounded_evidence(sess, body, rlog),
+                session_research_facts(body.get('messages', []), sess),
+                known_routes(body.get('messages', []), sess)),
+            lambda plan: self._persist_plan(plan, rlog), selected.coverage)
+        return livingplan.TailInput(sess.plan, f'{sess.plan.id}:{sum(it.done for it in sess.plan.items)}',
+            self._policy_epoch(sess), trigger, services, rlog, synthetic=sess.synthetic,
+            plan_off=sess.plan_off, critic_fails=sess.critic_fails, acting_calls=sess.step_tool_calls,
+            coder_tools=_coder_tools_summary(body.get('tools')),
+            tool_names=tuple((tool.get('function') or {}).get('name', '') for tool in body.get('tools') or ()),
+            step_index=idx)
+
+    def _replan_tail(self, sess: PlanSession, body: dict, idx: int, rlog, *, trigger=REPLAN_TRIGGER_ADVANCE,
+                     session_key=''):
         """LIVING PLAN. A step just verified — hand a dedicated reasoner the real work done and let it
         re-derive the REMAINING (not-done) steps, replacing that tail. Completed steps are immutable
         history; only the not-yet-done steps are rewritten. This is what prunes a step the coder already
@@ -4720,86 +4388,49 @@ class Loop:
         'all done' verdict is confirmed by the task critic before it is allowed to empty the plan (the
         pruned steps skip the per-step gate, so completion must clear the same backstop the plan-off
         path uses). Skipped for a synthetic 1-item plan (no tail) and when no reasoner is configured."""
-        if self._ctx.reasoner_role is None or sess.synthetic:
-            return
-        done_items = [it for it in sess.plan.items if it.done]
-        remaining = [it for it in sess.plan.items if not it.done]
-        if not remaining:
-            return
-        # EVERY pending step is re-derivable. cria used to hold a PINNED step out of the re-derivation so
-        # its own injected research step could never be reworded or dropped — but a step held out of the
-        # living plan is an inescapable mandate (485 calls burned on one), and cria authoring the step was
-        # the overreach underneath it. Nothing cria writes outranks the re-derivation any more.
-        rederivable = remaining
-        evidence = self._grounded_evidence(sess, body, rlog)
-        # The replanner is cria's SECOND author of plan steps, and it was never told the thing the
-        # planner is told (147e224): that nothing read so far DEFINES a route. Measured (run
-        # 0727-180058) its evidence carried zero `endpoints:` and zero `/handles/{handle}` while
-        # "resolve endpoint" echoed through it 9 times from the plan and the coder's own turns — it
-        # knew no routes and wrote "search for THE RESOLVE ENDPOINT pattern", which the coder turned
-        # into `https://api.handle.me/resolve/{handle}` (404). This fires BECAUSE the ledger is empty,
-        # which is the state that produces a presupposed endpoint — the inverse of a route CHECK,
-        # which needs a populated ledger and so cannot help here. Silent once any real route is known.
-        if not known_routes(body.get("messages", []), sess):
-            evidence = (evidence + "\n\n" + prompts.load_map("planner_steers")["fetch_no_structure"]).strip()
-        # THE REPLANNER GETS PARAMETERS; THE JUDGE BELOW DOES NOT. A re-derived step has to be
-        # something the coder can actually do, so the replanner is shown how each tool is called.
-        # A satisfaction judge is READ-ONLY and must not be: handed the parameter vocabulary
-        # (`justification`, `workdir`, `login`, …) it fabricates tool calls out of its own prompt,
-        # goes silent, and cria fail-closes — 12 consecutive times on a workspace already at 5/5
-        # (the incident in tests/test_judge_is_fenced_out_of_acting.py). The other three
-        # judge_satisfaction sites always passed params=False; this one reused the replanner's
-        # summary, and the guard that was supposed to catch it string-matched
-        # "coder_tools=_coder_tools_summary" and skipped every site that passes a variable.
-        tools = _coder_tools_summary(body.get("tools"))
-        judge_tools = _coder_tools_summary(body.get("tools"), params=False)
-        uncovered: list[str] = []
-        steps = reassess_remaining(
-            self._ctx.reasoner_chat, self._ctx.reasoner_role, sess.plan.task,
-            "\n".join(f"- {it.text}" for it in done_items),
-            "\n".join(f"- {it.text}" for it in rederivable), evidence, rlog, coder_tools=tools,
-            trigger=trigger, facts=session_research_facts(body.get("messages", []), sess),
-            uncovered=uncovered)
-        if steps is None:
-            if uncovered:
-                # A coverage refusal is not an undecidable replan.  Keeping its old cursor makes
-                # the rejected decomposition authoritative anyway.  The existing synthetic path is
-                # the one safe no-plan state: it frames the user's raw task, preserves all ordinary
-                # guards/gates, and cannot manufacture a replacement plan or code.
-                sess.synthetic = sess.plan_off = True
-                sess.plan.items = [PlanItem(text=sess.plan.task)]
-                sess.replan_uncovered = tuple(uncovered)
-                sess.replan_uncovered_pending = True
-                sess.steer_source = "living-plan coverage refusal"
-                rlog.emit("loop.replan_reset", level="warn", step=idx, state="raw_task",
-                          missing=", ".join(uncovered))
-                return
-            # An unparseable/otherwise declined re-derivation still cannot safely replace the plan.
-            rlog.emit("loop.replan_noop", step=idx, result="declined", remaining=len(rederivable))
-            return
-        if not steps:  # claims the re-derivable tail is done — confirm before dropping it
-            satisfied, _, _fix = judge_satisfaction(sess.plan.task, evidence, self._ctx.reasoner_chat,
-                                              self._ctx.reasoner_role, rlog, coder_tools=judge_tools,
-                                              workspace_root=sess.workspace_root or "",
-                                              routes=known_routes(body.get("messages", []), sess),
-                                              messages=body.get("messages", []), sess=sess)
-            if not satisfied:  # not actually done → keep the remaining steps, let them verify normally
-                rlog.emit("loop.replan_empty_declined", step=idx)
-                return
-        if [it.text for it in rederivable] == steps:
-            # Unchanged → no churn, but NOT no log. Both stuck-step callers spend their one-shot
-            # BEFORE calling here, so a re-derivation that returns the same tail permanently retires
-            # the rescue and the step re-nudges to the completion bound. Silence here made that
-            # indistinguishable, in the record, from a rescue that never fired.
-            rlog.emit("loop.replan_noop", step=idx, result="unchanged", remaining=len(rederivable))
-            return
-        sess.plan.items = done_items + [PlanItem(text=s) for s in steps]
-        rlog.emit("loop.replan", step=idx, before=len(rederivable), after=len(steps))
-        # Re-persist the mirror — the ONE plan mutation that didn't (run 0728-m12): after a live
-        # resize the on-disk plan showed 5 steps while the coder was correctly framed "4 of 7", so
-        # the operator (and any forensic read) compared live frames against a dead snapshot. The
-        # corrective-step mutation and _advance both persist; parity here.
-        self._persist_plan(sess.plan, rlog)
+        runtime = getattr(sess, 'pilot_binding', None) or self._ctx.pilot_runtime
+        selected = runtime.living_plan
+        if selected.definition is None:
+            return livingplan.TailResult(livingplan.TailStatus.NOT_SELECTED)
+        actual_trigger = (trigger if isinstance(trigger, livingplan.Trigger) else
+                          livingplan.Trigger.ADVANCE if trigger == REPLAN_TRIGGER_ADVANCE else
+                          livingplan.Trigger.CRITIC_STALLED)
+        if sess.living_state_view is None:
+            sess.living_state_view = _LivingTailView(sess)
+        source = self._living_input(sess, body, idx, rlog, actual_trigger)
+        result = selected.run(source, sess.living_state_view)
+        if _stable_session(session_key) and self._store.get(session_key) is not sess:
+            sess.living_pending = None
+            return livingplan.TailResult(livingplan.TailStatus.STALE)
+        if not isinstance(result, livingplan.TailResult) or not isinstance(result.status, livingplan.TailStatus):
+            raise TypeError('Living plan replacement must return a typed TailResult')
+        if result.status is livingplan.TailStatus.EMPTY_PENDING:
+            current = self._living_input(sess, body, idx, rlog, actual_trigger)
+            approved = None
+            if source.evidence_epoch == current.evidence_epoch:
+                approved, _, _fix = judge_satisfaction(sess.plan.task, result.confirmation.evidence,
+                    self._ctx.reasoner_chat, self._ctx.reasoner_role, rlog,
+                    coder_tools=_coder_tools_summary(body.get('tools'), params=False),
+                    workspace_root=sess.workspace_root or '',
+                    routes=known_routes(body.get('messages', []), sess),
+                    messages=body.get('messages', []), sess=sess)
+            # Re-read after the confirmation too: the question itself can receive new facts.
+            if _stable_session(session_key) and self._store.get(session_key) is not sess:
+                sess.living_pending = None
+                return livingplan.TailResult(livingplan.TailStatus.STALE)
+            result = selected.settle(self._living_input(sess, body, idx, rlog, actual_trigger),
+                sess.living_state_view, result.confirmation.token, approved)
+            if not isinstance(result, livingplan.TailResult) or not isinstance(result.status, livingplan.TailStatus):
+                raise TypeError('Living plan settlement must return a typed TailResult')
+        if result.reset_to_raw_task:
+            sess.synthetic = sess.plan_off = True
+            sess.replan_uncovered = result.missing
+            sess.replan_uncovered_pending = True
+            sess.steer_source = 'living-plan coverage refusal'
+        if result.reset_failure_counts or result.clear_nudge or result.reset_acting_calls:
+            sess.living_effects = (selected, result, sess.plan, sess.plan.id, sess.plan.task,
+                tuple((item.text, item.done, item.note) for item in sess.plan.items))
+        return result
 
     def _renudge(self, sess: PlanSession, key: str, body: dict, reason: str, rlog) -> dict:
         """A step failed its check → re-drive the coder on THIS step with the concrete
@@ -4815,6 +4446,8 @@ class Loop:
             sess.oscillation_note = ""
         sess.nudge_reason = reason
         try:
+            if sess.synthetic:
+                return self._drive_single_item(sess, body, key, rlog)
             return self._work(sess, key, body, rlog)
         except UpstreamProtocolError as error:
             if not getattr(error, 'coder_turn', False):
@@ -4830,25 +4463,12 @@ class Loop:
         at re-deriving the not-done tail from the REAL work done: if it rewrites/drops the stuck step, we
         re-drive fresh on the new current step; otherwise (declined/unchanged) we fall through to a normal
         re-nudge. NEVER used on a gate/real-error fail — those must be FIXED, not re-derived away."""
-        if (self._ctx.reasoner_role is not None and not sess.synthetic and not sess.plan_off
-                and not sess.verify_replanned and sess.critic_fails >= STUCK_STEP_REPLAN):
-            # ONE grounded re-derive per step. Firing every STUCK_STEP_REPLAN fails (the old
-            # `verify_fails % STUCK_STEP_REPLAN == 0`) re-derived the whole tail again and again and
-            # THRASHED the plan — observed live: 8 stuck_replans bouncing the size 3→4→5→7→3→2, burning
-            # the coder's turn budget so the deliverable never finished. This is the SAME churn
-            # _replan_if_thrashing was already bounded to one-shot to avoid; the verify path must match.
-            # Spend the one-shot up front (like the thrash path), so an unchanged re-derive can't re-fire.
-            sess.verify_replanned = True
-            before = [it.text for it in sess.plan.items if not it.done]
-            self._replan_tail(sess, body, idx, rlog, trigger=REPLAN_TRIGGER_STALLED)   # grounded re-derivation; its own fail-safes apply
-            after = [it.text for it in sess.plan.items if not it.done]
-            if after != before:  # the reasoner un-stuck the plan from ground truth → clean restart
-                sess.verify_fails, sess.critic_fails = 0, 0
-                rlog.emit("loop.stuck_replan", step=idx, before=len(before), after=len(after), trigger="verify")
-                if sess.synthetic:
-                    return self._drive_single_item(sess, body, key, rlog)
-                sess.nudge_reason = ""
-                return self._work(sess, key, body, rlog)
+        result = self._replan_tail(sess, body, idx, rlog,
+            trigger=livingplan.Trigger.CRITIC_STALLED, session_key=key)
+        if result.reset_failure_counts or result.reset_to_raw_task:
+            if sess.synthetic:
+                return self._drive_single_item(sess, body, key, rlog)
+            return self._work(sess, key, body, rlog)
         return self._renudge(sess, key, body, reason, rlog)
 
     def _replan_if_thrashing(self, sess: PlanSession, key: str, body: dict, idx: int, rlog) -> dict | None:
@@ -4860,40 +4480,29 @@ class Loop:
         ADVANCE): re-deriving REPEATEDLY churned the plan — a weak reasoner returns a different tail each
         call (observed: step count oscillated 11→5→6→9), destabilising the coder. One grounded attempt,
         then the normal guards/gate carry it. Returns a fresh re-drive when the plan MOVED, else None."""
-        if (self._ctx.reasoner_role is None or sess.synthetic or sess.plan_off or sess.thrash_replanned
-                or sess.step_tool_calls < STEP_THRASH_REPLAN):
-            return None
-        sess.thrash_replanned = True   # spend the one-shot regardless of outcome — no re-derive churn
-        before = [it.text for it in sess.plan.items if not it.done]
-        self._replan_tail(sess, body, idx, rlog, trigger=REPLAN_TRIGGER_STALLED)   # same grounded re-derivation + fail-safes
-        after = [it.text for it in sess.plan.items if not it.done]
-        if after != before:
-            sess.step_tool_calls, sess.verify_fails, sess.critic_fails = 0, 0, 0
-            rlog.emit("loop.stuck_replan", step=idx, before=len(before), after=len(after), trigger="thrash")
+        result = self._replan_tail(sess, body, idx, rlog,
+            trigger=livingplan.Trigger.TOOL_THRASH, session_key=key)
+        if result.reset_failure_counts or result.reset_to_raw_task:
             if sess.synthetic:
                 return self._drive_single_item(sess, body, key, rlog)
-            sess.nudge_reason = ""
             return self._work(sess, key, body, rlog)
         return None
 
     def _probe_author(self, condition: str, sess: PlanSession, outcome, body: dict, rlog):
-        """The loop's reasoned steer author for a guard probe — dispatches on the detector ``condition``
-        to the SHARED authors (so the plan-off path runs the identical reasoning) on the routed reasoner
-        endpoint. Repetition keeps a canned floor (via author_redirect); wheel-spin may return None
-        (ON_TRACK / nothing → inject nothing)."""
+        """Bind facts and shared inspection transport; selected Source owns author/vet decisions."""
+        if self._ctx.reasoner_role is None:
+            return None
         item = sess.plan.current()
         step_text = item.text if item is not None else sess.plan.task
-        root = sess.workspace_root
-        if condition == "refusal":
-            return author_redirect(self._ctx.reasoner_chat, self._ctx.reasoner_role,
-                                   root, step_text, sess, outcome, body, rlog)
-        return author_steer(self._ctx.reasoner_chat, self._ctx.reasoner_role, root, sess, body, rlog,
-                            condition="wheel_spin", outcome=outcome, step_text=step_text)
+        return _stalled_author(sess, body, rlog, self._ctx.reasoner_chat, self._ctx.reasoner_role,
+            sess.workspace_root, condition=condition, outcome=outcome, step_text=step_text)
 
     def _gate_op(self, body: dict, sess: PlanSession, rlog) -> dict | None:
         """The loop's completion gate — delegates to the shared :func:`guard_gate_op`, passing the
         configured workspace root."""
-        return guard_gate_op(sess, body, rlog, workspace_root=sess.workspace_root)
+        return _requested_repository_probe(sess, body, rlog, workspace_root=sess.workspace_root,
+            driver=repositorychecks.Driver.STEP,
+            step=sess.plan.items.index(sess.plan.current()) + 1 if sess.plan.current() is not None else None)
 
     # ------------------------------------------------------------------ helpers
 
@@ -4929,178 +4538,83 @@ class Loop:
         held files (run 0728-m1). Additive: every section only ever tells the critic MORE about the real
         state; none claims work that wasn't done."""
         messages = body.get("messages", [])
-        log = _dedup_evidence(_work_log(messages, rlog=rlog,
-                                        gate_plan=getattr(sess, "gate_plan", None)),
-                              rlog=rlog, chat_fn=self._reasoner()[0], role=self._reasoner()[1])
-        facts = _fetch_ground_truth(messages, sess, header=CODER_FETCH_HEADER)
-        inventory = workspace_inventory(sess.workspace_root)
-        return "\n\n".join(part for part in (log, facts, inventory) if part)
+        def consume(log):
+            facts = _fetch_ground_truth(messages, sess, header=CODER_FETCH_HEADER)
+            inventory = workspace_inventory(sess.workspace_root)
+            return "\n\n".join(part for part in (log, facts, inventory) if part)
+        return _dedup_evidence(_work_log(messages, rlog=rlog,
+                                          gate_plan=getattr(sess, "gate_plan", None)),
+            rlog=rlog, chat_fn=self._reasoner()[0], role=self._reasoner()[1], _consume=consume)
+
+    def _consume_step_result(self, sess, key, body, idx, total, rlog, verification):
+        result = verification.step_result
+        effect = result.effect
+        if effect.action is stepreview.StepAction.ADVANCE:
+            if effect.red_gate_advance:
+                rlog.emit('loop.gate_red_advance', level='warn', step=idx,
+                    findings=_clip(sess.last_gate_flag or '', 200), reason=_clip(result.reason, 200))
+            return self._advance(sess, key, body, idx, total, rlog)
+        if effect.action is stepreview.StepAction.RENUDGE:
+            sess.verify_fails += effect.verify_failures
+            sess.critic_fails += effect.critic_failures
+            rlog.emit('loop.step_incomplete', step=idx,
+                reason=result.reason if effect.consider_critic_rescue else 'probe failed',
+                attempt=sess.verify_fails)
+            if effect.consider_critic_rescue:
+                return self._renudge_or_replan(sess, key, body, effect.nudge or result.reason, idx, rlog)
+            return self._renudge(sess, key, body, effect.nudge or result.reason, rlog)
+        return self._work(sess, key, body, rlog)
 
     def _verify(self, item: str, coder_text: str, probe: str, evidence: str, rlog,
                 *, idx: int = 0, total: int = 0, key: str = "", coder_tools: str = "",
                 routes: str = "", workspace_root: str = "", red_findings: str = "",
                 gate_red: bool = False, sources_read: list | None = None,
                 messages: list | None = None, sess=None,
-                participation_facts: str = "", original_task: str = "") -> Verification:
-        # NB: no per-step fast-path around the critic. The one that existed shortcut a research step whose
-        # facts cria had surfaced — but it could only recognize a step cria itself had injected and pinned,
-        # and that injection is gone. The critic judges every step, grounded on the same durable fetch
-        # facts (_grounded_evidence) the fast-path was reading.
-        # System instruction: cria/prompts/verify.txt. User message (the step + real
-        # ground truth): assembled from the labels in cria/prompts/verify_user.txt.
-        system = prompts.load("verify")
-        labels = prompts.load_map("verify_user")
-        parts = [prompts.fill(labels["step"], step=item)]
-        if evidence:  # what the coder's OWN tools returned — real ground truth, not a claim
-            parts.append(prompts.fill(labels["evidence"], evidence=evidence))
-        if probe:
-            parts.append(prompts.fill(labels["probe"], probe=probe))
-        if participation_facts:
-            parts.append(participation_facts)
-        # A RED gate is EVIDENCE the critic weighs, not a veto that skips it — see _verify_after_probe
-        # for the measurement. The checker's OWN lines, under a label that states the one thing the
-        # findings cannot state for themselves: they are repo-wide, so they do not say whose step
-        # broke them. Additive — nothing else in the prompt changes, and it is absent on a clean gate.
-        if red_findings:
-            parts.append(prompts.fill(labels["probe_red"], findings=red_findings))
-        # The summary slot is a CLAIM, labeled as such — but unbounded it carried a measured 119KB
-        # leaked edit_file blob into a 151KB critic prompt (0567-critic, run 0728T000013), 5x the
-        # evidence budget in the same prompt. A leaked tool call is not a summary at all; a huge
-        # tool-shaped output is rejected as not being a summary at all. Ordinary summary prose is
-        # evidence and reaches the critic whole; context fitting belongs only at the context floor.
-        if massage.has_tool_call_leak(coder_text):
-            coder_text = labels["summary_leak"]
-        parts.append(prompts.fill(labels["summary"], coder_summary=coder_text))
-        # The critic is reasoning about the coder's work — give it the coder's tools too, so a NOT-done
-        # reason it writes back names an action the coder can actually take (blind to them, it can't).
-        if coder_tools:
-            parts.append(prompts.render("reasoner_coder_tools", tools=coder_tools))
-        # LAST: the step again. It was stated once at the top, before ~10K of evidence; the coder's
-        # summary that lands just above the verdict often narrates its own numbered plan, and the
-        # judge anchors on that instead (measured: it named a file that existed only in the summary).
-        # A quoted literal the step names that is absent from the artifact it names. Deterministic
-        # fact, offered as evidence — the critic still judges (principle 8). Measured need: a critic
-        # approved "resolve the handle 'goose' and 'papagoose'" against a file containing neither,
-        # and said so in its own reason. See groundtruth.absent_step_literals.
-        for artifact, missing in groundtruth.absent_step_literals(item, workspace_root):
-            parts.append(prompts.fill(labels["absent_literals"], artifact=artifact,
-                                      literals=", ".join(repr(m) for m in missing),
-                                      them="it" if len(missing) == 1 else "them"))
-        # WHAT HAS ACTUALLY BEEN READ, when anything has. The same shape as absent_step_literals
-        # above: a deterministic fact cria gathered, handed to the critic, which still judges
-        # (principle 8). This is the fact the critic did not have when it refused a research step
-        # forever — run 1785804243 spent 114 of its 195 calls on "Research the Ada Handles API
-        # documentation…" while the transcript held five HTTP 200s that defined nothing, and the
-        # critic had no way to tell reading-that-succeeded from reading-that-failed. Only sources
-        # that RETURNED something are here (research.sources_read): a page that answered and defined
-        # nothing is not evidence that anything was learned. Absent entirely when nothing was read,
-        # which is itself the honest state — cria says nothing rather than implying research happened.
-        if sources_read:
-            parts.append(prompts.fill(labels["sources_read"],
-                                      sources=research._sources_block(sources_read)))
-        # Additive — the same step text, nothing dropped.
-        parts.append(prompts.fill(labels["step_again"], step=item))
-        user = "\n\n".join(parts)
-
-        # First pass uses the reasoner role AS CONFIGURED (reasoning may be ON → a considered
-        # judgment). If that yields no parseable verdict, retry with reasoning forced OFF: a
-        # verdict is a one-line classification, and a reasoning model under the max_tokens cap
-        # can burn its whole budget THINKING and never emit the closing JSON — which used to
-        # fall through to a silent DONE. Reasoning-off makes it answer the JSON directly.
-        obj, raw = self._verdict(system, user, rlog, reasoning_off=False, workspace_root=workspace_root)
-        if obj is not None:
-            obj = _fill_missing_verdict_flag(obj, "done", rlog, "critic")
-        if obj is not None:
-            # MEASURED AND DELIBERATELY NOT BUILT (2026-08-02): the mirror of the reasoning recovery in
-            # _verdict — "the judge APPROVED but its own thinking says NOT done" — does not exist. Of
-            # 493 captured critic calls, 264 approved with a readable verdict and 7 of those have a
-            # negative ruling somewhere in the thinking. All 7 were read in full; every one is the
-            # judge ARGUING ITSELF TO the approval it emitted, not contradicting it — the negative is
-            # hypothetical ("maybe the step is not fully satisfied because they haven't verified the
-            # fetched file … but they used web_fetch with the exact URL, that's sufficient") or about
-            # a DIFFERENT scope ("the README is missing overall … but for THIS step: DONE"). Same for
-            # the satisfaction judge: 2 of 88, both the same shape. A lexical read cannot tell a
-            # considered-and-rejected objection from a real one, so overriding a verdict the judge
-            # actually reached would be 0-for-9 on the evidence. The approve path's brake is
-            # _confirm_completion, which asks a fresh question against fresh ground truth.
-            #
-            # The careful (reasoning-ON) pass is the ONLY one trusted to APPROVE a step done — it does
-            # the verification a reasoning-off judge can't.
-            done = bool(obj.get("done"))
-            confirmation = None
-            if done and workspace_root:
-                # One focused question when the repo is not red.  A path can name either an
-                # artifact the step produces or an existing input it reads, so deterministic path
-                # matching cannot make this semantic decision.  The ask fails toward the brake.
-                off_role = (replace(self._ctx.reasoner_role, reasoning="off")
-                            if self._ctx.reasoner_role is not None else None)
-                applies_ask = (lambda sysm: summarize(self._ctx.reasoner_chat, off_role, sysm,
-                                                      _ASK_USER_TURN,
-                                                      rlog, phase="confirm-applies",
-                                                      temperature=0.0) or "") \
-                    if self._ctx.reasoner_role is not None else None
-                if not _confirm_applies(item, red_findings, gate_red=gate_red,
-                                        ask=applies_ask, rlog=rlog):
-                    # A claim that promises nothing on disk, over a non-red repo, leaves the disk
-                    # checker nothing it can legitimately inspect — measured coin-flip, and the
-                    # walked run it cost. The careful critic pass already ruled.
-                    pass
-                else:
-                    # The approve-path brake (see _confirm_completion): a DONE must be consistent with
-                    # the FRESH on-disk listing and with its own stated reason.
-                    confirmation = _confirm_completion(item, str(obj.get("reason") or ""), workspace_root,
-                                                        self._ctx.reasoner_chat, self._ctx.reasoner_role,
-                                                        rlog, phase="critic-confirm", original_task=original_task,
-                                                        cria_facts=participation_facts)
-                    rlog.emit("loop.done_confirm", step=idx, confirmed=confirmation.confirmed)
-                    if not confirmation.confirmed:
-                        reason = VerdictNudge(confirmation.reason or prompts.load("unverified_step"))
-                        _dump_verify(self._run_dir(rlog), key, idx, total, item, system, user,
-                                     False, reason, response=raw)
-                        return Verification(False, reason, confirmation)
-            diagnosis_ask = ((lambda sysm: ask_closed(
-                self._ctx.reasoner_chat, self._ctx.reasoner_role, sysm, rlog,
-                phase="critic-diagnosis", max_tokens=JUDGE_MAX_TOKENS, retry_off=False))
-                if self._ctx.reasoner_role is not None else None)
-            reason = _verdict_nudge(obj, done, routes, evidence=user, task=item,
-                                    original_task=original_task,
-                                    action_log=evidence, checks=red_findings,
-                                    participation_facts=participation_facts,
-                                    diagnosis_ask=diagnosis_ask, phase="critic-diagnosis",
-                                    workspace_root=workspace_root, rlog=rlog,
-                                    messages=messages, sess=sess)
-            _dump_verify(self._run_dir(rlog), key, idx, total, item, system, user, done, reason, response=raw)
-            return Verification(done, reason, confirmation)
-        # No parseable careful verdict — the reasoner over-thought or leaked a tool call. Retry
-        # reasoning-off, but a reasoning-off judge is a rubber stamp (competent to REJECT, not APPROVE):
-        # use it only to confirm NOT-done. A "done" that exists ONLY because the careful pass failed is
-        # FAILED CLOSED — a wrongly-passed step is never re-checked, so a shallow retry must never
-        # advance the plan (the plan-off satisfaction judge fails closed the same way).
-        rlog.emit("loop.verify_retry", level="info", reason="no parseable verdict; retry reasoning-off")
-        retry, raw = self._verdict(system, user, rlog, reasoning_off=True)  # raw now = the retry's response
-        if retry is not None:
-            retry = _fill_missing_verdict_flag(retry, "done", rlog, "critic-retry")
-        if retry is not None and retry.get("done"):
-            rlog.emit("loop.verify_failclosed", level="info")
-            retry = None
-        if retry is None:
-            # Same fail-closed / plain-instruction contract as the satisfaction judge above.
-            reason = prompts.load("unverified_step") + _named_gap(red_findings)
-            _dump_verify(self._run_dir(rlog), key, idx, total, item, system, user, False, reason, response=raw)
-            return Verification(False, reason)
-        retry_ask = ((lambda sysm: ask_closed(
-            self._ctx.reasoner_chat, self._ctx.reasoner_role, sysm, rlog,
-            phase="critic-retry-diagnosis", max_tokens=JUDGE_MAX_TOKENS, retry_off=False))
-            if self._ctx.reasoner_role is not None else None)
-        reason = _verdict_nudge(retry, False, routes, evidence=user, task=item,
-                                original_task=original_task,
-                                action_log=evidence, checks=red_findings,
-                                participation_facts=participation_facts,
-                                diagnosis_ask=retry_ask, phase="critic-retry-diagnosis",
-                                workspace_root=workspace_root, rlog=rlog,
-                                messages=messages, sess=sess)
-        _dump_verify(self._run_dir(rlog), key, idx, total, item, system, user, False, reason, response=raw)
-        return Verification(False, reason)
+                participation_facts: str = "", original_task: str = "",
+                trigger=stepreview.StepTrigger.CLAIM, probe_ran=False, probe_unknown=False,
+                probe_blocked=False, probe_repair='') -> Verification:
+        runtime = getattr(sess, 'pilot_binding', None) if sess is not None else None
+        selected = (runtime or self._ctx.pilot_runtime).step_review
+        def source():
+            def read(request):
+                verdict, raw = self._verdict(request.system, request.user, rlog,
+                    reasoning_off=request.reasoning_off, workspace_root=request.workspace_root)
+                return stepreview.StepAnswer(verdict, raw)
+            def confirm(request):
+                result = _confirm_completion(request.step, request.reason, request.workspace_root,
+                    self._ctx.reasoner_chat, self._ctx.reasoner_role, rlog, phase=request.phase,
+                    original_task=request.original_task, cria_facts=request.participation_facts,
+                    authority=completionconfirmation.Authority.STEP,
+                    planning_enabled=self._ctx.planner_enabled)
+                return None if result.status is completionconfirmation.Status.NOT_SELECTED else result
+            def diagnose(request):
+                ask = ((lambda question: ask_closed(self._ctx.reasoner_chat,
+                    self._ctx.reasoner_role, question, rlog, phase=request.phase,
+                    max_tokens=JUDGE_MAX_TOKENS, retry_off=False))
+                    if self._ctx.reasoner_role is not None else None)
+                return _verdict_nudge(request.verdict, request.done, request.routes,
+                    evidence=request.user, task=request.step, original_task=request.original_task,
+                    action_log=request.action_log, checks=request.checks,
+                    participation_facts=request.participation_facts, diagnosis_ask=ask,
+                    phase=request.phase, workspace_root=request.workspace_root,
+                    rlog=rlog, messages=messages, sess=sess)
+            def persist(record):
+                _dump_verify(self._run_dir(rlog), record.key, record.index, record.total,
+                    record.step, record.system, record.user, record.done, record.reason, response=record.raw)
+            off_role = (replace(self._ctx.reasoner_role, reasoning='off')
+                        if self._ctx.reasoner_role is not None else None)
+            applies = (lambda question: summarize(self._ctx.reasoner_chat, off_role, question,
+                _ASK_USER_TURN, rlog, phase='confirm-applies', temperature=0.0) or '') if off_role else None
+            services = stepreview.StepServices(read,
+                lambda obj, flag, phase: _fill_missing_verdict_flag(obj, flag, rlog, phase),
+                confirm, diagnose, persist, VerdictNudge, _named_gap, applies)
+            return stepreview.StepInput(item, coder_text, evidence,
+                stepreview.ProbeEvidence(probe, red_findings, gate_red, probe_ran,
+                    probe_unknown, probe_blocked, probe_repair), services, rlog,
+                workspace_root, coder_tools, routes, tuple(sources_read or ()),
+                participation_facts, original_task, key, idx, total, trigger)
+        result = selected.run(source)
+        return Verification(result.done, result.reason, result.confirmation, result)
 
     def _verdict(self, system: str, user: str, rlog, *, reasoning_off: bool,
                  workspace_root: str = "") -> tuple[dict | None, str]:
@@ -5141,35 +4655,33 @@ class Loop:
         # — so a run's plan mirror, verify dumps, and call captures all land together.
         return Path(target).expanduser() / callcapture.session_dirname(session)
 
-    def _compact_done(self, sess: PlanSession, body: dict, rlog) -> str:
+    def _compact_done(self, sess: PlanSession, body: dict, rlog):
         """Compact a FINISHED plan into a work-done briefing (the reasoner), so a follow-up prompt
         on this session starts from a clean, accurate context. Focus is the completed state — files
         and their purpose, how it runs/tests, key facts — not narration or next steps. Grounded in
         the actual coder actions (from the transcript) + the plan, so it names real files, not
         guesses. Best-effort: on any failure, fall back to the running per-step summary / checklist.
         A prior session summary is threaded in so a chain of follow-ups keeps ONE cumulative briefing."""
-        checklist = "\n".join(
-            f"{i + 1}. [{'done' if it.done else 'incomplete'}] {it.text}"
-            for i, it in enumerate(sess.plan.items)
-        )
-        log = _work_log(body.get("messages", []), rlog=rlog,
-                        gate_plan=getattr(sess, "gate_plan", None))
-        prior = (prompts.render("done_summary_prior", prior_work=sess.prior_work) + "\n\n") if sess.prior_work else ""
-        user = prompts.render("done_summary_user", prior=prior, task=sess.plan.task,
-                              checklist=checklist, log=log or "(no tool activity captured)")
-        system = prompts.load("done_summary")
-        # The shared summarize primitive handles the reasoning-off retry (a reasoning model can burn
-        # its whole budget THINKING and emit empty content — the observed loop.compact_empty).
-        text = summarize(self._ctx.reasoner_chat, self._ctx.compactor_role or self._ctx.reasoner_role,
-                         system, user, rlog, phase="compactor")
-        if text:
-            rlog.emit("loop.compacted", id=sess.plan.id, chars=len(text))
-            return text
-        rlog.emit("loop.compact_empty", level="warn", id=sess.plan.id)
-        # Fallback: the running per-step summary (or the bare checklist) still grounds a follow-up.
-        return (sess.summary or checklist).strip()
+        runtime = getattr(sess, 'pilot_binding', None) or self._ctx.pilot_runtime
+        selected = runtime.completed_work
+        if selected.definition is None:
+            return None
+        def question(request, log):
+            return summarize(self._ctx.reasoner_chat, request.role, request.system, request.user,
+                log, phase=request.phase, retry_off=request.retry_off)
+        source = completedwork.BriefingInput(
+            completedwork.CompletionScope(getattr(sess, 'web_session', '') or '',
+                (id(sess), self._policy_epoch(sess))), sess.plan, body.get('messages', []),
+            completedwork.Services(_work_log, question), rlog, release_authorized=True,
+            planner_enabled=self._ctx.planner_enabled, synthetic=sess.synthetic,
+            summary=sess.summary, prior_work=sess.prior_work, gate_plan=sess.gate_plan,
+            compactor_role=self._ctx.compactor_role, reasoner_role=self._ctx.reasoner_role)
+        result = selected.generate(source)
+        if not isinstance(result, completedwork.BriefingResult):
+            raise TypeError('Completed work replacement must return BriefingResult')
+        return selected, source, result, sess
 
-    def _closing(self, sess: PlanSession, briefing: str = "") -> str:
+    def _closing(self, sess: PlanSession, briefing=None, *, base=None) -> str:
         """The final message — a clean completion. Every step is VERIFIED: cria advances a step ONLY on a
         genuine pass and re-nudges INDEFINITELY otherwise, so a step is never 'accepted unverified' and
         cria never ends a plan with untrusted work (the removed accept-and-advance/handback path).
@@ -5178,8 +4690,20 @@ class Loop:
         home. The harness stores it in the conversation, its compactor summarizes from it, and cria
         re-reads it from history (``_briefing_from_history``). One summary, carried by the transcript —
         never a server-side copy."""
-        brief_block = f"\n\n{BRIEFING_OPEN}\n{briefing}\n{BRIEFING_CLOSE}" if briefing else ""
-        return f"{indicators.MARKER}plan complete — all {len(sess.plan.items)} steps verified.{brief_block}".strip()
+        base = (f'{indicators.MARKER}plan complete — all {len(sess.plan.items)} steps verified.'
+                if base is None else base).strip()
+        if briefing is None:
+            return base
+        selected, producer, result, owner = briefing
+        runtime = getattr(sess, 'pilot_binding', None) or self._ctx.pilot_runtime
+        if owner is not sess or runtime.completed_work is not selected or sess.plan is not producer.plan:
+            return base
+        current = replace(producer, scope=completedwork.CompletionScope(producer.scope.session_key,
+            (id(sess), self._policy_epoch(sess))), plan=sess.plan)
+        closing = selected.embed(base, current, result)
+        if not isinstance(closing, completedwork.ClosingResult):
+            raise TypeError('Completed work embedding replacement must return ClosingResult')
+        return closing.text
 
     # -------------------------------------------------------- single-item (plan-off) mode
     # A degenerate 1-item "plan" (``sess.synthetic``) is driven HERE, not through ``_work``: the whole
@@ -5222,37 +4746,16 @@ class Loop:
                           last_ran=sess.satisfaction_last_drive, plan_off=plan_off,
                           why=blocked if isinstance(blocked, str) else "unnamed")
             return None            # BEFORE anything else — see test_blocked_short_circuits
+        if not assistruntime.current().review_applies(ReviewTrigger.SCHEDULED):
+            return None
         if not periodic_check_due(sess.drive_count, self._ctx.satisfaction_check_start,
                                       self._ctx.satisfaction_check_every,
                                       sess.satisfaction_last_drive):
             return None
-        # Stamped BEFORE the work, so a check that runs and returns "not satisfied" still spaces the
-        # next one — the cost this paces is the call, not the verdict.
+        # Stamped BEFORE the work, so a negative still spaces the next judgment.
         sess.satisfaction_last_drive = sess.drive_count
-        task = getattr(getattr(sess, "plan", None), "task", "")
-        evidence = _satisfaction_evidence(body.get("messages", []), rlog=rlog,
-                     chat_fn=self._reasoner()[0], role=self._reasoner()[1],
-                           gate_plan=getattr(sess, "gate_plan", None),
-                           workspace_root=getattr(sess, "workspace_root", "") or "",
-                           origin=getattr(sess, "handoff_origin", None))
-        evidence += _gate_notes(sess)
-        # RUN THE DELIVERABLE, BEFORE the verdict. This check existed on this path already — but only
-        # AFTER the judge had said "satisfied", where it can decorate a completion and never inform
-        # one. Measured on ada-handles_mellum2_codex_poff_1785693138 (planner off, 166 calls, 2/4):
-        # `loop.satisfaction_check` fired twice and `loop.exec_check` fired ZERO times, because both
-        # verdicts were not-satisfied and the marker sits past that return. The delivered CLI crashes
-        # with `NameError: name 'json' is not defined` — json is imported inside a function at line
-        # 124 and used in main() at line 87 — while the unit tests pass and cria's own lint floor
-        # reports "no problems reported". A green gate over a program that cannot run, and the one
-        # mechanism built to catch exactly that was never asked.
-        satisfied, reason, _fix = judge_satisfaction(
-            task, evidence, self._ctx.reasoner_chat, self._ctx.reasoner_role, rlog,
-            coder_tools=_coder_tools_summary(body.get("tools"), params=False),
-            workspace_root=sess.workspace_root or "",
-            routes=known_routes(body.get("messages", []), sess),
-            gate_findings=getattr(sess, "last_gate_flag", "") or "",
-            messages=body.get("messages", []), sess=sess)
-        _record_satisfaction(sess, satisfied, reason)
+        review = self._review_task(sess, body, rlog, trigger=ReviewTrigger.SCHEDULED)
+        satisfied, reason = review.approved, review.reason
         rlog.emit("loop.satisfaction_check", plan_off=plan_off, drive=sess.drive_count,
                   satisfied=satisfied)
         if not satisfied:
@@ -5281,43 +4784,23 @@ class Loop:
             # It carries the judge's REASON only. `proposed_fix` stays unused on this path: naming
             # the gap is what was ruled on, choosing the implementation is not (#2's corollary, and
             # steer_diagnose's own "Do not choose the IMPLEMENTATION").
-            named = (reason or "").strip()
-            # The survey is the only topology-safe owner of workspace generation.  It is None for
-            # an incomplete or overtaken listing, so uncertainty never re-arms a prior absence.
-            view = wsview.current(sess.workspace_root) if sess.workspace_root else None
-            observed = view.observation_fingerprint if view is not None else None
-            subject = getattr(reason, "subject", "")
-            same_file = (getattr(reason, "diagnosis_kind", "") == "missing_file"
-                         and bool(subject) and subject == getattr(sess, "last_gap_subject", ""))
-            renewed = bool(same_file and observed and observed != getattr(sess, "last_gap_observation", ""))
-            if named and not sess.nudge_reason and (named != (sess.last_gap_named or "").strip() or renewed):
-                # ``judge_satisfaction`` already passed this through the one typed provenance
-                # owner. A second missing-word/path pass here could disagree with the same facts.
-                # Same prose remains quiet unless a fresh complete survey observed a changed tree
-                # and the provenance owner still confirms that exact file is absent.
-                sess.last_gap_named = named
-                sess.last_gap_subject = subject if getattr(reason, "diagnosis_kind", "") == "missing_file" else ""
-                sess.last_gap_observation = observed if sess.last_gap_subject else ""
-                # A checked missing *file* already supplies the only bounded next action cria may
-                # select: create that exact task-named path.  The existing generic gap merely asked
-                # the coder to reconsider the requirement, which let the Feed replay spend its next
-                # turn inspecting a verified absence.  Its contents remain entirely with the task
-                # and coder; this does not choose an implementation.
-                gap_prompt = ("periodic_missing_file_gap"
-                              if getattr(reason, "diagnosis_kind", "") == "missing_file"
-                              else "periodic_gap")
-                sess.nudge_reason = prompts.render(gap_prompt, reason=reason, subject=subject)
-                # This is an action phase, not another competing nudge beside the active cursor.
-                # Only the provenance owner may arm it: the type and subject above survived its
-                # workspace-absence checks, and the stored reason preserves the exact task/evidence
-                # pair for every retry until the harness reports this write landed.
-                if sess.last_gap_subject and not plan_off:
-                    _arm_completion_remediation(sess, sess.last_gap_subject, sess.nudge_reason)
-                sess.steer_source = "completion check (deliverable not found)"
-                rlog.emit("loop.satisfaction_gap_named", level="info", head=_clip(named, 120),
-                          subject=sess.last_gap_subject, rearmed=renewed)
+            diagnosis = assistruntime.current().completion_diagnosis
+            if diagnosis is not None:
+                # VerdictNudge remains the public text/provenance carrier. Source-produced values
+                # retain their original typed status; legacy callers retain their declared evidence.
+                gap = getattr(reason, "diagnosis_result", None)
+                if gap is None:
+                    gap = completiondiagnosis.DiagnosisResult(
+                        completiondiagnosis.DiagnosisStatus.GROUNDED if reason else completiondiagnosis.DiagnosisStatus.NOT_APPLICABLE,
+                        getattr(reason, "evidence", str(reason or "")), getattr(reason, "action", ""),
+                        getattr(reason, "diagnosis_kind", ""), getattr(reason, "subject", ""))
+                delivered = diagnosis.deliver(completiondiagnosis.DeliveryInput(
+                    gap, completiondiagnosis.DeliveryTrigger.SCHEDULED_REVIEW, plan_off), sess,
+                    _diagnosis_delivery_services(diagnosis, sess.workspace_root or "", rlog))
+                completiondiagnosis._remediation_result(delivered,
+                    (completiondiagnosis.RemediationStatus.NOT_APPLICABLE, completiondiagnosis.RemediationStatus.DELIVERED))
             return None   # never ENDS the session on a not-satisfied verdict — that is unchanged
-        probe_tc = guard_gate_op(sess, body, rlog, workspace_root=sess.workspace_root)
+        probe_tc = _requested_repository_probe(sess, body, rlog, workspace_root=sess.workspace_root)
         if probe_tc is not None:  # verify the repo's checks before ending (same backstop as 'done')
             sess.done_probe = True
             sess.probe_call_id = probe_tc["id"]
@@ -5330,123 +4813,141 @@ class Loop:
                                          note="cria completion check: the task looks done — verifying the repo's checks")
         # No shell to verify → end fail-open, and SAY that nothing verified it. This path composes no
         # gate at all, so the "and the repo's own checks" claim was false here every single time.
-        return _completion_final(satisfaction_done_note(reason, checks_ran=False))
+        briefing = self._compact_done(sess, body, rlog)
+        return _completion_final(self._closing(sess, briefing,
+            base=satisfaction_done_note(reason, checks_ran=False)))
 
-    def _drive_single_item(self, sess: PlanSession, body: dict, session_key: str, rlog, *, rewritten: bool = False) -> dict | None:
+    def _settle_task_done_probe(self, sess: PlanSession, body: dict, key: str, rlog, *,
+                                plan_off: bool, rewritten: bool = False) -> dict | None:
+        """One consumer for a held whole-task claim and its exact probe in either mode.
+
+        Transport returns a harness call; rejection parks a nudge for the SAME
+        driver's continuation. Only released tasks return final completions.
+        Step progress is not inferred from whole-task approval.
+        """
+        # Plan-on can arm this claim only through scheduled review, which holds
+        # its parts with the probe. A legacy stranded boolean is not a claim and
+        # must not commandeer the ordinary step-completion backstop.
+        if not plan_off and not sess.pending_done_parts:
+            sess.done_probe = False
+            sess.pending_done = ""
+            rlog.emit("loop.orphan_done_probe", plan_off=False)
+            return None
+        reissue = guard_probe_reissue(sess, body, rlog, rewritten=rewritten,
+                                     workspace_root=sess.workspace_root)
+        if reissue is not None:
+            return reissue
+        transport = guard_gate_transport(sess, body, rlog)
+        if transport is not None:
+            return _completion_toolcalls([transport], note="verifying — receiving the repo's complete check output")
+        sess.done_probe = False
+        # Consume once; retain pieces only across survey replanning.
+        parts, sess.pending_done_parts = sess.pending_done_parts, ()
+        errors = guard_gate_verdict(sess, body, rlog)
+        if sess.gate_replan_required:
+            probe = guard_gate_replan_after_survey(sess, body, rlog, workspace_root=sess.workspace_root)
+            if probe is not None:
+                sess.done_probe = True
+                sess.probe_call_id = probe["id"]
+                sess.pending_done_parts = parts
+                return _completion_toolcalls([probe], note="verifying — running the repo's checks")
+        if errors:
+            rlog.emit("loop.gate", plan_off=plan_off, blocked=True)
+            if getattr(sess.gate_plan, "transport_error", ""):
+                sess.nudge_reason = errors
+                sess.steer_source = "completion gate (check evidence unknown)"
+            else:
+                sess.nudge_reason = prompts.render("gate_fail_steer", errors=errors)
+                sess.steer_source = "completion gate (repo checks failed)"
+            return None
+        critic_reason = ""
+        if self._ctx.reasoner_role is not None:
+            critic_reason = (self._done_critic_reason(sess, body, rlog) if plan_off else
+                             self._done_critic_reason(sess, body, rlog, plan_off=False))
+        if critic_reason:
+            sess.nudge_reason = prompts.render("done_incomplete", reason=critic_reason,
+                                               check_state=_check_state_words(sess))
+            sess.steer_source = "completion critic (task not fully done)"
+            sess.pending_done = ""
+            return None
+        if _satisfaction_blocks_completion(sess):
+            sess.nudge_reason = prompts.render("done_incomplete",
+                reason=str(getattr(sess, "latest_satisfaction_evidence", "") or prompts.load("done_no_named_gap")),
+                check_state=_check_state_words(sess))
+            sess.steer_source = "completion critic (task not fully done)"
+            return None
+        rlog.emit("loop.gate", plan_off=plan_off, blocked=False)
+        original_held = sess.pending_done
+        held, sess.pending_done, sess.leg0_nudged = original_held, "", False
+        if parts:
+            held = satisfaction_done_note(*parts, checks_ran=bool(sess.last_gate_ran))
+        try:
+            briefing = self._compact_done(sess, body, rlog)
+            closing = self._closing(sess, briefing, base=held or 'Done.')
+        except Exception:
+            # The actual held claim belongs to this owner until a closing exists.
+            # Restore only its original fields; no summary or approval is cached.
+            sess.done_probe = True
+            sess.pending_done_parts = parts
+            sess.pending_done = original_held
+            raise
+        if _stable_session(key):
+            self._store.mark_done(key)
+        self._store.drop(key)
+        return _completion_final(closing)
+
+    def _drive_single_item(self, sess: PlanSession, body: dict, session_key: str, rlog, *, rewritten: bool = False,
+                           rewrite_observation: RewriteObservation | None = None) -> dict | None:
         """The single-item coder turn with the SAME protections the loop gives its coder: the
         repetition/wheel-spin guard (probe → steer), the completion gate on a bare 'done' (verify the
         repo's checks before ending), harness-compaction re-anchoring, and the periodic + done
         satisfaction critic. Cross-turn state lives on the PlanSession (persisted for
         stable keys, ephemeral for ``task:`` keys). Returns the completion to send, or None on decode fail."""
+        act_first = assistruntime.current().completion_act_first
         sess.drive_count += 1  # this session's total drives — the periodic satisfaction check keys off it
         sess.workspace_root = _extract_cwd(body.get("messages", [])) or sess.workspace_root or self._ctx.workspace_root  # harness cwd, persisted (see _work)
         body = {**body, "messages": self._judge_search_reads(sess, body, rlog)}  # strip off-target search reads
-        # A probe whose result a harness compaction erased is re-issued (parity with the loop), rather
-        # than fail-open / downgrade to a canned steer with no ground truth.
-        reissue = guard_probe_reissue(sess, body, rlog, rewritten=rewritten, workspace_root=sess.workspace_root)
-        if reissue is not None:
-            return reissue
-        if sess.done_probe or sess.periodic_probe or sess.awaiting_probe:
-            transport_tc = guard_gate_transport(sess, body, rlog)
-            if transport_tc is not None:
-                return _completion_toolcalls(
-                    [transport_tc], note="verifying — receiving the repo's complete check output")
-        # A completion-gate probe we emitted last turn (to verify a 'done') has now run.
         if sess.done_probe:
-            sess.done_probe = False
-            # THE HELD PIECES BELONG TO THIS PROBE, AND THEY WERE CLEARED ON ONE EXIT OF THREE.
-            # `pending_done_parts` is set by the periodic satisfaction check and is meant to be
-            # recomposed when the gate's own answer arrives — but the red and critic-rejected exits
-            # below left it in place, and `pending_done` is re-set every time the coder claims done.
-            # So a satisfaction reason from an earlier turn REPLACED the coder's own closing text.
-            #
-            # Walked on session 01a00ade (2026-08-16, Go cart task): satisfied at 14:15:49.553 →
-            # parts set; the satisfaction probe came back RED 250 ms later; three more `task_complete`
-            # claims and a rejecting critic followed; and at 14:19:15 a green gate released the parts,
-            # so the session's closing message was "All tests pass, build and vet succeed" — from a
-            # verdict whose very next gate was red, 3.5 minutes and ~35 model calls earlier. Rare
-            # (1 of 233 satisfaction checks) and in the worst direction: a stale claim of success in
-            # cria's own voice, as the last word.
-            #
-            # Consumed here, once, by the probe they were held for — the way `done_probe` itself is.
-            parts, sess.pending_done_parts = sess.pending_done_parts, ()
-            errors = guard_gate_verdict(sess, body, rlog)
-            if sess.gate_replan_required:
-                probe_tc = guard_gate_replan_after_survey(
-                    sess, body, rlog, workspace_root=sess.workspace_root)
-                if probe_tc is not None:
-                    sess.done_probe = True
-                    sess.probe_call_id = probe_tc["id"]
-                    sess.pending_done_parts = parts
+            settled = self._settle_task_done_probe(sess, body, session_key, rlog,
+                                                  plan_off=True, rewritten=rewritten)
+            if settled is not None:
+                return settled
+        elif not sess.periodic_probe:
+            # Nonperiodic guards retain their separate authority; periodic resume owns its ordering.
+            reissue = guard_probe_reissue(sess, body, rlog, rewritten=rewritten, workspace_root=sess.workspace_root)
+            if reissue is not None:
+                return reissue
+            if sess.periodic_probe or sess.awaiting_probe:
+                transport_tc = guard_gate_transport(sess, body, rlog)
+                if transport_tc is not None:
                     return _completion_toolcalls(
-                        [probe_tc], note="verifying — running the repo's checks")
-            if errors:  # a check FAILED → steer to fix (pass the FULL output; the context floor bounds it)
-                rlog.emit("loop.gate", plan_off=True, blocked=True)
-                if getattr(sess.gate_plan, "transport_error", ""):
-                    sess.nudge_reason = errors
-                    sess.steer_source = "completion gate (check evidence unknown)"
-                else:
-                    sess.nudge_reason = prompts.render("gate_fail_steer", errors=errors)
-                    sess.steer_source = "completion gate (repo checks failed)"
-            elif self._ctx.reasoner_role is not None and (critic_reason := self._done_critic_reason(sess, body, rlog)):
-                # The objective gate is GREEN, but the task-level reasoner critic (parity with the loop's
-                # _verify) says the WHOLE task isn't done. NO once-bound: this re-runs on EVERY green
-                # 'done', steering the coder back with the critic's CONCRETE reason, until the task is
-                # actually satisfied. cria never lets a still-incomplete task exit early — the model
-                # finishes the real work on its own; there is no "give up after one look".
-                sess.nudge_reason = prompts.render("done_incomplete", reason=critic_reason,
-                                                   check_state=_check_state_words(sess))
-                sess.steer_source = "completion critic (task not fully done)"
-                sess.pending_done = ""
-            else:  # green + (satisfied / already critiqued / no reasoner) → trust the objective gate, END
-                if _satisfaction_blocks_completion(sess):
-                    sess.nudge_reason = prompts.render(
-                        "done_incomplete",
-                        reason=str(getattr(sess, "latest_satisfaction_evidence", "") or prompts.load("done_no_named_gap")),
-                        check_state=_check_state_words(sess))
-                    sess.steer_source = "completion critic (task not fully done)"
-                    # Do not return None here: the caller interprets that as "not handled" and
-                    # hands the original completion to the proxy. Continue into the ordinary
-                    # steer/coder path below, which is the only safe response to current false
-                    # satisfaction evidence.
-                else:
-                    rlog.emit("loop.gate", plan_off=True, blocked=False)
-                    held, sess.pending_done, sess.leg0_nudged = sess.pending_done, "", False
-                    if parts:   # recompose now that the gate's own answer is in
-                        held = satisfaction_done_note(*parts, checks_ran=bool(sess.last_gate_ran))
-                    # THE SESSION IS OVER, AND THIS PATH NEVER SAID SO. The plan-ON completion marks the
-                    # shape done and drops the session; this one — the only completion a real run
-                    # reaches — simply returned. Consequences measured over 12 days: `loop.done` fired 0
-                    # times, so the store's only eviction site never ran and `loopstate.json` reached
-                    # 494 sessions / 1 MB, all `in_progress`, 105 of them already finished here; and
-                    # `shape_done()` answered False 256 times out of 256, so the post-compaction pure
-                    # handoff has never once had that half of its evidence (`loop.start` fired 265
-                    # times, 0 with `continued=True`).
-                    if _stable_session(session_key):
-                        self._store.mark_done(session_key)
-                    self._store.drop(session_key)
-                    return _completion_final(held or "Done.")
+                        [transport_tc], note="verifying — receiving the repo's complete check output")
         # A PERIODIC check-in probe's result → insert the ground truth as a steer (no verdict).
         if sess.periodic_probe:
-            truth = guard_periodic_result(
-                sess, body, rlog, reasoner_chat=self._ctx.reasoner_chat,
-                reasoner_role=self._ctx.reasoner_role,
+            result = _resume_repository_checks(sess, body, rlog,
+                driver=repositorychecks.Driver.TASK, rewritten=rewritten,
+                reasoner_chat=self._ctx.reasoner_chat, reasoner_role=self._ctx.reasoner_role,
                 workspace_root=sess.workspace_root or _extract_cwd(body.get("messages", [])))
-            if not truth:
-                probe_tc = guard_periodic_replan_after_survey(
-                    sess, body, rlog, workspace_root=sess.workspace_root or _extract_cwd(body.get("messages", [])))
-                if probe_tc is not None:
-                    return _completion_toolcalls(
-                        [probe_tc], note="periodic check-in — running checks")
+            if result.call is not None:
+                note = ("verifying — receiving the repo's complete check output"
+                        if result.pending_kind is repositorychecks.PendingKind.PAGE
+                        else result.note or "periodic check-in — running checks")
+                return _completion_toolcalls([result.call], note=note)
+            truth = result.text
             if truth:
                 # C5: if the SAME error has persisted (the coder is STUCK, not just churning), replace the
                 # raw ground-truth insertion with a REASONED thrash-diagnosis + one concrete next step (on
                 # the routed reasoner). A reasoned unstick on a persistent RED stall — never a give-up.
-                if self._ctx.reasoner_role is not None and sess.gate_stall >= THRASH_STALL_CYCLES:
-                    truth = author_thrash_steer(
-                        self._ctx.reasoner_chat, self._ctx.reasoner_role,
-                        sess.workspace_root or _extract_cwd(body.get("messages", [])), sess, truth, body, rlog)
-                    rlog.emit("loop.thrash_diagnosed", plan_off=True, stall=sess.gate_stall)
+                stalled = _stalled_selection(sess)
+                if stalled is not None:
+                    progress = _stalled_result(stalled.progress(stalledwork.ProgressInput(
+                        truth, sess.gate_stall, _stalled_author(sess, body, rlog,
+                            self._ctx.reasoner_chat, self._ctx.reasoner_role,
+                            sess.workspace_root or _extract_cwd(body.get('messages', [])))
+                            if self._ctx.reasoner_role is not None else None, rlog),
+                        _StalledWorkView(sess)))
+                    if progress.steer is not None:
+                        truth = _stalled_text(progress.steer)
                 sess.nudge_reason = truth
                 sess.steer_source = "periodic check-in"
         # (No stall terminator: cria never ends a non-converging session by handing back to the human —
@@ -5460,13 +4961,9 @@ class Loop:
             # PARITY: the single-item path gets the SAME reasoner-authored steers as the loop (via the
             # shared authors on the routed reasoner endpoint). CANNED only if there's no reasoner.
             def _author(condition, g, outcome, b, r):
-                root = sess.workspace_root or _extract_cwd(b.get("messages", []))
-                if condition == "refusal":
-                    task = _history_root(b.get("messages", []))[0] or "the user's task"
-                    return author_redirect(self._ctx.reasoner_chat, self._ctx.reasoner_role,
-                                           root, task, g, outcome, b, r)
-                return author_steer(self._ctx.reasoner_chat, self._ctx.reasoner_role, root, g, b, r,
-                                    condition="wheel_spin", outcome=outcome)
+                return _stalled_author(g, b, r, self._ctx.reasoner_chat, self._ctx.reasoner_role,
+                    sess.workspace_root or _extract_cwd(b.get('messages', [])),
+                    condition=condition, outcome=outcome)
             author = _author if self._ctx.reasoner_role is not None else CANNED
             steer = guard_probe_steer(sess, body, rlog, author=author)
         elif not sess.nudge_reason:  # (a gate-fail steer is already parked — don't double-intervene)
@@ -5498,73 +4995,35 @@ class Loop:
         # PERIODIC gate: every N acting turns, run the checks and insert ground truth — only when nothing
         # else is steering this turn (a guard steer / re-anchor takes precedence).
         # LEVEL 5 — ASSISTS_ENABLED, same rule as the other call site: scheduled, so it is an assist.
-        if self._ctx.assists and steer is None and not rewritten:
-            periodic = guard_periodic_gate(sess, body, rlog, workspace_root=sess.workspace_root)
+        if self._ctx.assists:
+            periodic = guard_periodic_gate(sess, body, rlog, workspace_root=sess.workspace_root,
+                driver=repositorychecks.Driver.TASK, steer=steer, rewritten=rewritten)
             if periodic is not None:
                 return periodic
         record_coder_preframe(rlog, sess, sess.plan.current(), 1, 1, driver="plan_off")
-        framed = {**body, "messages": _frame_for_item(
-            body.get("messages", []), "", sess.summary, 1, 1,
-            prior_work=sess.prior_work, tools=body.get("tools"), synthetic=True,
-            gate_plan=getattr(sess, "gate_plan", None),
-            workspace_root=sess.workspace_root,
-            gate_red=bool(getattr(sess, "last_gate_red", False)),
-            suppress_plan_cursor=bool(sess.replan_uncovered))}
-        # THE DURABLE FETCH LEDGER — the same anchor the plan-ON driver has always injected. It was
-        # wired into _work_item only, so on THIS path (planner off — which is how every dense model on
-        # the ladder runs, and mellum2) the coder never got it: the ⟦ctx:facts⟧ marker appears in 0 of
-        # the 166 prompts of ada-handles_mellum2_codex_poff_1785693138. Its docstring names precisely
-        # the failure that then happened — at call 0102 a harness compaction took the fetched
-        # /handles/{handle} and /holders/{address} field shapes out of the coder's view and they never
-        # came back, for the 25 prompts to the end of the run, while the reasoner kept being given
-        # them. cria held those facts in its own memory the whole time and re-injected them on one
-        # path only.
-        restore, offered = _restored_text_message(sess, framed.get("messages", []))
-        facts = _fetched_facts_anchor(sess, framed.get("messages", []), offered)
         extra = []
-        if rewritten:  # first turn after a harness compaction → re-orient (a REASONED continuation).
-            extra.append({"role": "user", "content": prompts.render(
-                "nudge", reason=self._reasoned_reanchor(body, rlog, sess.workspace_root or ""))})
-            self._store.clear_rewrite(session_key)  # acted on it (framing rebuilt each turn)
         if steer:  # inject the steer into the coder framing this turn
             extra.append({"role": "user", "content": prompts.render("nudge", reason=steer)})
-        if extra:
-            framed = {**framed, "messages": framed["messages"] + extra}
-        # Pin the conversation-root task (from the RAW body, where env-context detection still works —
-        # framed has already been reframed) so self-compaction can't summarize it away.
-        framed = self._self_compact_single(framed, sess, rlog,
-                                           root_task=_history_root(body.get("messages", []))[0])
-        if facts is not None:
-            # Current fetched/disk facts belong after the historical rollup and rejected drafts. The
-            # old after-system insertion made stale chronology the final authority a small model read.
-            base = _elide_ledger_copies(framed["messages"], sess, rlog)
-            framed = {**framed, "messages": _plan_off_tail(base, restore, facts)}
-        elif restore is not None:
-            framed = {**framed, "messages": framed["messages"] + [restore]}
-        if self._ctx.coder_role is not None:  # the coder role's sampling/reasoning from cria.toml
-            self._ctx.coder_role.apply(framed, rlog=rlog)
-        if self._ctx.focus_trim:  # focus the OUTBOUND view (logged, not bannered — routine housekeeping)
-            trimmed, rep = focustrim.trim(framed["messages"])
-            if rep.applied:
-                framed = {**framed, "messages": trimmed}
-                rlog.emit("context.focus_trim", reshape="focus-trim", dropped_calls=rep.dropped_calls,
-                            dropped_msgs=rep.dropped_msgs)
+        framed, reoriented = self._prepare_coder_context(sess, body, rlog, synthetic=True,
+            notes=extra, rewritten=rewritten, session_key=session_key)
+        _stalled_frame(sess, framed, extra)
         comp = self._coder_turn(sess, framed, body, step=1, rlog=rlog)  # SHARED coder turn (see _work)
+        if rewritten and rewrite_observation is not None and rewrite_observation.key == session_key:
+            self._store.ack_rewrite(rewrite_observation)
         if reset_delivery:
-            sess.replan_uncovered_pending = False
-            rlog.emit("loop.replan_uncovered_delivered", missing=", ".join(sess.replan_uncovered))
-        if rewritten:  # no hidden guards: surface that cria re-anchored the turn
+            sess.living_raw_reply = comp
+        if reoriented:  # no hidden guards: surface only an executed reorientation
             _add_note(comp, "re-anchored after a harness compaction")
         if steer:  # no hidden guards: surface WHICH guard steered the coder
             _add_note(comp, f"steered the coder — {sess.steer_source or 'guard'}")
             sess.steer_source = ""
         if _has_tool_calls(comp):
-            sess.coder_turns += 1  # an acting turn — drives the periodic check-in cadence
-            sess.gate_fresh = False  # the workspace may change → any prior gate result is stale
-            return comp  # acting → forward
-        return self._gate_single_done(sess, comp, framed, body, session_key, rlog)
+            return _forward_acting_coder(sess, comp)
+        return self._gate_single_done(sess, comp, framed, body, session_key, rlog,
+                                      completion_act_first=act_first)
 
-    def _gate_single_done(self, sess: PlanSession, comp: dict, framed: dict, body: dict, key: str, rlog) -> dict:
+    def _gate_single_done(self, sess: PlanSession, comp: dict, framed: dict, body: dict, key: str, rlog, *,
+                          completion_act_first=None) -> dict:
         """The coder answered with NO tool call (thinks it's done). Verify before ending: LEG0 (never
         acted → one act-first nudge, re-call once), then the OBJECTIVE completion gate (run the repo's
         checks). NOTE: the gate reads cwd from the ORIGINAL body (reframe_preamble stripped the <cwd>
@@ -5587,7 +5046,7 @@ class Loop:
                 menu=", ".join(lost.get("menu") or []) or "(none)"))}]
             comp = self._coder_turn(sess, {**framed, "messages": conv}, body, step=1, rlog=rlog)
             if _has_tool_calls(comp):
-                return comp   # it re-issued the call with a tool that exists
+                return _forward_acting_coder(sess, comp)  # retained lost-call reask
         refused = comp.pop(bodykeys.FENCED_REFUSED, None)
         if refused and sess.unexecuted_nudges < MAX_UNEXECUTED_NUDGES:
             sess.unexecuted_nudges += 1
@@ -5599,33 +5058,28 @@ class Loop:
                 {"role": "user", "content": self._refused_call_text(sess, body, refused)}]
             comp = self._coder_turn(sess, {**framed, "messages": conv}, body, step=1, rlog=rlog)
             if _has_tool_calls(comp):
-                return comp   # it acted once it knew what had not run
+                return _forward_acting_coder(sess, comp)  # retained refusal reask
         # BEFORE reading this as "thinks it's done": a turn that pasted a whole file did not finish,
         # it failed to emit the call. Same check as the multi-step half — see unexecuted_write().
-        if (self._pasted_file_unsaved(sess, _completion_text(comp), body)
-                and sess.unexecuted_nudges < MAX_UNEXECUTED_NUDGES):
-            sess.unexecuted_nudges += 1
-            rlog.emit("loop.unexecuted_write", plan_off=True, attempt=sess.unexecuted_nudges)
-            # The reply the nudge refers to rides in front of it — `framed` is what the coder was
-            # SENT, so its own prose answer is not in there, and "send that same content again"
-            # about an invisible message is unactionable (see the multi-step sibling, including why
-            # a CUT-OFF reply is carried by neither).
-            carried = ([] if massage.is_truncated(comp)
-                       else [{"role": "assistant", "content": _completion_text(comp)}])
-            conv = framed["messages"] + carried + [
-                {"role": "user", "content": prompts.render(
-                    "nudge", reason=self._unexecuted_nudge_text(sess, _completion_text(comp)))}]
+        pasted_nudge = self._pasted_followup(sess, comp)
+        if pasted_nudge is not None:
+            carried = ([{'role': 'assistant', 'content': pasted_nudge.carried_reply}]
+                       if pasted_nudge.carried_reply else [])
+            conv = framed['messages'] + carried + [pasted_nudge.user_turn]
             comp = self._coder_turn(sess, {**framed, "messages": conv}, body, step=1, rlog=rlog)  # SHARED
             if _has_tool_calls(comp):
-                return comp  # it emitted the write after the nudge
-        if sess.action_seq == 0 and not sess.leg0_nudged:  # the session never acted at all
-            sess.leg0_nudged = True
-            rlog.emit("loop.step_incomplete", plan_off=True, reason="no tools used")
-            conv = framed["messages"] + [{"role": "user", "content": prompts.render("nudge", reason=prompts.load("leg0_nudge"))}]
+                return _forward_acting_coder(sess, comp)  # retained pasted-write reask
+        redrive = (completion_act_first.execute(completionredrive.Input(
+            completionredrive.Authority.TASK, sess.action_seq, sess, rlog))
+            if completion_act_first is not None else None)
+        if redrive is not None:
+            if not isinstance(redrive, completionredrive.Result) or not isinstance(redrive.user_turn, dict):
+                raise ValueError('Task act-first replacement must return Result with user turn')
+            conv = framed['messages'] + [redrive.user_turn]
             comp = self._coder_turn(sess, {**framed, "messages": conv}, body, step=1, rlog=rlog)  # SHARED
             if _has_tool_calls(comp):
-                return comp  # it acted after the nudge
-        probe = guard_gate_op(sess, body, rlog, workspace_root=sess.workspace_root)  # body, NOT framed
+                return _forward_acting_coder(sess, comp)  # retained leg0 reask
+        probe = _requested_repository_probe(sess, body, rlog, workspace_root=sess.workspace_root)  # body, NOT framed
         if probe is not None:
             sess.done_probe = True
             sess.probe_call_id = probe["id"]
@@ -5648,46 +5102,46 @@ class Loop:
                 check_state=prompts.load_map("done_check_state")["never_ran"]), rlog)
         return comp  # no reasoner AND no shell → can't verify at all; forward the 'done' (Tier-2 fail-open, left)
 
-    def _done_critic_reason(self, sess: PlanSession, body: dict, rlog) -> str:
+    def _review_task(self, sess: PlanSession, body: dict, rlog, *, trigger: ReviewTrigger) -> ReviewResult:
+        """Bind existing evidence/judge services to the registered state-writing stage.
+
+        The stage owns assembly order and recording. This adapter supplies the same
+        original-task, provenance and read-only services the three callers used before.
+        Tail-pruning deliberately does not enter this authoritative transition.
+        """
+        runtime = assistruntime.current()
+        if trigger is not ReviewTrigger.SCHEDULED and not runtime.review_applies(trigger):
+            raise ValueError("whole-task-review is required for reactive completion at L4/L5")
+        def history():
+            return _satisfaction_evidence(body.get("messages", []), rlog=rlog,
+                chat_fn=self._reasoner()[0], role=self._reasoner()[1],
+                gate_plan=getattr(sess, "gate_plan", None),
+                workspace_root=getattr(sess, "workspace_root", "") or "",
+                origin=getattr(sess, "handoff_origin", None))
+        def judge(task, evidence):
+            return judge_satisfaction(task, evidence, self._ctx.reasoner_chat, self._ctx.reasoner_role,
+                rlog, coder_tools=_coder_tools_summary(body.get("tools"), params=False),
+                workspace_root=sess.workspace_root or "",
+                routes=known_routes(body.get("messages", []), sess),
+                gate_findings=getattr(sess, "last_gate_flag", "") or "",
+                messages=body.get("messages", []), sess=sess)
+        return runtime.review(ReviewInput(trigger, getattr(getattr(sess, "plan", None), "task", ""),
+            history, lambda: _gate_notes(sess), judge, VerdictNudge, rlog), sess)
+
+    def _done_critic_reason(self, sess: PlanSession, body: dict, rlog, *, plan_off: bool = True) -> str:
         """The task-level reasoner critic on a GREEN single-item 'done' (parity with the loop's _verify):
         judge the WHOLE task against the real work + the vacuous-green fact. Returns the critic's CONCRETE
         reason when the task is NOT satisfied — a specific unmet deliverable to steer the coder back with —
         or "" when satisfied. Runs on EVERY green 'done' (NO once-bound): cria never lets a still-
         incomplete task exit early; the model finishes the real work on its own. Fail-CLOSED — an
         undecidable judge counts as not-satisfied (judge_satisfaction already only confirms NOT-done)."""
-        # Harness history may now be a continuation/summary. Only the retained original task
-        # supplies requirement authority; an unknown root cannot authorize a typed output.
-        task = getattr(getattr(sess, "plan", None), "task", "")
-        if not task:
-            _record_satisfaction(sess, False, VerdictNudge())
-            rlog.emit("loop.done_critic", plan_off=True, satisfied=False, original_task_unknown=True)
+        review = self._review_task(sess, body, rlog, trigger=ReviewTrigger.CLAIM)
+        if review.status is ReviewStatus.UNKNOWN_TASK:
+            rlog.emit("loop.done_critic", plan_off=plan_off, satisfied=False, original_task_unknown=True)
             return _unnamed_gap(sess, sess.pending_done)
-        ev = _satisfaction_evidence(body.get("messages", []), rlog=rlog,
-                     chat_fn=self._reasoner()[0], role=self._reasoner()[1],
-                     gate_plan=getattr(sess, "gate_plan", None),
-                     workspace_root=getattr(sess, "workspace_root", "") or "",
-                     origin=getattr(sess, "handoff_origin", None))
-        ev += _gate_notes(sess)
-        # RUN THE DELIVERABLE — the THIRD sibling of the same wiring. The marker was added to
-        # _periodic_satisfaction and _reopen_if_unsatisfied on 2026-08-02 and this path was missed, and
-        # this path is the one that actually fires: on a plan-OFF run the coder reaches a green gate and
-        # calls task_complete, which lands HERE, while _periodic_satisfaction is `blocked` by exactly the
-        # conditions that precede a finish (a pending steer, a red gate, a done-probe in flight).
-        # Measured on ada-handles_mellum2_codex_poff_1785693138: `loop.done_critic` fired twice (calls
-        # 0158 and 0164), `loop.satisfaction_check` fired ZERO times, so the two fixes that day did not
-        # touch the run they were written for. Both judges approved a CLI that dies with
-        # `NameError: name 'json' is not defined` in main(); the coder's own two attempts to run it were
-        # blocked on a typo'd path and nothing else ever executed it. EVIDENCE, never a gate — empty on
-        # a confirmed run or a task that needs no run, so a clean signal stays silent.
-        satisfied, reason, _fix = judge_satisfaction(
-            task, ev, self._ctx.reasoner_chat, self._ctx.reasoner_role, rlog,
-            coder_tools=_coder_tools_summary(body.get("tools"), params=False),
-            workspace_root=sess.workspace_root or "",
-            routes=known_routes(body.get("messages", []), sess),
-            gate_findings=getattr(sess, "last_gate_flag", "") or "",
-            messages=body.get("messages", []), sess=sess)
-        _record_satisfaction(sess, satisfied, reason)
-        rlog.emit("loop.done_critic", plan_off=True, satisfied=satisfied)
+        satisfied, reason = review.approved, review.reason
+        task = sess.plan.task
+        rlog.emit("loop.done_critic", plan_off=plan_off, satisfied=satisfied)
         if satisfied:
             return ""
         if not reason:
@@ -5704,127 +5158,134 @@ class Loop:
         """The plan-OFF twin of the plan-ON deliverable observer. Trigger: the model tried to stop and the
         completion check was not satisfied without a usable diagnosis (level 4's trigger — no assist
         schedule involved). Returns the typed `missing_file` nudge or an empty one."""
-        # The legacy argument may be a generated continuation. Never let it replace retained root
-        # authority, including when this observer is invoked independently of the done critic.
-        task = getattr(getattr(sess, "plan", None), "task", "")
-        view = wsview.current(sess.workspace_root) if sess.workspace_root else None
-        if (view is None or view.observation_fingerprint is None or not task
-                or self._ctx.reasoner_chat is None):
+        definition = assistruntime.current().completion_diagnosis
+        if definition is None:
             return VerdictNudge()
-        gap = observe_task_missing_file(
-            task, workspace_root=sess.workspace_root or "",
-            reasoner_chat=self._ctx.reasoner_chat, reasoner_role=self._ctx.reasoner_role, rlog=rlog)
-        if gap.diagnosis_kind == "missing_file" and gap.subject:
-            rlog.emit("loop.done_gap_observed", level="info", subject=gap.subject, plan_off=True)
-            return gap
-        return VerdictNudge()
+        return _diagnosis_nudge(definition.observe_terminal(
+            lambda: getattr(getattr(sess, "plan", None), "task", ""),
+            bool(sess.workspace_root and self._ctx.reasoner_chat is not None),
+            _diagnosis_lifecycle_services(definition, sess.workspace_root or "",
+                self._ctx.reasoner_chat, self._ctx.reasoner_role, rlog)))
 
     def _reasoned_reanchor(self, body: dict, rlog, workspace_root: str = "") -> str:
-        """A REASONED continuation after a harness compaction (parity with the loop's re-plan from the
-        summary): the reasoner reads the compaction SUMMARY and authors a grounded 'what's done / what
-        remains / inspect before creating' directive. Falls back to the canned reanchor when there is no
-        reasoner or it yields nothing — a compacted coder is never left without re-orientation."""
-        canned = prompts.load("reanchor")
-        # THE SUMMARY, NOT THE TASK. This read `_history_root`, which returns the first user message
-        # that is not env context — and under a harness that keeps its user messages (Codex does)
-        # that is the ORIGINAL TASK, never the compaction summary. So the reasoner was handed a list
-        # of REQUIREMENTS under a prompt saying "the working history was just compacted into the
-        # summary you are given… state what has already been built", and it answered the only way
-        # that question can be answered from a task: by inventing accomplishments.
-        #
-        # Walked on cycle 4 cell 10, feed-pipeline-java x qwen35, where it fired three times. The
-        # reasoner said so itself — "Since the summary is not provided… I am in a bind", "If I output
-        # a message claiming I know what was built, I am hallucinating" — and cria injected the guess
-        # as a four-item "Remains to Fix" list whose every item was already done and passing. The
-        # coder went back into working code and broke `messy_feed_handled`; the cell had been 5/5 at
-        # the fifteen-minute mark and finished 4/5.
-        #
-        # The re-anchored turn IS the summary, whichever shape the harness rewrites in: a harness that
-        # REPLACES the root has its compaction message rewritten in place by `reframe_compaction`, and
-        # one that KEEPS the root has it appended — either way the marker is on it. No marked turn
-        # means no summary reached this turn, so there is nothing to describe and the canned reanchor
-        # says the true thing without claiming to know (#11b).
-        msgs = body.get("messages", [])
-        summary = next((_content_text(m.get("content")) for m in reversed(msgs)
-                        if m.get("role") == "user"
-                        and CONTINUATION_MARKER in _content_text(m.get("content"))), "")
-        if self._ctx.reasoner_role is None or not summary.strip():
-            return canned
-        # NO MODEL PROSE SURVIVED → THERE IS NOTHING TO ORIENT FROM THAT THE CODER DOES NOT ALREADY HOLD.
-        # When the briefing was rejected, the continuation message carries only cria's re-derived ground
-        # truth (workspace listing + the repo's own check output), verbatim, in its own carrier — and this
-        # seat was handed exactly that and asked to "state what has been built / what remains". All it
-        # can do is PARAPHRASE THE CHECKER, and a paraphrase is a second voice speaking over the tool
-        # (principles 2, 5b): phi4/Java A6 call 0164 turned javac's "class, interface, enum, or record
-        # expected" into "missing declarations … ensure Importer.java contains the appropriate
-        # declarations", the coder obeyed (call 0165) and wrapped the file in an extra class; A2 turned a
-        # type error into "change long to int or vice versa". Measured over every phi4/Java capture, 34
-        # of 34 firings of this seat were this shape; most carried a repair plan the checker never
-        # stated. The canned re-anchor says the only true thing (inspect before creating; do not
-        # recreate) and the checker's own words reach the coder untouched.
-        if _DROPPED_PROSE_LEAD in summary:
-            rlog.emit("loop.reanchor_skipped_no_prose", level="info")
-            return canned
-        # …AND THE DISK. The sibling seat — the self-compaction briefing writer — was given this
-        # exact fix, and its comment says why: "This inventory was already gathered on the line
-        # below, but only to CORRECT the briefing after the fact. The writer never saw it and
-        # invented files that never existed. Same fact, given before the question."
-        #
-        # This seat never got it, and it is the one asked point-blank to "state what has already been
-        # built". Measured over 136 answers: 22 (16%) name a file path absent from their input, and
-        # replaying both guards below over the 126 non-empty ones discards 36 — 29% of a full model
-        # call each, on the seat withheld the fact it invents. The inventory is also what makes the
-        # answer USEFUL: the prompt's own instruction is "tell it to INSPECT the existing files on
-        # disk", which cria can simply show.
-        inventory = workspace_inventory(workspace_root or "", flavor="briefing")
-        grounding = summary if not inventory else summary + "\n\n" + inventory
-        text = summarize(self._ctx.reasoner_chat, self._ctx.reasoner_role,
-                         prompts.load("reanchor_reasoned"), grounding, rlog, phase="reasoner")
-        if not text:
-            return canned
-        # A SCRIPT IS NOT A RE-ORIENTATION. This seat is asked for one short directive — "here is
-        # what exists, here is what remains, inspect before creating" — and its prompt says "Output
-        # ONLY that directive to the coder — no preamble, no meta-commentary". Twice on
-        # feed-pipeline-java x qwen35 (calls 0066 and 0156) it answered with fenced bash instead, and
-        # cria injected the whole thing verbatim. The coder read it as the user speaking — "The user
-        # is right - I need to inspect the workspace... Let me run the commands they suggested" — and
-        # worked through the script command by command for the next ten to fourteen calls,
-        # re-deriving facts the continuation summary two messages earlier already stated with
-        # file:line precision.
-        #
-        # THE TEST IS SHAPE, NOT SCORE, and that is measured. Scoring the text and refusing above a
-        # bar refuses 21 of the 59 re-orientation notes in the captures (36%) — among them "INSPECT
-        # the workspace before creating anything…" and "You have built: - orders/app.py …", good
-        # directives that score high only because they are full of file paths. A fenced block, or
-        # three or more lines that are each independently a command, fires on 2 of 59: exactly the
-        # two failures, and nothing else in the whole captured history.
-        #
-        # The fallback is the canned reanchor that was always here — a compacted coder is never left
-        # without re-orientation, which is why refusing is safe in this one seat.
-        if "```" in text or len(shellshape.command_lines(text)) >= _REANCHOR_MAX_COMMAND_LINES:
-            rlog.emit("loop.reanchor_refused", level="warn",
-                      lines=len(shellshape.command_lines(text)), head=_clip(text, 120))
-            return canned
-        # …AND THE PROMPT'S OWN RULE, ENFORCED. It says "Never name a project, crate, file, module or
-        # command the summary does not already name" and "Never fill either gap with a guess" — in
-        # prose, to a small model, with nothing checking. Both failures the walks found are of exactly
-        # this shape and both were expensive:
-        #   * cart-billing-go 1787434778 — "upgrade to a version that includes those methods (e.g.
-        #     `v1.5.0` or later)". No version of that library has the method; the directive converted
-        #     an answerable question into an unanswerable one and cost eleven calls and a `go get`.
-        #   * shipping-rates-rb 1787432916 — "Existing files in the workspace: - lib/shipping.rb".
-        #     The file is lib/shipping/rates.rb. The coder read the phantom, was refused, and spent
-        #     six of its last twenty calls finding the real path, at minute 27 of 30.
-        # A path or a version the summary does not contain is an invention, and the canned reanchor
-        # is always available (#5b, #1).
-        # Grounded against BOTH sources — a file named by the disk listing is grounded, and
-        # refusing it would be the guard punishing the seat for using the fact cria just gave it.
-        invented = _invented_names(text, grounding)
-        if invented:
-            rlog.emit("loop.reanchor_ungrounded", level="warn",
-                      names=prompts.named_list(invented), head=_clip(text, 120))
-            return canned
-        return text
+        """Compatibility author: F49 owns exact-name grounding, not action vetting."""
+        definition = next(iter(assistruntime.current().bindings(reorientation.DEFINITION.policy.stage)), None)
+        if definition is None:
+            return ""
+        result = definition.execute(reorientation.ReorientationInput(True,
+            lambda: reorientation.ReorientationFacts(tuple(_content_text(m.get("content"))
+                for m in body.get("messages", []) if m.get("role") == "user"),
+                self._ctx.reasoner_role is not None),
+            lambda: workspace_inventory(workspace_root or "", flavor="briefing"),
+            reorientation.SummaryAuthor(summarize, self._ctx.reasoner_chat, self._ctx.reasoner_role, rlog),
+            None, rlog))
+        if result.message is None:
+            return ""
+        prefix, _slot, suffix = prompts.load("nudge").partition("{{REASON}}")
+        return result.message["content"].removeprefix(prefix).removesuffix(suffix)
+
+    def _prepare_coder_context(self, sess, body, rlog, *, synthetic, index=None, total=None,
+                               item="", notes=(), rewritten=False, session_key=""):
+        """One preparation order; driver scheduling never chooses pipeline placement."""
+        runtime = assistruntime.current()
+        raw = body.get("messages") or []
+        authority = _capture_context_facts(sess, raw)
+        base = _required_coder_base(raw, tools=body.get("tools"), prior_work=sess.prior_work,
+            workspace_root=sess.workspace_root, gate_plan=getattr(sess, "gate_plan", None),
+            suspend_cursor=bool(sess.completion_remediation_subject or sess.replan_uncovered), rlog=rlog)
+        # Required authority is a partition, not reducible history rediscovered later.
+        # Preserve the one source index; equal later user packets remain independent turns.
+        task_at = base.task_index + 1 if base.task_index is not None else None
+        root_message = base.messages[task_at] if task_at is not None else None
+        root_task = _history_root(raw)[0]
+        live, history = [], []
+        for position, message in enumerate(base.messages[1:], start=1):
+            if position == task_at:
+                continue
+            # Harness preambles are user packets; literal markup in tool results
+            # or assistant history must retain its read visibility and call order.
+            is_live = message.get("role") == "user" and selfcompact.is_env_context(message)
+            (live if is_live else history).append(message)
+        if self._ctx.self_compact:
+            history = self._self_compact(history, sess, index, rlog,
+                force=bool(not synthetic and sess.compact_pending), pinned_task=root_task,
+                protected_prefix=True)
+        focus_bindings = runtime.bindings("coder-focus") if self._ctx.focus_trim else ()
+        focused = focustrim.focus(focustrim.FocusInput(history), focus_bindings)
+        history = focused.messages
+        if focused.report.applied:
+            rlog.emit("context.focus_trim", reshape="focus-trim", step=index,
+                      dropped_calls=focused.report.dropped_calls, dropped_msgs=focused.report.dropped_msgs)
+        # Reducers never received these packets, so neither copies nor canonical
+        # rolling task publication can duplicate them. All returned context survives.
+        history = [base.messages[0], *([root_message] if root_message is not None else []), *history]
+        workspace = _surveyed_view(sess)
+        restore_definition = next(iter(runtime.bindings(contextrestoration.DEFINITION.policy.stage)), None)
+        if restore_definition is not None:
+            restored = restore_definition.execute(contextrestoration.RestoreInput(
+                lambda: workspace,
+                lambda: contextrestoration.FileHistory(
+                    tuple(path for path, _value in authority.ledger), authority.written_paths,
+                    tuple(_extract_whole_reads(history, workspace)),
+                    tuple(path for _pos, _tid, path in _write_events_paths(history)),
+                    authority.key, dict(authority.touch))))
+            if restored.message is not None:
+                history = history + [restored.message]
+            offered = restored.offered
+        else:
+            offered = {}
+        visible_urls = set(_extract_fetches(history)) & webfetch.visible_urls(getattr(sess, "web_session", None))
+        anchor = _render_context_facts(authority, visible_messages=history,
+            visible_fetch_urls=visible_urls, restored_offered=offered, workspace=workspace)
+        if anchor is not None:
+            history = history + [anchor]
+        ledger_definition = next(iter(runtime.bindings(ledgercopies.DEFINITION.policy.stage)), None)
+        if ledger_definition is not None and anchor is not None:
+            history = ledger_definition.execute(ledgercopies.LedgerCopyInput(history,
+                lambda: _format_fetches(dict(authority.fetches), "PAGES YOU HAVE ALREADY FETCHED",
+                    visible=set(), location=False), rlog)).messages
+        current = replace(base, messages=history, task_index=0 if root_message is not None else None)
+        remediation = bool(sess.completion_remediation_subject)
+        step_definition = next(iter(runtime.bindings(steppreparation.DEFINITION.policy.stage)), None)
+        steps = (steppreparation.StepSelection.opt_in(step_definition)
+                 if self._ctx.planner_enabled and not synthetic else steppreparation.StepSelection())
+        if remediation and not synthetic:
+            history = steppreparation.with_directive(current, prompts.load("completion_remediation"),
+                                                     prompts.load("plan_ack"))
+        else:
+            history = steps.prepare(steppreparation.StepInput(current, item, sess.summary,
+                index, total, step_artifacts_on_disk, getattr(sess, "last_gate_red", False),
+                self._ctx.planner_enabled, synthetic)).messages
+        preamble = next(iter(runtime.bindings(preamblepolicy.DEFINITION.policy.stage)), None)
+        live = preamblepolicy.reframe_messages(preamblepolicy.BatchInput(live, wsview.current), preamble,
+                                              enabled=runtime.engagement_level >= 4)
+        history = history + live
+        reoriented = False
+        reorient = next(iter(runtime.bindings(reorientation.DEFINITION.policy.stage)), None)
+        if reorient is not None and rewritten:
+            result = reorient.execute(reorientation.ReorientationInput(True,
+                lambda: reorientation.ReorientationFacts(tuple(_msg_text_content(m) for m in raw
+                    if m.get("role") == "user"), self._ctx.reasoner_role is not None),
+                lambda: workspace_inventory(sess.workspace_root or "", flavor="briefing"),
+                reorientation.SummaryAuthor(summarize, self._ctx.reasoner_chat, self._ctx.reasoner_role, rlog),
+                None, rlog))
+            if result.message is not None:
+                history = history + [result.message]
+            reoriented = result.message is not None
+        framed = {**body, "messages": history + list(notes), "stream": False}
+        framed = assistruntime.retain_focus_bindings(framed, focused, focus_bindings)
+        framed.pop("model", None)
+        if remediation:
+            framed[bodykeys.COMPLETION_REMEDIATION] = sess.completion_remediation_subject
+        workspace_root = sess.workspace_root or _extract_cwd(raw)
+        if workspace_root:
+            # One live listing, after reductions and current notes, before role lowering.
+            framed["messages"] = _ground_coder_view(framed["messages"], workspace_root)
+            _note_survey_baseline(sess, workspace_root)
+            _note_first_survey_files(sess, workspace_root, raw)
+        if self._ctx.coder_role is not None:
+            self._ctx.coder_role.apply(framed, rlog=rlog)
+        return framed, reoriented
 
     def _self_compact_single(self, framed: dict, sess: PlanSession, rlog, root_task: str = "") -> dict:
         """The plan-OFF driver's adapter onto :meth:`_self_compact` — dict in, dict out. It had its own
@@ -5876,21 +5337,7 @@ def _briefing_from_history(messages: list[dict]) -> str:
     (see ``_closing``). Matching cria's OWN sentinel is structural, not phrase-matching the
     harness. Returns "" when absent (e.g. the harness compacted it away — then the harness
     summary, which was written WITH the briefing in view, carries the content instead)."""
-    for m in reversed(messages):
-        if m.get("role") != "assistant":
-            continue
-        c = m.get("content")
-        # Both delimiters, and the opener at the START of a line — the shape cria's own closing message
-        # writes. The coder READS this block in its context and can parrot it, and a bare substring
-        # match anywhere in any assistant turn would then promote the coder's own prose to `prior_work`
-        # for the planner. This does not make the envelope unforgeable (it is deliberately marker-free
-        # so strip_history spares it, and there is no server-side copy by design) — it just stops the
-        # accidental case, which is the one that actually happens.
-        if isinstance(c, str) and BRIEFING_CLOSE in c and any(
-                ln.lstrip().startswith(BRIEFING_OPEN) for ln in c.splitlines()):
-            block = c.split(BRIEFING_OPEN, 1)[1]
-            return block.split(BRIEFING_CLOSE, 1)[0].strip()
-    return ""
+    return completedwork.read_history(messages).text
 
 
 def _session_to_dict(sess: PlanSession) -> dict:
@@ -5920,6 +5367,7 @@ def _session_to_dict(sess: PlanSession) -> dict:
         "synthetic": sess.synthetic,  # a resumed single-item session must stay single-item, not
         #                               flip to multi-step framing after a restart
         "plan_off": sess.plan_off,
+        "pilot_selection": list(sess.pilot_selection) if sess.pilot_selection is not None else None,
         "replan_uncovered": list(sess.replan_uncovered),
         "replan_uncovered_pending": sess.replan_uncovered_pending,
         # Optional additions preserve old state-file compatibility. The structured stream is what
@@ -5958,6 +5406,8 @@ def _session_from_dict(d) -> PlanSession | None:
                            completion_remediation_nonwrite_seen=bool(d.get("completion_remediation_nonwrite_seen")),
                            synthetic=bool(d.get("synthetic")),
                            plan_off=bool(d.get("plan_off")),
+                           pilot_selection=(tuple(d["pilot_selection"])
+                                            if isinstance(d.get("pilot_selection"), list) else None),
                            replan_uncovered=uncovered,
                            # State written before this acknowledgement bit existed has evidence but no
                            # receipt, so it must deliver once rather than silently treating it as spent.
@@ -6169,40 +5619,44 @@ def _satisfaction_evidence(messages: list[dict], rlog=None, gate_plan=None,
     # measured 73.7KB slot (0183-satisfaction, run 0729T224807); the judge holds read_file/list_dir
     # to drill past the disclosed elision, and the doom loop (fail closed -> re-nudge -> grow) is
     # the same mechanism the critic bound was shipped for.
-    log = _dedup_evidence(_work_log(messages, keep_checks=True, rlog=rlog, gate_plan=gate_plan),
-                          rlog=rlog, chat_fn=chat_fn, role=role)
-    # EXACT COUNTS OF THE FILES THE SESSION WROTE OR EDITED, appended after the (possibly
-    # deduplicated) log: the escaped-JSON layout hides a file's byte-level shape from the judge.
-    # Measured from file CONTENT only (see _written_file_facts), silent when nothing can be stated.
-    measured = filefacts.render(_written_file_facts(messages, workspace_root))
-    if measured:
-        log = f"{log}\n\n{measured}"
-    # The marker must START a user/system message. A tool can quote the same bytes,
-    # but that is its result payload, not a handoff; keep it only in the paired work log.
-    # Matching a bare substring in ANY role meant a coder that merely
-    # parroted "⟦ctx:rollup⟧" — a marker it reads in its own context every turn — got its own claim
-    # hoisted under "treat this as a record of what was already built" and handed to the done-judge as
-    # authoritative history.
-    summaries = [c.strip() for m in messages
-                 if m.get("role") in ("user", "system")
-                 and (c := _msg_text_content(m)).lstrip().startswith(
-                     (CONTINUATION_MARKER, selfcompact.SUMMARY_MARKER, BRIEFING_OPEN))]
-    if not summaries:
-        return log
-    # These records are heterogeneous. Only the session's actual hardener record
-    # identifies a dropped-prose continuation or accepted model account. Unknown
-    # history remains visible, but its own headings cannot authenticate it. If the
-    # sole floor sheds the introducing source statement, the active question abstains.
-    records = []
-    for summary in summaries:
-        known = isinstance(origin, _HandoffOrigin) and origin.matches_continuation(summary)
-        records.append(prompts.render("satisfaction_history_source", record=summary,
-                                      source=prompts.load("satisfaction_source_dropped" if known and origin.dropped
-                                                          else "satisfaction_source_model" if known
-                                                          else "satisfaction_source_unknown")))
-    head = prompts.render("satisfaction_history", history="\n\n".join(records))
-    tail = prompts.render("satisfaction_recent_actions", actions=log) if log.strip() else ""
-    return "\n\n".join(part for part in (head, tail) if part)
+    def consume(log):
+        # EXACT COUNTS OF THE FILES THE SESSION WROTE OR EDITED, appended after the (possibly
+        # deduplicated) log: the escaped-JSON layout hides a file's byte-level shape from the judge.
+        # Only the selected exact-form source may measure; other shared evidence stays independent.
+        exact = next((d for d in assistruntime.current().pre_release
+                      if isinstance(d, completionapproval.ExactFormDefinition)), None)
+        measured = (filefacts.render(exact.measure(messages, _completion_measurement_services(workspace_root)))
+                    if exact is not None else "")
+        if measured:
+            log = f"{log}\n\n{measured}"
+        # The marker must START a user/system message. A tool can quote the same bytes,
+        # but that is its result payload, not a handoff; keep it only in the paired work log.
+        # Matching a bare substring in ANY role meant a coder that merely
+        # parroted "⟦ctx:rollup⟧" — a marker it reads in its own context every turn — got its own claim
+        # hoisted under "treat this as a record of what was already built" and handed to the done-judge as
+        # authoritative history.
+        summaries = [c.strip() for m in messages
+                     if m.get("role") in ("user", "system")
+                     and (c := _msg_text_content(m)).lstrip().startswith(
+                         (CONTINUATION_MARKER, selfcompact.SUMMARY_MARKER, BRIEFING_OPEN))]
+        if not summaries:
+            return log
+        # These records are heterogeneous. Only the session's actual hardener record
+        # identifies a dropped-prose continuation or accepted model account. Unknown
+        # history remains visible, but its own headings cannot authenticate it. If the
+        # sole floor sheds the introducing source statement, the active question abstains.
+        records = []
+        for summary in summaries:
+            known = isinstance(origin, _HandoffOrigin) and origin.matches_continuation(summary)
+            records.append(prompts.render("satisfaction_history_source", record=summary,
+                                          source=prompts.load("satisfaction_source_dropped" if known and origin.dropped
+                                                              else "satisfaction_source_model" if known
+                                                              else "satisfaction_source_unknown")))
+        head = prompts.render("satisfaction_history", history="\n\n".join(records))
+        tail = prompts.render("satisfaction_recent_actions", actions=log) if log.strip() else ""
+        return "\n\n".join(part for part in (head, tail) if part)
+    return _dedup_evidence(_work_log(messages, keep_checks=True, rlog=rlog, gate_plan=gate_plan),
+                          rlog=rlog, chat_fn=chat_fn, role=role, _consume=consume)
 
 
 # A line that OPENS in cria's voice: the human-facing `⟦cria⟧` banner, or anything in the
@@ -6529,10 +5983,10 @@ def reframe_preamble(m: dict) -> dict:
     six-language battery it relayed another repo's development doctrine into a bare /tmp task. Only
     instructions cria can find in an instruction file inside the workspace the preamble names are
     relayed; everything else is dropped. The environment fields are unaffected."""
-    if m.get("role") != "user" or not selfcompact.is_env_context(m):
+    definition = next(iter(assistruntime.current().bindings(preamblepolicy.DEFINITION.policy.stage)), None)
+    if definition is None:
         return m
-    new = _reframe_preamble_text(_msg_text_content(m))
-    return {**m, "content": new} if new else m
+    return definition.execute(preamblepolicy.PreambleInput(m, wsview.current)).message
 
 
 def _msg_text_content(m: dict) -> str:
@@ -6586,36 +6040,13 @@ def _workspace_instructions(cwd: str, relayed: str) -> str | None:
     else is another repo's authority and is dropped — silence over noise (#3), and the subtractive
     direction (#1). The workspace is the ``cwd`` the preamble itself carries, so this needs no
     plumbing and works for any harness that states one."""
-    if not cwd:
-        return None
-    view = wsview.current(cwd)
-    if not view.surveyed:
-        return None
-    base = Path(cwd)
-    blob = _squash(relayed)
-    for name in _INSTRUCTION_FILES:
-        f = base / name
-        own = (view.read(f) or "").strip()
-        if own and _squash(own) in blob:
-            return own
-    return None
+    return preamblepolicy.workspace_instructions(cwd, relayed, wsview.current).text or None
 
 
 def _reframe_preamble_text(text: str) -> str | None:
-    instr = _tag_body(text, "INSTRUCTIONS") or _tag_body(text, "user_instructions")
-    env = _tag_body(text, "environment_context")
-    cwd = _tag_body(env or "", "cwd") or ""
-    parts: list[str] = []
-    if instr and instr.strip():
-        own = _workspace_instructions(cwd.strip(), instr)
-        if own:
-            parts.append(prompts.render("preamble_instructions", instructions=own.replace("\r", "").strip()))
-    if env:
-        fields = [(label, v.strip()) for tag, label in _ENV_FIELDS
-                  if (v := _tag_body(env, tag)) and v.strip()]
-        if fields:
-            parts.append(prompts.render("preamble_environment", fields=", ".join(f"{k}: {v}" for k, v in fields)))
-    return "\n\n".join(parts) if parts else None
+    message = {"role": "user", "content": text}
+    framed = reframe_preamble(message)
+    return framed["content"] if framed is not message else None
 
 
 def _is_serialized_plan_cursor(message: dict) -> bool:
@@ -6647,6 +6078,7 @@ def record_coder_preframe(rlog, sess: PlanSession, item: PlanItem | None, idx: i
     observation = getattr(sess, "last_gap_observation", "") or ""
     surveyed = view.surveyed if view is not None else False
     state = {
+        "pilot_assists": list(assistruntime.current().selected),
         "driver": driver,
         "cursor": {"index": idx, "total": total, "text": getattr(item, "text", "") if item else ""},
         "wsview": {
@@ -6682,106 +6114,39 @@ def record_coder_preframe(rlog, sess: PlanSession, item: PlanItem | None, idx: i
     rlog.emit("loop.coder_preframe", state=state)
 
 
-def _frame_for_item(messages: list[dict], item: str, summary: str, idx: int, total: int, prior_work: str = "", tools=None, synthetic: bool = False, gate_plan=None, workspace_root: str | None = None, gate_red: bool = False, remediation: bool = False, suppress_plan_cursor: bool = False) -> list[dict]:
-    """Rewrite the conversation so the coder's task IS the current step, and so cria — not the
-    harness — owns the system prompt:
+def _required_coder_base(messages, *, tools=None, prior_work="", workspace_root=None,
+                         gate_plan=None, suspend_cursor=False, reframe=False, rlog=None):
+    """Required source assembly with an explicit selected note-only menu adapter."""
+    runtime = assistruntime.current()
+    menu = toolmenu.selected_policies(runtime.definitions)
+    def menu_note(menu_tools):
+        result = menu.instructions(toolmenu.InstructionInput(menu_tools, messages=None, configured=True), rlog)
+        return result.note if result.applied else None
+    return steppreparation.assemble_base(steppreparation.BaseInput(
+        messages, steppreparation.BaseServices(_strip_cria_file_ops, _msg_text_content,
+            lambda message: reframe_preamble(message) if reframe and runtime.engagement_level >= 4 else message,
+            _is_serialized_plan_cursor, menu_note=menu_note),
+        tools, prior_work, workspace_root, gate_plan, suspend_cursor))
 
-    * DROP the harness's agent system prompt entirely. When cria is driving the loop it provides
-      the orchestration, so a harness's "you are an autonomous coding agent, plan and finish the
-      whole task" boilerplate (Codex ships ~7.8K tokens of it — a third of the window) is pure
-      conflict: it fights cria's step-by-step driving and buries cria's instruction. cria leads
-      with its OWN concise coder system prompt instead (`prompts/coder_system.txt`). Harness-
-      agnostic: whatever agent prompt any harness puts in `system`/`developer` is replaced.
-    * KEEP the user's real task as HISTORY (the whole goal — every requirement, so the coder works
-      from the full ask, not just the terse step text), followed by an acknowledgement that it has been
-      decomposed into a plan — so it reads as BACKGROUND rather than an unstructured replacement plan.
-      The ACTIVE directive makes the CURRENT step the priority, appended last and carried in the
-      authoritative system message. Later plan steps stay hidden, but the full task remains available
-      so completing the current code can also deliver directly related required tests and documentation.
-    * KEEP everything else: the user's own instructions (AGENTS.md), env context, and the work
-      history — those are user/assistant/tool messages, not the harness agent prompt.
-    * On a FOLLOW-UP (prior_work set), fold the completion-compaction of the earlier plan into the
-      system message so the coder knows what already exists this session — same reason as the step:
-      system is protected from floor-trimming and authoritative.
+
+def _frame_for_item(messages: list[dict], item: str, summary: str, idx: int, total: int, prior_work: str = "", tools=None, synthetic: bool = False, gate_plan=None, workspace_root: str | None = None, gate_red: bool = False, remediation: bool = False, suppress_plan_cursor: bool = False) -> list[dict]:
+    """Compatibility frame; required assembly and optional step wording have source owners.
+
+    Production supplies explicit config consent in the common preparation path.
+    Calling this planned-frame library API is the legacy standalone opt-in.
     """
-    messages = _strip_cria_file_ops(messages)  # don't let the coder see/mimic `.cria/` writes
-    if remediation or suppress_plan_cursor:
-        # Suspend every replayed copy of cria's cursor too.  Remediation temporarily owns an
-        # ordinary plan cursor; a typed coverage reset permanently releases a rejected one.  In
-        # either case, remove only cria's serialized frame, never a user mention of a plan.
-        messages = [m for m in messages if not _is_serialized_plan_cursor(m)]
-    # Responses caller instructions are not harness persona. Fold them into cria's one authoritative
-    # system turn before dropping ordinary harness system messages below.
-    # `add_cheatsheet` folded the tool hint onto the end of this message upstream of the frame; the
-    # frame renders the hint itself below, so the caller's own words are taken WITHOUT it (one block).
-    callers = [m for m in messages if isinstance(m, dict) and m.get(bodykeys.CALLER_INSTRUCTIONS)]
-    texts = [_msg_text_content({**m, "content": toolmenu.without_cheatsheet(m.get("content"))}) for m in callers]
-    caller = "\n\n".join(texts)
-    # Where the harness's own base prompt sits inside `caller` (offset from the start of the block).
-    persona_at, persona, run = -1, "", 0
-    for m, t in zip(callers, texts):
-        p = m.get(bodykeys.CALLER_PERSONA)
-        if persona_at < 0 and isinstance(p, str) and p and p in t:
-            persona_at, persona = run + t.index(p), p
-        run += len(t) + 2
-    # Where installed libraries may be READ (the harness's declared roots, the build's own dependency
-    # location) — a fact the model otherwise only meets as a refusal. "" unless the harness declared roots.
-    # Read BEFORE the caller-instruction messages are dropped below: the harness's permission text
-    # ("The writable roots are `...`") lives in exactly those messages (Codex `developer` items), so
-    # asking after the drop saw no declared root on every live Codex request.
-    roots_note = dirguard.readable_roots_note(messages, workspace_root)
-    messages = [m for m in messages if not (isinstance(m, dict) and m.get(bodykeys.CALLER_INSTRUCTIONS))]
-    caller_block = f"\n\n{caller}" if caller else ""
-    # The plan carries each section's probe KIND, which is what lets a non-zero TEST/BUILD exit whose
-    # output is all advisory-shaped (-Werror, deny(warnings), tsc noUnusedLocals) be reported as the
-    # failure it is instead of "no error-class problems".
-    messages = probegate.clean_gate_results(messages, gate_plan)  # strip raw gate plumbing/advisory
-    hint = toolmenu.cheatsheet(tools)
-    caller_block += f"\n\n{roots_note}" if roots_note else ""
-    done_block = (prompts.render("done_block", prior_work=prior_work) + "\n\n") if prior_work else ""
-    if synthetic:
-        # RAW-TASK MODE (plan-off / degenerate 1-item plan): cria's coder_system + the menu-derived
-        # tool hint (+ a follow-up done-context when prior_work is set), NO step prompt, and the user's
-        # real task message is KEPT (never replaced). Byte-equivalent to the former _direct_coder_body,
-        # so turning the planner off is a fair 'coder without a planner', not a bare passthrough.
-        system = (prompts.load("coder_system") + caller_block + (f"\n\n{hint}" if hint else "")
-                  + (f"\n\n{done_block.rstrip()}" if prior_work else ""))
-        out: list[dict] = [{"role": "system", "content": system, **_caller_span_hint(persona_at, persona)}]
-        for m in messages:
-            if m.get("role") in ("system", "developer"):
-                continue  # harness agent boilerplate → replaced by cria's coder_system above
-            out.append(reframe_preamble(m))  # env-context preamble → cria's clean voice; task kept raw
-        return out
-    # cria's step instruction goes in the SYSTEM message, NOT a front user turn. The context floor
-    # protects system messages but trims old user turns — and on a large history (after compaction)
-    # it was trimming cria's own step framing AWAY, leaving the coder with no idea what step it was
-    # on (it then flails and the re-nudge loop never converges = "Thinking forever"). In the system
-    # message the instruction can never be dropped, and system is authoritative for the model.
-    # cria owns the system prompt: base coder prompt → the menu-derived tool hint (so the coder is
-    # told to use ONLY the tools actually in this turn's menu — the harness system message that
-    # add_cheatsheet folded the hint into is dropped here) → done-context → the step (kept last).
-    # The remediation phase intentionally does not serialize the active plan cursor.  The plan
-    # survives in session state and the full user task remains in history; this body is owned by the
-    # checked missing-file action until its write result is observed.
-    prompt = (prompts.load("completion_remediation") if remediation
-              else _item_prompt(item, summary, idx, total, workspace_root, gate_red))
-    hint_block = f"{hint}\n\n" if hint else ""
-    out: list[dict] = [{"role": "system",
-                        "content": prompts.load("coder_system") + caller_block + "\n\n" + hint_block + done_block + prompt,
-                        **_caller_span_hint(persona_at, persona)}]
-    acked = False
-    for m in messages:
-        if m.get("role") in ("system", "developer"):
-            continue  # harness agent boilerplate → replaced by cria's coder_system above
-        out.append(reframe_preamble(m))  # env-context preamble → cria's clean voice; the real TASK is KEPT
-        if not acked and m.get("role") == "user" and not selfcompact.is_env_context(m):
-            # The user's real task just went in as history — acknowledge it's been decomposed, so it
-            # reads as the overall GOAL (background), not a fresh "do it all now" ask. Consecutive
-            # assistant turns (this ack + the first work turn) are merged upstream (_merge_consecutive_assistant).
-            out.append({"role": "assistant", "content": prompts.load("plan_ack")})
-            acked = True
-    out.append({"role": "user", "content": prompt})  # active step/remediation = the final ask
-    return out
+    runtime = assistruntime.current()
+    base = _required_coder_base(messages, tools=tools, prior_work=prior_work,
+        workspace_root=workspace_root, gate_plan=gate_plan, reframe=True,
+        suspend_cursor=remediation or suppress_plan_cursor)
+    if remediation and not synthetic:
+        return steppreparation.with_directive(base, prompts.load("completion_remediation"),
+                                             prompts.load("plan_ack"))
+    definition = next(iter(runtime.bindings(steppreparation.DEFINITION.policy.stage)), None)
+    selected = (steppreparation.StepSelection.opt_in(definition) if not synthetic
+                else steppreparation.StepSelection())
+    return selected.prepare(steppreparation.StepInput(base, item, summary, idx, total,
+        step_artifacts_on_disk, gate_red, not synthetic, synthetic)).messages
 
 
 # A file-looking token in a step's text: `test_resolve_handle.py`, src/main.go, "README.md".
@@ -6819,55 +6184,19 @@ def step_artifacts_on_disk(step: str, root: str | None) -> list[str]:
 
 
 def _repair_note(item: str, workspace_root: str | None, gate_red: bool) -> str:
-    """Reframe an AUTHORING step whose artifact already exists and is currently failing.
-
-    Measured on mellum2 attempt 3 (`ada-handles_mellum2_codex_pon_1785625253`). Step 4 of 7 read
-    "Write unit tests in `test_resolve_handle.py` …" and was sent, byte-identical, in **33
-    consecutive prompts**. The gate's findings rode along in only **15** of them. On the 18 turns
-    where the step arrived without the failures attached, the model read the standing order and did
-    exactly what it said — its own words, three turns running: *"The user is telling me to write
-    unit tests"*, *"asking me to complete step 4"*, *"The user is asking me to write unit tests"* —
-    and rewrote the file each time, regenerating the same two failing assertions it had just been
-    told to fix. The instruction that caused the loop was present 100% of the time; the correction,
-    45%.
-
-    So the fix is not to act on the stall signal, it is to stop the step's wording outliving its
-    artifact. Both conditions are facts cria already holds, and BOTH are required:
-
-      * the file the step names is on disk NOW (not a claim — `os.path.isfile`)
-      * the repo's own checks are currently RED
-
-    Either one alone stays silent (principle 3), and nothing is ever deleted or blocked — the step
-    itself is untouched and this only ever tells the coder MORE about the real state (principle 2).
-    """
-    if not gate_red:
-        return ""
-    files = step_artifacts_on_disk(item, workspace_root)
-    if not files:
-        return ""
-    # The note states a FACT and stops. It used to add "this step's wording asks you to WRITE them",
-    # which is a claim about the step's INTENT that the file list cannot support: step_artifacts_on_disk
-    # matches every filename token, and 14% of the 1,052 delivered notes named more than one — including
-    # files a step only MENTIONED. Live (run 20260801T232511 call 0097) the step was a critic's essay
-    # asserting "resolve_handle.py and get_holder_handle_count.py are not in the workspace / No README.md
-    # exists", and three lines below it cria listed all three as present. Both claims stood, unresolved,
-    # in one prompt. Restating the note as a direct disk read that OVERRIDES anything above is true
-    # whichever way the step meant those names, and it settles the contradiction instead of adding to it.
-    # (The old wording also read "but them are already written" — shipped 145 times.)
-    many = len(files) > 1
-    return "\n\n" + prompts.render(
-        "step_repair_note", files=", ".join(f"`{f}`" for f in files),
-        plural="s" if many else "", verb="" if many else "s")
+    """Legacy note view of the selected step owner's additive presence correction."""
+    return _item_prompt(item, "", 1, 1, workspace_root, gate_red).removeprefix(
+        _item_prompt(item, "", 1, 1, workspace_root, False))
 
 
 def _item_prompt(item: str, summary: str, idx: int, total: int,
                  workspace_root: str | None = None, gate_red: bool = False) -> str:
-    # Templates: cria/prompts/step_framing.txt (+ step_completed.txt for the prior-steps
-    # prefix, included only once there's progress to show, + step_repair_note.txt when the step's
-    # artifact already exists and the checks are red).
-    completed = prompts.render("step_completed", summary=summary) + "\n\n" if summary else ""
-    return (prompts.render("step_framing", completed=completed, idx=idx, total=total, step=item)
-            + _repair_note(item, workspace_root, gate_red))
+    """Standalone planned-frame opt-in; source owns wording and artifact judgment."""
+    definition = next(iter(assistruntime.current().bindings(steppreparation.DEFINITION.policy.stage)), None)
+    base = steppreparation.BaseFrame([{"role": "system", "content": ""}], "", None,
+                                    workspace_root=workspace_root)
+    return steppreparation.StepSelection.opt_in(definition).prepare(steppreparation.StepInput(
+        base, item, summary, idx, total, step_artifacts_on_disk, gate_red, True)).prompt
 
 
 def _completion_toolcalls(tool_calls: list[dict], *, note: str | None = None) -> dict:
@@ -7091,52 +6420,11 @@ def _ran_a_command_naming(messages: list[dict], rel: str, view=None) -> bool:
 # reported, as facts on the landed write: a line threshold cannot say whether a whole file is wanted.
 # Measured on 1,182 corpus writes: 102 (8.6%) remove >= half the lines; 49 (4.1%) once files the coder
 # created are exempt (the distinct-lines variant fires on 126, its extras long additive rewrites).
-SHRINK_MIN_LINES = 8
-SHRINK_OPENERS_MAX = 12
-
-
-def shrink_measure(current: str, candidate: str) -> dict | None:
-    """The measured facts of a whole-file write over a known file, or None when it is neither a FRAGMENT
-    (``fragment`` True) nor a removal of at least half the file's lines. Lines are compared stripped, blank lines ignored.
-
-    ``removed_at_least`` is a MULTISET difference: a line the candidate has once does not cover the file's
-    three copies of it, so the lines no candidate line can be matched to are a TRUE lower bound on what the
-    write removes. ``openers`` are the removed lines that open a nested block — the next non-blank line of
-    the file is indented deeper — shallowest first (then file order), at most SHRINK_OPENERS_MAX, returned in
-    file order as ``(line number, text)``. That is indentation, not vocabulary: a definition, a class or a
-    loop header is an opener in any brace or whitespace language, a closing brace or a statement never is,
-    and the first removed lines (package, imports, headers) say nothing about what is lost."""
-    cur = [l.strip() for l in current.splitlines() if l.strip()]
-    cand = [l.strip() for l in candidate.splitlines() if l.strip()]
-    if len(cur) < SHRINK_MIN_LINES:
-        return None
-    left = Counter(cand)
-    body = [(no, raw) for no, raw in enumerate(current.splitlines(), 1) if raw.strip()]
-    removed, first, openers = 0, None, []
-    for i, (no, raw) in enumerate(body):
-        line = raw.strip()
-        if left[line] > 0:
-            left[line] -= 1
-            continue
-        removed += 1
-        first = first or (no, line)
-        indent = len(raw) - len(raw.lstrip())
-        if i + 1 < len(body) and len(body[i + 1][1]) - len(body[i + 1][1].lstrip()) > indent:
-            openers.append((indent, no, line))
-    distinct, kept = set(cur), len(set(cur) & set(cand))
-    fragment = len(cand) * 2 <= len(cur) and kept * 2 < len(distinct)
-    if removed * 2 < len(cur) and not fragment:
-        return None
-    shown = sorted(sorted(openers)[:SHRINK_OPENERS_MAX], key=lambda o: o[1])
-    return {"current_lines": len(cur), "distinct": len(distinct), "cand_lines": len(cand), "kept": kept,
-            "removed_at_least": removed, "first_removed": first, "fragment": fragment,
-            "openers": [(no, line) for _i, no, line in shown], "openers_total": len(openers)}
-
-
-def _openers_fact(labels: dict, m: dict) -> str:
-    """The measured list of removed block openers, as the `openers` template says it."""
-    return prompts.fill(labels["openers"], shown=len(m["openers"]), total=m["openers_total"],
-                        listing="; ".join(f"line {no}: `{line}`" for no, line in m["openers"]))
+# Direct compatibility names; the source owner measures and formats these facts.
+SHRINK_MIN_LINES = shrinkprotection.SHRINK_MIN_LINES
+SHRINK_OPENERS_MAX = shrinkprotection.SHRINK_OPENERS_MAX
+shrink_measure = shrinkprotection.shrink_measure
+_openers_fact = shrinkprotection.openers_fact
 
 
 def whole_file_ruling(answer: str) -> str:
@@ -7472,81 +6760,25 @@ def _observed_successful_write(messages: list[dict], subject: str, root: str | N
     PATH`` confirmation only after its atomic write succeeds; correlate that authoritative result
     with the original call before releasing a completion remediation.
     """
-    calls: dict[str, str] = {}
-    for message in messages or []:
-        if not isinstance(message, dict):
-            continue
-        for tc in message.get("tool_calls") or []:
-            fn = tc.get("function") or {}
-            path = _write_path(fn)
-            if tc.get("id") and path and _same_workspace_path(path, subject, root):
-                calls[tc["id"]] = path
-        tid = message.get("tool_call_id") or message.get("call_id")
-        path = calls.get(tid)
-        if path:
-            content = message.get("content") if message.get("content") is not None else message.get("output")
-            if isinstance(content, str) and content.strip().splitlines()[:1] == [prompts.render("write_confirm", path=path).strip()]:
-                return True
-    return False
+    return completiondiagnosis.observed_successful_write(
+        messages, subject, _diagnosis_remediation_services(root))
 
 
 def _arm_completion_remediation(sess: GuardState, subject: str, reason: str) -> None:
     """Start a typed remediation with no presumed delivery or observed outcome."""
-    sess.completion_remediation_subject = subject
-    sess.completion_remediation_reason = reason
-    sess.completion_remediation_nonwrite_ids = ()
-    sess.completion_remediation_nonwrite_seen = False
-
-
-# Native tools use the canonical workspace reader names that massage has already normalized.  This
-# is intentionally not ``is_read_tool_name``: its family matcher correctly keeps unfamiliar reader
-# tools in the menu, but must not bless a connector or a compound "read and mutate" action here.
-_NATIVE_WORKSPACE_INSPECTION_TOOLS = frozenset({
-    "read_file", "cat_file", "view_file", "list_dir", "grep_files",
-})
-
-# Shell commands admitted here must be mechanically inspection-only.  Everything else — including
-# an unrecognised executable whose side effects we cannot prove absent — is deliberately silent.
-_SHELL_INSPECTION_READERS = frozenset({"ls", "dir", "pwd", "cat", "head", "tail", "wc", "stat",
-                                       "grep", "rg", "ag"})
-_SHELL_INSPECTION_INERT = frozenset({"cd", "echo", "printf", "test", "[", "[["})
-
-
-def _supported_remediation_inspection(function: dict) -> bool:
-    """Whether a delivered remediation reply made a bounded, non-mutating inspection action."""
-    name = function.get("name")
-    if name in _NATIVE_WORKSPACE_INSPECTION_TOOLS:
-        return True
-    if not is_shell_tool_name(name):
-        return False
-    command = _command_text(function.get("arguments") or "")
-    if not command or writes_something(name, command):
-        return False
-    inspected = False
-    for segment in probeclassify.split_chain(command):
-        argv = probeclassify.tokenize(segment)
-        if not argv:
-            continue
-        base = probeclassify.basename(argv[0])
-        if base in _SHELL_INSPECTION_READERS:
-            inspected = True
-        elif base not in _SHELL_INSPECTION_INERT:
-            return False
-    return inspected
+    definition = assistruntime.current().completion_diagnosis
+    if definition is not None:
+        completiondiagnosis._remediation_result(definition.arm(sess, subject, reason),
+            (completiondiagnosis.RemediationStatus.PENDING, completiondiagnosis.RemediationStatus.NOT_APPLICABLE))
 
 
 def _record_remediation_delivery(sess: GuardState, coder: dict) -> None:
     """Remember only supported inspection calls from the reply to a remediation body."""
-    subject = getattr(sess, "completion_remediation_subject", "")
-    if not subject:
-        return
-    ids = []
-    for choice in coder.get("choices", []) if isinstance(coder, dict) else []:
-        for call in ((choice.get("message") or {}).get("tool_calls") or []):
-            function = call.get("function") or {}
-            if call.get("id") and _supported_remediation_inspection(function):
-                ids.append(str(call["id"]))
-    sess.completion_remediation_nonwrite_ids = tuple(ids)
+    definition = assistruntime.current().completion_diagnosis
+    if definition is not None:
+        completiondiagnosis._remediation_result(definition.acknowledge(
+            sess, coder, _diagnosis_remediation_services(getattr(sess, "workspace_root", ""))),
+            (completiondiagnosis.RemediationStatus.NOT_APPLICABLE, completiondiagnosis.RemediationStatus.ACKNOWLEDGED))
 
 
 def _nudge_after_remediation_nonwrite(sess: GuardState, messages: list[dict], rlog) -> None:
@@ -7556,31 +6788,22 @@ def _nudge_after_remediation_nonwrite(sess: GuardState, messages: list[dict], rl
     undecidable/absent diagnoses silent.  This never settles the remediation: only its matching
     successful write can do that.
     """
-    subject = getattr(sess, "completion_remediation_subject", "")
-    ids = set(getattr(sess, "completion_remediation_nonwrite_ids", ()) or ())
-    if (not subject or not ids or getattr(sess, "completion_remediation_nonwrite_seen", False)
-            or getattr(sess, "nudge_reason", "")):
-        return
-    if not any((m.get("tool_call_id") or m.get("call_id")) in ids
-               for m in messages or [] if isinstance(m, dict)):
-        return
-    sess.completion_remediation_nonwrite_seen = True
-    sess.nudge_reason = prompts.load("completion_remediation_nonwrite")
-    sess.steer_source = "completion remediation non-write follow-up"
-    if rlog is not None:
-        rlog.emit("loop.completion_remediation_nonwrite", subject=subject)
+    definition = assistruntime.current().completion_diagnosis
+    if definition is not None:
+        completiondiagnosis._remediation_result(definition.follow_up(
+            sess, messages, _diagnosis_remediation_services(getattr(sess, "workspace_root", ""), rlog)),
+            (completiondiagnosis.RemediationStatus.NOT_APPLICABLE, completiondiagnosis.RemediationStatus.PENDING,
+             completiondiagnosis.RemediationStatus.FOLLOW_UP))
 
 
 def _settle_completion_remediation(sess: GuardState, messages: list[dict], rlog) -> None:
     """Release a typed missing-file remediation after, and only after, its observed write."""
-    subject = getattr(sess, "completion_remediation_subject", "")
-    if subject and _observed_successful_write(messages, subject, getattr(sess, "workspace_root", None)):
-        sess.completion_remediation_subject = ""
-        sess.completion_remediation_reason = ""
-        sess.completion_remediation_nonwrite_ids = ()
-        sess.completion_remediation_nonwrite_seen = False
-        if rlog is not None:
-            rlog.emit("loop.completion_remediation_written", subject=subject)
+    definition = assistruntime.current().completion_diagnosis
+    if definition is not None:
+        completiondiagnosis._remediation_result(definition.settle(
+            sess, messages, _diagnosis_remediation_services(getattr(sess, "workspace_root", ""), rlog)),
+            (completiondiagnosis.RemediationStatus.NOT_APPLICABLE, completiondiagnosis.RemediationStatus.PENDING,
+             completiondiagnosis.RemediationStatus.SETTLED))
 
 
 def _write_path(fn: dict) -> str | None:
@@ -7636,152 +6859,225 @@ def _shell_write_target(args) -> str | None:
     return m.group(1) if m else None
 
 
+def _check_pilot_runtime(state: GuardState, runtime: assistruntime.AssistRuntime) -> None:
+    if not isinstance(runtime, assistruntime.AssistRuntime):
+        raise ValueError("Invalid pilot assist runtime")
+    if ((state.pilot_selection is not None and state.pilot_selection != runtime.selected)
+            or (state.pilot_binding is not None and state.pilot_binding != runtime)):
+        raise ValueError("Pilot assist selection cannot change during an active task")
+
+
+def _pin_pilot_runtime(state: GuardState, runtime: assistruntime.AssistRuntime,
+                       origin: GuardState | None = None) -> None:
+    _check_pilot_runtime(state, runtime)
+    if origin is not None:
+        _check_pilot_runtime(origin, runtime)
+    if state.pilot_selection is None:
+        state.pilot_selection = (origin.pilot_selection if origin is not None
+                                 and origin.pilot_selection is not None else runtime.selected)
+    if state.pilot_binding is None:
+        state.pilot_binding = (origin.pilot_binding if origin is not None
+                               and origin.pilot_binding is not None else runtime)
+
+
+def _repository_selection(gs: GuardState) -> repositorychecks.Selected:
+    # Unknown-origin pending fixtures require consent NOW, not invented historic provenance.
+    if (not assistruntime.is_bound() and gs.pilot_selection is None and gs.pilot_binding is None
+            and (gs.periodic_probe or gs.awaiting_probe or gs.done_probe)):
+        raise ValueError("Pending repository policy use requires an explicitly bound runtime")
+    runtime = assistruntime.current()
+    _pin_pilot_runtime(gs, runtime)
+    return repositorychecks.Selected(runtime.repository_checks)
+
+
+class _SilentCheckLog:
+    def emit(self, event, **fields):
+        pass
+
+
+def _repository_input(body, rlog, *, workspace_root=None, driver=repositorychecks.Driver.TASK,
+                      trigger=repositorychecks.Trigger.PERIODIC, steer=None, rewritten=False, step=None):
+    return repositorychecks.Input(body, rlog if rlog is not None else _SilentCheckLog(),
+        assistruntime.current().engagement_level, workspace_root, driver, trigger, steer, rewritten, step)
+
+
+def _repository_probes():
+    return repositorychecks.ProbeServices(_extract_cwd, probegate.plan_gate)
+
+
+def _repository_evidence(gs):
+    return repositorychecks.EvidenceServices(_read_tool_result, read_gate, gate_error_text,
+        lambda findings, messages: track_gate_progress(gs, findings, messages))
+
+
+def _repository_outcome(outcome, *, consumed=False):
+    if (not isinstance(outcome, probegate.GateOutcome)
+            or any(type(getattr(outcome, name)) is not bool for name in (
+                "ran", "replan_after_survey", "transport_pending", "transport_unknown"))
+            or outcome.report is not None and not isinstance(outcome.report, proberun.ProbeReport)
+            or outcome.participation is not None and not isinstance(outcome.participation, participation.ParticipationReport)
+            or not isinstance(outcome.unran, list) or not isinstance(outcome.swept, list)
+            or not isinstance(outcome.refused, str)
+            or outcome.offline_ran is not None and type(outcome.offline_ran) is not bool
+            or outcome.ran and (outcome.transport_pending or outcome.transport_unknown)
+            or consumed and outcome.transport_pending):
+        raise ValueError("Repository evidence must be an actual settled GateOutcome")
+    return outcome
+
+
+def _repository_result(result, *, consumed=False, allow_pending=True):
+    if not isinstance(result, repositorychecks.Result):
+        raise ValueError("Repository check replacement must return Result")
+    if (not isinstance(result.status, repositorychecks.Status)
+            or result.text is not None and not isinstance(result.text, str)
+            or not isinstance(result.note, str)
+            or result.pending_kind is not None and not isinstance(result.pending_kind, repositorychecks.PendingKind)
+            or result.outcome is not None and not isinstance(result.outcome, probegate.GateOutcome)):
+        raise ValueError("Invalid repository check Result")
+    if result.outcome is not None:
+        _repository_outcome(result.outcome, consumed=consumed)
+    if result.status is repositorychecks.Status.PENDING:
+        if not allow_pending:
+            raise ValueError("Repository completion verdict cannot discard a pending call")
+        call = result.call
+        if (not isinstance(call, dict) or not isinstance(call.get("id"), str) or not call["id"]
+                or call.get("type") != "function" or not isinstance(call.get("function"), dict)
+                or not isinstance(call["function"].get("name"), str) or not call["function"]["name"]
+                or not isinstance(call["function"].get("arguments"), str)
+                or result.pending_kind is None):
+            raise ValueError("Pending repository check Result requires an actual call and pending kind")
+    elif result.call is not None or result.pending_kind is not None:
+        raise ValueError("Nonpending repository check Result cannot carry a call or pending kind")
+    if consumed and result.status is not repositorychecks.Status.PENDING:
+        if result.outcome is None:
+            raise ValueError("Consumed repository check Result requires an actual GateOutcome")
+    return result
+
+
+def _record_repository_evidence(gs, body, rlog):
+    raw = _read_tool_result(body.get("messages", []), gs.probe_call_id)
+    outcome = read_gate(gs.gate_plan, raw, rlog)
+    _repository_outcome(outcome, consumed=True)
+    record_gate_state(gs, outcome, gate_error_text(outcome), rlog, body.get("messages"))
+    return outcome
+
+
+def _repository_judgments(gs, body, rlog, *, reasoner_chat=None, reasoner_role=None, workspace_root=None):
+    runtime = assistruntime.current()
+    def runner(outcome):
+        with assistruntime.bound(runtime):
+            return runner_reset_steer(gs, outcome, body, rlog, reasoner_chat=reasoner_chat,
+                                     reasoner_role=reasoner_role, workspace_root=workspace_root)
+    def module(outcome):
+        return runtime.module_judgment(_periodic_judgment_input(gs, outcome, body, rlog,
+            reasoner_chat=reasoner_chat, reasoner_role=reasoner_role), gs.module_state).steer
+    return repositorychecks.JudgmentServices(runner, module)
+
+
+def _resume_repository_checks(gs, body, rlog, *, driver=repositorychecks.Driver.TASK,
+                              rewritten=False, step=None, reasoner_chat=None,
+                              reasoner_role=None, workspace_root=None):
+    selected = _repository_selection(gs)
+    if selected.definition is None:
+        # Required transport and factual settlement are not optional judgment/recovery fallbacks.
+        if not gs.periodic_probe:
+            return repositorychecks.Result(repositorychecks.Status.NOT_SELECTED)
+        page = guard_gate_transport(gs, body, rlog)
+        if page is not None:
+            return repositorychecks.Result(repositorychecks.Status.PENDING, page,
+                pending_kind=repositorychecks.PendingKind.PAGE)
+        gs.periodic_probe = gs.awaiting_probe = False
+        fresh = gs.gate_fresh
+        outcome = _record_repository_evidence(gs, body, rlog)
+        gs.gate_fresh = fresh
+        return repositorychecks.Result(repositorychecks.Status.NOT_SELECTED, outcome=outcome)
+    pending = gs.periodic_probe
+    return _repository_result(selected.resume(
+        lambda: _repository_input(body, rlog, workspace_root=workspace_root, driver=driver,
+                                  rewritten=rewritten, step=step), gs, _repository_probes,
+        lambda: _repository_evidence(gs), lambda: _repository_judgments(gs, body, rlog,
+            reasoner_chat=reasoner_chat, reasoner_role=reasoner_role, workspace_root=workspace_root)),
+        consumed=pending)
+
+
+def _repository_completion(result):
+    result = _repository_result(result)
+    return _completion_toolcalls([result.call], note=result.note) if result.call is not None else None
+
+
+class _NamedProbeState:
+    """Direct aliases for a caller's existing named pending probe; no copied settlement state."""
+    def __init__(self, state, field):
+        object.__setattr__(self, "_state", state)
+        object.__setattr__(self, "_field", field)
+
+    def __getattr__(self, name):
+        return getattr(self._state, name)
+
+    def __setattr__(self, name, value):
+        if name == "probe_call_id":
+            setattr(self._state, self._field, value)
+            self._state.probe_call_id = value
+        else:
+            setattr(self._state, name, value)
+
+    @property
+    def probe_call_id(self):
+        return getattr(self._state, self._field)
+
+    @property
+    def done_probe(self):
+        return bool(getattr(self._state, self._field))
+
+
+def _reissue_repository_checks(gs, body, rlog, *, workspace_root=None, rewritten=False,
+                               driver=repositorychecks.Driver.TASK, step=None):
+    selected = _repository_selection(gs)
+    return _repository_result(selected.reissue(lambda: _repository_input(body, rlog,
+        workspace_root=workspace_root, driver=driver, rewritten=rewritten, step=step),
+        gs, _repository_probes, lambda: _repository_evidence(gs)))
+
+
+def _requested_repository_probe(gs, body, rlog, *, workspace_root=None,
+                                 driver=repositorychecks.Driver.TASK, step=None):
+    selected = _repository_selection(gs)
+    return _repository_result(selected.admit(lambda: _repository_input(body, rlog,
+        workspace_root=workspace_root, driver=driver, trigger=repositorychecks.Trigger.REQUESTED,
+        step=step), gs, _repository_probes)).call
+
+
+def _forward_acting_coder(sess, completion):
+    # Only the six accepted coder-return leaves call this; delegation is transparent.
+    selected = _repository_selection(sess)
+    if selected.definition is not None and selected.definition.observe(sess, acting=True) is not None:
+        raise ValueError("Repository check observe replacement must return None")
+    sess.gate_fresh = False  # required workspace freshness is independent of the optional clock
+    return completion
+
+
 def guard_gate_op(gs: GuardState, body: dict, rlog, *, workspace_root=None) -> dict | None:
-    """Compose the completion gate (probegate.plan_gate: syntax floor + discovered top probe +
-    top TEST probe + git snapshot) and build it as a shell tool call for the HARNESS to run.
-    None if the harness advertises no shell tool (then cria can only prose-verify). The plan is
-    stashed on ``gs`` so the result can be replayed through the ported interpreters. Shared by the
-    plan loop (workspace_root from its LoopContext) and the plan-off path (root from the request)."""
-    tool = find_shell_tool(body.get("tools"))
-    if tool is None:
-        return None
-    # NEVER fall back to "." — that is cria's OWN cwd, not the workspace (it once composed a
-    # probe over cria's repo). Unknown root → a minimal git-only gate; the harness's shell
-    # still runs in the workspace, so the change-signal lands and the floor/probes abstain.
-    root = workspace_root or _extract_cwd(body.get("messages", [])) or ""
-    if root == ".":  # a stray "." from any caller IS cria's own cwd — refuse it (never probe cria's tree)
-        root = ""
-    try:
-        # The session key lets the gate's survey carry the questions the view could not answer this
-        # turn (a file body, a program on the coder's PATH). Without it the gate would re-ask
-        # nothing and a harness with native file tools — where cria lowers no command of its own —
-        # would never get an answer to any of them.
-        #
-        # C28b: the poll reader's own wait per read is chosen HERE, from the tool's own schema —
-        # never a harness name — and carried on the plan so every later poll of this SAME transport
-        # reuses it. A tool whose schema declares an ms-unit time-budget field can afford a longer
-        # wait per read (reviewer measured Codex honoring ~30s for such a call), which means fewer,
-        # cheaper polls for a slow gate; a tool with no such field keeps the short default, since
-        # cria never learned it can ask the harness for more than its own unbudgeted default yield.
-        poll_wait_s = (probegate.GATE_POLL_WAIT_LONG_S if tool_declares_time_budget(tool)
-                      else probegate.GATE_POLL_WAIT_S)
-        plan = probegate.plan_gate(root, getattr(gs, "web_session", "") or "", rlog,
-                                   poll_wait_s=poll_wait_s,
-                                   helpers_ready=gs.gate_helpers_ready)
-    except OSError as e:  # unreadable workspace → no gate; the caller still fails open
-        rlog.emit("loop.gate_error", level="warn", error=str(e))
-        gs.gate_plan = None
-        return None
-    gs.gate_plan = plan
-    # Planning against the now-surveyed view consumes the bootstrap obligation.  This assignment is
-    # deliberately after successful planning: no shell or an unreadable workspace must keep the
-    # caller on its existing bounded safe-exit path rather than pretending a second plan exists.
-    gs.gate_replan_required = False
-    return {
-        "id": "call_" + uuid.uuid4().hex[:16],
-        "type": "function",
-        # The gate script is bounded per-probe (timeout -k 5 240) but a harness exec's DEFAULT
-        # yield window (Codex: 10s) cut it mid-pytest — ask for the script's real budget via
-        # whatever ms-unit field the tool's own schema declares (none declared → unchanged).
-        "function": {"name": tool["name"],
-                     "arguments": json.dumps(with_time_budget(tool, shell_args(tool, plan.script)))},
-    }
+    """Required construction support, including planner surveys when the optional policy is off."""
+    return repositorychecks.compose(_repository_input(body, rlog, workspace_root=workspace_root),
+                                    gs, _repository_probes())
 
 
 def guard_gate_replan_after_survey(gs: GuardState, body: dict, rlog, *, workspace_root=None) -> dict | None:
-    """Plan the one follow-up gate required after a survey-only bootstrap result.
-
-    ``None`` preserves the existing no-shell/unreadable-workspace exit.  The obligation is consumed
-    in that case too: repeatedly asking for a shell that the harness does not expose would turn a
-    fail-safe completion check into an unbounded wedge.
-    """
-    if not gs.gate_replan_required:
-        return None
-    probe = guard_gate_op(gs, body, rlog, workspace_root=workspace_root)
-    if probe is None:
-        gs.gate_replan_required = False
-        rlog.emit("loop.gate_replan_after_survey", available=False)
-        return None
-    rlog.emit("loop.gate_replan_after_survey", available=True)
-    return probe
+    selected = _repository_selection(gs)
+    return _repository_result(selected.replan(
+        lambda: _repository_input(body, rlog, workspace_root=workspace_root), gs, _repository_probes)).call
 
 
 def guard_periodic_replan_after_survey(gs: GuardState, body: dict, rlog, *, workspace_root=None) -> dict | None:
-    """A periodic check-in's result was survey-only (:func:`record_gate_state` left
-    ``gate_replan_required`` set): plan the real gate against the now-surveyed view via
-    :func:`guard_gate_replan_after_survey`, and re-arm it as a PERIODIC probe — its result goes back
-    through :func:`guard_periodic_result`, never completion semantics; ``gate_fresh`` is untouched
-    (the periodic path already restores it around every read).
-
-    Bounded to ONE replan per periodic check-in: ``periodic_replan_done`` is set before the attempt
-    even runs, so a replanned gate that is ITSELF survey-only (or one no shell is available for)
-    falls through to the same silence an ordinary clean/couldn't-run periodic check-in has always
-    kept, rather than looping the harness through survey after survey.
-    """
-    if not gs.gate_replan_required or gs.periodic_replan_done:
-        return None
-    gs.periodic_replan_done = True
-    probe_tc = guard_gate_replan_after_survey(gs, body, rlog, workspace_root=workspace_root)
-    if probe_tc is None:
-        rlog.emit("loop.periodic_replan_after_survey", available=False)
-        return None
-    gs.periodic_probe = True
-    gs.awaiting_probe = True
-    gs.probe_call_id = probe_tc["id"]
-    rlog.emit("loop.periodic_replan_after_survey", available=True)
-    return probe_tc
+    selected = _repository_selection(gs)
+    return _repository_result(selected.replan(
+        lambda: _repository_input(body, rlog, workspace_root=workspace_root), gs,
+        _repository_probes, periodic=True)).call
 
 
 def guard_gate_transport(gs: GuardState, body: dict, rlog, *, call_id: str = "") -> dict | None:
-    """Consume the current gate page and, when needed, ask the HARNESS for the next one.
-
-    This is the asynchronous bridge shared by completion, periodic, and guard probes. It never
-    reads the harness filesystem: the next offset (or, while the resolved spool path is still
-    unknown, the whole idempotent launch script — see ``probegate.continue_transport_command``) is
-    composed into another ordinary shell call.
-    A malformed/cut page arms ``transport_error`` and returns no continuation; the subsequent gate
-    interpretation reports explicit UNKNOWN and cannot produce a clean verdict.
-
-    ``running`` (C28) is treated exactly like ``pending``: the detached probe block hasn't finished
-    yet — or the harness cut THIS poll before it could say so — and the read is read-only and
-    idempotent, so it is retried rather than made terminal. `ingest_transport` itself is what turns a
-    running gate terminal, once it exceeds the plan's own composed timeout budget.
-    """
-    plan = getattr(gs, "gate_plan", None)
-    if plan is None or not getattr(plan, "transport_required", False):
-        return None
-    raw = _read_tool_result(body.get("messages", []), call_id or gs.probe_call_id)
-    state = probegate.ingest_transport(plan, raw)
-    gs.gate_helpers_ready = plan.helpers_ready
-    if state not in ("pending", "running"):
-        if state == "unknown":
-            rlog.emit("gate.transport_unknown", level="warn", reason=plan.transport_error,
-                      received=len(plan.transport_data), total=plan.transport_total)
-        return None
-    command = probegate.continue_transport_command(plan)
-    tool = find_shell_tool(body.get("tools"))
-    if not command or tool is None:
-        probegate.fail_transport(plan, "the harness no longer offers a shell for the next page")
-        rlog.emit("gate.transport_unknown", level="warn", reason=plan.transport_error,
-                  received=len(plan.transport_data), total=plan.transport_total)
-        return None
-    call = {
-        "id": "call_" + uuid.uuid4().hex[:16],
-        "type": "function",
-        # C28b: the SAME schema-driven time budget the launch call got (with_time_budget) applies
-        # here too — a poll is just another shell call the harness's own exec yield can cut early,
-        # and a tool that offered a longer yield for the launch should get it for every poll of the
-        # same transport, not just the first.
-        "function": {"name": tool["name"],
-                     "arguments": json.dumps(with_time_budget(tool, shell_args(tool, command)))},
-    }
-    gs.probe_call_id = call["id"]
-    if state == "running":
-        rlog.emit("gate.transport_running", received=len(plan.transport_data),
-                  total=plan.transport_total)
-    else:
-        rlog.emit("gate.transport_page", received=len(plan.transport_data), total=plan.transport_total)
-    return call
+    """Required checked-page support, independent of optional policy selection."""
+    return repositorychecks.transport(_repository_input(body, rlog), gs, _repository_probes(),
+                                      _repository_evidence(gs), call_id=call_id).call
 
 
 def _refusals_in_window(messages: list[dict] | None) -> tuple[int, str]:
@@ -7813,60 +7109,138 @@ def _refusals_in_window(messages: list[dict] | None) -> tuple[int, str]:
     return n, last
 
 
-def guard_track_refusals(gs: GuardState, coder: dict, rlog, *, step=None,
-                         messages: list[dict] | None = None) -> None:
-    """REFUSAL detection: cria has blocked REPEAT_FINGERPRINT_N of the last REPEAT_WINDOW forwarded
-    calls, so the coder is spending its turns on calls that never ran. Trips the same
-    probe -> reasoned-steer round-trip as the wheel-spin and thrash detectors.
+class _StalledWorkView:
+    """Live aliases onto the actual task owner; no second state or cache."""
+    _fields = {name: name for name in (
+        'recent_writes', 'recent_write_ids', 'spin_recheck', 'spin_path', 'action_seq',
+        'blocked_fired_seq', 'repeat_action', 'repeat_count', 'redirect_due',
+        'steered_checks_text', 'same_checks_relooked')}
+    _fields.update(spin_due='spin_probe_due', pending_probe='stalled_probe',
+                   pending_steer='stalled_steer', last_delivered='stalled_delivered')
 
-    THE SIBLING ROUTE — "the same action N times in this window" — WAS REMOVED (operator,
-    2026-08-19). It is measured in `docs/audits/base-vs-cria-footgun-patterns.md`: BASE runs (no
-    assists) that contained three or more identical consecutive calls averaged 51%; the CRIA runs the
-    steer actually fired in averaged 48%. Models self-correct out of a repeat on their own — one BASE
-    `cart-billing-go x ternary-bonsai` run wrote a byte-identical `cart.go` five times, stopped
-    without being told, and scored 100%. Principle 1's corollary decides it: an assist is re-measured
-    against the system it runs in NOW, and removing this one costs nothing measurable.
+    def __init__(self, owner):
+        object.__setattr__(self, 'owner', owner)
 
-    The refusal route is NOT the same mechanism wearing a different hat. It fires on a fact cria owns
-    outright (it refused the calls) rather than on a similarity judgement about the model's intent,
-    and the thing it reports — your calls are not running — is invisible to the model in a way a
-    repeat is not.
+    def __getattr__(self, name):
+        target = self._fields[name]
+        value = getattr(self.owner, target, '' if name == 'steered_checks_text' else None)
+        if name in ('recent_writes', 'recent_write_ids') and value is None:
+            value = []
+            setattr(self.owner, target, value)
+        return value
 
-    Operates on GuardState so the plan loop and the plan-off path run ONE implementation."""
-    blocked, last_refused = _refusals_in_window(messages)
-    for ch in coder.get("choices", []):
-        for tc in (ch.get("message") or {}).get("tool_calls") or []:
-            if (gs.redirect_due or gs.redirect_probe
-                    or gs.spin_probe_due or gs.spin_probe):
-                return  # an intervention is in flight — it consumed the evidence; nothing
-                # accrues until it's delivered (a fire mid-completion must not let the
-                # completion's REMAINING calls repopulate the just-flushed window)
-            gs.action_seq += 1
-            # Replayed over cycle 4 cell 13's real 48 forwarded calls with their real tool results,
-            # the retired signature rule fired ZERO times against nine refusals — the three attempts
-            # inside one window scored Jaccard 0.636 against a 0.7 bar. The loop was twenty different
-            # attempts at ONE goal, which no similarity threshold can see. What cria has that needs no
-            # similarity judgement is its OWN refusals: 9 of 48 blocked in that run, 6 of 45 in the
-            # sibling, and it knows it blocked them (#8: the deterministic half gathers a fact cria
-            # owns).
-            if (blocked >= REPEAT_FINGERPRINT_N
-                    and gs.action_seq - gs.blocked_fired_seq >= REPEAT_WINDOW):
-                gs.blocked_fired_seq = gs.action_seq
-                gs.redirect_due = True
-                # flush the write window too: one intervention consumes the evidence — the writes in
-                # flight must not ALSO count toward a wheel-spin right after the coder complies (that
-                # steer would point away from the very file it just fixed).
-                gs.recent_writes, gs.recent_write_ids = [], []
-                # BOUND IT, and quote a call that was actually refused. Walked on
-                # ada-handles_fabliq_codex_pon_1785732102 call 0079: the retired route pasted the
-                # WHOLE 3.2 KB of handle_resolver.py back under the words "Choose a DIFFERENT next
-                # action". The model satisfied that literally — same 3.2 KB, new filename.
-                gs.repeat_action = last_refused
-                # THE MEASURED NUMBER, NOT THE THRESHOLD (#12). Emitting the constant instead is what
-                # put a false "3x" in front of the steer author.
-                gs.repeat_count = blocked
-                rlog.emit("loop.refusals", steer="refusals", step=step, count=blocked,
-                          action=_clip(last_refused, 120))
+    def __setattr__(self, name, value):
+        setattr(self.owner, self._fields[name], value)
+
+
+def _stalled_selection(gs):
+    runtime = assistruntime.current()
+    _pin_pilot_runtime(gs, runtime)
+    return gs.pilot_binding.stalled_work
+
+
+def _stalled_result(result):
+    if (not isinstance(result, stalledwork.Result) or not isinstance(result.status, stalledwork.Status)
+            or result.probe is not None and not isinstance(result.probe, stalledwork.PendingProbe)
+            or result.steer is not None and not isinstance(result.steer, stalledwork.Steer)):
+        raise TypeError('Stalled work replacement must return Result')
+    return result
+
+
+def _grounded_actions():
+    public = {'guard_ground_truth', 'workspace_inventory'}
+    facts = groundedaction.EvidenceServices(**{
+        name: globals()[name if name in public else '_' + name]
+        for name in groundedaction.EvidenceServices.__annotations__})
+    return groundedaction.GroundedActions(facts,
+        groundedaction.ProviderServices(summarize, _judge_completion))
+
+
+def _stalled_author(gs, body, rlog, chat, role, root=None, *, condition='refusal',
+                    outcome=None, truth_text='', step_text=''):
+    if chat is None:
+        return None
+    original = getattr(getattr(gs, 'plan', None), 'task', '') or _history_root(body.get('messages', []))[0]
+    evidence = groundedaction.ActionEvidence(original_task=original,
+        last_gate_flag=getattr(gs, 'last_gate_flag', ''), gate_plan=getattr(gs, 'gate_plan', None),
+        fetched_pages=getattr(gs, 'fetched_pages', None) or {},
+        refused_names=frozenset(getattr(gs, 'refused_names', None) or ()),
+        refusal_events=getattr(gs, 'refusal_events', None),
+        recent_writes=tuple(getattr(gs, 'recent_writes', None) or ()),
+        spin_path=getattr(gs, 'spin_path', ''),
+        repeat_count=getattr(gs, 'repeat_count', 0), repeat_action=getattr(gs, 'repeat_action', ''),
+        gate_stall=getattr(gs, 'gate_stall', 0),
+        thrash_edits=thrash_edits_clause(gs))
+    seat = groundedaction.AuthorInput(chat, role, root, evidence, body, rlog, condition,
+                                     outcome, truth_text, step_text)
+    return stalledwork.AuthorServices(original, lambda: getattr(gs, 'last_gate_flag', ''),
+        lambda text: _checks_superseded_by_coder_run(body.get('messages', []), text),
+        lambda text: _checks_already_visible(body, text), _checks_ran_before,
+        _grounded_actions(), seat, rlog)
+
+
+def _stalled_text(steer):
+    return ('[REDIRECT]\n' if steer.redirect_envelope else '') + steer.text
+
+
+def _stalled_frame(gs, framed, notes):
+    gs.stalled_reply = None
+    definition = _stalled_selection(gs)
+    steer = gs.stalled_steer
+    if definition is None or steer is None:
+        return
+    text = prompts.render('nudge', reason=_stalled_text(steer))
+    offered = next((m for m in notes if m.get('role') == 'user' and m.get('content') == text), None)
+    if offered is not None and any(m is offered and m.get('content') == text
+                                   for m in framed.get('messages', [])):
+        gs.stalled_reply = (None, definition, None, steer)
+
+
+def _stalled_observation(gs, coder, messages, rlog, *, step=None, observed=None, sequence_start=None,
+                         write_messages=None):
+    calls = tuple(writeobservation.ForwardedCall(tc.get('id'), _write_path(tc.get('function') or {}))
+                  for ch in coder.get('choices', [])
+                  for tc in (ch.get('message') or {}).get('tool_calls') or [])
+    if observed is None:
+        observed = writeobservation.record(writeobservation.WriteInput(calls, messages or [],
+            frozenset(_unlanded_call_ids(messages or [])), gs, _note_write_results))
+    def measure():
+        count, last = _refusals_in_window(messages)
+        sanction_messages = messages if write_messages is None else write_messages
+        sanctioned = frozenset(call.write_path for call in observed.calls
+            if call.write_path is not None and editrecovery.rewrite_sanctioned(sanction_messages or [], call.write_path))
+        return stalledwork.ObservationFacts(observed.calls, count, last,
+                                            observed.unlanded_ids, sanctioned, sequence_start)
+    return stalledwork.ObservationInput(measure, rlog, step)
+
+
+def _prepare_stalled_reply(gs, retained):
+    pending, gs.stalled_reply = gs.stalled_reply, None
+    if pending is None or pending[0] is None or pending[0] is not retained:
+        return None
+    _completion, definition, observation, steer, _sequence_start, _call_count = pending
+    if definition is not None and observation is not None:
+        # The actual framed offer permits observation, not delivery credit. A failing
+        # observer must leave the exact pending steer retriable and publish nothing.
+        source = replace(observation, offered_steer=steer)
+        _stalled_result(definition.execute(source, _StalledWorkView(gs)))
+    return pending
+
+
+def _settle_stalled_reply(gs, pending):
+    if pending is None:
+        return
+    _completion, definition, _observation, steer, sequence_start, call_count = pending
+    if definition is not None and steer is not None and gs.stalled_steer is steer:
+        _stalled_result(definition.acknowledge(_StalledWorkView(gs), steer))
+    gs.action_seq = sequence_start + call_count
+
+
+def guard_track_refusals(gs: GuardState, coder: dict, rlog, *, step=None, messages=None) -> None:
+    definition = _stalled_selection(gs)
+    if definition is not None:
+        _stalled_result(definition.execute(_stalled_observation(gs, coder, messages, rlog, step=step),
+                                          _StalledWorkView(gs)))
 
 
 def _repeat_observation(gs: GuardState) -> dict:
@@ -7922,177 +7296,34 @@ def _unlanded_call_ids(messages: list) -> set:
 
 
 def guard_track_write_streak(gs: GuardState, coder: dict, rlog, *, step=None, messages=None) -> None:
-    """Wheel-spinning detection, WINDOWED (operator, 2026-07-12): the same file written
-    WHEEL_SPIN_WRITES times — ANY content — within the last WRITE_WINDOW forwarded tool
-    calls (sized to five write→read→test cycles). Consecutive is not required: the tiny-edit
-    spiral rewrites the file with small varying changes (never fixing the actual fault, e.g.
-    indentation) while interleaving reads, tests, and other-file writes, so a consecutive streak
-    undercounts it and the repetition trigger's content-hash can't see it. At the threshold the
-    next turn runs the gate and INSERTS the lint/type-check findings — ground truth on the next
-    call, not more rewriting. Operates on GuardState — shared by both paths."""
-    if gs.recent_writes is None:
-        gs.recent_writes = []
-    if gs.recent_write_ids is None:
-        gs.recent_write_ids = []
-    if gs.write_call_ids is None:
-        gs.write_call_ids = []
-    gs.write_tracking = True
-    seen_ids = set(gs.write_call_ids)
-    for ch in coder.get("choices", []):
-        for tc in (ch.get("message") or {}).get("tool_calls") or []:
-            cid = tc.get("id")
-            if cid and cid not in seen_ids and _write_path(tc.get("function") or {}) is not None:
-                gs.write_call_ids.append(cid)
-                seen_ids.add(cid)
-    # TAKE BACK THE ONES THAT NEVER RAN. This window is filled from the OUTBOUND completion, so at
-    # the time a write is recorded cria does not yet know whether it will refuse it. It knows one
-    # turn later, from the marked result — so the correction happens here, before this turn accrues.
-    refused = _unlanded_call_ids(messages or [])
-    gs.refused_write_ids = (gs.refused_write_ids or set()) | set(refused)
-    _note_write_results(gs, messages)
-    if refused:
-        kept_w, kept_i = [], []
-        for path, cid in zip(gs.recent_writes, gs.recent_write_ids):
-            if cid is not None and cid in refused:
-                continue
-            kept_w.append(path)
-            kept_i.append(cid)
-        if len(kept_w) != len(gs.recent_writes):
-            rlog.emit("loop.write_streak_corrected", level="info",
-                      dropped=len(gs.recent_writes) - len(kept_w))
-        gs.recent_writes, gs.recent_write_ids = kept_w, kept_i
-    def trip(path: str) -> None:
-        gs.spin_probe_due = True
-        gs.spin_path = path
-        # flush the write window (one intervention at a time — a pending redirect's
-        # gate would otherwise be hijacked and its reasoner-authored nudge
-        # overwritten by the spin renudge)
-        gs.recent_writes, gs.recent_write_ids = [], []
-        gs.spin_recheck = ""
-        rlog.emit("loop.wheel_spinning", steer="wheel-spin", step=step, path=path,
-                  writes=WHEEL_SPIN_WRITES)
-
-    def armed(path) -> bool:
-        return (path is not None
-                and not gs.spin_probe_due and not gs.spin_probe
-                and not gs.redirect_due and not gs.redirect_probe
-                # Don't flag a rewrite cria ITSELF ordered: when edit-recovery has escalated this file
-                # to a whole-file rewrite, its compliance rewrites are sanctioned. Once that guidance
-                # scrolls out of the recent window (the model moved on to pure rewriting), the spin
-                # re-arms and the reasoned wheel-spin can diagnose the real bug.
-                and not editrecovery.rewrite_sanctioned(messages or [], path))
-
-    # A BATCH WHOSE RESULTS WERE NOT YET KNOWN. The calls of one turn are recorded before cria knows which
-    # of them landed, so N edits to one file in a single turn count ONCE toward the threshold when they are
-    # sent (below) and are judged on what landed at the next turn, here, after the correction above.
-    pending = gs.spin_recheck or ""
-    if pending:
-        gs.spin_recheck = ""
-        if gs.recent_writes.count(pending) >= WHEEL_SPIN_WRITES and armed(pending):
-            trip(pending)
-    this_turn: dict = {}
-    for ch in coder.get("choices", []):
-        for tc in (ch.get("message") or {}).get("tool_calls") or []:
-            if (gs.redirect_due or gs.redirect_probe
-                    or gs.spin_probe_due or gs.spin_probe):
-                return  # intervention in flight — nothing accrues (this tracker runs AFTER
-                # guard_track_refusals on the SAME completion: without this check it would
-                # repopulate the flushed window with the very writes that fired the redirect,
-                # and the coder's single compliance write would re-trip a spin probe steering
-                # it away from the file it just fixed)
-            path = _write_path(tc.get("function") or {})
-            gs.recent_writes.append(path)  # None for non-writes — the window is CALLS
-            gs.recent_write_ids.append(tc.get("id"))
-            del gs.recent_writes[:-WRITE_WINDOW]
-            del gs.recent_write_ids[:-WRITE_WINDOW]
-            if path is not None:
-                this_turn[path] = this_turn.get(path, 0) + 1
-                # earlier turns' writes (resolved) + one for this turn's batch
-                counted = gs.recent_writes.count(path) - (this_turn[path] - 1)
-                if counted >= WHEEL_SPIN_WRITES and armed(path):
-                    trip(path)
-                elif this_turn[path] > 1 and gs.recent_writes.count(path) >= WHEEL_SPIN_WRITES:
-                    gs.spin_recheck = path
+    guard_track_refusals(gs, coder, rlog, step=step, messages=messages)
 
 
 def guard_intervene(gs: GuardState, body: dict, rlog, *, step=None, workspace_root=None) -> dict | None:
-    """If a repeat/spin was flagged on a prior turn, intervene BEFORE the next coder turn: emit a
-    ground-truth probe (a repo-checks shell call the harness runs) and return that completion to
-    send now — or, when no gate is available (no shell tool / unreadable workspace), NEVER swallow
-    the tripped intervention: park a canned steer in ``gs.nudge_reason`` for the caller to inject
-    into the coder framing, and return None. Returns None when nothing is pending. Shared by the
-    plan loop and the plan-off path — one implementation of the repetition→probe→steer round-trip."""
-    if gs.redirect_due:  # repetition tripped → ground truth, then a redirect
-        gs.redirect_due = False
-        gs.spin_probe_due = False  # the redirect's gate supersedes a pending spin probe — never run
-        # two back-to-back gates, and never let the spin steer overwrite the redirect in nudge_reason
-        probe_tc = guard_gate_op(gs, body, rlog, workspace_root=workspace_root)
-        if probe_tc is not None:
-            gs.awaiting_probe = True
-            gs.redirect_probe = True
-            gs.probe_call_id = probe_tc["id"]
-            rlog.emit("loop.redirect_probe", step=step)
-            return _completion_toolcalls([probe_tc], note="running the repo's checks (repeated action detected)")
-        gs.nudge_reason = prompts.render(
-            "redirect_canned", ground_truth="", **_repeat_observation(gs))
-        gs.steer_source = "refusal guard"
-        rlog.emit("loop.redirect", step=step, canned=True, chars=len(gs.nudge_reason))
-    if gs.spin_probe_due:  # wheel-spinning tripped last turn → ground truth BEFORE more digging
-        gs.spin_probe_due = False
-        probe_tc = guard_gate_op(gs, body, rlog, workspace_root=workspace_root)
-        if probe_tc is not None:
-            gs.awaiting_probe = True
-            gs.spin_probe = True
-            gs.probe_call_id = probe_tc["id"]
-            rlog.emit("loop.spin_probe", step=step, path=gs.spin_path)
-            return _completion_toolcalls([probe_tc], note="running the repo's checks (repeated rewrites detected)")
-        gs.nudge_reason = prompts.render("spin_nogate", spin_path=gs.spin_path)  # a steer, never silence
-        gs.steer_source = "wheel-spin guard"
-        rlog.emit("loop.spin_probe_result", step=step, canned=True)
+    definition = _stalled_selection(gs)
+    if definition is None:
+        return None
+    previous_probe = gs.stalled_probe
+    result = _stalled_result(definition.admit(stalledwork.AdmissionInput(
+        lambda: _requested_repository_probe(gs, body, rlog, workspace_root=workspace_root,
+            driver=repositorychecks.Driver.STEP if step is not None else repositorychecks.Driver.TASK,
+            step=step), rlog, step), _StalledWorkView(gs)))
+    if result.probe is not None:
+        if gs.stalled_probe is not result.probe:
+            raise ValueError('Stalled probe must retain its actual pending identity')
+        gs.awaiting_probe = True
+        if previous_probe is result.probe and gs.probe_call_id != result.probe.call.get('id'):
+            # A mutable launch alias cannot replace current owned correlation,
+            # including a newer page/reissue already installed by transport.
+            return None
+        gs.probe_call_id = result.probe.call['id']
+        return _completion_toolcalls([result.probe.call], note=(
+            "running the repo's checks (repeated action detected)"
+            if result.probe.trigger is stalledwork.Trigger.REFUSAL else
+            "running the repo's checks (repeated rewrites detected)"))
+    if result.steer is not None:
+        gs.nudge_reason, gs.steer_source = _stalled_text(result.steer), result.steer.source
     return None
-
-
-def _poll_running_plan_after_rewrite(gs: GuardState, body: dict, rlog) -> dict | None:
-    """A harness history rewrite lost a probe's RESULT, not the check itself: `gs.gate_plan` is
-    cria's OWN session-scoped object and is untouched by a model-facing history rewrite, so if its
-    transport is still open (neither complete nor terminally failed) the detached probe block it
-    launched is very likely still running on the harness's machine. Composing a brand new gate here
-    would abandon that still-running check and restart the whole survey/gate bootstrap from zero —
-    live P24 Orders (session 01a0d4fa): ~12 full-launch-script polls (~95s) landed, a compaction
-    dropped them all, and cria — unable to tell "the check is running" from "nothing happened" once
-    its own probe result vanished — abandoned the still-running gate for a brand new one, repeating
-    every ~100s with ZERO coder progress across the whole session.
-
-    So: POLL the SAME transport_id first — idempotent and read-only
-    (`probegate.continue_transport_command`) — and only fall through to composing a new gate when
-    there is genuinely nothing left to poll (no plan, or its transport already ended). Bounded by its
-    OWN cap (`probe_poll_reissues`, independent of `MAX_PROBE_REISSUES`): a harness that compacts
-    EVERY turn never lets a real result reach `ingest_transport`, so the plan's own wall-clock
-    deadline never gets a chance to fire on this path alone — the cap is what stops it, then the
-    caller falls through to the existing (also capped) new-gate reissue. Returns the poll's tool
-    call, or None.
-    """
-    plan = getattr(gs, "gate_plan", None)
-    if (plan is None or not getattr(plan, "transport_required", False)
-            or plan.transport_complete or plan.transport_error
-            or gs.probe_poll_reissues >= MAX_PROBE_REISSUES):
-        return None
-    command = probegate.continue_transport_command(plan)
-    tool = find_shell_tool(body.get("tools"))
-    if not command or tool is None:
-        return None
-    call = {
-        "id": "call_" + uuid.uuid4().hex[:16],
-        "type": "function",
-        "function": {"name": tool["name"],
-                     "arguments": json.dumps(with_time_budget(tool, shell_args(tool, command)))},
-    }
-    gs.probe_call_id = call["id"]
-    gs.awaiting_probe = True
-    gs.probe_poll_reissues += 1
-    rlog.emit("gate.transport_poll_after_rewrite", attempt=gs.probe_poll_reissues,
-              received=len(plan.transport_data), total=plan.transport_total)
-    return call
 
 
 def guard_probe_reissue(gs: GuardState, body: dict, rlog, *, rewritten: bool, workspace_root=None) -> dict | None:
@@ -8105,28 +7336,13 @@ def guard_probe_reissue(gs: GuardState, body: dict, rlog, *, rewritten: bool, wo
     result the same way.
 
     C28b: before spending any of that budget, prefer POLLING the current plan if its transport is
-    still open (:func:`_poll_running_plan_after_rewrite`) — that costs nothing against
+    still open (the selected reissue hook) — that costs nothing against
     MAX_PROBE_REISSUES, since it is not a new gate, just another read of the one already in flight.
     """
-    if not (gs.done_probe or gs.awaiting_probe):
-        return None
-    if _read_tool_result(body.get("messages", []), gs.probe_call_id).strip():
-        gs.probe_reissues = gs.probe_poll_reissues = 0  # the result arrived — clear the streak
-        return None
-    if not rewritten:
-        return None
-    poll = _poll_running_plan_after_rewrite(gs, body, rlog)
-    if poll is not None:
-        return _completion_toolcalls([poll], note="receiving complete check output (history was compacted)")
-    if gs.probe_reissues >= MAX_PROBE_REISSUES:
-        return None
-    probe_tc = guard_gate_op(gs, body, rlog, workspace_root=workspace_root)
-    if probe_tc is None:
-        return None
-    gs.probe_call_id = probe_tc["id"]
-    gs.probe_reissues += 1
-    rlog.emit("loop.probe_reissued", plan_off=workspace_root is None, attempt=gs.probe_reissues)
-    return _completion_toolcalls([probe_tc], note="re-running checks (history was compacted)")
+    selected = _repository_selection(gs)
+    return _repository_completion(selected.reissue(
+        lambda: _repository_input(body, rlog, workspace_root=workspace_root, rewritten=rewritten),
+        gs, _repository_probes, lambda: _repository_evidence(gs)))
 
 
 # How many DRIVES a step may run before cria asks its own critic whether it is done.
@@ -8142,50 +7358,50 @@ def guard_probe_reissue(gs: GuardState, body: dict, rlog, *, rewritten: bool, wo
 # often than an acting turn (a turn that returns early on a probe or a steer counts as a drive and
 # not as an acting turn), so the cadence stays far above the median of 5 either way. The event now
 # records both numbers so the exact ratio is a reading rather than an argument.
-STEP_CHECK_EVERY = 12
+STEP_CHECK_EVERY = stepreview.STEP_CHECK_EVERY
 
 
-def guard_periodic_gate(gs: GuardState, body: dict, rlog, *, workspace_root=None) -> dict | None:
-    """Every GATE_EVERY_CODER_TURNS acting coder turns, emit the repo's checks as a probe so the
-    model gets GROUND TRUTH on a cadence — not only when it claims 'done' or a guard trips. INSERTs
-    the result (no verdict, the turn stays open), like the wheel-spin probe. Returns the probe
-    completion, or None (not due yet, or no gate available). Resets the counter either way so a
-    gate-less workspace doesn't retry every turn."""
-    if gs.coder_turns < GATE_EVERY_CODER_TURNS:
-        return None
-    gs.coder_turns = 0
-    probe_tc = guard_gate_op(gs, body, rlog, workspace_root=workspace_root)
-    if probe_tc is None:
-        return None  # no shell tool / unknown root — can't gate; try again in another N turns
-    gs.awaiting_probe = True
-    gs.periodic_probe = True
-    gs.periodic_replan_done = False  # a fresh check-in gets its own one-shot survey-only replan
-    gs.probe_call_id = probe_tc["id"]
-    rlog.emit("loop.periodic_gate", steer="periodic-gate", plan_off=workspace_root is None)
-    return _completion_toolcalls([probe_tc], note="periodic check-in — running the repo's checks")
+def guard_periodic_gate(gs: GuardState, body: dict, rlog, *, workspace_root=None,
+                        driver=repositorychecks.Driver.TASK, steer=None, rewritten=False, step=None) -> dict | None:
+    selected = _repository_selection(gs)
+    return _repository_completion(selected.admit(lambda: _repository_input(body, rlog,
+        workspace_root=workspace_root, driver=driver, steer=steer, rewritten=rewritten, step=step),
+        gs, _repository_probes))
 
 
-def _configured_js_test_failure(outcome) -> str:
-    """The declared JavaScript test command that actually ran and failed, or ``""``.
+_configured_js_test_failure = runnercontract.failed_declared_runner
 
-    This is deliberately configuration/result shaped, not an inference from failure text: discovery
-    records which candidates came from package.json, and the gate records their exit status.  The
-    reasoner decides whether the surrounding work is interface churn or a task-contract violation.
-    """
-    report = getattr(outcome, "report", None)
-    if report is None:
-        return ""
-    results = {result.command: result for result in (report.results or [])}
-    for candidate in report.selected or []:
-        if not (getattr(candidate, "declared_interface", False)
-                and getattr(candidate, "kind", None) is probediscovery.ProbeKind.Test
-                and getattr(candidate, "ecosystem", None) is probediscovery.Ecosystem.JsTs):
-            continue
-        command = proberun.display_command(candidate.command)
-        result = results.get(command)
-        if result is not None and result.exit_code not in (None, 0):
-            return command
-    return ""
+
+class _RunnerStateView:
+    """Direct access to the existing transient guard field; construction reads nothing."""
+    def __init__(self, guard: GuardState):
+        self._guard = guard
+
+    @property
+    def signature(self):
+        return self._guard.runner_reset_signature
+
+    @signature.setter
+    def signature(self, value):
+        self._guard.runner_reset_signature = value
+
+
+def _periodic_judgment_evidence(gs: GuardState, body: dict) -> tuple[str, str]:
+    task, _ = _history_root(body.get("messages", []))
+    session = selfcompact.serialize(_drop_harness_frame(probegate.clean_gate_results(
+        _reasoner_session(body.get("messages", [])), getattr(gs, "gate_plan", None))))
+    return task, session
+
+
+def _runner_contract_input(gs: GuardState, outcome, body: dict, rlog, *,
+                           reasoner_chat, reasoner_role, workspace_root) -> runnercontract.RunnerInput:
+    ask = None
+    if reasoner_chat is not None and reasoner_role is not None:
+        def ask(question, **options):
+            return ask_closed(reasoner_chat, reasoner_role, question, rlog, **options)
+    return runnercontract.RunnerInput(outcome, lambda: gate_error_text(outcome),
+        lambda: wsview.current(workspace_root).isdir("node_modules") if workspace_root else None,
+        lambda: _periodic_judgment_evidence(gs, body), ask, rlog)
 
 
 def runner_reset_steer(gs: GuardState, outcome, body: dict, rlog, *,
@@ -8198,92 +7414,23 @@ def runner_reset_steer(gs: GuardState, outcome, body: dict, rlog, *,
     no-node_modules contract.  A missing/unreadable judgment leaves the ordinary checker output
     untouched, toward more work rather than a fabricated reset.
     """
-    runner = _configured_js_test_failure(outcome)
-    if not runner or reasoner_chat is None or reasoner_role is None:
-        return None
-    checks = gate_error_text(outcome)
-    signature = "\n".join((runner, checks))
-    if signature == getattr(gs, "runner_reset_signature", ""):
-        return None
-    node_modules = (wsview.current(workspace_root).isdir("node_modules")
-                    if workspace_root else None)
-    node_modules_fact = {True: "node_modules is present in the surveyed workspace.",
-                         False: "node_modules is absent from the surveyed workspace.",
-                         None: "Whether node_modules is present is not known from the workspace survey."}[node_modules]
-    task, _ = _history_root(body.get("messages", []))
-    session = selfcompact.serialize(_drop_harness_frame(probegate.clean_gate_results(
-        _reasoner_session(body.get("messages", [])), getattr(gs, "gate_plan", None))))
-    question = prompts.render("runner_reset_judge_user", task=task or "(no task recovered)",
-                              runner=runner, node_modules=node_modules_fact, checks=checks,
-                              session=session)
-    answer = ask_closed(reasoner_chat, reasoner_role,
-                        prompts.load("runner_reset_judge") + "\n\n" + question,
-                        rlog, phase="runner-reset", max_tokens=JUDGE_MAX_TOKENS, retry_off=False)
-    verdict = answer.strip().upper()
-    if verdict not in ("RESET", "ON_TRACK"):
-        # Empty or malformed replies establish no judgment, so a later periodic gate may retry.
-        rlog.emit("loop.runner_reset", applied=False, runner=runner,
-                  verdict=answer.strip()[:40])
-        return None
-    # Both exact verdicts settle this unchanged fact set.  Retrying an ON_TRACK answer merely
-    # asks the reasoner to re-guess the same session on every periodic gate.
-    gs.runner_reset_signature = signature
-    if verdict == "ON_TRACK":
-        rlog.emit("loop.runner_reset", applied=False, runner=runner, verdict=verdict)
-        return None
-    rlog.emit("loop.runner_reset", applied=True, runner=runner,
-              node_modules=node_modules)
-    return prompts.render("runner_reset", runner=runner, checks=checks)
+    return runnercontract.run_selected(assistruntime.current().runner_contract,
+        lambda: _runner_contract_input(gs, outcome, body, rlog, reasoner_chat=reasoner_chat,
+            reasoner_role=reasoner_role, workspace_root=workspace_root), _RunnerStateView(gs)).steer
 
 
-def module_state_steer(gs: GuardState, outcome, body: dict, rlog, *,
-                       reasoner_chat, reasoner_role) -> str | None:
-    """Ask once whether a failed Go test gate needs a manifest-state reorientation.
+def _periodic_judgment_input(gs: GuardState, outcome, body: dict, rlog, *,
+                             reasoner_chat, reasoner_role) -> ModuleInput:
+    """Shared evidence/services at the result stage; gathering is deliberately lazy."""
+    def evidence():
+        return _periodic_judgment_evidence(gs, body)
 
-    The trigger is the discovered Go TEST candidate and its recorded non-zero exit, not checker
-    wording or a command/action matcher.  The gate is the read-only supervisory observation: its
-    selected test command, exit status, and exact output are passed unchanged to the reasoner, which
-    alone decides whether to interrupt the next speculative dependency edit.
-    """
-    report = getattr(outcome, "report", None)
-    if report is None or reasoner_chat is None or reasoner_role is None:
-        return None
-    # A cut gate records every selected candidate but omits results for absent sections.  Its
-    # result list is therefore not positional: pair by the command carried on the parsed result,
-    # so a missing earlier lint/build section cannot relabel a later failed Go test as that probe.
-    results_by_command = {result.command: result for result in report.results or []}
-    failed = []
-    for candidate in report.selected or []:
-        command = proberun.display_command(candidate.command)
-        result = results_by_command.get(command)
-        if (getattr(candidate, "ecosystem", None) is probediscovery.Ecosystem.Go
-                and getattr(candidate, "kind", None) is probediscovery.ProbeKind.Test
-                and result is not None
-                and getattr(result, "exit_code", None) not in (None, 0)):
-            failed.append((command, result.exit_code))
-    if not failed:
-        return None
-    checks = gate_error_text(outcome)
-    signature = json.dumps([failed, checks], sort_keys=True)
-    if signature == gs.module_state_signature:
-        return None
-    task, _ = _history_root(body.get("messages", []))
-    session = selfcompact.serialize(_drop_harness_frame(probegate.clean_gate_results(
-        _reasoner_session(body.get("messages", [])), getattr(gs, "gate_plan", None))))
-    question = prompts.render("module_state_judge_user", TASK=task or "(no task recovered)",
-                              TESTS="\n".join(f"{command} exited {code}" for command, code in failed),
-                              CHECKS=checks, SESSION=session)
-    answer = ask_closed(reasoner_chat, reasoner_role,
-                        prompts.load("module_state_judge") + "\n\n" + question,
-                        rlog, phase="module-state", max_tokens=JUDGE_MAX_TOKENS, retry_off=False)
-    verdict = answer.strip().upper()
-    if verdict not in ("REANCHOR", "ON_TRACK"):
-        rlog.emit("loop.module_state", applied=False, verdict=answer.strip()[:40])
-        return None
-    gs.module_state_signature = signature
-    rlog.emit("loop.module_state", applied=verdict == "REANCHOR", verdict=verdict,
-              tests=[command for command, _code in failed])
-    return prompts.render("module_state_reset", CHECKS=checks) if verdict == "REANCHOR" else None
+    ask = None
+    if reasoner_chat is not None and reasoner_role is not None:
+        def ask(question):
+            return ask_closed(reasoner_chat, reasoner_role, question, rlog,
+                              phase="module-state", max_tokens=JUDGE_MAX_TOKENS, retry_off=False)
+    return ModuleInput(outcome, lambda: gate_error_text(outcome), evidence, ask, rlog)
 
 
 def guard_periodic_result(gs: GuardState, body: dict, rlog, *, reasoner_chat=None,
@@ -8293,41 +7440,11 @@ def guard_periodic_result(gs: GuardState, body: dict, rlog, *, reasoner_chat=Non
     when no periodic probe is pending, OR when the checks are CLEAN / couldn't run: a periodic check-in
     with nothing to FIX stays silent rather than prod a passing check-in with 'the checks pass but
     that's not proof of correctness', which just makes the model distrust the pass and keep working."""
-    if not gs.periodic_probe:
-        return None
-    gs.periodic_probe = False
-    gs.awaiting_probe = False
-    probe = _read_tool_result(body.get("messages", []), gs.probe_call_id)
-    outcome = read_gate(gs.gate_plan, probe, rlog)
-    # A periodic check-in speaks ONLY when there is a real PROBLEM to fix. On a CLEAN result it stays
-    # SILENT — prodding a passing check-in with "the checks pass but that's not proof of correctness"
-    # just makes the model distrust the pass and keep working (feeding the can't-stop spiral).
-    err = gate_error_text(outcome)
-    rlog.emit("loop.periodic_gate_result", ran=outcome.ran, spoke=bool(err))
-    # THE SHARED MIRROR (record_gate_state). This was a fourth hand-written copy, and what it left
-    # out was `last_gate_ran` — so a periodic check-in that ran was indistinguishable from one that
-    # never happened to every later reader of that field. `gate_fresh` is DELIBERATELY not part of
-    # what a periodic check-in claims: the coder has not said done, so its clean result must not
-    # pre-satisfy the completion backstop for a 'done' that comes later. That is the one field this
-    # path owns differently, and it is restored right after.
-    fresh_before = gs.gate_fresh
-    record_gate_state(gs, outcome, err, rlog, body.get("messages"))
-    gs.gate_fresh = fresh_before
-    if err and (reset := runner_reset_steer(
-            gs, outcome, body, rlog, reasoner_chat=reasoner_chat, reasoner_role=reasoner_role,
-            workspace_root=workspace_root)):
-        return reset
-    if err and (reset := module_state_steer(
-            gs, outcome, body, rlog, reasoner_chat=reasoner_chat, reasoner_role=reasoner_role)):
-        return reset
-    if not err and outcome.ran and (lost := passing_test_regression(gs, outcome.report)):
-        rlog.emit("loop.tests_regressed", level="warn", command=gs.last_regression[0],
-                  high=gs.last_regression[1], now=gs.last_regression[2])
-        return prompts.render("periodic_gate", truth=lost)
-    # a couldn't-run probe leaves last_gate_red + the streak unchanged — no evidence either way
-    if not err:
-        return None  # clean or couldn't-run → nothing to fix → stay silent, don't editorialize a pass
-    return prompts.render("periodic_gate", truth=err)
+    result = _resume_repository_checks(gs, body, rlog, reasoner_chat=reasoner_chat,
+        reasoner_role=reasoner_role, workspace_root=workspace_root)
+    if result.call is not None:
+        raise ValueError("Pending repository result must be forwarded by its driver")
+    return result.text
 
 
 # A closed question cria asks a reasoner. THE QUESTION GOES IN THE USER TURN. cria used to put the
@@ -8610,53 +7727,8 @@ def record_gate_state(gs: GuardState, outcome, findings: str, rlog=None, message
     ATTEMPTED — the completion backstop's long-standing fail-open — so `gate_fresh` is set. The two
     exceptions are a survey-only bootstrap, which requires a newly planned gate, and incomplete
     transport, which is explicit UNKNOWN. Neither is fresh evidence."""
-    gs.last_gate_ran = bool(outcome.ran)
-    # Stored before every early return: missing/partial/failed gate sections are exactly where
-    # unknown participation must survive rather than inheriting an older green event.
-    gs.last_gate_participation = getattr(outcome, "participation", None)
-    gs.gate_replan_required = bool(getattr(outcome, "replan_after_survey", False))
-    if getattr(outcome, "transport_unknown", False):
-        # A missing byte is not the older, deliberately fail-open "the harness declined to run"
-        # case. The gate did run, but its evidence cannot be proved complete. Preserve any prior red,
-        # leave completion unsatisfied, and make the UNKNOWN visible to the caller.
-        gs.gate_fresh = False
-        return
-    if gs.gate_replan_required:
-        # Only the survey ran. It made a better plan possible; it did not attempt that plan.
-        gs.gate_fresh = False
-        if rlog is not None:
-            rlog.emit("loop.gate_survey_only", level="info")
-        return
-    if not outcome.ran:
-        gs.gate_fresh = True     # ATTEMPTED — cria's own inability must never wedge a real 'done'
-        return
-    # A FOUND ERROR IS A FOUND ERROR, whether or not every section came back. Red first.
-    if findings:
-        gs.last_gate_red = True
-        gs.gate_fresh = False    # red never satisfies the completion backstop
-        track_gate_progress(gs, findings, messages)
-        return
-    # A CLEAN PARTIAL GATE IS NOT A GREEN GATE. `ran` is True as long as ANY section came back, so a
-    # script cut in transit — the survey used to overrun the shared result on a third of real
-    # workspaces — left `results` a silent subset of `selected`, `findings` empty, and this function
-    # writing GREEN over checks that were never read. `outcome.unran` has recorded the gap since it
-    # was added and had exactly one reader, on the plan-ON path, which has not run in the whole log
-    # window (`loop.gate` with `probes_run`: 2,5,4,6,3,1,0,0,0,0,0,0 per day).
-    #
-    # Treated exactly as a gate that could not run: ATTEMPTED, so cria's own inability never wedges a
-    # real 'done', and neutral — it may not clear a previous red, because it did not re-read what
-    # made that red (#13 on the completion side).
-    if probegate.gate_is_partial(outcome):
-        if rlog is not None:
-            rlog.emit("loop.gate_partial", level="warn", missing=len(outcome.unran),
-                      checks=outcome.unran[:6])
-        gs.gate_fresh = True
-        return
-    gs.last_gate_red = False     # ran, complete, and genuinely clean → GREEN
-    gs.gate_fresh = True         # fresh ground truth — the completion backstop is satisfied
-    gs.last_gate_testless = not proberun.gate_ran_tests(outcome.report)  # vacuous-green evidence
-    gs.last_gate_skipped = proberun.gate_skipped_count(outcome.report)
-    track_gate_progress(gs, "", messages)
+    repositorychecks.record(_repository_input({"messages": messages}, rlog), gs, outcome, findings,
+                            _repository_evidence(gs))
 
 
 def guard_gate_verdict(gs: GuardState, body: dict, rlog) -> str | None:
@@ -8671,22 +7743,12 @@ def guard_gate_verdict(gs: GuardState, body: dict, rlog) -> str | None:
     couldn't-run (exit_code None, no signal) is fail-open — cria's own inability must not wedge a real
     'done'. Without the failed_unparsed_probes arm a failing test whose output didn't parse was accepted
     as a genuine 'done'."""
-    probe = _read_tool_result(body.get("messages", []), gs.probe_call_id)
-    outcome = read_gate(gs.gate_plan, probe, rlog)
-    # gate_error_text, not a private copy: it surfaces the located findings AND the checks that
-    # failed without a parseable line TOGETHER. This function used to pick one or the other, which
-    # is the exact contradiction gate_error_text was written to end — a turn that said "a specific
-    # line could not be parsed" while a ⟦ctx:checks⟧ block in the same prompt quoted the located
-    # error. Its wording lives in prompts (#22); the old one was an inline f-string here.
-    findings = gate_error_text(outcome)
-    record_gate_state(gs, outcome, findings, rlog, body.get("messages"))
-    if getattr(outcome, "transport_unknown", False):
-        return prompts.load("probe_transport_unknown")
-    if not outcome.ran:
-        rlog.emit("loop.gate", plan_off=True, blocked=False, gate_ran=False,
-                  replan_after_survey=bool(getattr(outcome, "replan_after_survey", False)))
-        return None  # couldn't run → fail-open; survey-only is separately re-planned by every caller
-    return findings or None
+    selected = _repository_selection(gs)
+    if selected.definition is None:
+        _record_repository_evidence(gs, body, rlog)
+        return None
+    return _repository_result(selected.completion(lambda: _repository_input(body, rlog), gs,
+        lambda: _repository_evidence(gs)), consumed=True, allow_pending=False).text
 
 
 def _gate_test_green(outcome) -> bool:
@@ -9076,27 +8138,7 @@ def passing_test_regression(sess, report) -> str:
     IT STATES THE FACT, IT DOES NOT ACCUSE (#2's corollary, #5b). A count can legitimately drop when
     two tests are merged into one, so cria reports what the runner reported and leaves the judgement
     to the coder — which is also what makes it safe to speak on a GREEN gate at all (#3)."""
-    now = probegate.gate_passing_by_command(report)
-    if not now:
-        return ""                       # no tally → no signal, and no guess
-    # COPIED, never mutated in place: the field may still be whatever a caller handed in, and a
-    # shared dict updated under the caller is a bug that only shows up two sessions later.
-    highs = getattr(sess, "tests_passed_high", None)
-    highs = dict(highs) if isinstance(highs, dict) else {}
-    worst = None
-    for cmd, passed in now.items():
-        was = highs.get(cmd, 0)
-        if passed < was and (worst is None or was - passed > worst[1] - worst[2]):
-            worst = (cmd, was, passed)
-        highs[cmd] = max(was, passed)
-    sess.tests_passed_high = highs
-    if worst is None:
-        return ""
-    # A COMMAND THAT DID NOT RUN THIS TIME IS NOT A LOSS. Its high-water mark is kept and simply not
-    # compared — the runner said nothing about it, and silence is not zero (the same distinction
-    # `gate_passing_tests` returns -1 for).
-    sess.last_regression = worst
-    return prompts.render("tests_regressed", was=str(worst[1]), now=str(worst[2]))
+    return repositorychecks.passing_test_regression(sess, report)
 
 
 def _gate_notes(sess) -> str:
@@ -9191,17 +8233,9 @@ def guard_ground_truth(outcome) -> str:
 
 
 def guard_canned_redirect(gs: GuardState, outcome) -> str:
-    """The canned repetition redirect (no reasoner) — the shared steer both the plan-off path and
-    the loop's reasoner-unavailable fallback deliver. The GROUND TRUTH leads (its block-nudge already
-    says 'fix these exact problems; go to the reported line, do not rewrite whole files') so the
-    concrete error is foregrounded — not buried after the 'you repeated an action' framing, where a
-    small model reads past it and rewrites the whole file again. When the checks gave no positive
-    signal (couldn't run), guard_ground_truth is empty and the redirect carries no checks block —
-    just the 'you repeated an action, do something different' steer."""
-    gt = guard_ground_truth(outcome)
-    return prompts.render(
-        "redirect_canned", ground_truth=(f"{gt}\n\n" if gt else ""),
-        **_repeat_observation(gs))
+    if _stalled_selection(gs) is None:
+        return ''
+    return stalledwork._redirect(gs.repeat_count, gs.repeat_action, guard_ground_truth(outcome))
 
 
 # ---- ONE reasoned steer author behind EVERY detector. A detector (repetition / wheel-spin / thrash /
@@ -10262,21 +9296,17 @@ def _restored_text_message(sess, messages: list[dict]) -> tuple[dict | None, dic
     CREDIT is not decided here. Whether the text REACHED the model is a fact about the wire body, settled
     after the floor (`modelview.settle_restored_text`) and read back in `_coder_turn`; `_coder_has_seen`
     counts only that."""
-    root = getattr(sess, "workspace_root", None)
-    view = wsview.current(root) if root else None
-    if view is None or not getattr(view, "surveyed", False):    # an unsurveyed view holds no bytes to deliver
+    definition = next(iter(assistruntime.current().bindings(contextrestoration.DEFINITION.policy.stage)), None)
+    if definition is None:
         return None, {}
-    ledger, _events, key = _ledger_state(sess, messages)
-    candidates = {key(p) for p in ledger} | {key(p) for p in (getattr(sess, "written_files", None) or {})}
-    candidates -= {key(p) for p in _extract_whole_reads(messages, view)}
-    candidates -= {key(path) for _idx, _tid, path in _write_events_paths(messages)}
-    text, offered, named = _render_restored(view, sorted(candidates), getattr(sess, "file_touch", None) or {})
-    if not offered and not text:
-        return None, {}
-    # ``named`` is every file the block speaks of (text shown, not shown, not available): what the floor's
-    # stand-in must still name when it swaps the text away, so the coder is never told nothing.
-    return ({"role": "user", "content": text,
-             bodykeys.RESTORED_FILES: {"offered": dict(offered), "named": sorted(named)}}, offered)
+    def history():
+        ledger, _events, key = _ledger_state(sess, messages)
+        return contextrestoration.FileHistory(tuple(ledger), tuple(getattr(sess, "written_files", None) or ()),
+            tuple(_extract_whole_reads(messages, _surveyed_view(sess))),
+            tuple(path for _pos, _tid, path in _write_events_paths(messages)), key,
+            getattr(sess, "file_touch", None) or {})
+    result = definition.execute(contextrestoration.RestoreInput(lambda: _surveyed_view(sess), history))
+    return result.message, result.offered
 
 
 def _plan_off_tail(base: list[dict], restore: dict | None, facts: dict) -> list[dict]:
@@ -10286,71 +9316,14 @@ def _plan_off_tail(base: list[dict], restore: dict | None, facts: dict) -> list[
     return base + ([restore] if restore is not None else []) + [facts]
 
 
-def _written_file_facts(messages: list[dict], workspace_root: str = "") -> list:
-    """The CURRENT content of every file the session wrote or edited, as ``filefacts.FileFact``s.
-
-    Only paths a write/edit call that RETURNED A RESULT named (a refused or failed call changed
-    nothing and is skipped — never "sent" content).  Each file's bytes come from ONE of two sources,
-    in order: the workspace view's current body (the read-only probe cria already owns) when the
-    view is usable and nothing that could have changed the workspace ran since it was surveyed; else
-    the content of the newest whole write to that path, but ONLY when no later call could have
-    changed that file — a later landed edit/patch, or a shell that writes, silences the fact rather
-    than letting it go stale (a veto the disk can settle is settled by the disk, never by history).
-    Anything else is not stated.  Paths come from the call's own path argument via the one shared
-    :func:`_path_of_args`; command strings are never mined."""
-    from . import denial, shelltool
-    events: list[tuple] = []          # (idx, name, path, whole-content-or-None) of calls that ran
-    pending: dict = {}
-    failed = writeproxy._failed_edit_ids(messages)
-    for idx, m in enumerate(messages or []):
-        if not isinstance(m, dict):
-            continue
-        for tc in m.get("tool_calls") or []:
-            fn = tc.get("function") or {}
-            name, args = fn.get("name"), fn.get("arguments") or ""
-            if tc.get("id") and (name in _WRITE_TOOLS or shelltool.writes_something(
-                    name, writeproxy._command_of(args))):
-                pending[tc["id"]] = (name, args)
-        tid = m.get("tool_call_id") or m.get("call_id")
-        if tid in pending:
-            res = m.get("content") if m.get("content") is not None else m.get("output")
-            res = res if isinstance(res, str) else ""
-            if tid in failed or denial.is_denied(res):
-                continue                                   # refused / failed: it changed nothing
-            name, args = pending[tid]
-            whole = None
-            if name in writeproxy_names:
-                body = _args_of(args).get("content")
-                whole = body if isinstance(body, str) else None
-            patch_ok = name not in writeproxy_names and name not in writeproxy._EDIT_NAMES
-            events.append((idx, name, _path_of_args(args, patch_ok=patch_ok), whole))
-    paths: list[str] = []
-    for _i, n, p, _w in events:
-        if p and n in _WRITE_TOOLS and not any(_same_workspace_path(p, q, workspace_root) for q in paths):
-            paths.append(p)
-    view = wsview.current(workspace_root) if workspace_root else None
-    use_view = view is not None and view.usable and not view.may_have_changed
-    facts = []
-    for path in paths:
-        last = max((i for i, (_ix, n, p, w) in enumerate(events)
-                    if p and w is not None and _same_workspace_path(p, path, workspace_root)), default=None)
-        if last is None:
-            continue
-        # ANYTHING AFTER THE NEWEST WHOLE WRITE that could have changed THIS file silences the fact —
-        # for the view's body as much as for the write's payload: a native patch / edit / harness
-        # Edit does not teach the view anything, so its body is the pre-edit file.
-        touched = any(n in _WRITE_TOOLS and w is None and (p is None or _same_workspace_path(p, path, workspace_root))
-                      or n not in _WRITE_TOOLS
-                      for _ix, n, p, w in events[last + 1:])
-        if touched:
-            continue
-        if use_view:
-            raw = view.read_bytes(path)
-            if raw is not None:
-                facts.append(filefacts.FileFact(view.rel(path) or path, raw, True))
-                continue
-        facts.append(filefacts.FileFact(path, events[last][3].encode("utf-8", "replace"), False))
-    return facts
+def _completion_measurement_services(workspace_root: str) -> completionmeasure.MeasurementServices:
+    """Shared tool/workspace facts, with workspace access deferred to the selected owner."""
+    from . import shelltool
+    return completionmeasure.MeasurementServices(
+        frozenset(_WRITE_TOOLS), frozenset(writeproxy_names), frozenset(writeproxy._EDIT_NAMES),
+        writeproxy._failed_edit_ids, shelltool.writes_something, writeproxy._command_of,
+        _args_of, _path_of_args, lambda a, b: _same_workspace_path(a, b, workspace_root),
+        lambda: wsview.current(workspace_root) if workspace_root else None)
 
 
 def _write_events_paths(messages: list[dict]):
@@ -10388,48 +9361,7 @@ def _render_restored(view, rels: list[str], touch: dict) -> tuple[str, dict, lis
     carried — the view holds no body for it, or a command that may have changed files ran since, so the body
     may be behind the disk — is NAMED as not available (and its body asked for afresh), never left out: the
     block is how the coder learns it holds no copy and must read the file (phi4 A10)."""
-    if not rels:
-        return "", {}, []
-    spill = groundtruth._SPILL_REL
-    todo = [rel for rel in rels if not rel.startswith(spill) and view.isfile(rel) is True]
-    if not todo:
-        return "", {}, []
-    unavailable: list[str] = []
-    if view.may_have_changed:                       # the body may be behind the disk: claim nothing, ask afresh
-        for rel in todo:
-            view.request_current_body(rel)
-        unavailable, todo = list(todo), []
-    # MOST RECENTLY TOUCHED FIRST, by the session's own record of its reads, writes and landed edits — the
-    # view's mtime keeps the survey's value across an edit (it is what the next survey is checked against),
-    # so it cannot say which file the coder worked on last.
-    mtime = {view.rel(e.path): (e.mtime or 0) for e in (view.files() or [])}
-    todo.sort(key=lambda r: (-touch.get(r, 0), -(mtime.get(r) or 0), r))
-    limit = writeproxy.READ_INLINE_MAX
-    labels = prompts.load_map("fetched_facts_sections")
-    shown, omitted, omitted_rels, taken, restored = [], [], [], 0, {}
-    for rel in todo:
-        raw = view.read_bytes(rel)                  # a miss queues the demand for the next survey
-        if raw is None:
-            unavailable.append(rel)
-            continue
-        text = raw.decode("utf-8", "replace")
-        if groundtruth.content_reduce_mod.looks_binary(text):
-            continue
-        if len(raw) > limit or taken + len(raw) > limit:
-            omitted.append(f"{rel} ({len(raw)} bytes)")
-            omitted_rels.append(rel)
-            continue
-        taken += len(raw)
-        shown.append(prompts.fill(labels["restore_file"], path=rel, body=text))
-        restored[rel] = hashlib.sha1(raw).hexdigest()
-    if not shown and not omitted and not unavailable:
-        return "", {}, []
-    parts = [labels["restore_header" if shown else "restore_header_bare"].rstrip()] + shown
-    if omitted:
-        parts.append(prompts.fill(labels["restore_omitted"], paths=", ".join(omitted), limit=limit))
-    if unavailable:
-        parts.append(prompts.fill(labels["restore_unavailable"], paths=", ".join(unavailable)))
-    return "\n".join(parts), restored, list(restored) + omitted_rels + unavailable
+    return contextrestoration.render(view, rels, touch)
 
 
 # NO CAP on the read ledger. It was 20 names out of an ALPHABETICALLY sorted list, so which files
@@ -10437,6 +9369,56 @@ def _render_restored(view, rels: list[str], touch: dict) -> tuple[str, dict, lis
 # replaced them answers a different question than the ledger's own stated purpose: "the KNOWLEDGE
 # THAT IT HAS ALREADY LOOKED" is per-file and is not recoverable from a number.
 _READ_LEDGER_CAP = None
+
+
+@dataclass(frozen=True)
+class _ContextFacts:
+    """Raw authority, never inferred from a reduced outgoing view."""
+    ledger: tuple
+    fetches: tuple
+    mismatch: str
+    written_paths: tuple[str, ...]
+    touch: tuple
+    key: Callable[[str], str]
+
+
+def _capture_context_facts(sess, raw: list[dict]) -> _ContextFacts:
+    ledger, _events, key = _ledger_state(sess, raw)
+    fetches = _merge_fetches(dict(getattr(sess, "fetched_pages", None) or {}), _extract_fetches(raw))
+    return _ContextFacts(
+        tuple((path, tuple(value)) for path, value in ledger.items()),
+        tuple((url, tuple(_fetch_facts(value))) for url, value in fetches.items()),
+        _route_mismatch_fact(fetches, raw, getattr(sess, "workspace_root", "") or ""),
+        tuple(getattr(sess, "written_files", None) or ()),
+        tuple((getattr(sess, "file_touch", None) or {}).items()), key)
+
+
+def _render_context_facts(facts: _ContextFacts, *, visible_messages: list[dict],
+                          visible_fetch_urls: set[str], restored_offered: dict,
+                          workspace, location: bool = True) -> dict | None:
+    """Render raw world facts against this outgoing view, without changing admission."""
+    absent = []
+    fetches = _format_fetches(dict(facts.fetches), "PAGES YOU HAVE ALREADY FETCHED",
+                             visible=visible_fetch_urls, absent_out=absent, location=location)
+    if facts.mismatch:
+        fetches = f"{fetches}\n\n{facts.mismatch}"
+    ledger = fetches
+    if facts.ledger:
+        labels = prompts.load_map("fetched_facts_sections")
+        live = {facts.key(ev[3]) for ev in _file_events(visible_messages, facts.key) if ev[2] == "read"}
+        lines = []
+        for path, (nbytes, size) in sorted(facts.ledger):
+            note = (labels["read_restored"] if path in restored_offered else
+                    "" if path in live else labels["read_out_of_view"])
+            lines.append(f"- {path} ({_dated_count(workspace, path, nbytes, size, labels)}){note}")
+        ledger += "\n\n" + prompts.fill(labels["read_header"], files="\n".join(lines), more="")
+    if not ledger.strip():
+        return None
+    tail = prompts.load_map("fetched_facts_sections")["anchor_tail_fetches"] if fetches.strip() else ""
+    if tail and absent:
+        tail += prompts.load_map("fetch_body_visibility")["anchor_tail_absent_scope"]
+    return {"role": "user", "content": prompts.render(
+        "fetched_facts_anchor", marker=selfcompact.FACTS_MARKER, ledger=ledger.strip("\n"), tail=tail)}
 
 
 def _fetched_facts_anchor(sess, messages: list[dict] | None = None, restored: dict | None = None) -> dict | None:
@@ -10461,28 +9443,10 @@ def _fetched_facts_anchor(sess, messages: list[dict] | None = None, restored: di
     coder prompts, while the coder spent 24 calls concluding the sandbox had no network. The fix's
     own docstring says it exists because "four separate steers instead told the coder the sandbox
     blocked the network" — and it could never have prevented that from here."""
-    absent = []  # gets True appended iff some entry below actually said "not in this conversation"
-    ledger = _fetch_ground_truth(messages or [], sess, header="PAGES YOU HAVE ALREADY FETCHED",
-                                 absent_out=absent)
-    # …AND THE HALF OF ITS RESEARCH THAT LIVES ON DISK. The fetch ledger survives compaction and the
-    # reads did not, so a compacted coder kept its web history and lost every file it had opened.
-    ledger = (ledger + _read_ground_truth(sess, messages or [], restored)).strip("\n")
-    if not ledger.strip():
-        return None
-    # THE TAIL IS ABOUT FETCHES, so it goes only where a fetch is. With the read ledger appended to
-    # this same anchor, a session that fetched nothing still rendered it — and told the model to
-    # "code against THOSE rather than re-fetching" while its own list held nothing but local files.
-    tail = (prompts.load_map("fetched_facts_sections")["anchor_tail_fetches"]
-            if _fetch_ground_truth(messages or [], sess).strip() else "")
-    # SCOPE "code against THOSE" away from an entry this render marked absent (Candidate C31): that
-    # clause names entries with endpoints/response fields, never the "not in this conversation" note,
-    # but a reader skimming the whole block could still read it as covering everything above. Said
-    # only when this render actually used the note — a run with nothing absent needs no caveat.
-    if tail and absent:
-        tail += prompts.load_map("fetch_body_visibility")["anchor_tail_absent_scope"]
-    return {"role": "user", "content": prompts.render("fetched_facts_anchor",
-                                                      marker=selfcompact.FACTS_MARKER,
-                                                      ledger=ledger, tail=tail)}
+    return _render_context_facts(_capture_context_facts(sess, messages or []),
+        visible_messages=messages or [],
+        visible_fetch_urls=webfetch.visible_urls(getattr(sess, "web_session", None)),
+        restored_offered=restored or {}, workspace=_surveyed_view(sess))
 
 
 # An anchor block is the DESIGNATED single copy of its content: folding it into a pointer at a later
@@ -10506,16 +9470,12 @@ def _elide_ledger_copies(msgs: list[dict], sess, rlog=None) -> list[dict]:
     identical field-shape lines inside the original fetched-page result — collapse to a one-line
     pointer. Measured on the maple full walk: the ~2.4KB field block rode up to 3× per prompt.
     Byte-exact, aggregate-lossless, identity when nothing matches (see cria/dedup.py)."""
-    ledger = _fetch_ground_truth([], sess, header="PAGES YOU HAVE ALREADY FETCHED")
-    out, n = dedup.elide_from_messages(msgs, dedup.ledger_units(ledger),
-                                       prompts.load("ledger_dedup_note"),
-                                       skip_prefix=selfcompact.FACTS_MARKER)
-    if n and rlog is not None:
-        rlog.emit("context.ledger_dedup", reshape="dedup", excised=n)
-    # Whole repeated messages are NOT folded here: that is a wire fold (`modelview.fold_repeats`,
-    # applied in `Upstream._prep` after the floor) — folded here, the floor could drop the surviving
-    # copy and leave a pointer to nothing.
-    return out
+    definition = next(iter(assistruntime.current().bindings(ledgercopies.DEFINITION.policy.stage)), None)
+    if definition is None:
+        return msgs
+    return definition.execute(ledgercopies.LedgerCopyInput(msgs,
+        lambda: _format_fetches(dict(getattr(sess, "fetched_pages", None) or {}),
+                               "PAGES YOU HAVE ALREADY FETCHED", visible=set(), location=False), rlog)).messages
 
 
 def _insert_after_system(msgs: list[dict], anchor: dict) -> list[dict]:
@@ -10788,473 +9748,35 @@ def _coder_tools_summary(tools, *, params: bool = True) -> str:
 # A prompt that teaches a weak model to weigh evidence that is never there is the useless-prompting
 # class; removing the leftover is the completion of that decision, not a reversal of it.
 def author_steer(reasoner_chat, reasoner_role, workspace_root, gs, body: dict, rlog, *,
-                 condition: str, outcome=None, truth_text: str = "", step_text: str = "",
-                 ) -> str | None:
-    """THE single reasoned steer author. A detector fired (``condition``); hand a no-tools reasoner the
-    FULL grounded picture — the real session (scrubbed of cria's own plumbing AND the harness's own agent
-    prompt), the churned files' real ON-DISK bytes and the repo's check output — and let it diagnose why the coder is stuck and give ONE
-    concrete, grounded next step. Returns the directive, or ``None`` when the reasoner judges the coder is
-    actually progressing (``ON_TRACK``) or yields nothing — the caller decides whether to fall back.
-
-    We hand it the real session rather than a curated slice: a curated view is exactly what made an
-    earlier steer invent a path. The one thing dropped is the harness's agent system prompt
-    (:func:`_drop_harness_frame`) — that is the coder's FRAME, not part of what the coder DID, and the
-    reasoner has its own supervisor prompt; every user/assistant/tool turn stays verbatim, so this is not
-    the curation the note above warns against. Grounded in what actually happened (and no longer padded
-    with a quarter-prompt of Codex boilerplate), it cannot hallucinate a filesystem it cannot see.
-
-    WHY TWO OF THE PROMPT'S RULES EXIST. `prompts/steer_diagnose.txt` carries them as plain
-    instructions; the measurements behind them live here, because a prompt file is model-facing text
-    and `prompts.load` ships every byte of it — an anecdote in there is tokens the coder's supervisor
-    pays for on every steer, and the operator's read (2026-08-19) was that it belongs in the code.
-
-    * "Do not choose the IMPLEMENTATION." Directives that picked the approach cost nine checks. One
-      told the coder to hand-roll a list the task had EXPLICITLY forbidden hand-rolling; another told
-      it to add a dependency the task had asked it to remove. The coder built exactly what the
-      directive said instead of what was asked, both times.
-    * "Do not state a CAUSE you have not verified." Measured across twenty-four such directives, the
-      coder's own reading was right and the directive was wrong EVERY time. A sentence beginning
-      "because" about something the author never opened arrives as an order that outranks the coder's
-      own eyes, and the coder obeys it.
-
-    Neither rule is self-enforcing — `steer_diagnose.txt` forbade replacement code, and on
-    rust-toml-cli x ternary-bonsai (2026-08-19, call 0015) the author wrote three snippets anyway.
-    What stopped it was `_dictates_code` + `_invented_code_spans`, in code. The prompt states the
-    intent; the guards are what hold."""
-    # SILENCE OVER A SECOND OPINION ON THE SAME FACTS. If the repo's checks have not moved since the
-    # last steer, the previous directive did not land — and a small reasoner asked to explain the same
-    # output again does not repeat itself, it re-guesses. Measured over 24 runs: 36% of every steer
-    # cria has ever authored was a fresh prose diagnosis of check findings unchanged since the
-    # previous one. g22 is what that costs: TEN consecutive steers on one pytest assertion diff, each
-    # contradicting the last, while the diff sat in the coder's own context pointing at the exact
-    # character ("- addr1e000…0002  ?  -"). The check output is the better steer, it is already in
-    # front of the coder, and cria adding a worse paraphrase of it is the assist-as-footgun case.
-    # THE FINDING-SET, WHOEVER TRIGGERED. `truth_text` is passed only by the thrash caller; the
-    # repetition and wheel-spin callers pass nothing, so `checks_now` was "" for them — the guard
-    # compared against an empty string, never suppressed, and then OVERWROTE the stored streak with
-    # "" a few lines down, so the next thrash steer saw no streak either. Measured over five days:
-    # `loop.steer_same_checks` fired ZERO times, and 318 steers passed no check text against 44 that
-    # did. One session shows two redirects wiping the streak between thrash steers at stall 2, 3 and
-    # 4 on one unchanged finding-set — three fresh diagnoses of one pytest state, which is precisely
-    # what this guard exists to stop. `last_gate_flag` is the authoritative finding-set every other
-    # seat reads (#12); taking it here makes the guard live on every trigger, not one of three.
-    checks_now = (truth_text or "").strip()
-    if not checks_now and gs is not None:
-        checks_now = (getattr(gs, "last_gate_flag", "") or "").strip()
-    # STALE FAILURES ARE NOT GROUND TRUTH. The coder runs the tests itself, out of band, and cria's
-    # gate cache does not know — so cria kept restating failures the disk had already cleared, under
-    # the word GROUND TRUTH, in prompts that carried the contradiction (see the helper). Dropped, not
-    # reworded: cria has no fresh finding to offer, and silence beats a false one.
-    superseded = _checks_superseded_by_coder_run(body.get("messages", []), checks_now)
-    if superseded:
-        rlog.emit("loop.steer_checks_stale", level="info", condition=condition, tally=superseded,
-                  head=_clip(checks_now, 100))
-        checks_now, truth_text = "", ""
-    if (checks_now and gs is not None and checks_now == getattr(gs, "steered_checks_text", "")
-            and not getattr(gs, "same_checks_relooked", False)):
-        # ONE grounded SECOND LOOK per unchanged-findings streak (provenance audit 2026-08-04): the
-        # never-re-invoke rule was measured entirely on the blind-author corpus, where a second ask
-        # necessarily re-guessed (g22's ten contradicting steers). A sighted author gets exactly one
-        # more considered pass at the same findings; the streak's third and later asks fall through
-        # to the reattach/silence below unchanged. The flag rearms whenever the findings move.
-        gs.same_checks_relooked = True
-    elif checks_now and gs is not None and checks_now == getattr(gs, "steered_checks_text", ""):
-        # The suppression above rests on ONE premise, stated in its own reasoning: "the check output
-        # is already in front of the coder". Measured on run ada-handles_mellum2_codex_poff_1785626379
-        # that premise was false for 129 of 176 coder prompts — the checks or a steer rode along in
-        # only 27% of them. So cria was withholding its correction on the grounds that a better one
-        # was visible, while for three turns in four nothing was.
-        #
-        # The answer is NOT to let the reasoner paraphrase again (that is the 36%-junk-steer problem
-        # this guard exists to stop, and g22's ten contradicting steers). It is to make the premise
-        # TRUE: hand back the CHECKER'S OWN LINES verbatim. cria may select which real lines to show
-        # and must never substitute its own words for them — so this repeats ground truth, and
-        # authors nothing.
-        if not _checks_already_visible(body, checks_now):
-            since = _writes_since_last_gate(body.get("messages", []))
-            rlog.emit("loop.steer_checks_reattached", level="info", condition=condition,
-                      since=since, head=_clip(checks_now, 100))
-            return prompts.render("steer_checks_repeat", findings=checks_now,
-                                  seeded_test_rule=prompts.load("seeded_test_rule").strip(),
-                                  since=_checks_ran_before(since))
-        rlog.emit("loop.steer_same_checks", level="info", condition=condition,
-                  head=_clip(checks_now, 100))
+                 condition: str, outcome=None, truth_text: str = "", step_text: str = "") -> str | None:
+    owner = gs if gs is not None else GuardState()
+    definition = assistruntime.current().stalled_work
+    if definition is None:
         return None
-    if gs is not None:
-        if checks_now != getattr(gs, "steered_checks_text", ""):
-            gs.same_checks_relooked = False   # findings moved → the one second look rearms
-        gs.steered_checks_text = checks_now
-
-    # Superseded write payloads are STUBBED to their on-disk reference (the existing compact_view
-    # write_stub — restructuring, not trimming: the bytes stay on disk and the author holds
-    # read_file). Without this the author's session carried every historical version whole — 49
-    # copies of one function at g2-0159 — and it asserted "current state" from the pile instead of
-    # reading (the latest tool-call turn keeps its full arguments: the live working set).
-    # DEFANGED, and with cria's OWN past output marked as such. Two measured faults, one call:
-    # mellum2 1786302864 call 0060 was shown tool-call syntax 50× and answered with a fabricated
-    # exec_command plus an invented Chunk ID and addr1q… address; call 0166 read the CODER's guess
-    # ("the endpoint only supports search_handles") as established fact and reversed a correct
-    # earlier directive, starting a four-way flip-flop that cost 83 edits. The first is imitation
-    # of a copyable template; the second is provenance — a wall of undifferentiated text in which
-    # a real endpoint response and a stuck model's speculation look identical.
-    session_turns = selfcompact.stub_old_write_args(
-        _drop_harness_frame(probegate.clean_gate_results(
-            _reasoner_session(body.get("messages", [])), getattr(gs, "gate_plan", None))))
-    # Split BEFORE serialization. Parsing the rendered prose back into turns would mistake
-    # matching text inside a real tool result for a boundary.
-    session_blocks = [_mark_own_notes(selfcompact.serialize([turn], defang=True))
-                      for turn in session_turns]
-    # recent_writes is a CONSUMABLE detector window — interventions flush it by design, which left
-    # the steer author's on-disk section reading "(no files touched yet)" for an ENTIRE run (14
-    # steers judging a one-character file bug blind, run 0729-gemma4) while the workspace held the
-    # files. The durable source is the normalized history itself: every write the coder ever made
-    # is still there as a tool_call (paths survive compaction stubs).
-    touched = _touched_paths(body.get("messages", []))
-    recent = list(getattr(gs, "recent_writes", None) or []) + touched if gs is not None else touched
-    disk = _label_spill_entries(
-        _fresh_disk_facts(workspace_root, recent, getattr(gs, "spin_path", "") if gs is not None else ""))
-    if not disk and workspace_root:
-        # The write history can be GONE: a harness compaction replaces the turns that carried the
-        # write tool_calls, so _touched_paths — the "durable" source above — recovers nothing. What
-        # then printed was "(no files touched yet)" under a header reading "trust this over the
-        # transcript", i.e. cria telling the judge to believe an empty workspace over a transcript
-        # that shows the files. Walked THREE times: 1785888803 calls 0122 and 0124 (both unstick
-        # judges blinded, both then prescribing code already on disk) and 1785360304 call 0088
-        # (`(no files touched yet)` while resolve_handle.py sat at 2,582 B, and the same prompt
-        # spoke of "your current edits" fourteen lines below). The disk is the answer cria could
-        # always have read — the same inventory the step critic is given.
-        # …and cria's OWN spill copies in it are labelled as such: the template heads this section
-        # "THE FILES IT HAS BEEN CHANGING", and on nemotron-nano 1786243834 the only entry was the
-        # spilled openapi reference — file activity where the coder had produced NOTHING, feeding
-        # five ON_TRACK verdicts over an untouched workspace (rule 5b, in cria's own prompt).
-        disk = _label_spill_entries(workspace_inventory(workspace_root))  # same label on BOTH branches
-    truth = truth_text or (guard_ground_truth(outcome) if outcome is not None else "")
-    # THE AUTHORITATIVE FINDING-SET, ADDED WHEN THE COMPUTED TRUTH CARRIES NONE. `last_gate_flag` is
-    # the gate's own finding-set — the object `_gate_notes` already builds the CODER's checks block
-    # from, and the one `judge_satisfaction` already receives as `gate_findings=` at three call
-    # sites. The steer author was the only seat reading a re-render of the transcript instead, and
-    # on shipping-rates-rb x nemotron-elastic that re-render came back as "a specific line could not
-    # be parsed" plus two exit codes. Writing from that, the author named
-    # `test_domestic_light_parcel` with numbers from a stale failure and told the coder to set the
-    # constant the LIVE failing test asserts is 12.0 to 0.0 — while the gate's own output, nineteen
-    # lines above it in the same prompt, named `test_oversize_surcharge_still_applies_to_free_
-    # shipping`. Derive the signal from the authoritative event, never a re-render of it (#12).
-    # ADDITIVE (#2): it only ever tells the author MORE, and stays silent when the flag is already
-    # represented or empty (#3).
-    flag = (getattr(gs, "last_gate_flag", "") or "").strip()
-    if flag and flag not in truth:
-        truth = "\n\n".join(t for t in (truth, flag) if t)
-    # Fold the deterministic fetch outcomes in with the check truth so the reasoner grounds on what the
-    # fetches ACTUALLY returned, not the coder's narration of them (the hallucinated-400 amplification).
-    # Pass gs so DURABLE facts (a spec fetched long ago, now floored out) still reach the steer.
-    # THIRD-person header — the default "PAGES YOU HAVE ALREADY FETCHED" told the STEER AUTHOR that
-    # it had fetched pages (role-collapse fuel for the same reasoner that fabricates transcripts).
-    # And checks-truth FIRST: the template's label says "GROUND TRUTH FROM THE REPO'S CHECKS", so the
-    # checks must sit directly under it, not the fetch block (run 0729-gemma4: every steer prompt
-    # opened the checks section with fetch content and floated the checks below the endpoint list).
-    fetch_truth = _fetch_ground_truth(body.get("messages", []), gs, header=CODER_FETCH_HEADER)
-    truth = "\n\n".join(t for t in (truth, fetch_truth) if t)
-    # ONE copy of the ledger in the author's prompt too: the serialized session often still holds
-    # the original fetched-page result (and the compaction appendix) with the SAME field lines the
-    # labeled fetch-record block above re-states. The labeled block is the authority the template
-    # names ("trust these over any note"); byte-identical copies in the session collapse to a
-    # pointer (measured on the maple walk: every steer/judge prompt carried the ~2.4KB block 2×+).
-    session_blocks = [dedup.elide_text(block, dedup.ledger_units(fetch_truth),
-                                      prompts.load("ledger_dedup_note"))[0]
-                      for block in session_blocks if block]
-    session = "\n".join(session_blocks)
-    trigger = _STEER_TRIGGER[condition](gs, step_text)
-    # THE AGE OF THE FINDINGS, in the author's own evidence block. cria already computes exactly
-    # this for the CODER-facing repeat prompt ("they last ran X, and <file> has been written since")
-    # and left the author reading the same cached block as the present tense under the word GROUND
-    # TRUTH. qwen35/go 0034: "The repo checks confirm: `sum.Add` is being called with 2 arguments
-    # but expects 1", while the file quoted in the same prompt reads sum.Add(price.Mul(quantity))
-    # and the coder's build one call later said "Build succeeded".
-    written = _writes_since_last_gate(body.get("messages", []))
-    user = prompts.render("steer_diagnose_user", trigger=trigger,
-                          session=prompts.load("steer_session_evidence"),
-                          disk=(disk or "(no files touched yet)"),
-                          truth=(truth or "(no check results for this steer)"),
-                          checks_age=(prompts.fill(prompts.load_map("steer_checks_age")["written"],
-                                                   files=prompts.named_list(written))
-                                                      if written else ""))
-    # The floor may digest historical blocks, but must not lose the root user's task/context.
-    # Keep that structural root with the active question, just as compaction pins its task fact.
-    root_context, _ = _history_root(body.get("messages", []))
-    if root_context:
-        user = prompts.render("steer_session_root", root=root_context) + "\n\n" + user
-    historical_request = prompts.render("steer_historical_author_request", request=user)
-    coder_tools = _coder_tools_summary(body.get("tools"))
-    # The one-shot reasoner the dictated-code check uses. Toolless and phase-tagged so it is
-    # visible in the captures as its own call, never mistaken for the authoring pass.
-    #
-    # IT MUST HONOUR `user`. It used to name that parameter `_user` and drop it, which is harmless
-    # for the closed-question guards (they render their payload INTO the system prompt and pass "")
-    # and silently fatal for :func:`_restate_without_code`, which passes the directive as `user`
-    # against a template that has no placeholder for it. Walked on feed-pipeline-java x
-    # nemotron-elastic 20260820T103857, call 0029: the rewriter was sent the bare template plus
-    # "Answer the question above.", reasoned "the original directive does not contain any file paths
-    # or line numbers" about the SYSTEM PROMPT ITSELF, and returned NO_DIRECTIVE — so every steer
-    # that reached the rewriter was dropped, always, for a reason that had nothing to do with it.
-    def _steer_ask(system: str, user: str, evidence_blocks: list[str] | None = None) -> str:
-        return summarize(reasoner_chat, reasoner_role, system, user or _ASK_USER_TURN, rlog,
-                         phase="steer-code", temperature=0.0, evidence_blocks=evidence_blocks,
-                         evidence_intro="composed_evidence_intro_system") or ""
-    # Declared, not detected by shape: this seat can carry a question's evidence as composed blocks.
-    _steer_ask.composes_evidence = True
-    # Same shape for the answer-vs-thinking recovery below, under its own phase tag.
-    def _recover_ask(system: str) -> str:
-        return summarize(reasoner_chat, reasoner_role, system, _ASK_USER_TURN, rlog,
-                         phase="steer-recover") or ""
-    if workspace_root and wsview.current(workspace_root).surveyed:
-        # The author INSPECTS like the critic (operator redesign, 07-30): the disk section above
-        # lists names/sizes only, and the author holds the same read-only tools the judges hold —
-        # it reads the real bytes it wants to cite instead of having every touched file inlined
-        # (the 210K-prompt incident). The inspection transcript joins the grounding evidence so a
-        # URL the author legitimately READ from a file is not dropped as invented.
-        tooled_user = prompts.render("reasoner_coder_tools", tools=coder_tools) + "\n\n" + user
-        transcript: list = []
-        comp = _judge_completion(reasoner_chat, reasoner_role, prompts.load("steer_diagnose"),
-                                 tooled_user, rlog, phase="reasoner",
-                                 workspace_root=workspace_root, transcript=transcript,
-                                 answer_now=verifytools.ANSWER_NOW_STEER,
-                                 evidence_blocks=session_blocks)
-        # A CUT REPLY IS NOT A DIRECTIVE. Its toolless sibling `summarize()` has checked this since
-        # the truncation guard landed, and the retired live-execution seat said it outright — "a cut
-        # intent is not an intent". This branch never got it. Walked on
-        # ada-handles_fabliq_codex_pon_1785721353 call 0139: the author returned finish_reason=length
-        # with 8,192 tokens of the coder's own pytest failures repeated ~9x, and cria delivered 27,000
-        # characters of that to the coder, in cria's voice, under a prompt asking for "a SHORT
-        # directive (under 120 words)". The real directive was sitting in the discarded
-        # reasoning_content.
-        if massage.is_truncated(comp):
-            rlog.emit("loop.steer_truncated", level="warn", phase="reasoner")
-            return None
-        text = _completion_text(comp)
-        if reasoner_role is not None:
-            text = reasoner_role.clean_content(text)
-        text = strip_think(text or "").strip()
-        # A RUMINATING REPLY IS NOT A DIRECTIVE either. The rumination guard is wired to the
-        # streaming coder path alone; these calls are non-streamed, so a reply that looped to a
-        # clean stop passed every guard. Walked on ada-handles_maple-preview_codex_poff_1785956867
-        # call 0055: one first-person paragraph repeated ~45x (finish=stop), delivered verbatim as
-        # a ~10KB ⟦ctx:steer⟧. Same pure detector as the stream watcher; dropped like a cut reply.
-        if _ruminating_reply(text):
-            rlog.emit("loop.steer_degenerate", level="warn", phase="reasoner", chars=len(text))
-            return None
-        evidence = session + "\n\n" + historical_request + "\n\n" + "\n".join(
-            str(m.get("content") or "") for m in transcript if m.get("role") == "tool")
-        # The generic massage layer preserves a finished reasoner's words by copying an otherwise
-        # empty answer out of `reasoning_content`. For answer-vs-thinking recovery that is still
-        # an EMPTY authored answer, not a prose action and not evidence that both channels agreed.
-        msg = ((comp.get("choices") or [{}])[0].get("message") or {})
-        raw_answer = ("" if isinstance(msg.get("reasoning_content"), str)
-                      and msg.get("content") == msg.get("reasoning_content") else text)
-        authored = _authored_action(raw_answer, rlog)
-        directive = authored.action
-        if directive is None and authored.state is not _AuthoredActionState.STRUCTURAL_REFUSAL:
-            directive = _authored_action(
-                _steer_from_reasoning(comp, raw_answer, _recover_ask, rlog) or "", rlog).action
-        return _grounded_steer_or_none(directive, evidence, rlog, ask=_steer_ask,
-                                       sess=gs, messages=body.get("messages", []),
-                                       workspace_root=workspace_root)
-    # BOTH PATHS, not just the tooled one: `capture` hands back the raw completions so the toolless
-    # branch can read the same discarded thinking. capture[0] is the reasoning-ON pass — summarize's
-    # retry runs with reasoning forced OFF and has none to read.
-    passes: list = []
-    text = (summarize(reasoner_chat, reasoner_role, prompts.load("steer_diagnose"), user, rlog,
-                      phase="reasoner", coder_tools=coder_tools, capture=passes,
-                      evidence_blocks=session_blocks) or "").strip()
-    if _ruminating_reply(text):   # same guard as the tooled branch — see loop.steer_degenerate above
-        rlog.emit("loop.steer_degenerate", level="warn", phase="reasoner", chars=len(text))
+    services = _stalled_author(owner, body, rlog, reasoner_chat, reasoner_role, workspace_root,
+        condition=condition, outcome=outcome, truth_text=truth_text, step_text=step_text)
+    if services is None:
         return None
-    # `summarize` may coerce private reasoning into text when the actual answer is empty.  That
-    # prose is not an authored action, and using the coerced value as `answer` also makes
-    # `_steer_from_reasoning` believe there is no second signal to recover.  Recovery is about
-    # answer-versus-thinking provenance, so compare the raw answer from the captured completion.
-    raw_answer = _completion_text(passes[0]) if passes else text
-    if reasoner_role is not None:
-        raw_answer = reasoner_role.clean_content(raw_answer)
-    authored = _authored_action(raw_answer, rlog)
-    directive = authored.action
-    if (directive is None and passes
-            and authored.state is not _AuthoredActionState.STRUCTURAL_REFUSAL):
-        directive = _authored_action(
-            _steer_from_reasoning(passes[0], raw_answer, _recover_ask, rlog) or "", rlog).action
-    return _grounded_steer_or_none(directive, session + "\n\n" + historical_request, rlog, ask=_steer_ask,
-                                   sess=gs, messages=body.get("messages", []),
-                                   workspace_root=workspace_root)
+    return stalledwork._author(services, _StalledWorkView(owner), stalledwork.Trigger(condition),
+        truth_text, getattr(owner, 'gate_stall', 0), actions=definition.actions).text
 
 
 def _ruminating_reply(text: str) -> bool:
-    """True when a steer reply's tail is a periodic repetition of one block — the author looping,
-    not directing. Pure delegation to the stream watcher's detector (rumination.degenerate_tail):
-    short replies can never fire (the window is 2KB and a directive is asked for at <120 words),
-    and long-but-varied replies have no short period."""
-    from . import rumination
-    return rumination.degenerate_tail(text or "")
+    return _grounded_actions()._ruminating_reply(text)
 
 
 def _steer_or_none(text: str) -> str | None:
-    """A steer_diagnose reply → the directive to inject, or None for a genuine "on track" verdict. The
-    "fine, no help" sentinel is ON_TRACK — a POSITIVE token on purpose: the old NOT_STUCK was a negation
-    trap a weak reasoner would emit for the WRONG reason ("the coder is NOT progressing → NOT_STUCK"),
-    vetoing its own rescue while looping. A verbose reasoner (Fabliq) also HEDGES — it writes the verdict
-    token and THEN a real, grounded directive ("the endpoint is GET /handles/{handle}, stop fetching,
-    write it"); a naive prefix check discarded the whole reply, silently dropping good steers. Strip the
-    verdict token(s) + think/markdown scaffolding; deliver whatever substantive directive remains, and
-    treat it as an on-track veto only when essentially nothing else is there. (Legacy NOT_STUCK still
-    stripped, in case a model reaches for the old word.)"""
-    if not text:
-        return None
-    body = strip_think(text)
-    # A reply that IS one bare JSON object is a role-collapse artifact — the author answering in a
-    # judge's verdict schema (measured live: the tool-looped author returned {"done": true,
-    # "reason": "complete implementation..."}, which the cleaning below would inject verbatim as a
-    # steer). A directive is prose; a lone JSON object is not a directive → safe null.
-    fenced = re.sub(r"^```[a-z]*\s*|\s*```$", "", body.strip())
-    if fenced.startswith("{") and fenced.endswith("}"):
-        try:
-            if isinstance(json.loads(fenced), dict):
-                return None
-        except ValueError:
-            pass
-    # A REPLY THAT ENDS INSIDE AN UNTERMINATED JSON OBJECT was a structured emission that stopped
-    # mid-object, not a directive. Walked on maple-preview 1786218955 call 0065 (finish_reason
-    # `stop`, not a length cut): the author wrote a first-person verdict essay — "Looking at this
-    # situation, I need to decide if the coder is stuck or making progress… I'll give the imperative
-    # directive to fix these concrete issues." — then opened `{ "Fix the ada_handle_resolver.py
-    # code: …` and never closed it. cria shipped all of it as `⟦ctx:steer⟧ [REDIRECT]`. Inside the
-    # fragment sat the false claim that ended the run ("a list with 2 items is returned instead of
-    # 1"); the coder had just reasoned its way to the real bug, deferred to cria, and wrote nothing
-    # more before the wall.
-    #
-    # KEYED ON WHAT FOLLOWS THE BRACE, NOT THE BRACE. A bare unbalanced-`{` test refuses real directives —
-    # measured: "You are missing a closing brace. Add { after the if on line 12" and "Replace the
-    # literal {handle in the URL" both died. `{` is ordinary code in every brace language and an
-    # ordinary placeholder in a URL template, so a rule that reads it as JSON is a Python-corpus
-    # artifact that would misfire the moment the task is Go or Java. What is NOT ordinary prose is
-    # an unclosed `{` whose very next token is a quoted string — `{ "Fix the …`. Prose after a brace
-    # does not open with a quote; a serialized object does. Over the 99 distinct steers cria has
-    # delivered across 18 captured sessions this refuses exactly one — call 0065.
-    #
-    # Refusing the WHOLE reply, not salvaging the prose: the prose is the deliberation the author was
-    # told not to emit, and the instruction is inside the fragment. Half a broken emission is not a
-    # directive; the caller falls back to its grounded canned text.
-    if body.count("{") > body.count("}") and body.rsplit("{", 1)[1].lstrip()[:1] == '"':
-        return None
-    body = re.sub(r"```[a-z]*|`|</?think>|</?assistant>", " ", body)      # markdown/channel scaffolding
-    # Drop every SENTENCE that carries a verdict token, rather than excising the token and keeping the
-    # wreckage of the sentence around it. Both prompts end by teaching the exact bigram "is NOT
-    # ON_TRACK", so a reasoner that agrees the coder is stuck echoes it — and token-level stripping
-    # left the negation behind: "NOT ON_TRACK" became "NOT" (under the floor → read as an on-track
-    # VETO, silently cancelling the rescue the reasoner had just called for) and "The coder is NOT
-    # ON_TRACK" became "The coder is NOT", which cleared the floor and was injected into the coder AS
-    # its rescue. That is the NOT_STUCK negation trap this sentinel was renamed to escape.
-    # A verdict sentence carries no instruction either way, so losing it costs nothing, and the hedge
-    # this function exists for survives: Fabliq's "ON_TRACK. You keep re-fetching; write it now."
-    # keeps its second sentence. Nothing left → the caller falls back to its grounded text.
-    # A NEGATED verdict takes its whole sentence (it asserts a judgement and carries no instruction);
-    # a BARE token is only a label on a hedged reply and is excised in place, so "ON_TRACK You are
-    # stuck; write it now" keeps its directive.
-    # `NOT_STUCK` is a SENTINEL — the underscore is part of the token. `on[_ ]track` may keep the space
-    # form because "on track" is only ever the verdict; "not stuck" is ordinary English a directive says
-    # about the coder, and excising it INVERTS the sentence. Measured on
-    # ada-handles_mellum2_codex_poff_1785693138 call 0138: the reasoner wrote "You are making genuine
-    # progress ... This is not stuck." and the coder was handed "... This is ." as its rescue; the same
-    # regex turns "You are not stuck on the import, you are stuck on the missing live test" into "You are
-    # on the import, ..." — cria asserting the opposite of what the reasoner ruled.
-    # A SENTINEL AT THE END IS A DECISION, NOT A HEDGE. The hedge this function exists for puts the
-    # sentinel FIRST — Fabliq's "ON_TRACK. You keep re-fetching; write it now." — and the directive
-    # follows it. When the sentinel is LAST, everything before it is the reasoning that produced the
-    # decision, and delivering that reasoning ships a verdict as a directive.
-    #
-    # Walked twice on maple-preview 1786228135. Call 0085 answered, verbatim:
-    #     "The coder has already completed the task—files are created, tests pass, and live tests
-    #      succeed. No indication of being stuck.\n\nON_TRACK"
-    # ON_TRACK means SAY NOTHING. cria stripped it and shipped the sentence before it, so the coder
-    # was told it was finished — while cria's own gate said the opposite 23 calls later. Call 0057 is
-    # the same shape ("You're making forward progress on all fronts. OUT"), and the reasoner's own
-    # thinking there reads "the coder is NOT stuck. I should output ON_TRACK."
-    #
-    # Position, not phrasing: no word list, and the hedge keeps working. Only a reply whose LAST
-    # non-empty line is the bare sentinel is read as a decision.
-    _lines = [ln for ln in body.strip().splitlines() if ln.strip()]
-    if _lines and re.fullmatch(r"(?i)\W{0,4}(?:on[_ ]track|not_stuck)\W{0,4}", _lines[-1].strip()):
-        return None
-    _SENTINEL = r"on[_ ]track|not_stuck"
-    negated = re.compile(rf"(?i)\b(?:not|never|isn't|aren't)\s+(?:{_SENTINEL})\b")
-    kept = [s for s in re.split(r"(?<=[.!?])\s+|\n+", body) if not negated.search(s)]
-    directive = re.sub(rf"(?i)\b({_SENTINEL})\b", " ", " ".join(kept))
-    directive = re.sub(r"\s+", " ", directive).lstrip(" >-*:.,;").strip()
-    # A directive remains once the verdict is stripped → deliver it (Fabliq hedges the verdict + advice);
-    # essentially nothing left → a genuine on-track veto, inject nothing. The small floor skips a bare
-    # "ok"/"yes" residue without discarding a real short steer.
-    return directive if len(directive) >= 8 else None
+    return _grounded_actions()._steer_or_none(text)
 
 
-class _AuthoredActionState(Enum):
-    """Why the steer author did, or did not, yield one action.
-
-    ``NO_ACTION`` deliberately keeps the established ON_TRACK / empty path together: either can
-    still have a separate reasoning channel worth asking about.  ``STRUCTURAL_REFUSAL`` is
-    different provenance.  The author supplied multiple actions, so treating the later absence as
-    an ON_TRACK answer would manufacture the premise of the recovery prompt.
-    """
-    ACCEPTED = auto()
-    NO_ACTION = auto()
-    STRUCTURAL_REFUSAL = auto()
+_AuthoredActionState = groundedaction._AuthoredActionState
 
 
-@dataclass(frozen=True)
-class _AuthoredAction:
-    action: str | None
-    state: _AuthoredActionState
+_AuthoredAction = groundedaction._AuthoredAction
 
 
 def _authored_action(text: str, rlog=None) -> _AuthoredAction:
-    """A steer-author reply and the provenance of its one-action decision.
-
-    Whether prose describes one conceptual action is a judgment and does not belong in a verb list.
-    The author contract supplies the cheaper upstream constraint: one imperative sentence.  Code can
-    enforce only that observable shape.  Multiple sentence boundaries are multiple authored units,
-    whatever language or tool they name, so the ambiguous reply is withheld and the caller keeps its
-    existing raw-ground-truth fallback.  The historical ``_steer_or_none`` cleanup remains the owner
-    of verdict/scaffolding recovery before this shape check.
-    """
-    action = _steer_or_none(text)
-    if not action:
-        return _AuthoredAction(None, _AuthoredActionState.NO_ACTION)
-    # Explicit lists expose multiple units even when the author omitted sentence punctuation. This
-    # is structure, not an English verb/conjunction guess, and applies equally to numbered and
-    # bulleted actions in any implementation language.
-    listed = re.findall(r"(?m)^\s*(?:[-*+]|\d+[.)])\s+", strip_think(text or ""))
-    # COUNT UNITS WITH CODE SPANS INTACT. `_steer_or_none` removes markdown scaffolding by replacing
-    # each backtick with a SPACE, which is right for delivery and destructive for this check: the
-    # backticks are the only thing separating a code span from a sentence end, so `go build ./...`
-    # becomes `go build ./...  passes` and the dot-then-space reads as a boundary.
-    #
-    # Measured on cart-billing-go x ternary-bonsai-2 (session 01a0b6aa, turn 6277f59b). The reasoner
-    # authored ONE correct directive -- "Choose one Go decimal package ... add it to go.mod via
-    # `go get`, and confirm `go build ./...` passes before you change cart.go or cart_test.go." --
-    # and it counted as 2 units, so the whole thing was withheld as STRUCTURAL_REFUSAL and the coder
-    # got `redirect_canned` instead: "Choose a DIFFERENT next action", which is precisely what a
-    # stuck coder cannot do. Live log: `loop.steer_multiple_actions units=2` -> `loop.redirect`.
-    # The stray space in that event's head ("via go get ,") is this substitution's fingerprint.
-    #
-    # Masking to a punctuation-free token rather than special-casing dotted runs in the split: the
-    # defect is lost information, not a regex that is too naive. A dotted-run exception would still
-    # mis-split `pytest tests/.`, `npm run build.`, or any path ending a clause -- every case where a
-    # code span ends in a mark. One mask covers them because it restores what the author marked.
-    shape = _steer_or_none(re.sub(r"`[^`\n]+`", "CODE", text or "")) or action
-    units = [part for part in re.split(r"(?<=[.!?])\s+", shape.strip()) if part.strip()]
-    if len(units) > 1 or len(listed) > 1:
-        if rlog is not None:
-            rlog.emit("loop.steer_multiple_actions", level="warn",
-                      units=max(len(units), len(listed)),
-                      head=_clip(action, 120))
-        return _AuthoredAction(None, _AuthoredActionState.STRUCTURAL_REFUSAL)
-    return _AuthoredAction(action, _AuthoredActionState.ACCEPTED)
+    return _grounded_actions()._authored_action(text, rlog)
 
 # ---- THE ANSWER SAYS ON_TRACK; THE THINKING SAYS STUCK ------------------------------------------
 #
@@ -11307,42 +9829,7 @@ _STEER_REASONING_STUCK = re.compile(
 
 
 def _steer_from_reasoning(comp: dict, answer: str, ask, rlog) -> str | None:
-    """The directive an ON_TRACK answer discarded, or None — see the long note above for the evidence.
-
-    ``ask(system) -> str`` is the caller's one-shot toolless reasoner. No reasoner, no thinking beyond
-    the answer itself, a cut reply, or a trigger that does not fire → None, so the common path costs
-    nothing. The recovered reply is read by `_steer_or_none` like any other, which is why the hedge
-    and negation handling is not duplicated here."""
-    if ask is None or massage.is_truncated(comp):
-        return None      # a cut reply is not a directive, and a cut trace is not a conclusion
-    # …AND A STREAM CRIA ITSELF KILLED IS NOT AN ANSWER. When a guard aborts a reply mid-stream there
-    # is no verdict to have been contradicted: cria stopped the model before it could give one. This
-    # ran anyway, and then cria narrated the corpse as a decision.
-    #
-    # Measured, nemotron-elastic/ruby 0048. cria's prompt to the recovery reasoner: "You were just
-    # asked whether a small coding model was stuck, and you answered with the single word ON_TRACK."
-    # The reply it refers to ended "reasoning stream ABORTED HERE by the rumination guard", with no
-    # content at all. The model never said ON_TRACK; cria did, on its behalf, and then built a steer
-    # on the answer it invented (#12 — every sentence cria says about an action comes from the event
-    # that produced it, and the abort IS the event here).
-    if comp.get(bodykeys.RUMINATION) or (comp.get("choices") or [{}])[0].get("finish_reason") == "rumination":
-        rlog.emit("loop.steer_rescue_skipped", level="info", why="stream aborted by a guard")
-        return None
-    reasoning = _reasoning_of(comp)
-    # `_reasoning_of` falls back to `content` for a model with no separate channel (principle 19). If
-    # that IS the answer we already read, there is no second signal here and nothing to recover.
-    if not reasoning or reasoning.strip() == (answer or "").strip():
-        return None
-    if not _STEER_REASONING_STUCK.search(reasoning):
-        return None
-    rlog.emit("loop.steer_answer_contradicted", level="info", answer=_clip(answer, 60))
-    recovered = strip_think(ask(prompts.render(
-        "steer_reasoning_recover",
-        reasoning=reasoning)) or "").strip()
-    directive = _steer_or_none(recovered)
-    if directive:
-        rlog.emit("loop.steer_from_reasoning", level="info", head=_clip(directive, 140))
-    return directive
+    return _grounded_actions()._steer_from_reasoning(comp, answer, ask, rlog)
 
 
 # A steer that CONTAINS a transcript is not a directive — it is the reasoner role-playing the
@@ -11367,38 +9854,11 @@ _ROLEPLAY_FIRSTPERSON = re.compile(r"\b[Ii] will (?:write|create|implement|add|r
 
 
 def _is_argument_blob(directive: str) -> bool:
-    """True when a 'directive' is really a tool call's ARGUMENTS — a bare JSON object or array.
-
-    Walked on ada-handles_nemotron-elastic_codex_pon_1785360304 call 0030, and again in the sibling
-    run at 0044. The steer author tried to CALL read_file; its reply content was the argument object,
-    and cria injected it verbatim:
-        ⟦ctx:steer⟧ { "path": "/tmp/…/ada_handles_resolver.py", "start_line": 1, "end_line": 1 }
-    and, at 0030, ~4,000 characters of fabricated grep output carrying an invented schema
-    ("holder": an object with an `address`) that the coder then believed and chased for two calls.
-    `holder` is a plain string.
-
-    _ROLEPLAY_STEER already hard-drops transcript syntax and `name({` tool-call syntax; a bare
-    argument object matches neither — it has no tool name in front of it. The test is EXACT (does the
-    whole directive parse as a JSON object/array?), not a judgment, and it is the same direction as
-    the guards beside it: a steer that is not a directive is withheld, and the caller falls back to
-    the grounded canned redirect or to silence."""
-    t = (directive or "").strip()
-    if not (t.startswith("{") or t.startswith("[")):
-        return False
-    return extract_json_object(t) is not None or t.endswith(("}", "]"))
+    return _grounded_actions()._is_argument_blob(directive)
 
 
 def _dedupe_doubled(text: str) -> str:
-    """A weak reasoner sometimes emits its directive twice, verbatim, in one reply (run
-    0729-mellum2: the identical paragraph back-to-back). Injecting the doubled text doubles the
-    noise a small coder must wade through — keep one copy when the halves match exactly."""
-    t = text.strip()
-    half, rem = divmod(len(t), 2)
-    if half > 40:
-        a, b = t[:half].strip(), t[half + rem:].strip()
-        if a == b:
-            return a
-    return text
+    return _grounded_actions()._dedupe_doubled(text)
 
 
 # A steer that DICTATES CODE is the highest-damage class measured across the gemma runs: the author
@@ -11504,12 +9964,7 @@ _CODE_LINE = re.compile(
 
 
 def _is_code_line(line: str) -> bool:
-    """A line the coder could paste: source in a language cria recognises, or a shell command.
-
-    ONE OWNER for the shell half (:mod:`cria.shellshape`), at the RESTATE bar rather than the refuse
-    bar — being wrong here costs one reasoner call to say the same thing in words, and the restater
-    can only say less than it was given, never something different."""
-    return bool(_CODE_LINE.search(line)) or shellshape.looks_like_command(line)
+    return _grounded_actions()._is_code_line(line)
 # EMPTY PARENS ARE A NAME, NOT CODE. `Importer.load()` hands the coder nothing to paste — it says
 # WHERE, the way a file path does, and a directive is entitled to name the method it is talking
 # about. The argument text is the part that can be invented, so the pattern now requires some.
@@ -11540,8 +9995,7 @@ _INLINE_CALL = re.compile(r"\b\w+(?:\.\w+)*\(\s*[^)\n\s][^)\n]*\)")
 
 
 def _unquoted(s: str) -> str:
-    """``s`` with quote characters and backslashes removed — the comparison that ignores escaping."""
-    return s.translate(_QUOTE_CHARS)
+    return _grounded_actions()._unquoted(s)
 
 
 _QUOTE_CHARS = {ord(c): None for c in "'\"`\\"}
@@ -11628,117 +10082,15 @@ _NO_DIRECTIVE = "NO_DIRECTIVE"
 
 
 def _restate_without_code(directive: str, ask, rlog) -> str | None:
-    """``directive`` said again without the code it prescribed — or None to refuse it whole.
-
-    THE REWRITER IS BLIND ON PURPOSE. It is handed the directive and nothing else: no session, no
-    evidence, no workspace, no tools. That is the safety property — a rewriter with context could
-    substitute one invention for another, and this one holds no facts to substitute. The most it can
-    do is say less than it was given.
-
-    Bounded to ONE attempt. If what comes back still dictates code, or is the refusal sentinel, or
-    is empty, the answer is None and the caller drops the steer — the same ending every other guard
-    in :func:`_grounded_steer_or_none` reaches, rather than the hollowed sentence the strip left."""
-    if ask is None or not (directive or "").strip():
-        return None
-    out = strip_think(ask(prompts.load("steer_restate"), directive) or "").strip()
-    if not out or _NO_DIRECTIVE in out.upper():
-        rlog.emit("loop.steer_restate", level="info", kept=False, reason="nothing left")
-        return None
-    # ASKED OUTRIGHT, not re-triggered. The input to this rewrite was ruled a dictation; the output is
-    # the higher-risk text, not the lower-risk one, so it does not have to re-earn the question.
-    if _dictates_code(out, ask, presumed=True, rlog=rlog):   # it did it again — one attempt, then silence (#3)
-        rlog.emit("loop.steer_restate", level="info", kept=False, reason="still dictates")
-        return None
-    rlog.emit("loop.steer_restate", level="info", kept=True, chars=len(out))
-    return out
+    return _grounded_actions()._restate_without_code(directive, ask, rlog)
 
 
 def _invented_code_spans(directive: str, evidence: str) -> int:
-    """How many code spans in ``directive`` the author did NOT read — 0 when it only quotes.
-
-    A COUNT, NOT A REWRITE. This used to return the directive with the invented spans replaced by a
-    marker, and the caller shipped that. It no longer does: a hollowed sentence is worse than no
-    sentence — "Change [code removed] to [code removed]" is an imperative with both operands deleted
-    (walked on rust-toml-cli x ternary-bonsai, call 0015) — so a directive with anything invented in
-    it now goes to :func:`_restate_without_code`, which is given the ORIGINAL and says it again in
-    words. Nothing this function produces reaches the coder, so it produces nothing but the number
-    that decides whether the rewriter runs.
-
-    Code counts as READ when it appears in what cria OBSERVED — see :func:`_observed_code` for why
-    that is tool results and written bytes, and never the coder's own prose. That is the whole
-    distinction the 2026-08-04 ruling rests on: a steer quoting the coder's own failing line is
-    grounded and carried the ladder passes; a steer inventing a replacement is the author, and the
-    author is the same weak model with no compiler.
-
-    THE UNIT IS A SEGMENT, NOT A LINE. A reasoner writes its whole answer as one paragraph, and
-    judging the LINE it lives in let a 976-character description of real work count as invented code
-    because one sentence in it quoted a command (20260819T133948 call 0110). Whitespace-insensitive,
-    because cria's own relay reflows the directive before anyone sees it."""
-    if not evidence:
-        return 0                                  # nothing to check against → nothing is invented
-    haystack = " ".join(evidence.split())
-    bare = _unquoted(haystack)
-
-    def seen(s: str) -> bool:
-        flat = " ".join(s.split())
-        # QUOTING IS NOT CONTENT. A one-character slip in an escape — `setEscapeCharacter('\')` for
-        # the `setEscapeCharacter('\\')` that is on disk — is the author re-typing a line it read,
-        # not inventing one, and everything that decides what the line DOES is identical. Compared
-        # again with quote characters and backslashes taken out of both sides, so a difference in
-        # what is inside the quotes still counts as invented.
-        return flat in haystack or _unquoted(flat) in bare
-
-    n = 0
-    for line in directive.splitlines():
-        for seg in (shellshape.segments(line) or [line]):
-            body = seg.strip().strip("`")
-            if len(body) >= _QUOTABLE_MIN and _is_code_line(seg) and not seen(body):
-                n += 1
-        for m in _INLINE_CALL.finditer(line):
-            span = m.group(0)
-            if len(span) >= _QUOTABLE_MIN and not seen(span):
-                n += 1
-    return n
+    return _grounded_actions()._invented_code_spans(directive, evidence)
 
 
-def _dictates_code(directive: str, ask=None, presumed: bool = False, rlog=None) -> bool:
-    """True when the directive hands the coder CODE TO COPY rather than a description of the change.
-
-    Deterministic pre-filter, then ONE focused question — the pattern the operator's policy calls for:
-    a single purposeful model call is not extra inference when it stops the coder thrashing against
-    unverified code. Code-shaped text is a cheap fact; whether it is a quote or a dictation is not.
-
-    ``ask(system, user) -> str`` is the caller's one-shot reasoner. With no reasoner (or an answer
-    that is not one of the two words) the pre-filter's verdict stands — which is exactly today's
-    behaviour, so this can only move steers from dropped to delivered, never the other way.
-
-    ``presumed`` SKIPS THE PRE-FILTER. The filter's only job is to decide whether one call is worth
-    making; a caller that already has a DICTATES verdict on this text's parent has that answer, and
-    re-deriving it from the shape of the rewrite can only lose. It did: a rewrite asked to take the
-    code OUT comes back as prose, prose is not code-SHAPED, so the trigger declined and the judge —
-    the half that actually rules quote-versus-dictation — was never asked. Inline dictation in a
-    sentence is precisely the shape the trigger is documented as missing (`pytest.register_pytest_mark
-    ("live")`, a function that does not exist, sailed through for that reason). The verdict travels
-    forward instead of being guessed again (#12)."""
-    if not presumed and not _CODE_SHAPED.search(directive):
-        return False
-    if ask is None:
-        return True
-    ans = strip_think(ask(prompts.render("steer_dictates_code", directive=directive), "") or "").strip()
-    head = ans.upper().split()[0].strip(".,:;`*") if ans.split() else ""
-    if head not in (_DESCRIBES, _DICTATES):
-        # NEITHER WORD IS A FACT ABOUT THE PROMPT, NOT ABOUT THE STEER. The verdict still falls
-        # closed, which is right, but it used to fall closed in silence and so this was invisible:
-        # walked on cart-billing-go x nemotron-elastic 1787349058 call 0125, where the answer was
-        # `DIRECTIVE` — the bare label this prompt used to print immediately above the text being
-        # judged. The reasoning is explicit: "answer with a single word: either DIRECTIVE or
-        # DESCRIBES". A weak model took the label for an option, the correct steer was refused, and
-        # the run spent its last ten calls without the one fact that would have unblocked it. The
-        # label is gone from the prompt; this line is how the next one gets noticed (#12).
-        if rlog is not None:
-            rlog.emit("loop.dictates_verdict_unreadable", level="warn",
-                      answer=_clip(ans, 60), head=_clip(directive, 100))
-    return head != _DESCRIBES        # DICTATES, or anything unreadable → the pre-filter stands
+def _dictates_code(directive: str, ask=None, presumed: bool=False, rlog=None) -> bool:
+    return _grounded_actions()._dictates_code(directive, ask, presumed, rlog)
 
 
 # A TRIGGER, deliberately over-firing: its only job is to decide whether one focused question is
@@ -11909,48 +10261,8 @@ def _provider_rejected_name_the_steer_relies_on(
     return ""
 
 
-def _diagnostic_action_verdict(directive: str, findings: str, refused, rlog, ask,
-                               grounding: str = "", ask_with_evidence=None) -> str:
-    """Whether an optional authored steer is supported by current check/refusal evidence.
-
-    The old guard asked a lexical question for each identifier-shaped token shared by a directive
-    and the findings.  That made ``go.mod:5`` the subject while a steer restored a rejected version,
-    and its blanket "a missing name should be supplied" rule blessed imports for classes whose
-    PACKAGE was proving they do not exist.  The action-to-diagnostic relationship is semantic: code
-    gathers the exact checker lines and durable resolver refusals; one focused reasoner judges them.
-
-    ``SUPPORTED`` is the positive sentinel (#21).  An unreadable judgment is ``UNDECIDABLE`` and the
-    caller withholds the optional steer: silence preserves the coder's own work, while shipping a
-    supervisor directive gives an ungrounded guess cria's authority (#1, #3, #4). A refusal-only
-    call is made only when the directive names a current event; it uses this same whole-action
-    judgment rather than restoring a second per-provider veto.
-    """
-    refused_text = refusalledger.render_active(refused)
-    if not directive or not ((findings or "").strip() or refused_text.strip()):
-        return "SUPPORTED"
-    if ask is None:
-        return "UNDECIDABLE"
-    # THE GROUNDING IS THE UNBOUNDED PART, so it rides as composed evidence blocks the floor can reduce
-    # (oldest first, labelled) — inside the system message it was protected and irreducible (A11: the
-    # whole session, 17.7k estimated tokens, into a 16k window; both passes failed at the wire and the
-    # steer was withheld as UNDECIDABLE for a reason that had nothing to do with the steer). The seat's
-    # question is the same; only where the evidence sits changes.
-    composed = bool(grounding.strip()) and ask_with_evidence is not None
-    question = prompts.render(
-        "steer_diagnostic_action", directive=directive,
-        findings=(findings or prompts.load("steer_diagnostic_no_findings")),
-        grounding=(prompts.load("steer_diagnostic_grounding_above") if composed
-                   else (grounding or prompts.load("steer_diagnostic_no_grounding"))),
-        refusals=(refused_text or prompts.load("steer_diagnostic_no_refusals")))
-    ans = strip_think((ask_with_evidence(question, _evidence_blocks(grounding)) if composed
-                       else ask(question)) or "").strip()
-    head = ans.upper().split()[0].strip(".,:;`*\"'") if ans.split() else ""
-    verdict = (head if head in {"SUPPORTED", "CONTRADICTED", "UNSUPPORTED", "UNRELATED"}
-               else "UNDECIDABLE")
-    if rlog is not None:
-        rlog.emit("loop.steer_diagnostic_action", level="info" if verdict == "SUPPORTED" else "warn",
-                  verdict=verdict, head=_clip(directive, 120))
-    return verdict
+def _diagnostic_action_verdict(directive: str, findings: str, refused, rlog, ask, grounding: str='', ask_with_evidence=None) -> str:
+    return _grounded_actions()._diagnostic_action_verdict(directive, findings, refused, rlog, ask, grounding, ask_with_evidence)
 
 
 def _prescribes_a_refused_coordinate(directive: str, refused, rlog, ask) -> str:
@@ -12007,44 +10319,7 @@ def _prescribes_a_refused_coordinate(directive: str, refused, rlog, ask) -> str:
 
 
 def _blames_a_service_that_answered(directive: str, sess, messages: list, rlog, ask) -> bool:
-    """True when the directive concludes the SERVICE is broken while cria's own ledger holds a 2xx
-    for that host.
-
-    The steer author's system prompt already forbids this, in these words: "NEVER attribute the
-    failure to an outside cause — authentication, rate limits, permissions, a broken service — that
-    the working access disproves; a false cause becomes the coder's belief and every later step
-    builds on it." That is a request, not an enforcement, and this is what it costs when a small
-    reasoner breaks it.
-
-    Walked on ada-handles_mellum2_codex_poff_1785714194 call 0026, cria's own voice, delivered
-    verbatim to the coder at 0027:
-
-        "The Ada Handles API does not support /holders/{address} returning per-holder total_handles —
-         it consistently returns 404 ... which is impossible given the API. Fix: handle the 404 and
-         return 0 for total_handles. In test_resolve_handle.py, relax the total_handles assertion to
-         allow 0."
-
-    Run during the walk: that endpoint returns 200 with total_handles: 15 for the STAKE address the
-    code already held. The coder read the steer as the user speaking, wrote the band-aid, rewrote its
-    own assertion to expect 0, and the run shipped green over a broken deliverable. The same false
-    claim ended two earlier runs on this task.
-
-    Silent when cria has NO successful fetch: then it cannot disprove anything, and abstaining is the
-    only honest answer (same contract as :func:`known_routes`). Silent with no reasoner."""
-    if not directive or ask is None:
-        return False
-    if not _BLAME_WORDS.search(directive):
-        return False
-    ledger = _fetch_ground_truth(messages, sess, header="PAGES ALREADY FETCHED")
-    if not ledger.strip() or not _fetch_succeeded_anywhere(sess, messages):
-        return False          # nothing answered → cria holds no disproof → not its call to make
-    ans = strip_think(ask(prompts.render("steer_blames_the_service",
-                                         ledger=ledger, directive=directive)) or "").strip()
-    head = ans.upper().split()[0].strip(".,:;`*") if ans.split() else ""
-    if head == "BLAMES":
-        rlog.emit("loop.steer_blames_service", level="warn", head=_clip(directive, 140))
-        return True
-    return False
+    return _grounded_actions()._blames_a_service_that_answered(directive, sess, messages, rlog, ask)
 
 
 def _fetch_succeeded_anywhere(sess, messages: list) -> bool:
@@ -12060,222 +10335,28 @@ _ABS_SYSTEM_PATH = re.compile(r"(?<![\w./-])(/(?:home|root|usr|etc|opt|srv|var)/
 
 
 def _phantom_system_path(directive: str, workspace_root: str | None) -> str:
-    """An absolute system-root path the directive names that does NOT exist — else "".
-
-    Walked 2026-08-04, run ada-handles_gemma4_codex_poff_1785860144 call 0023: a steer told the
-    coder "The real OpenAPI spec at /home/user1/.cache/api.handle.me/openapi.json contains…" — a
-    path that has never existed on this box — and the coder spent its next turn trying to read it.
-    The URL-grounding check is URL-scoped and the citation check is file:line-scoped, so a bare
-    fabricated filesystem path passed both. This is the same enforcement family, same shape:
-    cria holds the disk, so existence is a fact, not a judgment. A path inside the workspace is
-    never checked (it may be a create-target); a SYSTEM path that exists is fine to mention."""
-    for m in _ABS_SYSTEM_PATH.finditer(directive or ""):
-        path = m.group(1).rstrip(".,;:'\"")
-        if workspace_root and path.startswith(str(workspace_root).rstrip("/") + "/"):
-            continue
-        # ONLY A CERTAINTY BLOCKS. This is a path on the CODER's machine, so cria asks the harness;
-        # until it answers, the path is neither proved nor disproved and the steer stands. Blocking
-        # on an unanswered question would drop every steer that names a real system path for the
-        # first ~one turn of a session, which is the shape of a mechanism that stops reaching what
-        # it judges (#11b).
-        if wsview.current(workspace_root).outside_kind(path) == "":
-            return path
-    return ""
+    return _grounded_actions()._phantom_system_path(directive, workspace_root)
 
 
 def _grounded_steer_or_none(directive: str | None, evidence: str, rlog, ask=None,
-                            sess=None, messages: list | None = None,
-                            workspace_root: str | None = None) -> str | None:
-    """The authored steer, or None when a guard refuses it — and ONE event either way.
-
-    THE RATIO HAD NO OWNER. Every guard below logs its own fire, and each was built from a real
-    incident it demonstrably prevents. Nothing counted the total, so nothing showed what they add up
-    to: measured across four days of logs, 109 authored steers refused against 45 delivered. cria
-    kills roughly seven of every ten directives it writes, and each walk of this campaign found the
-    run's one correct directive somewhere in the refused pile.
-
-    That is not an argument for removing a guard. It is an argument for being able to SEE the
-    tradeoff without walking a run by hand (#12 — the metric comes from the authoritative event, and
-    the authoritative event is this function returning). `loop.steer_outcome` carries `delivered` and
-    the name of the guard that refused, so a run's refusal profile is one query rather than a walk.
-
-    The vetting itself is unchanged and lives in :func:`_vet_steer`."""
-    if not directive:
-        return None
-    steer, refused_by = _vet_steer(directive, evidence, rlog, ask, sess, messages, workspace_root)
-    if rlog is not None:
-        rlog.emit("loop.steer_outcome", delivered=steer is not None,
-                  refused_by=refused_by, head=_clip(directive, 120))
-    return steer
+                            sess=None, messages=None, workspace_root=None) -> str | None:
+    definition = assistruntime.current().stalled_work
+    if definition is None:
+        return directive
+    return _grounded_actions()._grounded_steer_or_none(directive, evidence, rlog,
+        ask, sess, messages, workspace_root, vet=definition.actions.vet)
 
 
 def _vet_steer(directive: str | None, evidence: str, rlog, ask=None,
-                            sess=None, messages: list | None = None,
-                            workspace_root: str | None = None) -> tuple:
-    """The authored steer, or None when it names a URL the evidence cannot support.
-
-    The steer author's own system prompt already says "NEVER invent a file path, directory, command,
-    value, or error that does not appear above" — but a prompt is a request, not an enforcement, and a
-    small reasoner breaks it. This is the enforcement, and it is deterministic: cria composed the
-    evidence, so it can check the claim against it exactly rather than judging it.
-
-    The whole steer is withheld, not just the bad URL: a directive built AROUND an invented route
-    ("fetch the response from <invented>, parse the JSON …") is wrong as a whole, and excising the URL
-    would leave cria authoring a mutilated instruction — repairing a guess with another guess. The
-    callers that need a signal already have a grounded one to fall back to (the canned redirect, the
-    raw check truth); a caller with none falls back to silence, which is the correct assist."""
-    if not directive:
-        return None, "empty"
-    directive = _dedupe_doubled(directive)
-    if _ROLEPLAY_STEER.search(directive):
-        rlog.emit("loop.steer_roleplay_dropped", level="warn", head=_clip(directive, 120))
-        return None, "roleplay"
-    if _is_argument_blob(directive):
-        rlog.emit("loop.steer_argument_blob", level="warn", head=_clip(directive, 120))
-        return None, "argument_blob"
-    if _ROLEPLAY_FIRSTPERSON.search(directive):
-        # OBSERVE-ONLY (provenance audit, 2026-08-04): the first-person arm's evidence is two
-        # blind-author-era MoE incidents, and it killed whole steers for a pronoun (40 unexamined
-        # drops on one model in one day). The transcript-syntax arms above remain hard drops —
-        # those are self-evidently fiction. This arm logs and delivers, pending the truth sample.
-        rlog.emit("loop.steer_roleplay_firstperson", level="info", delivered=True,
-                  head=_clip(directive, 120))
-    bad = urlgrounding.ungrounded_urls(directive, evidence)
-    if bad:
-        rlog.emit("loop.steer_ungrounded", level="warn", urls=",".join(bad))
-        return None, "ungrounded_url"
-    phantom = _phantom_system_path(directive, workspace_root)
-    if phantom:
-        rlog.emit("loop.steer_phantom_path", level="warn", path=phantom, head=_clip(directive, 120))
-        return None, "phantom_path"
-    # A FALSE FACT ABOUT A SOURCE CRIA HAS READ. Same enforcement class as the phantom path and the
-    # false line citation above: cria stated the shape, so the check is exact, and a steer that
-    # contradicts it is refused rather than reworded. This is what separates the maple steer that
-    # wrote the shipped bug from the gemma4 steers that carried a 4/4 — both dictate code; only one
-    # names a field the ledger denies.
-    denied_field = _field_the_ledger_denies(
-        directive, _merge_fetches(_extract_fetches(messages or []),
-                                  (getattr(sess, "fetched_pages", None) or {})))
-    if denied_field:
-        rlog.emit("loop.steer_phantom_field", level="warn", field=denied_field,
-                  head=_clip(directive, 120))
-        return None, "phantom_field"
-    if _dictates_code(directive, ask, rlog=rlog):
-        # OBSERVE-ONLY on the DROP (operator ruling, 2026-08-04) — and the ruling's own reasoning is
-        # what this now enforces. The drop's harm evidence came from a BLIND author (empty truth
-        # slot, 6/6 runs of invented code); blindness was fixed the same day, and the 08-01 ladder
-        # passes were carried by ~15 SIGHTED dictated steers per run. The distinction the ruling
-        # turned on is therefore not "does it contain code" but "did the author READ this code or
-        # invent it" — and that is checkable, because cria holds the evidence the author was shown.
-        #
-        # The cross-cohort re-measure the ruling asked for is in: across the six-language battery,
-        # dictated implementations destroyed a working state 10 times. nemotron rust 0053 dictated a
-        # whole lib.rs whose body returns `current` from an Option fn and puts `return None` after
-        # `exit(1)`; 0038's judge "Proposed fix" re-injected a live E0593 and wrote Python
-        # triple-quoted strings into Rust. Neither line existed anywhere cria had read.
-        #
-        # So: quotes survive, inventions are stripped, and the prose ships either way. This is not
-        # the blunt drop the ruling rejected — a steer quoting the coder's own failing line is
-        # untouched, which is exactly the case the ladder passes were built on.
-        # …AGAINST WHAT CRIA OBSERVED, not against the prompt. The prompt carries the coder's own
-        # prose, which made a line the coder only believed count as one cria had seen.
-        invented = _invented_code_spans(directive, _observed_code(messages))
-        if invented:
-            # A HOLLOWED SENTENCE IS WORSE THAN NO SENTENCE. Replacing the invented spans in place
-            # and shipping the rest produced "Change [code removed] to [code removed]" — an
-            # imperative with both operands deleted, and the WRONG CAUSE left standing (walked on
-            # rust-toml-cli x ternary-bonsai, 2026-08-19, call 0015). So the directive is REWRITTEN
-            # by a reasoner instead of mutilated by a regex, and the rewriter is given the directive
-            # AND NOTHING ELSE — no session, no evidence, no tools. It cannot introduce a fact
-            # because it holds none; the most it can do is say less.
-            #
-            # Prevalence, before building it (#15): of 100 dictated steers in the captures, 66 had
-            # nothing invented at all — the sighted "quoting the coder's own line" case the
-            # 2026-08-04 ruling protects. They never reach here. This path is the other 34.
-            restated = _restate_without_code(directive, ask, rlog)
-            # AND MEASURED AGAINST THE SAME EVIDENCE. The rewrite is judged for dictation by a
-            # reasoner; whether it still carries code cria never READ is exact, and cria is holding
-            # both halves right here. A rewrite that swapped one unread span for another would
-            # otherwise ship on a fuzzy pass.
-            if restated is not None and _invented_code_spans(restated, _observed_code(messages)):
-                rlog.emit("loop.steer_restate", level="info", kept=False, reason="still invented")
-                restated = None
-            if restated is None:
-                rlog.emit("loop.steer_dictated_code", level="warn", delivered=False,
-                          invented=invented, reason="prescription",
-                          head=_clip(directive, 120))
-                return None, "dictated_code"       # refused whole, like every other guard in this function
-            directive = restated
-        else:
-            # `invented=0` MUST MEAN "CHECKED, AND NONE" — never "could not check". With no
-            # conversation, `_observed_code(None)` is "" and `_invented_code_spans` short-circuits on
-            # "nothing to check against → nothing is invented": the same 0, from a check that did not
-            # run. Of 25 such log lines, 10 were preceded by a `satisfaction` call, the seat that
-            # passed no messages, and nothing in the record told them apart (#12).
-            rlog.emit("loop.steer_dictated_code", level="info", delivered=True,
-                      invented=0, checked=messages is not None, head=_clip(directive, 120))
-    if sess is not None and _blames_a_service_that_answered(
-            directive, sess, messages or [], rlog, (lambda sysm: ask(sysm, "")) if ask else None):
-        return None, "blames_a_service"
-    action_judged = False
-    refusal_triggered = False
-    if sess is not None:
-        findings = (getattr(sess, "last_gate_flag", "") or "").strip()
-        refusals = _session_refusals(sess)
-        refused_coordinate = refusalledger.prescribed(directive, refusals)
-        refusal_triggered = bool(refused_coordinate)
-        if ask is not None and (findings or refused_coordinate):
-            # A check observed the workspace at one point in the transcript.  If a later write
-            # changed it, that finding is still true historically but cannot ground a new precise
-            # supervisor action.  Do not ask a judge to turn stale evidence into present-tense
-            # advice; withhold the optional steer until a fresh gate supplies a current subject.
-            written = _writes_since_last_gate(messages or []) if findings else []
-            if written:
-                rlog.emit("loop.steer_diagnostic_stale", level="warn", files=written,
-                          head=_clip(directive, 120))
-                return None, "diagnostic_stale"
-            verdict = _diagnostic_action_verdict(
-                directive, findings, refusals, rlog,
-                (lambda sysm: ask(sysm, prompts.load("steer_diagnostic_answer"))) if ask else None,
-                grounding=evidence,
-                ask_with_evidence=((lambda sysm, blocks: ask(
-                    sysm, prompts.load("steer_diagnostic_answer"), blocks))
-                                   if getattr(ask, "composes_evidence", False) else None))
-            if verdict != "SUPPORTED":
-                return None, "diagnostic_" + verdict.lower()
-            action_judged = True
-            # This is the sole semantic ruling over the action. Exact-coordinate matching above is
-            # only the refusal-only trigger; it never decides what naming the coordinate means. A
-            # second provider/token pass would duplicate the judgment and can falsely veto a
-            # supported removal because an incidental filename or bare package shares text.
-    ghost = _symbol_not_in_the_file(directive, workspace_root)
-    if ghost:
-        # cria READ the file; the steer names something that is not in it. Refused, not reworded —
-        # the same rule as the phantom path above, one claim class over.
-        rlog.emit("loop.steer_phantom_symbol", level="warn", symbol=ghost,
-                  head=_clip(directive, 120))
-        return None, "phantom_symbol"
-    # The whole-action judge has already ruled on every external version in this directive against
-    # stronger checker/refusal evidence. Re-running the lexical version-shape veto here makes a
-    # supported removal indistinguishable from inventing that version and restores the same
-    # two-owner failure the provider veto caused.
-    made_up = "" if (action_judged or refusal_triggered) else _invented_version(directive, evidence)
-    if made_up:
-        # The author cannot know a version it was not told; the one it invents is pasted into a
-        # manifest and poisons every build after it. See _invented_version for the run this cost.
-        rlog.emit("loop.steer_invented_version", level="warn", version=made_up,
-                  head=_clip(directive, 120))
-        return None, "invented_version"
-    cite = _false_line_citation(directive, workspace_root, _touched_paths(messages or []))
-    if cite:
-        # Same enforcement, next claim class: the author cited a LINE past the file's real length —
-        # its own disk list said "68 lines" and the steer said "lines 108-112" (run g1 0034; run g1
-        # 0127's misread rode a citation too). cria stated the line count, so the check is exact.
-        rlog.emit("loop.steer_false_citation", level="warn", cite=cite)
-        return None, "false_citation"
-    if _steer_auth_refuted(directive, evidence, sess, ask, rlog):
-        return None, "auth_refuted"
-    return directive, ""
+               sess=None, messages=None, workspace_root=None) -> tuple[str | None, str]:
+    definition = assistruntime.current().stalled_work
+    if definition is None:
+        return directive, ''
+    result = definition.actions.vet(_grounded_actions(), groundedaction.CandidateInput(
+        directive, evidence, rlog, ask, sess, messages, workspace_root))
+    if not isinstance(result, groundedaction.CandidateResult):
+        raise TypeError('Stalled action vet must return CandidateResult')
+    return result.directive, result.refused_by
 
 
 _AUTH_MARKER = re.compile(r"\b40[13]\b|\bunauthori[sz]ed\b|\bforbidden\b", re.I)
@@ -12289,39 +10370,14 @@ AUTH_SHAPE = re.compile(r"(?i)\b(?:authenticated|authentication|auth token|api[-
 
 
 def _steer_auth_refuted(directive: str, evidence: str, sess, ask, rlog) -> bool:
-    """True when the steer asserts an authentication requirement the session's own record refutes.
-
-    Walked on ada-handles_gemma4_codex_poff_1785866157 steer 0191: "don't add live network calls
-    here, they will fail without your API key; keep tests mocked" — for a task that names no key,
-    in a session whose every fetch returned HTTP 200 and which had ALREADY resolved handles live
-    without a credential. The steer countermanded a deliverable the task itself requires. The
-    author HAS evidence here, so a deterministic drop would misfire on a genuinely authenticated
-    API — the F2 pattern applies instead. DETERMINISTIC CODE GATHERS, THE REASONER JUDGES (principle 8):
-    the auth shape is only the TRIGGER for spending one call, the network facts are gathered
-    exactly (the fetch ledger's statuses, the evidence's own denial markers), and ONE focused
-    question rules STANDS or REFUTED. Every failure direction DELIVERS: task mentions auth, no
-    reasoner, an unreadable answer — the trigger alone is not proof, and the roleplay retune
-    showed what unexamined drops cost. Only a clear REFUTED withholds."""
-    if not AUTH_SHAPE.search(directive) or ask is None:
-        return False
-    task = getattr(getattr(sess, "plan", None), "task", "") or ""
-    if AUTH_SHAPE.search(task):
-        return False   # the user's own words raised auth — the claim has a source
-    pages = getattr(sess, "fetched_pages", None) or {}
-    statuses = {url: str(v[0]) if isinstance(v, (list, tuple)) and v else str(v)
-                for url, v in pages.items()}
-    facts = [f"- fetched {url}: {st}" for url, st in statuses.items()]
-    facts.append("- the task's own text mentions no key, token, or login")
-    facts.append("- a 401/403/unauthorized/forbidden DOES appear elsewhere in the session evidence"
-                 if _AUTH_MARKER.search(evidence or "")
-                 else "- no 401/403/unauthorized/forbidden appears anywhere in the session evidence")
-    ans = strip_think(ask(prompts.render("confirm_auth_claim", directive=directive,
-                                         facts="\n".join(facts)), "") or "")
-    head = ans.upper().split()[0].strip(".,:;`*\"'") if ans.split() else ""
-    if head == "REFUTED":
-        rlog.emit("loop.steer_auth_refuted", level="warn", head=_clip(directive, 120))
-        return True
-    return False
+    if not isinstance(sess, groundedaction.ActionEvidence):
+        task = getattr(sess, 'original_task', None)
+        if task is None:
+            task = getattr(getattr(sess, 'plan', None), 'task', '') or ''
+        pages = getattr(sess, 'fetched_pages', None)
+        sess = groundedaction.ActionEvidence(original_task=task,
+            fetched_pages={} if pages is None else pages)
+    return _grounded_actions()._steer_auth_refuted(directive, evidence, sess, ask, rlog)
 
 
 # Explicit line citations, still anchored on exact ground truth (the disk list's stated counts):
@@ -12347,34 +10403,7 @@ _SYMBOL_IN_FILE = re.compile(
 
 
 def _symbol_not_in_the_file(directive: str, workspace_root: str | None) -> str | None:
-    """A steer binding an identifier to a named file where that identifier does not appear — or None.
-
-    Same enforcement class as the phantom path and the false line citation beside it: cria can settle
-    this against disk, so a steer that contradicts disk is refused rather than reworded. A weak model
-    believes cria's assertion over its own reading — told a function lives in a file where it does
-    not exist, it invents a plausible one and every later step builds on that.
-
-    Only files that EXIST inside the workspace are checkable; a name cria cannot resolve passes
-    silently (#3), and so does an unreadable file. The identifier must be a real word, not a bare
-    letter, or ordinary prose would trip it."""
-    if not workspace_root:
-        return None
-    view = wsview.current(workspace_root)
-    root = Path(workspace_root)
-    for m in _SYMBOL_IN_FILE.finditer(directive):
-        symbol, rel = (m.group(1) or m.group(2)), m.group(3)
-        if not symbol:
-            continue
-        # The view answers only for paths inside the workspace, so the containment bound that used
-        # to be a `resolve()`/`is_relative_to` dance is the seam itself now. A file cria has not
-        # been told reads as None and the citation is left alone — a symbol cannot be shown absent
-        # from bytes nobody has seen.
-        body = view.read(root / rel)
-        if body is None:
-            continue
-        if symbol not in body:
-            return f"{symbol} in {rel}"
-    return None
+    return _grounded_actions()._symbol_not_in_the_file(directive, workspace_root)
 
 
 # A VERSION IS A FACT ABOUT THE WORLD, AND THE AUTHOR CANNOT KNOW ONE IT WAS NOT TOLD.
@@ -12388,61 +10417,7 @@ _VERSION_SHAPED = re.compile(
     r"(?<![\w.-])(?:v\d+(?:\.\d+)+[\w.+-]*|\d+\.\d+\.\d+[\w.+-]*|@\s*v?\d+(?:\.\d+)+[\w.+-]*)")
 
 def _invented_version(directive: str, evidence: str) -> str | None:
-    """A version string in the steer that appears NOWHERE in the evidence cria gathered — or None.
-
-    The measured incident, cycle 4 cell 20 (`cart-billing-go x nemotron-elastic`, 15% useful). The
-    checks said, verbatim:
-
-        cart.go:8: missing go.sum entry for module providing package
-        github.com/shopspring/decimal (imported by cartsvc); to add:
-                go get cartsvc
-
-    The author answered with a version it made up — `v0.0.0-20240817123456-001`, a plausible Go
-    pseudo-version whose timestamp is the day the run happened — and told the coder four separate
-    times to write that literal into `go.mod`:
-
-        "replace it with the exact line `require github.com/shopspring/decimal
-         v0.0.0-20240817123456-001`. … Do this now with the edit_file tool."
-
-    It then diagnosed its own defect and repeated it in the same breath: *"Stop editing go.mod with
-    invalid version strings … run `go get github.com/shopspring/decimal@v0.0.0-20240817123456`"*. The
-    coder obeyed, wrote pseudo-version after pseudo-version, and reached the wall with nothing that
-    compiles. The real fix was one grounded word — `go get github.com/shopspring/decimal` — and it
-    was sitting in the error message cria had already read.
-
-    This is #5b at its most concrete: a version is not a judgement the author is entitled to make, it
-    is a fact about a registry it cannot see. Grounded means the exact token appears in the evidence —
-    quoting a version the checks, the disk or the transcript reported is always allowed, which is the
-    only way an author should ever have one.
-
-    Refused whole, not stripped: the version IS the instruction in every case measured, so a directive
-    with it removed says "edit go.mod to add the required line" and helps nobody. Silence is the safe
-    direction (#1).
-
-    WHAT IT BLOCKS IS THE FIRST ONE, and that is the one that matters. Once the coder has pasted the
-    invented version into `go.mod` it is genuinely on disk, cria's evidence genuinely contains it,
-    and a later steer repeating it passes — correctly, by this rule's own terms. Cell 20's cascade
-    was four steers and needed only the first stopped.
-
-    A second rule was written for those repeats and then REMOVED: it asked whether the token's only
-    appearances were inside a phrase like `invalid version` or `unknown revision`, which is an
-    English exception list doing semantic work in deterministic code (#8) and inert on any registry
-    that words its refusal differently (#20). It bought nothing the replay against cell 20's real
-    evidence did not already get from the rule above.
-
-    BLAST RADIUS, measured over cycle 4: of **71 distinct steers cria delivered across the 24 runs,
-    2 contain a version-shaped token at all**. This rule cannot silence much, which is what makes it
-    safe to fail closed."""
-    if not directive:
-        return None
-    ev = evidence or ""
-    for m in _VERSION_SHAPED.finditer(directive):
-        tok = m.group(0).lstrip("@").strip()
-        if not tok:
-            continue
-        if not _grounds_a_version(tok, ev):
-            return tok
-    return None
+    return _grounded_actions()._invented_version(directive, evidence)
 
 
 # A TOOL'S OWN SYNOPSIS IS NOT EVIDENCE ABOUT THIS REPO. Every command-line tool answers a malformed
@@ -12457,17 +10432,7 @@ _SYNOPSIS_LINE = re.compile(r"(?i)(?<![\w-])(?:usage|synopsis)\s*:")
 
 
 def _grounds_a_version(tok: str, evidence: str) -> bool:
-    """True when the evidence carries ``tok`` as a version something REPORTED, not as a template.
-
-    Walked on the sub-40 pass, cart-billing-go x nemotron-elastic (scored 27). cria's steer at call
-    0091 quoted go's usage line back at the coder — *"the go.mod requires the correct format:
-    `require module/path v1.2.3`"* — and the coder wrote `v1.2.3` into the manifest, which is not a
-    version of anything and cannot resolve. `_invented_version` passed it because the token was
-    present in the evidence, which was true and beside the point.
-
-    Grounding stays the same rule (#5b): the exact token must appear in something cria observed. Only
-    a line where the tool is printing its own argument syntax stops counting as an observation."""
-    return any(tok in ln and not _SYNOPSIS_LINE.search(ln) for ln in (evidence or "").splitlines())
+    return _grounded_actions()._grounds_a_version(tok, evidence)
 
 
 def _resolve_cited(root: str, rel: str) -> str | None:
@@ -12503,55 +10468,8 @@ def _lines_in(root: str | None, rel: str) -> int | None:
     return raw.count(b"\n") + (0 if raw.endswith(b"\n") or not raw else 1)
 
 
-def _false_line_citation(directive: str, workspace_root: str | None,
-                         touched: list[str] | None = None) -> str | None:
-    """A line citation in the steer that exceeds the file's REAL line count — or None.
-
-    ASKED OF THE FILE, not recovered from cria's own sentence about the file. This used to re-parse
-    the `FILE x — 1,234 bytes, 56 lines` list that `_fresh_disk_facts` had composed into the
-    evidence a few thousand characters earlier, with a regex that had to agree with an inline
-    f-string on an em dash and a comma. The same class as the nine gate matchers and the search
-    pointer: cria read the file, wrote a sentence about it, threw the number away, and tried to get
-    it back out of English. It cost accuracy three ways — a path with a space stopped at the space,
-    two files with the same basename collapsed onto one count with the last one silently winning,
-    and the two OTHER lines that list writes ("does NOT exist", a size with no line count) were
-    invisible to the reader, so a file cria KNEW about was unheckable.
-
-    The view answers directly, so any file the steer names is checkable — not only the handful that
-    happened to be in the list (#12).
-
-    A BARE citation ("lines 30 and 98") names no file, so it is measured against the longest of the
-    files the CODER HAS BEEN TOUCHING — `touched`, which is the same set the composed disk list was
-    built from, taken from the write history instead of from the sentence that listed it. Nothing
-    touched and nothing named means no ceiling and no check (silence over noise). Anything fuzzier
-    would be judgment dressed as a rule."""
-    cited: list[tuple[str, int]] = []
-    cited += [(m.group(1), int(m.group(2))) for m in _CITE_COLON.finditer(directive)]
-    cited += [(m.group(3), max(int(m.group(1)), int(m.group(2) or 0)))
-              for m in _CITE_WORDS.finditer(directive)]
-    counts: dict[str, int] = {}
-    for f, _n in cited:
-        if f not in counts:
-            got = _lines_in(workspace_root, f)
-            if got is not None:
-                counts[f] = got
-    for f, n in cited:
-        known = counts.get(f)
-        if known is not None and n > known:
-            return f"{f}:{n} (file has {known} lines)"
-    for f in (touched or []):
-        if f not in counts:
-            got = _lines_in(workspace_root, f)
-            if got is not None:
-                counts[f] = got
-    if not counts:
-        return None
-    ceiling = max(counts.values())
-    for m in _CITE_BARE.finditer(directive):
-        n = max(int(d) for d in re.findall(r"\d{1,5}", m.group(1)))
-        if n > ceiling:
-            return f"line {n} (no file in play has more than {ceiling} lines)"
-    return None
+def _false_line_citation(directive: str, workspace_root: str | None, touched: list[str] | None=None) -> str | None:
+    return _grounded_actions()._false_line_citation(directive, workspace_root, touched)
 
 
 # A field the steer tells the coder to read off an API response: `data.get("x")`, `data["x"]`, and
@@ -12586,60 +10504,19 @@ def _ledger_field_names(ledger: dict) -> set[str]:
 
 
 def _field_the_ledger_denies(directive: str, ledger: dict) -> str | None:
-    """A response field the steer tells the coder to read that cria's OWN parsed shapes do not have.
-
-    THE VERIFIED ROOT of both maple-preview misses. At call 0029 of run 1786053138 cria injected a
-    whole script as a steer, comment and all — "# - address (the resolved Cardano address) ... # -
-    total_holders" — and `resolved_address = data.get('address')`. That is the FIRST appearance of
-    `data.get('address')` anywhere in the run; the model never proposed it. Neither field exists on
-    GET /handles/{handle}; the address is `resolved_addresses.ada` and the holder's count comes from
-    a second call to /holders/{address}. cria's own ledger said so, in the same prompt, under the
-    words "use these EXACT names and nesting; do not guess". The shipped CLI prints the handle name
-    where the address belongs, in BOTH runs.
-
-    This is the discriminator the DICTATES guard cannot make. A steer that dictates code is not the
-    problem — the gemma4 4/4 runs were carried by them, and one of those wrote
-    `data.get("resolved_addresses", {}).get("ada")`, which is right. The problem is a steer that
-    states a FALSE FACT about a source cria has already read (rule 5b). Checked against what cria
-    parsed, the good steer passes and the bad one does not.
-
-    SILENT unless cria can actually check: no parsed shapes at all → None, always. A field cria did
-    parse → None. Only a field asserted on a response, when cria holds the response's real shape and
-    that name is not in it, is refused.
-
-    THE UNION OF ALL ENDPOINTS, not per-endpoint. `address` is a real field — on /holders/{address} —
-    so a steer using it against /handles/{handle} passes here even though it is wrong for that route.
-    Attributing a field access to a route needs the steer to name the route unambiguously, and
-    guessing wrong would refuse a TRUE steer. A miss shows the coder a bad field it may still catch;
-    a false refusal leaves it stuck with nothing. Under-refuse, deliberately (#5b, #3)."""
-    known = _ledger_field_names(ledger)
-    if not known:
-        return None                            # nothing parsed → nothing checkable → say nothing
-    for m in _FIELD_ACCESS.finditer(directive or ""):
-        field = m.group(1) or m.group(2)
-        if field and field not in known:
-            return field
-    return None
+    return _grounded_actions()._field_the_ledger_denies(directive, ledger)
 
 
 def author_redirect(reasoner_chat, reasoner_role, workspace_root, step_text: str,
                     gs: GuardState, outcome, body: dict, rlog) -> str:
-    """The REASONED redirect (repetition trigger) — a thin wrapper over :func:`author_steer`. Falls back
-    to the canned redirect when the reasoner declines/yields nothing: the identical-repeat signal is
-    strong, so a stuck repeater is never left without a steer."""
     return author_steer(reasoner_chat, reasoner_role, workspace_root, gs, body, rlog,
-                        condition="refusal", outcome=outcome, step_text=step_text) \
-        or guard_canned_redirect(gs, outcome)
+        condition='refusal', outcome=outcome, step_text=step_text) or guard_canned_redirect(gs, outcome)
 
 
-def author_thrash_steer(reasoner_chat, reasoner_role, workspace_root, gs: GuardState,
-                        truth: str, body: dict, rlog) -> str:
-    """C5 — the reasoned thrash-assist (thrash trigger) — a thin wrapper over :func:`author_steer`. The
-    persistent-error string is the trigger's ground truth; on an ON_TRACK / empty reasoner reply we fall
-    back to inserting that raw ground truth (the periodic check-in's baseline behaviour, valuable on its
-    own — the reasoned diagnosis is an upgrade of it, not a replacement)."""
+def author_thrash_steer(reasoner_chat, reasoner_role, workspace_root, gs, truth: str,
+                        body: dict, rlog) -> str:
     return author_steer(reasoner_chat, reasoner_role, workspace_root, gs, body, rlog,
-                        condition="thrash", truth_text=truth, step_text="") or truth
+        condition='thrash', truth_text=truth) or truth
 
 
 def _reasoning_of(comp: dict) -> str:
@@ -12687,15 +10564,6 @@ def _reasoning_of(comp: dict) -> str:
 # a structural fact (the reply carries a verdict its own thinking denies) rather than a vocabulary.
 # `_reasoning_of` stays — the rescue and the captures both use it.
 
-def _substitute_fetch(coder: dict, msg: dict, tc: dict, url: str, note: str) -> dict:
-    """Swap one tool call for a web_fetch of ``url`` and attach ``note`` telling the coder cria did it."""
-    msg["tool_calls"] = [{"id": tc.get("id") or ("call_" + uuid.uuid4().hex[:16]), "type": "function",
-                          "function": {"name": "web_fetch", "arguments": json.dumps({"url": url})}}]
-    _add_note(coder, note)
-    return coder
-
-
-_URL_LIKE = re.compile(r"^(https?://\S+|(?:[a-z0-9-]+\.)+[a-z]{2,}/\S*)$", re.I)
 # A read (read_file path / cat|grep command) that targets a spilled search-results file, and the search
 # POINTER that names (query, file) — cria controls this filename, so a read of it is unambiguously the
 # model consuming a search's results, which the read-judge then checks for relevance.
@@ -12767,150 +10635,28 @@ def search_file_text(workspace_root: str, rel: str) -> str:
 
 def _looks_like_url(s: str) -> bool:
     """A recommendation that is a concrete URL / domain+path to fetch, not a search phrase."""
-    return bool(_URL_LIKE.match((s or "").strip()))
+    return semanticquery.looks_like_url(s)
 
 
 def guard_search_query(sess: GuardState, coder: dict, body: dict,
-                       reasoner_chat, reasoner_role, rlog) -> dict:
-    """Judge an OUTGOING web_search query before it runs (reduce flailing at the source). Off-target →
-    substitute a web_fetch when the recommendation is a URL, else re-issue the recommended query. The
-    verdict is cached per query, so a repeated off-target query is re-substituted without a fresh call."""
-    msg = (coder.get("choices") or [{}])[0].get("message") or {}
-    search_tc = next((tc for tc in (msg.get("tool_calls") or []) if _tool_name(tc) == "web_search"), None)
-    if search_tc is None:
-        return coder
-    query = str(massage._args((search_tc.get("function") or {}).get("arguments")).get("query", "")).strip()
-    if not query:
-        return coder
-    if sess.query_verdicts is None:
-        sess.query_verdicts = {}
-    task = latest_user_text(body.get("messages", []))
-    tools_summary = _coder_tools_summary(body.get("tools"))
-    # The repeat gate downstream refuses this search if it overlaps a visible earlier one, on four
-    # hand-tuned word counts. Ask about exactly the pair it would act on — and only when it WOULD act,
-    # so a search with no prior costs nothing. A clear "different hunt" clears the query; anything
-    # else leaves the gate's verdict alone, so this can only ever refuse LESS.
-    # An IDENTICAL query is not a judgement call, it is identity — re-running the same search
-    # returns the same results, and asking anyway is how a repeat got cleared (measured: the coder
-    # then issued it three times). Only an OVERLAPPING query is worth a reasoner call.
-    prior = webfetch.prior_matching_search(sess.web_session, query)
-    if prior and normalize_search(prior) == normalize_search(query):
-        prior = None
-    if prior and query not in (sess.rehunt_verdicts or {}):
-        if sess.rehunt_verdicts is None:
-            sess.rehunt_verdicts = {}
-        fresh = judge_rehunt(reasoner_chat, reasoner_role, task, query, prior, rlog,
-                             coder_tools=tools_summary)
-        sess.rehunt_verdicts[query] = fresh
-        if fresh:
-            webfetch.allow_search(sess.web_session, query)
-            rlog.emit("loop.search_rehunt_cleared", query=query, prior=prior)
-    if query in sess.query_verdicts:
-        on_target, rec = sess.query_verdicts[query]
-    else:
-        # `tried` is what the session has already LEARNED: the fetch record (404s / repo-not-found)
-        # AND the packages the toolchain refused to install/load. The judge keyed "already failed" off
-        # HTTP status alone and blessed a gem that 200'd on its page but never once `require`d
-        # (ornith15 x shipping-rates-rb 0045). The ledger carries the other half of the truth.
-        _tried = _fetch_ground_truth(body.get("messages", []), sess)
-        _refused = _unresolved_deps(sess)
-        on_target, rec = judge_query(reasoner_chat, reasoner_role, task, query, rlog,
-                                     coder_tools=tools_summary,
-                                     tried=f"{_tried}\n\n{_refused}" if _refused else _tried)
-        sess.query_verdicts[query] = (on_target, rec)
-    # A CONCRETE URL IS WORTH ACTING ON EVEN WHEN THE QUERY IS FINE. The judge's own prompt says: "make
-    # the recommendation a concrete URL to fetch (the API's .../openapi.json, or the docs page) — the
-    # supervisor will fetch it directly." It did not: `on_target` returned first, so a URL handed back
-    # alongside a good query was dropped on the floor. Walked on
-    # ada-handles_mellum2_codex_poff_1785714194 call 0003: the judge ruled the query on-target AND
-    # returned "https://api.handle.me/openapi.json" — the exact live URL the coder then spent six more
-    # calls rediscovering on its own at 0009. cria promising a model something it does not do is the
-    # same false-fact class as any other, and here it was promising it to its own judge.
-    #
-    # A search is still a legitimate move, so an on-target query is NOT rewritten — only a URL is acted
-    # on, and only through the same host-grounding check below that an off-target one passes.
-    #
-    # …UNLESS THE CODER'S QUERY IS NOT A QUERY. `on_target` answers one question — is this the right
-    # THING to look for — and its answer was being used to settle a second one nobody asked: is this
-    # a usable search STRING. A spiral fragment can be both, and cria already owns the test that tells
-    # them apart; it just only ever pointed it at the judge's recommendation, never at the coder's own.
-    #
-    # Walked on cart-billing-go x ternary-bonsai-2 (session 01a0b6aa, call 0005). After a rumination
-    # abort the coder regenerated the spiral INTO its search argument and sent:
-    #   go.mod decimal module golang.org/x/exp math/bits? no — "github.com/bsb" or
-    #   "github.com/joelschaefer"? Actually: which Go library provides a Decimal type for money, e.g.
-    #   github.com/shopspring/supercharge? Let me search properly.
-    # The judge saw that text verbatim, ruled `on_target: true` — correctly, the TOPIC is right — and
-    # returned "Go third-party Decimal type for money calculations go.mod", which cria dropped on the
-    # floor. The spiral went to the network, returned no results, and the empty result then fed the
-    # re-hunt guard and a phantom spill file. `_usable_query` rejects the sent query and accepts the
-    # dropped recommendation; the machinery to prevent the whole detour was already here.
-    #
-    # NARROW ON PURPOSE. Rewriting on-target queries in general is a KNOWN footgun — measured at 47%
-    # of all searches rewritten, with `web_search('…')` wrappers and instruction sentences used
-    # verbatim as the search string — which is why the URL-only rule above exists. This does not widen
-    # that: a query that passes cria's own shape test is still never rewritten. Only one that fails it
-    # is, and only when the judge supplied a usable string to use instead.
-    if not rec or (on_target and _usable_query(query)
-                   and not _looks_like_url(_usable_query(rec) or "")):
-        return coder
-    # The recommendation must be a QUERY before it can replace the coder's own. Measured: 47% of all
-    # searches today were rewritten, and the replacements included `web_search('…')` wrappers and
-    # instruction sentences used verbatim as the search string. An unusable recommendation means cria
-    # leaves the coder's query alone — substituting a worse query is strictly worse than not acting.
-    rec = _usable_query(rec)
-    if not rec:
-        rlog.emit("loop.search_rec_unusable", level="warn", query=query)
-        return coder
-    if _same_query(rec, query):
-        return coder      # a query rewritten to itself is not a redirect — touch nothing, log nothing
-    if _looks_like_url(rec):
-        url = rec if rec.lower().startswith("http") else "https://" + rec
-        # SUBSTITUTING the coder's own tool call is the strongest thing cria does here, and the url it
-        # substituted was never checked — while an authored steer's url is (_grounded_steer_or_none).
-        # Only the HOST is required here, not the path: this judge's whole job is to say "fetch the
-        # spec of the domain the task named", and a path nobody has fetched yet is exactly what it is
-        # for. What it must not do is send the coder to a site it invented — which its own prompt
-        # invites, saying "never invented" and then asking it to synthesise `<domain>/openapi.json`.
-        evidence = task + "\n" + selfcompact.serialize(_reasoner_session(body.get("messages", [])))
-        # HOST-ONLY IS ENOUGH ONLY FOR THE HOST THE TASK ITSELF NAMES. That is the case the comment
-        # above describes and it stays: "fetch api.handle.me's spec" is a route, and a route nobody
-        # has walked is the whole point. Anywhere else, a path segment carries a NAME that must exist
-        # in the world — `/gems/<gem>`, `/crates/<crate>` — and a reasoner will invent one. cria
-        # substituted `rubygems.org/gems/eu-membership` for a coder's own search on shipping-rates-rb
-        # x nemotron-elastic 1787344941: the host was grounded, the gem has never existed, and the
-        # coder read a 404 with cria's note saying the mistake was its own. Twice, in one run.
-        grounded = (urlgrounding.host_is_grounded(url, task)
-                    or urlgrounding.url_is_grounded(url, evidence))
-        if not grounded:
-            rlog.emit("loop.search_query_ungrounded", level="warn", query=query, rec=url)
-            return coder
-        rlog.emit("loop.search_query_judged", action="fetch", query=query, rec=url)
-        # WHOSE REQUEST THIS IS. The coder asked to search; this fetch is cria's. Recorded so a 4xx
-        # is not reported back to the coder as its own mistake (webfetch.client_error_note).
-        webfetch.note_substituted(getattr(sess, "web_session", ""), url)
-        return _substitute_fetch(coder, msg, search_tc, url,
-                                 (f"fetching {url} — the source this task names, read it directly"
-                                  if on_target else
-                                  f"'{query}' looked off-target for this task — fetching {url} instead"))
-    # SURFACE, DO NOT SUBSTITUTE. This rewrote the coder's own search arguments in place, so the
-    # question the coder actually asked was never asked at all — and cria's replacement became the
-    # record held against it. Doctrine #2's corollary states the rule outright: "cria never
-    # SUBSTITUTES its own action for the coder's: surface the fact, steer, and let the coder act."
-    #
-    # Measured, nemotron-elastic/rust 0006. The plan step in flight was "Read the crates.io TOML
-    # crate documentation"; the judge reasoned "That seems off-target: they need to write a tool, not
-    # search docs", and cria searched "rust toml dotted key path command line tool" instead. The
-    # documentation the step asked for was never fetched, and the saved results held 20 finished
-    # tools rather than the API the coder needed.
-    #
-    # The coder's search runs. cria says what it thinks and lets the coder decide — which is also the
-    # only version that survives the judge being wrong, and here the judge was wrong because it was
-    # never told what step was in flight.
-    _add_note(coder, f"'{query}' may be off-target for this task — '{rec}' would search for what the "
-                     f"task actually needs. Your search runs either way; re-run it with that if you agree.")
-    rlog.emit("loop.search_query_judged", action="noted", query=query, rec=rec)
-    return coder
+                       reasoner_chat, reasoner_role, rlog, *, _defer: bool = False) -> dict:
+    """Bind selected Source questions to live state and required raw research facts.
+
+    Production stages in place and leaves settlement to public drive retention.
+    Standalone compatibility callers retain this local return immediately.
+    """
+    runtime = assistruntime.current()
+    selected = semanticquery.Selection(runtime.rehunt, runtime.query)
+    messages = body.get("messages", [])
+    source = semanticquery.TurnInput(coder, sess.web_session,
+        lambda: semanticquery.QuestionFacts(latest_user_text(messages), _coder_tools_summary(body.get("tools"))),
+        lambda: _fetch_ground_truth(messages, sess), lambda: _unresolved_deps(sess),
+        lambda: selfcompact.serialize(_reasoner_session(messages)),
+        semanticquery.Judge(summarize, reasoner_chat, reasoner_role, rlog))
+    result = semanticquery.prepare_turn(source, sess, selected)
+    if not _defer:
+        semanticquery.settle_turn(sess, result)  # standalone caller retains this exact local return
+    return result
 
 
 # Explicit sentinel for a path that genuinely has NO reasoner: it must pass author=CANNED, not omit the
@@ -12920,43 +10666,35 @@ CANNED = object()
 
 
 def guard_probe_steer(gs: GuardState, body: dict, rlog, *, author, step=None) -> str | None:
-    """A guard probe (repetition redirect or wheel-spin) we emitted last turn has now run — read its
-    result, interpret the gate, and return the steer text to hand the coder. ``author`` is REQUIRED: a
-    callable that REASONS the redirect from ground truth (both paths now supply one via
-    :func:`author_redirect`), or the ``CANNED`` sentinel when a path truly has no reasoner. Returns None
-    when this isn't a guard probe (a plan completion-gate — the loop handles that itself)."""
-    if not (gs.spin_probe or gs.redirect_probe):
+    definition = _stalled_selection(gs)
+    ticket = gs.stalled_probe
+    if definition is None or ticket is None:
         return None
-    probe = _read_tool_result(body.get("messages", []), gs.probe_call_id)
-    outcome = read_gate(gs.gate_plan, probe, rlog)
-    # THE READING IS STATE, whatever cria does with the steer. This is the same probe result the
-    # completion gate reads (same call id, same plan) and it used to be read here and dropped on the
-    # floor, so a gate that flipped green→red on a redirect/wheel-spin turn left last_gate_red False.
-    record_gate_state(gs, outcome, gate_error_text(outcome), None, body.get("messages"))
-    if gs.redirect_probe:  # repetition: a REASONED redirect (or the canned floor when no reasoner)
-        gs.redirect_probe = False
-        gs.steer_source = "refusal guard"
-        redirect = guard_canned_redirect(gs, outcome) if author is CANNED \
-            else author("refusal", gs, outcome, body, rlog)  # author_redirect keeps a canned floor → never None
-        rlog.emit("loop.redirect", step=step, chars=len(redirect))
-        return f"[REDIRECT]\n{redirect}"
-    # wheel-spin: the same file rewritten with varying content. A REASONER reads the file's real on-disk
-    # bytes + the checks + the session and authors a grounded unstick — NOT a canned "stop rewriting"
-    # that prescribes a broken edit or reads as "abandon the file". When it declines / there's no reasoner,
-    # fall back to INSERTING the ground truth (fact, always worth surfacing) — never a suppressed probe (a
-    # None here would misroute into the completion gate). The step stays open either way; no verdict.
-    gs.spin_probe = False
-    gs.steer_source = "wheel-spin guard"
-    truth = guard_ground_truth(outcome)
-    canned = prompts.render("spin_ground_truth", spin_path=gs.spin_path, truth=truth) if truth \
-        else prompts.render("spin_no_truth", spin_path=gs.spin_path)
-    authored = "" if author is CANNED else (author("wheel_spin", gs, outcome, body, rlog) or "")
-    # `spoke=True` was a LITERAL, so the log said `spoke` on 121 of 121 occasions and could not have
-    # said anything else — a tautology wearing a measurement's clothes (#12). What actually varies is
-    # who wrote the steer and whether it carries any ground truth, so record THAT: `authored` false
-    # with `grounded` false is cria talking with nothing to say, and now it is countable.
-    rlog.emit("loop.spin_probe_result", step=step, authored=bool(authored), grounded=bool(truth))
-    return authored or canned
+    cid = gs.probe_call_id  # owned current launch/reissue/page, never the mutable ticket alias
+    if not cid or not any(m.get('role') == 'tool' and (m.get('tool_call_id') or m.get('call_id')) == cid
+               for m in body.get('messages', []) if isinstance(m, dict)):
+        return None
+    raw = _read_tool_result(body.get('messages', []), cid)
+    outcome = read_gate(gs.gate_plan, raw, rlog)
+    if getattr(outcome, 'transport_pending', False):
+        return None
+    recorded = False
+    def record_reading():
+        nonlocal recorded
+        if not recorded:
+            record_gate_state(gs, outcome, gate_error_text(outcome), None, body.get('messages'))
+            recorded = True
+    record_reading()  # mandatory facts precede optional policy and its evidence snapshot
+    services = (None if author is CANNED else
+                author(ticket.trigger.value, gs, outcome, body, rlog))
+    if services is not None and not isinstance(services, stalledwork.AuthorServices):
+        raise TypeError('Stalled author adapter must return AuthorServices')
+    result = _stalled_result(definition.settle(stalledwork.ReturnedProbeInput(ticket,
+        record_reading, lambda: guard_ground_truth(outcome), services, rlog, step), _StalledWorkView(gs)))
+    if result.steer is None:
+        return None
+    gs.steer_source = result.steer.source
+    return _stalled_text(result.steer)
 
 
 _CHECK_FILE_LINE = re.compile(r"(?P<path>[^\s:]+\.[A-Za-z0-9_]+):(?P<line>\d+)(?::\d+)?:")
@@ -12972,40 +10710,9 @@ def _same_workspace_file(a: str, b: str, root: str) -> bool:
 
 
 def grounded_rumination_step(gs, messages: list[dict]) -> str:
-    """The rumination notice's next-step sentence when cria can ground it, else "" (the default text).
-
-    Fires only when ALL of: the last gate is red; no file edit/write tool call of the coder's has been
-    forwarded since it (`gate_unedited`); the gate's own output has a line naming ``file:line``; and
-    `messages` — the conversation the notice is attached to — holds a read RESULT for that same path
-    (compared as paths, through cria's own read parse) whose returned lines include that line, with no
-    write-class call to the path after it. Everything stated is observed: the checker's own line is quoted
-    as stored, and nothing is said about the disk. A read the wire later reduces away is still one that
-    "was returned to you earlier", which is all the sentence says."""
-    if gs is None or not gate_unedited(gs):
-        return ""
-    flag = getattr(gs, "last_gate_flag", "") or ""
-    root = getattr(gs, "workspace_root", None) or _extract_cwd(messages) or ""
-    for raw in flag.splitlines():
-        m = _CHECK_FILE_LINE.search(raw)
-        if m is None:
-            continue
-        path, line = m.group("path"), int(m.group("line"))
-        for idx, _tid, rpath, start, end, text in _read_results_ordered(messages):
-            if not _same_workspace_file(rpath, path, root):
-                continue
-            span = _read_span(start, end, text)
-            if span is None:
-                continue
-            last = span[1] if span[1] is not None else len(text.rstrip("\n").split("\n"))
-            if not (span[0] <= line <= last):
-                continue
-            if any(wp is _ANY_PATH or _same_workspace_file(wp, path, root)
-                   for wp in _write_paths_after(messages, idx, root)):
-                continue
-            return prompts.render("rumination_next_step_grounded", finding=raw.strip(),
-                                  path=f"`{rpath}`", line=line)
-        return ""   # the first file:line the checker named is the one this speaks of
-    return ""
+    """Compatibility projection of source-owned guidance from existing facts."""
+    from . import generationguards
+    return generationguards.grounded_next_step(messages, _generation_grounding_services(gs, messages))
 
 
 _ANY_PATH = object()   # a mutation whose targets cannot be fully determined: any file may have changed
@@ -13066,123 +10773,95 @@ def _write_paths_after(messages: list[dict], idx: int, workspace_root: str | Non
                     yield from got
 
 
+@dataclass(frozen=True)
+class _ObservedCoderRetries(generationguards.RetryServices):
+    on_completion: Callable[[dict], None] | None = None
+
+    def retry(self, body, tools):
+        completion = super().retry(body, tools)
+        if self.on_completion is not None:
+            self.on_completion(completion)
+        return completion
+
+
+class _CoderReplyReceipts:
+    """Call-local facts linking actual normalized coder replies to final wire reads."""
+    def __init__(self, chat):
+        self._chat = chat
+        self.latest = {}
+        self.latest_remediation = ""
+        self._replies = []
+
+    def chat(self, body, rlog):
+        self.latest = {}
+        self.latest_remediation = ""
+        rlog.restored_on_wire = {}
+        subject = body.get(bodykeys.COMPLETION_REMEDIATION, "")
+        raw = self._chat(body, rlog)
+        self.latest = dict(getattr(rlog, "restored_on_wire", None) or {})
+        self.latest_remediation = subject
+        return raw
+
+    def record(self, completion, receipt=None, *, remediation=None):
+        self._replies.append((completion, dict(self.latest if receipt is None else receipt),
+                              self.latest_remediation if remediation is None else remediation))
+
+    def receipt(self, completion):
+        return next((dict(receipt) for reply, receipt, _ in reversed(self._replies)
+                     if reply is completion), {})
+
+    def remediation_receipt(self, completion):
+        return next((subject for reply, _, subject in reversed(self._replies)
+                     if reply is completion), "")
+
+
+def _generation_cut_services():
+    from . import generationguards
+    return generationguards.CutServices(frozenset(_WRITE_TOOLS), frozenset(writeproxy_names), _path_of_args)
+
+
+def _generation_grounding_services(gs, messages):
+    from . import generationguards
+    if gs is None:
+        return None
+    root = getattr(gs, "workspace_root", None) or _extract_cwd(messages) or ""
+    def lines():
+        for raw in (getattr(gs, "last_gate_flag", "") or "").splitlines():
+            match = _CHECK_FILE_LINE.search(raw)
+            if match is not None:
+                yield raw, match.group("path"), int(match.group("line"))
+    return generationguards.GroundedNoticeServices(
+        gate_unedited=lambda: gate_unedited(gs), gate_lines=lines,
+        reads=lambda msgs: [generationguards.ReadResult(i, path, start, end, text)
+                           for i, _tid, path, start, end, text in _read_results_ordered(msgs)],
+        read_span=_read_span,
+        same_file=lambda left, right: _same_workspace_file(left, right, root),
+        mutated_after=lambda msgs, position, path: any(
+            target is _ANY_PATH or _same_workspace_file(target, path, root)
+            for target in _write_paths_after(msgs, position, root)))
+
+
+def _generation_recovery(coder, body, coder_chat, rlog, *, step=None, phase="coder",
+                         coder_role=None, gs=None, selected=None, on_completion=None):
+    from . import generationguards
+    if selected is None:
+        selected = generationguards.SelectedGuards.from_definitions(assistruntime.current().definitions)
+    return selected.recover(
+        generationguards.RecoveryInput(coder, body, step, phase),
+        _ObservedCoderRetries(coder_chat, _parse_completion, _add_note, rlog, coder_role,
+                              on_completion=on_completion),
+        _generation_cut_services,
+        lambda: _generation_grounding_services(gs, body.get("messages") or []))
+
+
 def guard_rumination(coder: dict, body: dict, coder_chat, rlog, *, step=None, phase: str = "coder",
                      coder_role=None, gs=None) -> dict:
-    """Rumination guard (ported from codex-local §19). The streaming coder aborted this turn as
-    a reasoning loop (``finish_reason == "rumination"``) — the model was second-guessing itself
-    into the ground and would otherwise return an empty turn or run to truncation. Re-prompt to
-    pick the simplest next step and act, capped. Distinct from the truncation guard (that's a
-    cut-off WRITE; this is runaway THINKING) — they key off different finish_reasons.
-
-    ``coder_chat(body, rlog) -> bytes`` is injected so BOTH the plan loop (its watched coder
-    call) and the plan-off proxy path (a per-request watched call) run the identical guard —
-    the guards are NOT gated behind the planner; only plan-authored guidance is."""
-    attempt = 0
-    conv = list(body.get("messages") or [])
-    _last_notice = None   # the guard notice this loop appended, so a retry REPLACES it
-    _last_sent = None     # the conversation the previous attempt actually sent
-    while massage.is_ruminating(coder) and attempt < MAX_RUMINATION_RETRIES:
-        v = coder.get(bodykeys.RUMINATION) or {}
-        attempt += 1
-        # WHICH GUARD, AND ONLY ITS OWN NUMBERS — the same rule the capture header now follows, at
-        # the seat that is actually read when someone asks why a call stopped. Four backstops abort a
-        # turn and this reported the RUMINATION watcher's two counters for all of them, so a
-        # degenerate-run abort logged `hits: None, reasoning_tokens: None`. Seen live mid-cycle-4
-        # while answering exactly that question about a 194-second call.
-        which = ("degenerate" if v.get("degenerate") else
-                 "window_exhausted" if v.get("window_exhausted") else
-                 "dead_stream" if v.get("dead_stream") else "rumination")
-        counts = {"degenerate": ("chars",), "window_exhausted": ("room", "frames"),
-                  "dead_stream": ("chunks",), "rumination": ("hits", "reasoning_tokens")}[which]
-        rlog.emit("loop.rumination", step=step, attempt=attempt, guard=which,
-                  **{k: v.get(k) for k in counts})
-        # TWO detectors abort a turn, and they are not the same failure — so they do not get the same
-        # notice. The phrase watcher fires on second-guessing ("actually", "wait") and its notice says
-        # stop re-examining. The degenerate-tail backstop (upstream.py) fires on a stream that has
-        # locked into repeating one passage, where there is no second-guessing to stop. Rendering the
-        # phrase notice for it produced, five times in one walked run, "[RUMINATION GUARD] Your last
-        # reasoning pass hit 0 second-guessing phrases … after ~2048 reasoning tokens" — a stated
-        # cause of ZERO hits (self-refuting), a character count relabelled as tokens, and advice
-        # aimed at the wrong behaviour. Rule 5b: cria states the trigger it actually has.
-        # THREE detectors abort a turn now, and a third failure gets a third notice for the reason
-        # the comment above gives. A dead stream produced NOTHING — telling it to stop re-examining,
-        # or to stop repeating a passage, would name a behaviour that did not happen (5b).
-        grounded = grounded_rumination_step(gs, conv)
-        step_fill = {"rumination_next_step": grounded} if grounded else {}
-        notice = {"role": "user", "content": (
-            prompts.render("rumination_guard_window",
-                           percent=int(WINDOW_EXHAUSTED_FRACTION * 100))
-            if v.get("window_exhausted") else
-            prompts.load("rumination_guard_dead_stream") if v.get("dead_stream") else
-            prompts.load("rumination_guard_degenerate") if v.get("degenerate") else
-            # WHICH ARM FIRED. The phrase watcher and the length backstop are different failures and
-            # the notice states a cause; blaming second-guessing for a length abort is a stated cause
-            # the numbers refute — measured at densities of 2.50, 1.65, 1.28 and 0.73 per 1k against
-            # a threshold of 10.0, all four described to the model as second-guessing. The advice
-            # differed too: "just pick one and proceed" is right for a model circling a decision it
-            # can already make, and wrong for one circling because it has not read the thing it needs
-            # (feed-pipeline-java 1787436645 — `CSVParserBuilder` appears in the turn after it).
-            prompts.render("rumination_guard_length",
-                           tokens=v.get("reasoning_tokens", "many"), **step_fill)
-            if v.get("arm") == "length" else
-            prompts.render("rumination_guard", hits=v.get("hits", "several"),
-                           tokens=v.get("reasoning_tokens", "many"), **step_fill))}
-        # ONE NOTICE, REPLACED — never a stack. Each retry used to APPEND, so attempt 3 carried three
-        # copies of the same paragraph and the prompt grew with every failure. Walked on
-        # `shipping-rates-rb x ternary-bonsai` 1787111689, whose last four calls all died the same
-        # way: at `coder-s1-focus3` the model was reading the identical instruction three times over,
-        # and the system prompt and tool list between focus2 and focus3 were byte-identical — three
-        # full re-prefills that changed nothing but the length.
-        #
-        # Repetition is not emphasis (#3), and for the two failures that are ABOUT running out of
-        # room — window_exhausted and dead_stream — a longer prompt makes the next attempt more
-        # likely to fail the same way, not less.
-        conv = (conv[:-1] if attempt > 1 and conv and conv[-1] is _last_notice else conv) + [notice]
-        # AND NEVER THE SAME PROMPT TWICE. Replacing the notice instead of stacking it fixed the
-        # growth — and when two consecutive aborts come from the SAME arm the notice is the same
-        # text, so the replacement produced a byte-identical retry of the prompt that had just
-        # aborted. Measured across the log window: 0 byte-identical focus retries in the six days
-        # before the replace landed (2026-08-18), 20 of 230 (8.7%) in the five days after,
-        # 1,006,908 bytes re-sent, 3 of them on 2026-08-23. `20260823T001200` calls 0008 and 0009
-        # are 26,674 bytes each and `cmp` clean.
-        #
-        # A model that just ran itself into the ground on this exact prompt will do it again, and
-        # for the two arms that are ABOUT running out of room the retry cannot help by construction.
-        # cria has nothing new to say, so it stops saying it (#3).
-        if _last_sent is not None and conv == _last_sent:
-            rlog.emit("loop.rumination_retry_identical", level="warn", attempt=attempt,
-                      arm=v.get("arm", ""))
-            break
-        _last_sent = list(conv)
-        _last_notice = notice
-        rlog.phase = f"{phase}-focus{attempt}"
-        retry_body = {**body, "messages": conv}
-        # BREAK THE LOOP BY TAKING THE CHANNEL AWAY. A rumination abort is runaway (or empty/looping)
-        # THINKING; re-prompting with reasoning still ON lets a weak model ruminate straight into the
-        # same wall. Replay of feed-pipeline-java x ornith15 1788907072 call 0054-focus1: reasoning ON,
-        # the retry emitted a tool call 1/8; reasoning OFF, 7/8 — and it was the OFF, not the notice
-        # wording (the ORIGINAL notice worked 3/3 off). So force reasoning OFF for the RETRY ONLY.
-        # retry_body is a shallow copy of body, so chat_template_kwargs must be COPIED before the flip
-        # or the next turn inherits reasoning-off; the original body keeps the role's reasoning, so the
-        # guard is bounded and self-reverting. The documented cost — a reasoning-trained model is less
-        # accurate starved of reasoning — is the deliberate trade: on a turn otherwise producing
-        # NOTHING, an imperfect artifact to iterate on beats another empty turn (#10, #14). A coder body
-        # always carries tools, so chat_template OFF is only the enable_thinking parameter (the nothink
-        # message-prefill is gated on no-tools), never a message rewrite.
-        if coder_role is not None and getattr(coder_role, "reasoning", None) not in (None, "off"):
-            retry_body["chat_template_kwargs"] = dict(retry_body.get("chat_template_kwargs") or {})
-            reasoning.apply_reasoning(retry_body, "off", coder_role.think_protocol, rlog)
-            rlog.emit("loop.rumination_reasoning_off", attempt=attempt, guard=which,
-                      protocol=coder_role.think_protocol)
-        coder = massage.apply(
-            _parse_completion(coder_chat(retry_body, rlog)), body.get("tools"), rlog)
-    coder.pop(bodykeys.RUMINATION, None)  # internal marker — never forward it
-    for ch in coder.get("choices", []):  # normalize the sentinel finish_reason for downstream
-        if ch.get("finish_reason") == "rumination":
-            ch["finish_reason"] = "stop"
-    if attempt:  # no hidden guards: surface that the reasoning loop was broken
-        _add_note(coder, f"reasoning loop detected — aborted and refocused ({attempt}×)")
-    return coder
+    """Public runaway-only compatibility; decisions belong to the selected source."""
+    from . import generationguards
+    selected = generationguards.SelectedGuards.from_definitions(assistruntime.current().definitions)
+    return _generation_recovery(coder, body, coder_chat, rlog, step=step, phase=phase,
+                                coder_role=coder_role, gs=gs,
+                                selected=generationguards.SelectedGuards(selected.runaway, None)).completion
 
 
 def _refusal_turn(body: dict, text: str) -> None:
@@ -13196,241 +10875,16 @@ def _refusal_turn(body: dict, text: str) -> None:
 
 
 def guard_truncation(coder: dict, body: dict, coder_chat, rlog, *, step=None, phase: str = "coder") -> dict:
-    """Output-truncation guard (ported from codex-local `local_routing.rs`). The model hit
-    the output-token cap MID-generation, so any file it was writing is cut off. NEVER ship
-    that partial write: the model would re-read an "incomplete" file and rewrite it forever,
-    each rewrite truncating at the SAME cap (the file-corruption loop we watched burn a whole
-    run). Instead — when the truncation was mid-`write_file` — steer to INCREMENTAL writes
-    (first chunk via write_file, then edit_file appends) and retry, capped. If it's still cut
-    off after the retry budget (or the truncation wasn't a write), refuse the partial: drop
-    the tool call so the caller gates on ground truth rather than writing a corrupt file.
-
-    NOTE: the retry deliberately does NOT feed the model its own truncated output — the remedy
-    is 'write the file in small pieces', which starts the file over in chunks, so 'continue
-    from byte N' isn't needed (and the truncated text is unreliable anyway).
-
-    ``coder_chat`` is injected so the loop and the plan-off proxy path share ONE guard."""
-    # SELF-TRUNCATED write: the model cut its own write_file off mid-content (a normal `tool_calls`
-    # finish, not `length` — so `is_truncated` never sees it), leaving the `content` string unclosed.
-    # massage's arg-recovery refuses to salvage a partial, so the arguments are still malformed here.
-    # Refuse it the SAME way as a length-truncation: never lower a half-written file to disk. The turn
-    # then reads as non-acting and the caller gates on ground truth rather than a broken file.
-    # A cut-off response comes in TWO shapes: it hit the output cap (`is_truncated`), or it cut its OWN
-    # tool arguments off mid-string on a normal `tool_calls` finish. Both leave a half-written file that
-    # must never reach disk, and both have the SAME remedy — build the file in small pieces.
-    def _cut_off(c: dict) -> bool:
-        return massage.is_truncated(c) or massage.has_incomplete_tool_args(c)
-
-    if not massage.is_truncated(coder) and massage.has_incomplete_tool_args(coder) \
-            and _cut_target(coder)[2] is None:
-        # Not a write (e.g. a shell command with inline code) — there is nothing to chunk, so refuse it.
-        rlog.emit("loop.incomplete_tool_call_dropped", step=step)
-        also = _also_withheld(coder)   # named BEFORE the calls are dropped
-        _drop_tool_calls(coder)
-        _add_note(coder, "tool call was cut off mid-arguments — partial call refused")
-        # ...and tell the MODEL too: _add_note is a ⟦cria⟧ human indicator, stripped before the model,
-        # so a refusal reported only there is invisible to the coder — its call just vanishes.
-        _refusal_turn(body, prompts.load_map("call_refused")["incomplete_args"] + also)
-        return coder
-    attempt = 0
-    conv = list(body.get("messages") or [])
-    while _cut_off(coder) and attempt < MAX_TRUNCATION_RETRIES:
-        # a self-cut reply is cut in ITS cut call, whatever the family — not in the first write it carries
-        path = _truncated_write_path(coder) if massage.is_truncated(coder) else _cut_target(coder)[2]
-        also = _also_withheld(coder)
-        out_tok = _output_tokens(coder)
-        # A SELF-cut write used to fall out here with only a ⟦cria⟧ note — which is HUMAN-facing and
-        # stripped before the model, so the coder was told nothing at all: its write silently never
-        # landed and it re-sent the same oversized write. Observed live (run 0726-133755): 7 self-cut
-        # writes, 81 calls, empty workspace. It gets the same real remedy the cap-truncation gets,
-        # worded truthfully for what actually happened (it stopped itself; it did not hit the cap).
-        selfcut = not massage.is_truncated(coder)
-        rlog.emit("loop.truncated", steer="truncation", step=step, attempt=attempt + 1, path=path,
-                  output_tokens=out_tok, selfcut=selfcut)
-        if path is None:
-            break  # not a mid-write truncation → the write steer doesn't apply; refuse below
-        attempt += 1
-        rlog.phase = f"{phase}-continue{attempt}"
-        whole = _whole_file_cut(coder)
-        remedy = ((prompts.render("truncation_guard_selfcut", path=_cut_target(coder)[2] or path,
-                                  also=also) if whole else
-                   prompts.fill(prompts.load_map("truncation_withheld")["selfcut"],
-                                tool=_cut_target(coder)[0], path=_cut_target(coder)[2] or path,
-                                also=also)) if selfcut else
-                  _length_cut_notice(coder, path, out_tok))
-        conv = conv + [{"role": "user", "content": remedy}]
-        coder = massage.apply(
-            _parse_completion(coder_chat({**body, "messages": conv}, rlog)), body.get("tools"), rlog)
-    dropped = _cut_off(coder)
-    if dropped:
-        # Exhausted (or a non-write truncation): do NOT forward the partial write — a cut-off
-        # write_file lowered to disk is exactly the corruption. Drop the tool call; the turn then
-        # reads as non-acting and the caller gates on ground truth rather than a corrupt file.
-        rlog.emit("loop.truncated_dropped", step=step)
-        # EVERYTHING THE CLOSING REFUSAL SAYS DESCRIBES THE REPLY BEING DROPPED — the one the loop
-        # never examined when retries ran out (the reply to the last retry), not an earlier pass.
-        # Read it here, before the calls are gone.
-        selfcut = not massage.is_truncated(coder)
-        _closing_target = _cut_target(coder)[2] if selfcut else _truncated_write_path(coder)
-        # WRITE-NESS IS A FACT ABOUT THE DROPPED REPLY, by the cut call's family — a path may be lost to
-        # a cut ('{"pa'), a family is not. An earlier pass's write says nothing about this reply.
-        was_write = (_closing_target is not None
-                     or (_cut_target(coder)[0] in _WRITE_TOOLS if selfcut
-                         else any(n in _WRITE_TOOLS for n, _a in _cut_off_calls(coder))))
-        _closing_whole = was_write and _whole_file_cut(coder)
-        _closing_also = _also_withheld(coder)
-        _drop_tool_calls(coder)
-    coder.pop(bodykeys.RUMINATION, None)  # a retry may itself ruminate — never forward the marker
-    for ch in coder.get("choices", []):
-        if ch.get("finish_reason") == "rumination":
-            ch["finish_reason"] = "stop"
-    if dropped:  # no hidden guards: the partial write was refused
-        # SAY WHICH IT WAS. The retry remedy already distinguishes a self-cut from a cap; these two
-        # closing messages did not, so the model got the correct diagnosis on the retry and "your
-        # response hit the output limit" on exhaustion — cria contradicting itself about one event.
-        # Measured (run 0727-145921): 17 truncations, ALL self-cuts. It matters: told it hit a limit,
-        # a model shrinks its content, and a generation that ended early is not fixed by being shorter.
-        # …AND SAY WHICH THING IT WAS, TOO. Both wordings above assert a WRITE. When
-        # `_truncated_write_path` found none, the loop breaks out at `path is None` — cria's own
-        # finding that this was not a write — and then fell into the write wording regardless.
-        # Measured over five days: all 17 truncations had `path is None`, so 17 of 17 told the model
-        # its last write was refused and that it stopped "partway through writing the file" (#5b).
-        key = (("selfcut_write" if _closing_whole else "selfcut_edit") if selfcut else
-               "truncated_write") if was_write else "truncated_call"
-        _add_note(coder, ("reply incomplete — actions withheld" if generation.incomplete(coder) else
-                          "output stopped early mid-write — partial write refused (retry in smaller pieces)"
-                          if was_write and selfcut else
-                          "output hit the token limit — partial write refused (retry in smaller pieces)"
-                          if was_write else
-                          "output ended before the call was complete — partial call refused"))
-        _refusal_turn(body, prompts.load("generation_incomplete_refused") if generation.incomplete(coder)
-                      else prompts.load_map("call_refused")[key] + _closing_also)
-        # WHICH SENTENCE WENT OUT, in the event that produced it (#12). The `path`/`selfcut` fields on
-        # `loop.truncated` describe the DETECTION; nothing recorded the wording, so the incident this
-        # branch was written for — 17 of 17 truncations telling the model its WRITE was refused when
-        # cria's own `path is None` said it was not a write — was invisible in the log and had to be
-        # reconstructed from prompt captures. Now it is one field.
-        rlog.emit("loop.truncated_refused", step=step,
-                  wording="generation_incomplete_refused" if generation.incomplete(coder) else key,
-                  classification=key, was_write=was_write)
-    elif attempt:  # recovered after steering to incremental writes
-        _add_note(coder, f"steered to incremental writes ({attempt}×)")
-    return coder
-
-
-def _cut_off_calls(completion: dict) -> list[tuple[str, str]]:
-    """(tool name, raw arguments) of every call the reply carried — live ``tool_calls`` plus the
-    prefixes the V4 wire retains as evidence once the calls are withheld at a length stop."""
-    calls = [tc.get("function") or {} for ch in completion.get("choices", [])
-             for tc in (ch.get("message") or {}).get("tool_calls") or []]
-    for prefix in (completion.get(generation.EVIDENCE) or {}).get("call_prefixes", []):
-        calls.append({"name": prefix.get("name"), "arguments": prefix.get("arguments")})
-    return [(str(fn.get("name") or ""), fn.get("arguments") or "") for fn in calls]
-
-
-def _args_complete(args: str) -> bool:
-    try:
-        return isinstance(json.loads(args), dict)
-    except (ValueError, TypeError):
-        return False
-
-
-def _cut_target(coder: dict) -> tuple[str, str, str | None, bool, int]:
-    """(tool name, raw arguments, write path or None, arguments-complete, position) of THE call a
-    length/self-cut stop cut, whatever its family: the LAST call whose own arguments are incomplete,
-    else the last call (a reply that stops at the limit stops inside its last call). Not the first — a
-    reply may carry a complete edit followed by the call that was actually cut. ``path`` is None when
-    that call is not a write-family call."""
-    calls = _cut_off_calls(coder)
-    if not calls:
-        return "", "", None, False, -1
-    cut = [i for i, (_n, a) in enumerate(calls) if not _args_complete(a)]
-    i = (cut or [len(calls) - 1])[-1]
-    n, a = calls[i]
-    path = _path_of_args(a, patch_ok=n == "apply_patch") if n in _WRITE_TOOLS else None
-    return n, a, path, _args_complete(a), i
-
-
-def _whole_file_cut(coder: dict) -> bool:
-    """True only when the cut call is a whole-file write tool whose OWN arguments were cut off — the one
-    case the 'build it in small pieces' advice is true of."""
-    name, _args, _path, complete, _i = _cut_target(coder)
-    return name in writeproxy_names and not complete
-
-
-def _describe_withheld(name: str, args: str, path: str | None) -> str:
-    where = f" on `{path}`" if path else ""
-    state = "arguments complete" if _args_complete(args) else "arguments cut off at the limit"
-    return f"`{name}`{where} ({len(args)} characters, {state})"
-
-
-def _describe_call(name: str, args: str) -> str:
-    return _describe_withheld(name, args, _path_of_args(args, patch_ok=name == "apply_patch")
-                              if name in _WRITE_TOOLS else None)
-
-
-def _also_withheld(coder: dict) -> str:
-    """The sentence naming every call in the reply OTHER than the cut one — by position, so a call whose
-    name and arguments equal the cut call's is still listed. Empty when the cut call was alone."""
-    idx = _cut_target(coder)[4]
-    others = [_describe_call(n, a) for i, (n, a) in enumerate(_cut_off_calls(coder)) if i != idx]
-    return prompts.fill(prompts.load_map("truncation_withheld")["also"],
-                        others="; ".join(others)) if others else ""
-
-
-def _length_cut_notice(coder: dict, path: str, out_tok: int | None) -> str:
-    """The model-facing notice for a reply that reached the output limit with write-family calls in it,
-    built from what was MEASURED about that reply (#5b): EVERY withheld call (tool, path, whether its own
-    arguments were complete or cut), how many tokens the reply used, and how many characters of text were
-    delivered. The 'build it in small pieces' advice is true ONLY when the CUT call is a whole-file write
-    whose own content overflowed — an edit, or calls that finished their arguments, get the notice that
-    says so (observed: a complete 1.4K edit_file after a long prose lead was called a cut-off whole-file
-    write; and a complete edit followed by a cut write_file was described as the edit alone)."""
-    used = f"{out_tok} tokens" if out_tok else "the output-token limit"
-    name, _args, cut_path, _complete, _i = _cut_target(coder)
-    if _whole_file_cut(coder):
-        return prompts.render("truncation_guard", path=cut_path or path, limit=used, tool=name,
-                              also=_also_withheld(coder))
-    prose = sum(len(str((ch.get("message") or {}).get("content") or "")) for ch in coder.get("choices", []))
-    calls = "; ".join(_describe_call(n, a) for n, a in _cut_off_calls(coder))
-    return prompts.fill(prompts.load_map("truncation_withheld")["withheld"], used=used, prose=prose, calls=calls)
+    """Public cut-only compatibility; recovery and refusal are source-owned."""
+    from . import generationguards
+    selected = generationguards.SelectedGuards.from_definitions(assistruntime.current().definitions)
+    return _generation_recovery(coder, body, coder_chat, rlog, step=step, phase=phase,
+                                selected=generationguards.SelectedGuards(None, selected.truncation)).completion
 
 
 def _truncated_write_path(completion: dict) -> str | None:
-    """The path of a file the model was writing when it hit the token cap, read from the
-    (possibly cut-off) tool-call arguments. Same lenient extraction as _path_of_args — a
-    truncated response can leave the args as invalid JSON, and alias-keyed writes
-    (file_path/file) must keep their incremental-write steer too."""
-    calls = [tc for ch in completion.get("choices", [])
-             for tc in (ch.get("message") or {}).get("tool_calls") or []]
-    evidence = completion.get(generation.EVIDENCE) or {}
-    for prefix in evidence.get("call_prefixes", []):
-        calls.append({"function": {"name": prefix.get("name"), "arguments": prefix.get("arguments")}})
-    for tc in calls:
-        fn = tc.get("function") or {}
-        if fn.get("name") not in _WRITE_TOOLS:
-            continue
-        # same patch_ok gate as _write_path: a truncated write_file whose CONTENT contains
-        # patch-example text must not steer the coder to a file it never touched
-        p = _path_of_args(fn.get("arguments") or "", patch_ok=fn.get("name") == "apply_patch")
-        if p:
-            return p
-    return None
-
-
-def _output_tokens(completion: dict) -> int | None:
-    """The completion-token count the server reported for this response (when present)."""
-    n = (completion.get("usage") or {}).get("completion_tokens")
-    return n if isinstance(n, int) else None
-
-
-def _drop_tool_calls(completion: dict) -> None:
-    """Strip tool calls from a completion in place (used to REFUSE a truncated/partial write so
-    it never reaches the writeproxy → disk). The turn then reads as non-acting and the loop gates
-    on ground truth. A length stop remains incomplete through the harness wire."""
-    generation.safe_completion(completion)
-    for ch in completion.get("choices", []):
-        (ch.get("message") or {}).pop("tool_calls", None)
+    """Compatibility reader using the canonical cut policy's factual services."""
+    return generationguards.truncated_write_path(completion, _generation_cut_services())
 
 
 def _read_tool_result(messages: list[dict], call_id: str) -> str:

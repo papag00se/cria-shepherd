@@ -7,6 +7,21 @@ schema plus a conversation that grows without bound. cria cannot rely on the har
 compact — many can't, and it isn't cria's to configure. So cria enforces the window
 itself, here, on the final outbound body, operating on nothing but ``{messages, tools}``.
 
+Source contract: ``fit`` is ONE required wire-fit foundation (canonical family F68),
+not a set of independently selectable steering policies. It owns the complete pressure
+lifecycle: schema compression, caller-span/restored-text/output reduction, history dropping,
+labelled replacement notes, pair cleanup, and honest residual-overflow reporting. The helpers
+share one budget and preservation contract; none judges task relevance or fires without size
+pressure. Replacement labels and protection are obligations of fitting, not optional assists.
+
+Required means indivisible WHEN invoked, not enabled at every engagement level. The final
+``Upstream._prep`` owns activation and remains the sole fitting boundary: its existing L0–L2
+pass-through and unknown-window behavior are unchanged. No per-helper or disabled mode is
+supported by ``fit``; unsupported keyword combinations fail rather than bypassing fitting.
+``FloorReport.over_budget`` is a non-acceptance signal, never permission to send invalid input.
+Wire role/privacy integrity and other source-owned steering stages retain their own boundaries.
+This classification does not certify each legacy reduction as lossless or effective.
+
 Four levers, in order (cheapest / most-lossless first), mirroring codex-local's
 ``enforce_token_budget`` (docs/spec/compaction-reference.md, content-reduce.md):
 
@@ -315,7 +330,14 @@ def fit(messages: list[dict], tools, *, window: int, reserve: int,
     ``tools`` schema and a generation ``reserve``). Pure — does not mutate the inputs;
     reduced/dropped messages and compressed tools are new objects. ``safety`` inflates the
     chars/4 estimate to approximate real tokens; the caller raises it (via a real /tokenize
-    measurement) for dense base64/code requests where chars/4 badly underestimates."""
+    measurement) for dense base64/code requests where chars/4 badly underestimates.
+
+    Required foundation contract: all pressure reductions below belong to this one fit
+    lifecycle, with unchanged ordering, labels, callable schemas and protection rules.
+    No reduction can be independently disabled here. A fitting input is unchanged; an
+    irreducible overflow is returned with ``report.over_budget=True``, NOT declared fit.
+    Activation and final serialization/refusal remain the caller's wire responsibility.
+    """
     rep = FloorReport(window=window, reserve=reserve, reserve_requested=reserve)
     if not isinstance(messages, list) or not messages or window <= 0:
         rep.tool_tokens = rep.tool_tokens_before = est_tokens(json.dumps(tools)) if tools else 0

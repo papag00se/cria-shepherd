@@ -1009,6 +1009,7 @@ Add tests, including at least one test that makes a real request to api.handle.m
 
     def test_c22_ready_replay_starts_a_plan_session_and_coder_s1(self):
         """CALL0039's runner-bearing plan plus CALL0040 READY must reach the coder."""
+        from tests.test_loop import _enable_test_planning
         from cria.config import Role
         from cria.loop import Loop, LoopContext
 
@@ -1086,8 +1087,8 @@ Add tests, including at least one test that makes a real request to `api.handle.
             token = wsview.bind(view)
             try:
                 rlog = _Rlog()
-                loop = Loop(LoopContext(planner=planner_for("TEST_EXECUTION_PATH_READY"),
-                                        coder_chat=coder, reasoner_chat=lambda *_: b"", runs_dir=""))
+                loop = Loop(_enable_test_planning(LoopContext(planner=planner_for("TEST_EXECUTION_PATH_READY"),
+                                        coder_chat=coder, reasoner_chat=lambda *_: b"", runs_dir="")))
                 with patch("cria.planner.urlgrounding.ungrounded_urls", return_value=[]):
                     completion = loop.drive(body, "c22-ready", type("Task", (), {
                         "engagement": "task", "task_type": "coding", "cached": False})(), rlog)
@@ -1101,22 +1102,22 @@ Add tests, including at least one test that makes a real request to `api.handle.
                 self.assertIn(session.plan.items[0].text, json.dumps(coder_bodies[0]))
 
                 missing_coder_bodies = []
-                missing_loop = Loop(LoopContext(
+                missing_loop = Loop(_enable_test_planning(LoopContext(
                     planner=planner_for("MISSING_TEST_EXECUTION_PATH"),
                     coder_chat=lambda body, _rlog: (missing_coder_bodies.append(body),
                                                     json.dumps(_tool_resp("shell", {"command": "pwd"})).encode())[1],
-                    reasoner_chat=lambda *_: b"", runs_dir=""))
+                    reasoner_chat=lambda *_: b"", runs_dir="")))
                 missing_rlog = _Rlog()
                 with patch("cria.planner.urlgrounding.ungrounded_urls", return_value=[]):
                     missing = missing_loop.drive(body, "c22-missing", type("Task", (), {
                         "engagement": "task", "task_type": "coding", "cached": False})(), missing_rlog)
 
                 not_applicable_coder_bodies = []
-                not_applicable_loop = Loop(LoopContext(
+                not_applicable_loop = Loop(_enable_test_planning(LoopContext(
                     planner=planner_for("NOT_APPLICABLE"),
                     coder_chat=lambda body, _rlog: (not_applicable_coder_bodies.append(body),
                                                     json.dumps(_tool_resp("shell", {"command": "pwd"})).encode())[1],
-                    reasoner_chat=lambda *_: b"", runs_dir=""))
+                    reasoner_chat=lambda *_: b"", runs_dir="")))
                 not_applicable_rlog = _Rlog()
                 with patch("cria.planner.urlgrounding.ungrounded_urls", return_value=[]):
                     not_applicable = not_applicable_loop.drive(body, "c22-not-applicable", type("Task", (), {

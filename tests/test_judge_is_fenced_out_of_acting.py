@@ -71,6 +71,7 @@ class TheJudgeGetsNamesNotSignatures(unittest.TestCase):
         as "all sites checked" when it means "the sites I could see". Found by the test audit of
         2026-08-19; fixed with it."""
         import unittest.mock
+        from cria.assistruntime import AssistRuntime
         from cria.loop import Loop, PlanSession
         from cria.plan import Plan, PlanItem
 
@@ -79,6 +80,8 @@ class TheJudgeGetsNamesNotSignatures(unittest.TestCase):
                 pass
 
         class _Ctx:
+            planner_enabled = True
+            pilot_runtime = AssistRuntime.select(experimental_planning=True)
             reasoner_chat = object()
             reasoner_role = object()
             satisfaction_check_start = 80

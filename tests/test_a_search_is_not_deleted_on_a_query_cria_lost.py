@@ -156,13 +156,17 @@ class TheWebSessionIsRecordedOnEveryDriverTests(unittest.TestCase):
         lp._ctx = types.SimpleNamespace(planner_enabled=False, planner=None, workspace_root="")
         lp._store = types.SimpleNamespace(get=lambda k: sess, put=lambda k, v: None,
                                           clear_rewrite=lambda k: None, shape_done=lambda k: False,
-                                          observe_shape=lambda *a, **k: (False, 0))
+                                          observe_shape=lambda key, fp, n_messages: False,
+                                          observe_shape_with_ticket=lambda key, fp, n_messages: None)
 
-        def _single(s, body, key, rlog, rewritten=False):
+        def _single(s, body, key, rlog, *, rewritten=False, rewrite_observation):
+            self.assertFalse(rewritten)
+            self.assertIsNone(rewrite_observation)
             seen["single"] = s.web_session
             return {"ok": True}
 
         def _work(s, key, body, rlog, rewritten=False):
+            self.assertFalse(rewritten)
             seen["work"] = s.web_session
             return {"ok": True}
 

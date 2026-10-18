@@ -126,7 +126,8 @@ def test_chunks_and_assignment_segments_cover_partial_bytes_with_whole_prompts(t
     assert manifest["segments"][1]["oversized"] is True
     assert "OVERSIZED chunk02.txt" in stdout
     assert "PAGE IT" in stdout
-    assert "OVERSIZED" in (outdir / "WALK-PLAN.md").read_text()
+    assert not (outdir / "WALK-PLAN.md").exists()
+    assert not list((outdir / "findings").iterdir())
 
 
 def test_utf8_bytes_not_character_count_decide_chunk_and_segment_boundaries(tmp_path):

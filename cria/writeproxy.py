@@ -28,171 +28,178 @@ import json
 import os
 import re
 from dataclasses import dataclass
-from pathlib import Path
 from shlex import quote as _qbash  # one bash-quoting rule (was a hand-rolled _qbash)
 
-from . import bodykeys, brave, denial, depsurface, dirguard, editrecovery, prompts, webfetch, wsview
-from .probegate import GATE_SENTINEL
+from . import bodykeys, brave, denial, depsurface, dirguard, editrecovery, prompts, webfetch, wsview, toolstages
+from .toolstages import LoweringRequest, OutboundCall, ShellCommand, ReturnedResult, ReturnedHistory
+from .returnedpolicies import (_rejected_payload_note, _collapse_rejected_payload,
+                               _render_dependency_surface, _found_nothing, _blind_pipe_failure)
+from .outboundpolicies import _external_refusal, _spill_read_command
+from .shrinkprotection import ShrinkServices, wrap_finding
 from . import content_reduce as content_reduce_mod
 from . import probeparse
 from . import proberun
-from .config import CRIA_HOME
+from .privatepaths import CRIA_HOME
 from .shelltool import _CMD_FIELDS, is_shell_tool_name, shell_args
 from .toolargs import PATH_KEYS as _PATH_KEYS, parse_args as _parse, tool_path as _tool_path
+from . import filecommands
+# Canonical pure helpers; transport/service composition remains in this facade.
+from .callliterals import (
+    _FUSED_TAIL_MAX_LINES, _PROTOCOL_TAG_LINE, _protocol_debris, trim_fused_tail,
+    _TC_DEBRIS, _has_tc_debris, _ESCAPES, _repair_double_escaped, _decode_backslash_escapes)
+from .filecommands import (
+    _WRITE_NAMES, _EDIT_NAMES, _READ_NAMES, _LIST_NAMES, _FileMutation, _prepare_file_mutation,
+    _targets_cria_home, _guarded_path, READ_INLINE_MAX, _ranged_read, _read_failure_branches,
+    _read_command, _read_in_place_of_write)
+from .toolwire import (
+    REFUSED_EXIT_CODE, _oversize_command, _refusal_command, _SENTINEL, _SENTINEL_LINE, _WROTE,
+    _sentinel, _shell_call, _b64, REMOVAL_FACTS, _RIDE_ALONG_HOST_RESERVE,
+    _RIDE_ALONG_COMMAND_RESERVE, _command_of, is_crias_own, original_call, _read_sentinel,
+    GATE_SENTINEL)
+_STORED_MARKER = '⟦ctx:stored⟧'
 
-# A tool-protocol tag line, any dialect seen in captures: XML-ish (</tool_call>, <function=...>,
-# <parameter=...>), gemma pipes (<|tool_call>, <tool_call|>, <|channel>thought), bare <think> forms.
-# How far back a fused call's ARGUMENT may run before the protocol tags that opened it. A second call
-# carries a path, a command, or a short body; a whole file does not.
-_FUSED_TAIL_MAX_LINES = 40
-
-# THE OPENERS CARRY AN `=`, AND THAT IS WHAT MAKES THEM PROTOCOL. `<function=exec_command>` and
-# `<parameter=cmd>` are the dialect; `<parameter>` and `<function>` without one are ordinary XML
-# element names, and `<parameter>` is a real Maven POM element.
-#
-# The old pattern was `</?(?:…|parameter|…)\b[^\n]*?>?\s*$`, whose lazy middle swallows the rest of
-# the line — so `<parameter>Main-Class=pipeline.Importer</parameter>`, three lines of valid POM XML,
-# classified as debris. Walked on feed-pipeline-java x gemma4 call 0054: the model sent five lines of
-# a `<transformers>` block, cria delivered two, and then told it "your edit would break pom.xml —
-# mismatched tag: line 54". Its `old_string` (which says `<parameters>`, plural, and so did not
-# match) came back intact beside a truncated `new_string`, so the model read itself as having sent a
-# short replacement for a complete original. At 0056 it renamed the tag that was never wrong.
-#
-# Rule 5 and rule 5b in one turn: model output shortened, and cria stating a false fact about the
-# model's own call. Measured over every firing in the captures: 65 of 77 cuts remove a genuine fused
-# call and every one of those uses the dialect form, so requiring the `=` costs none of them.
-_PROTOCOL_TAG_LINE = re.compile(
-    r"^\s*(?:</?tool_call>"                       # <tool_call> / </tool_call>
-    r"|<(?:function|parameter)=[^>\n]*>"           # the dialect's openers, which carry the `=`
-    r"|</(?:function|parameter)>"                  # and their closers
-    r"|</?think>|</?channel>"
-    r"|<\|[^|>\n]+\|?>|<[a-z_]+\|>)\s*$")
+from .resultnotes import (
+    _ENVELOPE_OUTPUT_LINE, _ENVELOPE_ADVISORY, _ENVELOPE_CUT_WARNING, _EXIT_CODE,
+    _strip_exec_envelope, _noted, _digest, append_note, payload_of, _workspace_ecosystem,
+    probegate_marker_in)
 
 
-def _protocol_debris(content: str) -> bool:
-    """True when write content is a fused call's DEBRIS: at least one protocol-tag line, and every
-    other non-empty line a bare single token (the path the next call carried). Real file content —
-    even code that mentions these tags inside string literals with normal multi-word lines — never
-    classifies: one real line of prose or code defeats it."""
-    lines = [ln for ln in (content or "").splitlines() if ln.strip()]
-    if not lines:
-        return False
-    tags = [ln for ln in lines if _PROTOCOL_TAG_LINE.match(ln)]
-    if not tags:
-        return False
-    return all(len(ln.split()) == 1 for ln in lines if ln not in tags)
+@dataclass
+class ExternalizationOffer:
+    """Invocation authority plus required transport correlation, never a storage claim."""
+    owner: object
+    source: object
+    delivery: object
+    call_id: str
+    original_arguments: str
+    operation: str
+    original_name: str
+    lowered_arguments: str | None = None
+    lowered_name: str | None = None
+    lowered_type: str | None = None
+    retained: bool = False
 
 
-def trim_fused_tail(content: str) -> str:
-    """Real file content with a fused call's debris stuck to its END, cut back to the real content.
+def _externalize_coder(source: OutboundCall) -> str:
+    from . import externalization as e
+    request, args = source.request, source.arguments
+    definition, owner = request.externalization_definition, request.externalization_owner
+    search = source.name == 'web_search'
+    cid = str(source.call.get('id') or '')
+    arguments = source.function.get('arguments')
+    prior = (getattr(owner, 'externalization_offers', None) or {}).get(cid) if owner is not None else None
+    if (prior is not None and prior.original_arguments == arguments
+            and prior.original_name == source.name and prior.delivery.owner is definition):
+        return prior.delivery.result.payload
+    if prior is not None:
+        prior.delivery.cancel()
+        owner.externalization_offers.pop(cid, None)
+    inline = (_search_command(args, request.brave_key) if search else
+              _fetch_command(args, request.session, request.workspace_root))
+    if definition is None:
+        return inline
+    state = getattr(owner, 'externalization_state', None) if owner is not None else None
+    if state is None:
+        state = e.State()
+        if owner is not None:
+            owner.externalization_state = state
+    operation = uuid.uuid4().hex
+    if search:
+        target = webfetch.search_spill_name(str(args.get('query') or ''))
+        program = definition.search_program(content_reduce_mod.INLINE_RESULT_MAX_BYTES)
+        detect = lambda: e.SearchOffer(target, program)
+        offer = lambda spill: _search_command(args, request.brave_key, search_offer=spill, operation=operation)
+        record = lambda spill: webfetch.note_search_spill(request.session, str(args.get('query') or ''), spill.target)
+    else:
+        url = str(args.get('url') or '')
+        def cached(value):
+            found = webfetch._DOC_CACHE.get(value)
+            if found is None:
+                return None
+            def render():
+                _status, target, content, pointer = webfetch.render_cached_spill(
+                    value, found, _guidance=request.document_guidance)
+                return e.Spill(target, content, pointer)
+            return e.FetchFacts(len(found[2]), render)
+        services = e.FetchServices(webfetch.OVERSIZE_CHARS, cached,
+            lambda: webfetch.already_spilled(request.session, url, request.workspace_root))
+        cursor = None if args.get('raw') else args.get('cursor')
+        detect = lambda: e.coder_fetch(url, find=args.get('find') or None,
+                                      cursor=cursor or None, services=services)
+        offer = lambda spill: _spill_command(spill.target, spill.content, spill.pointer,
+                                             operation=operation)
+        def record(spill):
+            written = (os.path.join(request.workspace_root, spill.target.lstrip('./'))
+                       if request.workspace_root else '')
+            webfetch.note_fetch_spill(request.session, url, written)
+    value = e.Input(operation, inline, e.Services(detect, offer, record))
+    delivery = e.selected_externalization(definition, value, state)
+    if owner is not None and delivery.result.spill is not None:
+        pending = ExternalizationOffer(owner, value, delivery, cid, arguments, operation, source.name)
+        if owner.externalization_offers is None:
+            owner.externalization_offers = {}
+        owner.externalization_offers[cid] = pending
+    return delivery.result.payload
 
-    `_protocol_debris` answers the all-or-nothing case — content that is NOTHING but protocol tags —
-    and correctly says no when a genuine file has the tags appended to it. That is the expensive
-    case. Walked on cycle 4 cell 22 (`feed-pipeline-java x nemotron-elastic`, 5% useful): the model
-    omitted `</parameter>` and opened a second call in the same turn, so every `pom.xml` it sent
-    ended
 
-        </project>
-        </function>
-        </tool_call>
-        <tool_call>
-        <function=write_file>
-        <parameter=path>
-        src/main/java/pipeline/Importer.java
-
-    cria refused it eight times as malformed XML at "line 34, column 1" — which is exactly where the
-    junk began — and the model, unable to re-read its own rejected payload, re-derived the identical
-    file by hand and was refused again. It escaped only by switching to `edit_file`, which then put a
-    `<dependency>` block outside `<dependencies>` and left the project unreadable by Maven.
-
-    cria already knows these sentinels: `massage._LEAK_DEBRIS` lists them as tokens that NEVER appear
-    in legitimate prose, and `massage._bounded_xml_params` cuts them out of arguments cria itself
-    parses. This is the same knowledge applied where a SERVER-parsed tool call delivered them instead.
-
-    ONLY A TAIL, and only one made entirely of tags and bare tokens: a file whose real lines merely
-    MENTION a tag (a leak-detector's own source, say) has multi-word lines all the way down and is
-    returned untouched, which is the same distinction `_protocol_debris` already draws."""
-    lines = (content or "").splitlines()
-    cut = len(lines)
-    saw_tag = False
-    for i in range(len(lines) - 1, -1, -1):
-        ln = lines[i]
-        if not ln.strip():
+def retain_externalizations(owner, completion) -> None:
+    """Only final retained exact lowered calls earn offer retention, never storage."""
+    calls = {str(tc.get('id') or ''): tc for choice in completion.get('choices', [])
+             for tc in (choice.get('message') or {}).get('tool_calls') or []}
+    for cid, offer in (getattr(owner, 'externalization_offers', None) or {}).items():
+        if not isinstance(offer, ExternalizationOffer):
             continue
-        # THE BOUND APPLIES ALWAYS, and it did not. It read `if not saw_tag and …`, so the moment one
-        # tag was found the scan lost its limit and walked to the top of the file — the cut then
-        # landing on the EARLIEST tag-shaped line anywhere, not on the start of the trailing junk.
-        # The docstring says "ONLY A TAIL" and the comment below claims the bound "keeps it to an
-        # argument's worth of lines rather than the whole file"; neither was true after the first
-        # tag. A 205-line file with one tag-shaped line near the top came back as two lines.
-        if (len(lines) - i) > _FUSED_TAIL_MAX_LINES:
-            break
-        if _PROTOCOL_TAG_LINE.match(ln):
-            saw_tag, cut = True, i     # the cut may only ever land ON a tag
+        call = calls.get(cid)
+        if (offer.owner is owner and call is not None and offer.lowered_arguments is not None
+                and call.get('type') == offer.lowered_type
+                and (call.get('function') or {}).get('name') == offer.lowered_name
+                and (call.get('function') or {}).get('arguments') == offer.lowered_arguments):
+            offer.retained = True
+
+
+def observe_externalization_results(owner, messages) -> None:
+    """Read checked producer facts from raw exact paired transport, before representation."""
+    from . import externalization as e
+    calls = {}
+    offers = getattr(owner, 'externalization_offers', None) or {}
+    for message in messages:
+        if message.get('role') == 'assistant':
+            calls.update({str(call.get('id') or ''): call for call in message.get('tool_calls') or []})
+        if message.get('role') != 'tool':
             continue
-        # A VALUE LINE IS SCANNED PAST but never becomes the cut. Both ends of the debris need this
-        # and for opposite reasons: it trails the tags (the next call's argument, met first going
-        # backwards), and it also precedes them in ordinary markup (`</project>`, `}`), where cutting
-        # at it would eat the file. Only a tag marks where the junk starts.
-        #
-        # ANY value, not just a bare token. The single-token rule fitted the walked case, where the
-        # fused second call was a `write_file` and its `path` is one word — and missed the same
-        # failure when the second call is an `exec_command`, because `mvn -q compile` is three words
-        # and the scan broke on it before it ever met a tag. Verified against the four captured
-        # payloads from feed-pipeline-java x nemotron-elastic 1787436645: all four returned unchanged,
-        # cria refused its own write four times as malformed XML pointing at `line 34: </function>`,
-        # and the model could not see the payload it had sent.
-        #
-        # This is safe because `_PROTOCOL_TAG_LINE` matches only tokens that never appear in real
-        # content — `</function>`, `<tool_call>`, `<parameter=…>` — so a file with no fused call has
-        # no tag to find and comes back untouched however far the scan walks. The bound keeps it to
-        # an argument's worth of lines rather than the whole file.
-        continue
-    if not saw_tag or cut == 0:
-        return content          # nothing to cut, or the whole thing is debris (that is _protocol_debris)
-    return "\n".join(lines[:cut]).rstrip("\n") + "\n"
-
-
-_WRITE_NAMES = {"write_file", "create_file"}
-_EDIT_NAMES = {"edit_file", "str_replace"}
-_READ_NAMES = {"read_file"}
-_LIST_NAMES = {"list_dir"}
-
-
-@dataclass(frozen=True)
-class _FileMutation:
-    path: str
-    content: str = ""
-    old: str = ""
-    new: str = ""
-    error: str = ""
-
-
-def _prepare_file_mutation(name: str, args: dict) -> _FileMutation:
-    """F13: validate required values before lowering; empty is an explicit value.
-
-    Whole writes accept the legacy contents alias only when content is absent/null.
-    Exact edits require both snippets, and an empty old snippet names no place.
-    Preserve real falsy values as text, not an accidental deletion/empty write.
-    This prepares arguments only: syntax, debris and candidate safety keep their
-    separate owners and cannot be inferred from argument validity.
-    """
-    path = _tool_path(args) or ""
-    if not path:
-        return _FileMutation(path, error="path")
-    if name in _WRITE_NAMES:
-        body = args.get("content")
-        if body is None:
-            body = args.get("contents")
-        return (_FileMutation(path, error="content") if body is None
-                else _FileMutation(path, content=str(body)))
-    if args.get("old_string") is None:
-        return _FileMutation(path, error="old_string")
-    if args.get("new_string") is None:
-        return _FileMutation(path, error="new_string")
-    if args["old_string"] == "":
-        return _FileMutation(path, error="empty_old_string")
-    return _FileMutation(path, old=str(args["old_string"]), new=str(args["new_string"]))
+        cid = str(message.get('tool_call_id') or '')
+        offer, call = offers.get(cid), calls.get(cid)
+        if (not isinstance(offer, ExternalizationOffer) or offer.owner is not owner or not offer.retained or call is None
+                or call.get('type') != offer.lowered_type
+                or (call.get('function') or {}).get('name') != offer.lowered_name
+                or (call.get('function') or {}).get('arguments') != offer.lowered_arguments):
+            continue
+        content = message.get('content')
+        if not isinstance(content, str):
+            continue
+        exit_match = _EXIT_CODE.search(content)
+        if exit_match is not None and int(exit_match.group(1)) != 0:
+            offer.delivery.settle(e.Outcome.FAILED, stored=False)
+            continue
+        for line in content.splitlines():
+            if not line.startswith(_STORED_MARKER):
+                continue
+            try:
+                fact = json.loads(line[len(_STORED_MARKER):])
+                if fact.get('operation') != offer.operation:
+                    continue
+                stored = e.SearchStored(fact['target'], fact['byte_count'], fact['sha256'])
+                spill = offer.delivery.result.spill
+                if isinstance(spill, e.Spill):
+                    body, _note = _spill_body(spill.content)
+                    raw = body.encode('utf-8')
+                    if (stored.target != spill.target or stored.byte_count != len(raw)
+                            or stored.sha256 != hashlib.sha256(raw).hexdigest()):
+                        continue
+                    stored = True
+                offer.delivery.settle(e.Outcome.RETAINED, stored=stored)
+            except (ValueError, TypeError, KeyError):
+                continue
 
 
 def _file_mutation_refusal(name: str, mutation: _FileMutation, injected: set, rlog) -> str:
@@ -214,135 +221,8 @@ def _file_mutation_refusal(name: str, mutation: _FileMutation, injected: set, rl
             rlog.emit("writeproxy.write_missing_arg" if write else "writeproxy.edit_missing_arg",
                       tool=name, arg=error)
     return _refusal_command(message)
-
-# cria's own private dir is off-limits to the driven model — no reading (it holds cria's .env
-# credentials and config) and no writing (a stray file, or worse an overwrite of cria.toml /
-# loopstate, corrupts cria). A confused small model has done both: it invented a `~/.cria/chat-<id>.txt`
-# path and wrote a "message to the user" into it, having no other channel to speak. This is the dual of
-# the no-workspace-pollution rule, enforced at the same chokepoint that lowers the synthetic tools.
-# The cria-home refusal (prompts/cria_home_refusal.txt) and the malformed-fused-call refusal
-# (prompts/malformed_call_refusal.txt) are loaded per call at their use sites in translate_outbound.
-
-# A REFUSED call did not run, so it must not report success. Every refusal cria lowers is a
-# `printf`, and printf exits 0 — so the harness stamped `Process exited with code 0` directly above
-# text saying "Nothing was run". Measured: 331 captured prompts carry that pair for the malformed-call
-# refusal alone, and the same shape reaches the external-dir guard, the cria-home guard, the read-only
-# spill guard and the repeat-search gate. A guard that reports success is the worst failure shape
-# there is, and the contradiction sat inside a single tool result.
-REFUSED_EXIT_CODE = 1
-
-
-def _oversize_command(text: str) -> str:
-    """A refusal for SIZE, which exits 0 — the target is fine, cria simply will not hand it over.
-
-    Operator ruling, 2026-08-12: *"You must still use an exit code of 0 or the weak model will
-    assume something like the file doesn't exist."* A non-zero exit on `ls` or `cat` means one thing
-    to a small model — the path is not there — and it then goes looking for a directory it is
-    standing in. That is a worse lie than the success-stamp the sibling owner exists to prevent,
-    because it is about the WORLD rather than about the call.
-
-    The distinction between the two owners is what was refused. :func:`_refusal_command` answers a
-    call that was BLOCKED or malformed — it did not run and must not report success. This one
-    answers a call that ran fine and produced more than fits: nothing failed, so nothing claims to
-    have. The denied mark is carried either way, so cria's own readers still know no content came
-    back."""
-    return f"printf %s {_qbash(denial.mark(text))}"
-
-
-def _refusal_command(text: str, survey: str = "") -> str:
-    """The one way cria lowers a refusal: MARK it as a call that did not run, print it, then exit
-    non-zero. ONE owner — the five call sites each hand-rolled `printf %s …` and all five inherited
-    printf's exit 0.
-
-    The mark (:mod:`cria.denial`) is applied HERE, at the site that decides to refuse, because the
-    exit code does not survive to the reader that needs it: a refusal comes back as a tool result
-    whose text is the only thing a judge's action log carries, and ``represent_inbound`` strips the
-    harness's ``Process exited with code`` envelope off read/nav results outright. Marking the text
-    is what lets ``loop._work_log`` say the call never ran without matching a single word of it.
-
-    ``survey`` RIDES BEFORE THE EXIT, and only a refusal that needs one passes it. A refused install
-    is the single moment cria both owes the coder a route and does not have one: ``dirguard`` asks
-    ``toolpath.resolved`` which binary the CODER's shell has, the workspace view QUEUES that question
-    and answers None until a survey lands — and a survey rides only on a write or an edit. A coder
-    looping on raw ``gem install`` makes neither, so the question is asked every time and delivered
-    never, and the refusal renders ``route_unknown_yet`` forever. Measured in dirguard's own notes:
-    580 of 3,704 renderings (16%) routeless, clustered at session start, and once decisive — nine
-    routeless refusals in one prompt, after which the escalation reasoner told the coder to hardcode
-    the data the gem would have provided, while `countries (8.1.0)` sat installed on the box.
-
-    THE EXIT CODE IS UNCHANGED AND STILL LAST. It is read by a small model: a refusal that exits 0
-    reads as a call that ran (the five hand-rolled printfs this function replaced all inherited
-    ``printf``'s exit 0), and a non-zero exit on a READ reads as a missing path (operator ruling,
-    2026-08-12). The survey's own status must not move it, so it is spliced before and discarded."""
-    body = f"printf %s {_qbash(denial.mark(text))}"
-    if not survey:
-        return f"{body}; exit {REFUSED_EXIT_CODE}"
-    # NEWLINE-JOINED, AND NOT WRAPPED IN ANYTHING. The survey is a multi-line block containing a
-    # heredoc (`python3 - <<'__CRIA_SV_PY__'`), so it cannot be `;`-joined onto one line and it
-    # cannot be parenthesised: `( <heredoc> ) || true` does not parse at all.
-    #
-    # My own first version did exactly that and SHIPPED. Measured on the very next cell run
-    # (session 01a0b798, calls 0010-0011): `gem install countries --no-document` came back as
-    # `bash: -c: line 146: syntax error: unexpected end of file from `('` in 0.0 seconds — so the
-    # coder never saw a refusal at all, just a broken shell, and spent turns diagnosing an
-    # environment that was never the problem. cria composed that syntax error (5b, in the most
-    # literal form: cria's own command lying about what is wrong).
-    #
-    # No wrapper is needed for the exit code either: `survey_command` contains no bare `exit`, so
-    # nothing terminates before the final line, and `exit` last sets the code whatever the survey
-    # returned. Asserted by a test rather than by this comment.
-    return f"{body}\n{survey}\nexit {REFUSED_EXIT_CODE}"
-
-
-# Tool-call-dialect special-token sentinels a weak model leaks into a shell command when it FUSES two
-# calls into one turn (gemma live: `["bash","-lc","pytest"]}<tool_call|><|tool_call>call:write_file{…`).
-# massage._recover_fused_call already RECOVERS the real first call for the ~83% that's cleanly parseable
-# (a true massage — no wasted turn); this is the FLOOR beneath it: when even that can't reconstruct the
-# command (mixed quoting / hallucinated paths), the debris survives into the lowered command and bash
-# dies on the unbalanced quotes on a cryptic EOF. Rather than run garbage, REFUSE with guidance the model
-# can act on — the "replace the bad call with a model-read refusal" pattern used for the dir guards.
-# (Mirrors massage.py's dialect sentinels; kept local because massage imports writeproxy, not vice versa.)
-_TC_DEBRIS = ("<|tool_call>", "<tool_call|>", '<|"|>', "<|tool_call_start|>", "<|tool_call_end|>")
-
-
-def _has_tc_debris(arguments) -> bool:
-    """True when a tool call's raw arguments carry leaked tool-call special tokens — a fused/corrupt call
-    whose command would reach bash as garbage. Cheap substring scan over the raw string."""
-    s = arguments if isinstance(arguments, str) else ("" if arguments is None else str(arguments))
-    return any(tok in s for tok in _TC_DEBRIS)
-
-
-def _targets_cria_home(path: str) -> bool:
-    """True when a synthetic tool's path resolves INTO cria's own home (~/.cria). Only absolute / ~
-    paths can — a relative path resolves against the harness workspace, never cria's home. Lexical
-    (normpath, not resolve) so `..` can't escape the check and the path need not exist yet."""
-    try:
-        t = Path(path).expanduser()
-        if not t.is_absolute():
-            return False
-        t = Path(os.path.normpath(str(t)))
-        return t == CRIA_HOME or CRIA_HOME in t.parents
-    except (ValueError, OSError):
-        return False
-
-
-def _guarded_path(name: str, args: dict) -> str | None:
-    """The local filesystem path a synthetic tool would touch — for the cria-home guard. None for the
-    non-path tools (web_fetch/web_search take a URL/query, not a local path)."""
-    if name in _WRITE_NAMES or name in _EDIT_NAMES or name in _READ_NAMES:
-        p = _tool_path(args)
-    elif name in _LIST_NAMES:
-        p = args.get("path") or args.get("dir") or args.get("directory")
-    else:
-        return None
-    return str(p) if p else None
 _FETCH_NAMES = {"web_fetch"}
 _SEARCH_NAMES = {"web_search", "local_web_search"}
-
-# The stateless re-presentation sentinel: a leading shell COMMENT line carrying the original
-# tool call, base64-encoded, so inbound can rebuild it from the command in history (no store).
-_SENTINEL = "⟦ctx:tool⟧"
-_SENTINEL_LINE = re.compile(r"#\s*" + re.escape(_SENTINEL) + r"([A-Za-z0-9+/=]+)")
 # Heredoc terminator — the payload rides on stdin, so there is NO arg-size limit (no chunking). Both
 # the write and edit commands are python heredocs (they share the validate-before-lower syntax check).
 _HD_PY = "__CRIA_PY_EOF__"
@@ -360,10 +240,6 @@ EDIT_ORDER_LATE = editrecovery.ORDER_LATE
 EDIT_SEQ_DIR = ".cria-edits-"            # under $TMPDIR (else /tmp) — never in the user's tree
 EDIT_SEQ_WAIT_SECONDS = 5     # under the ~10 s a harness's exec yields without a budget (probegate.GATE_POLL_WAIT_S)
 _TMP_SUFFIX = ".tmp-partial"   # never carries the marker: a leftover is a filename the model can ls
-# A POSITIVE success token a write/edit prints ONLY on success. The empty-result reframe keys on
-# this, not on blank output — otherwise a FAILED write/edit (silent success and stderr-only failure
-# both look blank) would be reported to the model as "Wrote {path}" (false success).
-_WROTE = "⟦ctx:wrote⟧"
 _FETCH_TIMEOUT_S = 20
 # Ask Brave for its per-request maximum so a lower-ranked but authoritative page (9th, 12th…) is
 # actually IN the response — then the parser shows ALL of them (no display slice) and discloses the
@@ -470,25 +346,6 @@ def advertise(body: dict, rlog=None, brave_key: str | None = None) -> set[str]:
     if injected and rlog is not None:
         rlog.emit("writeproxy.advertised", tools=sorted(injected))
     return injected
-
-
-# --------------------------------------------------------------------- outbound lowering
-
-
-def _sentinel(name: str, arguments) -> str:
-    """The leading comment line that lets inbound rebuild the original tool call, statelessly."""
-    args_str = arguments if isinstance(arguments, str) else json.dumps(arguments, ensure_ascii=False)
-    payload = base64.b64encode(json.dumps({"name": name, "arguments": args_str}).encode("utf-8")).decode("ascii")
-    return f"# {_SENTINEL}{payload}"
-
-
-def _shell_call(orig_id: str, shell_tool: dict, command: str) -> dict:
-    return {"id": orig_id, "type": "function",
-            "function": {"name": shell_tool["name"], "arguments": json.dumps(shell_args(shell_tool, command))}}
-
-
-def _b64(s: str) -> str:
-    return base64.b64encode(s.encode("utf-8")).decode("ascii")
 
 
 # VALIDATE-BEFORE-LOWER: a shared, in-process syntax check for the languages cria can parse with the
@@ -664,6 +521,18 @@ print('{wrote}')
 '''
 
 
+class WriteCommand(str):
+    """The actual whole-write producer's admission facts; shell bytes are unchanged."""
+    def __new__(cls, command, path, content):
+        result = super().__new__(cls, command)
+        object.__setattr__(result, 'path', path)
+        object.__setattr__(result, 'content', content)
+        return result
+
+    def __setattr__(self, name, value):
+        raise AttributeError('Write producer facts are immutable')
+
+
 def _write_command(path: str, content: str) -> str:
     """Byte-exact atomic write via a python heredoc: validate-before-write (a broken write over a valid
     file is refused), then write to a temp and os.replace over the target so a partial write never
@@ -690,7 +559,7 @@ def _write_command(path: str, content: str) -> str:
                                            # FileExistsError traceback — cause invisible, three
                                            # identical retries, tests never landed. Name the block.
                                            parentfile=_b64(denial.mark(prompts.load("write_parent_is_file"))))
-    return f"python3 - <<'{_HD_PY}'\n{py}{_HD_PY}"
+    return WriteCommand(f"python3 - <<'{_HD_PY}'\n{py}{_HD_PY}", path, content)
 
 
 # The edit executor (old/new/path base64'd — nothing to escape). Tries an EXACT single match first
@@ -841,10 +710,6 @@ ECHO_CONTEXT = 3
 ECHO_MAX_BYTES = 3000
 ECHO_WIRE_MAX_BYTES = content_reduce_mod.INLINE_RESULT_MAX_BYTES
 EDIT_VIEW = "\u27e6ctx:editview\u27e7"
-# A LANDED whole-file write that removed most of a pre-existing file prints its measured facts on ONE line
-# after the confirmation, behind this marker; `represent_inbound` re-renders the result as the confirmation
-# and then the facts (it replaces the raw result wholesale, so an unmarked line would be lost).
-REMOVAL_FACTS = "\u27e6ctx:removal\u27e7"
 
 
 def removal_facts(content: str) -> str:
@@ -1024,252 +889,6 @@ def _edit_command(path: str, old: str, new: str, pack: bool = False, echo: bool 
     return f"python3 - <<'{_HD_PY}'\n{py}{_HD_PY}"
 
 
-# A whole read bigger than this is steered to grep / a line range instead of cat'd — a raw cat of a
-# big file is middle-cut by the harness (Codex kept only a few KB of a 96 KB spec, eating the middle
-# where the endpoints were), a silent lie the model then acts on. THE bound is the shared inline-result
-# bound (content_reduce.INLINE_RESULT_MAX_BYTES): the old local 12,000 sat exactly ON codex-local's
-# 10,000-byte×1.2 history budget, so borderline reads (~12–13 KB observed kept-sizes in the capture
-# corpus) still got holed in later prompts. The size-check is lowered INSIDE the read_file call, so
-# the sentinel swap re-presents it as a plain read_file — the model never sees the `wc`/`if` plumbing.
-READ_INLINE_MAX = content_reduce_mod.INLINE_RESULT_MAX_BYTES
-
-
-def _ranged_read(q: str, path: str, sed_end: str, start: int) -> str:
-    """A ranged read (``sed -n 'start,END p'``) with the SAME two guards a whole read needs:
-    * SIZE — a range over READ_INLINE_MAX is not handed back; the coder is told how to ask a
-      smaller question instead. Observed live: a big range was cut at ~20707 tokens and the model
-      then read line '20707' — the truncation count mistaken for a line number.
-
-      WHAT THE REFUSAL SAYS ABOUT ITSELF. It used to say "the HARNESS would truncate it mid-way".
-      READ_INLINE_MAX is 9,000 bytes and the observed cut was ~20,707 tokens — roughly nine times
-      higher — so at the threshold where this actually fires, nothing would have been truncated by
-      anyone. That is an internal limit stated as a fact about the world, which rule 5b names in
-      those words, and it is the same defect `_spill_read_command` was fixed for one function over:
-      "cria says it about its OWN read guard, which is a claim about cria dressed as a claim about
-      the world". The refusal stands — cria genuinely will not return that much in one piece — so it
-      now says THAT, and the routes it offers are unchanged and still true.
-    * PAST-EOF — a start beyond the file is a SILENT EMPTY the model crawls forever; say the length.
-    An in-range, in-size read returns exactly its content."""
-    # Through an owner, not a hand-rolled printf — and specifically the SIZE owner, which exits 0.
-    # These two guards were once switched to REFUSED_EXIT_CODE alongside the blocked-call refusals,
-    # and that was wrong for them: a non-zero exit on a read means one thing to a small model, that
-    # the path is not there, and it goes hunting for a file it is holding. The call did not fail —
-    # cria declined to hand over the bytes — so nothing claims it failed. The denied mark still
-    # rides, so cria's own readers know no content came back (operator ruling, 2026-08-12).
-    steer = _oversize_command(prompts.render("large_range_steer", path=str(path)))
-    return (
-        # awk NR (not `wc -l`) so a final line with no trailing newline still counts — else a 1-line
-        # file reads as 0 lines and a valid `start_line: 1` falsely trips the past-EOF branch.
-        # A MISSING FILE IS NOT AN EMPTY ONE. `awk` on a nonexistent path prints nothing, `|| echo 0`
-        # makes that a zero, and the past-EOF branch then reports a file that does not exist as one
-        # with no lines in it. Walked on ada-handles_fabliq_codex_pon_1785721353 (calls 0093-0096,
-        # 0085-0088, 0263, 0268): the coder guessed a path, cria answered "has 0 lines; line 1 is past
-        # the end of the file", and its reasoning recorded the damage — "the file was empty or
-        # couldn't be found". The UNRANGED read of that same path says the file is not there, so cria
-        # held the true answer and served the false one. Ask the filesystem first.
-        #
-        # Through the SAME owner as the unranged read (_read_failure_branches), not a hand-rolled
-        # printf of bash's wording. Unmarked error text is indistinguishable from the file's contents
-        # to everything downstream: the read ledger counted exactly this shape as "261 chars read
-        # from disk" for a file nobody opened. One owner, one answer, whichever read was asked for.
-        f"{_read_failure_branches(q, path)}"
-        f'__n=$(awk \'END{{print NR}}\' {q} 2>/dev/null || echo 0); '
-        f'if [ {start} -gt "$__n" ]; then '
-        f'printf "(no lines in that range — %s has %s lines; line %s is past the end of the file)\\n" {q} "$__n" {start}; '
-        # NUMBER THE LINES. The crew's read_file has always numbered them (verifytools: `f"{i}: {line}"`)
-        # and the coder's never did — the same tool name, two different views, and only the model that
-        # has to EDIT by line number got the one without them. Walked on
-        # ada-handles_mellum2_codex_poff_1785693138: the coder asked for lines 55-68 to see the line a
-        # check flagged at 63, got the text naked, counted from the top of the block, and burned 8,234
-        # reasoning tokens insisting a valid f-string was valid — then took three more calls to find
-        # one line. Numbering is why the crew never has that problem.
-        f'else __s=$(sed -n \'{sed_end}p\' {q} | awk -v s={start} \'{{printf "%d: %s\\n", s+NR-1, $0}}\'); '
-        f'if [ "$(printf %s "$__s" | wc -c)" -gt {READ_INLINE_MAX} ]; then {steer}; '
-        f'else printf \'%s\\n\' "$__s"; fi; fi'
-    )
-
-
-def _spill_read_command(path: str) -> str:
-    """A WHOLE read of a file in the read-only spill scratch: hand back the file when it fits, and
-    refuse only when it genuinely does not.
-
-    This branch used to refuse EVERY whole read of a spilled file, at any size, with a message that
-    says "reading it whole gets truncated, so you would miss the middle". For a file under
-    :data:`READ_INLINE_MAX` that sentence is false — nothing would have been truncated — and cria
-    says it about its OWN read guard, which is a claim about cria dressed as a claim about the world
-    (rule 5b). Measured over the 96 captured runs (``suite/replay_logic.py --check spill-read-small``):
-    FIVE distinct spilled files were refused a whole read while being 6630–8408 bytes, across 5 runs,
-    every one of them saved SEARCH RESULTS. Search results are the worst case: a shell pipeline writes
-    them, so cria never holds them parsed and there is no outline to carry — "grep it for what you
-    need" was the entire answer, about a file the coder had no way to see the shape of.
-
-    The size test lives in the LOWERED COMMAND, not in an in-process ``stat``, for the same reason
-    :func:`_read_command` puts it there: the file is on the harness's filesystem at the moment of the
-    read, and a size cria measured a turn earlier is a remembered flag, not the world.
-
-    A MISSING FILE IS NOT AN EMPTY ONE — the same guard :func:`_ranged_read` carries, for the same
-    reason. ``wc -c`` on a path that is not there yields 0, which is not over the limit, so the read
-    fell through to ``cat``, whose error goes to STDERR: the coder saw an empty result with no
-    explanation and crawled the path forever. Ask the filesystem first and answer on stdout.
-
-    DIRECTION OF FAILURE: strictly toward the coder having MORE real content. It changes no verdict
-    path, advances no step, and the oversized case is byte-identical to before (same steer, same
-    outline, same refusal exit code)."""
-    q = _qbash(path)
-    # The outline carries the doc's own routes/keys — the SIBLING of the web_fetch spill refusal, and
-    # the same trap: cria refuses the whole read of a doc it is itself holding parsed, and answers
-    # with "grep it for what you need", which cannot be acted on before you know what the doc
-    # contains. Measured across the 123 captured sessions: 1,931 coder calls carried this steer and
-    # 500 of them (26%) had no outline anywhere in the prompt. "" when the doc is not cached
-    # (rule 5b — no outline is invented); the steer's own instructions stand without it. The EDIT
-    # refusal names no content, so it takes no outline — which is why it renders without one above.
-    fmt = webfetch.format_for_spill_path(path)
-    # …AND HOW BIG IT IS. "grep it, or read a line range" is unactionable without the document's
-    # extent: measured twice on `shipping-rates-rb x ternary-bonsai`, the coder asked once, was
-    # refused, and never opened the file again — the file that defines the method it then guessed
-    # wrong. See webfetch.spill_reading_hint; "" when cria holds no such doc.
-    extent = webfetch.spill_reading_hint(path, READ_INLINE_MAX)
-    fmt_clause = f" It is {fmt}." if fmt else ""
-    if webfetch.page_not_file_for_spill_path(path):
-        fmt_clause += " " + prompts.load_map("webfetch_guards")["spill_is_the_page_not_the_file"]
-    steer = prompts.render("spill_read_steer", path=path,
-                           format=fmt_clause,
-                           extent=(f" {extent}\n" if extent else ""),
-                           outline=webfetch.outline_for_spill_path(path))
-    # The refuse branch goes through the ONE refusal owner, so it keeps this guard's non-zero exit.
-    # So does the not-there branch now: it used to printf bash's own phrasing, which exits non-zero
-    # but carries NO denied mark — so the ledger counted the error text as the file's contents. Same
-    # owner, same mark, one statement of what happened (see _read_failure_branches).
-    return (f"{_read_failure_branches(q, path)}"
-            f'if [ "$(wc -c < {q} 2>/dev/null || echo 0)" -gt {READ_INLINE_MAX} ]; '
-            f'then {_oversize_command(steer)}; else cat {q}; fi')
-
-
-def _read_failure_branches(q: str, path: str) -> str:
-    """The guards that must run before any `cat`: a read that CANNOT return bytes says so in cria's
-    own voice, through the one refusal owner, so it carries the denied mark and a non-zero exit.
-
-    A bare `cat <missing>` hands the model bash's own error as the tool RESULT — text that is
-    non-empty and unmarked, so everything downstream reads it as content. `research.files_read`
-    accepts a read when the body is non-empty and not a denial, and its docstring already states the
-    intended rule: *an attempted read is not a read*. It was right; the input was lying to it. The
-    ledger recorded "Importer.java — 261 chars read from disk" for a 6,783-byte file at a path that
-    holds only directories, and a judge ruled the reading step DONE on a file nobody opened.
-
-    Fixed HERE, where cria composes the command, and not in the ledger: one statement of what
-    happened, in cria's own voice (#5b), and every reader downstream inherits it. The ledger needs
-    no change at all — the denied mark is already what it tests."""
-    msg = prompts.load_map("read_failed")
-    return (f'if [ -d {q} ]; then {_refusal_command(prompts.fill(msg["is_directory"], path=path))}; fi; '
-            f'if [ ! -e {q} ]; then {_refusal_command(prompts.fill(msg["missing"], path=path))}; fi; '
-            f'if [ ! -r {q} ]; then {_refusal_command(prompts.fill(msg["unreadable"], path=path))}; fi; ')
-
-
-def _read_command(args: dict) -> str | None:
-    path = _tool_path(args)
-    if not path:
-        return None
-    q = _qbash(path)
-    start, end = args.get("start_line"), args.get("end_line")
-    # An end-only range is a prefix, not a whole read. Keep explicit invalid starts
-    # and non-integer ends on their existing paths; only supply the omitted bound.
-    if "start_line" not in args and type(end) is int and end > 0:
-        start = 1
-    # An INVERTED range is its own defect and gets its own answer. The old flow dropped the
-    # end_line silently (the `end >= start` guard below fails, so the start-only branch read
-    # start→EOF) and then refused THAT as "too large — narrow your window" — about a request the
-    # coder believed was already narrow. Walked on run 1785893473 call 0018 (start 1041, end 358);
-    # 100 inverted ranges across 3 captured sessions. Name the real cause instead.
-    if isinstance(start, int) and start > 0 and isinstance(end, int) and 0 < end < start:
-        return _refusal_command(prompts.render("inverted_range", path=str(path),
-                                               start=start, end=end))
-    if isinstance(start, int) and start > 0 and isinstance(end, int) and end >= start:
-        return _ranged_read(q, str(path), f"{start},{end}", start)
-    if isinstance(start, int) and start > 0:          # start-only → from the line to EOF (was ignored)
-        return _ranged_read(q, str(path), f"{start},$", start)
-    # Whole read: size-check first; a file over the limit is not handed back, so the coder gets a
-    # grep/line-range pointer instead of a silently-cut cat. (Small files cat exactly as before.)
-    # The pointer states the refusal, not a prediction about what some other layer would have done
-    # with the bytes — see the SIZE note in `_ranged_read`.
-    # Through the ONE refusal owner (see _ranged_read): the `cat` never runs, so this must not
-    # report success.
-    # …AND HOW LONG IT IS. The refusal tells the coder to read a line RANGE and did not say how many
-    # lines there are, so the first window is a guess — while its own sibling for a spilled document
-    # (`spill_extent`) says "It is N lines — read_file with start_line=1 end_line=F fits in one
-    # read". 420 renderings of the version without it. The shell running this knows the number, the
-    # same way `_list_command` already fills its entry count, so cria says it rather than making the
-    # coder discover it.
-    # …AND THE WINDOW IT NAMES HAS TO FIT. The first window was the literal `end_line=200`, a
-    # constant with no relationship to the file it was said about, and cria refuses a RANGE over the
-    # same byte limit — so on a file with wide lines it recommended a read it then denied. Measured
-    # on feed-pipeline-java x nemotron-elastic 0041/0042: cria said `start_line=1 end_line=200`, the
-    # coder sent exactly that, lines 1-200 are 9,457 bytes against READ_INLINE_MAX, and the window
-    # was refused as too large. The coder never asked for a big window again — it worked from 5-line
-    # grep results for the next 66 calls, on the file it had just been told to rewrite whole.
-    #
-    # EXACT, NOT PROPORTIONAL. The sibling for a spilled document (`spill_extent`) estimates the fit
-    # from an average line width because it holds the bytes and not the file; here the shell IS
-    # walking the file, so it can carry a running total and name the largest prefix that provably
-    # fits. Same one pass that already produces the line count. `LC_ALL=C` makes `length` bytes
-    # rather than characters, because the limit is bytes.
-    #
-    # AND IT COUNTS THE BYTES CRIA WILL RETURN, NOT THE ONES ON DISK. `_ranged_read` NUMBERS its
-    # output (`printf "%d: %s\n"`) and then sizes THAT against the same limit, so a window measured
-    # against the raw file overshoots by the width of every line number it is about to add — a
-    # 147-line window over 8,967 bytes of source comes back as 9,702 and is refused. That is the
-    # same defect as the constant 200, one layer down: a promise made about a different artifact
-    # than the one the promise is checked against (#12). The `length(NR) + 2` below IS the prefix,
-    # and it is exact because this clause only ever offers a window starting at line 1.
-    #
-    # AND IT ABSTAINS. A file whose FIRST line is over the limit has no window to offer, so the
-    # clause is dropped rather than filled with a number that would be refused (#11b) — the grep
-    # route beside it is still true.
-    text = denial.mark(prompts.render("large_read_steer", path=str(path)))
-    head, _, rest = text.partition("{{LINES}}")
-    mid, _, tail = rest.partition("{{WINDOW}}")
-    win_head, _, win_tail = prompts.render("large_read_window").partition("{{FITS}}")
-    # Passed through the environment, not `awk -v`, which would process backslash escapes in a path.
-    prog = ('{t += length(NR) + 2 + length($0) + 1; if (t <= %d) f = NR}\n'
-            'END {w = ""; if (f > 0) w = ENVIRON["CRIA_WH"] f ENVIRON["CRIA_WT"];\n'
-            '     printf "%%s%%s%%s%%s%%s", ENVIRON["CRIA_H"], NR, ENVIRON["CRIA_M"], w,\n'
-            '                              ENVIRON["CRIA_T"]}') % READ_INLINE_MAX
-    steer = (f"CRIA_H={_qbash(head)} CRIA_M={_qbash(mid)} CRIA_T={_qbash(tail)} "
-             f"CRIA_WH={_qbash(win_head)} CRIA_WT={_qbash(win_tail)} "
-             f"LC_ALL=C awk {_qbash(prog)} {q}")
-    return (f"{_read_failure_branches(q, str(path))}"
-            f'if [ "$(wc -c < {q} 2>/dev/null || echo 0)" -gt {READ_INLINE_MAX} ]; '
-            f"then {steer}; else cat {q}; fi")
-
-
-def _held_shrinking_write(check, path: str, content: str, edit_names: set) -> dict | None:
-    """``{"text", "bytes"}`` for a whole-file write the shrink check holds — or ``{..., "land": True}`` when the
-    write runs and ``text`` is facts for its result — or None (no check / may run untouched)."""
-    if check is None:
-        return None
-    return check(path, content, sorted(edit_names)[0] if edit_names else "")
-
-
-def _read_in_place_of_write(path: str, fact: str) -> str:
-    """The command that answers a ``write_file`` for an unread existing file with that file.
-
-    Whole file when it fits one read: the measured ``fact``, the call-not-run statement, a marker line
-    (:data:`denial.READ_INSTEAD_MARKER`) and then ``cat`` — the bytes unaltered. A file over
-    :data:`READ_INLINE_MAX` (or unreadable) falls to the ordinary whole-read owner, whose steer to
-    read it in ranges is the lossless paging path; the result then states the call was not run
-    and carries no read marker, so nothing is recorded as seen until a read has actually come back."""
-    q = _qbash(path)
-    labels = prompts.load_map("write_unread_target")
-    # MARKED AS A CALL THAT DID NOT RUN, because the write did not: every reader that asks "did this
-    # write land?" (`_extract_writes`, contextfloor, focustrim's supersede rule, `_failed_edit_ids`) asks
-    # `denial.is_denied`. The read marker rides inside the same text, and the readers that want the FILE
-    # (`_extract_reads`, `represent_inbound`) look for it before they look at the denial.
-    read = denial.mark(prompts.fill(labels["read"], fact=fact))
-    not_read = denial.mark(prompts.fill(labels["not_read"], fact=fact))
-    return (f'if [ -f {q} ] && [ -r {q} ] && [ "$(wc -c < {q} 2>/dev/null || echo 0)" -le {READ_INLINE_MAX} ]; '
-            f"then printf %s {_qbash(read)}; cat {q}; "
-            f"else printf %s {_qbash(not_read)}; {_read_command({'path': path})}; fi")
-
-
 def _list_command(args: dict) -> str:
     path = args.get("path") or args.get("dir") or args.get("directory") or "."
     q = _qbash(path)
@@ -1317,15 +936,6 @@ def _fetch_command(args: dict, session: str | None = None, workspace_root: str |
     # already in `result`) instead of copying the same document over itself. Measured (run
     # 0727-104845): a 154KB docs page re-fetched NINETEEN times after the harness compacted the first
     # result away — each one re-spilling and burning a turn.
-    if find is None and cursor is None and not webfetch.already_spilled(session, str(url), workspace_root):
-        spill = webfetch.oversized_spill(str(url))
-        if spill:
-            _status, target, content, msg = spill
-            # Record WHERE it landed: the refusal built on this ledger names that path to the model,
-            # and the same session key can be reused by a later run in a DIFFERENT workspace.
-            written = os.path.join(workspace_root, target.lstrip("./")) if workspace_root else ""
-            webfetch.note_fetch_spill(session, str(url), written)
-            return _spill_command(target, content, msg)
     # A repeat-gate REFUSAL comes back from fetch_nav as ordinary text, and this printf gave it
     # printf's exit 0 — the "a refused call must not report success" contradiction the module header
     # documents, at the one site that still had it. Which results are refusals is webfetch's own
@@ -1363,7 +973,7 @@ COMMAND_ARG_BUDGET = content_reduce_mod.COMMAND_ARG_BUDGET
 SPILL_CONTENT_MAX = content_reduce_mod.SPILL_CONTENT_MAX
 
 
-def _spill_command(target: str, content: str, msg: str) -> str:
+def _spill_command(target: str, content: str, msg: str, *, operation=None) -> str:
     """Land ``content`` at ``target`` (in the workspace spill dir), then print the model-facing pointer
     message — the harness runs this and records the message as the tool result. The sentinel
     re-presents the whole command as web_fetch, so the model never sees the plumbing.
@@ -1379,15 +989,26 @@ def _spill_command(target: str, content: str, msg: str) -> str:
     no way to deliver more than this in one turn: it cannot write to the harness's disk except
     through a command, and a command is one argv string."""
     tdir = os.path.dirname(target) or "."
-    body, note = content, ""
-    if len(content.encode("utf-8", "replace")) > SPILL_CONTENT_MAX:
-        body = content.encode("utf-8", "replace")[:SPILL_CONTENT_MAX].decode("utf-8", "ignore")
-        note = prompts.fill(prompts.load("spill_cut"),
-                            kept=f"{len(body):,}", total=f"{len(content):,}")
-        body += "\n\n" + note
-    return (f"mkdir -p {_qbash(tdir)} && base64 -d > {_qbash(target)} <<'__CRIA_SPILL__'\n"
-            f"{_b64_wrapped(body)}\n__CRIA_SPILL__\n"
-            f"printf %s {_qbash(msg + (chr(10) + note if note else ''))}")
+    body, note = _spill_body(content)
+    command = (f"if mkdir -p {_qbash(tdir)} && base64 -d > {_qbash(target)} <<'__CRIA_SPILL__'\n"
+               f"{_b64_wrapped(body)}\n__CRIA_SPILL__\n"
+               f"then printf %s {_qbash(msg + (chr(10) + note if note else ''))}")
+    if operation is not None:
+        raw = body.encode('utf-8')
+        fact = _STORED_MARKER + json.dumps(dict(operation=operation, target=target,
+            byte_count=len(raw), sha256=hashlib.sha256(raw).hexdigest()), sort_keys=True)
+        command += f"; printf '\\n%s\\n' {_qbash(fact)}"
+    return command + '; else exit 1; fi'
+
+
+def _spill_body(content: str) -> tuple[str, str]:
+    """Existing labelled command-budget extent, shared by producer and observation."""
+    body, note = content, ''
+    if len(content.encode('utf-8', 'replace')) > SPILL_CONTENT_MAX:
+        body = content.encode('utf-8', 'replace')[:SPILL_CONTENT_MAX].decode('utf-8', 'ignore')
+        note = prompts.fill(prompts.load('spill_cut'), kept=f'{len(body):,}', total=f'{len(content):,}')
+        body += '\n\n' + note
+    return body, note
 
 
 def _b64_wrapped(s: str, width: int = 76) -> str:
@@ -1401,9 +1022,7 @@ def _b64_wrapped(s: str, width: int = 76) -> str:
 def _under_spill_dir(path: str) -> bool:
     """True when ``path`` lands in cria's read-only spill scratch (:data:`webfetch.SPILL_DIR`) — a
     reference doc cria saved, which the model must GREP, not read-whole or edit."""
-    norm = os.path.normpath(path or "")
-    tail = webfetch.SPILL_DIR.lstrip("./")   # "tmp/cria"
-    return norm == tail or norm.startswith(tail + os.sep) or (os.sep + tail + os.sep) in (os.sep + norm)
+    return filecommands._under_spill_dir(path, webfetch.SPILL_DIR)
 
 
 def _spill_relpath(path: str) -> str | None:
@@ -1413,14 +1032,7 @@ def _spill_relpath(path: str) -> str | None:
     the doc cria saved (the live footgun: a fetched spec sitting unreadable on disk). Return
     ``./tmp/read-only/x``; ``None`` otherwise. Only the root-absolute spill form is redirected — a path
     that merely CONTAINS ``tmp/read-only`` deeper in some other tree is left alone."""
-    if not path:
-        return None
-    p = os.path.normpath(os.path.expanduser(str(path)))
-    if not os.path.isabs(p):
-        return None                                   # already workspace-relative → nothing to fix
-    tail = webfetch.SPILL_DIR.lstrip("./")            # "tmp/read-only"
-    rel = p.lstrip(os.sep)
-    return "./" + rel if (rel == tail or rel.startswith(tail + os.sep)) else None
+    return filecommands._spill_relpath(path, webfetch.SPILL_DIR)
 
 
 def _respill_command(command: str) -> str:
@@ -1430,8 +1042,7 @@ def _respill_command(command: str) -> str:
     refused; shown both, the model learned "the sandbox blocks this file" and burned ~130 calls on
     it (run 0729-gemma4 pon2; ~25 more in poff-C1). cria controls the spill dir name, so the
     rewrite is exact — only a token that STARTS at the filesystem root is touched."""
-    tail = webfetch.SPILL_DIR.lstrip("./")
-    return re.sub(r"(?<![\w.])/" + re.escape(tail) + r"(?=[/\s\"']|$)", "./" + tail, command)
+    return filecommands._respill_command(command, webfetch.SPILL_DIR)
 
 
 # WHAT A TITLE CANNOT CARRY. A description earns its place inline when it names something callable:
@@ -1457,7 +1068,7 @@ def _pyq(s: str) -> str:
     return _json.dumps(s).replace("'", "\\u0027")
 
 
-def _search_command(args: dict, brave_key: str) -> str:
+def _search_command(args: dict, brave_key: str, *, search_offer=None, operation=None) -> str:
     """Brave web search lowered to a curl — endpoint, %-encoded query, and headers come from the
     shared `brave` module (same request the planner's in-process search builds), then parsed to
     compact "title / url / description" lines the model can pair with web_fetch. Requests Brave's
@@ -1466,7 +1077,8 @@ def _search_command(args: dict, brave_key: str) -> str:
     query = str(args.get("query") or "")
     # Composed before the parse below, which needs both: the spill path to write, and the pointer to
     # print when the brief listing does not fit inline.
-    target, msg = webfetch.search_spill(query)
+    if search_offer is not None:
+        target, msg = webfetch.search_spill(query)
     # NAME THE FILE. The note used to end "in the file named above" on the INLINE path, where
     # nothing above names a file — the filename only appears in the spill branch, which is the
     # branch not taken. A pointer to a file cria never named is a false fact in cria's own voice
@@ -1477,7 +1089,8 @@ def _search_command(args: dict, brave_key: str) -> str:
     # on shipping-rates-rb x nemotron-elastic 1787294328: the deleted file held
     # `ISO3166::Country#in_eu?`, the exact predicate that task needed, and the run scored 0/5. Both
     # pointers now say the same sentence, so one regex reads both (#23).
-    inline_note = prompts.fill(prompts.load("search_inline_note"), target=target, query=query)
+    inline_note = (prompts.fill(prompts.load("search_inline_note"), target=target, query=query)
+                   if search_offer is not None else '')
     url = brave.query_url(query, count=_SEARCH_MAX_RESULTS)
     header_flags = " ".join(f"-H {_qbash(f'{k}: {v}')}" for k, v in brave.headers(brave_key).items())
     # `e`: a Brave ERROR body (401 invalid key, 422, 429 rate-limited) is valid JSON, so json.load
@@ -1512,35 +1125,28 @@ def _search_command(args: dict, brave_key: str) -> str:
     # never opened the file — zero tool calls in 89 touched the spill directory, and four of the
     # nine saved files contain `in_eu?`. Measured over those nine files, the rule below keeps 9 of
     # 20 descriptions on the search that mattered (3,054 characters) and 250-1,750 on the rest.
-    parse = (r"""python3 -c 'import sys,json,os,re"""
-             r""";d=json.load(sys.stdin);r=(d.get("web") or {}).get("results") or []"""
-             r""";e=d.get("error") or d.get("message")"""
-             r""";T=""" + _pyq(target) +
-             r""";K=re.compile(""" + _pyq(_API_NAME_SHAPE) + r""")"""
-             r""";api=lambda x:("\n  "+(x.get("description") or "")) if K.search(x.get("description") or "") else str()"""
-             r""";full="\n".join("%s\n  %s\n  %s"%(x.get("title",""),x.get("url",""),x.get("description","")) for x in r)"""
-             r""";os.makedirs(os.path.dirname(T) or ".",exist_ok=True)"""
-             # WRITTEN EVEN WHEN THERE ARE ZERO RESULTS. `note_search_spill` records the path when cria
-             # COMPOSES this command; the write used to be conditional on `r`, so an empty search left a
-             # remembered path and no file, and the later re-hunt refusal sent the coder to grep it.
-             # Measured on cart-billing-go x ternary-bonsai-2 (session 01a0b6aa, calls 0008-0012): the
-             # first search returned "no results", and cria then said "Its results were saved to
-             # ./tmp/reference/search-go.mod_...-29f04005.txt ... READ THAT FILE rather than searching
-             # again". The coder obeyed -- "The search results were saved to a reference file. Let me
-             # read that file" -- and cria answered "is not there - nothing was read", stacking a second
-             # false statement on the first (#5b twice, #11b: the remedy could not be taken). Three tool
-             # calls went to a phantom, and the coder re-ran the same dead query.
-             # A zero-result file is the honest artifact: it terminates the detour with the true fact
-             # ("0 results") instead of a promise of content that was never written. Fixing the WRITE
-             # keeps the warrant in one place -- cria said it wrote a file, so cria writes one.
-             r""";open(T,"w").write(("%d results:\n"%len(r))+full)"""
-             r""";brief=("%d results:\n"%len(r))+"\n".join("%s\n  %s%s"%(x.get("title",""),x.get("url",""),api(x)) for x in r)+"\n"+""" + _pyq(inline_note) +
-             r""";print(brief if len(brief.encode())<=""" + str(content_reduce_mod.INLINE_RESULT_MAX_BYTES) +
-             r""" else """ + _pyq(msg) + r""") if r else print("search API error: "+json.dumps(e) if e else "no results")'""")
+    script = ('import sys,json,os,re,hashlib\n'
+              'd=json.load(sys.stdin)\nr=(d.get("web") or {}).get("results") or []\n'
+              'e=d.get("error") or d.get("message")\n'
+              'full="\\n".join("%s\\n  %s\\n  %s"%(x.get("title",""),x.get("url",""),x.get("description","")) for x in r)\n'
+              'stored=("%d results:\\n"%len(r))+full\n')
+    if search_offer is None:
+        script += 'print(stored if r else "search API error: "+json.dumps(e) if e else "no results")\n'
+    else:
+        script += ('T=' + repr(search_offer.target) + '\n'
+                   'K=re.compile(' + repr(_API_NAME_SHAPE) + ')\n'
+                   'api=lambda x:("\\n  "+(x.get("description") or "")) if K.search(x.get("description") or "") else str()\n'
+                   'brief=("%d results:\\n"%len(r))+"\\n".join("%s\\n  %s%s"%(x.get("title",""),x.get("url",""),api(x)) for x in r)+"\\n"+' + repr(inline_note) + '\n'
+                   'pointer=' + repr(msg) + '\n'
+                   'os.makedirs(os.path.dirname(T) or ".",exist_ok=True)\n'
+                   'with open(T,"w",encoding="utf-8") as f:\n    f.write(stored)\n'
+                   'print(' + search_offer.program.expression + ') if r else print("search API error: "+json.dumps(e) if e else "no results")\n'
+                   'raw=stored.encode("utf-8")\n'
+                   'print(' + repr(_STORED_MARKER) + '+json.dumps({"operation":' + repr(operation) + ',"target":T,"byte_count":len(raw),"sha256":hashlib.sha256(raw).hexdigest()},sort_keys=True))\n')
+    parse = 'python3 -c ' + _qbash(script)
     # Save the (noisy) results to the read-only spill dir and hand back a grep/line-read pointer, instead
     # of inlining snippet poison. The lowered command carries the web_search sentinel (translate_outbound),
     # so re-presentation swaps it back to web_search — the model never sees this curl/tee plumbing.
-    tdir = os.path.dirname(target) or "."
     # NO `rm -f` and NO `chmod 444`: the harness sandbox (Codex) HARD-REJECTS `rm -f` ("rm -f style
     # commands are not permitted"), which broke EVERY web_search — the model read the refusal as "the
     # API has permission issues" and hallucinated an endpoint instead. The `rm -f` only existed to clear
@@ -1554,50 +1160,10 @@ def _search_command(args: dict, brave_key: str) -> str:
     fallback = prompts.load("search_unparsable")
     # The parse writes the spill file itself now (it decides what to print based on size), so this is
     # a plain pipeline rather than a redirect-then-announce.
-    return (f"mkdir -p {_qbash(tdir)} && "
-            f"curl -sL --max-time {_FETCH_TIMEOUT_S} {header_flags} {_qbash(url)} | {parse} "
+    return (f"curl -sL --max-time {_FETCH_TIMEOUT_S} {header_flags} {_qbash(url)} | {parse} "
             f"|| printf %s {_qbash(fallback)}")
 
 
-def _external_refusal(name, args, fn, injected, level: str, workspace: str | None, roots=()) -> str | None:
-    """A refusal string when this tool call reaches outside the workspace beyond ``level``, else None.
-    A synthetic file tool is checked by its explicit path + operation; a raw shell command by a
-    heuristic scan. cria's OWN composed commands (the gate probe / a lowered synthetic, carrying a
-    marker) are exempt — trusted and always workspace-scoped. See cria/dirguard.py."""
-    if is_shell_tool_name(name):
-        command = _command_of(fn.get("arguments"))
-        root_delete = dirguard.root_recursive_delete_refusal(command)
-        if root_delete:
-            return root_delete
-    if not workspace:
-        return None
-    if level == "write":  # unrestricted external-directory permission, except root-wide recursive deletion
-        return None
-    if name in injected:  # a synthetic file tool cria advertised → explicit path + operation
-        target = _guarded_path(name, args)
-        if not target:
-            return None
-        return dirguard.path_refusal(target, name in _WRITE_NAMES or name in _EDIT_NAMES, level, workspace, roots)
-    if is_shell_tool_name(name):  # the harness's raw shell → heuristic path/verb scan
-        command = _command_of(fn.get("arguments"))
-        # cria's own composed command → trust. ANCHORED, not a substring scan anywhere in the text: a
-        # model-authored command that merely mentions either literal used to inherit cria's trust and
-        # skip the guard entirely. cria always writes the sentinel as the FIRST line (`# ⟦ctx:tool⟧<b64>`)
-        # and always opens the gate script with `cd <workspace> || exit 97` followed by the section
-        # echo — so requiring the marker in the first two lines authenticates the shape cria emits
-        # rather than any text containing the token.
-        head = "\n".join(command.lstrip().splitlines()[:2])
-        # BOTH cria command sentinels earn the exemption: `# ⟦ctx:tool⟧` leads a lowered synthetic
-        # tool call, `# ⟦ctx:gate⟧` (probegate.GATE_SENTINEL) leads the gate script AND its transport
-        # continuation. The continuation is a `python3 - <spool> <<HEREDOC` reader that NAMES the
-        # /tmp/.cria-gate-* spool; recognising only the tool sentinel made cria refuse its own
-        # multi-page gate as "outside the working directory", so every large gate read UNKNOWN and the
-        # completion path could never verify (cart-billing-go, session 20260906T124743).
-        if (head.startswith("# " + _SENTINEL) or head.startswith("# " + GATE_SENTINEL)
-                or (head.startswith("cd ") and "___CRIA_GATE_" in head)):
-            return None
-        return dirguard.command_refusal(command, level, workspace, roots)
-    return None
 
 
 # Lowered tools whose own result is ONE bounded line, so appending the workspace survey to them
@@ -1617,15 +1183,6 @@ def _external_refusal(name, args, fn, injected, level: str, workspace: str | Non
 # answer in one line, so they keep carrying it; a `list_dir` changes nothing on disk, so a view that
 # waits for the next write is not stale about anything that happened in between.
 _SURVEYABLE = _WRITE_NAMES | _EDIT_NAMES
-
-# What a carrier's OWN result may take before the survey is sized against what is left. Every tool
-# in _SURVEYABLE answers in one line ("wrote N bytes to <path>"), so this is generous for them and
-# is here to keep the arithmetic honest if a chattier carrier is ever added: the survey shrinks to
-# fit, and below TREE_MIN_BYTES it does not ride at all rather than overflowing the result.
-_RIDE_ALONG_HOST_RESERVE = 1_000
-# The lowered write/list command and its harness envelope share the result with the survey. This is
-# local transport overhead, not a probe evidence budget; gate evidence now uses checked pages.
-_RIDE_ALONG_COMMAND_RESERVE = 1_100
 
 # How many surveyable calls pass between surveys once the view is populated. The tree is re-walked
 # on the harness's side each time, so this is a cost on the CODER's box, not cria's; four is often
@@ -1687,17 +1244,79 @@ def _edit_sequence(tool_calls: list, injected: set) -> dict:
     return out
 
 
+def _lower_synthetic(source: OutboundCall) -> ShellCommand | dict | None:
+    """Required harness adapters, independent of optional steering selection.
+
+    Validating mutation arguments and preserving execution/correlation are not
+    advice. Disabling a protection never turns missing content into an empty write.
+    """
+    name, args, request = source.name, source.arguments, source.request
+    if name in (_WRITE_NAMES | _EDIT_NAMES) and name in request.injected:
+        mutation = _prepare_file_mutation(name, args)
+        if mutation.error:
+            return ShellCommand(_file_mutation_refusal(name, mutation, request.injected, source.log))
+        if name in _WRITE_NAMES:
+            command = _write_command(str(mutation.path), _repair_double_escaped(mutation.content))
+        else:
+            command = _edit_command(str(mutation.path), mutation.old, mutation.new,
+                pack=request.pack, echo=request.edit_echo, seq=source.sequence)
+        command = toolstages.current().mutation_command(source, command)
+        # Explicit, unbound library callback compatibility only. Production uses
+        # typed factual services; a bound selection never falls back to a whole
+        # legacy policy callback, even when its selected source has no services.
+        if (not toolstages.is_bound() and request.shrink_services is None
+                and request.shrink_check is not None and name in _WRITE_NAMES):
+            edits = request.injected & _EDIT_NAMES
+            finding = request.shrink_check(str(mutation.path), _repair_double_escaped(mutation.content),
+                                           sorted(edits)[0] if edits else '')
+            if finding:
+                command = wrap_finding(str(mutation.path), finding, command)
+                if source.log is not None:
+                    event = 'writeproxy.write_removal_facts' if finding.get('land') else 'writeproxy.write_shrink_held'
+                    source.log.emit(event, tool=name, path=str(mutation.path))
+        return ShellCommand(command)
+    if name in _READ_NAMES and name in request.injected:
+        command = _read_command(args)
+    elif name in _LIST_NAMES and name in request.injected:
+        command = _list_command(args)
+    elif name in _FETCH_NAMES and name in request.injected:
+        command = _externalize_coder(source)
+    elif name == 'web_search':
+        if name in request.injected and request.brave_key:
+            command = _externalize_coder(source)
+        elif request.native_search and request.native_search != name:
+            return {**source.call, 'function': {**source.function, 'name': request.native_search}}
+        else:
+            return None
+    else:
+        return None
+    return ShellCommand(command) if command is not None else None
+
+
 def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: set[str] | None = None,
                        brave_key: str | None = None, native_search: str | None = None,
                        session: str | None = None, workspace_root: str | None = None,
                        external_dir_permission: str = "write", unread_target=None,
                        shrink_check=None, pack: bool = False, edit_echo: bool = False,
-                       declared_roots: tuple = ()) -> dict:
+                       declared_roots: tuple = (), *, shrink_services: ShrinkServices | None = None,
+                       observe_lowering=None, externalization_owner=None,
+                       observe_externalization=None) -> dict:
     """Lower cria's synthetic tool calls to shell commands the harness runs, each stamped with the
     stateless re-presentation sentinel. Only lowers a tool cria INJECTED (a harness-native tool of
     the same name is the harness's to run). ``web_search`` routes to ``native_search`` when the
-    harness has one, else to a Brave curl (when injected)."""
+    harness has one, else to a Brave curl (when injected).
+
+    ``shrink_services`` supplies factual services to the selected F15 source.
+    ``shrink_check`` is retained only for explicit unbound library callers; a
+    bound request never consults that legacy whole-policy callback.
+    """
     injected = injected or set()
+    from . import assistruntime
+    request = LoweringRequest(frozenset(injected), brave_key, native_search, session, workspace_root,
+        external_dir_permission, unread_target, shrink_check, pack, edit_echo, declared_roots, shrink_services,
+        externalization_owner, assistruntime.current().externalization, observe_externalization,
+        (assistruntime.current().document_guidance, webfetch.guidance_services()))
+
     for choice in completion.get("choices", []):
         tool_calls = (choice.get("message") or {}).get("tool_calls")
         if not tool_calls:
@@ -1708,211 +1327,20 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
             fn = tc.get("function") or {}
             name = fn.get("name")
             args = _parse(fn.get("arguments"))
-            # DROPPED-'./' SPILL READ: the model wrote a root-absolute '/tmp/read-only/x' for the
-            # workspace-relative './tmp/read-only/x' file cria saved; the dirguard would (correctly)
-            # block that as external and the model could never re-read the doc. Rewrite it to the real
-            # workspace path BEFORE the guard chain, so the read (or the grep steer) reaches the file.
-            if name in injected and (_rp := _tool_path(args)) and (_rel := _spill_relpath(str(_rp))):
-                for _k in _PATH_KEYS:
-                    if args.get(_k):
-                        args = {**args, _k: _rel}
-                        break
-                if rlog is not None:
-                    rlog.emit("writeproxy.spill_path_redirect", tool=name, to=_rel)
-            # The same rescue for RAW commands (grep/cp/sed on the spill file), which previously got
-            # only the dirguard refusal — the file-tool half succeeding while the command half was
-            # blocked on the same path string taught the model a false sandbox rule.
-            if is_shell_tool_name(name) and (_c0 := _command_of(fn.get("arguments"))) \
-                    and _respill_command(_c0) != _c0:
-                _d = _parse(fn.get("arguments"))
-                for _f in (*_CMD_FIELDS, "script"):
-                    _v = _d.get(_f)
-                    if isinstance(_v, list) and _v and isinstance(_v[-1], str):
-                        _d = {**_d, _f: [*_v[:-1], _respill_command(_v[-1])]}
-                    elif isinstance(_v, str) and _v:
-                        _d = {**_d, _f: _respill_command(_v)}
-                fn = {**fn, "arguments": json.dumps(_d, ensure_ascii=False)}
-                tc = {**tc, "function": fn}
-                args = _d
-                if rlog is not None:
-                    rlog.emit("writeproxy.spill_command_redirect", tool=name)
-            cmd = None
-            read_in_place = False
-            # MALFORMED FUSED CALL: the model leaked tool-call marker tokens into the command (two calls
-            # fused / broken quoting). It can't be reconstructed and would die in bash as a cryptic EOF —
-            # refuse it with guidance to send ONE clean call, so the turn teaches instead of just failing.
-            if is_shell_tool_name(name) and _has_tc_debris(fn.get("arguments")):
-                cmd = _refusal_command(prompts.load('malformed_call_refusal'))
-                if rlog is not None:
-                    rlog.emit("writeproxy.blocked_malformed_call", tool=name)
-            # EXTERNAL-DIR GUARD (cria-side, independent of the harness sandbox): a fledgling model
-            # gets bounded to the workspace even when the harness runs --yolo. Refuse a synthetic file
-            # tool or raw shell command reaching outside the workspace beyond [safety] permission.
-            elif (reason := _external_refusal(name, args, fn, injected, external_dir_permission, workspace_root,
-                                         declared_roots)) is not None:
-                # CARRY THE SURVEY WHEN A PROGRAM QUESTION IS STILL UNANSWERED. `dirguard` has just
-                # queued it while composing this very refusal; this is the only carrier a coder
-                # looping on raw installs is guaranteed to produce. Budgeted like any other
-                # ride-along, with the refusal's own (short, fixed) text charged against the room.
-                ride = ""
-                if wsview.pending(session or "")[1]:
-                    room = (content_reduce_mod.INLINE_RESULT_MAX_BYTES - _RIDE_ALONG_HOST_RESERVE
-                            - _RIDE_ALONG_COMMAND_RESERVE - len(reason))
-                    if room >= wsview.TREE_MIN_BYTES:
-                        ride = wsview.survey_command(session or "", cd=workspace_root or "", budget=room, pack=pack)
-                    elif rlog is not None:
-                        rlog.emit("wsview.survey_not_carried", level="info", left=room, carrier=name)
-                cmd = _refusal_command(reason, ride)
-                if rlog is not None:
-                    rlog.emit("writeproxy.blocked_external", tool=name,
-                              permission=external_dir_permission, carried_survey=bool(ride))
-            # cria's own dir is off-limits: refuse a synthetic read/write/edit/list whose path lands
-            # in ~/.cria BEFORE lowering it, so cria never cats its secrets to the model or lets a
-            # stray write corrupt its state. The refusal is a normal tool result the model reads.
-            elif name in injected and (target := _guarded_path(name, args)) and _targets_cria_home(target):
-                cmd = _refusal_command(prompts.load('cria_home_refusal'))
-                if rlog is not None:
-                    rlog.emit("writeproxy.blocked_cria_home", tool=name, path=target)
-            # cria's read-only SPILL scratch (./tmp/cria): a big doc cria saved as REFERENCE. Refuse an
-            # edit/write (observed: identical no-op edits on the spilled spec that poisoned the reasoner);
-            # steer a WHOLE read to grep (a raw cat of a big file is truncated by the harness). A ranged
-            # read is fine (falls through to the normal read handler).
-            elif (name in (_WRITE_NAMES | _EDIT_NAMES | _READ_NAMES) and name in injected
-                  and (sp := _tool_path(args)) and _under_spill_dir(str(sp))
-                  and not (name in _READ_NAMES and (args.get("start_line") or args.get("end_line")))):
-                # A READ is SIZE-GATED, not refused outright (see _spill_read_command): a spilled
-                # file under READ_INLINE_MAX is handed over, because "reading it whole gets
-                # truncated" is not true of it. An edit/write is refused whatever the size — the doc
-                # is reference material, and that has nothing to do with how big it is.
-                cmd = (_spill_read_command(str(sp)) if name in _READ_NAMES
-                       else _refusal_command(prompts.render("spill_edit_refusal", path=str(sp))))
-                if rlog is not None:
-                    # A read is no longer necessarily BLOCKED — the size test runs on the harness's
-                    # filesystem, so cria does not know here which way it went. Naming this event
-                    # "blocked" for a read that then succeeds would put a false fact in cria's own
-                    # log, which is the same defect one level down (rule 12: the event is the truth).
-                    rlog.emit("writeproxy.spill_read_gated" if name in _READ_NAMES
-                              else "writeproxy.blocked_spill", tool=name, path=str(sp))
-            elif name in _WRITE_NAMES and name in injected:
-                mutation = _prepare_file_mutation(name, args)
-                path = mutation.path
-                if mutation.error:
-                    cmd = _file_mutation_refusal(name, mutation, injected, rlog)
-                else:
-                    body = mutation.content
-                    if _protocol_debris(body):
-                        # Content that is NOTHING BUT tool-protocol tags (plus at most a bare
-                        # path token) is the mis-split half of a FUSED call, not a file. Walked
-                        # on nemotron poff 1785946072: cria wrote that soup as a file named
-                        # `tests` ("Wrote tests"), which then blocked the real tests/ directory
-                        # for the rest of the run. A file whose real lines merely MENTION a tag
-                        # never trips this — every line must be a tag or a bare token.
-                        cmd = _refusal_command(prompts.load("write_fused_content"))
-                        if rlog is not None:
-                            rlog.emit("writeproxy.write_fused_content", tool=name,
-                                      path=str(path))
-                    elif (unread := unread_target(str(path)) if unread_target is not None else ""):
-                        # A WHOLE-FILE REPLACEMENT OF A FILE THE CODER HAS NEVER SEEN is invention under
-                        # a real file's name (phi4 A2 pom.xml; A3 pom.xml + Importer.java, which, once a
-                        # refusal had been said once, were then overwritten). The coder's call is ANSWERED
-                        # with the file: the harness runs a read of the path the coder named, so the
-                        # result carries ground truth and records a read — the hold lifts exactly when
-                        # the file has been seen, not on a count. cria composes no content.
-                        cmd = _read_in_place_of_write(str(path), unread)
-                        read_in_place = True
-                        if rlog is not None:
-                            rlog.emit("writeproxy.write_unread_target", tool=name, path=str(path))
-                    else:
-                        # NO SECOND TRIM HERE. The fused-call tail is cut once, for every tool's
-                        # every string argument, at `massage.strip_debris_from_args` — which runs on
-                        # this completion before it ever reaches translation. A copy of the rule in
-                        # this one branch is what left `edit_file` still receiving the junk (#23).
-                        from . import cleanupsafety
-                        candidate = _repair_double_escaped(str(body))
-                        refusal = cleanupsafety.review(str(path), candidate, None,
-                                                       workspace_root, rlog, permission=external_dir_permission)
-                        cmd = (_refusal_command(refusal) if refusal
-                               else _write_command(str(path), candidate))
-                        # A WHOLE-FILE WRITE THAT WOULD LEAVE LESS THAN HALF OF A FILE THE CODER HAS SEEN,
-                        # and that the judge did not rule the file's complete content (phi4 A4: a 190-char
-                        # `<dependencies>` excerpt over the 28-line pom.xml; A3: a 13-line stub over the
-                        # 129-line Importer.java). The hold is bound to the BYTES it was measured on: the
-                        # lowered command refuses only while the file still equals them (the coder's own
-                        # shell may have rewritten it since the view last saw it); otherwise the ordinary
-                        # command runs below. The rejected payload rides after the facts
-                        # (`_rejected_payload_note`).
-                        held = _held_shrinking_write(shrink_check, str(path), candidate, injected & _EDIT_NAMES)
-                        if held:
-                            same = ("import base64,pathlib,sys; "
-                                    "p=pathlib.Path(base64.b64decode(" + repr(_b64(str(path))) + ").decode()); "
-                                    "sys.exit(0 if p.is_file() and p.read_bytes()==base64.b64decode("
-                                    + repr(base64.b64encode(held["bytes"]).decode("ascii")) + ") else 1)")
-                            if held.get("land"):
-                                # NOT A HOLD: the write runs and its result carries what it removed — only
-                                # when it LANDED (rc 0) and only for the bytes the facts were measured on.
-                                facts = f"printf '%s\\n' {_qbash(REMOVAL_FACTS + held['text'])}"
-                                run = (f"{cmd}\n_rc=$?\n"
-                                       f"if [ $_rc -eq 0 ]; then {facts}; fi\n(exit $_rc)")
-                                cmd = f"if python3 -c {_qbash(same)}; then\n{run}\nelse\n{cmd}\nfi"
-                                if rlog is not None:
-                                    rlog.emit("writeproxy.write_removal_facts", tool=name, path=str(path))
-                            else:
-                                cmd = (f"if python3 -c {_qbash(same)}; then\n{_refusal_command(held['text'])}\n"
-                                       f"else\n{cmd}\nfi")
-                                if rlog is not None:
-                                    rlog.emit("writeproxy.write_shrink_held", tool=name, path=str(path))
-            elif name in _EDIT_NAMES and name in injected:
-                mutation = _prepare_file_mutation(name, args)
-                path = mutation.path
-                if mutation.error:
-                    cmd = _file_mutation_refusal(name, mutation, injected, rlog)
-                else:
-                    old, new = mutation.old, mutation.new
-                    cmd = _edit_command(str(path), old, new, pack=pack, echo=edit_echo, seq=edit_seq.get(ti))
-                    from . import cleanupsafety
-                    raw = wsview.current().read_bytes(str(path))
-                    try:
-                        previous = raw.decode() if raw is not None else None
-                    except UnicodeError:
-                        previous = None
-                    # Exact edits only: never invent the candidate when the
-                    # harness hasn't supplied the file or matching is ambiguous.
-                    if previous is not None and old and previous.count(old) == 1:
-                        refusal = cleanupsafety.review(str(path), previous.replace(old, new, 1),
-                                                       previous, workspace_root, rlog, permission=external_dir_permission)
-                        if refusal:
-                            # Bind the finding to the reviewed bytes. If they changed,
-                            # ask for a fresh read, never bypass a known unsafe finding.
-                            check = ("import base64,pathlib,sys; "
-                                     "p=pathlib.Path(base64.b64decode(" + repr(_b64(str(path))) + ").decode()); "
-                                     "sys.exit(0 if p.read_bytes()==base64.b64decode(" + repr(_b64(previous)) + ") else 1)")
-                            stale = _refusal_command(prompts.load('cleanup_stale'))
-                            cmd = (f"if python3 -c {_qbash(check)}; then\n"
-                                   f"{_refusal_command(refusal)}\nelse\n{stale}\nfi")
-                    elif rlog is not None:
-                        rlog.emit('safety.cleanup_review', path=str(path), verdict='UNKNOWN',
-                                  reason='complete exact edit candidate unavailable')
-            elif name in _READ_NAMES and name in injected:
-                cmd = _read_command(args)
-            elif name in _LIST_NAMES and name in injected:
-                cmd = _list_command(args)
-            elif name in _FETCH_NAMES and name in injected:
-                cmd = _fetch_command(args, session, workspace_root)
-            elif name == "web_search":
-                refusal = webfetch.gate_search(session, str(args.get("query") or ""))
-                if refusal is not None:  # exact-repeat search this session → refuse, don't burn a call
-                    cmd = _refusal_command(refusal)
-                elif "web_search" in injected and brave_key:  # synthetic → Brave curl
-                    q = str(args.get("query") or "")
-                    cmd = _search_command(args, brave_key)
-                    # ONLY this path writes the spill file, so only this path earns the later
-                    # "go read that file" refusal — and it records the path the composed curl
-                    # actually writes, so that refusal names a file that exists rather than
-                    # deriving the name a second time from a differently-spelled copy of the query.
-                    webfetch.note_search_spill(session, q, webfetch.search_spill_name(q))
-                elif native_search and native_search != "web_search":  # route to the harness's search tool
-                    rebuilt.append({**tc, "function": {**fn, "name": native_search}})
-                    continue
+            tc, args, effect = toolstages.current().outbound_call(
+                OutboundCall(tc, args, request, edit_seq.get(ti), rlog))
+            fn = tc.get("function") or {}
+            name = fn.get("name")
+            if effect is None:
+                effect = _lower_synthetic(OutboundCall(tc, args, request, edit_seq.get(ti), rlog))
+            if isinstance(effect, dict):
+                rebuilt.append(effect)
+                if observe_lowering is not None:
+                    observe_lowering(tc, effect, None)
+                continue
+            cmd = effect.command if effect is not None else None
+            proposed_write = cmd if isinstance(cmd, WriteCommand) else None
+            read_in_place = effect.read_in_place if effect is not None else False
             if cmd is not None:
                 # RIDE ALONG. cria has no synchronous channel to the harness — it can ask the
                 # workspace a question only by putting a command in the reply it is already
@@ -1950,6 +1378,15 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
                 if (rm := _litter_leg(workspace_root)):
                     cmd = f"{rm}\n{cmd}"
                 rebuilt.append(_shell_call(tc.get("id"), shell_tool, f"{_sentinel(name, fn.get('arguments'))}\n{cmd}"))
+                pending = (getattr(externalization_owner, 'externalization_offers', None) or {}).get(str(tc.get('id') or ''))
+                if pending is not None:
+                    pending.lowered_arguments = rebuilt[-1]['function']['arguments']
+                    pending.lowered_name = rebuilt[-1]['function']['name']
+                    pending.lowered_type = rebuilt[-1].get('type')
+                    if observe_externalization is not None:
+                        observe_externalization(tc, rebuilt[-1], pending)
+                if observe_lowering is not None:
+                    observe_lowering(tc, rebuilt[-1], proposed_write)
                 if rlog is not None:
                     # `target`/`detail` feed the LIVE status ticker — the harness renders the lowered
                     # call as an opaque sentinel blob (operator: "a file wrote to the project, but
@@ -1958,97 +1395,10 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
                               detail=str(args.get("query") or args.get("url") or ""))
             else:
                 rebuilt.append(tc)
+                if observe_lowering is not None:
+                    observe_lowering(tc, tc, None)
         choice["message"]["tool_calls"] = rebuilt
     return completion
-
-
-# --------------------------------------------------------------------- inbound re-presentation
-
-
-def _command_of(args) -> str:
-    """The command string out of a shell-tool call's arguments (reverse of shell_args)."""
-    d = _parse(args)
-    v = next((d[f] for f in (*_CMD_FIELDS, "script") if d.get(f)), None)
-    if isinstance(v, list):
-        return v[-1] if v else ""
-    return str(v or "")
-
-
-def is_crias_own(command: str) -> bool:
-    """Did cria compose this command, whatever it composed it FOR?
-
-    ONE QUESTION, ONE OWNER (#23). `original_call` answers a narrower one — "which coder tool did
-    this lowering come from" — and returns None for a cria composition that is nobody's tool call:
-    the gate script, which carries its own sentinel. Every caller that used `original_call` as a
-    stand-in for this question therefore fell through to scanning cria's own bytes on the gate leg.
-    That is how `FILE FOLD_AT — does NOT exist on disk` kept reaching the steer author: the workspace
-    survey program contains `if len(files) > FOLD_AT:`, and the redirect matcher read the `>` as a
-    write to a file named after one of cria's own constants. Fixed once for the writeproxy sentinel
-    and still live on the gate leg at ef8ee77 — hence one owner rather than one sentinel's reader."""
-    text = command or ""
-    if not text:
-        return False
-    from . import probegate
-    return _SENTINEL in text or probegate.GATE_SENTINEL in text
-
-
-def original_call(command: str) -> dict | None:
-    """The tool call a lowered command was made FROM — ``{"name":…, "arguments":…}`` — or None when
-    this is not one of cria's.
-
-    Public so a reader that wants to know what the CODER did stops reading what CRIA WROTE. The
-    lowered form is cria's text: a `python3` heredoc, a curl, and — appended to writes, edits and
-    lists — the workspace survey program. Anything that scans it is scanning cria's own bytes.
-
-    Walked on feed-pipeline-java x nemotron-elastic 1787346816. `loop._shell_write_target` looks for
-    a redirect target after a `>`; the survey program contains the ordinary Python comparison
-    `if len(files) > FOLD_AT:`, so cria read one of its OWN CONSTANTS as a file the coder had
-    written, and then told the model, in its own voice, `FILE FOLD_AT — does NOT exist on disk`.
-    Same family as the gate matchers retired on 2026-08-21: cria's own text re-entering as the
-    model's work (#12, #17)."""
-    return _read_sentinel(command)
-
-
-def _read_sentinel(command: str) -> dict | None:
-    """The original tool call encoded in a lowered command's sentinel, or None."""
-    m = _SENTINEL_LINE.search(command or "")
-    if not m:
-        return None
-    try:
-        d = json.loads(base64.b64decode(m.group(1)).decode("utf-8"))
-        return {"name": d["name"], "arguments": d.get("arguments") or "{}"}
-    except (json.JSONDecodeError, ValueError, KeyError, TypeError):
-        return None
-
-
-# The Codex exec-output envelope wrapped around a lowered synthetic tool's result:
-#   ``Chunk ID: <hex>`` / ``Wall time: <n> seconds`` / ``Process exited with code <n>`` /
-#   ``Original token count: <n>`` / ``Output:`` / [``Warning: truncated output …``] /
-#   [``Total output lines: <n>``] then the real stdout.
-# web_fetch/web_search are SYNTHETIC tools cria lowers to a shell exec, so the harness wraps their
-# result in this envelope. Re-presented as a web_fetch value it reads as a SHELL command that cached
-# a "chunk" to disk: the model then greps a phantom cache path and re-fetches the whole page instead
-# of paging with cursor/find (observed live — a 57K OpenAPI doc grepped at an imagined
-# .cache/mcp-server/… file, then re-fetched 7×, its reasoning derailed across 10 turns by a "cache is
-# gone" delusion). The tool's OWN "⚠ More remains … cursor=" footer is the real pagination signal;
-# the envelope adds only a false disk-cache mental model (and a spurious "truncated output" warning —
-# webfetch PAGINATES, it does not truncate). Strip it back to the payload. A no-op when absent.
-_ENVELOPE_OUTPUT_LINE = re.compile(r"^Output:[ \t]*$", re.M)
-# THE HARNESS'S OWN BOOKKEEPING, which is envelope and goes. `Total output lines: N` describes the
-# transport, not the answer.
-_ENVELOPE_ADVISORY = re.compile(r"^Total output lines: \d+[ \t]*$")
-# ITS TRUNCATION WARNING IS NOT ENVELOPE. `Warning: truncated output` says the payload below is a
-# PIECE of the answer, and it was being dropped along with the framing — so a read, a listing or a
-# fetch that the harness had cut reached the model looking whole (#5b). It stays, and
-# `note_harness_cuts` learns its shape so cria can count it like the inline `…N tokens truncated…`
-# marker it already watches for.
-_ENVELOPE_CUT_WARNING = re.compile(r"^Warning: truncated output.*$")
-
-
-# A pipe into a line-filter: the class of self-blinding observed live (`| grep -E 'passed|failed'`,
-# `| grep -v Error`, `| tail`). Only these — a pipe into tee/xargs/python is not a filter.
-_FILTER_PIPE = re.compile(r"\|\s*(?:grep|egrep|fgrep|rg|head|tail|sed|awk)\b")
-_EXIT_CODE = re.compile(r"Process exited with code (\d+)")
 
 
 def _debinarized(content: str) -> str:
@@ -2090,59 +1440,6 @@ def _binary_fact(blob: str) -> str:
         head = b""
     return content_reduce_mod.binary_note(len(blob.encode("utf-8", "replace")),
                                           content_reduce_mod.binary_kind(head))
-
-
-# A SEARCH COMMAND, by shape. These read a file or a tree and answer with the lines that matched;
-# every one of them exits 1 and prints nothing when the answer is "none", which is a FACT and not a
-# failure. Deliberately excludes the pipe case — `_blind_pipe_failure` owns that one, where the
-# model's own filter ate someone else's error.
-_SEARCH_CMD = re.compile(r"(?:^|[;&|(]\s*)\s*(?:grep|egrep|fgrep|rg|ag|ack)\b")
-
-
-def _found_nothing(command: str, content: str) -> bool:
-    """The model ran a search, it matched nothing, and the envelope shows that as a blank."""
-    cmd = command or ""
-    if not cmd or not _SEARCH_CMD.search(cmd) or _FILTER_PIPE.search(cmd):
-        return False
-    m = _EXIT_CODE.search(content or "")
-    if not m or m.group(1) != "1":       # 1 is "no match"; 2+ is a real error, with its own message
-        return False
-    return not _strip_exec_envelope(content or "").strip()
-
-
-def _blind_pipe_failure(command: str, content: str) -> bool:
-    """True when the model's own command failed (nonzero exit), printed NOTHING, and contains a
-    line-filter pipe — the three computable facts behind 'your filter ate the error'. Anything less
-    than all three → stay silent (a bare `grep pat file` exiting 1 with no output is a real answer)."""
-    if not command or not _FILTER_PIPE.search(command):
-        return False
-    m = _EXIT_CODE.search(content)
-    if not m or m.group(1) == "0":
-        return False
-    return _strip_exec_envelope(content).strip() == ""
-
-
-def _strip_exec_envelope(content: str, *, preserve_eof: bool = False) -> str:
-    """The harness exec envelope around a re-presented synthetic-tool result → just the payload.
-    Untouched when the envelope isn't present (a native path, an already-clean or non-exec result)."""
-    if not content:
-        return content
-    m = _ENVELOPE_OUTPUT_LINE.search(content)
-    if not m or "Process exited with code" not in content[:m.start()]:
-        return content
-    # The newline immediately after Output: belongs to framing; subsequent blank lines
-    # in a whole-file payload belong to the file, just like its trailing newlines.
-    lines = content[m.end():].removeprefix("\n").split("\n")
-    kept_warning = ""
-    while lines and (_ENVELOPE_ADVISORY.match(lines[0]) or (not preserve_eof and not lines[0].strip())
-                     or _ENVELOPE_CUT_WARNING.match(lines[0])):
-        line = lines.pop(0)
-        if _ENVELOPE_CUT_WARNING.match(line):
-            kept_warning = line.strip()      # the payload is a piece — say so above it
-    body = "\n".join(lines)
-    if not preserve_eof:
-        body = body.rstrip("\n")
-    return f"{kept_warning}\n{body}" if kept_warning else body
 
 
 def _scrub(v, secrets: list[str]):
@@ -2238,59 +1535,8 @@ def _failed_edit_ids(messages: list[dict]) -> set[str]:
     return ids
 
 
-def _rejected_payload_note(tc: dict, path: str) -> str:
-    """Lossless, explicitly provenanced copy of large bytes removed from a rejected tool argument."""
-    fn = tc.get("function") or {}
-    args = _parse(fn.get("arguments"))
-    if not isinstance(args, dict):
-        return ""
-    blocks = []
-    for key in ("old_string", "new_string", "content"):
-        val = args.get(key)
-        if isinstance(val, str) and len(val) > _REJECTED_PAYLOAD_CHARS:
-            blocks.append(prompts.render("rejected_candidate", tool=fn.get("name") or "write",
-                                         key=key, path=path, body=val).strip())
-    return "\n\n".join(blocks)
 
 
-def _collapse_rejected_payload(tc: dict, path: str, rlog=None) -> dict:
-    """Take a REJECTED edit's verbatim payload OUT of the call, rather than replacing it with prose.
-
-    The model no longer sees its own invented file text rendered as though it were the file. What it
-    still sees is the call it made, the path it aimed at, and — in the tool RESULT, which is cria's
-    own marked refusal — that nothing was written. None of that lives in an argument slot.
-
-    NO SENTENCE GOES IN THE CONTENT SLOT. This used to write
-    `[985 characters — this edit was REJECTED, nothing was written to <path>]` into `content`, which
-    is the exact position a file body occupies, and the model read it as one. In the captures:
-    `20260819T063347` calls 0046 and 0047 emitted `write_file {"content": "[2254 characters — this
-    edit was REJECTED…]"}` twice in a row — cria's sentence WAS the file it wrote;
-    `20260817T020431/0012` reasoned *"The current pom.xml is: ```[1107 characters — this edit was
-    REJECTED…]```"*; `20260822T001226/0078` attributed the same sentence to a read_file result. The
-    stub's em dash is the documented cause of `Importer.java:[1,20] illegal character: '\u2014'`.
-    It shipped in 858 prompt files, 1,770 times, including 85 coder prompts on 2026-08-22/23.
-
-    `focustrim` reached the same place from the other side and the operator ruled on it,
-    2026-08-19: *"There is not supposed to be any elision. It's all or nothing."* There the whole
-    call could go, because a superseded write loses nothing. Here the failure is information the
-    coder needs, so the CALL stays and only the payload leaves — which is the same rule applied to
-    the only part of it that can be misread."""
-    fn = tc.get("function") or {}
-    args = _parse(fn.get("arguments"))
-    if not isinstance(args, dict):
-        return tc
-    dropped = []
-    for key in ("old_string", "new_string", "content"):
-        val = args.get(key)
-        if isinstance(val, str) and len(val) > _REJECTED_PAYLOAD_CHARS:
-            del args[key]
-            dropped.append((key, len(val)))
-    if not dropped:
-        return tc
-    if rlog is not None:
-        rlog.emit("writeproxy.rejected_payload_dropped", level="info", path=path,
-                  keys=[k for k, _ in dropped], chars=sum(n for _, n in dropped))
-    return {**tc, "function": {**fn, "arguments": json.dumps(args)}}
 
 
 # THE HARNESS'S OWN TRUNCATION MARKER, in either unit. Codex writes `…N chars truncated…` /
@@ -2373,6 +1619,7 @@ def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | Non
     failed_ids = _failed_edit_ids(messages)
     write_paths: dict[str, str] = {}  # tool_call_id -> path, for the success reframe / failure strip
     strip_ids: set[str] = set()       # read/nav re-presented tool ids → strip the harness exec envelope
+    storage_ids: set[str] = set()     # only our instrumented research producer's internal facts
     own_cmds: dict[str, str] = {}     # tool_call_id -> the model's OWN raw command, for the blind-pipe note
     # WHAT THIS PASS TEACHES THE WORKSPACE VIEW. cria lowered every one of these calls, so it knows
     # the path and (for a whole write) the exact bytes — the workspace's own contents, proved by the
@@ -2404,6 +1651,9 @@ def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | Non
                         if _shelltool.writes_something(name, own):
                             view.note_a_mutator_ran()
                     if orig is not None:
+                        if (orig['name'] in (_FETCH_NAMES | _SEARCH_NAMES)
+                                and _STORED_MARKER in _command_of(fn.get('arguments'))):
+                            storage_ids.add(tc.get('id'))
                         tc = {**tc, "function": {"name": orig["name"], "arguments": orig["arguments"]}}
                         swapped += 1
                         if orig["name"] in (_WRITE_NAMES | _EDIT_NAMES):
@@ -2419,10 +1669,10 @@ def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | Non
                                 if body_arg is not None:
                                     written[tc.get("id")] = body_arg
                             if tc.get("id") in failed_ids:
-                                note = _rejected_payload_note(tc, _tool_path(p) or "")
-                                if note:
-                                    rejected_notes_by_id[tc.get("id")] = note
-                                tc = _collapse_rejected_payload(tc, _tool_path(p) or "", rlog)
+                                draft = toolstages.current().preserve_draft(tc, _tool_path(p) or "", rlog)
+                                if draft.note:
+                                    rejected_notes_by_id[tc.get("id")] = draft.note
+                                tc = draft.call
                         elif orig["name"] in (_READ_NAMES | _LIST_NAMES | _FETCH_NAMES | _SEARCH_NAMES):
                             strip_ids.add(tc.get("id"))
                             if orig["name"] in _READ_NAMES:
@@ -2506,6 +1756,9 @@ def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | Non
                 # Raw Codex ingress fixtures prove it does not append a payload newline.
                 view.note_read(read_whole[tid], _strip_exec_envelope(content, preserve_eof=preserve_eof))
             if tid in strip_ids:                          # read/nav result → drop the shell envelope
+                if tid in storage_ids:
+                    content = ''.join(line for line in content.splitlines(keepends=True)
+                                      if not line.startswith(_STORED_MARKER))
                 out.append({**m, "content": _strip_exec_envelope(content, preserve_eof=preserve_eof)})
             elif tid in write_paths and any(ln.strip() == _WROTE for ln in content.splitlines()):  # write/edit SUCCESS
                 rendered = render_edit_echo(content, write_paths[tid])
@@ -2515,32 +1768,17 @@ def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | Non
                 # then hand a structured edit-fail fact-report to the ONE edit-recovery owner, which
                 # composes the single monotonic directive keyed on this file's failure history so far
                 # (``out``). A non-edit-fail failure (write refusal, real error) passes through unchanged.
-                recovered = editrecovery.recover(_strip_exec_envelope(content), out, rlog)
+                stripped = _strip_exec_envelope(content)
+                result = toolstages.current().returned_result(
+                    ReturnedResult(m, stripped, own_cmds.get(tid, ""), out, rlog, mutation_failure=True))
+                recovered = (result or {**m, "content": stripped})["content"]
                 note = rejected_notes_by_id.get(tid, "")
                 if note:
                     recovered = recovered.rstrip() + "\n\n" + note
                 out.append({**m, "content": recovered})
-            elif "externally-managed-environment" in content:
-                # PEP 668: `pip install` fails by design on this box. A weak model retries it forever
-                # (observed: Fabliq wedged a whole step re-running pip). Append the remedy (stdlib /
-                # --break-system-packages / venv) ONCE — grounded in the real error, not invented.
-                out.append(_noted(m, content, prompts.load("pep668_remedy")))
-            elif _found_nothing(own_cmds.get(tid, ""), content):
-                # AN EMPTY RESULT FROM A SEARCH IS AN ANSWER. `grep` exits 1 and prints nothing when
-                # the string is not there, and the harness envelope renders that as `Process exited
-                # with code 1 / Output:` with a blank beneath it — indistinguishable, to a reader,
-                # from a command that failed to run. Walked on cart-billing-go x nemotron-elastic
-                # 1787434778: the coder grepped the library for `Quantize` six times, got the blank
-                # each time, and read it as "the command did not work" rather than "the method does
-                # not exist" — which was the whole question of the run. Its own words at 0072: "in our
-                # fetch we didn't see that snippet; maybe it's later in the file."
-                out.append(_noted(m, content, prompts.load("search_found_nothing")))
-            elif _blind_pipe_failure(own_cmds.get(tid, ""), content):
-                # The model's OWN filter pipe ate the error: `pytest … | grep -E 'passed|failed'` on a
-                # collection error prints NOTHING (grep exits 1 on no match), and a weak model re-ran
-                # that blind for ELEVEN turns while the real traceback existed (run 0729-gemma4 B3).
-                # The note states only computable facts: nonzero exit, empty output, a filter present.
-                out.append(_noted(m, content, prompts.load("filtered_failure_note")))
+            elif (result := toolstages.current().returned_result(
+                    ReturnedResult(m, content, own_cmds.get(tid, ""), out, rlog))) is not None:
+                out.append(result)
             elif content != str(m.get("content") or ""):
                 out.append({**m, "content": content})   # the binary-soup cleanse changed it
             else:
@@ -2549,10 +1787,8 @@ def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | Non
             out.append(m)
     if swapped and rlog is not None:
         rlog.emit("writeproxy.represented", calls=swapped)
-    _note_missing_dependency(out, workspace_root, rlog)
-    _note_dependency_search(out, own_cmds, workspace_root, rlog)
-    if tools_present:   # a compaction/summarize turn (empty tool menu) never gets a C40 probe
-        _note_dependency_surface(out, workspace_root, sess_key, rlog)
+    toolstages.current().returned_history(
+        ReturnedHistory(out, own_cmds, workspace_root, sess_key, tools_present, rlog))
     return out
 
 
@@ -2587,397 +1823,3 @@ _MAX_ANCHOR_RENDERS_PER_REQUEST = 12
 # on the next request; if anything was withheld this pass, ONE labelled sentence says so -- never a
 # silent cut (#5).
 _MAX_TOTAL_NOTE_BYTES_PER_REQUEST = 24_000
-
-
-def _note_dependency_surface(messages: list[dict], workspace_root, sess_key: str, rlog) -> None:
-    """Candidate C40. See cria/depsurface.py's module docstring for the full redesign history.
-
-    TWO PHASES, ANCHORED FIRST (independent review round 4, R3 regression fix #1). The round-3 shape
-    processed every declared coordinate in ONE pass, in manifest order -- so a coordinate that had
-    never been anchored yet, but happened to be listed before an already-anchored one, could consume
-    budget a stable, already-delivered note needed, displacing it for that request (breaking the very
-    stability the durable-anchor design exists for). This function now runs two full passes: PHASE 1
-    re-renders every ALREADY-ANCHORED coordinate first (bounded by `_MAX_ANCHOR_RENDERS_PER_REQUEST`
-    and the byte budget) -- no disk read, no `gather()` call, `gather()` still runs AT MOST ONCE per
-    coordinate per session. Only once phase 1 is done does PHASE 2 consider coordinates never anchored
-    this session, bounded by `_MAX_NOTES_PER_REQUEST` new `gather()` calls.
-
-    ANCHOR LOSS (a harness compaction folds the anchor's message out of history): re-anchored once on
-    the newest qualifying tool result within phase 1, replaying the SAME cached text -- see the
-    C37/compaction rationale in this module's git history for why re-anchoring is preferred over
-    staying silent.
-
-    TIMELESS WORDING. `cria/prompts/dependency_surface_*.txt` says "THE VERSION ... DECLARED IN
-    <manifest>", never "JUST RESOLVED" -- true no matter how many times the identical text repeats.
-
-    PERMANENT WITHHOLDING, NEVER RE-GATHERED, NO FALSE PROMISE (independent review round 4, R3
-    regression fixes #2 and #3). A coordinate whose real surface does not fit the remaining byte
-    budget the FIRST time it is gathered is recorded in `depsurface._WITHHELD` -- permanently for the
-    session, so it is NEVER handed to `gather()` again (round 3's bug: a withheld coordinate was
-    silently re-gathered on every later request, which for JVM meant a fresh `javap` subprocess every
-    single turn). Only three small pointer fields are kept (the coordinate label, its real local path,
-    and the real command to read it), never the full surface. The combined withheld note names every
-    withheld coordinate's real read command directly (`go doc -all <coord>` / `jar tf <jar>` / a real
-    grep-able path) and explicitly says it will NOT appear automatically -- round 3's wording promised
-    "they will appear on a later turn," which was false (#5b): nothing in this design ever revisits a
-    withheld coordinate, so nothing could have made that promise true.
-
-    Without a `sess_key` (no identity to remember anchors/withholds against) this abstains entirely."""
-    if not workspace_root or not sess_key:
-        return
-    by_call_id: dict[str, dict] = {}
-    newest_tool = None
-    for m in messages:
-        if m.get("role") == "tool" and isinstance(m.get("content"), str) and m["content"]:
-            newest_tool = m   # keep walking -- the LAST qualifying tool result in this batch wins
-            cid = m.get("tool_call_id")
-            if cid:
-                by_call_id[cid] = m
-    if newest_tool is None:
-        return
-    declared = depsurface.declared_coordinates(workspace_root)
-    build_roots = dirguard.dependency_roots(messages, workspace_root)   # where THIS run's build keeps its dependencies
-    declared_keys = {(eco, package, version) for eco, package, version in declared}
-
-    total_bytes = 0
-    anchor_renders = 0
-
-    # PHASE 1 -- every already-anchored coordinate, priority, before anything new is even considered.
-    for eco, package, version in declared:
-        if anchor_renders >= _MAX_ANCHOR_RENDERS_PER_REQUEST:
-            break
-        coordinate_key = (eco, package, version)
-        state = depsurface.anchor_state(sess_key, coordinate_key)
-        if state is None:
-            continue   # never anchored -- phase 2's job
-        anchor_id, note_text = state
-        note_bytes = len(note_text.encode("utf-8", "replace"))
-        if total_bytes + note_bytes > _MAX_TOTAL_NOTE_BYTES_PER_REQUEST:
-            break   # anchored notes have priority; if even one cannot fit, stop -- phase 2 won't fit either
-        anchor_msg = by_call_id.get(anchor_id)
-        if anchor_msg is not None:
-            append_note(anchor_msg, note_text)
-            total_bytes += note_bytes
-            anchor_renders += 1
-            continue
-        # Anchor lost (compaction) -- re-anchor once on the newest tool result, same cached text.
-        new_cid = newest_tool.get("tool_call_id")
-        if new_cid:
-            append_note(newest_tool, note_text)
-            depsurface.set_anchor_state(sess_key, coordinate_key, new_cid, note_text)
-            total_bytes += note_bytes
-            anchor_renders += 1
-            if rlog is not None:
-                rlog.emit("writeproxy.dependency_surface_reanchored", level="info", ecosystem=eco,
-                          coordinate=coordinate_key)
-
-    # PHASE 2 -- coordinates never anchored: a bounded new gather(), or (if already withheld) nothing
-    # at all -- the combined pointer note below is the only thing a withheld coordinate ever costs.
-    new_gathers = 0
-    for eco, package, version in declared:
-        coordinate_key = (eco, package, version)
-        if depsurface.anchor_state(sess_key, coordinate_key) is not None:
-            continue   # phase 1 already handled it
-        if depsurface.is_withheld(sess_key, coordinate_key):
-            continue   # permanently withheld -- NEVER gathered again
-        if new_gathers >= _MAX_NOTES_PER_REQUEST:
-            continue
-        if not depsurface.source_located(eco, package, version, workspace_root, build_roots):
-            continue   # declared but not on disk YET (the build resolves after the manifest is written):
-            #            ask again next request, for stat calls only -- no abstain back-off, no decode
-        if not depsurface.should_retry_gather(sess_key, coordinate_key):
-            continue   # abstained recently (cache absent / go doc/javap failed) -- not retried yet
-        cid = newest_tool.get("tool_call_id")
-        if not cid:
-            continue   # no stable id to anchor to -- skip rather than anchor to nothing
-        surface = depsurface.gather(eco, package, version, workspace_root, cache_roots=build_roots)
-        new_gathers += 1   # gather() ran -- counts here whether or not it fit the budget below
-        if surface is None:
-            depsurface.record_abstain(sess_key, coordinate_key)
-            continue   # abstain silently -- manifest declares it, but the local cache does not
-        note = _render_dependency_surface(surface, eco)
-        if not note:
-            depsurface.record_abstain(sess_key, coordinate_key)
-            continue
-        note_bytes = len(note.encode("utf-8", "replace"))
-        if total_bytes + note_bytes > _MAX_TOTAL_NOTE_BYTES_PER_REQUEST:
-            # A REAL surface that simply does not fit -- withheld PERMANENTLY, never gathered again.
-            depsurface.record_withheld(sess_key, coordinate_key, surface.coordinate, surface.root,
-                                       surface.read_hint)
-            if rlog is not None:
-                rlog.emit("writeproxy.dependency_surface_withheld_new", level="info", ecosystem=eco,
-                          coordinate=coordinate_key)
-            continue
-        append_note(newest_tool, note)
-        depsurface.set_anchor_state(sess_key, coordinate_key, cid, note)
-        depsurface.clear_abstain(sess_key, coordinate_key)
-        total_bytes += note_bytes
-        anchor_renders += 1
-        if rlog is not None:
-            rlog.emit("writeproxy.dependency_surface", level="info", ecosystem=eco,
-                      coordinate=surface.coordinate, members=len(surface.lines),
-                      complete=surface.complete)
-
-    # Independent review round 5: `withheld_pointers` is filtered against `declared_keys` -- the SAME
-    # filter the anchor phases use -- so a superseded version (a bump replaced p6 v1.0.0 with p6
-    # v1.1.0) or a removed dependency (p5 dropped from go.mod) stops being named the moment it leaves
-    # the manifest, instead of being listed forever as a false present-tense fact about the project.
-    pointers = depsurface.withheld_pointers(sess_key, declared_keys)
-    if pointers:
-        all_lines = [f"- {label}: {read_hint}" for label, _root, read_hint in pointers]
-        # The pointer BLOCK itself counts against the same total-byte budget as every other note
-        # (independent review round 5) -- bounded, never a silent unbounded addition once several
-        # coordinates are withheld. A pointer line that does not fit is simply not shown; the COUNT
-        # in the label is always the real total, so an incomplete pointer list never claims to be
-        # the whole one.
-        shown_lines: list[str] = []
-        budget_left = _MAX_TOTAL_NOTE_BYTES_PER_REQUEST - total_bytes
-        used = 0
-        for line in all_lines:
-            cost = len(line.encode("utf-8", "replace")) + 1
-            if used + cost > max(budget_left, 0):
-                break
-            shown_lines.append(line)
-            used += cost
-        if shown_lines:
-            block = prompts.render("dependency_surface_withheld", count=str(len(pointers)),
-                                   pointers="\n".join(shown_lines))
-            append_note(newest_tool, block)
-            total_bytes += len(block.encode("utf-8", "replace"))
-
-
-def _render_dependency_surface(surface, ecosystem: str) -> str:
-    """The model-facing note for one real DependencySurface -- every line in it is byte-identical to a
-    line :func:`cria.depsurface.gather` read from disk (#5b: never a cria paraphrase of what a real
-    tool said). Uses the COMPLETE template ONLY when ``surface.complete`` is True (a real,
-    authoritative tool enumerated the package's whole exported surface, e.g. ``go doc -all``) AND the
-    complete selection fits the inline budget -- otherwise ALWAYS the partial template, which never
-    claims a missing member does not exist (independent review B3). ``ecosystem`` selects the
-    TIMELESS manifest label ("the version declared in go.mod") -- this text is re-rendered verbatim on
-    every later turn, so it must never say anything that is only true at the moment of first
-    delivery."""
-    manifest = depsurface.MANIFEST_LABEL.get(ecosystem, "the project's dependency manifest")
-    joined = "\n".join(surface.lines)
-    fits = len(joined.encode("utf-8", "replace")) <= _SURFACE_INLINE_BUDGET
-    if surface.complete and fits:
-        return prompts.render("dependency_surface_complete", coordinate=surface.coordinate,
-                              manifest=manifest, root=surface.root, lines=joined)
-    shown: list[str] = list(surface.lines) if fits else []
-    if not fits:
-        budget = _SURFACE_INLINE_BUDGET
-        for line in surface.lines:
-            cost = len(line.encode("utf-8", "replace")) + 1
-            if cost > budget:
-                break
-            shown.append(line)
-            budget -= cost
-        if not shown:
-            shown = list(surface.lines[:1])
-    return prompts.render("dependency_surface_partial", coordinate=surface.coordinate,
-                          manifest=manifest, root=surface.root, total=str(len(surface.lines)),
-                          shown=str(len(shown)), lines="\n".join(shown), read_hint=surface.read_hint)
-
-
-def _noted(m: dict, content: str, note: str) -> dict:
-    out = dict(m)
-    append_note(out, note, content)
-    return out
-
-
-def _digest(text: str) -> str:
-    return hashlib.sha1(text.encode("utf-8", "replace")).hexdigest()
-
-
-def append_note(m: dict, note: str, content: str | None = None) -> None:
-    """Append cria's ``note`` to tool message ``m`` and record WHERE THE PAYLOAD ENDED (length + digest of what
-    the tool said), the first time only — a cria-internal hint (`bodykeys.PAYLOAD_BOUNDARY`) the wire strips.
-    ``content`` is the payload when the caller already cleansed it. Every producer that appends cria text to
-    a tool result goes through here, so a reader that counts the payload never has to guess from the text."""
-    c = m.get("content") if content is None else content
-    c = c if isinstance(c, str) else ""
-    if bodykeys.PAYLOAD_BOUNDARY not in m:
-        m[bodykeys.PAYLOAD_BOUNDARY] = (len(c), _digest(c))
-    m["content"] = c + "\n\n" + note
-
-
-def payload_of(m: dict, content: str) -> str | None:
-    """The tool's own payload within ``content``. No boundary ever stamped: the whole content (nothing was
-    appended). A boundary still true of these bytes (length AND digest): the content cut there. A boundary
-    that no longer verifies: None — the payload is UNKNOWN and a reader must abstain, never count the
-    annotated carrier and never guess from marker text."""
-    if bodykeys.PAYLOAD_BOUNDARY not in m:
-        return content
-    b = m[bodykeys.PAYLOAD_BOUNDARY]
-    if isinstance(b, (tuple, list)) and len(b) == 2 and isinstance(b[0], int) \
-            and 0 <= b[0] <= len(content) and _digest(content[:b[0]]) == b[1]:
-        return content[:b[0]]
-    return None
-
-
-def _note_missing_dependency(messages: list[dict], workspace_root, rlog) -> None:
-    """Label the MOST RECENT command result whose own output says a dependency will not load.
-
-    The note existed already and fired only on cria's gate probes — so it never saw the model's own
-    `ruby -Ilib …`, which is where this actually happens. Measured on the p3 arm: nemotron-elastic's
-    ruby run carried `cannot load such file` 39 times and the note appeared zero times, and all five
-    of that cell's checks died on that one unloadable gem. Same mistake as the read guard: the door
-    cria watches was not the door the failure comes through.
-
-    ONLY THE LAST ONE. Annotating all 39 would put the same paragraph in the window 39 times, which
-    is noise on a signal the model has already seen (#3). The most recent occurrence is the turn it
-    can act on.
-
-    Silent when the name resolves to the project's own file — telling a coder its own module is a
-    missing dependency sends it after a package that should not exist (#8: ask the disk)."""
-    last = None
-    for m in messages:
-        if m.get("role") != "tool":
-            continue
-        c = m.get("content")
-        if not isinstance(c, str) or probegate_marker_in(c):
-            continue          # a gate result already carries the note from proberun
-        if probeparse.dependency_missing(c):
-            last = m
-    if last is None:
-        return
-    eco, name = probeparse.dependency_missing(last["content"])
-    if workspace_root and probeparse.names_a_workspace_file(name, workspace_root):
-        return
-    note = prompts.fill(proberun.dependency_line(eco, workspace_root or ""), name=name)
-    if note in last["content"]:
-        return
-    append_note(last, note)
-    if rlog is not None:
-        rlog.emit("writeproxy.dependency_note", level="info", ecosystem=eco, name=name)
-
-
-def _note_dependency_search(messages: list[dict], own_cmds: dict[str, str],
-                            workspace_root, rlog) -> None:
-    """Answer a search for dependency SOURCE that came back empty, by naming where it really lives.
-
-    `probeparse.searched_for_dependency_source` and `probeparse.dependency_source_root` were written
-    for this on 2026-08-19 and NOTHING EVER CALLED THEM. The prompt file existed, the table of
-    per-ecosystem roots existed, the tests passed against the functions directly — and the whole
-    thing sat outside the loop for a day (#11b, again: a mechanism that reaches nothing). Its sibling
-    from the same walk, the 4xx note in `webfetch.render_page`, did land, so half that fix has been
-    live and half has been dead.
-
-    The incident it was built for, walked on `rust-toml-cli x ternary-bonsai` 2026-08-19: the coder
-    ran `find <WORKSPACE>/.cargo/registry/src/... -name value.rs` twice, got nothing both times, and
-    concluded the source was unavailable. It was on the box the whole run under `~/.cargo/registry/src`
-    — one directory root away — and the model spent the next twenty calls guessing TOML syntax from
-    memory instead.
-
-    THE TRIGGER IS THE SEARCH, NOT THE FAILURE THAT PROMPTED IT, and that bounds what this can do:
-    a model that never goes looking is never answered. `feed-pipeline-java x nemotron-elastic`
-    1787247514 died believing `com.opencsv.CSVRecord` exists, with the jar sitting in `~/.m2` that
-    would have disproved it in one command — and searched no package directory in 74 calls, so this
-    note could not have fired. Pointing a model at the source it did not ask for is a different
-    mechanism and a much higher bar (#1); this one only answers a question already asked.
-
-    ONLY THE LAST ONE, like its sibling above: repeating the same paragraph for every empty search is
-    noise on a signal the model has already read (#3). Silent when the search found something, when
-    the path searched is already the home root (`searched_for_dependency_source` handles that), and
-    when no root for this ecosystem is on disk in the `found` wording — that case gets the `absent`
-    wording instead, which tells the model to stop searching the same way rather than sending it to a
-    directory cria cannot see."""
-    if not messages:
-        return
-    last, searched = None, ""
-    for m in messages:
-        if m.get("role") != "tool":
-            continue
-        c = m.get("content")
-        if not isinstance(c, str) or probegate_marker_in(c):
-            continue
-        tok = probeparse.searched_for_dependency_source(own_cmds.get(m.get("tool_call_id"), ""))
-        if not tok:
-            continue
-        if _strip_exec_envelope(c).strip():
-            continue                     # it FOUND something — nothing to answer (#3)
-        last, searched = m, tok
-    if last is None:
-        return
-    eco = _workspace_ecosystem(workspace_root)
-    root = probeparse.dependency_source_root(eco, workspace_root or "") if eco else ""
-    if root is None:
-        # cria has not been told where this ecosystem keeps its source yet — the candidates are
-        # queued for the next survey. Saying "no installed source root can be found on this machine"
-        # from an unasked question is the false fact the `absent` wording is built on, and its remedy
-        # sends the coder away from source that may be one directory over (#23c, #3).
-        return
-    words = prompts.load_map("dependency_source_root")
-    # …AND NOT A PARENT OF WHERE IT JUST LOOKED. The `found` wording says "you looked in the wrong
-    # root; the real one is <root>" — false when the token is already inside that root, and its
-    # remedy names a directory the search was already under. Walked on shipping-rates-rb x
-    # nemotron-elastic 1787432916: cria answered a search of the installed gem's own lib/ with "this
-    # project keeps no vendored copy there … Search there instead", naming the parent (#5b).
-    if root and probeparse.searched_under(searched, root):
-        return
-    note = (prompts.fill(words["found"], searched=searched, root=root) if root
-            else prompts.fill(words["absent"], searched=searched))
-    if note in last["content"]:
-        return
-    append_note(last, note)
-    if rlog is not None:
-        rlog.emit("writeproxy.dependency_source_note", level="info",
-                  ecosystem=eco or "", root=root, searched=searched)
-
-
-def _workspace_ecosystem(workspace_root) -> str:
-    """The first ecosystem this workspace declares, by its own manifests — "" when none or unreadable.
-
-    Reuses `probediscovery.detect_ecosystems`, whose enum values are already the keys of
-    `_DEPENDENCY_SOURCE_ROOTS` ("jvm", "rust", …), so there is no second table to drift (#23)."""
-    if not workspace_root:
-        return ""
-    try:
-        from pathlib import Path
-        from .probediscovery import ProjectDir, detect_ecosystems
-        entries = wsview.current(workspace_root).scandir(workspace_root)
-        if entries is None:
-            return ""
-        names = {e.name for e in entries if e.is_file()}
-        found = detect_ecosystems(ProjectDir(Path(workspace_root), names))
-        return found[0].value if found else ""
-    except Exception:                     # noqa: BLE001 — a note must never break the reply
-        return ""
-
-
-def probegate_marker_in(text: str) -> bool:
-    """A gate result — proberun.dependency_note already speaks for those."""
-    from .probegate import SECTION_PREFIX
-    return SECTION_PREFIX in text
-
-
-# --------------------------------------------------------------------- content repair
-
-# Ported from codex-local tool_aliases.rs: a weak model sometimes emits a file's whole content with
-# literal `\n` for every newline and NO real newlines — which lands the file as one physical line.
-# If the content has no real newline but has a literal `\n`, decode its backslash escapes.
-_ESCAPES = {"n": "\n", "t": "\t", "r": "\r", '"': '"', "'": "'", "\\": "\\", "0": "\0"}
-
-
-def _repair_double_escaped(content: str) -> str:
-    if "\n" in content or "\\n" not in content:
-        return content
-    return _decode_backslash_escapes(content)
-
-
-def _decode_backslash_escapes(s: str) -> str:
-    out: list[str] = []
-    i, n = 0, len(s)
-    while i < n:
-        c = s[i]
-        if c != "\\":
-            out.append(c)
-            i += 1
-            continue
-        if i + 1 >= n:
-            out.append("\\")
-            i += 1
-            continue
-        nxt = s[i + 1]
-        out.append(_ESCAPES[nxt] if nxt in _ESCAPES else "\\" + nxt)
-        i += 2
-    return "".join(out)

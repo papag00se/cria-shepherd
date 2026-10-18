@@ -25,12 +25,13 @@ import os
 from . import content_reduce
 import re
 import tempfile
+import uuid
 import urllib.parse
 import urllib.request
-from dataclasses import dataclass
+from .planningcontracts import ToolResult
 
-from . import brave, prompts, webfetch, wsview
-from .searchloop import first_domain_in, normalize_search, searches_match
+from . import brave, prompts, webfetch, wsview, researchpolicies
+from .searchloop import first_domain_in, normalize_search, searches_match  # compatibility support exports
 
 # The READ-ONLY tools offered to the planner (inline schemas — local models are lenient). No
 # write/patch/exec tools at all: planning is not building, and cria cannot run a command on the
@@ -61,34 +62,14 @@ _SEARCH_COUNT = 20
 # still ride inline; it is the snippet bodies that carry the unrelated vocabulary.
 _SEARCH_INLINE_CHARS = 1500
 
-@dataclass(frozen=True)
-class ToolResult:
-    """One gather tool call: its visible text, whether it taught the planner, and whether a
-    workspace-file answer is still pending.
-
-    ``learned`` is stated by the code that ran the tool — it knows whether the command printed
-    anything, whether the file opened, whether the fetch answered — so the caller never has to
-    re-derive it by reading the text. That distinction is load-bearing: measured (run 0727-090143),
-    an empty workspace answered `ls -la` and `find` with nothing, the gather counted two calls as
-    having researched, and the planner drafted from memory and invented an endpoint the coder then
-    built. A refusal, an error, and a command that printed nothing are all calls that taught it
-    nothing.
-
-    ``pending`` is narrower: only a workspace ``read_file`` whose bytes have not reached the view
-    yet sets it. Its result is neither a file answer nor a repeatable refusal; the next harness
-    survey may carry the requested bytes. An empty or missing file is answered even though it may
-    not have taught the planner anything."""
-    text: str
-    learned: bool
-    pending: bool = False
-
-
 def _nothing(text: str) -> ToolResult:
     return ToolResult(text, False)
 
 
 def execute_tool(name: str, args: dict, cwd: str, search_key: str, recent_searches: list, rlog,
-                 scratch: str | None = None, facts: dict | None = None) -> ToolResult:
+                 scratch: str | None = None, facts: dict | None = None, *,
+                 externalization_owner=None, operation: str | None = None,
+                 observe_externalization=None) -> ToolResult:
     """Run ONE planner tool call → the text for the gather loop to feed back, plus whether anything
     came back (:class:`ToolResult`). Reads anything; may WRITE only to a scratchpad (``scratch`` or
     /tmp), never the workspace, so the reasoner can persist and process fetched data.
@@ -110,9 +91,18 @@ def execute_tool(name: str, args: dict, cwd: str, search_key: str, recent_search
     if name in ("read_file", "cat_file"):
         return _read_file(args, cwd, scratch)
     if name == "web_fetch":
-        return _web_fetch(args, facts, scratch)
+        result = _web_fetch(args, facts, scratch, externalization_owner=externalization_owner,
+                            operation=operation, rlog=rlog, _tool_name=name)
+        if observe_externalization is not None:
+            observe_externalization(result)
+        return result
     if name in ("web_search", "local_web_search"):
-        return _web_search(args, search_key, recent_searches, facts, scratch)
+        result = _web_search(args, search_key, recent_searches, facts, scratch,
+                             externalization_owner=externalization_owner, operation=operation, rlog=rlog,
+                             _tool_name=name)
+        if observe_externalization is not None:
+            observe_externalization(result)
+        return result
     return _nothing(prompts.fill(prompts.load_map("planner_steers")["unknown_tool"], tool=name,
                                  tools=", ".join(t["function"]["name"] for t in PLANNER_TOOLS)))
 
@@ -288,7 +278,8 @@ def _read_file(args: dict, cwd: str, scratch: str | None = None) -> ToolResult:
 
 # ------------------------------------------------------------------ web fetch / search
 
-def _web_fetch(args: dict, facts: dict | None = None, scratch: str | None = None) -> ToolResult:
+def _web_fetch(args: dict, facts: dict | None = None, scratch: str | None = None, *,
+               externalization_owner=None, operation=None, rlog=None, _tool_name='web_fetch') -> ToolResult:
     """Fetch through the SHARED fetcher, reduce MIME-aware, and hand back something that FITS.
 
     This used to read the socket itself and return the whole decoded body, trusting a comment that
@@ -301,6 +292,11 @@ def _web_fetch(args: dict, facts: dict | None = None, scratch: str | None = None
     So a doc bigger than one page takes the coder's route: written IN FULL to the planner's own
     scratchpad — never the workspace — with a pointer and an outline back. Nothing is truncated;
     it moves from the context to a file the gather can grep with the tools it already has."""
+    from . import assistbinding, documentguidance, externalization
+    guidance_definition = assistbinding.selected_definition(documentguidance.DEFINITION)
+    externalization_definition = assistbinding.selected_definition(externalization.DEFINITION)
+    request_provenance = (_tool_name, json.dumps(args, sort_keys=True, ensure_ascii=False))
+    guidance_services = webfetch.guidance_services()
     url = str(args.get("url") or "").strip()
     if not url:
         return _nothing("[web_fetch error: no url]")
@@ -321,50 +317,52 @@ def _web_fetch(args: dict, facts: dict | None = None, scratch: str | None = None
     # then turned that phrase into a concrete 404-ing route. Additive (a true sentence, never an
     # action) and self-limiting: only while cria knows NO routes at all — once any spec has been read
     # it goes quiet, because then the planner has something real to plan against.
-    note += _no_structure_note(facts, parsed)
-    if len(reduced) > webfetch.OVERSIZE_CHARS:
-        spilled = _spill_to_scratch(r, reduced, parsed, scratch)
-        if spilled is not None:
-            return ToolResult(spilled + note, True)
-    return ToolResult(f"HTTP {r.status} \u00b7 {r.final_url}\n{reduced}{note}", True)
+    note += documentguidance.selected_guidance(guidance_definition,
+        documentguidance.GuidanceInput('planner_fetch', parsed=parsed, facts=facts),
+        guidance_services).text
+    from . import externalization as e
+    def detect():
+        root = scratch or os.path.join(tempfile.gettempdir(), 'gather-docs-' + uuid.uuid4().hex)
+        return e.planner_fetch(status=r.status, url=r.final_url, reduced=reduced, parsed=parsed,
+            content_type=r.content_type, root=root, remedy=spill_remedy,
+            services=e.PlannerFetchServices(webfetch.OVERSIZE_CHARS, webfetch.spill_content,
+                                            webfetch._spill_name,
+                lambda value, target: webfetch._spill_outline(value, target,
+                    _guidance=(guidance_definition, guidance_services))))
+    return _externalize_planner(externalization_definition, externalization_owner, operation,
+        f"HTTP {r.status} \u00b7 {r.final_url}\n{reduced}", detect, note, rlog,
+        provenance=(request_provenance, r.status, r.final_url, r.content_type, r.truncated, reduced))
 
 
 def _search_no_structure_note(facts: dict | None) -> str:
     """The search-result flavor of the no-routes disclosure — same condition, same silence rule as
     :func:`_no_structure_note`, worded for snippets (a search that answered is still not a SOURCE)."""
-    if facts is None:
-        return ""
-    if any((e[1] if len(e) > 1 else "") for e in facts.values()):
-        return ""
-    return prompts.load_map("planner_steers")["search_no_structure"]
+    from . import assistbinding, documentguidance
+    return documentguidance.selected_guidance(assistbinding.selected_definition(documentguidance.DEFINITION),
+        documentguidance.GuidanceInput('planner_search', facts=facts),
+        webfetch.guidance_services()).text
 
 
 def _no_structure_note(facts: dict | None, parsed=None) -> str:
     """Disclose an unstructured page only when the shared fetcher established that fact."""
-    if facts is None or parsed is not None:
-        return ""
-    if any((e[1] if len(e) > 1 else "") for e in facts.values()):
-        return ""
-    return prompts.load_map("planner_steers")["fetch_no_structure"]
+    from . import assistbinding, documentguidance
+    return documentguidance.selected_guidance(assistbinding.selected_definition(documentguidance.DEFINITION),
+        documentguidance.GuidanceInput('planner_fetch', parsed=parsed, facts=facts),
+        webfetch.guidance_services()).text
 
 
 def _spill_to_scratch(r, reduced: str, parsed, scratch: str | None) -> str | None:
     """Write a too-large doc to the gather's scratchpad and return the pointer message; None if it
     could not be written (then the caller inlines it — a fetch that reached the model as nothing at
     all would be worse than one that costs context)."""
-    content = webfetch.spill_content(reduced, parsed, r.content_type)
-    try:
-        root = scratch or tempfile.mkdtemp(prefix="gather-docs-")
-        os.makedirs(root, exist_ok=True)
-        target = os.path.join(root, os.path.basename(webfetch._spill_name(r.final_url)))
-        with open(target, "w", encoding="utf-8") as fh:
-            fh.write(content)
-    except OSError:
-        return None
-    return prompts.fill(prompts.load_map("planner_steers")["fetch_spill"],
-                        status=str(r.status), url=r.final_url, chars=f"{len(content):,}",
-                        target=target, outline=webfetch.spill_outline(parsed, target),
-                        remedy=spill_remedy(target))
+    from . import assistbinding, externalization as e
+    root = scratch or os.path.join(tempfile.gettempdir(), 'gather-docs-' + uuid.uuid4().hex)
+    result = _externalize_planner(assistbinding.selected_definition(e.DEFINITION), None, None, '',
+        lambda: e.planner_fetch(status=r.status, url=r.final_url, reduced=reduced, parsed=parsed,
+            content_type=r.content_type, root=root, remedy=spill_remedy,
+            services=e.PlannerFetchServices(webfetch.OVERSIZE_CHARS, webfetch.spill_content,
+                                            webfetch._spill_name, webfetch.spill_outline)), '', None)
+    return result.text or None
 
 
 def spill_remedy(target: str) -> str:
@@ -411,7 +409,13 @@ def _record_fetch(facts: dict | None, url: str, status, body: str, content_type)
 
 
 def _web_search(args: dict, search_key: str, recent: list, facts: dict | None = None,
-                scratch: str | None = None) -> ToolResult:
+                scratch: str | None = None, *, externalization_owner=None, operation=None,
+                rlog=None, _tool_name='web_search') -> ToolResult:
+    from . import assistbinding, documentguidance, externalization
+    guidance_definition = assistbinding.selected_definition(documentguidance.DEFINITION)
+    externalization_definition = assistbinding.selected_definition(externalization.DEFINITION)
+    request_provenance = (_tool_name, json.dumps(args, sort_keys=True, ensure_ascii=False))
+    guidance_services = webfetch.guidance_services()
     query = str(args.get("query") or args.get("q") or "").strip()
     if not query:
         return _nothing("[web_search error: no query]")
@@ -426,7 +430,9 @@ def _web_search(args: dict, search_key: str, recent: list, facts: dict | None = 
         # drafted a concrete invented route from snippets and the coder built a 404. Snippets are
         # pointers, not the source (the same sentence the coder-side doctrine already carries); the
         # note stays exactly while cria knows no routes and goes quiet the moment any spec is read.
-        note = _search_no_structure_note(facts)
+        note = documentguidance.selected_guidance(guidance_definition,
+            documentguidance.GuidanceInput('planner_search', facts=facts),
+            guidance_services).text
         body = format_results(query, brave_search(search_key, query, _SEARCH_COUNT))
         # SPILL, exactly as the fetch sibling does. Twenty results of titles+snippets is thousands of
         # characters of OTHER people's words, and a search is speculative by nature — the model asked
@@ -436,29 +442,78 @@ def _web_search(args: dict, search_key: str, recent: list, facts: dict | None = 
         # none of it about the task. It then survived into the compaction note and was still there,
         # verbatim, at call 0004. The list stays reachable in full on disk; what rides in the context
         # is the pointer plus the titles.
-        spilled = _spill_search(query, body, scratch)
-        return ToolResult((spilled if spilled is not None else body) + note, True)
+        from . import externalization as e
+        return _externalize_planner(externalization_definition, externalization_owner, operation,
+            body, lambda: e.planner_search(query, body, scratch=scratch,
+                inline_chars=_SEARCH_INLINE_CHARS, remedy=spill_remedy), note, rlog,
+            provenance=(request_provenance, body))
     except Exception as e:
         return _nothing(f"[web_search error: {e}]")
+
+
+def _externalize_planner(definition, owner, operation, inline, detect, note, rlog, *, provenance=None):
+    from . import externalization as e
+    key = ('planner', operation) if operation is not None else None
+    previous = (getattr(owner, 'externalization_offers', None) or {}).get(key) if owner is not None and key else None
+    if definition is None:
+        if previous is not None:
+            previous.externalization.cancel()
+            owner.externalization_offers.pop(key, None)
+        return ToolResult(inline + note, True)
+    actual_input = (provenance, inline, note)
+    if previous is not None:
+        if (previous.externalization.owner is definition
+                and previous.externalization_provenance == actual_input):
+            return previous
+        previous.externalization.cancel()
+    state = getattr(owner, 'externalization_state', None) if owner is not None else None
+    if state is None:
+        state = e.State()
+        if owner is not None:
+            owner.externalization_state = state
+    stored = False
+    def write(spill):
+        nonlocal stored
+        try:
+            os.makedirs(os.path.dirname(spill.target) or '.', exist_ok=True)
+            with open(spill.target, 'w', encoding='utf-8') as fh:
+                fh.write(spill.content)
+            stored = True
+        except OSError:
+            return None
+        return spill.pointer
+    def record(spill):
+        if rlog is not None:
+            rlog.emit('plan.research_spill', path=spill.target, operation=operation)
+    source = e.Input(uuid.uuid4().hex, inline, e.Services(detect, write, record))
+    delivery = e.selected_externalization(definition, source, state)
+    result = ToolResult(delivery.result.payload + note, True, externalization=delivery,
+                        externalization_owner=owner, externalization_stored=stored,
+                        externalization_provenance=actual_input)
+    if owner is not None and key:
+        if owner.externalization_offers is None:
+            owner.externalization_offers = {}
+        owner.externalization_offers[key] = result
+    return result
+
+
+def retain_tool_result(result, current_owner) -> bool:
+    """Called after actual gather transcript insertion, never on ToolResult construction."""
+    from . import externalization as e
+    delivery = result.externalization
+    if current_owner is None or delivery is None or result.externalization_owner is not current_owner:
+        return False
+    return delivery.settle(e.Outcome.RETAINED, stored=result.externalization_stored)
 
 
 def _spill_search(query: str, body: str, scratch: str | None) -> str | None:
     """Save a search result list to the scratchpad and return the pointer + the titles, or None when
     it is small enough to inline. Same contract as :func:`_spill_to_scratch` for fetches."""
-    if scratch is None or len(body) <= _SEARCH_INLINE_CHARS:
-        return None
-    slug = re.sub(r"[^a-z0-9]+", "-", query.lower()).strip("-")[:60] or "search"
-    target = os.path.join(scratch, f"search-{slug}.txt")
-    try:
-        with open(target, "w", encoding="utf-8") as fh:
-            fh.write(body)
-    except OSError:
-        return None
-    titles = "\n".join(ln for ln in body.splitlines()
-                       if ln[:2].strip().rstrip(".").isdigit() or ln.startswith("Search results for:"))
-    return prompts.fill(prompts.load_map("planner_steers")["search_spill"],
-                        query=query, chars=f"{len(body):,}", target=target, titles=titles,
-                        remedy=spill_remedy(target))
+    from . import assistbinding, externalization as e
+    result = _externalize_planner(assistbinding.selected_definition(e.DEFINITION), None, None, '',
+        lambda: e.planner_search(query, body, scratch=scratch,
+            inline_chars=_SEARCH_INLINE_CHARS, remedy=spill_remedy), '', None)
+    return result.text or None
 
 
 def brave_search(api_key: str, query: str, count: int = _SEARCH_COUNT) -> list[dict]:
@@ -488,21 +543,38 @@ def gate_search(recent: list, query: str) -> str | None:
     """Decide whether this search runs or is refused as a repeat of one already made
     this gather. ``recent`` is a list of normalized word-sets (mutated in place). Returns
     ``None`` to proceed (and records the query), or the HTTP-400 refusal text to block."""
+    selected = researchpolicies.current()
+    if selected.search is None:
+        return None
     words = normalize_search(query)
     if not words:
         return None
-    if any(searches_match(words, prev) for prev in recent):
-        domain = first_domain_in(query)
-        steer = (f"\nThis query names a domain — stop searching ABOUT it and FETCH it directly: "
-                 f"web_fetch https://{domain} , then parse the response for what you need."
-                 if domain else "")
-        return (f'HTTP 400 Bad Request · web_search "{query}"\n'
-                f"You've searched this before. Make a major change to your search, or try something else.{steer}")
+    # The gather's existing word-set history is an adapter to shared admission,
+    # not another repeat detector or clearance store. No clearance is requested
+    # here; SearchState stays call-local and the gather owns the visible history.
+    def render(key, **values):
+        # This seat retains its established HTTP wording; the shared source
+        # owns the decision and calls this adapter only for its concrete effect.
+        if key == "search_repeat_inline":
+            return ("You've searched this before. Make a major change to your search, "
+                    f"or try something else.{values['domain_steer']}")
+        text = prompts.fill(prompts.load_map("webfetch_guards")[key], **values)
+        return text.replace("then read the response", "then parse the response")
+
+    def domain_note(text):
+        return selected.domain.execute(text, render) if selected.domain is not None else ""
+
+    result = selected.search.execute(researchpolicies.SearchInput(
+        "planner-gather", query, researchpolicies.SearchAction.ADMIT,
+        lambda: tuple(" ".join(sorted(prev)) for prev in recent),
+        lambda _prior: "", domain_note, render), researchpolicies.SearchState())
+    if result.effect is researchpolicies.Effect.REFUSED:
+        return f'HTTP 400 Bad Request · web_search "{query}"\n{result.note}'
     recent.append(words)
     if len(recent) > 64:  # bound memory on a pathologically search-heavy gather
         del recent[0:len(recent) - 64]
     return None
 
 
-# normalize_search / searches_match / first_domain_in now live in cria/searchloop.py (imported
-# above) — shared by this planner guard, the live webfetch.gate_search, and loop.py's fingerprinting.
+# Search normalization is support. Admission/domain judgment and selection are
+# owned by researchpolicies, also used by the coder-facing fetch/search path.

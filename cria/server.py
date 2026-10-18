@@ -18,16 +18,18 @@ import os
 import threading
 import time
 import uuid
-from dataclasses import replace
+from dataclasses import dataclass, replace
+from collections.abc import Callable
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import bodykeys, dirguard
+from . import bodykeys, dirguard, memoryhandoff
 from . import (callcapture, compat, focustrim, groundtruth, massage, modelview, probegate, prompts,
                responses, rumination, selfcompact)
+from . import classify
 from .classify import Classifier
 from . import content_reduce
 from .content_reduce import est_tokens
-from . import config
+from . import config, assistruntime
 from .config import Config
 from . import brave, webfetch
 from .events import EventLog
@@ -57,11 +59,13 @@ from .planner import Planner, _extract_cwd
 from .routing import Router
 from .statusline import StatusWriter  # noqa: F401 — re-exported for tests
 from . import statusline
-from .toolmenu import add_cheatsheet, focus_tools
+from . import toolmenu
 from .turnstats import StatsStore
 from .upstream import Upstream, UpstreamError
 from . import wsview, generation
-from .writeproxy import advertise, native_search_name, needs_translation, redact_secrets, represent_inbound, translate_outbound
+from .writeproxy import (advertise, native_search_name, needs_translation, redact_secrets,
+                         represent_inbound, translate_outbound, retain_externalizations,
+                         observe_externalization_results)
 
 
 def _error_sse(message: str | dict) -> bytes:
@@ -192,8 +196,16 @@ def _is_compaction_request(messages: list) -> bool:
     return LOCAL_COMPACT_MARKER in _latest_user_text(messages)
 
 
-def _recognize_compaction(body: dict, server, rlog) -> bool:
-    """Harness-agnostic recognition of a compaction/summarize turn the operator has NOT wired the
+def _selected_handoff(server=None):
+    runtime = (assistruntime.current() if assistruntime.is_bound()
+               else getattr(server, "pilot_runtime", assistruntime.current()))
+    return runtime.harness_memory_handoff
+
+
+def _recognize_compaction(body: dict, server, rlog, *, definition=...) -> bool:
+    """Selected Source recognition; marker-only routing remains mandatory when absent.
+
+    Harness-agnostic recognition of a compaction/summarize turn the operator has NOT wired the
     `<<<LOCAL_COMPACT>>>` marker onto (see `_is_compaction_request`) — Codex's own default
     `compact_prompt` is exactly this case, and with no `compact_prompt` set in the harness config it
     is what EVERY harness compaction sends. Layered, per principle #8/#18: no Codex metadata sniff,
@@ -231,45 +243,16 @@ def _recognize_compaction(body: dict, server, rlog) -> bool:
     NEW one. So this recognizer only ever WIDENS what counts as compaction from the marker-only
     baseline, never narrows it, and any doubt resolves toward that baseline.
     """
-    if _is_compaction_request(body.get("messages", [])):
-        return True
-    if body.get("tools"):
-        return False  # tools present → an ordinary task by construction; no call, byte-identical
-    if not server.cfg.routing.context_fixes:
-        # Nothing downstream of recognition (the hardening in _compaction_body /
-        # _harden_compaction_reply) is even reachable below LEVEL 3 — asking would spend a call
-        # whose answer cannot change what ships; the harness keeps its own compaction below level
-        # three (see _compaction_body's "LEVEL 3" doc).
-        return False
-    messages = body.get("messages", [])
-    if not any(isinstance(m, dict) and m.get("role") in ("assistant", "tool") for m in messages):
-        # STRUCTURAL, not textual: a checkpoint/handoff summary always has PRIOR work to fold — by
-        # construction it cannot be the first turn of a session. A fresh conversation (no
-        # assistant/tool turn yet) is never a compaction however its lone user turn is worded, so
-        # this excludes it for free — the ordinary "no tools, first message" chat/title call that
-        # would otherwise cost a reasoner call on every such turn campaign-wide.
-        return False
-    turn = _latest_user_text(messages).strip()
-    if not turn:
-        return False
-    if server.reasoner_role is None:
-        # NO REASONER CONFIGURED. `server.reasoner_upstream` still resolves (it falls back to the
-        # SHARED upstream — the coder — unconditionally, the same wiring `LoopContext.reasoner_
-        # chat` uses; see `CriaServer.__init__`), so calling through it here would silently ask the
-        # CODER model a judgment question with none of the reasoner's sampling, and under the "no
-        # reasoner AND no shell" doctrine this is the acknowledged fail-OPEN exit's sibling: nothing
-        # can judge, so this recognizer must not pretend something did. Every other caller of the
-        # reasoner in this codebase gates on `reasoner_role is not None` at its own call site (see
-        # `LoopContext`'s wiring comment) — this is that same gate, here.
-        return False
-    answer = ask_closed(
-        server.reasoner_upstream.chat, server.reasoner_role,
-        prompts.render("recognize_compaction_request", turn=turn), rlog,
-        phase="compaction-recognize", retry_off=False,
-    ).strip().upper()
-    recognized = answer == "YES"
-    rlog.emit("classify.compaction_recognized", by="judge", answer=answer or "(none)",
-              recognized=recognized)
+    definition = _selected_handoff(server) if definition is ... else definition
+    if definition is None:
+        return _is_compaction_request(body.get("messages", []))  # required routing handshake
+    def chat(call, log):
+        return server.reasoner_upstream.chat(call, log)
+    recognized = definition.recognize(body, selected=True,
+        context_fixes=server.cfg.routing.context_fixes, chat_fn=chat,
+        role=server.reasoner_role, ask=ask_closed, rlog=rlog)
+    if type(recognized) is not bool:
+        raise ValueError("Harness handoff recognition must return bool")
     return recognized
 
 
@@ -407,6 +390,12 @@ def _session_gate_plan(server, sess_key: str):
     return getattr(sess, "gate_plan", None) if sess is not None else None
 
 
+@dataclass(frozen=True)
+class _HandoffEvidenceAdapter:
+    """Required role filtering and selected preamble, not an optional hardener."""
+    drop_harness_frame: Callable[[list[dict]], list[dict]]
+
+
 def _compaction_messages(messages: list) -> list[dict]:
     """The model-authored history eligible to become compaction evidence — everything except the
     harness's own compaction/summarize ASK, excluded BY POSITION (the latest user turn, the same
@@ -422,17 +411,7 @@ def _compaction_messages(messages: list) -> list[dict]:
     comment exists to prevent, and `tests/test_server.py::...ask_is_last_and_the_summarize_turn_is_
     not_evidence` already asserts for the marked case). A compaction ask is ALWAYS the harness's
     latest user turn, whatever it says — so drop that one turn by position, unconditionally."""
-    ask_idx = None
-    for i in range(len(messages) - 1, -1, -1):
-        m = messages[i]
-        if isinstance(m, dict) and m.get("role") == "user":
-            ask_idx = i
-            break
-    convo = [m for i, m in enumerate(messages)
-             if i != ask_idx
-             and m.get("role") not in ("system", "developer")
-             and not selfcompact.has_anchor(m)]
-    return _drop_harness_frame(convo)
+    return memoryhandoff.evidence_messages(messages, _HandoffEvidenceAdapter(_drop_harness_frame))
 
 
 def _compaction_transcript(messages: list, files_list: str = "", gate_plan=None,
@@ -449,9 +428,41 @@ def _compaction_transcript(messages: list, files_list: str = "", gate_plan=None,
                                           checks, checks_age)
 
 
+def _handoff_services():
+    return memoryhandoff.EvidenceServices(_drop_harness_frame,
+        lambda root: groundtruth.workspace_inventory(root, flavor="briefing"),
+        _workspace_listing, _fetch_ground_truth, _briefing_disk_truth,
+        validate_compaction_briefing, _proxy_body, SUMMARIZE_MAX_TOKENS)
+
+
+def _handoff_session(server, key):
+    driver = getattr(server, "loop", None)
+    return driver._store.get(key) if driver is not None else None
+
+
+def _observe_handoff_write_results(server, key, messages):
+    owner = _handoff_session(server, key)
+    if owner is not None:
+        from .loop import _note_write_results
+        _note_write_results(owner, messages)
+    return owner
+
+
+def _handoff_facts(server, key, body, rlog, owner):
+    messages = body.get("messages", [])
+    return memoryhandoff.SessionFacts(
+        workspace_root=_session_cwd(key, messages, rlog) or "",
+        original_task=_history_root(messages)[0], gate_plan=_session_gate_plan(server, key),
+        gate_flag=_last_gate_flag(server, key), gate_age=_gate_age(server, key),
+        checks=_last_checks_note(server, key),
+        carried_ledger=_carried_ledger(messages, origin=getattr(owner, "handoff_origin", None)))
+
+
 def _compaction_body(pbody: dict, workspace_root: str | None = None, gate_plan=None,
-                     checks: str = "", checks_age: int = 0) -> dict:
-    """The compaction request, re-asked in CRIA'S OWN WORDS.
+                     checks: str = "", checks_age: int = 0, *, definition=..., facts=None) -> dict:
+    """Selected Source framing, with no replacement when its lifecycle is absent.
+
+    The compaction request, re-asked in CRIA'S OWN WORDS.
 
     LEVEL 3 — CONTEXT_FIXES, and it ran at EVERY level until 2026-08-27. Discarding the harness's
     own summarize instruction and replacing it with cria's, then flattening a structured history into
@@ -494,21 +505,16 @@ def _compaction_body(pbody: dict, workspace_root: str | None = None, gate_plan=N
     so cria, not the harness, gets to say what a good briefing is. ONE owner, so the streaming and
     buffered transports cannot drift apart (they already did: streaming passed the harness's raw
     prompt and the full structured history for months)."""
-    return {**pbody, "messages": [
-        {"role": "system", "content": prompts.load("selfcompact_summary")},
-        *selfcompact.compaction_request_messages(
-            _compaction_messages(pbody.get("messages", [])),
-            # …AND THE DISK, for the same reason the self-compaction sibling now passes it: a writer
-            # shown no workspace invents one. ONE mechanism, both paths.
-            groundtruth.workspace_inventory(workspace_root or "", flavor="briefing"),
-            gate_plan,
-            # …and the checks, by the same argument one step on: a writer shown no build result
-            # invents one. See selfcompact.compaction_request.
-            checks,
-            # …and HOW OLD they are, which decides whether the block may claim to outrank the
-            # transcript. Unconditional precedence over a newer command is what cost the java run.
-            checks_age),
-    ]}
+    definition = _selected_handoff() if definition is ... else definition
+    if definition is None:
+        return pbody
+    if facts is None:
+        facts = memoryhandoff.SessionFacts(workspace_root=workspace_root or "",
+            gate_plan=gate_plan, gate_flag=checks, gate_age=checks_age)
+    framed = definition.frame(pbody, facts, _handoff_services(), selected=True)
+    if not isinstance(framed, dict) or not isinstance(framed.get("messages"), list):
+        raise ValueError("Harness handoff framing must return a message body")
+    return framed
 
 
 def _text_of_msg(m: dict) -> str:
@@ -623,8 +629,11 @@ def _carried_ledger(messages: list, *, origin: _HandoffOrigin | None = None) -> 
     return ""
 
 
-def _harden_compaction_reply(comp: dict, body: dict, provider, server, rlog, sess_key: str = "") -> dict:
-    """The harness stores this reply as the session's ENTIRE remembered past — everything not in it
+def _harden_compaction_reply(comp: dict, body: dict, provider, server, rlog, sess_key: str = "",
+                             *, definition=..., _defer_commit=None, _owner=..., _facts=None) -> dict:
+    """Bind selected hardening; authenticate only the matching, actually returned output.
+
+    The harness stores this reply as the session's ENTIRE remembered past — everything not in it
     is gone (self-compaction's anchors cannot protect messages the harness itself discards). Two
     hardenings, both from captured failures:
 
@@ -640,175 +649,52 @@ def _harden_compaction_reply(comp: dict, body: dict, provider, server, rlog, ses
     facts lived only in the discarded transcript. The deterministic fetch ledger (final status per
     URL + surfaced endpoint routes) is computed from the history being folded and appended to the
     summary — cria appends only facts it can re-derive from the record, never judgment."""
-    _text_of = _completion_text
-
-    # Derived ONCE for both halves. The retry (1) composed its request with neither the disk
-    # inventory nor the gate plan that the first pass gets, while the appendix (2) below derived the
-    # same key again a few lines down. One derivation, both users.
-    #
-    # …AND THE CALLER'S KEY, NOT A SECOND GUESS AT IT. This re-derived the key with an EMPTY headers
-    # dict, and `session_key` reads the session header first — so it could never return the `sid:`
-    # form the loop's store is written under, only the `task:` text-hash fallback. Under Codex, whose
-    # `prompt_cache_key` becomes that `sid:`, the lookup missed every time: `_last_checks_note` and
-    # `_session_gate_plan` both resolved to nothing on every compaction of every session.
-    #
-    # What that cost, walked on feed-pipeline-java x nemotron-elastic 20260820T103857: the briefing
-    # is the ONLY surviving record once the transcript is cut, and `_last_checks_note` exists to bolt
-    # the last gate verdict onto it verbatim — "deterministic check truth the model-authored briefing
-    # kept omitting", in its own docstring. Zero `LATEST CHECK RESULTS` blocks appear in the run's 75
-    # prompts, while the workspace inventory — which needs no store lookup — appears in six. The
-    # compactor was left to describe a broken build from memory and said the code "still references
-    # `CSVRecord` … without importing the class"; the import was line 5 and the class does not exist
-    # in that package. cria then carried that sentence as `⟦ctx:continuation⟧` for the rest of the
-    # run and a steer turned it into a numbered work order (#5b).
     sk = sess_key or session_key({}, body.get("messages", []))
-    # The transcript being folded is the last place most of its tool results will ever be seen: a write
-    # whose result came back only here is still a write that was answered (`gate_unedited`).
-    _loop = getattr(server, "loop", None)
-    _sess = _loop._store.get(sk) if _loop is not None else None
-    if _sess is not None:
-        from .loop import _note_write_results
-        _note_write_results(_sess, body.get("messages", []))
-    ws = _session_cwd(sk, body.get("messages", []), rlog)
-    text = _text_of(comp).strip()
-    truncated = massage.is_truncated(comp)
-    if not text or massage.has_tool_call_leak(text) or truncated:
-        role = server.cfg.routing.roles.get("compactor") or server.cfg.routing.roles.get("reasoner")
-        pb = _proxy_body(dict(body))
-        pb = {**pb, "messages": [m for m in pb.get("messages", []) if m.get("role") != "system"]}
-        # The retry must not re-ask the question that just failed: the harness's own summarize
-        # prompt + a weak model = a pseudo tool call, BOTH passes (g1 0093/0094, g2 twice — the
-        # summary degraded to appendices-only). Lead the retry with cria's briefing framing built
-        # for weak models: prose only, no tools, name real files, quote real checks.
-        pb = {**pb, "messages": [
-            {"role": "system", "content": prompts.load("selfcompact_summary")},
-            # The SAME grounding facts the first pass gets. This retry composed the request
-            # without them: no disk inventory (so the writer that already invented a file is asked
-            # again with nothing to check itself against) and no gate plan (so a red gate cleans to
-            # cria's most forgiving sentence). It is the pass that runs precisely when the first one
-            # produced garbage — the one that can least afford to be given less. The checks join
-            # them for the same reason, and most of all here.
-            *selfcompact.compaction_request_messages(
-                _compaction_messages(pb.get("messages", [])),
-                groundtruth.workspace_inventory(ws or "", flavor="briefing"),
-                _session_gate_plan(server, sk),
-                _last_gate_flag(server, sk),
-                _gate_age(server, sk)),
-        ]}
-        # BOUNDED, not None (C41). `pb` still carries whatever `max_tokens` the harness's ORIGINAL
-        # request had — often None ("uncapped"), which is a reasonable thing for a harness to ask of
-        # its own summarize call but not for this one: this body's messages are cria's own
-        # (`selfcompact_summary` + the grounding facts above), not the harness's, so it is an
-        # INTERNAL prose-writing call exactly like every other briefing `summarize()` writes, and
-        # those all carry `SUMMARIZE_MAX_TOKENS`. Without a cap this is the runaway measured live in
-        # row p28: 0080-proxy (this exact retry) generated the full 37,719-token window and zero
-        # content in ~228s — a SECOND full-window cost on top of the first pass's own, for one
-        # compaction. A length-cut reply is not silently accepted either way: `massage.is_truncated`
-        # below still fails the retry to the deterministic-appendices-only path, unchanged.
-        if not isinstance(pb.get("max_tokens"), int):
-            pb["max_tokens"] = SUMMARIZE_MAX_TOKENS
-        if role is not None:
-            replace(role, reasoning="off").apply(pb, rlog=rlog)
-        else:
-            pb.setdefault("chat_template_kwargs", {})["enable_thinking"] = False
-        rlog.emit("route.compaction_retry", level="info", had_leak=bool(text), truncated=truncated,
-                  max_tokens=pb["max_tokens"])
-        try:
-            comp2 = massage.coerce_text_answer(
-                massage.apply(json.loads(provider.chat(pb, rlog)), None, rlog), rlog)
-            text2 = _text_of(comp2).strip()
-            if text2 and not massage.has_tool_call_leak(text2) and not massage.is_truncated(comp2):
-                comp, text = comp2, text2
-            else:
-                # both passes produced no usable prose (observed: two pseudo write_file dumps in a
-                # row, run g1 0093/0094) — the summary will be the deterministic appendices ONLY.
-                # Without this emit that fact was invisible in the events.
-                rlog.emit("route.compaction_no_briefing", level="warn", retry_leak=bool(text2))
-                text = ""   # this comment's own claim, now true in the code: a leaked or cut-off
-                            # summary was still MERGED with the appendices and shipped as the
-                            # session's entire remembered past. Ship the re-derivable facts alone.
-        except Exception:  # noqa: BLE001 — best-effort: a failed retry must never break the reply
-            rlog.emit("route.compaction_retry_failed", level="warn")
-            text = ""
-    # location=False: this text is about to be FROZEN into the harness's own compaction reply, a
-    # message no later turn of cria's can revise. A location claim ("in this conversation above" /
-    # "not in this conversation") is true only of THIS turn's window and goes stale the moment the
-    # model re-fetches the url or the window moves — independent review of Candidate C31 found this
-    # exact frozen copy asserting a page was NOT in the conversation while the live per-turn facts
-    # anchor, built after a re-fetch, asserted the opposite for the same url in the same coder body
-    # (repro c31contra.py). No session is available here to check visibility anyway (`sess=None`
-    # below), so this call must never claim a location one way or the other.
-    facts = _fetch_ground_truth(body.get("messages", []), location=False)
-    # WORKSPACE LEDGER — the fetch-facts pattern extended to files. g1's compaction summary carried
-    # endpoint facts but no file inventory; the post-compaction coder, told to inspect before
-    # creating, didn't — and wrote a DUPLICATE test suite beside the one it had already built.
-    # A name-only listing (top level + one level down) is re-derivable truth, judgment-free.
-    inventory = _workspace_listing(ws)
-    checks = _last_checks_note(server, sk)
-    if text:
-        # A model-made summary becomes the harness's entire memory. Give a separate, closed judge
-        # the candidate, the same transcript, and the exact disk/gate facts before allowing that
-        # summary onto the wire. An absent/ambiguous judge withholds the prose; unlike internal
-        # self-compaction this handshake cannot retain history the harness has chosen to replace,
-        # so the re-derivable appendices below remain as the safe minimum.
-        writer_inventory = groundtruth.workspace_inventory(ws or "", flavor="briefing")
-        transcript = selfcompact.compaction_request_parts(
-            _compaction_messages(body.get("messages", [])),
-            gate_plan=_session_gate_plan(server, sk))
-        role = server.cfg.routing.roles.get("compactor") or server.cfg.routing.roles.get("reasoner")
-        if not validate_compaction_briefing(
-                lambda call, log: provider.chat(call, log), role, text,
-                files=writer_inventory, checks=checks, transcript_blocks=transcript,
-                task=_history_root(body.get("messages", []))[0], rlog=rlog,
-                phase="harness-compaction-validate"):
-            text = ""
-    # THE SAME REPAIR THE OTHER COMPACTION PATH HAS. `_briefing_disk_truth` appends a ground-truth
-    # line when a briefing DENIES a file cria can see — never deletes — and the self-compaction path
-    # has called it since it was written. This one, the HARNESS handshake, never did, and it is the
-    # path whose reply becomes the session's entire remembered past.
-    #
-    # Landed on 2026-08-23: `20260823T025404/0078` listed `REVIEW.md (4746 B)` under "This list is
-    # complete", and the briefing it returned said "The `REVIEW.md` file has not yet been created or
-    # updated with the detailed risk list; it must be added". Nothing corrected it, and at 0080 the
-    # coder adopted it: *"then create/update REVIEW.md with risks."*
-    #
-    # Precision on this path, measured over its 224 briefings: 4 flags, 1 of them that case and 3
-    # about a file's CONTENTS rather than its existence. A false flag appends "these files DO exist
-    # on disk right now" — a TRUE sentence that is merely beside the point — so the failure
-    # direction is an irrelevant fact, never a deletion and never a falsehood (#2).
-    if text and inventory:
-        text = _briefing_disk_truth(text, inventory, rlog)
-    # WHEN NO MODEL PROSE SURVIVED, THE NEXT WINDOW STILL GETS WHAT THE TOOLS DID. A21/A10: 29 of 29
-    # handoffs were rejected and every later window held only a file listing. The rejected prose is
-    # the part that fabricates progress; the record of calls and their confirmed outcomes is the part
-    # cria owns (`selfcompact.work_ledger` — cria's own templates over structured fields, so it carries
-    # no instruction and no claim beyond what a tool confirmed).
-    ledger = (selfcompact.work_ledger(_compaction_messages(body.get("messages", [])),
-                                      carried=_carried_ledger(body.get("messages", []),
-                                                              origin=getattr(_sess, "handoff_origin", None)), root=ws or "")
-              if not text else "")
-    # Keep the historical signature and event rendering unchanged. Authority for
-    # the next window comes from the session's actual producer record, not this heading.
-    facts = "\n\n".join(t for t in (ledger, facts, inventory, checks) if t)
-    # Rewrite when there is anything to append OR when the reply's own prose was DROPPED above —
-    # otherwise a dropped summary silently survives as the untouched original content.
-    if facts or text != _text_of(comp).strip():
-        merged = (text + "\n\n" + facts).strip()
-        # C44 B1: `not text` here means NO prose survived any of the paths above (an empty/garbled
-        # writer even after its own empty-briefing retry, or a validator rejection) \u2014 `merged` is the deterministic appendices ALONE. Mark it so
-        # `reframe_compaction`, which sees this same content again on a LATER turn wrapped in the
-        # harness's own "another language model" preamble, presents it as retained ground truth
-        # rather than disclaiming a handoff that was never written (#5b). Stripped there before the
-        # model reads it; never sent when real prose shipped.
-        if not text and merged:
-            merged = f"{_PROSE_DROPPED_MARKER}\n{merged}"
-        chs = [dict(ch) for ch in comp.get("choices") or []]
-        if chs:
-            chs[0] = {**chs[0], "message": {**(chs[0].get("message") or {}), "content": merged}}
-            comp = {**comp, "choices": chs}
-    if _sess is not None:
-        _sess.handoff_origin = _HandoffOrigin(reply=_text_of(comp), ledger=ledger, dropped=not bool(text))
-    return comp
+    observed = _observe_handoff_write_results(server, sk, body.get("messages", []))
+    owner = observed if _owner is ... else _owner
+    definition = _selected_handoff(server) if definition is ... else definition
+    if definition is None:
+        return comp
+    facts = _handoff_facts(server, sk, body, rlog, owner) if _facts is None else _facts
+    settlement = []
+    def settle(reply, ledger, dropped):
+        if (settlement or not isinstance(reply, str) or not isinstance(ledger, str)
+                or type(dropped) is not bool):
+            raise ValueError("Invalid harness handoff producer settlement")
+        settlement.append((reply, ledger, dropped))
+    role = server.cfg.routing.roles.get("compactor") or server.cfg.routing.roles.get("reasoner")
+    result = definition.execute(comp, body, facts, _handoff_services(), selected=True,
+        chat_fn=provider.chat if provider is not None else None,
+        role=role, rlog=rlog, settle=settle, frame_hook=definition.frame)
+    if (not isinstance(result, memoryhandoff.HandoffResult) or not isinstance(result.completion, dict)
+            or not isinstance(result.prose, str) or not isinstance(result.ledger, str)
+            or result.effect not in (memoryhandoff.Effect.NO_OP, memoryhandoff.Effect.DELIVERED,
+                                     memoryhandoff.Effect.WITHHELD)):
+        raise ValueError("Harness handoff replacement must return HandoffResult")
+    if result.effect is memoryhandoff.Effect.NO_OP:
+        if settlement or result.prose or result.ledger:
+            raise ValueError("No-op harness handoff cannot publish a producer record")
+        return result.completion
+    reply = _completion_text(result.completion)
+    prose_matches = (not result.prose or reply == result.prose
+                     or reply.startswith(result.prose + "\n\n"))
+    ledger_prefix = _PROSE_DROPPED_MARKER + "\n" + result.ledger
+    ledger_matches = (not result.ledger or reply == ledger_prefix
+                      or reply.startswith(ledger_prefix + "\n\n"))
+    expected = (reply, result.ledger, result.effect is memoryhandoff.Effect.WITHHELD)
+    if (settlement != [expected] or not prose_matches or not ledger_matches
+            or bool(result.prose) != (result.effect is memoryhandoff.Effect.DELIVERED)):
+        raise ValueError("Harness handoff settlement must match its returned result")
+    origin = _HandoffOrigin(*expected)
+    def commit(retained):
+        if (owner is not None and _handoff_session(server, sk) is owner
+                and _completion_text(retained) == origin.reply):
+            owner.handoff_origin = origin
+    if _defer_commit is None:
+        commit(result.completion)  # compatibility caller receives this exact returned result
+    else:
+        _defer_commit(commit)  # actual producer waits for successful finalization
+    return result.completion
 
 
 class CriaServer(ThreadingHTTPServer):
@@ -876,9 +762,11 @@ class CriaServer(ThreadingHTTPServer):
         self.loop = None
         # Surface a misconfigured-looking feature at startup instead of silently degrading — the
         # class of failure that hid the Brave-key bug (web_search just quietly never ran).
-        # The output massages are level 1; set the one process-wide flag before anything can call
-        # them (see massage._TOOL_CALL_FIXES for why this is not threaded through the call sites).
-        massage.set_tool_call_fixes(cfg.routing.tool_call_fixes)
+        # Request/task binding supplies the immutable output-stage selection. Server
+        # construction must not change another request's unbound library opt-out.
+        self.pilot_runtime = assistruntime.AssistRuntime.select(
+            level=cfg.routing.engagement_level, disabled=cfg.assists.disabled,
+            experimental_planning=cfg.planner.enabled and cfg.routing.assists_enabled)
         _warn_config(cfg, has_reasoner, has_coder, log)
         # Always build the loop when a coder exists; require a reasoner only when the planner is ON.
         # Planner OFF → the loop drives the synthetic 1-item path (guards but no decomposition).
@@ -895,16 +783,18 @@ class CriaServer(ThreadingHTTPServer):
             # runaway thinking loop is aborted mid-flight (rumination detector) instead of burning
             # the window to an empty turn / truncation. Budget seeded from the coder's output_reserve.
             coder_role = self.coder_role
-            detector = rumination.Detector.from_reasoning_budget(
-                coder_role.output_reserve if coder_role else None)
-
-            def coder_chat(body, rlog, _up=_ep("coder"), _det=detector):
-                return _up.chat_watched(body, rlog, watch=_det.check)
+            def coder_chat(body, rlog, _up=_ep("coder")):
+                from . import generationguards
+                runtime = assistruntime.current() if assistruntime.is_bound() else self.pilot_runtime
+                selected = generationguards.SelectedGuards.from_definitions(runtime.definitions)
+                detector = selected.detector(lambda: coder_role.output_reserve if coder_role else None)
+                return _up.chat_watched(body, rlog, watch=detector.check if detector is not None else None)
 
             self.loop = Loop(
                 LoopContext(
                     planner=Planner(_ep("reasoner"), role=roles.get("reasoner"),
-                                    search_key=search_key, max_gather_rounds=cfg.planner.max_gather_rounds),
+                                    search_key=search_key, max_gather_rounds=cfg.planner.max_gather_rounds,
+                                    policies=self.pilot_runtime.initial_planning),
                     coder_chat=coder_chat,
                     # reasoner_chat/reasoner_role are wired UNCONDITIONALLY (even with no reasoner role,
                     # _ep resolves the shared endpoint and role is None) — the single-item off-ramps gate
@@ -935,6 +825,7 @@ class CriaServer(ThreadingHTTPServer):
                     self_compact=cfg.context.self_compact,
                     trigger_compaction=cfg.context.trigger_compaction,
                     assists=cfg.routing.assists_enabled,
+                    pilot_runtime=self.pilot_runtime,
                     # THE PLANNER IS AN ASSIST, so below level 5 the loop always drives the
                     # synthetic single-item path however `[planner] enabled` is set. This is also
                     # what makes levels 0-4 planner-AGNOSTIC by construction rather than by
@@ -1041,12 +932,13 @@ class CriaHandler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:
         path = self.path.split("?", 1)[0].rstrip("/")   # strip any query string (parity with do_GET)
-        if path == "/v1/chat/completions":
-            self._handle_chat()
-        elif path == "/v1/responses":
-            self._handle_responses()
-        else:
-            self._send_json(404, {"error": "not found"})
+        with assistruntime.bound(self.server.pilot_runtime):
+            if path == "/v1/chat/completions":
+                self._handle_chat()
+            elif path == "/v1/responses":
+                self._handle_responses()
+            else:
+                self._send_json(404, {"error": "not found"})
 
     # ------------------------------------------------------------------ chat
 
@@ -1087,6 +979,7 @@ class CriaHandler(BaseHTTPRequestHandler):
         stream = bool(body.get("stream"))
         rlog.emit(
             "request.recv",
+            pilot_assists=assistruntime.current().selected,
             model=body.get("model"),
             stream=stream,
             n_messages=len(body.get("messages", [])),
@@ -1122,7 +1015,10 @@ class CriaHandler(BaseHTTPRequestHandler):
         if compaction or _is_compaction_request(body.get("messages", [])):
             rlog.emit("classify.skipped", why="compaction")
             return None
-        return server.classifier.classify(body.get("messages", []), rlog)
+        definition = classify.selected_definition()
+        if definition is None:
+            return None
+        return definition.execute(server.classifier, body.get("messages", []), rlog)
 
     def _decorate(self, completion: dict) -> dict:
         """[indicators] assists: surface EVERY cria assist that fired as a ⟦cria⟧ line — the
@@ -1176,7 +1072,8 @@ class CriaHandler(BaseHTTPRequestHandler):
             if ic.enabled and ic.stats and _has_visible_output(completion):
                 _append_content_line(completion, stats.summary())
                 self.server.stats_store.reset(sess_key)
-        return completion
+        self._retain_external_output(completion, sess_key)
+        return self._retain_pasted_output(completion)
 
     def _bind_workspace_view(self, body: dict, sess_key: str) -> None:
         """THE WORKSPACE VIEW FOR THIS REQUEST. cria answers every question about the coder's files
@@ -1260,12 +1157,15 @@ class CriaHandler(BaseHTTPRequestHandler):
         checks under another. On the Responses path the reader key is ``sid:<sess>`` (from the body's
         cache key), NOT ``session_key(headers, messages)`` — so passing the caller's sess_key here is
         what lets the 'you already fetched this' refusal fire (it re-fetched openapi.json 10+ times)."""
+        owner = self.server.loop_store.get_guard(sess_key)
+        if owner is not None:
+            observe_externalization_results(owner, body.get('messages') or [])
         self._shell_tool = None
         self._synthetic: set[str] = set()
         self._native_search = None
         self._brave_key = None
         self._unread_target = None
-        self._shrink_check = None
+        self._shrink_services = None
         # LEVEL 2 — SIMPLE_TOOLS. Below this rung cria alters no toolset: the harness's own tools go
         # up exactly as they arrived, nothing is lowered to shell, nothing is re-presented, and the
         # menu is not curated. ONE owner for the whole tool layer, both call sites, so a rung cannot
@@ -1328,22 +1228,55 @@ class CriaHandler(BaseHTTPRequestHandler):
             self._unread_target = (self.server.loop.unread_target_check(
                 sess_key, body.get("messages", []), self._workspace_root)
                 if self.server.loop is not None else None)
-            self._shrink_check = (self.server.loop.shrinking_write_check(
+            self._shrink_services = (self.server.loop.shrinking_write_services(
                 sess_key, body.get("messages", []), self._workspace_root, rlog)
                 if self.server.loop is not None else None)
         # Tool-menu FOCUS: curate the harness's menu to the coding essentials (drop the goal/MCP/
         # connector firehose), then a terse per-tool cheat-sheet for the curated set. AFTER advertise,
         # so cria's write_file survives the curation.
-        if self.server.cfg.tools.focus:
-            focus_tools(body, rlog)
-        if self.server.cfg.tools.cheatsheet:
-            add_cheatsheet(body, rlog)
+        policies = toolmenu.selected_policies(assistruntime.current().definitions)
+        focused = policies.focus(toolmenu.FocusInput(
+            body.get("tools"), configured=self.server.cfg.tools.focus), rlog)
+        if focused.applied:
+            body["tools"] = focused.tools
+        instructions = policies.instructions(toolmenu.InstructionInput(
+            body.get("tools"), body.get("messages") or [],
+            configured=self.server.cfg.tools.cheatsheet), rlog)
+        if instructions.applied:
+            body["messages"] = instructions.messages
+
+    def _defer_pasted_delivery(self, settle):
+        # Invocation-local obligations, never a session cache or serialized packet.
+        self._pasted_retention = settle
+        self._pasted_lowered = None
+
+    def _retain_pasted_output(self, completion):
+        settle = getattr(self, '_pasted_retention', None)
+        self._pasted_retention = None
+        if settle is not None:
+            settle(completion, getattr(self, '_pasted_lowered', None))
+        return completion
+
+    def _retain_external_output(self, completion: dict, sess_key: str) -> dict:
+        owner = self.server.loop_store.get_guard(sess_key)
+        if owner is not None:
+            retain_externalizations(owner, completion)
+        return completion
 
     def _translate_out(self, completion: dict, sess_key: str, rlog) -> dict:
         """Lower the model's synthetic-tool calls to shell, when translation is active for this
         request (set up in `_setup_translation`). ``sess_key`` enables webfetch's per-session
         fetch/search repeat + stop-guessing gates."""
         completion = generation.safe_completion(completion)
+        research = any((tc.get('function') or {}).get('name') in ('web_fetch', 'web_search')
+                       for choice in completion.get('choices', [])
+                       for tc in (choice.get('message') or {}).get('tool_calls') or [])
+        owner = self.server.loop_store.get_guard(sess_key, create=(research and
+            assistruntime.current().externalization is not None))
+        admitted = {}
+        def observed(original, lowered, proposed_write):
+            if proposed_write is not None:
+                admitted[lowered.get('id')] = proposed_write
         if self._shell_tool is not None:
             translate_outbound(completion, self._shell_tool, rlog, injected=getattr(self, "_synthetic", set()),
                                brave_key=getattr(self, "_brave_key", None),
@@ -1352,13 +1285,17 @@ class CriaHandler(BaseHTTPRequestHandler):
                                external_dir_permission=self.server.cfg.safety.external_dir_permission,
                                declared_roots=getattr(self, "_declared_roots", ()),
                                unread_target=getattr(self, "_unread_target", None),
-                               shrink_check=getattr(self, "_shrink_check", None),
+                               shrink_services=getattr(self, "_shrink_services", None),
                                # N2: harness-side plumbing is packed only at the gate's rung (L4+, N1's scope);
                                # L2/L3 lowered commands are byte-for-byte what they always were.
                                pack=self.server.cfg.routing.done_refusals,
                                # Edit echo is context work only an assist-rung coder gets (L5); L2-L4 results
                                # stay exactly the harness's own confirmation.
-                               edit_echo=self.server.cfg.routing.assists_enabled)
+                               edit_echo=self.server.cfg.routing.assists_enabled,
+                               observe_lowering=observed, externalization_owner=owner)
+            self._pasted_lowered = admitted
+        else:
+            self._pasted_lowered = None
         return completion
 
     def _focus_trim(self, framed: dict, rlog) -> tuple[dict, bool]:
@@ -1372,12 +1309,15 @@ class CriaHandler(BaseHTTPRequestHandler):
         msgs = framed.get("messages")
         if not isinstance(msgs, list):
             return framed, False
-        trimmed, rep = focustrim.trim(msgs)
-        if not rep.applied:
+        selected = assistruntime.current() if assistruntime.is_bound() else self.server.pilot_runtime
+        definitions = selected.bindings("coder-focus")
+        result = focustrim.focus(focustrim.FocusInput(msgs), definitions)
+        framed = assistruntime.retain_focus_bindings(framed, result, definitions)
+        if not result.report.applied:
             return framed, False
-        rlog.emit("context.focus_trim", reshape="focus-trim", dropped_calls=rep.dropped_calls,
-                  dropped_msgs=rep.dropped_msgs)
-        return {**framed, "messages": trimmed}, True
+        rlog.emit("context.focus_trim", reshape="focus-trim", dropped_calls=result.report.dropped_calls,
+                  dropped_msgs=result.report.dropped_msgs)
+        return {**framed, "messages": result.messages}, True
 
     def _route(self, body: dict, classification, rlog, compaction: bool = False) -> tuple[object, Indicator]:
         """Resolve the provider/model for this classification and build the
@@ -1554,30 +1494,32 @@ class CriaHandler(BaseHTTPRequestHandler):
             # Recognized ONCE per request — the marker (free) or, when tools are empty/absent and
             # the marker is absent, the one focused judge call (see _recognize_compaction). Every
             # downstream compaction check in this request reuses this single answer.
-            compaction = _recognize_compaction(body, server, rlog)
-            classification = self._classify(body, rlog, compaction)
+            handoff = _selected_handoff(server)
             sk = session_key(self.headers, body.get("messages", []))
+            owner = _observe_handoff_write_results(server, sk, body.get("messages", []))
+            compaction = _recognize_compaction(body, server, rlog, definition=handoff)
+            classification = self._classify(body, rlog, compaction)
             # ONE coder driver: engage the loop when it should (a known session, or a fresh turn the
             # loop would start — see _engages_loop). It drives a real multi-item plan OR the synthetic
             # 1-item plan-off path; both come back as a completion. Otherwise fall through to the proxy.
             if self._engages_loop(sk, classification):
-                completion = server.loop.drive(body, sk, classification, rlog)
+                completion = server.loop.drive(body, sk, classification, rlog,
+                    pasted_delivery=self._defer_pasted_delivery)
                 if completion is not None:
                     yield from completion_to_sse(self._finalize(self._translate_out(completion, sk, rlog), sk, rlog))
                     return
             provider, indic = self._route(body, classification, rlog, compaction)
             rlog.phase = "proxy"
             sbody = _proxy_body(body)
-            if self.server.cfg.routing.context_fixes and compaction:
-                sbody = _compaction_body(sbody, _session_cwd(sk, body.get("messages", []), rlog),
-                                         _session_gate_plan(server, sk),
-                                         _last_gate_flag(server, sk), _gate_age(server, sk))
+            if self.server.cfg.routing.context_fixes and compaction and handoff is not None:
+                facts = _handoff_facts(server, sk, body, rlog, owner)
+                sbody = _compaction_body(sbody, definition=handoff, facts=facts)
             stream = massage.massage_stream(
                 provider.stream_chat(self._apply_route_role(sbody, indic, rlog), rlog),
                 body.get("model", ""),
                 body.get("tools"),
                 rlog,
-                post=lambda c: self._translate_out(c, sk, rlog),  # lower a mid-stream-recovered write_file
+                post=lambda c: self._retain_external_output(self._translate_out(c, sk, rlog), sk),
             )
             yield from wrap_stream(stream, indic)
         except UpstreamError as e:
@@ -1594,7 +1536,9 @@ class CriaHandler(BaseHTTPRequestHandler):
         Shared by the buffered chat path and the Responses adapter."""
         server: CriaServer = self.server
         # Recognized ONCE per request — see _produce_stream's twin call for the same reasoning.
-        compaction = _recognize_compaction(body, server, rlog)
+        handoff = _selected_handoff(server)
+        owner = _observe_handoff_write_results(server, sess_key, body.get("messages", []))
+        compaction = _recognize_compaction(body, server, rlog, definition=handoff)
         classification = self._classify(body, rlog, compaction)
         # ONE coder driver: engage the loop (a real multi-item plan OR the synthetic 1-item plan-off
         # path) whenever it should; otherwise proxy. See _engages_loop — a known session ALWAYS
@@ -1604,8 +1548,10 @@ class CriaHandler(BaseHTTPRequestHandler):
             # The model-visible size is taken BEFORE the drive (a finished session drops its state)
             # and from the same framing the coder prompt is built from — see Loop.visible_context_tokens.
             visible = server.loop.visible_context_tokens(
-                body, sess_key, fold=bool(server.cfg.routing.context_fixes))
-            completion = server.loop.drive(body, sess_key, classification, rlog)
+                body, sess_key, fold=bool(server.cfg.routing.context_fixes),
+                definitions=server.pilot_runtime.wire_folds)
+            completion = server.loop.drive(body, sess_key, classification, rlog,
+                pasted_delivery=self._defer_pasted_delivery)
             if completion is not None:
                 out = self._finalize(self._translate_out(completion, sess_key, rlog), sess_key, rlog)
                 _report_context_usage(out, visible, rlog)
@@ -1613,11 +1559,12 @@ class CriaHandler(BaseHTTPRequestHandler):
         provider, indic = self._route(body, classification, rlog, compaction)
         rlog.phase = "proxy"
         pbody = _proxy_body(body)
-        if self.server.cfg.routing.context_fixes and compaction:
-            pbody = _compaction_body(pbody, _session_cwd(sess_key, body.get("messages", []), rlog),
-                                     _session_gate_plan(server, sess_key),
-                                     _last_gate_flag(server, sess_key), _gate_age(server, sess_key))
-        pbody, _ = self._focus_trim(self._apply_route_role(pbody, indic, rlog), rlog)
+        facts = None
+        if self.server.cfg.routing.context_fixes and compaction and handoff is not None:
+            facts = _handoff_facts(server, sess_key, body, rlog, owner)
+            pbody = _compaction_body(pbody, definition=handoff, facts=facts)
+        pbody, _ = self._focus_trim(pbody, rlog)
+        pbody = self._apply_route_role(pbody, indic, rlog)
         raw = provider.chat(pbody, rlog)
         try:
             comp = massage.apply(json.loads(raw), body.get("tools"), rlog)
@@ -1627,13 +1574,18 @@ class CriaHandler(BaseHTTPRequestHandler):
             # caller surfaces a clean 502/failed and the client retries, instead of recording "done".
             raise UpstreamError("upstream returned a non-JSON 200 body: "
                                 + repr(content_reduce.clip(raw, 200))) from e
+        commit_handoff = None
+        def defer_handoff(commit):
+            nonlocal commit_handoff
+            commit_handoff = commit
         if not body.get("tools") and not generation.incomplete(comp):
             # The HARNESS offered no tools (a compaction/summary, a question) — a tool-call answer
             # (native or a recovered dialect leak) is spurious. Coerce it back to text so an empty
             # or dialect-only "answer" recovers the summary from the model's reasoning.
             comp = massage.coerce_text_answer(comp, rlog)
             if compaction:
-                comp = _harden_compaction_reply(comp, body, provider, server, rlog, sess_key)
+                comp = _harden_compaction_reply(comp, body, provider, server, rlog, sess_key,
+                    definition=handoff, _defer_commit=defer_handoff, _owner=owner, _facts=facts)
         if massage.is_truncated(comp):
             indic.note = "⚠ output truncated at the token limit"
             rlog.emit("response.truncated")
@@ -1647,7 +1599,10 @@ class CriaHandler(BaseHTTPRequestHandler):
             shown = body if (self.server.cfg.routing.context_fixes and compaction) else pbody
             _report_context_usage(out, modelview.visible_tokens(
                 shown.get("messages") or [], shown.get("tools"),
-                fold=bool(self.server.cfg.routing.context_fixes)), rlog)
+                fold=bool(self.server.cfg.routing.context_fixes),
+                definitions=server.pilot_runtime.wire_folds), rlog)
+        if commit_handoff is not None:
+            commit_handoff(out)
         return out, indic
 
     def _respond_buffered(self, body: dict, rlog) -> None:
@@ -1725,7 +1680,8 @@ class CriaHandler(BaseHTTPRequestHandler):
         # + its tool TYPES (catches a non-`function` type our converter would drop) vs what SURVIVES
         # cria's convert + focus. inbound>0 but after==0 ⇒ cria dropped them; inbound==0 ⇒ harness sent none.
         _raw_tools = rbody.get("tools") or []
-        rlog.emit("request.recv", api="responses", model=body.get("model"), stream=stream,
+        rlog.emit("request.recv", api="responses", pilot_assists=assistruntime.current().selected,
+                  model=body.get("model"), stream=stream,
                   n_messages=len(body.get("messages", [])),
                   inbound_tools=len(_raw_tools),
                   inbound_tool_types=sorted({(t.get("type") if isinstance(t, dict) else "?") for t in _raw_tools}),

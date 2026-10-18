@@ -40,7 +40,7 @@ Read and obey, in full, before touching behavior:
 Consequences:
 
 - Ground truth is an executed check or the authoritative structured event, never a coder claim or a line count.
-- Read every selected capture from first prompt to final reply/reasoning. Do not substitute counts, `grep`, snippets, or a model summary for a walk.
+- Read 100% of each selected capture's text, including complete prompts, replies, recorded reasoning, tool calls and results. Understand the sequence as the small model encountered it: what information it had, how its recorded reasoning interpreted that information, what it did, and what followed. Reading need not be literally one line at a time; lossless parsing and chronological batching are welcome. Search can navigate, but counts, snippets and summaries cannot replace reading. Do not infer unrecorded thoughts.
 - Deterministic logic detects and gathers facts; a reasoner makes semantic judgments. Do not add keyword lists, task/language rules, proximity windows, or canned remedies to settle a judgment.
 - Never truncate model-visible information; never replace a tool's real output with invented wording.
 - Fix the upstream cause in cria. Do not paper it over in Codex configuration, task prompts, benchmark-specific hooks, suite scoring, or a fallback that silently changes behavior.
@@ -61,9 +61,9 @@ The plugin gives delegated children no parent context by default. Each child pro
 
 For a single WALK, launch **no more than ten children total**. Parallel read-only walkers may inspect disjoint cells/captures; no two editing children may touch the same code path or worktree. Reconcile every child report against the actual files/captures yourself before treating it as evidence. A child report is a lead, not a finding.
 
-**Partition every walk into compaction-safe segments before delegating — a reader must never compact mid-walk.** Do not hand a walker a whole capture: its context fills, it compacts, and the walk silently degrades into a summarized skim (this is what derailed the prior run). Run `python3 suite/walk.py <capture_dir> --out <dir> --segment-bytes 250000 --label <cell>` for each open cell (resolve `<capture_dir>` from the run's `capture_dir` field in `suite/results/results.jsonl`). It writes self-contained segments under the measured compaction ceiling plus `assignments.json` and `WALK-PLAN.md`. Give each segment its own **fresh** walker — never continue a walker onto a second segment — and require it to write its finding file. Verify a segment's finding file cites real chunks/calls before assigning the next. A capture yields more segments than the ten-child cap, so dispatch in waves of fresh read-only walkers, verifying each wave's finding files before launching the next; the ten-child cap is per wave.
+**Partition every walk into compaction-safe segments before delegating — a reader must never compact mid-walk.** Do not hand a walker a whole capture: its context fills, it compacts, and the walk silently degrades into a summarized skim (this is what derailed the prior run). Run `python3 suite/walk.py <capture_dir> --out <dir> --segment-bytes 250000 --label <cell>` for each open cell (resolve `<capture_dir>` from the run's `capture_dir` field in `suite/results/results.jsonl`). It writes self-contained segments under the measured compaction ceiling and one `assignments.json`; readers create actual findings inside the same temporary directory. Give each segment its own **fresh** walker — never continue a walker onto a second segment — and require it to write its finding file. Verify a segment's finding file cites real chunks/calls before assigning the next. A capture yields more segments than the ten-child cap, so dispatch in waves of fresh read-only walkers, verifying each wave's finding files before launching the next; the ten-child cap is per wave.
 
-Keep a finite top-level ledger in `docs/goals/bonsai-l5-75-loop-report.md`: per-cell current score/status, the causal findings, rejected candidates with reasons, accepted changes/tests/commits, replays, exact reruns, and the evidence that closed each cell.
+Use the canonical suite records and battery publication for run judgments/status. Keep causal findings and unresolved candidate decisions only in the current temporary walk directory, following `docs/walk-prompt.md`. Do not append another permanent attempt ledger, duplicate score table, proof inventory or intermediate review history; the old loop report is historical, not a required dependency.
 
 ## The loop
 
@@ -74,7 +74,7 @@ Before each iteration:
 1. Inspect `git status`, current branch/HEAD, the live `~/.cria/cria.toml`, service health, model identity, `/props`, and the structured suite records.
 2. Confirm the served runtime context is the actual context advertised to the harness; do not confuse trained context with runtime context.
 3. Read the complete task prompt and final workspace/evidence for every open cell. Run the relevant frozen check yourself where the archived environment permits it.
-4. Preserve the exact row/run ids and final usefulness judgments in the report.
+4. Preserve the exact row/run ids and final usefulness judgments in the canonical suite records.
 
 ### 2. Walk the failing behavior exactly as `docs/walk-prompt.md` requires
 
@@ -86,7 +86,7 @@ Walk all currently open cells, not only the lowest score. For each selected run,
 - cria structured events and milestone/final usefulness evidence;
 - the final workspace diff and the real task checks.
 
-Use at most ten read-only child walkers for disjoint cells or disjoint chronological capture ranges, with boundaries that preserve the whole sequence. The Supervisor must read enough of each complete run to verify every claimed causal chain. Record specific chains in the report: **observed context or event → coder reasoning/action → disk/check consequence**.
+Use at most ten read-only child walkers for disjoint cells or disjoint chronological capture ranges, with boundaries that preserve the whole sequence. The Supervisor must read enough of each complete run to verify every claimed causal chain. Record specific chains in the current temporary findings: **observed context or event → coder reasoning/action → disk/check consequence**.
 
 Also walk the repaired Responses preflight failures enough to confirm the compatibility fixes are on the correct wire boundary and did not create a silent request-semantic change.
 
@@ -94,7 +94,7 @@ Look for shared, language-agnostic mechanisms that allowed: long no-write period
 
 ### 3. Form candidate fixes only from demonstrated causes
 
-For every candidate, write a compact record before editing:
+For each candidate, establish the following in the current working findings, not a separate receipt or permanent report. Consider removal and upstream correction before adding another assist:
 
 - exact observed causal chain and affected run ids;
 - the upstream owner/path in cria;
@@ -111,15 +111,15 @@ Search code and commit history before implementation. Build on the existing owne
 For each candidate:
 
 1. Check the implementation against current code and relevant history for an earlier reverted footgun.
-2. Have an independent Reviewer assess the fixed acceptance boundary and likely false-positive/false-negative harm.
-3. Replay it against the exact captured model prompts/responses and relevant archived workspace. A replay must exercise the actual intervention boundary and show a changed, correct outcome; a mocked unit assertion alone is insufficient.
-4. Reject a candidate if the replay does not improve the observed failure without harming the original good path. Record rejected candidates and why.
+2. Challenge the proposed boundary for false-positive/false-negative harm; independently review the complete integrated change once in step 5, not every intermediate patch.
+3. Replay the actual captured boundary and check relevant legitimate cases. Preserve necessary workspace inputs as small regression fixtures, not a permanent source/workspace mirror. Bound the conclusion to the demonstrated cause and correction; do not require whole-task or universal assist-benefit proof.
+4. Reject a candidate if it does not correct the observed cause or harms the original good path. Keep the reason only while it is needed to settle current work.
 
 ### 5. Implement only survivors
 
-Assign one surviving coherent change to a Coder. It owns implementation, focused checks, fails-before/passes-after test, full test suite, and a precise report. The Supervisor inspects the diff, runs independent relevant checks, reviews with the Reviewer, commits/pushes the unit, restarts `cria.service`, and confirms `/health` before a battery rerun.
+Assign one surviving coherent change to a Coder. It owns implementation, focused checks, a fails-before/passes-after test, and the full test suite; hand off the diff and relevant test outcome, not another permanent report. The Supervisor inspects the diff, runs independent relevant checks, reviews with the Reviewer, commits/pushes the unit, restarts `cria.service`, and confirms `/health` before a battery rerun.
 
-Do not combine speculative fixes. Do not run broad acceptance repeatedly while a shared failure class is not explained. After a changed/expanded/recurrent failure class, perform a strategy reset: return to the complete interaction and the shared architecture/environment boundary, prove a new root-cause hypothesis with focused deterministic evidence, then continue.
+Do not combine speculative fixes or repeatedly run broad checks without using their results. A recurring or changed failure is a reason to inspect the relevant evidence, not an automatic restart of the investigation. Reuse completed readings and established facts; expand the investigation only when a concrete unresolved question requires it. A demonstrated local fix and its relevant regression checks can be settled without re-reading unrelated captures or reopening accepted fixes.
 
 ### 6. Re-run only open cells and judge them honestly
 
@@ -133,6 +133,6 @@ A rerun that is not above 75% remains open and becomes evidence for the next wal
 
 ## Definition of done
 
-This goal is complete only when all six valid Bonsai 2 L5 cells have a latest comparable final usefulness judgment **strictly greater than 75%**, each with preserved workspace/capture evidence, and all shared changes are committed, pushed, fully tested, live-restarted, and documented in the report.
+This goal is complete only when all six valid Bonsai 2 L5 cells have a latest comparable final usefulness judgment **strictly greater than 75%**, each with preserved workspace/capture evidence, and all shared changes are committed, pushed, fully tested, and live-restarted when authorized by the current operational gates.
 
-The final report must list the final score and run id per cell; accepted and rejected candidate fixes; capture replay evidence; full-suite result; service health; and any residual risks that did not invalidate the closed acceptance boundary. Never declare success from an average.
+Publish final judgments through the canonical suite/battery tooling. Report the outcome and material residual risks briefly; do not reproduce the attempt ledger or preserve temporary walks/reviews for score explanations. Close and remove each walk once its associated fixes settle, keeping repository regressions and actual model-call logs. Never declare success from an average.

@@ -1,6 +1,8 @@
 """The 'task is finished but the session cannot stop' off-ramp must run on BOTH driver paths."""
 import json
 import subprocess
+import shutil
+import tempfile
 import unittest
 import unittest.mock
 
@@ -10,6 +12,7 @@ from cria import loop, wsview
 from cria.loop import Loop, LoopContext, PlanSession
 from cria.plan import Plan, PlanItem
 from tests.wsfixture import survey
+from tests.completion_fixtures import ROOT, feed_task, missing_review
 
 
 class _RLog:
@@ -239,25 +242,11 @@ class NamesTheMissingDeliverableTests(unittest.TestCase):
         self.assertIn("REVIEW.md", s.nudge_reason)
 
     def test_feed_gap_rearms_only_after_a_new_complete_workspace_observation(self):
-        """Four Feed archives lack REVIEW.md; 1790026888 named it at drive 34 then went silent.
+        """Same gap stays quiet until the complete harness observation changes.
 
-        Fails before: text-only ``last_gap_named`` suppresses the same checked gap after the
-        importer changes.  This replays that causal boundary without executing Feed.
+        The deleted archive's existence was not input to this regression. Keep the actual
+        transition below, with explicit controlled survey generations and no archive dependency.
         """
-        cohort = (
-            ("20260921T131112-01a0c598-12c3-7973-8ebd-3f87b1ce0016", "1790021450"),
-            ("20260921T135359-01a0c5bf-3d05-7fd0-a573-6c95720f4526", "1790024016"),
-            ("20260921T144153-01a0c5eb-172a-7002-b4cf-64ac66d26edf", "1790026888"),
-            ("20260921T164500-01a0c65b-cd75-7ab3-b3dd-3d839bfb3b35", "1790034274"),
-        )
-        for capture_id, run_id in cohort:
-            with self.subTest(run=run_id):
-                self.assertTrue((Path.home() / ".cria/calls" / capture_id).is_dir())
-                archive = Path.home() / ".cria/suite" / f"feed-pipeline-java_ternary-bonsai-2_codex_pon_{run_id}/workspace"
-                self.assertFalse((archive / "REVIEW.md").exists())
-        capture = Path.home() / ".cria/calls/20260921T144153-01a0c5eb-172a-7002-b4cf-64ac66d26edf"
-        self.assertTrue((capture / "0141-satisfaction.response.json").is_file())
-
         root = "/harness/feed"
         view = wsview.View(root, "feed-gap-replay")
         self.assertTrue(wsview.apply_survey(view, survey(
@@ -291,20 +280,16 @@ class NamesTheMissingDeliverableTests(unittest.TestCase):
         self.assertTrue(any(k == "loop.satisfaction_gap_named" and kw.get("rearmed")
                             for k, kw in rearmed_log.events))
 
-    def test_exact_feed_terminal_gap_rearms_from_seed_to_terminal_survey(self):
-        """Replay 1790026888's captured typed REVIEW verdict over real harness survey bytes.
+    def test_recorded_gap_rearms_after_a_real_workspace_change_and_fresh_survey(self):
+        """Original typed gap over real surveys of a portable seed and a controlled edit.
 
-        The first survey is the task seed expressed at the terminal workspace root: the same
-        workspace before the importer landed.  The second is a fresh survey command run against
-        the preserved terminal archive.  Before 2fd69ae's observation comparison, equal verdict
-        text made the second call silent; now the changed, complete terminal generation re-arms it.
+        This preserves generation comparison, not the deleted historical terminal workspace.
         """
-        capture = Path.home() / ".cria/calls/20260921T144153-01a0c5eb-172a-7002-b4cf-64ac66d26edf"
-        archive = Path.home() / ".cria/suite/feed-pipeline-java_ternary-bonsai-2_codex_pon_1790026888/workspace"
-        seed = Path("suite/tasks/feed-pipeline-java/seed").resolve()
-        response = json.loads((capture / "0142-satisfaction.response.json").read_text())
-        args = json.loads(response["choices"][0]["message"]["tool_calls"][0]["function"]["arguments"])
-        task = Path("suite/tasks/feed-pipeline-java/prompt.txt").read_text()
+        archive = Path(self.enterContext(tempfile.TemporaryDirectory()))
+        seed = ROOT / "suite/tasks/feed-pipeline-java/seed"
+        shutil.copytree(seed, archive, dirs_exist_ok=True)
+        args = missing_review()
+        task = feed_task()
         self.assertEqual(args["diagnosis_kind"], "missing_file")
         self.assertEqual(args["subject"], "REVIEW.md")
         self.assertIn(args["task_quote"], task)
@@ -312,11 +297,9 @@ class NamesTheMissingDeliverableTests(unittest.TestCase):
 
         root = str(archive.resolve())
         pre = subprocess.run(["bash", "-c", wsview.survey_command("feed-terminal-replay")],
-                             cwd=seed, text=True, capture_output=True, check=True).stdout
-        # The harness would have run this pre-change survey at the same workspace path.  Only its
-        # declared root differs because the preserved seed and terminal snapshots live in separate
-        # archive directories.
-        pre = pre.replace(f"root\t{seed}", f"root\t{root}")
+                             cwd=archive, text=True, capture_output=True, check=True).stdout
+        importer = archive / "src/main/java/pipeline/Importer.java"
+        importer.write_text(importer.read_text() + "\n// changed workspace generation\n")
         terminal = subprocess.run(["bash", "-c", wsview.survey_command("feed-terminal-replay")],
                                   cwd=archive, text=True, capture_output=True, check=True).stdout
         view = wsview.View(root, "feed-terminal-replay")
@@ -327,7 +310,9 @@ class NamesTheMissingDeliverableTests(unittest.TestCase):
         self.addCleanup(wsview.unbind, token)
         rlog = self._Rlog()
         captured_gap = loop._negative_diagnosis_nudge(
-            args, task=task, workspace_root=root, rlog=rlog, phase="feed-terminal-replay")
+            args, task=task, workspace_root=root, rlog=rlog, phase="feed-terminal-replay",
+            ask=lambda _question: json.dumps({"required_output": True, "subject": args["subject"],
+                                               "task_quote": args["task_quote"]}))
         self.assertEqual(captured_gap.diagnosis_kind, "missing_file")
         self.assertEqual(captured_gap.subject, "REVIEW.md")
 

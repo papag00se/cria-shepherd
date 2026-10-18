@@ -8,13 +8,14 @@ and actual parser/suppression/remediation results, not prompt source code.
 import copy
 import json
 import random
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
 
-from cria import denial, loop, modelview, prompts, selfcompact, server, upstream, wsview
+from cria import assistruntime, completiondiagnosis, contextfloor as cf, denial, loop, modelview, prompts, selfcompact, server, upstream, wsview
 from cria.config import Role
 from cria.plan import Plan, PlanItem
 from tests.test_c13a_rejected_handoff_keeps_the_tool_ledger import _provider
@@ -119,10 +120,39 @@ class Wire:
 
     def prepare(self, body, log=None):
         original = copy.deepcopy(body)
-        with patch('cria.upstream.urllib.request.urlopen', side_effect=AssertionError('network forbidden')), \
-             patch('cria.upstream.tokenratio.observed', return_value=1.05):
+        selected_runtime = (assistruntime.current() if assistruntime.is_bound() else
+                            assistruntime.AssistRuntime.select(level=self.u._engagement_level))
+        selected = selected_runtime.capacity
+        runtime, density_models = selected_runtime, []
+        def density(model):
+            assert assistruntime.current() is runtime
+            assert runtime.capacity is controlled
+            density_models.append(model)
+            return 1.05
+        if selected is not None:
+            controlled = replace(selected, density=density)
+            assert controlled.policy is selected.policy and controlled.execute is selected.execute
+            runtime = replace(selected_runtime, ordered_stages=tuple(
+                controlled if member.policy.id == selected.policy.id else member
+                for member in selected_runtime.ordered_stages))
+            assert runtime.capacity is controlled
+            assert runtime.registrations is selected_runtime.registrations
+            assert all(after is (controlled if before is selected else before)
+                       for before, after in zip(selected_runtime.ordered_stages, runtime.ordered_stages))
+        with assistruntime.bound(runtime), \
+             patch('cria.upstream.urllib.request.urlopen', side_effect=AssertionError('network forbidden')), \
+             patch('cria.upstream.contextfloor.fit', wraps=cf.fit) as floor:
             data, _est, _rendered = self.u._prep(body, False, log or Log())
         assert body == original
+        if floor.called and selected is not None:
+            assert density_models == [body.get('model')]
+            assert all(call.kwargs['safety'] == 1.05 for call in floor.call_args_list)
+        else:
+            assert density_models == []
+        if floor.called:
+            print('CONTROLLED DENSITY WIRE', json.dumps({'models': density_models,
+                'floor_safety': [call.kwargs['safety'] for call in floor.call_args_list],
+                'wire': json.loads(data)}, ensure_ascii=False))
         return json.loads(data)
 
     def __call__(self, body, log):
@@ -408,7 +438,9 @@ def test_actual_archived_retry_is_suppressed_by_exact_quote_and_never_arms_remed
     assert sess.nudge_reason == '' and not sess.completion_remediation_subject
     assert len(wire.bodies) == 2  # no required-output/semantic question
     assert ('loop.negative_diagnosis_suppressed', {'level': 'info', 'phase': 'satisfaction-retry-diagnosis',
-            'cause': 'task quote is not exact', 'diagnosis_kind': 'failed_check'}) in log.events
+            'cause': 'task quote is not exact', 'diagnosis_kind': 'failed_check',
+            'assist_id': completiondiagnosis.DEFINITION.policy.id,
+            'family_id': completiondiagnosis.DEFINITION.policy.family_id}) in log.events
     for body in wire.bodies:
         assert_source_not_overridden(body, continuation, ledger, False)
 

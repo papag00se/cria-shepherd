@@ -27,7 +27,7 @@ import json
 import unittest
 from unittest import mock
 
-from cria import bodykeys, loop, prompts, rumination, upstream
+from cria import bodykeys, generationguards, loop, prompts, rumination, upstream
 
 
 class _Rlog:
@@ -120,15 +120,15 @@ class TheStreamLoopAborts(unittest.TestCase):
         self.assertIn(f"line{len(frags) - 1} = compute_value({len(frags) - 1})", args)
 
     def test_it_is_checked_before_the_degenerate_backstop_and_the_watcher(self):
-        """STRUCTURAL, deliberately not a behaviour test: `gen_tail`/`streamed_chars` update
-        together on every readable fragment (upstream.py, the frag loop right above these checks),
+        """STRUCTURAL, deliberately not a behaviour test: per-call tail/character counts update
+        together on every readable fragment (the source stream guard's fragment loop),
         so `streamed_chars == 0` (dead-stream's own trigger) and a non-empty periodic tail
         (degenerate-tail's trigger) can never both hold at the same evaluation — no fixture can
         make the checks fire in the "wrong" order because the two conditions are mutually
         exclusive by construction. What this guards is the source staying in the narrative order
         the surrounding comments describe, which only `inspect.getsource` + position can see."""
         import inspect
-        src = inspect.getsource(upstream.Upstream.chat_watched)
+        src = inspect.getsource(generationguards.StreamGuard.feed)
         self.assertLess(src.index("DEAD_STREAM_CHUNKS"), src.index("degenerate_tail"))
 
 

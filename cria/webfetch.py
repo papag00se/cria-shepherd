@@ -41,6 +41,7 @@ from . import apidiscovery, brave, denial, prompts
 from .content_reduce import (COMMAND_ARG_BUDGET, INLINE_RESULT_MAX_BYTES,  # noqa: F401
                              SPILL_CONTENT_MAX, clip, est_tokens, html_to_text)
 from .searchloop import first_domain_in, normalize_search, searches_match
+from . import researchpolicies
 from . import content_reduce
 
 try:  # structural YAML is best-effort — the Rust degrades YAML to text too when it can't parse
@@ -273,6 +274,17 @@ def clear_cache() -> None:
     _FETCH_SPILLED.clear()
 
 
+def reset_session(session: str) -> None:
+    """Forget task-local research state/provenance without destroying shared documents.
+
+    The task owner invokes this on a new task or fork. Visibility and spill ledgers
+    remain facts even when admission is disabled; clearances/streaks are policy state.
+    """
+    for store in (_FETCH_SEEN, _FETCH_STREAK, _SEARCH_SEEN, _SEARCH_SPILLED,
+                  _SEARCH_ALLOWED, _FETCH_SPILLED, _SUBSTITUTED):
+        store.pop(session, None)
+
+
 # --- OVERSIZED docs: spill to a file the model can grep, instead of a low-signal page-1 -------------
 # A big doc paged in document order leads with its FRONT MATTER (an OpenAPI spec's info/license/contact
 # block), NOT the endpoints/schemas the model needs — and a weak model, seeing only that, re-fetches or
@@ -421,7 +433,7 @@ def spill_outline(parsed: Optional[Any], target: str) -> str:
     return _spill_outline(parsed, target)
 
 
-def outline_for_url(url: str) -> str:
+def outline_for_url(url: str, *, _guidance=None) -> str:
     """The outline cria ALREADY HOLDS for ``url``'s spilled document — rebuilt from the parsed doc in
     the per-URL cache — or ``""`` when nothing is cached for it.
 
@@ -446,7 +458,7 @@ def outline_for_url(url: str) -> str:
     cached = _DOC_CACHE.get(url)
     if not cached:
         return ""
-    return _spill_outline(cached[3], _spill_name(url))
+    return _spill_outline(cached[3], _spill_name(url), _guidance=_guidance)
 
 
 def outline_for_spill_path(path: str) -> str:
@@ -639,6 +651,11 @@ def oversized_spill(url: str) -> Optional[tuple[int, str, str, str]]:
     cached = _DOC_CACHE.get(url)
     if not cached or len(cached[2]) <= OVERSIZE_CHARS:
         return None
+    return render_cached_spill(url, cached)
+
+
+def render_cached_spill(url: str, cached, *, _guidance=None) -> tuple:
+    """Factual content/extent/target rendering after Source admission, without a size decision."""
     status, ct, reduced, parsed, _trunc = cached
     content = _greppable(reduced, parsed, ct)
     target = _spill_name(url)
@@ -656,7 +673,7 @@ def oversized_spill(url: str) -> Optional[tuple[int, str, str, str]]:
                      chars=f"{len(content):,}", target=target,
                      extent=_guard_msg("spill_extent_full" if whole else "spill_extent_cut"),
                      format=fmt_clause,
-                     outline=_spill_outline(parsed, target))
+                     outline=_spill_outline(parsed, target, _guidance=_guidance))
     return status, target, content, msg
 
 
@@ -1148,7 +1165,7 @@ def _shape_block(shapes) -> str:
             "guess:\n" + "\n".join(f"  {s}" for s in shapes) + "]\n")
 
 
-def _spill_outline(parsed: Any, target: str) -> str:
+def _spill_outline(parsed: Any, target: str, *, _guidance=None) -> str:
     """A navigation outline for a SPILLED structured doc (JSON or YAML — both parse to ``parsed``): the
     API routes when it's spec-shaped, else the top-level keys — so the model greps straight to what it
     needs instead of paging a huge file top-to-bottom. This is the exact gap that sank the Ada-handle
@@ -1156,41 +1173,18 @@ def _spill_outline(parsed: Any, target: str) -> str:
     /holders or resolved_addresses, and gave up. Same shape-branch as render_page's inline outline,
     keyed off real bytes; the grep example uses a REAL route/key (no ``<placeholder>`` to echo). Ends
     with a newline when non-empty; "" when the doc has no walkable structure (an HTML/text spill)."""
-    catalog = _catalog_links(parsed)
-    if catalog:
-        # Same treatment a catalogue gets inline. A catalogue big enough to SPILL would otherwise be
-        # written to a file with an outline that never mentioned the one thing it contains — hrefs.
-        return (f"{CATALOG_MARKER}{len(catalog)}): where each API's spec and docs live — fetch one "
-                "of these urls]\n" + "\n".join(f"  {c}" for c in catalog) + "\n")
-    routes = _endpoint_routes(parsed)
-    if routes:
-        shapes = _endpoint_response_fields(parsed)
-        shape_block = _shape_block(shapes)
-        # The grep example is a REAL route as a FIXED string — and it must be the PATH alone.
-        # Walked twice, on two different model families (finetune run 1785893473 call 0019, stock
-        # run 1785948232 call 0005): the shape lines above read "GET /handles/{handle} → …", both
-        # coders grepped the file for that exact label, and the spec stores the method as a KEY
-        # INSIDE the route's object — zero hits, and each read the empty result as "the file is
-        # wrong/missing". cria's own rendering taught the ungreppable string; the hint now hands
-        # over a command that provably matches (JSON quotes the path, YAML doesn't; -F on the bare
-        # path matches both).
-        # The example route must itself be a USEFUL grep target: an earlier seeded example used
-        # routes[0] blindly, a real spec's routes[0] was "/", and the degenerate `grep "/"` sent
-        # the coder crawling the meta-path aliases. Prefer a parameterized route (the kind the
-        # task actually needs), else the first non-trivial one; none → the plain list phrasing.
-        example = next((r for r in routes if "{" in r), next((r for r in routes if len(r) > 1), None))
-        hint = (f"[grep for a route as a FIXED string, e.g.: grep -n -F '{example}' {target} — "
-                f"the METHOD (GET/POST) is a key INSIDE the route's section, so grepping "
-                f"'GET /path' matches nothing]\n") if example else \
-               (f'[grep {target} for the endpoint you need FROM THAT LIST, or read_file it with a start_line/end_line range]\n')
-        return (f'{ROUTES_MARKER}{len(routes)}): {", ".join(routes)}]\n'
-                f'{shape_block}' + hint)
-    keys = [k for k in top_level_keys(parsed) if k != "[array]"]
-    if keys:
-        return (f'[top-level keys ({len(keys)}): {", ".join(keys)}]\n'
-                f"[grep for a key as a FIXED string, e.g.: grep -n -F '{keys[0]}' {target}, "
-                f'or read_file it with a start_line/end_line range]\n')
-    return ""
+    from . import assistbinding, documentguidance
+    definition, services = ((assistbinding.selected_definition(documentguidance.DEFINITION), guidance_services())
+                            if _guidance is None else _guidance)
+    return documentguidance.selected_guidance(definition,
+        documentguidance.GuidanceInput('spill', parsed=parsed, target=target), services).text
+
+
+def guidance_services():
+    """The existing pure factual providers, never an optional Root decision callback."""
+    from .documentguidance import GuidanceServices
+    return GuidanceServices(_catalog_links, _endpoint_routes, top_level_keys,
+                            _endpoint_response_fields, _shape_block)
 
 
 def _pad4(k):
@@ -1316,17 +1310,6 @@ def _bound(store: dict) -> None:
         store.clear()
 
 
-def _note_streak(session: str, status: int) -> int:
-    """Consecutive non-2xx fetches this session; a 2xx resets it. Returns the current streak."""
-    if 200 <= status < 300:
-        _FETCH_STREAK[session] = 0
-        return 0
-    n = _FETCH_STREAK.get(session, 0) + 1
-    _FETCH_STREAK[session] = n
-    _bound(_FETCH_STREAK)
-    return n
-
-
 # The guard keys that REFUSE a call — the fetch or the search did not run, and this text stands in
 # its place. Named by KEY, at the one place a guard message is rendered, so the mark is a property of
 # the decision cria made and never of the words it chose (:mod:`cria.denial`).
@@ -1359,14 +1342,11 @@ def prior_matching_search(session: Optional[str], query: str) -> Optional[str]:
     Exported so a caller that CAN reason (the loop, which has the reasoner) asks its question about
     exactly the pair :func:`gate_search` would act on. Same code, one verdict — a second matcher
     would drift from this one and the reasoner would be asked about the wrong prior."""
-    q = (query or "").strip()
-    if not session or not q:
+    definition = researchpolicies.current().search
+    if definition is None:
         return None
-    words = normalize_search(q)
-    if not words:
-        return None
-    return next((prev for prev in _SEARCH_SEEN.get(session, ())
-                 if searches_match(words, normalize_search(prev))), None)
+    return definition.execute(_search_input(session, query, researchpolicies.SearchAction.PRIOR),
+                              researchpolicies.SearchState(_SEARCH_ALLOWED)).prior
 
 
 def allow_search(session: Optional[str], query: str) -> None:
@@ -1382,8 +1362,10 @@ def allow_search(session: Optional[str], query: str) -> None:
     direction" licenses running it, never re-running it: measured (run 0727-103922) a standing
     clearance let the coder issue the identical search three times, which is the exact loop this
     gate exists to stop."""
-    if session and (query or "").strip():
-        _SEARCH_ALLOWED.setdefault(session, set()).add(query.strip().lower())
+    definition = researchpolicies.current().search
+    if definition is not None:
+        definition.execute(_search_input(session, query, researchpolicies.SearchAction.CLEAR),
+                           researchpolicies.SearchState(_SEARCH_ALLOWED))
 
 
 def gate_search(session: Optional[str], query: str) -> Optional[str]:
@@ -1396,32 +1378,20 @@ def gate_search(session: Optional[str], query: str) -> Optional[str]:
     searches by alternating "…API resolve…" / "…API endpoint resolve…". A genuine refinement or a
     new direction is NOT matched; only a re-hunt (see `searches_match`) — and a query a reasoner has
     cleared as a new direction (:func:`allow_search`) is never refused."""
-    q = (query or "").strip()
-    if not session or not q:
+    definition = researchpolicies.current().search
+    if definition is None:
         return None
-    if q.lower() in _SEARCH_ALLOWED.get(session, ()):
-        _SEARCH_ALLOWED[session].discard(q.lower())   # consumed: it permitted this run, not the next
-        return None
-    prior = prior_matching_search(session, q)
-    if prior is not None:
-        # Only claim the results are in a FILE when cria itself wrote one. gate_search runs before the
-        # routing split, so a harness-native search reaches here too — and it never spills. Naming the
-        # derived path unconditionally sent the model to grep a file that was never created.
-        domain0 = first_domain_in(query)
-        steer0 = _guard_msg("domain_steer", domain=domain0) if domain0 else ""
-        if prior.strip().lower() not in _SEARCH_SPILLED.get(session, ()):
-            return _guard_msg("search_repeat_inline", query=query, prior=prior, domain_steer=steer0)
-        # Name WHERE the earlier results actually are. The refusal used to say "its results are still
-        # above — use them", which is false: cria spills search results to a file and tells the model in
-        # the same breath that they are NOT inlined. So the coder was sent to look above at nothing and,
-        # finding nothing, searched again. Observed live (run 0726-135324): 8 refusals in one run, each
-        # pointing at content that was never there, while the coder never opened the file that held it.
-        domain = first_domain_in(query)
-        steer = _guard_msg("domain_steer", domain=domain) if domain else ""
-        # The path cria WROTE for that query, not a name derived from it a second time.
-        return _guard_msg("search_repeat", query=query, prior=prior,
-                          target=spilled_path(session, prior), domain_steer=steer)
-    return None
+    return definition.execute(_search_input(session, query, researchpolicies.SearchAction.ADMIT),
+                              researchpolicies.SearchState(_SEARCH_ALLOWED)).note
+
+
+def _search_input(session, query, action) -> researchpolicies.SearchInput:
+    def domain_note(original):
+        definition = researchpolicies.current().domain
+        return definition.execute(original, _guard_msg) if definition is not None else ""
+    return researchpolicies.SearchInput(
+        session, query, action, lambda: _SEARCH_SEEN.get(session, ()),
+        lambda prior: spilled_path(session, prior), domain_note, _guard_msg)
 
 
 # --- the entry point (web_fetch.rs::fetch_nav) ---------------------------------------------
@@ -1449,55 +1419,27 @@ def fetch_nav(url: str, *, find: Optional[str] = None, cursor: Optional[str] = N
         # kept re-asking. Worse, honoring it would have ended the run: "resolve" matches
         # `resolved_addresses` in that spec — the exact field the task needs.
         cursor = None
-    external = not is_internal_url(url)
-    seen_key = (url, find or "", cursor or "", bool(raw))
-    # A SPILLED doc is durable, so visibility is the wrong gate for it. The rule below refuses only
-    # while the earlier result is still in the conversation — right for an ordinary fetch, since a
-    # compacted-away result is genuinely gone. But when the doc was too big to inline, cria wrote it
-    # to a FILE and told the model so ("saved it IN FULL to … do NOT re-fetch the whole url"). That
-    # file survives the compaction. Measured (run 0727-104845): the coder fetched a 154KB docs page,
-    # the harness compacted the result away, the guard fell silent, and it re-fetched the same url
-    # NINETEEN times. Only a whole-doc re-fetch is refused — a `find=` is navigation into the doc and
-    # is answered normally, which is the whole point of having spilled it.
-    if session and external and not find and not cursor and already_spilled(session, url, workspace_root):
-        # The refusal CARRIES the outline (:func:`outline_for_url`). Refusing a re-fetch while cria is
-        # itself holding the parsed document, and answering with nothing but a filename, is what made
-        # step 1 unclosable in run 0802-184308 — 981 of 2,074 refusal-carrying calls across the corpus
-        # had no outline in the prompt at all.
-        return _guard_msg("fetch_repeat_spilled", url=url, target=_spill_name(url),
-                          extent=spill_extent_of(url), outline=outline_for_url(url))
-    # Refuse ONLY while the identical result is still in the conversation (set_visible); once
-    # compaction elides it the model may legitimately re-read it — the footgun fix.
-    if session and external and seen_key in _FETCH_SEEN.get(session, ()):
-        # Status- and spill-aware. The refusal used to assert "this is the SAME result you got before,
-        # still above; use it" for EVERY repeat — computed from the model's own tool calls, never from
-        # what came back. So a URL that 404'd was refused with "use it", and an oversized doc that cria
-        # had spilled to a FILE was described as sitting above. Both facts are already in the cache.
-        cached = _DOC_CACHE.get(url)
-        if cached is not None:
-            c_status, _ct, c_reduced, _parsed, _trunc = cached
-            if not (isinstance(c_status, int) and 200 <= c_status < 300):
-                return _guard_msg("fetch_repeat_failed", url=url, status=status_label(c_status))
-            if len(c_reduced) > OVERSIZE_CHARS and already_spilled(session, url, workspace_root):
-                # THE FILE HAS TO BE THERE. This wording says "and that file is still there", and
-                # this return site — unlike its twin thirty lines up — asserted it from the DOC
-                # CACHE alone. `already_spilled`'s own docstring records what that costs: "the spill
-                # exec was refused, and for twenty-six turns cria told the model 'that file is still
-                # there' in one paragraph while its own read guard answered 'is not there — nothing
-                # was read' in the next." The check is the same one, at the site that did not have
-                # it (#23). Without the file, the honest answer is the plain repeat refusal below,
-                # which claims nothing about a spill.
-                return _guard_msg("fetch_repeat_spilled", url=url, target=_spill_name(url),
-                                  extent=spill_extent_of(url), outline=outline_for_url(url))
-        return _guard_msg("fetch_repeat", url=url)
+    definition = researchpolicies.current().fetch
+    if definition is not None:
+        source = researchpolicies.FetchInput(
+            session, url, find, cursor, raw, is_internal_url,
+            lambda: _FETCH_SEEN.get(session, ()),
+            lambda: already_spilled(session, url, workspace_root),
+            lambda: _DOC_CACHE.get(url), OVERSIZE_CHARS,
+            lambda: _guard_msg("fetch_repeat_spilled", url=url, target=_spill_name(url),
+                               extent=spill_extent_of(url), outline=outline_for_url(url)),
+            status_label, _guard_msg)
+        decision = definition.execute(source)
+        if decision.effect is researchpolicies.Effect.REFUSED:
+            return decision.note
     out, status, discovered = _fetch_and_render(url, find, cursor, cap_tokens, user_agent, raw,
                                                ours=was_substituted(session, url))
-    if session and external and status is not None:
-        # A PROTOCOL endpoint answers a GET with 405/400 by design, and cria just came back with its
-        # full callable surface. Counting that as another failed URL guess would push the model over
-        # the streak and append "you keep guessing URLs, stop" underneath the answer it asked for —
-        # cria contradicting itself in one message. The probe succeeded: score it as a success.
-        out += guess_hint(200 if discovered else status, _note_streak(session, 200 if discovered else status))
+    observation = researchpolicies.current().failure
+    if observation is not None:
+        decision = observation.execute(researchpolicies.FailureInput(
+            session, url, status, discovered, is_internal_url, _bound, guess_hint),
+            researchpolicies.FailureState(_FETCH_STREAK))
+        out += decision.note or ""
     return out
 
 
@@ -1530,6 +1472,12 @@ def _fetch_and_render(url, find, cursor, cap_tokens, user_agent,
     ``(text, status, discovered)``; ``status`` is None on a transport error (no HTTP response) and
     ``discovered`` is True when the text came from a protocol probe rather than the document. ``raw``
     fetches always re-fetch (never navigate) so a stale reduced-cache entry is never served as source."""
+    from . import assistbinding, discoverypolicy, documentguidance
+    discovery_definition = assistbinding.selected_definition(discoverypolicy.DEFINITION)
+    guidance = (assistbinding.selected_definition(documentguidance.DEFINITION), guidance_services())
+    discovery_services = discoverypolicy.DiscoveryServices(
+        apidiscovery.probe_kind, apidiscovery._mcp_discover, apidiscovery._graphql_discover,
+        apidiscovery._unread, apidiscovery.ProbeTooLarge, _render_discovery)
     # A raw fetch NEVER serves the cache: that entry may hold the REDUCED text of an earlier ordinary
     # fetch, and handing that back as "source" is the stale-view lie this flag exists to avoid. It
     # re-fetches, then `find` (now honored under raw) applies to the freshly-read raw body.
@@ -1565,9 +1513,11 @@ def _fetch_and_render(url, find, cursor, cap_tokens, user_agent,
     # route outline above and this probe, and cria then reported the document defines nothing.
     # Discovery only REPLACES the body when it finds a real protocol contract; on a plain document it
     # returns nothing and the raw bytes fall through exactly as before.
-    found = apidiscovery.discover(url, status, reduced, ct)
-    if found:
-        return _render_discovery(url, status, ct, found), status, True
+    discovered = discoverypolicy.selected_discovery(discovery_definition,
+        discoverypolicy.DiscoveryInput(url, status, reduced, ct, find, cursor, raw),
+        discovery_services)
+    if discovered.discovered:
+        return discovered.text, status, True
     if not reduced.strip():
         return (f"{status_label(status)} · {url}\nContent-Type: {ct or '(none)'}\n"
                 "The response body was EMPTY. Retrying this exact URL returns the same empty "
@@ -1600,7 +1550,7 @@ def _fetch_and_render(url, find, cursor, cap_tokens, user_agent,
             # Reserve for the find-header, the find_large guard AND the route outline appended
             # below — the outline is the half this branch used to drop, and it must not push the
             # result back over the bound the harness middle-cuts at.
-            reserve = 800 + len(outline_for_url(url))   # upper bound; the grep line is dropped below
+            reserve = 800 + len(outline_for_url(url, _guidance=guidance))   # upper bound; the grep line is dropped below
             body, nxt, total = page_from(slice_, 0, max(50, (INLINE_RESULT_MAX_BYTES - reserve) // 4))
             # The message tells the model to "grep the saved ./tmp file". On this branch nothing was
             # ever saved — the spill lives on the no-find path — so cria was naming a file that did
@@ -1609,8 +1559,9 @@ def _fetch_and_render(url, find, cursor, cap_tokens, user_agent,
             # 186,444-char OpenAPI spec returned 2 of 33 endpoints — "/" and "/mcp" — and the model
             # built a JSON-RPC client because those were the only routes it had ever been shown. The
             # real GET /handles/{handle} did not reach it until call 152 of 225.
-            spill = oversized_spill(url)
-            target = spill[1] if spill else "the saved ./tmp file"
+            # Only the factual target is needed here; rendering a discarded spill
+            # would invoke optional guidance under a potentially different provider scope.
+            target = _spill_name(url)
             slice_ = body + _guard_msg("find_large", find=find, chars=f"{total:,}", target=target)
         # A find MISS on a truncated doc is the Ada-handle lie: the target may lie beyond the cut,
         # not be absent. Disclose so a miss isn't mistaken for "doesn't exist" (final-page parity).
@@ -1631,7 +1582,7 @@ def _fetch_and_render(url, find, cursor, cap_tokens, user_agent,
         # The ROUTE/SHAPE blocks only — never the `[grep <file>]` pointer. On this branch nothing was
         # spilled (the write is gated on find is None and cursor is None), so naming that file would
         # be the very 5b violation the 08-01 fix was written for. The route list is true either way.
-        outline = "\n".join(ln for ln in outline_for_url(url).splitlines()
+        outline = "\n".join(ln for ln in outline_for_url(url, _guidance=guidance).splitlines()
                             if not ln.lstrip().startswith("[grep ")).strip()
         head = (f"{status_label(status)} · {url}\nContent-Type: {ct or '(none)'}\n"
                 f'find="{find.strip()}"\n\n---\n{slice_}')
@@ -1642,7 +1593,7 @@ def _fetch_and_render(url, find, cursor, cap_tokens, user_agent,
         return head, status, False
     offset = _parse_cursor(cursor) if cursor else 0
     return render_page(url, status, ct, reduced, parsed, offset, cap_tokens, truncated,
-                       ours=ours), status, False
+                       ours=ours, _guidance=guidance), status, False
 
 
 # --- paging (content_reduce.rs::page_from + render_page) ------------------------------------
@@ -1743,40 +1694,18 @@ def client_error_note(status: int, body: str, ours: bool = False) -> str:
 
 
 def render_page(url: str, status: int, ct: Optional[str], reduced: str, parsed: Optional[Any],
-                offset: int, cap_tokens: int, truncated: bool = False, ours: bool = False) -> str:
+                offset: int, cap_tokens: int, truncated: bool = False, ours: bool = False, *,
+                _guidance=None) -> str:
+    from . import assistbinding, documentguidance
+    definition, services = ((assistbinding.selected_definition(documentguidance.DEFINITION), guidance_services())
+                            if _guidance is None else _guidance)
     body, nxt, total = page_from(reduced, offset, cap_tokens)
 
     def _head(nxt_: int, total_: int) -> str:
         head = f"{status_label(status)} · {url}\nContent-Type: {ct or '(none)'}\n"
-        # A CATALOGUE names where other documents live, and is short enough to fit one page — so it is
-        # surfaced regardless of size, unlike the spec blocks below (which exist to navigate a doc too
-        # big to read). Without this its hrefs reached the model only as raw JSON body text.
-        if offset == 0 and parsed is not None:
-            catalog = _catalog_links(parsed)
-            if catalog:
-                # Relation-agnostic wording: the live api.handle.me catalogue files its openapi.json
-                # under `service-doc`, not `service-desc`, so naming one relation sent the model
-                # looking for a link that wasn't there.
-                head += (f"{CATALOG_MARKER}{len(catalog)}): where each API's spec and docs live — fetch one "
-                         "of these urls]\n" + "\n".join(f"  {c}" for c in catalog) + "\n")
-        # For a large structured doc, lead with the shape so the model can `find=` a key instead
-        # of blindly paging a minified blob (the "summarize with top-level keys" ask).
-        if offset == 0 and parsed is not None and nxt_ < total_:
-            keys = top_level_keys(parsed)
-            if keys:
-                head += (f"[structured doc — top-level keys: {', '.join(keys)}]\n"
-                         f'[use find="<key>" to jump to a section]\n')
-            # For an API spec, surface the actual ENDPOINT ROUTES up front — the single most useful
-            # thing and the one a model reaching for "the endpoint" keeps missing (it drills into
-            # component schemas and guesses the URL instead). Detected by SHAPE (a top-level object
-            # whose keys are mostly `/`-paths), so it works for OpenAPI and any spec dialect.
-            routes = _endpoint_routes(parsed)
-            if routes:  # uncapped, like top_level_keys — the route the model needs may be #61
-                head += f"{ROUTES_MARKER}{len(routes)}): {', '.join(routes)}]\n"
-                shapes = _endpoint_response_fields(parsed)
-                head += _shape_block(shapes)  # the response FIELDS (dereferenced), real names
-                head += '[web_fetch find="<path>" for one endpoint\'s full request/response detail]\n'
-        return head
+        return head + documentguidance.selected_guidance(definition,
+            documentguidance.GuidanceInput('inline', parsed=parsed, offset=offset,
+                                           more=nxt_ < total_), services).text
 
     # THE WHOLE RENDERED RESULT must fit the inline bound, not just the body window: the head
     # (routes/shapes outline) is data too, and head + body above INLINE_RESULT_MAX_BYTES is exactly

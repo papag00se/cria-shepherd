@@ -55,7 +55,7 @@ from .probeparse import COMPILES_FIRST, runner_and_tally, runner_tally  # noqa: 
 
 # Marker line delimiting each section of the composed script's output. The id after the
 # prefix names the section ("probe-0", "git"). Chosen to never collide with tool output.
-SECTION_PREFIX = "___CRIA_GATE_"
+from .toolwire import SECTION_PREFIX, GATE_SENTINEL, write_landed
 SECTION_SUFFIX = "___"
 # Section carrying the untracked paths the probes themselves created — cria's own litter, listed by the
 # harness's shell and removed by :func:`sweep_litter` on cria's side. A signal for cria, never the model.
@@ -1089,7 +1089,6 @@ def _paths_written_after(messages: list, start: int) -> "frozenset[str]":
     cria's own quote of disk line 42 showed a line with no `requests` — a self-contradictory anchor,
     three times, because the file moved under the still-newest gate. The write ledger in the same
     message list says exactly which files moved; their findings keep the checker's line, unquoted."""
-    from cria import selfcompact
     calls: dict = {}
     changed = set()
     for m in messages[start + 1:]:
@@ -1108,7 +1107,7 @@ def _paths_written_after(messages: list, start: int) -> "frozenset[str]":
         if m.get("role") == "tool" or m.get("type") == "function_call_output":
             tid = m.get("tool_call_id") or m.get("call_id")
             c = m.get("content") if m.get("content") is not None else m.get("output")
-            if tid in calls and isinstance(c, str) and selfcompact.write_landed(c):
+            if tid in calls and isinstance(c, str) and write_landed(c):
                 changed.add(calls[tid])
     return frozenset(changed)
 
@@ -1913,7 +1912,6 @@ _NO_SIGNAL_CHECK = "no usable result"   # the ⟦ctx:checks⟧ non-signal — no
 # and it is the half that hurt — the TOML check handed a Rust project the Python package `tomli`
 # (0/4), and a coder emitted cria's `compileall` line back as its own work. Discovery states which
 # is which (`ProbeCandidate.composed_by_cria`); the plan carries only the coder's half.
-GATE_SENTINEL = "⟦ctx:gate⟧"
 
 
 def _gate_sentinel(probes: list[str]) -> str:

@@ -1,15 +1,17 @@
 """The periodic path consumes the single provenance owner's result without re-judging it."""
 
+from contextlib import contextmanager
+from dataclasses import replace
 import json
 import re
 import unittest
-from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
-from cria import bodykeys, loop, prompts, upstream, wsview
+from cria import assistruntime, bodykeys, completiondiagnosis, config, loop, prompts, upstream, wsview
 from cria.plan import Plan, PlanItem
 from tests.wsfixture import survey
+from tests.completion_fixtures import feed_body, feed_task, missing_review, response, returned_inspections
 
 
 class _NullRlog:
@@ -18,6 +20,20 @@ class _NullRlog:
 
     def emit(self, kind, **_fields):
         self.events.append(kind)
+
+
+@contextmanager
+def _selected_observer(observe):
+    current = assistruntime.current()
+    selected = current.completion_diagnosis
+    assert selected is not None, "fixture requires the selected diagnosis policy"
+    replacement = replace(selected,observe=observe)
+    root = replace(current,ordered_stages=tuple(
+        replacement if definition is selected else definition for definition in current.ordered_stages))
+    assert root.completion_diagnosis is replacement
+    with assistruntime.bound(root):
+        assert assistruntime.current().completion_diagnosis is replacement
+        yield replacement
 
 
 def _sess():
@@ -62,18 +78,11 @@ class PeriodicDiagnosisOwnershipTests(unittest.TestCase):
         self.assertIn("loop.satisfaction_gap_named", rlog.events)
         extra.assert_not_called()
 
-    def test_feed_capture_missing_file_gap_reaches_the_prepared_coder_wire(self):
-        """Replay 1790034274's typed verdict through the next live frame and wire boundary.
-
-        The old generic prompt fails this test: the instruction is absent after `_work_item()`
-        constructs the next coder frame and `Upstream._prep()` serializes its final body.
-        """
-        capture = Path.home() / ".cria" / "calls" / "20260921T164500-01a0c65b-cd75-7ab3-b3dd-3d839bfb3b35"
-        verdict = json.loads((capture / "0109-satisfaction.response.json").read_text())
-        args = json.loads(verdict["choices"][0]["message"]["tool_calls"][0]["function"]["arguments"])
-        captured = json.loads((capture / "0112-coder-s3.json").read_text())["body"]
-        task = next(m["content"] for m in captured["messages"]
-                    if m.get("role") == "user" and str(m.get("content", "")).startswith("Fix these three"))
+    def test_recorded_missing_file_gap_reaches_the_prepared_coder_wire(self):
+        """Original typed verdict through a controlled cursor and the real wire boundary."""
+        args = missing_review()
+        captured = feed_body()
+        task = feed_task()
         active = re.search(r"Prioritize this step \(3 of 6\):\n\n(.*?)\n\nOnce it is complete",
                            captured["messages"][0]["content"], re.S)
         self.assertIsNotNone(active)
@@ -130,17 +139,15 @@ class PeriodicDiagnosisOwnershipTests(unittest.TestCase):
         self.assertIn("Determine its contents from the exact task requirement", wire_text)
         self.assertNotIn(args["proposed_fix"], expected_nudge)
 
-    def test_live_1790044200_red_gate_observation_suspends_step_one_on_the_prepared_wire(self):
-        """The live 0033 boundary: red stays red; only a complete survey can arm REVIEW.md."""
-        capture = Path.home() / ".cria" / "calls" / "20260921T193024-01a0c6f3-3dc1-7aa2-bc65-951943f81ad4"
-        body = json.loads((capture / "0033-coder-s1.json").read_text())["body"]
-        task = next(m["content"] for m in body["messages"]
-                    if m.get("role") == "user" and str(m.get("content", "")).startswith("Fix these three"))
+    def test_red_gate_observation_suspends_step_one_on_the_prepared_wire(self):
+        """Red stays red; only a complete survey can arm the missing deliverable."""
+        body = feed_body(1, 9)
+        task = feed_task()
         active = re.search(r"Prioritize this step \(1 of 9\):\n\n(.*?)\n\nOnce it is complete",
                            body["messages"][0]["content"], re.S)
         self.assertIsNotNone(active)
-        root = "/home/jesse/suite-runs/suite-feed-pipeline-java_ternary-bonsai-2_codex_pon_1790044200-vhli_z3m"
-        view = wsview.View(root, "feed-1790044200-red-gate")
+        root = "/harness/feed"
+        view = wsview.View(root, "feed-red-gate")
         self.assertTrue(wsview.apply_survey(view, survey(
             "D\tsrc\nD\tsrc/main\nD\tsrc/main/java\nD\tsrc/main/java/pipeline\n"
             "F\t1\t9938\tsrc/main/java/pipeline/Importer.java\nF\t1\t980\tpom.xml",
@@ -149,7 +156,8 @@ class PeriodicDiagnosisOwnershipTests(unittest.TestCase):
         token = wsview.bind(view)
         self.addCleanup(wsview.unbind, token)
         frames = []
-        verdict = {"missing_file": True, "reason": "REVIEW.md is absent.", "proposed_fix": "",
+        verdict = {"missing_file": True, "required_output": True,
+                   "reason": "REVIEW.md is absent.", "proposed_fix": "",
                    "diagnosis_kind": "missing_file", "subject": "REVIEW.md",
                    "task_quote": "Add `REVIEW.md` describing remaining problems or risks in the code you changed. For every issue, include the file name and line number.",
                    "evidence_source": "workspace_absence", "evidence_quote": ""}
@@ -160,7 +168,8 @@ class PeriodicDiagnosisOwnershipTests(unittest.TestCase):
                     "name": "read_file", "arguments": '{"path":"README.md"}'}}]}}]}).encode()),
             reasoner_chat=lambda _body, _rlog: json.dumps({"choices": [{"message": {
                 "role": "assistant", "content": json.dumps(verdict)}}]}).encode(),
-            reasoner_role=None, runs_dir="", self_compact=False, focus_trim=False,
+            reasoner_role=config.Role(name="reasoner", backend="local"), runs_dir="",
+            self_compact=False, focus_trim=False,
             assists=True, satisfaction_check_start=1, satisfaction_check_every=100))
         sess = loop.PlanSession(plan=Plan(id="live-0033", task=task, created="now", items=[PlanItem(active.group(1))]),
                                 drive_count=10, last_gate_red=True, gate_stall=1,
@@ -180,18 +189,16 @@ class PeriodicDiagnosisOwnershipTests(unittest.TestCase):
         self.assertIn("Create REVIEW.md now.", text)
         self.assertNotIn(bodykeys.COMPLETION_REMEDIATION, wire)
         self.assertNotIn("deliverable_observation_last_drive", loop._session_to_dict(sess))
-        # The actual 0033 tool calls have no receipt and cannot release a remediation they did not write.
+        # A history without a matching successful write cannot release remediation.
         loop._settle_completion_remediation(sess, body["messages"], rlog)
         self.assertEqual(sess.completion_remediation_subject, "REVIEW.md")
 
     def test_red_gate_observer_requires_a_complete_current_survey(self):
-        capture = Path.home() / ".cria" / "calls" / "20260921T193024-01a0c6f3-3dc1-7aa2-bc65-951943f81ad4"
-        body = json.loads((capture / "0033-coder-s1.json").read_text())["body"]
-        task = next(m["content"] for m in body["messages"]
-                    if m.get("role") == "user" and str(m.get("content", "")).startswith("Fix these three"))
+        body = feed_body(1, 9)
+        task = feed_task()
         active = re.search(r"Prioritize this step \(1 of 9\):\n\n(.*?)\n\nOnce it is complete",
                            body["messages"][0]["content"], re.S)
-        root = "/home/jesse/suite-runs/suite-feed-pipeline-java_ternary-bonsai-2_codex_pon_1790044200-vhli_z3m"
+        root = "/harness/feed"
         view = wsview.View(root, "red-gate-unknown")
         self.assertTrue(wsview.apply_survey(view, survey("F\t1\t1\tImporter.java", root=root,
                                                          complete=False)))
@@ -212,31 +219,24 @@ class PeriodicDiagnosisOwnershipTests(unittest.TestCase):
         driver._work_item(sess, "unknown", body, _NullRlog(), sess.plan.current(), 1)
         self.assertEqual(sess.completion_remediation_subject, "")
 
-    def test_all_seven_feed_terminal_states_arm_before_their_captured_cursor_is_framed(self):
-        """The owner receives live-shaped *unarmed* states, never a pre-armed serializer fixture."""
-        captures = (
-            ("20260921T110810-01a0c527-6c46-74b3-bf8d-91cb6d18d707", "0075-coder-s3.json", 17, False),
-            ("20260921T131112-01a0c598-12c3-7973-8ebd-3f87b1ce0016", "0108-coder-s3.json", 22, False),
-            ("20260921T135359-01a0c5bf-3d05-7fd0-a573-6c95720f4526", "0095-coder-s3.json", 26, False),
-            ("20260921T144153-01a0c5eb-172a-7002-b4cf-64ac66d26edf", "0157-coder-s3-focus1.json", 75, False),
-            ("20260921T164500-01a0c65b-cd75-7ab3-b3dd-3d839bfb3b35", "0112-coder-s3.json", 37, False),
-            ("20260921T180043-01a0c6a1-2038-7a52-95be-552a62330eaf", "0088-coder-s1.json", 33, False),
-            ("20260921T193024-01a0c6f3-3dc1-7aa2-bc65-951943f81ad4", "0033-coder-s1.json", 11, True),
-        )
-        home = Path.home() / ".cria" / "calls"
+    def test_unarmed_early_middle_and_late_cursors_arm_before_framing(self):
+        """Controlled cursor matrix, not a reconstruction of missing historical requests."""
+        cases = ((3, 6, 17, False), (3, 7, 22, False), (3, 10, 26, False),
+                 (6, 6, 75, False), (9, 10, 37, False), (1, 9, 33, False), (1, 9, 11, True))
         evidence = prompts.render("negative_diagnosis", task_quote="Add REVIEW.md.",
                                   source="workspace_absence",
                                   evidence=prompts.render("negative_diagnosis_missing_file", subject="REVIEW.md"))
         gap = loop.VerdictNudge(evidence, diagnosis_kind="missing_file", subject="REVIEW.md")
-        for capture, call, drive, red in captures:
-            with self.subTest(capture=capture):
-                body = json.loads((home / capture / call).read_text())["body"]
+        for cursor, count, drive, red in cases:
+            capture = f"cursor-{cursor}-of-{count}-drive-{drive}"
+            with self.subTest(cursor=cursor, count=count, drive=drive, red=red):
+                body = feed_body(cursor, count)
                 system = body["messages"][0]["content"]
                 active = (re.search(r"Prioritize this step \((\d+) of (\d+)\):\n\n(.*?)\n\nOnce it is complete", system, re.S)
                           or re.search(r"Do ONLY this step \((\d+) of (\d+)\), then stop:\n\n(.+)", system, re.S))
                 self.assertIsNotNone(active)
                 idx, total, step = active.groups()
-                # Fails-before fixture: this is the exact captured cursor and no remediation state.
+                # Unarmed framing must preserve the ordinary cursor before observation.
                 before = loop._frame_for_item(body["messages"], step, "", int(idx), int(total))
                 self.assertTrue("Prioritize this step" in before[0]["content"]
                                 or "Do ONLY this step" in before[0]["content"])
@@ -262,9 +262,20 @@ class PeriodicDiagnosisOwnershipTests(unittest.TestCase):
                                         drive_count=drive - 1, last_gate_red=red, gate_stall=int(red),
                                         workspace_root=root)
                 rlog = _NullRlog()
+                typed_gap = completiondiagnosis.DiagnosisResult(completiondiagnosis.DiagnosisStatus.GROUNDED,
+                    gap.evidence,gap.action,gap.diagnosis_kind,gap.subject)
+                def observed(source,services):
+                    self.assertEqual(source,completiondiagnosis.ObservationInput("Add REVIEW.md.",True))
+                    self.assertEqual(sess.drive_count,drive)
+                    self.assertEqual(sess.deliverable_observation_last_drive,drive)
+                    return typed_gap
+                obs = mock.Mock(side_effect=observed)
                 with (mock.patch.object(driver, "_periodic_satisfaction", return_value=None),
-                      mock.patch.object(loop, "observe_task_missing_file", return_value=gap)):
+                      _selected_observer(obs) as selected):
+                    self.assertIs(selected.observe,obs)
                     driver._work_item(sess, capture, body, rlog, sess.plan.current(), int(idx))
+                obs.assert_called_once_with(completiondiagnosis.ObservationInput("Add REVIEW.md.",True),mock.ANY)
+                self.assertIs(typed_gap.status,completiondiagnosis.DiagnosisStatus.GROUNDED)
                 self.assertEqual(sess.completion_remediation_subject, "REVIEW.md")
                 self.assertEqual(sess.last_gate_red, red, "observation must not change check state")
                 raw, _estimate, _capture = upstream.Upstream("http://unused", context_window=49152)._prep(
@@ -296,6 +307,7 @@ class PeriodicDiagnosisOwnershipTests(unittest.TestCase):
                             "name": "read_file", "arguments": '{"path":"README.md"}'}}]}}]}).encode()),
                     reasoner_chat=object(), runs_dir="", self_compact=False, focus_trim=False,
                     assists=True, satisfaction_check_start=1, satisfaction_check_every=1))
+                driver._ctx.planner_enabled = True
                 root = f"/comparator/{len(sent)}"
                 view = wsview.View(root, task)
                 self.assertTrue(wsview.apply_survey(view, survey("F\t1\t1\tREADME.md", root=root)))
@@ -303,10 +315,19 @@ class PeriodicDiagnosisOwnershipTests(unittest.TestCase):
                 self.addCleanup(wsview.unbind, token)
                 sess = loop.PlanSession(plan=loop.Plan(id=task, task=task, created="now",
                     items=[loop.PlanItem("finish the remaining requested artifact")]), workspace_root=root)
+                not_applicable = completiondiagnosis.DiagnosisResult(completiondiagnosis.DiagnosisStatus.NOT_APPLICABLE)
+                def observed(source,services):
+                    self.assertEqual(source,completiondiagnosis.ObservationInput(task,True))
+                    self.assertEqual(sess.drive_count,1)
+                    self.assertEqual(sess.deliverable_observation_last_drive,1)
+                    return not_applicable
+                obs = mock.Mock(side_effect=observed)
                 with (mock.patch.object(driver, "_periodic_satisfaction", return_value=None),
-                      mock.patch.object(loop, "observe_task_missing_file", return_value=loop.VerdictNudge())):
+                      _selected_observer(obs)):
                     driver._work_item(sess, task, {"messages": [{"role": "user", "content": task}], "tools": []},
                                       _NullRlog(), sess.plan.current(), 1)
+                obs.assert_called_once_with(completiondiagnosis.ObservationInput(task,True),mock.ANY)
+                self.assertIs(not_applicable.status,completiondiagnosis.DiagnosisStatus.NOT_APPLICABLE)
                 text = "\n".join(str(m.get("content") or "") for m in sent[0]["messages"])
                 self.assertIn("Prioritize this step", text)
                 self.assertEqual(sess.completion_remediation_subject, "")
@@ -367,36 +388,26 @@ class PeriodicDiagnosisOwnershipTests(unittest.TestCase):
                 self.assertEqual(sess.nudge_reason, "")
                 self.assertNotIn("loop.completion_remediation_nonwrite", rlog.events)
 
-    def test_exact_review_remediation_nonwrite_replays_reach_the_following_coder_wire(self):
-        """Fails before the result-correlated follow-up: the exact next wire has no such assist."""
-        home = Path.home() / ".cria" / "calls"
-        captures = (
-            ("20260921T135359-01a0c5bf-3d05-7fd0-a573-6c95720f4526", "0061-satisfaction", "0062-coder-s2", "0063-coder-s2"),
-            ("20260921T144153-01a0c5eb-172a-7002-b4cf-64ac66d26edf", "0084-satisfaction", "0085-coder-s2", "0086-coder-s2"),
-            ("20260921T164500-01a0c65b-cd75-7ab3-b3dd-3d839bfb3b35", "0109-satisfaction", "0112-coder-s3", "0113-coder-s3"),
-        )
-        for capture, satisfaction_call, directive_call, result_call in captures:
-            with self.subTest(capture=capture):
-                directive = json.loads((home / capture / f"{directive_call}.json").read_text())["body"]
-                response = json.loads((home / capture / f"{directive_call}.response.json").read_text())
-                after_result = json.loads((home / capture / f"{result_call}.json").read_text())["body"]
-                verdict = json.loads((home / capture / f"{satisfaction_call}.response.json").read_text())
-                message = verdict["choices"][0]["message"]
-                raw_verdict = ((message.get("tool_calls") or [{}])[0].get("function") or {}).get("arguments") \
-                    or message.get("content")
-                args = json.loads(raw_verdict)
+    def test_recorded_nonwrite_calls_reach_the_following_coder_wire(self):
+        """Recorded inspection replies, with explicit synthetic request/result frames."""
+        for capture in ("review_inspection_read", "review_inspection_list", "review_inspection_shell"):
+            with self.subTest(response=capture):
+                directive = feed_body()
+                reply = response(capture)
+                after_result = returned_inspections(directive, reply)
+                args = missing_review()
                 evidence = prompts.render(
                     "negative_diagnosis", task_quote=args["task_quote"], source=args["evidence_source"],
                     evidence=prompts.render("negative_diagnosis_missing_file", subject=args["subject"]))
                 gap = loop.VerdictNudge(evidence, diagnosis_kind=args["diagnosis_kind"], subject=args["subject"])
-                original_ids = {call["id"] for choice in response["choices"]
+                original_ids = {call["id"] for choice in reply["choices"]
                                 for call in ((choice.get("message") or {}).get("tool_calls") or [])}
                 self.assertTrue(original_ids)
                 self.assertTrue(any((m.get("tool_call_id") or m.get("call_id")) in original_ids
                                     for m in after_result["messages"] if isinstance(m, dict)))
 
                 sent = []
-                replies = [response, {"choices": [{"message": {"role": "assistant", "tool_calls": [{
+                replies = [reply, {"choices": [{"message": {"role": "assistant", "tool_calls": [{
                     "id": "next", "type": "function", "function": {"name": "read_file",
                     "arguments": '{"path":"pom.xml"}'}}]}}]}]
                 driver = loop.Loop(loop.LoopContext(
@@ -408,9 +419,8 @@ class PeriodicDiagnosisOwnershipTests(unittest.TestCase):
                     PlanItem("finish the requested review"),
                 ]), drive_count=1)
                 rlog = _NullRlog()
-                # The captured typed verdict arms remediation through its production owner; the
-                # following production coder turn receives the recorded response and records only
-                # its supported inspection calls before the recorded harness results return.
+                # The production owner arms the gap; the real coder transition tracks inspection
+                # calls before controlled matching results return.
                 with (mock.patch.object(loop, "judge_satisfaction", return_value=(False, gap, "")),
                       mock.patch.object(loop, "_satisfaction_evidence", return_value=""),
                       mock.patch.object(loop, "_gate_notes", return_value="")):

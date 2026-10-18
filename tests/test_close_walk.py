@@ -29,7 +29,7 @@ def owner():
     return close_walk
 
 
-def invoke(area, tmp_path, status, dry=False):
+def invoke(area, tmp_path, status, dry=False, stdin=False):
     scratch, unit, repo, record = area
     # CLI's real default boundary: HOME/.cria/validation, never arbitrary extra flags.
     home = tmp_path / 'home'
@@ -39,16 +39,19 @@ def invoke(area, tmp_path, status, dry=False):
     record['scratch'] = [str(target)]
     record['fixes'][0]['disposition'] = status
     manifest = tmp_path / 'closure.json'
-    manifest.write_text(json.dumps(record))
+    if not stdin:
+        manifest.write_text(json.dumps(record))
     module_root = Path(os.environ.get('RETENTION_MODULE_ROOT', Path(__file__).resolve().parents[1]))
-    command = [sys.executable, '-B', str(module_root / 'suite/close_walk.py'), str(manifest)]
+    command = [sys.executable, '-B', str(module_root / 'suite/close_walk.py'),
+               '-' if stdin else str(manifest)]
     if dry:
         command.append('--dry-run')
     guard = os.environ.get('RETENTION_GUARD_RUN')
     if guard:
         command.insert(0, guard)
     env = dict(os.environ, HOME=str(home), PYTHONDONTWRITEBYTECODE='1')
-    return subprocess.run(command, capture_output=True, env=env, text=True), target
+    return subprocess.run(command, capture_output=True, env=env, text=True,
+                          input=json.dumps(record) if stdin else None), target
 
 
 @pytest.mark.parametrize('status', ['ACCEPTED', 'REJECTED'])
@@ -57,6 +60,17 @@ def test_cli_removes_closed_scratch(area, tmp_path, status):
     assert result.returncode == 0, result.stderr
     assert json.loads(result.stdout)['removed'] == [str(target)]
     assert not target.exists()
+
+
+@pytest.mark.parametrize('status,dry', [('ACCEPTED', False), ('REJECTED', False),
+                                      ('ACCEPTED', True)])
+def test_cli_closes_from_stdin_without_creating_a_receipt(area, tmp_path, status, dry):
+    result, target = invoke(area, tmp_path, status, dry=dry, stdin=True)
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout) == {'eligible' if dry else 'removed': [str(target)]}
+    assert target.exists() is dry
+    assert not (tmp_path / 'closure.json').exists()
+    assert sorted(p.name for p in tmp_path.iterdir()) == ['home', 'repo', 'scratch']
 
 
 def test_cli_dry_run_keeps_files(area, tmp_path):

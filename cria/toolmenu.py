@@ -16,12 +16,16 @@ Two curation moves, both on the OUTBOUND request to the model:
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+from typing import Iterable, Protocol
+
 from . import prompts
+from .assistcontract import ExecutableDefinition, Policy, Reference
 from .shelltool import find_shell_tool, is_file_tool_name, is_shell_tool_name
-from .writeproxy import _EDIT_NAMES, _LIST_NAMES, _READ_NAMES, _WRITE_NAMES
+from .filecommands import _EDIT_NAMES, _LIST_NAMES, _READ_NAMES, _WRITE_NAMES
 
 # The file-op tool FAMILIES cria recognizes (write/edit/read/list, incl. aliases like create_file /
-# str_replace), sourced from writeproxy so the focus menu never DROPS a differently-named essential a
+# str_replace), sourced from filecommands so the focus menu never DROPS a differently-named essential a
 # harness advertises natively — the keep-set must match what needs_translation treats as first-class.
 # …AND BY SHAPE, like the shell beside it. This was a six-name literal set under a comment calling
 # them FAMILIES. Simulated through the real gate (`needs_translation` → `advertise` → `focus_tools`):
@@ -86,19 +90,33 @@ def _order_key(name) -> tuple:
     return (1, 0)                                     # unranked focus tool — keep in the middle
 
 
-def focus_tools(body: dict, rlog=None) -> None:
-    """Curate the model's tool menu to the coding essentials AND order it by preference — in place.
+@dataclass(frozen=True)
+class FocusInput:
+    tools: list[dict] | None
+    selected: bool = True
+    configured: bool = True
 
-    Ports codex-local's ``ToolSubset::Focused`` + ``present_local_tools``: keep the shell/exec tool
-    (by family, so it's harness-agnostic) plus FOCUS_TOOL_NAMES; drop goal/MCP/connector/ask-the-user
-    tools that only distract a small model (and let it wander off — e.g. spawning a rogue
-    ``create_goal``); then REORDER the survivors so cria's purpose-built tools lead and the generic
-    shell trails (the schema order nudges the model to prefer the specific tools). No-op when there
-    are no tools. NEVER curates to empty: if nothing coding-essential survives (a degenerate harness),
-    the original menu is left untouched rather than leaving the model tool-less."""
-    tools = body.get("tools")
-    if not tools:
-        return
+
+@dataclass(frozen=True)
+class FocusResult:
+    tools: list[dict] | None
+    # Whether the caller should install the projection, not a count of drops.
+    applied: bool = False
+
+
+class Log(Protocol):
+    def emit(self, kind: str, **fields) -> None: ...
+
+
+def focus_menu(request: FocusInput, rlog: Log | None = None) -> FocusResult:
+    """Select and order a menu without rewriting native tool objects or schemas.
+
+    Selection and the existing tools.focus configuration are independent gates.
+    No detector or event runs when either is off. Never curate to empty.
+    """
+    tools = request.tools
+    if not request.selected or not request.configured or not tools:
+        return FocusResult(tools)
     kept, dropped = [], []
     for t in tools:
         nm = _tool_name(t)
@@ -111,13 +129,20 @@ def focus_tools(body: dict, rlog=None) -> None:
         else:
             dropped.append(nm)
     if not kept:  # nothing coding-essential survives — leaving zero tools would break the model
-        return
+        return FocusResult(tools)
     # Reorder to lead with cria's tools even when nothing was dropped (the harness may already send
     # only focused tools); prune too when the firehose brought extras.
     kept.sort(key=lambda t: _order_key(_tool_name(t)))  # specific tools first, shell last
-    body["tools"] = kept
     if rlog is not None and dropped:
         rlog.emit("toolmenu.focused", kept=len(kept), dropped=len(dropped), names=dropped)
+    return FocusResult(kept, applied=True)
+
+
+def focus_tools(body: dict, rlog=None) -> None:
+    """In-place compatibility: honor a bound root; unbound keeps old defaults."""
+    result = current_policies().focus(FocusInput(body.get("tools")), rlog)
+    if result.applied:
+        body["tools"] = result.tools
 
 
 def cheatsheet(tools) -> str | None:
@@ -225,28 +250,56 @@ def _path_arg(tool, default: str = "path") -> str:
     return req[0] if req else next(iter(props), default)
 
 
-def add_cheatsheet(body: dict, rlog=None) -> None:
-    """Fold the cheat-sheet into the model's system prompt on the OUTBOUND request.
+@dataclass(frozen=True)
+class InstructionInput:
+    tools: list[dict] | None
+    # None requests the note for embedding in an owned coder system frame.
+    # A list (including []) requests the historical first-system merge.
+    messages: list[dict] | None = None
+    selected: bool = True
+    configured: bool = True
 
-    It MERGES into the existing first system message rather than adding a second one:
-    some chat templates (e.g. Qwythos, Ornith) raise "System message must be at the
-    beginning" — i.e. they permit exactly one system message, at index 0 — and a
-    second system message 500s the model server. Merging keeps exactly one system
-    message and is compatible with both strict and lenient templates. If there is no
-    system message, one is inserted at the front."""
-    note = cheatsheet(body.get("tools"))
+
+@dataclass(frozen=True)
+class InstructionResult:
+    note: str | None
+    messages: list[dict] | None
+    applied: bool = False
+
+
+def tool_instructions(request: InstructionInput, rlog: Log | None = None) -> InstructionResult:
+    """One instruction policy, with note-only and first-system projections.
+
+    Both consume the resolved menu, not the pre-focus menu. The shared renderer
+    is support, not a selectable helper. No rendering or message copying occurs
+    when selection or configuration is off. Note-only delivery keeps the coder's
+    existing placement and emits no event (matching its former direct renderer).
+    """
+    if not request.selected or not request.configured:
+        return InstructionResult(None, request.messages)
+    note = cheatsheet(request.tools)
     if note is None:
-        return
-    messages = list(body.get("messages") or [])
+        return InstructionResult(None, request.messages)
+    if request.messages is None:
+        return InstructionResult(note, None, applied=True)
+    messages = list(request.messages)
     if messages and messages[0].get("role") == "system":
         head = dict(messages[0])
         head["content"] = _merge_system(head.get("content"), note)
         messages[0] = head
     else:
         messages.insert(0, {"role": "system", "content": note})
-    body["messages"] = messages
     if rlog is not None:
         rlog.emit("toolmenu.cheatsheet")
+    return InstructionResult(note, messages, applied=True)
+
+
+def add_cheatsheet(body: dict, rlog=None) -> None:
+    """Root-aware compatibility with the original first-system merge and event."""
+    result = current_policies().instructions(
+        InstructionInput(body.get("tools"), body.get("messages") or []), rlog)
+    if result.applied:
+        body["messages"] = result.messages
 
 
 def without_cheatsheet(content):
@@ -281,3 +334,135 @@ def _merge_system(existing, note: str):
     if isinstance(existing, list):  # multimodal content parts
         return list(existing) + [{"type": "text", "text": note}]
     return note
+
+
+class FocusStage(Protocol):
+    def __call__(self, request: FocusInput, rlog: Log | None = None) -> FocusResult: ...
+
+
+class InstructionStage(Protocol):
+    def __call__(self, request: InstructionInput, rlog: Log | None = None) -> InstructionResult: ...
+
+
+@dataclass(frozen=True)
+class FocusDefinition:
+    policy: Policy
+    execute: FocusStage
+
+
+@dataclass(frozen=True)
+class InstructionDefinition:
+    policy: Policy
+    execute: InstructionStage
+
+
+# Integration handoff: server._setup_translation must resolve both selections
+# after advertise, at its existing SIMPLE_TOOLS admission, using cfg.tools.focus
+# and cfg.tools.cheatsheet independently. Apply focus before instructions.
+# loop._frame_for_item must replace its direct cheatsheet(tools) with the same
+# INSTRUCTION_DEFINITION note-only projection at the existing embedding position.
+# That path historically ignores cfg.tools.cheatsheet; do not silently change
+# existing config behavior while installing selection. without_cheatsheet remains
+# shared support for removing the upstream copy before the coder re-embeds it.
+# Neither role names nor tool schemas are changed here. No reasoner/provider is
+# consulted: a reasoner receives instructions only if its caller requests them.
+# Compatibility wrappers project the bound canonical root (standalone calls keep
+# defaults). Required coder-base assembly projects the same selected note-only
+# adapter; migrated=False remains conservative until broader migration acceptance.
+FOCUS_DEFINITION = FocusDefinition(
+    Policy("focused-tool-menu", "tool-menu-focus", 2, family_id="F10",
+           state="none; request-local menu projection",
+           services=("resolved tool menu", "tools.focus configuration"),
+           hooks=(Reference("cria/server.py", "CriaHandler._setup_translation"),),
+           regressions=(Reference("tests/test_toolmenu_source_policies.py", "test_focus_preserves_native_bytes_and_stable_order"),
+                        Reference("tests/test_toolmenu_root_projection.py", "test_bound_absence_prevents_all_detection_render_mutation_and_events"),
+                        Reference("tests/test_toolmenu_root_projection.py", "test_bound_exact_replacements_and_nested_empty_restore_through_public_aliases")),
+           migrated=False),
+    focus_menu,
+)
+INSTRUCTION_DEFINITION = InstructionDefinition(
+    Policy("tool-menu-instructions", "tool-menu-instructions", 2, family_id="F10",
+           prompts=("cheatsheet",), state="none; request-local note/system projection",
+           services=("resolved tool menu", "tools.cheatsheet configuration", "system content"),
+           hooks=(Reference("cria/server.py", "CriaHandler._setup_translation"),
+                  Reference("cria/loop.py", "_required_coder_base"),
+                  Reference("cria/loop.py", "_frame_for_item")),
+           regressions=(Reference("tests/test_toolmenu_source_policies.py", "test_instruction_body_parity"),
+                        Reference("tests/test_toolmenu_source_policies.py", "test_disabled_never_detects_renders_copies_or_emits"),
+                        Reference("tests/test_toolmenu_root_projection.py", "test_projection_coder_note_uses_exact_selected_replacement_and_rejects_wrong_results")),
+           migrated=False),
+    tool_instructions,
+)
+DEFINITIONS = (FOCUS_DEFINITION, INSTRUCTION_DEFINITION)
+
+
+@dataclass(frozen=True)
+class MenuPolicies:
+    """Typed projection of one canonical selection, including explicit absence.
+
+    These methods enforce applicability BEFORE invoking even a replacement.
+    There is no absent-definition fallback and no second context-local registry.
+    Projection results are installed by the body owner only when applied=True.
+    """
+    focus_definition: FocusDefinition | None = None
+    instruction_definition: InstructionDefinition | None = None
+
+    def __post_init__(self):
+        for definition, expected, kind in (
+                (self.focus_definition, FOCUS_DEFINITION, FocusDefinition),
+                (self.instruction_definition, INSTRUCTION_DEFINITION, InstructionDefinition)):
+            if definition is not None and (not isinstance(definition, kind)
+                    or definition.policy != expected.policy or not callable(definition.execute)):
+                raise ValueError("Tool menu replacement must preserve its typed policy contract")
+
+    def focus(self, source: FocusInput, rlog: Log | None = None) -> FocusResult:
+        if self.focus_definition is None or not source.selected or not source.configured:
+            return FocusResult(source.tools)
+        result = self.focus_definition.execute(source, rlog)
+        if not isinstance(result, FocusResult):
+            raise ValueError("Tool menu focus replacement must return FocusResult")
+        return result
+
+    def instructions(self, source: InstructionInput, rlog: Log | None = None) -> InstructionResult:
+        if self.instruction_definition is None or not source.selected or not source.configured:
+            return InstructionResult(None, source.messages)
+        result = self.instruction_definition.execute(source, rlog)
+        if not isinstance(result, InstructionResult):
+            raise ValueError("Tool instruction replacement must return InstructionResult")
+        return result
+
+
+def selected_policies(definitions: Iterable[ExecutableDefinition]) -> MenuPolicies:
+    """Project exact selected definitions; unrelated policies are not defaults.
+
+    Primary integration: after advertise, call focus(FocusInput(...,
+    configured=cfg.tools.focus)), install only an applied result, then call
+    instructions(InstructionInput(resolved_tools, messages,
+    configured=cfg.tools.cheatsheet)). The coder uses instructions with
+    messages=None and configured=True at its existing note slot: historically
+    that path ignores cfg.tools.cheatsheet. Both policies retain minimum L2;
+    canonical root selection owns engagement filtering, not this projection.
+    """
+    chosen = {}
+    ids = (FOCUS_DEFINITION.policy.id, INSTRUCTION_DEFINITION.policy.id)
+    for definition in definitions:
+        identity = definition.policy.id
+        if identity in ids:
+            if identity in chosen:
+                raise ValueError("Duplicate tool menu policy selection: " + identity)
+            chosen[identity] = definition
+    return MenuPolicies(chosen.get(ids[0]), chosen.get(ids[1]))
+
+
+def current_policies() -> MenuPolicies:
+    """Public compatibility: exact stored selection wins; only UNBOUND defaults.
+
+    Storage owns no catalog or dispatcher. Explicit hooks may instead use
+    selected_policies(selection.definitions); neither path creates a shadow
+    binding, invents defaults for a bound selection, or catches selection errors.
+    """
+    from . import assistbinding
+    selection = assistbinding.current()
+    if selection is assistbinding.UNBOUND:
+        return MenuPolicies(FOCUS_DEFINITION, INSTRUCTION_DEFINITION)
+    return selected_policies(selection.definitions)

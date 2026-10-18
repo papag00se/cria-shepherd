@@ -653,7 +653,8 @@ class ChatTimingTests(unittest.TestCase):
             def close(self_):
                 pass
 
-        def fake_open(b, stream, rlog):
+        def fake_open(b, stream, rlog, *, _transport):
+            self.assertEqual(_transport, (up._receive_open, urllib.request.urlopen))
             _time.sleep(0.1)        # the server generating; a non-stream urlopen blocks HERE
             return _Resp(), 10, None
 

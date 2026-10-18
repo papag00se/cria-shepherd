@@ -11,7 +11,7 @@ import tempfile
 import unittest
 from unittest import mock
 
-from cria import loop, probegate, wsview
+from cria import assistruntime, loop, probegate, wsview
 from cria.config import Role
 from cria.plan import Plan, PlanItem
 
@@ -141,8 +141,10 @@ class SurveyGateProvenanceTests(_GateFixtures, unittest.TestCase):
                 )
                 rlog = _Rlog()
 
-                out = self._driver(root)._work(
-                    session, "session", self._body("first", result), rlog)
+                driver = self._driver(root)
+                with assistruntime.bound(driver._ctx.pilot_runtime):
+                    out = driver._work(
+                        session, "session", self._body("first", result), rlog)
 
                 self.assertTrue(out["choices"][0]["message"].get("tool_calls"))
                 self.assertNotEqual(session.completion_probe_id, "first")
@@ -172,8 +174,10 @@ class SurveyGateProvenanceTests(_GateFixtures, unittest.TestCase):
                     pending_done="the artifact is ready",
                 )
 
-                out = self._driver(root)._drive_single_item(
-                    session, self._body("first", result), "session", _Rlog())
+                driver = self._driver(root)
+                with assistruntime.bound(driver._ctx.pilot_runtime):
+                    out = driver._drive_single_item(
+                        session, self._body("first", result), "session", _Rlog())
 
                 self.assertTrue(out["choices"][0]["message"].get("tool_calls"))
                 self.assertTrue(session.done_probe)
@@ -243,8 +247,10 @@ class PeriodicSurveyOnlyReplanTests(_GateFixtures, unittest.TestCase):
                     awaiting_probe=True,
                 )
 
-                out = self._driver(root)._drive_single_item(
-                    session, self._body("first", result), "session", _Rlog())
+                driver = self._driver(root)
+                with assistruntime.bound(driver._ctx.pilot_runtime):
+                    out = driver._drive_single_item(
+                        session, self._body("first", result), "session", _Rlog())
 
                 # Before the fix: guard_periodic_result reads a survey-only result → None, and the
                 # caller stopped there \u2014 the check-in vanished with nothing to show for it.
@@ -262,8 +268,9 @@ class PeriodicSurveyOnlyReplanTests(_GateFixtures, unittest.TestCase):
                     capture_output=True, text=True, check=True,
                 ).stdout
 
-                out2 = self._driver(root)._drive_single_item(
-                    session, self._body(second_call_id, second_result), "session", _Rlog())
+                with assistruntime.bound(driver._ctx.pilot_runtime):
+                    out2 = driver._drive_single_item(
+                        session, self._body(second_call_id, second_result), "session", _Rlog())
 
                 self.assertIsNotNone(out2)
                 self.assertFalse(session.periodic_probe)         # consumed; no further replan queued
@@ -295,8 +302,10 @@ class PeriodicSurveyOnlyReplanTests(_GateFixtures, unittest.TestCase):
                     awaiting_probe=True,
                 )
 
-                out = self._driver(root)._verify_after_probe(
-                    session, "session", self._body("first", result), _Rlog())
+                driver = self._driver(root)
+                with assistruntime.bound(driver._ctx.pilot_runtime):
+                    out = driver._verify_after_probe(
+                        session, "session", self._body("first", result), _Rlog())
 
                 self.assertTrue(out["choices"][0]["message"].get("tool_calls"))
                 self.assertTrue(session.periodic_probe)

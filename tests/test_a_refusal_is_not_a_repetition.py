@@ -117,19 +117,49 @@ class TheCodersRedirectSaysTheSameThingTests(unittest.TestCase):
 
 
 class TheCountComesFromTheEventTests(unittest.TestCase):
+    def _observe_distinct_refusals(self):
+        import json
+        from types import SimpleNamespace
+        from cria import assistruntime, denial
+        messages = []
+        for number, command in enumerate(('bundle add countries', 'gem install countries',
+                'gem list --local countries', 'bundle info countries', 'gem environment')):
+            cid = f'refused-{number}'
+            messages.extend([
+                {'role': 'assistant', 'tool_calls': [{'id': cid, 'type': 'function', 'function': {
+                    'name': 'exec_command', 'arguments': json.dumps({'cmd': command})}}]},
+                {'role': 'tool', 'tool_call_id': cid, 'content': denial.mark('This call did not run.')}])
+        current = {'choices': [{'message': {'role': 'assistant', 'tool_calls': [{'id': 'unrefused-current',
+            'type': 'function', 'function': {'name': 'exec_command',
+                'arguments': json.dumps({'cmd': 'which bundler'})}}]}}]}
+        messages.extend([current['choices'][0]['message'],
+                         {'role': 'tool', 'tool_call_id': 'unrefused-current', 'content': 'ordinary result'}])
+        events = []
+        log = SimpleNamespace(emit=lambda event, **fields: events.append((event, fields)))
+        gs = loop.GuardState()
+        runtime = assistruntime.AssistRuntime.select(level=5)
+        with assistruntime.bound(runtime):
+            loop.guard_track_refusals(gs, current, log, step=1, messages=messages)
+        self.assertIs(gs.pilot_binding.stalled_work, runtime.stalled_work)
+        self.assertTrue(gs.redirect_due)
+        return gs, events
+
     def test_the_fire_site_records_what_it_observed(self):
-        """`blocked` is in hand at that line; the constant was not."""
-        import inspect
-        src = inspect.getsource(loop.guard_track_refusals)
-        self.assertIn("gs.repeat_count = blocked", src)
-        self.assertNotIn("count=REPEAT_FINGERPRINT_N", src)
+        """Five distinct refused calls must not become the firing threshold of three."""
+        gs, events = self._observe_distinct_refusals()
+        self.assertEqual(gs.repeat_count, 5)
+        self.assertEqual(events, [('loop.refusals', {'steer': 'refusals', 'step': 1,
+            'count': 5, 'action': 'exec_command {"cmd": "gem environment"}'})])
+        self.assertIn('5 of its recent calls were refused', loop._STEER_TRIGGER['refusal'](gs, 1))
 
     def test_the_quoted_call_is_one_that_was_actually_refused(self):
-        """The steer names "the most recent" refused call. It used to name whatever call was in
-        flight when the counter tripped — a call cria had not refused at all."""
-        import inspect
-        src = inspect.getsource(loop.guard_track_refusals)
-        self.assertIn("gs.repeat_action = last_refused", src)
+        """The most recent refused call is not the unrefused current bundler lookup."""
+        gs, events = self._observe_distinct_refusals()
+        self.assertEqual(gs.repeat_action, 'exec_command {"cmd": "gem environment"}')
+        self.assertEqual(events[0][1]['action'], 'exec_command {"cmd": "gem environment"}')
+        said = loop._STEER_TRIGGER['refusal'](gs, 1)
+        self.assertIn('gem environment', said)
+        self.assertNotIn('which bundler', said)
 
 
 if __name__ == "__main__":

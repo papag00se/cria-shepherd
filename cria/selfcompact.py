@@ -27,8 +27,12 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass
+from typing import Callable, Protocol
 
-from . import denial, jsontext, probegate, prompts, toolargs, writeproxy
+from .assistcontract import Policy, Reference
+from .memoryeffects import Effect
+
+from . import denial, jsontext, probegate, prompts, toolargs, toolwire
 from .content_reduce import clip, est_tokens
 
 # Tunables in TOKENS. TRIGGER is operator-tunable via [context] trigger_compaction; the rest are
@@ -69,9 +73,9 @@ _SPEC_SHAPE_MARKER = "[response shape —"
 # summarizing the last round's summary is how a transient hallucination hardened into authoritative
 # "Treat this as done" misdirection that inverted the task). ⟦ctx:continuation⟧ (loop's harness-
 # compaction reframe) is one such cria-authored summary and MUST be here for the same reason as
-# ⟦ctx:briefing⟧. Mirrors loop.BRIEFING_OPEN / loop.CONTINUATION_MARKER / probegate.SECTION_PREFIX
+# ⟦ctx:briefing⟧. Mirrors loop.BRIEFING_OPEN / loop.CONTINUATION_MARKER; gate prefix is toolwire-owned.
 # + webfetch.ROUTES_MARKER / SHAPE_MARKER (selfcompact is low-level; a test asserts sync).
-_ANCHOR_MARKERS = ("⟦ctx:briefing⟧", "⟦ctx:continuation⟧", "___CRIA_GATE_", SUMMARY_MARKER, TASK_MARKER,
+_ANCHOR_MARKERS = ("⟦ctx:briefing⟧", "⟦ctx:continuation⟧", toolwire.SECTION_PREFIX, SUMMARY_MARKER, TASK_MARKER,
                    FACTS_MARKER, _SPEC_ROUTES_MARKER, _SPEC_SHAPE_MARKER)
 
 
@@ -727,17 +731,14 @@ _REPLACED_ARG_KEYS = ("old_string",)
 _STUB_MIN_CHARS = 400
 
 
-# A write that landed confirms in one of two shapes: the raw heredoc token (writeproxy._WROTE,
+# A write that landed confirms in one of two shapes: the raw heredoc token (toolwire._WROTE,
 # pre-render) or the model-facing render of prompts/write_confirm ("Wrote <path>") that transcripts
 # actually carry. Anything else — an ⟦ctx:editfail⟧ report, a denial, an error — did NOT reach
 # disk. Kept in sync with both owners by tests.
-_WROTE_HEAD = "⟦ctx:wrote⟧"
+_WROTE_HEAD = toolwire._WROTE
 
 
-def write_landed(result_text: str) -> bool:
-    head = prompts.render("write_confirm", path="").strip()
-    t = result_text.lstrip()
-    return _WROTE_HEAD in result_text or (bool(head) and t.startswith(head))
+write_landed = toolwire.write_landed
 
 
 def _is_write_call(tc: dict) -> bool:
@@ -1016,7 +1017,7 @@ def work_ledger(msgs: list[dict], *, carried: str = "", root: str = "") -> str:
                 continue
             args = toolargs.parse_args(fn.get("arguments"))
             cmd = next((str(args[k]) for k in _LEDGER_EXEC_ARGS if args.get(k)), "")
-            if cmd and not writeproxy.is_crias_own(cmd):  # cria's own gate/lowering is not the coder's act
+            if cmd and not toolwire.is_crias_own(cmd):  # cria's own gate/lowering is not the coder's act
                 cmd = _one_line(clip(cmd.strip(), _LEDGER_CMD_CAP,
                                      f" [command continues; {len(cmd.strip())} characters in all]"))
                 state = "shell_refused" if refused else ("shell_unanswered" if result is None else "shell_answered")
@@ -1027,14 +1028,53 @@ def work_ledger(msgs: list[dict], *, carried: str = "", root: str = "") -> str:
     return prompts.fill(labels["header"], signature=labels["signature"], scope=labels["scope"], lines=lines)
 
 
-def compact(messages: list[dict], summarize, state: CompactState, *,
-            trigger_tokens: int = TRIGGER_TOKENS_DEFAULT, keep_tail_tokens: int = KEEP_TAIL_TOKENS,
-            recompact_tokens: int = RECOMPACT_TOKENS, pinned_task: str = "", force: bool = False,
-            boundary_keep_tail_tokens: int = BOUNDARY_KEEP_TAIL_TOKENS,
-            files_list: str = "", refold=None,
-            refold_tokens: int = REFOLD_TOKENS, rlog=None,
-            with_grounding: bool = False) -> tuple[list[dict], CompactState, bool]:
-    """Return (messages, state, applied?). ``summarize(list[dict]) -> str`` folds the old middle into
+@dataclass(frozen=True)
+class RollingInput:
+    messages: list[dict]
+    # Callbacks supply validated memory; grounded callbacks also accept the
+    # keyword-only newer_messages scope. Evidence and three-lens validation stay
+    # shared services, not alternate parsers or new judgments in this engine.
+    summarize: Callable[..., str]
+    trigger_tokens: int = TRIGGER_TOKENS_DEFAULT
+    keep_tail_tokens: int = KEEP_TAIL_TOKENS
+    recompact_tokens: int = RECOMPACT_TOKENS
+    pinned_task: str = ""
+    force: bool = False
+    boundary_keep_tail_tokens: int = BOUNDARY_KEEP_TAIL_TOKENS
+    files_list: str = ""
+    refold: Callable[..., str] | None = None
+    refold_tokens: int = REFOLD_TOKENS
+    rlog: object = None
+    with_grounding: bool = False
+
+
+@dataclass(frozen=True)
+class RollingResult:
+    messages: list[dict]
+    state: CompactState
+    effect: Effect
+    # The session's boundary request is consumed only by a selected lifecycle.
+    force_pending: bool = False
+    refold_effect: Effect = Effect.NO_OP
+
+    @property
+    def applied(self) -> bool:
+        return self.effect is Effect.REDUCED
+
+
+class RollingExecutor(Protocol):
+    def __call__(self, source: RollingInput, state: CompactState, *,
+                 enabled: bool = True) -> RollingResult: ...
+
+
+@dataclass(frozen=True)
+class RollingDefinition:
+    policy: Policy
+    execute: RollingExecutor
+
+
+def rolling(source: RollingInput, state: CompactState, *, enabled: bool = True) -> RollingResult:
+    """Return typed messages/state/effect. ``summarize(list[dict]) -> str`` folds the old middle into
     a briefing (injected so this is testable without a model). No-op (same list) at/below the token
     trigger, or when there is no middle to compact (the recent tail already spans everything).
 
@@ -1058,17 +1098,25 @@ def compact(messages: list[dict], summarize, state: CompactState, *,
     summarizable middle and ERODES across rounds (round 2's rollup summarizes round 1's rollup), which
     is how a plan-off session lost its goal and drifted onto tangential build/deploy work. Pinning it
     keeps the north star authoritative and immune to summary degradation."""
+    if not enabled:
+        return RollingResult(source.messages, state, Effect.NO_OP, source.force)
+    messages, summarize = source.messages, source.summarize
+    trigger_tokens, keep_tail_tokens = source.trigger_tokens, source.keep_tail_tokens
+    recompact_tokens, pinned_task, force = source.recompact_tokens, source.pinned_task, source.force
+    boundary_keep_tail_tokens = source.boundary_keep_tail_tokens
+    files_list, refold, refold_tokens = source.files_list, source.refold, source.refold_tokens
+    rlog, with_grounding = source.rlog, source.with_grounding
     # At a STEP BOUNDARY keep only a SMALL verbatim tail (boundary_keep_tail_tokens) so the just-finished
     # step's work FOLDS into the rollup; otherwise keep the full working-set tail. force also lowers the
     # trigger so a boundary compacts even below the size trigger (but never a trivial view that fits the tail).
     eff_keep_tail = boundary_keep_tail_tokens if force else keep_tail_tokens
     threshold = eff_keep_tail if force else trigger_tokens
     if sum(_msg_tokens(m) for m in messages) <= threshold:
-        return messages, state, False
+        return RollingResult(messages, state, Effect.NO_OP)
     head_end = 1 if messages and messages[0].get("role") == "system" else 0
     tail_start = _tail_start(messages, head_end, eff_keep_tail)
     if tail_start <= head_end:
-        return messages, state, False
+        return RollingResult(messages, state, Effect.NO_OP)
 
     # A rejected briefing does not change the evidence. Retrying it on the next coder call asks the
     # same weak model the same question and produced dozens of near-identical rejected briefings in
@@ -1082,7 +1130,8 @@ def compact(messages: list[dict], summarize, state: CompactState, *,
     should_summarize = ((not state.summary and never_attempted) or band_tokens is None
                         or (band_tokens is not None and band_tokens >= recompact_tokens))
     if not should_summarize and not state.summary:
-        return messages, state, False
+        return RollingResult(messages, state, Effect.NO_OP)
+    refold_effect = Effect.NO_OP
     if should_summarize:
         # TRULY ROLLING (operator-driven, first 27B): summarize only the NEW band — the turns past
         # what the existing summary already covers — and APPEND the increment. The old shape
@@ -1112,7 +1161,7 @@ def compact(messages: list[dict], summarize, state: CompactState, *,
             # exists to prevent. Fail SAFE: fold nothing, keep every turn verbatim, and let the context
             # floor (the one lossless window-fit point) size the request.
             if not fresh.strip():
-                return messages, state, False
+                return RollingResult(messages, state, Effect.WITHHELD)
             combined = (state.summary + "\n\n" + fresh) if (state.summary and lo > head_end) else fresh
             # REFOLD TIER (operator: append-only just moves the unbounded growth into the summary —
             # over a long session the accumulated increments would themselves overtake the window,
@@ -1128,6 +1177,9 @@ def compact(messages: list[dict], summarize, state: CompactState, *,
                 folded = strip_frame_echo(folded_text, prompts.load("selfcompact_refold"))
                 if folded.strip():
                     combined = folded
+                    refold_effect = Effect.REDUCED
+                else:
+                    refold_effect = Effect.WITHHELD
             state = CompactState(summary=combined, covered=tail_start, attempted=tail_start)
 
     covered = max(head_end, min(state.covered, tail_start))
@@ -1161,7 +1213,41 @@ def compact(messages: list[dict], summarize, state: CompactState, *,
     # when it holds none, in the message that IS the record.
     rollup = [_summary_msg(state.summary)] if state.summary.strip() else []
     out = messages[:head_end] + task + files + anchors + rollup + working
-    return out, state, True
+    return RollingResult(out, state, Effect.REDUCED, refold_effect=refold_effect)
+
+
+DEFINITION = RollingDefinition(
+    Policy("rolling-transcript-memory", "coder-memory", 4, family_id="F70",
+           prompts=("selfcompact_summary", "selfcompact_refold"),
+           state="session/task-local CompactState and boundary force; reset on new task/fork/durable restore",
+           services=("validated-memory-writer", "validated-memory-refold", "pinned-original-task",
+                     "workspace-inventory", "compaction-evidence", "three-lens-validator"),
+           hooks=(Reference("cria/loop.py", "Loop._self_compact"),
+                  Reference("cria/loop.py", "Loop._self_compact_single")),
+           regressions=(Reference("tests/test_context_memory_migration.py", "test_rolling_definition_owns_algorithm_and_legacy_api_remains_identical"),
+                        Reference("tests/test_context_memory_migration.py", "test_disabled_rolling_does_not_detect_call_or_consume_force"),
+                        Reference("tests/test_context_memory_migration.py", "test_rejected_attempt_is_withheld_and_throttled_without_advancing_coverage"),
+                        Reference("tests/test_context_memory_migration.py", "test_refold_keeps_newer_grounding_separate_and_failed_refold_keeps_increment")),
+           migrated=False), rolling)
+
+
+def compact(messages: list[dict], summarize, state: CompactState, *,
+            trigger_tokens: int = TRIGGER_TOKENS_DEFAULT, keep_tail_tokens: int = KEEP_TAIL_TOKENS,
+            recompact_tokens: int = RECOMPACT_TOKENS, pinned_task: str = "", force: bool = False,
+            boundary_keep_tail_tokens: int = BOUNDARY_KEEP_TAIL_TOKENS,
+            files_list: str = "", refold=None,
+            refold_tokens: int = REFOLD_TOKENS, rlog=None,
+            with_grounding: bool = False) -> tuple[list[dict], CompactState, bool]:
+    """Compatibility for existing drivers and one-argument writer callbacks.
+
+    One whole-stage adapter preserves the public tuple API; the executable
+    definition owns the actual algorithm, attempted state and reduction effect.
+    """
+    result = DEFINITION.execute(RollingInput(
+        messages, summarize, trigger_tokens, keep_tail_tokens, recompact_tokens,
+        pinned_task, force, boundary_keep_tail_tokens, files_list, refold,
+        refold_tokens, rlog, with_grounding), state)
+    return result.messages, result.state, result.applied
 
 
 def _dedup_identical(msgs: list[dict]) -> tuple[list[dict], int]:

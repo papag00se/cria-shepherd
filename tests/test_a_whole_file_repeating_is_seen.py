@@ -38,7 +38,7 @@ import random
 import unittest
 from unittest import mock
 
-from cria import prompts, rumination
+from cria import generationguards, prompts, rumination
 from cria.upstream import Upstream
 
 
@@ -119,7 +119,7 @@ class ItIsAffordableTests(unittest.TestCase):
             def close(self): pass
 
         calls = []
-        real = rumination.degenerate_wide
+        real = generationguards.degenerate_wide
         def counting(s):
             calls.append(len(s))
             return real(s)
@@ -130,7 +130,7 @@ class ItIsAffordableTests(unittest.TestCase):
             def emit(self, *a, **k): pass
 
         up = Upstream("http://x", context_window=10_000_000)
-        with mock.patch.object(rumination, "degenerate_wide", counting), \
+        with mock.patch.object(generationguards, "degenerate_wide", counting), \
              mock.patch("urllib.request.urlopen", return_value=_Resp()):
             out = up.chat_watched({"messages": [{"role": "user", "content": "hi"}], "model": "m"}, _Rlog())
         self.assertEqual(json.loads(out)["choices"][0]["message"]["content"], text)   # nothing lost

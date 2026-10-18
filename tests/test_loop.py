@@ -12,7 +12,8 @@ from cria.loop import (Loop, LoopContext, LoopStore, PlanSession, TASK_COMPLETE_
                        _frame_for_item, _has_tool_calls, _completion_text, _normalize_completion,
                        completion_to_sse, guard_rumination, guard_truncation, session_key,
                        Confirmation, Verification, VerdictNudge, _record_satisfaction)
-from cria import prompts, webfetch
+from cria import assistruntime, completedwork, livingplan, planner, prompts, stepreview, webfetch
+from cria.config import Role
 
 from cria.plan import Plan, PlanItem
 from cria.shelltool import find_shell_tool, shell_args
@@ -311,6 +312,7 @@ class CompletionCriticTests(unittest.TestCase):
 
         driver = Loop(LoopContext(planner=None, coder_chat=coder,
                                   reasoner_chat=lambda *_: json.dumps(_sat(True)).encode(), runs_dir=""))
+        _select_test_planning(driver._ctx, stepreview.DEFINITION)
         sess = PlanSession(plan=Plan(id="boundary", task="deliver the requested behavior", created="now",
                                      items=[PlanItem("implement the active behavior"),
                                             PlanItem("verify the remaining behavior")]))
@@ -322,8 +324,16 @@ class CompletionCriticTests(unittest.TestCase):
         self.assertTrue(approval.confirmation.confirmed)
         rlog = _Rlog()
 
-        with mock.patch.object(driver, "_verify", return_value=approval), \
-             mock.patch.object(driver, "_replan_tail") as replan:
+        real_replan_tail = driver._replan_tail
+        def observe_advance(*args, **kwargs):
+            if kwargs.get("trigger", livingplan.Trigger.ADVANCE) is livingplan.Trigger.ADVANCE:
+                replan(*args, **kwargs)
+            return real_replan_tail(*args, **kwargs)
+
+        replan = mock.Mock()
+        with assistruntime.bound(driver._ctx.pilot_runtime), \
+             mock.patch.object(driver, "_verify", return_value=approval), \
+             mock.patch.object(driver, "_replan_tail", side_effect=observe_advance):
             out = driver._periodic_step_check(sess, "k", _body(), 1, 2, rlog, force=True)
         self.assertTrue(_has_tool_calls(out))
         self.assertFalse(sess.plan.items[0].done)
@@ -334,8 +344,10 @@ class CompletionCriticTests(unittest.TestCase):
             str(message.get("content") or "") for message in frames[-1]["messages"]))
 
         _record_satisfaction(sess, True, "CHECK RESULT: requested behavior now passes")
-        with mock.patch.object(driver, "_verify", return_value=approval), \
-             mock.patch.object(driver, "_replan_tail") as replan:
+        replan = mock.Mock()
+        with assistruntime.bound(driver._ctx.pilot_runtime), \
+             mock.patch.object(driver, "_verify", return_value=approval), \
+             mock.patch.object(driver, "_replan_tail", side_effect=observe_advance):
             released = driver._periodic_step_check(sess, "k", _body(), 1, 2, _Rlog(), force=True)
         self.assertTrue(_has_tool_calls(released))
         self.assertTrue(sess.plan.items[0].done)
@@ -359,7 +371,7 @@ class CompletionCriticTests(unittest.TestCase):
 
         _record_satisfaction(sess, True, "CHECK RESULT: requested behavior now passes")
         with mock.patch.object(driver, "_reopen_if_unsatisfied", return_value=None), \
-             mock.patch.object(driver, "_compact_done", return_value="briefing"):
+             mock.patch.object(driver, "_compact_done", return_value=None):
             released = driver._work(sess, "k", _body(), _Rlog())
         self.assertEqual(sess.phase.name, "DONE")
         self.assertIn("plan complete", released["choices"][0]["message"]["content"])
@@ -383,7 +395,8 @@ class CompletionCriticTests(unittest.TestCase):
         sess.pending_done = "the stale completion"
         sess.latest_satisfaction = False
         sess.latest_satisfaction_evidence = VerdictNudge("the requested resolver is still missing")
-        with mock.patch("cria.loop.guard_gate_verdict", return_value=""):
+        with assistruntime.bound(assistruntime.current()), \
+             mock.patch("cria.loop.guard_gate_verdict", return_value=""):
             out = driver._drive_single_item(sess, _body(), "k", _Rlog())
         self.assertIsNotNone(out)
         self.assertTrue(_has_tool_calls(out))
@@ -397,7 +410,8 @@ class CompletionCriticTests(unittest.TestCase):
         sess.pending_done = "the current completion"
         sess.latest_satisfaction = True
         sess.latest_satisfaction_evidence = VerdictNudge("the resolver is now verified")
-        with mock.patch("cria.loop.guard_gate_verdict", return_value=""):
+        with assistruntime.bound(assistruntime.current()), \
+             mock.patch("cria.loop.guard_gate_verdict", return_value=""):
             released = driver._drive_single_item(sess, _body(), "k", _Rlog())
         self.assertIsNotNone(released)
         self.assertFalse(_has_tool_calls(released))
@@ -483,7 +497,7 @@ class LivingPlanTests(unittest.TestCase):
     def _loop(self, reasoner):
         ctx = _ctx(_Scripted([_toolcall()]), reasoner)
         ctx.reasoner_role = self._role()
-        return Loop(ctx)
+        return Loop(_select_test_planning(ctx, planner.COVERAGE, livingplan.DEFINITION))
 
     def test_refines_not_done_tail_and_keeps_completed(self):
         loop = self._loop(_Scripted([_replan(["step 3"]), _text("NONE")]))  # re-derive drops step 2; noise: NONE
@@ -883,7 +897,7 @@ class StuckStepReplanTests(unittest.TestCase):
     def _loop(self, reasoner):
         ctx = _ctx(_Scripted([_toolcall()]), reasoner)  # coder acts → _work forwards it, no verify churn
         ctx.reasoner_role = self._role()
-        return Loop(ctx)
+        return Loop(_select_test_planning(ctx, planner.COVERAGE, livingplan.DEFINITION))
 
     def test_below_threshold_does_not_replan(self):
         from cria.loop import STUCK_STEP_REPLAN
@@ -897,7 +911,13 @@ class StuckStepReplanTests(unittest.TestCase):
         from cria.loop import STUCK_STEP_REPLAN
         loop = self._loop(_Scripted([_replan(["rewritten step 2", "step 3"]), _text("NONE")]))
         sess = self._sess(); sess.verify_fails = sess.critic_fails = STUCK_STEP_REPLAN
-        loop._renudge_or_replan(sess, "k", _body(), "still not done", 2, _Rlog())
+        loop._store.put("k", sess)
+        def enter(body, key, classification, rlog, *, _semantic_owner=None):
+            if _semantic_owner is not None:
+                _semantic_owner(sess)
+            return loop._renudge_or_replan(sess, key, body, "still not done", 2, rlog)
+        with mock.patch.object(loop, "_drive_locked", side_effect=enter):
+            loop.drive(_body(), "k", None, _Rlog())
         self.assertEqual([it.text for it in sess.plan.items],
                          ["step 1", "rewritten step 2", "step 3"])  # stuck step re-derived from ground truth
         self.assertEqual(sess.verify_fails, 0)                       # clean restart on the new step
@@ -944,6 +964,10 @@ class StuckStepReplanTests(unittest.TestCase):
         from cria.loop import STEP_THRASH_REPLAN
         loop = self._loop(_Scripted([_replan(["A", "B"])]))
         sess = self._sess()
+        from cria.loop import _LivingTailView
+        source = loop._living_input(sess, _body(), 2, _Rlog(), livingplan.Trigger.TOOL_THRASH)
+        sess.living_state_view = _LivingTailView(sess)
+        sess.living_state_view.reset(source.step_key, plan_id=source.plan.id, task=source.plan.task)
         sess.thrash_replanned = True                      # already spent this step
         sess.step_tool_calls = STEP_THRASH_REPLAN * 3     # well past the threshold
         self.assertIsNone(loop._replan_if_thrashing(sess, "k", _body(), 2, _Rlog()))  # no second re-derive
@@ -957,6 +981,10 @@ class StuckStepReplanTests(unittest.TestCase):
         from cria.loop import STUCK_STEP_REPLAN
         loop = self._loop(_Scripted([_replan(["A", "B"]), _text("NONE")]))
         sess = self._sess()
+        from cria.loop import _LivingTailView
+        source = loop._living_input(sess, _body(), 2, _Rlog(), livingplan.Trigger.CRITIC_STALLED)
+        sess.living_state_view = _LivingTailView(sess)
+        sess.living_state_view.reset(source.step_key, plan_id=source.plan.id, task=source.plan.task)
         sess.verify_replanned = True                       # already spent this step's one re-derive
         sess.verify_fails = sess.critic_fails = STUCK_STEP_REPLAN * 3   # a multiple → the OLD `% == 0` would re-fire here
         loop._renudge_or_replan(sess, "k", _body(), "still not done", 2, _Rlog())
@@ -1004,6 +1032,57 @@ def _ctx(coder, reasoner, plan=None, workspace_root=None):
     return LoopContext(planner=_Planner(plan or _plan()), coder_chat=coder,
                        reasoner_chat=reasoner, runs_dir="",  # "" = no run-artifact writes in tests
                        workspace_root=workspace_root)
+
+
+def _enable_test_planning(ctx):
+    """Explicit fake STEP consent, preserving this caller's actual selected definitions."""
+    from dataclasses import replace
+    from cria import planner
+    runtime = ctx.pilot_runtime
+    initial_ids = {definition.policy.id for definition in planner.DEFINITIONS}
+    selected_ids = {definition.policy.id for definition in runtime.ordered_stages}
+    missing = tuple(definition for definition in runtime.registrations
+                    if definition.policy.id in initial_ids and definition.policy.id not in selected_ids)
+    ctx.pilot_runtime = replace(runtime, experimental_planning=True,
+                                ordered_stages=runtime.ordered_stages + missing)
+    ctx.planner_enabled = True
+    return ctx
+
+
+def _select_test_planning(ctx, *definitions):
+    """Select only explicitly requested policies from this fixture's actual registrations."""
+    from dataclasses import replace
+    runtime = ctx.pilot_runtime
+    wanted = {definition.policy.id for definition in definitions}
+    selected = {definition.policy.id for definition in runtime.ordered_stages}
+    missing = tuple(definition for definition in runtime.registrations
+                    if definition.policy.id in wanted and definition.policy.id not in selected)
+    if wanted - selected - {definition.policy.id for definition in missing}:
+        raise ValueError("Fixture requested an unregistered planning policy")
+    ctx.pilot_runtime = replace(runtime, experimental_planning=True,
+                                ordered_stages=runtime.ordered_stages + missing)
+    ctx.planner_enabled = True
+    return ctx
+
+
+def _step_ctx(*args, **kwargs):
+    return _enable_test_planning(_ctx(*args, **kwargs))
+
+
+def _admit_guard_probe(gs, body, rlog, *, redirect=False):
+    """Admit a real selected pending probe; a legacy boolean is not a transport receipt."""
+    from cria import loop as owner
+    gs.redirect_due = redirect
+    gs.spin_probe_due = not redirect
+    call = {"id": gs.probe_call_id, "type": "function", "function": {
+        "name": "shell", "arguments": json.dumps({"command": ["sh", "-c", "true"]})}}
+    admission_body = {**body, "messages": [message for message in body.get("messages", [])
+        if not (message.get("role") == "tool" and message.get("tool_call_id") == call["id"])]}
+    with mock.patch.object(owner, "_requested_repository_probe", return_value=call):
+        admitted = owner.guard_intervene(gs, admission_body, rlog)
+    assert admitted["choices"][0]["message"]["tool_calls"][0] is call
+    assert gs.stalled_probe.call is call
+    return admitted
 
 
 def _body(tools=True):
@@ -1150,7 +1229,7 @@ class GuardTests(unittest.TestCase):
         self.assertIn("RUMINATION GUARD", rec.last_user())
         self.assertNotIn("cria_rumination", out)                             # internal marker stripped
 
-    def test_rumination_exhausted_normalizes_and_stops(self):
+    def test_rumination_exhausted_keeps_quarantine_and_suppresses_identical_retry(self):
         rec = _Recorder([_ruminating()])  # never focuses, and always on the SAME arm
         rlog = _Rlog()
         out = self._rum(rec, _ruminating(), 4, rlog)
@@ -1158,7 +1237,9 @@ class GuardTests(unittest.TestCase):
         # have re-sent a byte-identical prompt to the model that had just aborted on it — measured
         # at 20 of 230 focus retries. The retry budget still applies when the ARM changes.
         self.assertEqual(rec.calls, 1)
-        self.assertEqual(out["choices"][0]["finish_reason"], "stop")         # sentinel normalized on exit
+        self.assertEqual(out["choices"][0]["finish_reason"], "length")  # never relabel an incomplete reply as success
+        self.assertTrue(out["generation_evidence"]["incomplete"])
+        self.assertFalse(out["choices"][0]["message"].get("tool_calls"))
         self.assertNotIn("cria_rumination", out)
 
 
@@ -1184,6 +1265,7 @@ class SessionGateTests(unittest.TestCase):
         self.assertFalse(loop.has_session("k"))
 
     def test_live_session_continues_regardless_of_classification(self):
+        _ctx = _step_ctx
         # The bug: a returning tool result classifies as 'question' and the loop got abandoned. drive()
         # consults classification ONLY when there's no live session; an in-flight plan must continue.
         from cria.loop import Loop, LoopStore
@@ -1219,22 +1301,24 @@ class CompactionTests(unittest.TestCase):
     def test_compact_done_summarizes_via_reasoner(self):
         from cria.loop import Loop, PlanSession
         reasoner = _Scripted([_summary("Built resolve_handle.py (handler) + test_resolve_handle.py; run: pytest -q.")])
-        loop = Loop(_ctx(_Scripted([_done()]), reasoner))
+        loop = Loop(_select_test_planning(_ctx(_Scripted([_done()]), reasoner), completedwork.DEFINITION))
         sess = PlanSession(plan=_plan(1))
         sess.plan.items[0].done = True
         rlog = _Rlog()
-        out = loop._compact_done(sess, _body(), rlog)
+        out = loop._compact_done(sess, _body(), rlog)[2].text
         self.assertIn("resolve_handle.py", out)
         self.assertIn("loop.compacted", rlog.kinds())
 
     def test_compact_done_falls_back_to_running_summary(self):
         from cria.loop import Loop, PlanSession
-        loop = Loop(_ctx(_Scripted([_done()]), _Scripted([_summary("")])))  # model returns nothing
+        loop = Loop(_select_test_planning(_ctx(_Scripted([_done()]), _Scripted([_summary("")])),
+                                          completedwork.DEFINITION))  # model returns nothing
         sess = PlanSession(plan=_plan(1), summary="step 1 done: built X")
-        out = loop._compact_done(sess, _body(), _Rlog())
+        out = loop._compact_done(sess, _body(), _Rlog())[2].text
         self.assertEqual(out, "step 1 done: built X")  # never break completion — fall back
 
     def test_follow_up_plan_is_grounded_from_history_briefing(self):
+        _ctx = _step_ctx
         # The briefing rides IN the conversation (the closing message); a follow-up re-reads it
         # from history — nothing is stored server-side.
         from cria.loop import BRIEFING_CLOSE, BRIEFING_OPEN, Loop, LoopStore
@@ -1252,6 +1336,8 @@ class CompactionTests(unittest.TestCase):
         self.assertEqual(store.get("sid:k").prior_work, "DONE: built the handler + unit tests + README")
 
     def test_loop_done_stores_compaction_end_to_end(self):
+        _ctx = lambda *args, **kw: _select_test_planning(_step_ctx(*args, **kw),
+            stepreview.DEFINITION, completedwork.DEFINITION)
         from cria.loop import Loop, LoopStore
         store = LoopStore()
         coder = _Scripted([_toolcall(), _done()])
@@ -1359,6 +1445,7 @@ class HistoryRewriteTests(unittest.TestCase):
         self.assertFalse(s.observe_shape("k2", "", 1))     # no root at all → never flags
 
     def test_rewrite_after_done_plans_continuation_not_fresh_task(self):
+        _ctx = _step_ctx
         # The lame-plan bug: plan finished (briefing stored), Codex compacted, next request's root
         # is the summary. Must plan via the rewrite frame — bypassing the classifier's opinion of
         # the summary text — and must NOT stack cria's briefing on top of the harness summary.
@@ -1381,6 +1468,7 @@ class HistoryRewriteTests(unittest.TestCase):
         self.assertTrue(starts and starts[0].get("rewritten"))
 
     def test_rewrite_without_briefing_needs_task_classification(self):
+        _ctx = _step_ctx
         # No completed briefing (e.g. compaction mid-question-chat): don't hijack a non-task turn.
         from cria.loop import Loop, LoopStore
         store = LoopStore()
@@ -1395,6 +1483,7 @@ class HistoryRewriteTests(unittest.TestCase):
         self.assertIn("S2: different summary", store.get("sid:q").prior_work)  # clipped summary as prior
 
     def test_normal_followup_still_uses_briefing_not_rewrite_frame(self):
+        _ctx = _step_ctx
         # A same-root follow-up (no compaction) keeps the existing plan_continuation behavior.
         from cria.loop import Loop, LoopStore
         from cria.loop import BRIEFING_CLOSE, BRIEFING_OPEN
@@ -1428,6 +1517,7 @@ class HistoryRewriteTests(unittest.TestCase):
         self.assertNotIn("loop.step_done", rlog.kinds())                # nothing passed silently
 
     def test_probe_absent_without_rewrite_keeps_fail_open(self):
+        _ctx = _step_ctx
         # The existing don't-wedge behavior is preserved when there was NO rewrite: an absent
         # probe result still fails open to the critic path.
         from cria.loop import Loop, LoopStore
@@ -1502,6 +1592,8 @@ class ReviewFixTests(unittest.TestCase):
                                                 {"role": "assistant", "content": "ok"}]))  # stable per convo
 
     def test_task_keyed_sessions_never_rewrite_or_store_briefings(self):
+        _ctx = lambda *args, **kw: _select_test_planning(_step_ctx(*args, **kw),
+            stepreview.DEFINITION, completedwork.DEFINITION)
         # task: keys derive from the root — rewrite detection is meaningless and a briefing under
         # a task-text hash would resurrect for unrelated same-prompt conversations. Both gated.
         from cria.loop import Loop, LoopStore
@@ -1543,7 +1635,7 @@ class ReviewFixTests(unittest.TestCase):
         planner = _FlakyPlanner(_plan(1), fail_first=1)
         ctx = LoopContext(planner=planner, coder_chat=_Scripted([_toolcall()]),
                           reasoner_chat=_Scripted([_verdict()]), runs_dir="")
-        loop = Loop(ctx, store)
+        loop = Loop(_enable_test_planning(ctx), store)
         store.observe_shape("sid:s", "originalroot", 3)                  # session known at the original root
         store.mark_done("sid:s")
         self.assertIsNone(loop.drive(_body_rewritten(), "sid:s", _Question(), _Rlog()))  # attempt 1: planner fails
@@ -1659,6 +1751,7 @@ class GateFlowTests(unittest.TestCase):
         return "\n".join(parts)
 
     def test_floor_failure_re_drives_with_the_exact_error(self):
+        _ctx = lambda *args, **kw: _select_test_planning(_step_ctx(*args, **kw), stepreview.DEFINITION)
         ws = self._ws()
         coder = _Recorder([_toolcall(), _done(), _toolcall()])
         reasoner = _Scripted([_verdict(False)])   # the critic rules the failure IS this step's
@@ -1675,6 +1768,7 @@ class GateFlowTests(unittest.TestCase):
         self.assertIn("SyntaxError", coder.last_user())
 
     def test_plan_on_red_gate_records_last_gate_red(self):
+        _ctx = _step_ctx
         # H2: a RED step-gate on the MULTI-STEP (plan-ON) path must record sess.last_gate_red — the field
         # the anti-laundering rollup override + vacuous-green evidence read. It was permanently False on
         # plan-ON (set only by the plan-off readers), leaving those ground-truth guards dead.
@@ -1689,6 +1783,7 @@ class GateFlowTests(unittest.TestCase):
         self.assertTrue(loop._store.get("k").last_gate_red)                   # recorded (was permanently False)
 
     def test_plan_on_periodic_gate_fires_in_a_long_step(self):
+        _ctx = _step_ctx
         # M2: a plan-ON step where the coder keeps ACTING with DISTINCT edits (never repeating, never
         # claiming done) must get a periodic check-in after GATE_EVERY_CODER_TURNS acting turns — this
         # was plan-off-only, so a long step editing many different things got no proactive ground truth.
@@ -1708,6 +1803,7 @@ class GateFlowTests(unittest.TestCase):
         self.assertIn("loop.periodic_gate", rlog.kinds())
 
     def test_failing_test_probe_re_drives_with_the_exact_error(self):
+        _ctx = lambda *args, **kw: _select_test_planning(_step_ctx(*args, **kw), stepreview.DEFINITION)
         ws = self._ws()
         coder = _Recorder([_toolcall(), _done(), _toolcall()])
         reasoner = _Scripted([_verdict(False)])   # the critic rules the failing tests ARE this step's
@@ -1722,6 +1818,7 @@ class GateFlowTests(unittest.TestCase):
         self.assertIn("tests/test_x.py", coder.last_user())
 
     def test_clean_gate_hands_critic_the_digest(self):
+        _ctx = lambda *args, **kw: _select_test_planning(_step_ctx(*args, **kw), stepreview.DEFINITION)
         ws = self._ws()
         captured = {}
 
@@ -1758,6 +1855,7 @@ class GateFlowTests(unittest.TestCase):
         self.assertTrue(gate_events and gate_events[0]["floor_clean"] and not gate_events[0]["blocked"])
 
     def test_stalled_gate_is_logged_not_accepted(self):
+        _ctx = _step_ctx
         ws = self._ws()
         coder = _Scripted([_toolcall(), _done()])   # keeps claiming done, never fixes
         reasoner = _Scripted([_verdict(True)])
@@ -1815,7 +1913,9 @@ class ProbeReissueTests(unittest.TestCase):
     def test_reissues_when_result_lost_to_compaction(self):
         from cria.loop import GuardState, guard_probe_reissue
         gs = GuardState(awaiting_probe=True, probe_call_id="p1")   # result missing
-        out = guard_probe_reissue(gs, self._SHELL, _Rlog(), rewritten=True)
+        # First policy use of fabricated pending state: explicitly choose the existing library runtime.
+        with assistruntime.bound(assistruntime.current()):
+            out = guard_probe_reissue(gs, self._SHELL, _Rlog(), rewritten=True)
         self.assertIsNotNone(out)                                 # re-issued, not failed-open
         self.assertEqual(gs.probe_reissues, 1)
 
@@ -1823,12 +1923,14 @@ class ProbeReissueTests(unittest.TestCase):
         from cria.loop import GuardState, guard_probe_reissue
         body = {"tools": self._SHELL["tools"], "messages": [{"role": "tool", "tool_call_id": "p1", "content": "EXIT:0"}]}
         gs = GuardState(awaiting_probe=True, probe_call_id="p1", probe_reissues=1)
-        self.assertIsNone(guard_probe_reissue(gs, body, _Rlog(), rewritten=True))
+        with assistruntime.bound(assistruntime.current()):
+            self.assertIsNone(guard_probe_reissue(gs, body, _Rlog(), rewritten=True))
         self.assertEqual(gs.probe_reissues, 0)
 
     def test_no_reissue_without_compaction_or_when_nothing_pending(self):
         from cria.loop import GuardState, guard_probe_reissue
-        self.assertIsNone(guard_probe_reissue(GuardState(awaiting_probe=True, probe_call_id="p1"), self._SHELL, _Rlog(), rewritten=False))
+        with assistruntime.bound(assistruntime.current()):
+            self.assertIsNone(guard_probe_reissue(GuardState(awaiting_probe=True, probe_call_id="p1"), self._SHELL, _Rlog(), rewritten=False))
         self.assertIsNone(guard_probe_reissue(GuardState(), self._SHELL, _Rlog(), rewritten=True))  # nothing pending
 
 
@@ -2029,7 +2131,8 @@ class PeriodicGateTests(unittest.TestCase):
         from cria.loop import GuardState, guard_periodic_result
         gs = GuardState(periodic_probe=True, probe_call_id="p1", last_gate_red=True)  # gate_plan None → couldn't run
         body = {"messages": [{"role": "tool", "tool_call_id": "p1", "content": "meh"}]}
-        self.assertIsNone(guard_periodic_result(gs, body, _Rlog()))
+        with assistruntime.bound(assistruntime.current()):
+            self.assertIsNone(guard_periodic_result(gs, body, _Rlog()))
         self.assertTrue(gs.last_gate_red)                      # neutral non-signal must NOT flip the gate
 
 
@@ -2051,7 +2154,8 @@ class GateProgressTrackingTests(unittest.TestCase):
         from cria.loop import GuardState, guard_periodic_result
         gs = GuardState(periodic_probe=True, probe_call_id="p1", gate_stall=2)  # gate_plan None → couldn't run
         body = {"messages": [{"role": "tool", "tool_call_id": "p1", "content": "x"}]}
-        guard_periodic_result(gs, body, _Rlog())
+        with assistruntime.bound(assistruntime.current()):
+            guard_periodic_result(gs, body, _Rlog())
         self.assertEqual(gs.gate_stall, 2)      # neutral non-signal → stall unchanged
 
 
@@ -2092,6 +2196,7 @@ class WheelSpinTests(unittest.TestCase):
         return t
 
     def test_five_rewrites_trigger_a_spin_probe_and_reasoner_authors_the_steer(self):
+        _ctx = _step_ctx
         from cria.loop import WHEEL_SPIN_WRITES
         from cria.probegate import SECTION_PREFIX as P, SECTION_SUFFIX as S
         ws = self._ws()
@@ -2114,6 +2219,7 @@ class WheelSpinTests(unittest.TestCase):
 
         coder = _VaryingWriter()                   # rewrites handler.py forever (content varies)
         loop = Loop(_ctx(coder, _Reasoner(), _plan(1), workspace_root=ws))
+        loop._ctx.reasoner_role = Role(name="reasoner", backend="local")
         rlog = _Rlog()
         c = None
         for _ in range(WHEEL_SPIN_WRITES):         # five forwarded writes, one per turn
@@ -2143,18 +2249,21 @@ class WheelSpinTests(unittest.TestCase):
         from cria.loop import GuardState, guard_probe_steer, CANNED
         rlog = _Rlog()
         # wheel-spin probe resolving → labels "wheel-spin guard"
-        gs = GuardState(spin_probe=True, probe_call_id="p1", spin_path="x.py")
+        gs = GuardState(probe_call_id="p1", spin_path="x.py")
         body = {"messages": [{"role": "tool", "tool_call_id": "p1", "content": "EXIT:0"}]}
+        _admit_guard_probe(gs, body, rlog)
         self.assertIsNotNone(guard_probe_steer(gs, body, rlog, author=CANNED))
         self.assertEqual(gs.steer_source, "wheel-spin guard")
         # refusal redirect resolving (canned, no author) → labels "refusal guard"
-        gs2 = GuardState(redirect_probe=True, probe_call_id="p2", repeat_action="write_file(h.py)")
+        gs2 = GuardState(probe_call_id="p2", repeat_action="write_file(h.py)")
         body2 = {"messages": [{"role": "tool", "tool_call_id": "p2", "content": "EXIT:0"}]}
+        _admit_guard_probe(gs2, body2, rlog, redirect=True)
         steer = guard_probe_steer(gs2, body2, rlog, author=CANNED)
         self.assertIn("[REDIRECT]", steer)
         self.assertEqual(gs2.steer_source, "refusal guard")
 
     def test_clean_gate_lets_the_reasoner_judge_without_canned_editorializing(self):
+        _ctx = _step_ctx
         # Round-6 lives on: a content-blind streak can't tell a spiral from honest edits (applying review
         # findings one by one). So there's no canned "the problem is elsewhere" steer — the reasoner is
         # handed the CLEAN ground truth + the real session and DECIDES. Here it judges the coder fine
@@ -2171,6 +2280,7 @@ class WheelSpinTests(unittest.TestCase):
 
         coder = _VaryingWriter()
         loop = Loop(_ctx(coder, _Reasoner(), _plan(1), workspace_root=ws))
+        loop._ctx.reasoner_role = Role(name="reasoner", backend="local")
         rlog = _Rlog()
         for _ in range(WHEEL_SPIN_WRITES):
             loop.drive(_body(), "k", _Classification(), rlog)
@@ -2187,6 +2297,7 @@ class WheelSpinTests(unittest.TestCase):
         self.assertIn("loop.spin_probe_result", rlog.kinds())
 
     def test_other_file_writes_do_not_shield_the_count(self):
+        _ctx = _step_ctx
         # WINDOWED (operator, 2026-07-12), not consecutive: the tiny-edit spiral interleaves
         # other work — 5 writes to a.py within the window fire even with b.py written between.
         from cria.loop import WHEEL_SPIN_WRITES
@@ -2201,6 +2312,7 @@ class WheelSpinTests(unittest.TestCase):
         self.assertIn("loop.wheel_spinning", rlog.kinds())     # 4×a, b, a → 5×a within 6 calls
 
     def test_edit_file_spiral_counts_toward_wheel_spin(self):
+        _ctx = _step_ctx
         # The tiny-edit route: the writeproxy lowers edit_file → apply_patch BEFORE tracking,
         # so the patch target must count as a write to that file. (The old greedy patch-tail
         # regex made every edit look like a different garbage path — the trigger's own target
@@ -2217,6 +2329,7 @@ class WheelSpinTests(unittest.TestCase):
         self.assertNotIn("loop.repetition", rlog.kinds())  # contents vary — the identical tier stays silent
 
     def test_canonical_tiny_edit_spiral_fires(self):
+        _ctx = _step_ctx
         # Round-5 verify: THE incident shape — edit → cat → pytest, repeated. Five edits at
         # 3-call interleave span 13 calls; the old 12-call window missed it by exactly one,
         # permanently. WRITE_WINDOW (five full cycles) must catch it.
@@ -2236,6 +2349,7 @@ class WheelSpinTests(unittest.TestCase):
         self.assertNotIn("loop.repetition", rlog.kinds())   # varying edits purge the act hunt
 
     def test_create_file_spiral_counts_toward_wheel_spin(self):
+        _ctx = _step_ctx
         # Round-5 verify: create_file is a write for the writeproxy — it must be one for the
         # spin tracker too (a varying-content create_file spiral was invisible to BOTH tiers).
         from cria.loop import WHEEL_SPIN_WRITES
@@ -2271,6 +2385,7 @@ class WheelSpinTests(unittest.TestCase):
         self.assertNotIn("loop.repetition", rlog.kinds())
 
     def test_interleaved_non_write_calls_do_not_break_the_streak(self):
+        _ctx = _step_ctx
         from cria.loop import WHEEL_SPIN_WRITES
         ws = self._ws()
         seq = []
@@ -2302,7 +2417,7 @@ class RunFolderTests(unittest.TestCase):
         ctx = LoopContext(planner=_Planner(_plan(1)), coder_chat=_Scripted([_toolcall(), _done()]),
                           reasoner_chat=_Scripted([_verdict(True), _summary("s")]),
                           runs_dir=tmp)
-        loop = Loop(ctx)
+        loop = Loop(_select_test_planning(_enable_test_planning(ctx), stepreview.DEFINITION))
         rlog = _SessRlog()
         loop.drive(_body(), "k", _Classification(), rlog)                      # plan persisted
         c2 = loop.drive(_body(), "k", _Classification(), rlog)                 # done → gate
@@ -2315,6 +2430,7 @@ class RunFolderTests(unittest.TestCase):
 
 class ResumeTests(unittest.TestCase):
     def test_restart_mid_plan_resumes_instead_of_replanning(self):
+        _ctx = lambda *args, **kw: _select_test_planning(_step_ctx(*args, **kw), stepreview.DEFINITION)
         # The restart-amnesia bug: cria restarted mid-plan → fresh blind plan → new filenames →
         # duplicate files. Now: a new Loop over the SAME state file resumes the plan at the
         # current step; the planner is never consulted.
@@ -2335,7 +2451,7 @@ class ResumeTests(unittest.TestCase):
             store2 = LoopStore(state_path=state)
             ctx2 = LoopContext(planner=_NoPlanner(), coder_chat=_Recorder([_toolcall()]),
                                reasoner_chat=_Scripted([_verdict(True)]), runs_dir="")
-            loop2 = Loop(ctx2, store2)
+            loop2 = Loop(_select_test_planning(_enable_test_planning(ctx2), stepreview.DEFINITION), store2)
             rlog = _Rlog()
             out = loop2.drive(_body(), "sid:r", C, rlog)                 # resumes: drives step 2
             self.assertTrue(out["choices"][0]["message"].get("tool_calls"))
@@ -2624,6 +2740,7 @@ class RefusalRedirectTests(unittest.TestCase):
         return t
 
     def test_refused_calls_trip_redirect_and_reasoner_authors_it(self):
+        _ctx = _step_ctx
         from cria.probegate import SECTION_PREFIX as P, SECTION_SUFFIX as S
         ws = self._ws()
         captured = {}
@@ -2641,6 +2758,7 @@ class RefusalRedirectTests(unittest.TestCase):
 
         coder = _Recorder([_write("h.py", "same bytes")])
         loop = Loop(_ctx(coder, _Reasoner(), _plan(1), workspace_root=ws))
+        loop._ctx.reasoner_role = Role(name="reasoner", backend="local")
         rlog = _Rlog()
         loop.drive(_body_with_refusals(), "k", _Classification(), rlog)   # 3 refused calls behind it
         self.assertIn("loop.refusals", rlog.kinds())
@@ -2672,6 +2790,7 @@ class RefusalRedirectTests(unittest.TestCase):
         self.assertNotIn("look elsewhere", txt)
 
     def test_reasoner_sees_neutral_system_and_fact_on_clean_gate(self):
+        _ctx = _step_ctx
         # The reasoner's inputs on a clean gate carry no "problem is elsewhere" premise, in
         # EITHER the system prompt or the ground-truth fact.
         from cria.probegate import SECTION_PREFIX as P, SECTION_SUFFIX as S
@@ -2688,6 +2807,7 @@ class RefusalRedirectTests(unittest.TestCase):
 
         coder = _Recorder([_write("h.py", "same bytes")])
         loop = Loop(_ctx(coder, _Recorder2(), _plan(1), workspace_root=ws))
+        loop._ctx.reasoner_role = Role(name="reasoner", backend="local")
         rlog = _Rlog()
         loop.drive(_body_with_refusals(), "k", _Classification(), rlog)
         gate = loop.drive(_body(), "k", _Classification(), rlog)
@@ -2699,6 +2819,7 @@ class RefusalRedirectTests(unittest.TestCase):
         self.assertIn("no error-class", seen["user"].lower())   # the neutral clean fact
 
     def test_reasoner_failure_falls_back_to_canned_redirect(self):
+        _ctx = _step_ctx
         from cria.probegate import SECTION_PREFIX as P, SECTION_SUFFIX as S
         ws = self._ws()
         coder = _Recorder([_write("h.py", "same bytes")])
@@ -2714,6 +2835,7 @@ class RefusalRedirectTests(unittest.TestCase):
         self.assertIn("no error-class", coder.last_user().lower())    # clean-checks truth included
 
     def test_canned_redirect_foregrounds_the_failing_check(self):
+        _ctx = _step_ctx
         # #2: when the gate FAILS, the concrete error must LEAD the redirect (a small model reads
         # past a trailing ground-truth block and rewrites the whole file again).
         from cria.probegate import SECTION_PREFIX as P, SECTION_SUFFIX as S
@@ -2853,6 +2975,7 @@ class RefusalRedirectTests(unittest.TestCase):
 
 
     def test_no_gate_still_delivers_a_canned_steer(self):
+        _ctx = _step_ctx
         # The gate can't compose (unreadable workspace → _gate_op returns None). The tripped
         # intervention must NEVER be swallowed: the coder's next turn carries the canned
         # redirect as a nudge.
@@ -2952,6 +3075,7 @@ class _Classification:
 
 class LoopDriveTests(unittest.TestCase):
     def test_happy_path_two_items(self):
+        _ctx = lambda *args, **kw: _select_test_planning(_step_ctx(*args, **kw), stepreview.DEFINITION)
         from cria.probegate import SECTION_PREFIX
         coder = _Scripted([_toolcall(), _done(), _done()])  # work(item0), done(item0), done(item1 twice via leg0)
         reasoner = _Scripted([_verdict(True), _verdict(True)])
@@ -3013,6 +3137,7 @@ class LoopDriveTests(unittest.TestCase):
         self.assertEqual(reasoner.calls, 0, "failing tests short-circuit — the critic isn't consulted")
 
     def test_probe_passes_but_critic_rejects_does_not_advance(self):
+        _ctx = lambda *args, **kw: _select_test_planning(_step_ctx(*args, **kw), stepreview.DEFINITION)
         # The syntax probe passes, but THIS step's own goal is failing (e.g. it's the test
         # step and its tests fail) → the critic returns not-done → cria nudges the coder to
         # fix it rather than marking the step done. (Regression: a test step was being
@@ -3047,6 +3172,7 @@ class LoopDriveTests(unittest.TestCase):
         self.assertIn("loop.step_incomplete", rlog.kinds())
 
     def test_unparseable_verdict_fails_closed_not_open(self):
+        _ctx = lambda *args, **kw: _select_test_planning(_step_ctx(*args, **kw), stepreview.DEFINITION)
         # Regression: when the critic returns NO parseable verdict (a reasoning model that ran
         # out of budget before emitting JSON), the step must NOT be silently marked done. It
         # fails CLOSED — the coder is re-driven — and the critic was retried (reasoning-off).
@@ -3064,6 +3190,7 @@ class LoopDriveTests(unittest.TestCase):
         self.assertEqual(reasoner.calls, 2, "first pass + reasoning-off retry")
 
     def test_careful_reasoning_verdict_completes_the_step(self):
+        _ctx = lambda *args, **kw: _select_test_planning(_step_ctx(*args, **kw), stepreview.DEFINITION)
         # The reasoning-ON pass lands a clean verdict → the step advances normally (the trusted path).
         coder = _Scripted([_done()])
         reasoner = _Scripted([_verdict(True)])
@@ -3075,6 +3202,7 @@ class LoopDriveTests(unittest.TestCase):
         self.assertIn("loop.step_done", rlog.kinds())
 
     def test_reasoning_off_retry_cannot_advance_the_step(self):
+        _ctx = lambda *args, **kw: _select_test_planning(_step_ctx(*args, **kw), stepreview.DEFINITION)
         # THE both-paths mirror of the satisfaction fail-close: careful pass unparseable, reasoning-off
         # retry says done=true → FAIL CLOSED (a rubber-stamp can't approve). The step does NOT complete;
         # the loop re-nudges instead.
@@ -3089,6 +3217,7 @@ class LoopDriveTests(unittest.TestCase):
         self.assertNotIn("loop.step_done", rlog.kinds())
 
     def test_no_shell_tool_declines_to_proxy(self):
+        _ctx = _step_ctx
         # Without a shell tool the loop can't run: no plan file, no ground-truth probe, and the
         # writeproxy can't lower write_file → a shell command, so the coder can't even write files.
         # Codex also sends genuinely tool-less turns (title/summarize) that classify as 'task'.
@@ -3101,6 +3230,7 @@ class LoopDriveTests(unittest.TestCase):
         self.assertFalse(loop.has_session("k"))    # no plan started
 
     def test_live_plan_survives_a_tool_less_turn(self):
+        _ctx = _step_ctx
         # A tool-less turn arriving mid-plan is declined (proxied) but must NOT drop the live plan —
         # the next tool-bearing turn resumes it.
         store = LoopStore()
@@ -3217,6 +3347,7 @@ class BannerStripTests(unittest.TestCase):
         self.assertIn("Actually reading handler.py", blob)  # the coder's real line survives
 
     def test_pending_coder_text_is_banner_free_for_critic(self):
+        _ctx = lambda *args, **kw: _select_test_planning(_step_ctx(*args, **kw), stepreview.DEFINITION)
         # the coder parrots cria's banners; they must NOT reach the critic as its "summary"
         parroted = _done("⟦cria⟧ coder · m\n⟦cria⟧ planned 5 steps\nI'll inspect the docs.")
         coder = _Scripted([parroted])   # coder is 'done' with parroted banners in its content
@@ -3623,11 +3754,13 @@ class SharedRefusalGuardTests(unittest.TestCase):
 
     def test_probe_steer_returns_spin_ground_truth(self):
         from cria.loop import GuardState, guard_probe_steer, CANNED
-        gs = GuardState(); gs.spin_probe = True; gs.spin_path = "h.py"; gs.probe_call_id = "p1"
+        gs = GuardState(); gs.spin_path = "h.py"; gs.probe_call_id = "p1"
         body = {"messages": [{"role": "tool", "tool_call_id": "p1", "content": "PROBE_EXIT=0"}]}
+        _admit_guard_probe(gs, body, _Rlog())
         steer = guard_probe_steer(gs, body, _Rlog(), author=CANNED)  # explicit CANNED (no reasoner)
         self.assertIn("rewritten `h.py`", steer)
         self.assertFalse(gs.spin_probe)  # consumed
+        self.assertIsNone(gs.stalled_probe)
 
 
 class GuardNoteTests(unittest.TestCase):
@@ -3986,9 +4119,10 @@ class GroundTruthSilenceTests(unittest.TestCase):
         # the wheel-spin steer must still fire (with a DIFFERENT-action nudge) even when the checks
         # gave no signal — it just carries no checks claim.
         from cria.loop import GuardState, guard_probe_steer, CANNED
-        gs = GuardState(); gs.spin_probe = True; gs.spin_path = "handle_api.py"; gs.probe_call_id = "p1"
+        gs = GuardState(); gs.spin_path = "handle_api.py"; gs.probe_call_id = "p1"
         gs.gate_plan = None  # → outcome.ran False → guard_ground_truth "" → spin_no_truth path
         body = {"messages": [{"role": "tool", "tool_call_id": "p1", "content": "x"}]}
+        _admit_guard_probe(gs, body, _Rlog())
         steer = guard_probe_steer(gs, body, _Rlog(), author=CANNED)
         self.assertIsNotNone(steer)
         self.assertIn("handle_api.py", steer)
@@ -4387,6 +4521,11 @@ class SearchJudgeTests(unittest.TestCase):
         p = pathlib.Path(tmp) / webfetch.SPILL_DIR.lstrip("./")
         p.mkdir(parents=True)
         (p / self._SPILL_REL.split("/")[-1]).write_text(self._REAL_RESULTS, encoding="utf-8")
+        # This fixture's workspace really is on disk; the production harness view
+        # correctly refuses unobserved reads without its reader/survey service.
+        from cria import wsview
+        token = wsview.bind(wsview.DirectView(tmp))
+        self.addCleanup(wsview.unbind, token)
         return tmp
 
     def _register_spill(self, sess):
@@ -4677,7 +4816,8 @@ class PeriodicGateSilentOnCleanTests(unittest.TestCase):
         gs.gate_plan = GatePlan(workspace="/tmp", candidates=[cand])
         clean = f"{P}probe-0{S}\n3 passed in 0.1s\nEXIT:0\n{P}git{S}\nabc\n"
         body = {"messages": [{"role": "tool", "tool_call_id": "p1", "content": clean}]}
-        self.assertIsNone(guard_periodic_result(gs, body, _Rlog()))   # clean → no injection
+        with assistruntime.bound(assistruntime.current()):
+            self.assertIsNone(guard_periodic_result(gs, body, _Rlog()))   # clean → no injection
 
 
 def _single_loop(coder_chat, *, reasoner_chat=None, reasoner_role=None, compactor_chat=None,
@@ -4708,7 +4848,8 @@ class SingleItemMethodTests(unittest.TestCase):
     def test_coder_turn_forwards_toolcall_and_tracks(self):
         loop = _single_loop(_Scripted([_toolcall()]))
         sess = _synth()
-        comp = loop._coder_turn(sess, {"messages": [], "tools": [_SHELL]}, {"messages": []}, step=1, rlog=_Rlog())
+        loop._store.put("k", sess)
+        comp = loop.drive({"messages": [], "tools": [_SHELL]}, "k", _Classification(), _Rlog())
         self.assertTrue(comp["choices"][0]["message"]["tool_calls"])   # acting turn forwarded
         self.assertEqual(sess.action_seq, 1)                           # refusal tracking ran
 
@@ -5150,7 +5291,7 @@ class VerifyPromptStepIsRestatedLast(unittest.TestCase):
         from cria.config import Role
         ctx = _ctx(_Scripted([_toolcall()]), reasoner)
         ctx.reasoner_role = Role(name="reasoner", backend="local")
-        Loop(ctx)._verify(self.STEP, self.CODER, "", "$ web_fetch → 200", _Rlog(),
+        Loop(_select_test_planning(ctx, stepreview.DEFINITION))._verify(self.STEP, self.CODER, "", "$ web_fetch → 200", _Rlog(),
                           idx=1, total=9, key="sid:x", coder_tools="write_file(path, content)")
         return seen["user"]
 
@@ -5180,7 +5321,7 @@ class VerifyPromptKeepsOrdinarySummariesWholeTests(unittest.TestCase):
         summary = "SUMMARY_START\n" + "a" * 5000 + "\nSUMMARY_MIDDLE\n" + "b" * 5000 + "\nSUMMARY_END"
         ctx = _ctx(_Scripted([_toolcall()]), reasoner)
         ctx.reasoner_role = Role(name="reasoner", backend="local")
-        Loop(ctx)._verify("Implement the feature", summary, "", "", _Rlog(), idx=1, total=1)
+        Loop(_select_test_planning(ctx, stepreview.DEFINITION))._verify("Implement the feature", summary, "", "", _Rlog(), idx=1, total=1)
         self.assertIn(summary, seen["user"])
         self.assertLess(seen["user"].index("SUMMARY_START"), seen["user"].index("SUMMARY_MIDDLE"))
         self.assertLess(seen["user"].index("SUMMARY_MIDDLE"), seen["user"].index("SUMMARY_END"))
@@ -5247,7 +5388,7 @@ class GateFailsMustNotRewriteTheStepTests(unittest.TestCase):
         ctx = _ctx(_Scripted([_toolcall()]), reasoner)
         from cria.config import Role
         ctx.reasoner_role = Role(name="reasoner", backend="local")
-        return Loop(ctx)
+        return Loop(_select_test_planning(ctx, planner.COVERAGE, livingplan.DEFINITION))
 
     def test_gate_failures_alone_never_trigger_the_re_derive(self):
         from cria.loop import STUCK_STEP_REPLAN
@@ -5327,7 +5468,7 @@ class ReplannerToldNothingDefinesARouteTests(unittest.TestCase):
         from cria.config import Role
         ctx = _ctx(_Scripted([_toolcall()]), reasoner)
         ctx.reasoner_role = Role(name="reasoner", backend="local")
-        return Loop(ctx)
+        return Loop(_select_test_planning(ctx, planner.COVERAGE, livingplan.DEFINITION))
 
     def _seen_evidence(self, ledger):
         seen = {}
@@ -5613,6 +5754,7 @@ class ReplanTailCoverageTests(unittest.TestCase):
 
     def test_c7_coverage_refusal_releases_the_malformed_url_cursor_to_raw_task(self):
         """Capture-shaped C7: a refused replacement must not leave ``https:/`` as the next frame."""
+        _ctx = lambda *args, **kw: _select_test_planning(_step_ctx(*args, **kw), livingplan.DEFINITION)
         from cria.config import Role
         task = "Build the Handles CLI with unit tests, a live lookup test, and a README."
         stale = "Fetch https:/api.handle.me/handles/{handle} and wire the lookup"
@@ -5629,7 +5771,10 @@ class ReplanTailCoverageTests(unittest.TestCase):
         body = {"messages": [{"role": "user", "content": task},
                              {"role": "user", "content": replayed_cursor}],
                 "tools": [_SHELL], "stream": True}
-        Loop(ctx)._advance(sess, "sid:c7", body, 1, 2, _Rlog())
+        driver = Loop(ctx)
+        driver._store.put("sid:c7", sess)
+        with assistruntime.bound(ctx.pilot_runtime):
+            driver._advance(sess, "sid:c7", body, 1, 2, _Rlog())
 
         sent = json.dumps(coder.bodies[-1]["messages"])
         self.assertTrue(sess.synthetic)
@@ -5645,6 +5790,7 @@ class ReplanTailCoverageTests(unittest.TestCase):
 
     def test_c9_coverage_refusal_releases_the_package_only_cursor_to_raw_task(self):
         """Capture-shaped C9: package work cannot remain authoritative after Docker/live-E2E loss."""
+        _ctx = lambda *args, **kw: _select_test_planning(_step_ctx(*args, **kw), livingplan.DEFINITION)
         from cria.config import Role
         task = "Build Handles service packaging with Dockerfile, package tests, and a live end-to-end test."
         stale = "Update package.json scripts and dependencies"
@@ -5657,7 +5803,10 @@ class ReplanTailCoverageTests(unittest.TestCase):
         ctx.reasoner_role = Role(name="reasoner", backend="local")
         sess = PlanSession(plan=plan)
         body = {"messages": [{"role": "user", "content": task}], "tools": [_SHELL], "stream": True}
-        Loop(ctx)._advance(sess, "sid:c9", body, 1, 2, _Rlog())
+        driver = Loop(ctx)
+        driver._store.put("sid:c9", sess)
+        with assistruntime.bound(ctx.pilot_runtime):
+            driver._advance(sess, "sid:c9", body, 1, 2, _Rlog())
 
         sent = json.dumps(coder.bodies[-1]["messages"])
         self.assertTrue(sess.synthetic)
@@ -5669,6 +5818,7 @@ class ReplanTailCoverageTests(unittest.TestCase):
 
     def test_cart_coverage_refusal_releases_the_discounts_cursor_to_raw_task(self):
         """Capture-shaped Cart/Go: typed delivery loss cannot retain discounts.json as the cursor."""
+        _ctx = lambda *args, **kw: _select_test_planning(_step_ctx(*args, **kw), livingplan.DEFINITION)
         from cria.config import Role
         task = (
             "Fix the rounding bug causing totals to be one cent low. Example: three items at `19.99` "
@@ -5701,7 +5851,10 @@ class ReplanTailCoverageTests(unittest.TestCase):
                              {"role": "user", "content": replayed_cursor}],
                 "tools": [_SHELL], "stream": True}
         rlog = _Rlog()
-        Loop(ctx)._advance(sess, "sid:cart", body, 1, 2, rlog)
+        driver = Loop(ctx)
+        driver._store.put("sid:cart", sess)
+        with assistruntime.bound(ctx.pilot_runtime):
+            driver._advance(sess, "sid:cart", body, 1, 2, rlog)
 
         sent = coder.bodies[-1]["messages"]
         serialized = "\n".join(message.get("content", "") for message in sent)
@@ -5736,7 +5889,7 @@ class ReplanTailCoverageTests(unittest.TestCase):
         ctx.reasoner_role = Role(name="reasoner", backend="local")
         sess = PlanSession(plan=plan)
         rlog = _Rlog()
-        Loop(ctx)._replan_tail(sess, _body(), 1, rlog)
+        Loop(_select_test_planning(ctx, planner.COVERAGE, livingplan.DEFINITION))._replan_tail(sess, _body(), 1, rlog)
 
         self.assertFalse(sess.synthetic)
         self.assertFalse(sess.plan_off)
@@ -5773,7 +5926,8 @@ class ReplanTailCoverageTests(unittest.TestCase):
                               "You are completing a larger task. This plan was created by another model. " + stale}],
                 "tools": [_SHELL], "stream": True}
 
-        loop._drive_single_item(sess, body, "sid:restored", rlog)
+        loop._store.put("sid:restored", sess)
+        loop.drive(body, "sid:restored", None, rlog)
         first = json.dumps(coder.bodies[-1]["messages"])
         self.assertIn("previous planning breakdown was rejected", first)
         self.assertIn("Dockerfile", first)
@@ -5781,7 +5935,7 @@ class ReplanTailCoverageTests(unittest.TestCase):
         self.assertFalse(sess.replan_uncovered_pending)
         self.assertIn("loop.replan_uncovered_delivered", rlog.kinds())
 
-        loop._drive_single_item(sess, body, "sid:restored", _Rlog())
+        loop.drive(body, "sid:restored", None, _Rlog())
         second = json.dumps(coder.bodies[-1]["messages"])
         self.assertNotIn("previous planning breakdown was rejected", second)
         self.assertNotIn(stale, second)  # reset keeps suppressing its rejected serialized cursor
@@ -5912,7 +6066,7 @@ class ApprovePathConfirmTests(unittest.TestCase):
         chat = _Scripted(responses)
         ctx = _ctx(_Scripted([_toolcall()]), chat)
         ctx.reasoner_role = self._role()
-        return Loop(ctx), chat
+        return Loop(_select_test_planning(_enable_test_planning(ctx), stepreview.DEFINITION)), chat
 
     def test_the_m8_confabulated_done_is_downgraded(self):
         """The replay: 'Write unit tests' DONE, workspace holds only spills — checker kills it."""
@@ -6179,6 +6333,7 @@ class ConfirmRestatesItsOwnClaimTests(unittest.TestCase):
 
     def test_a_step_is_NOT_advanced_by_the_echo(self):
         """The direction that makes this safe: unusable, not true. The step stays open."""
+        _ctx = lambda *args, **kw: _select_test_planning(_step_ctx(*args, **kw), stepreview.DEFINITION)
         with tempfile.TemporaryDirectory() as ws:
             Path(ws, "resolve.py").write_text("x = 1\n")
             chat = _Scripted([self._done(self.REASON), self._confirm(False, self.REASON)])
@@ -6194,6 +6349,7 @@ class ConfirmRestatesItsOwnClaimTests(unittest.TestCase):
     def test_the_affirming_sentence_never_reaches_the_coder(self):
         """The concrete damage: "the coder successfully fetched ... and extracted all required
         endpoints" printed under "Do ONLY this step, then stop"."""
+        _ctx = lambda *args, **kw: _select_test_planning(_step_ctx(*args, **kw), stepreview.DEFINITION)
         with tempfile.TemporaryDirectory() as ws:
             Path(ws, "resolve.py").write_text("x = 1\n")
             chat = _Scripted([self._done(self.REASON), self._confirm(False, self.REASON)])
@@ -6208,28 +6364,60 @@ class ConfirmRestatesItsOwnClaimTests(unittest.TestCase):
 
     def test_the_re_ask_happens_ONCE_names_the_echo_and_can_still_approve(self):
         """A repeat at temperature 0 returns the identical echo, so the second ask must differ — and
-        it must be able to rule either way, or the brake would just be disabled."""
+        it must be able to rule either way, or the brake would just be disabled.
+
+        The old fixture approved an uninspected positive. That unsafe case now has a separate
+        withholding witness; this positive must inspect afresh on its own re-ask.
+        """
+        import copy
+        from cria import completionconfirmation
         from cria.loop import _confirm_completion
         bodies = []
+        inspection = {"id":"confirm-reask-read","type":"function","function":{
+            "name":"read_file","arguments":json.dumps({"path":"resolve.py"})}}
 
         def chat(body, rlog):
-            bodies.append(body)
+            bodies.append(copy.deepcopy(body))
             if len(bodies) == 1:
                 return json.dumps(self._confirm(False, self.REASON)).encode()
+            if len(bodies) == 2:
+                return json.dumps({"choices":[{"finish_reason":"tool_calls","message":{
+                    "role":"assistant","content":None,"tool_calls":[inspection]}}]}).encode()
+            self.assertEqual(len(bodies),3,"the re-ask permits one real inspection round")
             return json.dumps(self._confirm(True, "")).encode()
 
         with tempfile.TemporaryDirectory() as ws:
             Path(ws, "resolve.py").write_text("x = 1\n")
             rlog = _Rlog()
-            ok, why = _confirm_completion(self.STEP, self.REASON, ws, chat, self._role(), rlog,
-                                          phase="critic-confirm")
+            role = self._role()
+            original_reasoning = role.reasoning
+            confirmation = _confirm_completion(self.STEP, self.REASON, ws, chat, role, rlog,
+                                                phase="critic-confirm")
+            ok, why = confirmation
         self.assertTrue(ok)                                  # the re-ask's real answer stands
-        self.assertEqual(len(bodies), 2, "the re-ask must happen exactly once")
+        self.assertEqual(why,"")
+        self.assertIs(confirmation.status,completionconfirmation.Status.CONFIRMED)
+        self.assertEqual(len(confirmation.attempts),2,"the policy re-ask must happen exactly once")
+        self.assertEqual([attempt.rounds for attempt in confirmation.attempts],[0,1])
+        self.assertEqual([attempt.verdict for attempt in confirmation.attempts],[False,True])
+        self.assertEqual([attempt.pending_ids for attempt in confirmation.attempts],[(),()])
+        self.assertEqual(len(bodies),3,"two policy attempts plus one tool-result continuation")
         first = bodies[0]["messages"][-1]["content"]
         second = bodies[1]["messages"][-1]["content"]
         self.assertNotEqual(first, second, "an identical re-ask at temperature 0 is a wasted call")
         self.assertIn("is not an answer", second)
         self.assertTrue(second.startswith(first))            # the question itself is unchanged
+        self.assertIn(self.STEP,first)
+        self.assertIn(self.REASON,first)
+        paired = [message for message in bodies[2]["messages"] if message.get("role") == "tool"]
+        self.assertEqual(paired,[{"role":"tool","tool_call_id":"confirm-reask-read","content":"x = 1\n"}])
+        calls = [call for message in bodies[2]["messages"] for call in message.get("tool_calls",[])]
+        self.assertEqual(calls,[inspection])
+        self.assertEqual([(name,fields) for name,fields in rlog.events if name == "loop.verify_inspect"],
+                         [("loop.verify_inspect",{"round":1,"calls":1})])
+        self.assertEqual(sum(name == "loop.confirm_restated_claim" for name,_ in rlog.events),1)
+        self.assertEqual(role.reasoning,original_reasoning)
+        self.assertTrue(all(body["chat_template_kwargs"]["enable_thinking"] is False for body in bodies))
         self.assertIn(("loop.confirm_restated_claim",), [(k,) for k, _ in rlog.events])
 
     def test_the_SIBLING_caller_is_covered_too(self):
@@ -6329,7 +6517,7 @@ class ReplanPersistsMirrorTests(unittest.TestCase):
             from cria.config import Role
             ctx.reasoner_role = Role(name="reasoner", backend="local")
             ctx.runs_dir = runs
-            loop = Loop(ctx)
+            loop = Loop(_select_test_planning(ctx, planner.COVERAGE, livingplan.DEFINITION))
             sess = PlanSession(plan=plan)
             loop._replan_tail(sess, _body(), 1, _Rlog())
             self.assertEqual([i.text for i in sess.plan.items],

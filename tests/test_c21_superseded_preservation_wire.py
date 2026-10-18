@@ -314,6 +314,22 @@ def test_distinct_notices_settle_independently_and_l0_strips_the_carrier():
     _, sent, _ = prepare(messages)
     notes = [m["content"] for m in sent if "earlier write(s) in this conversation" in str(m.get("content", ""))]
     assert PROMISE not in notes[0] and PROMISE in notes[1]
-    raw, _, _ = prepare(messages, level=0)
+    raw, lower_sent, _ = prepare(messages, level=0)
     expected = [{k: v for k, v in m.items() if k != bodykeys.SUPERSEDED_WRITES} for m in messages]
+    notice_indices = [i for i, m in enumerate(messages) if bodykeys.SUPERSEDED_WRITES in m]
+    assert len(notice_indices) == 2
+    first_notice, second_notice = notice_indices
+    assert expected[first_notice]["content"].count(PROMISE) == 1
+    # L0 disables optional production, not settlement of an authenticated
+    # historical promise. Only the first replacement pair was removed here.
+    qualification = (
+        "The historical replacement call and its paired result are not both carried above in full for: "
+        "/w/src/source.txt. This says nothing about the current file contents.")
+    expected[first_notice]["content"] = expected[first_notice]["content"].replace(PROMISE, qualification, 1)
+    assert qualification in lower_sent[first_notice]["content"]
+    assert lower_sent[second_notice] == expected[second_notice]
+    assert PROMISE in lower_sent[second_notice]["content"]
+    assert not any(bodykeys.SUPERSEDED_WRITES in m for m in lower_sent)
+    # Every other byte/message, including the second notice and surviving
+    # assistant arguments + correlated tool results, is still the input fixture.
     assert json.loads(raw) == {"model": "fixture", "messages": expected, "stream": False}

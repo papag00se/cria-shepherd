@@ -1,11 +1,15 @@
 # Canonical assist-family map
 
-Start with [REPORT.md](REPORT.md): 76 properly titled capability families, their contracts and principal code owners.
+Start with [REPORT.md](REPORT.md): current maintenance responsibilities, distinguishing boundaries, direct historical aliases, registered atomic definitions and conservative source-owned migration declarations.
 
-- `cria/assistfamilies.py` is the single source of family identities, titles, ownership and historical detail membership. It is inert metadata, not a dispatcher or 76 new wrappers.
-- `build_report.py` generates the human-readable implementation map and verifies every source binding and historical assignment. Run with `--check` in CI/review.
-- `detail-history.json` retains the necessary 409-contract lineage, individual historical judgments/risks/gates and composite/alias dispositions. The 15 supporting/retired/proposed rows remain excluded. These frozen-review judgments do not score current source or establish isolated delivered usefulness.
+- `cria/assistfamilies.py` owns family metadata and preserved detail lineage. Families are not runtime switches. Shared foundations/support and provider/native artifacts have explicit classifications.
+- Atomic metadata is read directly from the authoritative production `assistruntime.DEFINITIONS` and explicit source-owned definitions (single objects or named immutable tuples); executable ownership is derived, not manually listed again in family metadata. This directory contains no duplicate atomic catalog. Principal source references remain navigation, not exhaustive production bindings. Registration and source-owned migration declarations are distinct from behavioral acceptance; this map alone does not establish R1/R7 closure.
+- F68's `required_wire_contract` coverage explicitly classifies the complete source-owned floor strategy as an indivisible foundation, not an omitted atomic registration or removable helper catalog. Existing wire activation and L0–L2 behavior remain unchanged; this classification is not behavioral acceptance. Navigation-only, nonregistered coverage does not establish production binding.
+- `build_report.py` generates this single view and validates required metadata, identities, ownership, direct aliases, dependencies/order, scopes and real source declarations without executing policies. Run with `--check` in review.
+- `detail-history.json` remains frozen byte-for-byte: original detail-family assignments, judgments/risks/gates and composite dispositions are historical provenance. Current displays resolve aliases without rewriting that history. Historical details are not automatically independently selectable assists or current usefulness scores.
 
-Current titles/ownership belong in the registry; do not edit the generated report or create a second family list. Family grouping preserves differing safety policies and experimental consent. Planning remains OFF unless explicitly enabled; native and optional CLI-provider entries do not assert deployment or architectural acceptance.
+[Architecture doctrine](../shephard.md#assist-and-family-boundaries) owns atomic/family qualifications and consolidation rules. Code checks structural completeness; humans judge conceptual boundaries. There is no required family count or English uniqueness classifier.
 
-This replaces the old branch/adapter-count headline and min–max family score presentation. No procedural assignments, state/validation/finalization manifests, acceptance receipts, incident scratch or duplicate partition reports are admitted as permanent supporting evidence. Keep original model-call logs at their authoritative capture locations.
+Update family metadata in the registry and atomic metadata at its executable owner, never in the generated report. Regenerate with `python docs/assist-inventory/build_report.py`; verify with `--check`. Planning remains OFF unless explicitly enabled. Native artifacts and optional configured providers imply neither deployment nor architectural acceptance.
+
+Do not create another inventory, efficacy score, permanent investigation report or proof archive. Actual model-call logs remain at their authoritative capture locations.

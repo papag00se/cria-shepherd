@@ -40,10 +40,6 @@ _MAX_PROPS_ATTEMPTS = 3
 _PROPS_RETRY_EVERY = 50
 # Fail-fast budget for the debug-only /apply-template render (shares the single inference slot).
 _RENDER_TIMEOUT_S = 8
-# Re-run the reasoning watcher (rumination check) only after this many new chars of reasoning, so
-# the regex isn't recompiled-scanned on every tiny SSE delta. codex-local checks ~every 500 bytes.
-_WATCH_STRIDE = 400
-
 
 # A kill can lose at most this much reasoning. Small enough that the tail of a thought survives,
 # large enough that streaming does not become one write syscall per token.
@@ -399,6 +395,10 @@ class Upstream:
             if loaded:
                 body["model"] = loaded
         self._reconcile_reasoning_convention(body, rlog)
+        from . import assistruntime
+        runtime = (assistruntime.current() if assistruntime.is_bound() else
+                   assistruntime.AssistRuntime.select(level=self._engagement_level))
+        wire_folds = runtime.wire_folds if self._context_fixes else ()
         out = {**body, "stream": stream}
         msgs = body.get("messages")
         if isinstance(msgs, list):
@@ -437,7 +437,9 @@ class Upstream:
             if window:
                 reserve = contextfloor.reserve_for(body)  # reads cria_output_reserve (stripped below)
                 tools_in = body.get("tools")
-                safety = safety_override if safety_override is not None else tokenratio.observed(body.get("model"))
+                from . import capacitypolicy
+                safety = (safety_override if safety_override is not None else
+                          capacitypolicy.fit_density(body.get("model"), runtime.capacity))
                 pinned = str(body.get(bodykeys.PINNED_TASK) or "")
                 # THE ONE-COPY FOLD (modelview.fold_evidence) NEVER RUNS BEFORE THE FLOOR DECIDES
                 # WHAT SURVIVES. A pointer says "the full copy is further down"; the floor may drop
@@ -446,7 +448,7 @@ class Upstream:
                 # outlive its target. So: size the body folded — that is what lets it fit WITHOUT
                 # trimming — and if the floor touched anything, discard that and fit the UNFOLDED
                 # conversation instead; the fold is applied once more below, over whatever survived.
-                trial = modelview.fold_evidence(msgs) if self._context_fixes else msgs
+                trial = modelview.fold_selected(modelview.WireInput(msgs), wire_folds).messages
                 fitted, tools, rep = contextfloor.fit(
                     trial, tools_in, window=window, reserve=reserve, safety=safety, pinned_task=pinned)
                 if trial is not msgs and fitted != trial:      # the floor removed or shrank a message
@@ -459,11 +461,6 @@ class Upstream:
                               **rep.as_event())
                 if rep.tools_compressed and tools is not None:
                     out["tools"] = tools  # send the bounded tool schema, not the fat original
-            # Native templates reparse historical arguments even on tool-free compaction calls.
-            # A length-ended argument must remain readable context, not poison every later request.
-            # At L0 only losslessly envelope the exact malformed bytes; argument recovery remains
-            # LEVEL 1. Never complete the command or change any valid historical call at L0.
-            msgs = massage.repair_history_tool_args(msgs, rlog, recover=self._tool_call_fixes)
             # UNCONDITIONAL tool-integrity: an orphan `tool` (its assistant call folded by self-compaction,
             # or dropped) 400s a strict template EVERY turn — and the floor's orphan strip runs only when
             # the request is OVER budget, so a fitting request ships the orphan. Convert it to `user` here,
@@ -477,11 +474,10 @@ class Upstream:
             if self._context_fixes:       # L0-L2 send what they were given (no context surgery)
                 msgs = modelview.retained_results_truth(msgs)
                 # Last, over what survived: every pointer's full copy is in `msgs` by construction.
-                msgs, _n = modelview.fold_repeats(msgs)
+                msgs = modelview.fold_selected(modelview.WireInput(msgs), wire_folds).messages
                 repeats = modelview.repeat_pointers(msgs) - repeat_ptrs_in
                 if repeats > 0:
                     rlog.emit("context.repeat_dedup", reshape="dedup", folded=repeats)
-                msgs = modelview.fold_check_runs(msgs)
             # C44 R1 (review 9eaadebe): THE WIRE INVARIANT. `indicators.PROSE_DROPPED_MARKER` must
             # never reach a model (#17: no literal "cria"-family token; #24: a wire invariant belongs
             # at the wire). `loop.reframe_compaction` and `server._strip_and_reframe_inbound` are the
@@ -498,10 +494,21 @@ class Upstream:
                     rlog.restored_on_wire = on_wire
                 except AttributeError:
                     pass
-            if self._context_fixes:
-                # Supersession ran before the floor. Settle over exact pairs after
-                # all content repairs/folds, before lossless role concatenation.
-                msgs = modelview.superseded_writes_truth(msgs)
+            # Existing promises are required settlement, not optional production.
+            # Keep the actual producer through copies/refits and later disabled scopes.
+            from . import focustrim
+            producers = body.get(bodykeys.FOCUS_PRODUCERS)
+            pending = any(isinstance(m.get(bodykeys.SUPERSEDED_WRITES), focustrim.SupersededWriteNotice)
+                          for m in msgs)
+            if pending and isinstance(producers, assistruntime.FocusWireBindings):
+                settlement = producers.definitions
+            elif pending:
+                # Genuine standalone canonical notices predate request binding. This
+                # qualifies their existing factual promise; it produces no history.
+                settlement = (focustrim.SUPERSESSION,)
+            else:
+                settlement = ()
+            msgs = focustrim.settle_focus(focustrim.FocusInput(msgs), settlement).messages
             msgs = _merge_consecutive_assistant(msgs)
             # THE LAST message transform, and last is the point. A template that enforces strict
             # user/assistant alternation ({user,tool} vs {assistant}) rejects the body outright, and
@@ -527,8 +534,20 @@ class Upstream:
             out["messages"] = [{k: v for k, v in m.items()
                                 if k not in (bodykeys.CALLER_INSTRUCTIONS, bodykeys.CALLER_PERSONA,
                                              bodykeys.CALLER_SPAN, bodykeys.RESTORED_FILES,
-                                             bodykeys.PAYLOAD_BOUNDARY, bodykeys.SUPERSEDED_WRITES)}
+                                             bodykeys.PAYLOAD_BOUNDARY, bodykeys.SUPERSEDED_WRITES,
+                                             bodykeys.FOCUS_PRODUCERS)}
                                if isinstance(m, dict) else m for m in out["messages"]]
+        # Historical arguments are a final-wire invariant: role merges/folds can
+        # introduce calls after any earlier repair. Optional recovery is selected
+        # once here; disabled/proxy calls still retain the exact malformed text in
+        # a valid, lossless envelope. Nothing below changes message contents.
+        if isinstance(out.get("messages"), list):
+            from . import assistruntime, historyarguments
+            runtime = (assistruntime.current() if assistruntime.is_bound() else
+                       assistruntime.AssistRuntime.select(level=self._engagement_level))
+            definition = historyarguments.selected_definition(runtime.definitions)
+            out["messages"] = historyarguments.prepare_history(
+                out["messages"], rlog, definition=definition, recover=self._tool_call_fixes)
         sent_estimate = contextfloor.est_total(out.get("messages"), out.get("tools"))
         # The pre-frame observer never rides in ``out``.  It is correlated here, after every wire
         # transform and internal-key strip, with the exact bytes about to be POSTed.  A non-coder
@@ -558,10 +577,14 @@ class Upstream:
                        "final_wire": {"sha256": hashlib.sha256(data).hexdigest(), "bytes": len(data)}}
         capture_path = None
         if self._capture_dir is not None:  # record EXACTLY what the model will see, per call
+            from .assistruntime import current
+            selection = current()
             rendered = (rendered if rendered is not None else self._render_prompt(out)) if self._capture_rendered else None
             capture_path = callcapture.capture(out, rlog, calls_dir=self._capture_dir,
                                                phase=phase, url=self._chat_url, rendered=rendered,
-                                               coder_preframe=receipt)
+                                               coder_preframe=receipt,
+                                               assist_selection={"selected": list(selection.selected),
+                                                                 "engagement_level": selection.engagement_level})
         if receipt is not None:
             rlog.emit("loop.coder_preframe_serialized", **receipt, capture_path=capture_path)
         return data, sent_estimate, capture_path
@@ -607,25 +630,12 @@ class Upstream:
         if shifted is not None:
             rlog.emit("context.calibrated", model=model, real=prompt_tokens, est=estimate, ratio=round(shifted, 2))
 
-    def _overflow_refit(self, err, sent_estimate: int, model, rlog) -> float | None:
-        """A 400 'exceeds context' means the floor under-budgeted THIS body (its density ran hotter
-        than the per-model average — a base64/blob-heavy turn). The server reports the REAL prompt
-        size (``n_prompt_tokens``); return the density factor (real÷estimate) that re-prepping with
-        will trim this exact body to fit, and feed it into the per-model average for future turns.
-        ``None`` when it isn't a refittable overflow (nothing to re-fit against)."""
-        if not isinstance(err, urllib.error.HTTPError):
-            return None
-        try:
-            payload = json.loads(_http_error_body(err))
-        except (ValueError, OSError, AttributeError):
-            return None
-        inner = payload.get("error") if isinstance(payload.get("error"), dict) else payload
-        real = inner.get("n_prompt_tokens") if isinstance(inner, dict) else None
-        if not real or not sent_estimate:
-            return None
-        tokenratio.record(model, real, sent_estimate)  # also nudge the running per-model average
+    def _observe_capacity(self, facts, model, rlog) -> None:
+        """Record authoritative counts/window; no optional refit choice or return value."""
+        real, n_ctx = facts.rejection.real, facts.rejection.window
+        sent_estimate = facts.prepared.estimate
+        tokenratio.record(model, real, sent_estimate)
         density = float(real) / float(sent_estimate)
-        n_ctx = inner.get("n_ctx") if isinstance(inner, dict) else None
         rlog.emit("context.refit", level="warn", model=model, real=real, est=sent_estimate,
                   n_ctx=n_ctx, safety=round(density, 2))
         # THE SERVER JUST STATED ITS WINDOW. It was being logged and thrown away while the floor ran
@@ -636,46 +646,56 @@ class Upstream:
                       was=(None if self._window is _UNSET else self._window))
             self._window, self._window_final = n_ctx, True
             self._window_guessed = False
-        return density
 
-    def _open_with_refit(self, body: dict, stream: bool, rlog) -> tuple:
-        """Prep + POST the request, with ONE context-overflow REFIT-retry. cria's whole job is to
-        make every request fit the window; if the floor still under-budgets a hot-density turn and
-        the server 400s, re-fit to the REAL token count it reports and retry ONCE — so the harness
-        never sees the 400 (its blind same-body retries can't converge fast enough). Returns the
-        open ``(resp, sent_estimate, capture_path)``; raises ``UpstreamError`` on any other failure."""
-        safety_override: float | None = None
-        sent_data: bytes | None = None
-        last_err: BaseException | None = None
-        caller_refit = body.get(bodykeys.CONTEXT_REFIT_NO_CHANGE)
-        for attempt in range(2):
-            data, sent_estimate, capture_path = self._prep(body, stream, rlog, safety_override=safety_override)
-            if attempt == 0 and isinstance(caller_refit, ContextRefitNoChange) and data == caller_refit.final_wire:
-                # ``summarize`` supplies this private provenance only for its single forced-off
-                # retry after a real parsed context rejection whose inner refit already could not
-                # change the wire.  Compare HERE, after ordinary Role.apply/_prep, so a changed
-                # role, tool schema, floor result, reserve, or model discovery remains a real POST.
-                rlog.emit("upstream.caller_retry_no_change", level="warn", bytes=len(data),
-                          model=body.get("model"), est=sent_estimate)
-                raise CallerContextRetryNoChange(caller_refit, data) from caller_refit
-            if attempt and data == sent_data:
-                # A REFIT THAT CHANGES NOTHING IS NOT A RETRY. The floor's lever is dropping whole
-                # oldest turns, and a COMPOSED two-message prompt — a compaction request, a judge
-                # question — has none to drop, so re-prepping it against any density returns the same
-                # bytes. Measured over 12 days: 59 `context.refit` events and 59 HTTP 400s, an exact
-                # match, with the re-run floor logging `msg_before == msg_after` and `over_budget` on
-                # 59 of 59. Byte-identical proof in the captures: 20260820T133651 calls 0005 and 0006,
-                # 379,391 bytes each, `cmp` clean; 20260813T180510 sent the same 167,617-byte prompt
-                # 12 times in ~70 seconds. 3,230,841 prompt tokens re-sent to a guaranteed 400.
-                #
-                # The window learned from the 400 is kept — that is the durable half of the refit and
-                # it makes every LATER turn fit. Only the re-send is dropped.
-                rlog.emit("upstream.refit_no_change", level="warn", bytes=len(data),
-                          model=body.get("model"), est=sent_estimate)
-                rlog.emit("upstream.error", level="error", url=self._chat_url, error=str(last_err))
-                err = ContextRefitNoChange(last_err, data)
-                raise err from last_err
-            sent_data = data
+    def _open_with_refit(self, body: dict, stream: bool, rlog, *, _transport=None) -> tuple:
+        """Selected capacity policy over required final preparation and single-send custody."""
+        from . import assistruntime, capacitypolicy
+        runtime = (assistruntime.current() if assistruntime.is_bound() else
+                   assistruntime.AssistRuntime.select(level=self._engagement_level))
+        transport = ((self._receive_open, urllib.request.urlopen)
+                     if _transport is None else _transport)
+        sends = 0
+
+        def prepare(safety):
+            return capacitypolicy.Prepared(*self._prep(body, stream, rlog, safety_override=safety))
+
+        def send(prepared):
+            nonlocal sends
+            attempt = sends
+            sends += 1
+            return self._send_capacity(prepared, body, stream, rlog, attempt, runtime, transport)
+
+        def observe(facts):
+            self._observe_capacity(facts, body.get('model'), rlog)
+
+        def no_change(source, wire):
+            rlog.emit('upstream.error', level='error', url=self._chat_url, error=str(source))
+            return ContextRefitNoChange(source, wire)
+
+        services = capacitypolicy.Services(
+            prepare, send, observe, rlog.emit,
+            lambda value: (capacitypolicy.NoChangeProvenance(value, value.final_wire)
+                           if isinstance(value, ContextRefitNoChange) else None),
+            no_change, CallerContextRetryNoChange)
+        with assistruntime.bound(runtime):
+            result = capacitypolicy.dispatch(services, runtime.capacity,
+                caller_refit=body.get(bodykeys.CONTEXT_REFIT_NO_CHANGE),
+                model=lambda: body.get('model'))
+        if isinstance(result.outcome, capacitypolicy.Accepted):
+            return result.outcome.response, result.prepared.estimate, result.prepared.capture_path
+        e = result.outcome.source
+        rlog.emit('upstream.error', level='error', url=self._chat_url, error=str(e))
+        error_class = (UpstreamProtocolError if generation.is_protocol_error(
+            getattr(e, 'response_error', None)) else UpstreamError)
+        err = error_class(str(e), getattr(e, 'response_error', None))
+        err.code = getattr(e, 'code', None)
+        raise err from e
+
+    def _send_capacity(self, prepared, body, stream, rlog, attempt, runtime, transport):
+        """One transport open; custody and parsed facts never grant optional retry authority."""
+        from . import assistruntime, capacitypolicy
+        data, sent_estimate, capture_path = prepared.wire, prepared.estimate, prepared.capture_path
+        with assistruntime.bound(runtime):
             req = urllib.request.Request(self._chat_url, data=data, method="POST", headers=self._headers(sse=stream))
             rlog.emit("upstream.request", url=self._chat_url, model=body.get("model"),
                       stream=stream, n_messages=len(body.get("messages", [])), refit=(attempt > 0))
@@ -709,11 +729,12 @@ class Upstream:
                     raise receivecapture.CaptureFailure('configured request capture unavailable; no dispatch')
                 receipt = (receivecapture.Receipt(capture_path, request_sha256=hashlib.sha256(data).hexdigest())
                            if capture_path is not None else None)
-                opening = self._receive_open or receivecapture.default_open_request
+                receive_open, ordinary_open = transport
+                opening = receive_open or receivecapture.default_open_request
                 try:
-                    if self._receive_open is None and self._capture_dir is None:
-                        # Capture-off retains the actual installed urllib policy unchanged.
-                        resp = urllib.request.urlopen(req, timeout=max(read_deadline, 1.0))
+                    if receive_open is None and self._capture_dir is None:
+                        # Capture-off retains the transport captured for this operation.
+                        resp = ordinary_open(req, timeout=max(read_deadline, 1.0))
                     else:
                         resp = opening(req, timeout=max(read_deadline, 1.0), receipt=receipt)
                 except BaseException as exc:
@@ -722,9 +743,8 @@ class Upstream:
                         if not isinstance(exc, urllib.error.HTTPError):
                             receipt.finish(exc)
                     raise
-                return resp, sent_estimate, capture_path
+                return capacitypolicy.Accepted(resp)
             except urllib.error.URLError as e:
-                last_err = e
                 failed_custody = False
                 if isinstance(e, urllib.error.HTTPError):
                     from .receivecapture import finalize_http_error
@@ -739,16 +759,17 @@ class Upstream:
                             receipt.partial(secondary)
                     finally:
                         failed_custody = finalize_http_error(e, receipt) or failed_custody
-                refit = (self._overflow_refit(e, sent_estimate, body.get("model"), rlog)
-                         if attempt == 0 and not failed_custody else None)
-                if refit is not None:
-                    safety_override = refit  # re-prep tighter against the server's real count, retry
-                    continue
-                rlog.emit("upstream.error", level="error", url=self._chat_url, error=str(e))
-                error_class = UpstreamProtocolError if generation.is_protocol_error(getattr(e, "response_error", None)) else UpstreamError
-                err = error_class(str(e), getattr(e, "response_error", None))
-                err.code = getattr(e, "code", None)  # carry the real HTTP status for classify_failure
-                raise err from e
+                real = window = None
+                if isinstance(e, urllib.error.HTTPError) and not failed_custody:
+                    try:
+                        payload = json.loads(_http_error_body(e))
+                        inner = payload.get('error') if isinstance(payload.get('error'), dict) else payload
+                        if isinstance(inner, dict):
+                            real, window = inner.get('n_prompt_tokens'), inner.get('n_ctx')
+                    except (ValueError, OSError, AttributeError):
+                        pass
+                return capacitypolicy.Rejection(e, isinstance(e, urllib.error.HTTPError),
+                                                real, window, not failed_custody)
 
     def _render_prompt(self, body: dict) -> str | None:
         """Ask the server to render the chat body into the flat prompt string the model actually
@@ -796,11 +817,34 @@ class Upstream:
             return None
 
     def stream_chat(self, body: dict, rlog) -> Iterator[bytes]:
+        """Capture request selection now, not when a delayed iterator starts."""
+        from . import assistruntime
+        runtime = (assistruntime.current() if assistruntime.is_bound() else
+                   assistruntime.AssistRuntime.select(level=self._engagement_level))
+        transport = (self._receive_open, urllib.request.urlopen)
+        iterator = self._stream_chat(body, rlog, _transport=transport)
+
+        def selected_stream():
+            try:
+                while True:
+                    with assistruntime.bound(runtime):
+                        try:
+                            item = next(iterator)
+                        except StopIteration:
+                            return
+                    yield item
+            finally:
+                with assistruntime.bound(runtime):
+                    iterator.close()
+        return selected_stream()
+
+    def _stream_chat(self, body: dict, rlog, *, _transport) -> Iterator[bytes]:
         """POST a streaming chat completion and yield raw SSE lines (bytes) for the
         caller to forward. Emits ``upstream.request`` / ``upstream.first_token`` /
         ``upstream.done`` with TTFT + tok/s. Token count uses the upstream ``usage``
         block when present, else counts content deltas as a proxy."""
-        resp, sent_estimate, capture_path = self._open_with_refit(body, True, rlog)
+        resp, sent_estimate, capture_path = self._open_with_refit(
+            body, True, rlog, _transport=_transport)
         t0 = time.monotonic()
         t_first: float | None = None
         content_chunks = 0
@@ -867,6 +911,16 @@ class Upstream:
             )
 
     def chat(self, body: dict, rlog) -> bytes:
+        """Capture the operation's selection and bound retry services before its first attempt."""
+        from . import assistruntime
+        runtime = (assistruntime.current() if assistruntime.is_bound() else
+                   assistruntime.AssistRuntime.select(level=self._engagement_level))
+        opening, sleeper = self._open_with_refit, time.sleep
+        transport = (self._receive_open, urllib.request.urlopen)
+        with assistruntime.bound(runtime):
+            return self._chat(body, rlog, runtime, opening, sleeper, transport)
+
+    def _chat(self, body: dict, rlog, runtime, opening, sleeper, transport) -> bytes:
         """Non-streaming: return the full upstream response body (bytes).
 
         Retries the SAME endpoint ONCE on a transient TIMEOUT (a slow-prefill / connection-reset on
@@ -885,23 +939,32 @@ class Upstream:
                 # open captures just the body READ (~ms) — tokens/that = millions of tok/s. Measuring
                 # from before the open gives the real end-to-end generation time.
                 t0 = time.monotonic()
-                resp, sent_estimate, capture_path = self._open_with_refit(body, False, rlog)
+                resp, sent_estimate, capture_path = opening(body, False, rlog, _transport=transport)
                 try:
                     raw = resp.read()
                 finally:
                     resp.close()
                 break
             except (UpstreamError, OSError) as e:  # OSError → socket read-timeout mid-response
+                # Proven capacity no-change is terminal regardless of provider wording.
+                # Preserve the original typed exception before any transient classification.
+                if isinstance(e, (ContextRefitNoChange, CallerContextRetryNoChange)):
+                    raise
                 if generation.is_protocol_error(getattr(e, "response_error", None)):
                     raise
-                action = failover.decide_action(
-                    failover.classify_failure(getattr(e, "code", None), str(e)),  # real 429/408 status, not None
-                    "upstream", "upstream", ("upstream",), attempt)
+                from . import transientpolicy
+                choice = transientpolicy.selected_choice(runtime.transient_recovery,
+                    lambda: transientpolicy.FailureFacts(
+                        failover.classify_failure(getattr(e, 'code', None), str(e)),
+                        'upstream', 'upstream', ('upstream',), attempt))
+                if choice is None:
+                    raise
+                action = choice.action
                 if not isinstance(action, failover.RetrySame):
                     raise
                 attempt = action.attempt
                 rlog.emit("upstream.retry", level="warn", attempt=attempt, wait_ms=action.wait_ms, error=str(e))
-                time.sleep(action.wait_ms / 1000.0)
+                sleeper(action.wait_ms / 1000.0)
         t_end = time.monotonic()
         usage = (_try_json(raw) or {}).get("usage")
         self._calibrate(body.get("model"), usage, sent_estimate, rlog)
@@ -926,8 +989,9 @@ class Upstream:
         verdict so the caller can re-prompt.
 
         Only reasoning/content is watched — a large ``write_file`` streams as tool-call ARGUMENTS,
-        so it never trips the watcher; only runaway thinking does. With ``watch=None`` this is just a
-        streaming call assembled into a buffered response."""
+        so it never trips the watcher; only runaway thinking does. ``watch=None`` disables only the
+        reasoning scanner; selected stream backstops remain active. Explicit policy absence disables
+        those optional decisions too, without disabling transport safety."""
         # Ask for the usage block on the terminal chunk (llama.cpp honors this) so the assembled
         # completion carries real completion_tokens — the truncation guard reports them to the model.
         body = {**body, "stream_options": {"include_usage": True}}
@@ -945,28 +1009,10 @@ class Upstream:
         stream_error: str | dict | None = None
         generation_evidence = {}
         wire_raw = bytearray()
-        watched_len = 0
-        gen_tail = ""  # rolling tail of ALL generated chars (incl. tool-call args) for the degenerate-run backstop
-        wide_tail = ""      # the same tail, 32 KB of it, for the strided wide-unit check
-        wide_evaled = 0     # chars of wide_tail seen at the last wide evaluation
         chunks_seen = 0     # SSE frames carrying a choices delta
         streamed_chars = 0  # of those, how many characters cria could actually read
-        # The room this generation has: the model's window minus what the prompt already spent.
-        #
-        # ONLY WHEN THE WINDOW IS NOT A GUESS. `_resolve_window` returns a deliberately conservative
-        # FALLBACK when /props cannot be read, and computing room from a guess would abort real
-        # generations on a model whose true window is six times larger — the "cap output" footgun
-        # principle 6 exists to forbid, arrived at by arithmetic instead of by a constant. A test
-        # caught exactly that: a legitimate 31,735-character reasoning block tripped it against the
-        # 8,192 fallback.
-        #
-        # But this gated on `_window_final`, which answers "stop probing", not "is this number real".
-        # A window learned from a prompt the server ACCEPTED (`_window_at_least`) is measured and not
-        # final, and under the old test the guard stayed off for it — off, that is, in precisely the
-        # sessions where /props was unreachable and a runaway was most likely to go unnoticed.
-        # `_window_guessed` asks the question that matters: did cria invent this number?
-        _win = self._resolve_window(rlog) or 0
-        window_room = max(0, _win - sent_estimate) if (_win and not self._window_guessed) else 0
+        from . import assistruntime, generationguards
+        stream_guard = None
         saved = False  # the reasoning has been written by an early-exit path; do not write it twice
         # LIVE generation counters for the status ticker's beat tick (operator asked for tok/s on the
         # in-between lines): the beat thread reads these while this call streams. Benign racy reads
@@ -974,6 +1020,13 @@ class Upstream:
         rlog.live_t0 = t0
         rlog.live_chars = 0
         try:
+            runtime = (assistruntime.current() if assistruntime.is_bound() else
+                       assistruntime.AssistRuntime.select(level=self._engagement_level))
+            selected = generationguards.SelectedGuards.from_definitions(runtime.definitions)
+            if self._engagement_level < config.DONE_REFUSALS_ENABLED:
+                selected = generationguards.SelectedGuards(None, None)
+            stream_guard = selected.stream(lambda: generationguards.StreamInput(
+                self._resolve_window(rlog), sent_estimate, self._window_guessed, watch))
             for raw in resp:
                 wire_raw.extend(raw)
                 if not raw.startswith(b"data:"):
@@ -1019,99 +1072,30 @@ class Upstream:
                     for frag in (delta.get("content"), rc,
                                  *(((tc.get("function") or {}).get("arguments")) for tc in (tcs or []))):
                         if frag:
-                            gen_tail = (gen_tail + frag)[-rumination.DEGENERATE_RUN_CHARS:]
-                            wide_tail = (wide_tail + frag)[-rumination.WIDE_RUN_CHARS:]
                             streamed_chars += len(frag)   # anything cria could actually read
                             rlog.live_chars += len(frag)  # the ticker's live tok/s numerator
                     if choice.get("finish_reason"):
                         finish = choice["finish_reason"]
                 if obj.get("usage"):
                     usage = obj["usage"]
-                # Degenerate-run backstop (independent of the rumination watcher: it fires even on a
-                # tool-arg runaway and even when watch is None). A tail of identical chars = a stuck
-                # stream — abort so the caller re-prompts instead of burning the window to a dead turn.
-                # DEAD STREAM. Chunks keep coming and nothing cria can read is in them — no
-                # content, no reasoning, no tool-call fragment. See rumination.DEAD_STREAM_CHUNKS for
-                # the call this was measured on: 42,744 tokens and 11.7 minutes to an empty message,
-                # stopped only by n_ctx. It is not a cap: a real write_file accumulates from its
-                # first delta and never reaches this, which is exactly why the rumination watcher can
-                # afford to skip arguments.
-                # WINDOW EXHAUSTED. The generation has used effectively all the room it will ever
-                # get, so the server is about to stop it with finish_reason=length and the result is
-                # discarded. Aborting here keeps nothing from surviving that would have; what it buys
-                # is a LABELLED turn with a notice the coder can act on. See
-                # rumination.WINDOW_EXHAUSTED_FRACTION for the three cycle-3 measurements.
-                # COUNTED IN FRAMES, NOT IN CHARACTERS CRIA MANAGED TO READ. The first cut of this
-                # used `streamed_chars // 4` and did not fire on the very call it was built for
-                # (cycle 3 cell 1 re-run, 43,873 tokens against 43,932 of room): the tokens were
-                # arriving in a delta shape the reader does not accumulate, so the character counter
-                # stayed far behind the token count while the server happily emitted 43,873 of them.
-                # A frame that carried a choices delta is the server saying "here is a token" — it is
-                # true whatever the delta contains, which is exactly the property a backstop needs.
-                if aborted is None and window_room > 0 and \
-                        chunks_seen >= window_room * rumination.WINDOW_EXHAUSTED_FRACTION:
-                    aborted = {"window_exhausted": True, "room": window_room, "frames": chunks_seen}
-                    rlog.emit("rumination.abort", steer="rumination", level="warn", window_exhausted=True,
-                              room=window_room, frames=chunks_seen)
-                    break
-                if aborted is None and streamed_chars == 0 and chunks_seen >= rumination.DEAD_STREAM_CHUNKS:
-                    aborted = {"dead_stream": True, "chunks": chunks_seen}
-                    rlog.emit("rumination.abort", steer="rumination", level="warn", dead_stream=True,
-                              chunks=chunks_seen)
-                    break
-                # …AND THE SAME DEATH WITH TOO FEW CHUNKS TO COUNT. The condition above needs 400
-                # frames; the measured call delivered fewer than that in twelve and a half minutes
-                # while the server generated 43,442 tokens. Every other guard here thresholds on
-                # arrivals too, so all four stayed silent for the whole call. The clock is the one
-                # signal a quiet server cannot suppress. See rumination.DEAD_STREAM_SECONDS.
-                if aborted is None and streamed_chars == 0 and \
-                        time.monotonic() - t0 >= rumination.DEAD_STREAM_SECONDS:
-                    elapsed = round(time.monotonic() - t0, 1)
-                    aborted = {"dead_stream": True, "chunks": chunks_seen, "seconds": elapsed}
-                    rlog.emit("rumination.abort", steer="rumination", level="warn", dead_stream=True,
-                              chunks=chunks_seen, seconds=elapsed)
-                    break
-                # THE WIDE UNIT, on a stride. The cheap check above cannot see a repeating block
-                # larger than 682 characters; cell 4's was 6,664 — a whole Java file re-emitted —
-                # and the correct answer it had already finished was discarded twelve minutes later
-                # by the window backstop. See rumination.WIDE_RUN_CHARS.
-                if aborted is None and len(wide_tail) - wide_evaled >= rumination.WIDE_EVAL_STRIDE:
-                    wide_evaled = len(wide_tail)
-                    if rumination.degenerate_wide(wide_tail):
-                        aborted = {"degenerate": True, "chars": len(wide_tail)}
-                        rlog.emit("rumination.abort", steer="rumination", level="warn", degenerate=True,
-                                  chars=len(wide_tail), wide=True)
+                if stream_guard is not None:
+                    decision = stream_guard.feed(obj, lambda: time.monotonic() - t0,
+                                                 lambda: "".join(reasoning), lambda: "".join(content), rlog)
+                    if decision.status is generationguards.StreamStatus.ABORT:
+                        aborted = decision.verdict
                         break
-                if aborted is None and rumination.degenerate_tail(gen_tail):
-                    # No `hits` and no `reasoning_tokens`: this detector counts NEITHER. It used to
-                    # report hits=0 and pass len(gen_tail) — a CHARACTER count — as reasoning_tokens,
-                    # and the notice built from that told the coder it "hit 0 second-guessing phrases
-                    # after ~2048 reasoning tokens". A guard must not invent the numbers it fired on.
-                    aborted = {"degenerate": True, "chars": len(gen_tail)}
-                    rlog.emit("rumination.abort", steer="rumination", level="warn", degenerate=True, chars=len(gen_tail))
-                    break
-                if watch is not None and aborted is None:
-                    # Watch reasoning if the server splits it out; else the content stream (a
-                    # runaway that never calls a tool). Tool-call args are excluded on purpose.
-                    watch_text = "".join(reasoning) or "".join(content)
-                    if len(watch_text) - watched_len >= _WATCH_STRIDE:
-                        watched_len = len(watch_text)
-                        verdict = watch(watch_text, len(watch_text) // 4)
-                        if verdict:
-                            aborted = verdict
-                            rlog.emit("rumination.abort", steer="rumination", level="warn",
-                                      hits=verdict.get("hits"), reasoning_tokens=verdict.get("reasoning_tokens"))
-                            break  # drop the receiver → server stops generating, slot freed
         except TimeoutError as e:
-            # THE WIRE DEADLINE FIRED (see _open_with_refit). Same fact as the in-loop dead-stream
-            # check, reached by the one route a silent server cannot close, so it must produce the
-            # same OUTCOME: a completion carrying `finish_reason="rumination"` the caller re-prompts
-            # from — not an exception that surfaces as a 502 and hands the harness a blind retry of
-            # the body that just stalled (#13, fail open toward continuing work).
+            # The mandatory socket deadline survives optional-policy opt-out.
+            # A selected guard owns the abort verdict; without one, preserve an
+            # incomplete-stream error and its raw evidence, never new coaching.
             elapsed = round(time.monotonic() - t0, 1)
-            aborted = {"dead_stream": True, "chunks": chunks_seen, "seconds": elapsed, "wire": True}
-            rlog.emit("rumination.abort", steer="rumination", level="warn", dead_stream=True, wire=True,
-                      chunks=chunks_seen, seconds=elapsed, error=str(e))
+            if stream_guard is not None:
+                aborted = stream_guard.wire_timeout(elapsed, str(e), rlog).verdict
+            else:
+                # The socket deadline is required transport safety, not consent
+                # to optional coaching. Preserve the incomplete-stream error path.
+                finish = None
+                generation_evidence["wire_timeout"] = {"seconds": elapsed, "error": str(e)}
             self._save_reasoning(capture_path, "".join(reasoning), aborted, rlog,
                                  ending=f"the wire went silent for {elapsed}s and the read was cut")
             saved = True

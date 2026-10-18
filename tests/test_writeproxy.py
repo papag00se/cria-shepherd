@@ -616,7 +616,15 @@ class WebFetchEnvelopeTests(unittest.TestCase):
 
     def test_web_fetch_result_stripped_end_to_end(self):
         comp = _call("web_fetch", {"url": "https://api.handle.me/openapi.json"}, cid="c7")
-        translate_outbound(comp, _CMD_SHELL, injected={"web_fetch"})
+        with mock.patch.dict(webfetch._DOC_CACHE, {}, clear=True), \
+                mock.patch.object(webfetch, "fetch", return_value=webfetch.FetchResult(
+                    200, "https://api.handle.me/openapi.json", "application/json",
+                    '{"openapi":"3.0.3"}', False)) as fetch, \
+                mock.patch("urllib.request.urlopen", side_effect=AssertionError(
+                    "unexpected fixture network")) as network:
+            translate_outbound(comp, _CMD_SHELL, injected={"web_fetch"})
+        fetch.assert_called_once_with("https://api.handle.me/openapi.json", None)
+        network.assert_not_called()
         hist = _history_from(comp) + [{"role": "tool", "tool_call_id": "c7", "content": self._ENVELOPE}]
         out = represent_inbound(hist)
         self.assertEqual(out[0]["tool_calls"][0]["function"]["name"], "web_fetch")   # name restored
@@ -1039,12 +1047,18 @@ class SpillLedgerAcrossWorkspacesTests(unittest.TestCase):
     def setUp(self):
         webfetch.clear_cache()
         webfetch._FETCH_SPILLED.clear()
+        from cria.loop import LoopStore
+        self._store = LoopStore()
+        self._owner = self._store.get_guard("task:same-prompt", create=True)
+        self._last_completion = None
 
-    def _lower(self, workspace):
-        comp = {"choices": [{"message": {"tool_calls": [{"id": "1", "type": "function", "function": {
+    def _lower(self, workspace, *, cid="1"):
+        comp = {"choices": [{"message": {"tool_calls": [{"id": cid, "type": "function", "function": {
             "name": "web_fetch", "arguments": json.dumps({"url": "https://api.example.com/openapi.json"})}}]}}]}
         out = translate_outbound(comp, _ARR_SHELL, None, injected={"web_fetch"},
-                                 session="task:same-prompt", workspace_root=workspace)
+                                 session="task:same-prompt", workspace_root=workspace,
+                                 externalization_owner=self._owner)
+        self._last_completion = out
         return (out["choices"][0]["message"]["tool_calls"][0]["function"]["arguments"])
 
     def test_a_spill_from_another_workspace_does_not_refuse_a_first_fetch(self):
@@ -1054,24 +1068,49 @@ class SpillLedgerAcrossWorkspacesTests(unittest.TestCase):
             return webfetch.FetchResult(200, url, "application/json", body, False)
 
         with tempfile.TemporaryDirectory() as ws1, tempfile.TemporaryDirectory() as ws2, \
-                mock.patch.object(webfetch, "fetch", _stub):
+                mock.patch.object(webfetch, "fetch", _stub), \
+                mock.patch("urllib.request.urlopen", side_effect=AssertionError("unexpected fixture network")) as network:
             first = self._lower(ws1)
             self.assertIn(webfetch.SPILL_DIR, first)   # run 1 spills the doc into ITS workspace
             self._run_the_cp(first, ws1)
-            second = self._lower(ws2)                  # run 2: same session key, different workspace
+            second = self._lower(ws2, cid="2")          # fresh request, same session, different workspace
         self.assertNotIn("You already fetched", second,
                          "cria refused a first fetch by pointing at another run's file")
+        network.assert_not_called()
 
     def _run_the_cp(self, lowered, ws):
-        """cria EMITS the spill as a command; the HARNESS runs it. Existence is only a fact once it
-        has — which is why the check is worth making: a sandbox-rejected spill now re-spills instead
-        of pointing the model at a file that was never written."""
-        # Derived, not spelled out: the spill NAME is webfetch's to choose (it gained a mandatory
-        # `.txt` when a fetched `…decimal.go` got compiled by `go build ./...`), and a hard-coded
-        # copy of it here silently stops writing the file the guard looks for.
-        target = pathlib.Path(ws) / webfetch._spill_name("https://api.example.com/openapi.json").lstrip("./")
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text("the spilled document")
+        """Retain the actual offer, execute its bounded producer, then ingest actual raw output."""
+        import re
+        import shlex
+        completion = self._last_completion
+        call = completion["choices"][0]["message"]["tool_calls"][0]
+        self.assertEqual(lowered, call["function"]["arguments"])
+        command = writeproxy._command_of(lowered)
+        sentinel, rest = command.split("\n", 1)
+        header, rest = rest.split("\n", 1)
+        encoded, tail = rest.split("\n__CRIA_SPILL__\n", 1)
+        self.assertRegex(sentinel, r"^# ⟦ctx:tool⟧[A-Za-z0-9+/=]+$")
+        self.assertEqual(header, "if mkdir -p ./tmp/reference && base64 -d > "
+            "./tmp/reference/api.example.com_openapi.json.txt <<'__CRIA_SPILL__'")
+        self.assertIsNotNone(re.fullmatch(r"[A-Za-z0-9+/=\n]+", encoded))
+        lexer = shlex.shlex(tail, posix=True, punctuation_chars=";")
+        lexer.whitespace_split = True
+        tokens = list(lexer)
+        self.assertEqual(tokens[:3] + tokens[4:7] + tokens[8:],
+            ["then", "printf", "%s", ";", "printf", r"\n%s\n", ";", "else", "exit", "1", ";", "fi"])
+        self.assertEqual(len(tokens), 14)
+        self.assertFalse(os.environ.get("BASH_ENV"))
+        self.assertFalse(any(k.startswith("BASH_FUNC_") for k in os.environ))
+        writeproxy.retain_externalizations(self._owner, completion)
+        result = subprocess.run(["bash", "-c", command], cwd=ws, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stderr, "")
+        history = _history_from(completion) + [{"role": "tool", "tool_call_id": call["id"],
+            "content": f"Process exited with code {result.returncode}\nOutput:\n{result.stdout}"}]
+        writeproxy.observe_externalization_results(self._store.get_guard("task:same-prompt"), history)
+        represented = represent_inbound(history, workspace_root=ws, sess_key="task:same-prompt")
+        self.assertIn("⟦ctx:stored⟧", result.stdout)
+        self.assertNotIn("⟦ctx:stored⟧", represented[-1]["content"])
 
     def test_the_same_workspace_is_still_refused_a_whole_re_fetch(self):
         """The guard this fix works around is real and must survive: a doc cria DID write into THIS
@@ -1081,11 +1120,13 @@ class SpillLedgerAcrossWorkspacesTests(unittest.TestCase):
         def _stub(url, user_agent=None):
             return webfetch.FetchResult(200, url, "application/json", body, False)
 
-        with tempfile.TemporaryDirectory() as ws, mock.patch.object(webfetch, "fetch", _stub):
+        with tempfile.TemporaryDirectory() as ws, mock.patch.object(webfetch, "fetch", _stub), \
+                mock.patch("urllib.request.urlopen", side_effect=AssertionError("unexpected fixture network")) as network:
             first = self._lower(ws)
             self._run_the_cp(first, ws)
-            again = self._lower(ws)
+            again = self._lower(ws, cid="2")
             self.assertIn("You already fetched", again)
+            network.assert_not_called()
 
     def test_a_spilled_file_the_model_deleted_is_not_claimed_to_exist(self):
         body = json.dumps(self.PAGE)
@@ -1093,14 +1134,16 @@ class SpillLedgerAcrossWorkspacesTests(unittest.TestCase):
         def _stub(url, user_agent=None):
             return webfetch.FetchResult(200, url, "application/json", body, False)
 
-        with tempfile.TemporaryDirectory() as ws, mock.patch.object(webfetch, "fetch", _stub):
+        with tempfile.TemporaryDirectory() as ws, mock.patch.object(webfetch, "fetch", _stub), \
+                mock.patch("urllib.request.urlopen", side_effect=AssertionError("unexpected fixture network")) as network:
             first = self._lower(ws)
             self._run_the_cp(first, ws)
             for f in pathlib.Path(ws).rglob("*"):
                 if f.is_file():
                     f.unlink()
-            again = self._lower(ws)
+            again = self._lower(ws, cid="2")
         self.assertNotIn("You already fetched", again)
+        network.assert_not_called()
 
 
 class WriteTempEscapesWorkspaceTests(unittest.TestCase):

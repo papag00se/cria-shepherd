@@ -22,6 +22,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from . import bodykeys
+from .privatepaths import CRIA_HOME
 from . import jsontext, prompts, reasoning
 
 # --- The engagement ladder ---------------------------------------------------------------
@@ -54,7 +55,6 @@ CWD_CONFIG = "cria.toml"            # the workspace's own overrides (relative to
 # dual of the no-workspace-pollution rule — the driven MODEL must never read or write in here (the
 # writeproxy refuses synthetic-tool paths that resolve into it), so it can't leak cria's secrets or
 # clobber cria's state by writing a stray file.
-CRIA_HOME = Path("~/.cria").expanduser()
 
 
 @dataclass(frozen=True)
@@ -568,6 +568,18 @@ class PlannerConfig:
 
 
 @dataclass(frozen=True)
+class AssistConfig:
+    """Atomic opt-outs for the executable pilots only; other policies are unchanged."""
+    disabled: tuple[str, ...] = ()
+
+    def __post_init__(self):
+        from .assistruntime import validate_selection_ids
+        if not isinstance(self.disabled, tuple) or any(not isinstance(x, str) for x in self.disabled):
+            raise ValueError("[assists] disabled must be an array of atomic IDs")
+        validate_selection_ids(self.disabled)
+
+
+@dataclass(frozen=True)
 class Config:
     server: ServerConfig = field(default_factory=ServerConfig)
     upstream: UpstreamConfig = field(default_factory=UpstreamConfig)
@@ -578,11 +590,16 @@ class Config:
     context: ContextConfig = field(default_factory=ContextConfig)
     safety: SafetyConfig = field(default_factory=SafetyConfig)
     planner: PlannerConfig = field(default_factory=PlannerConfig)
+    assists: AssistConfig = field(default_factory=AssistConfig)
     # Path to an env file cria loads at startup so it has its secrets (Brave key, provider keys)
     # no matter how it's launched — a systemd service does NOT source a shell `.env`. Values the
     # environment already provides win; a missing file is not an error. See cria/envfile.py.
     env_file: str | None = None
     source: str | None = None  # the file this was loaded from (None = all defaults)
+
+    def __post_init__(self):
+        from .assistruntime import AssistRuntime
+        AssistRuntime.select(level=self.routing.engagement_level, disabled=self.assists.disabled)
 
     @classmethod
     def load(cls, path: str | os.PathLike[str] | None = None) -> "Config":
@@ -623,6 +640,7 @@ class Config:
                 satisfaction_check_every=int(data.get("context", {}).get("satisfaction_check_every", 25)),
             ),
             safety=_safety(data.get("safety", {})),
+            assists=_assists(data.get("assists", {})),
             planner=PlannerConfig(
                 enabled=bool(data.get("planner", {}).get("enabled", False)),
                 max_gather_rounds=int(data.get("planner", {}).get("max_gather_rounds", 12)),
@@ -630,6 +648,15 @@ class Config:
             env_file=(str(data["env_file"]) if data.get("env_file") else None),
             source=source,
         )
+
+
+def _assists(data: dict) -> AssistConfig:
+    if not isinstance(data, dict) or set(data) - {"disabled"}:
+        raise ValueError("[assists] supports only disabled pilot atomic IDs")
+    disabled = data.get("disabled", [])
+    if not isinstance(disabled, list) or any(not isinstance(x, str) for x in disabled):
+        raise ValueError("[assists] disabled must be an array of atomic IDs")
+    return AssistConfig(tuple(disabled))
 
 
 def _read_toml(p: Path) -> dict:

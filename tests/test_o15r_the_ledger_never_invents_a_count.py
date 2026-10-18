@@ -8,7 +8,7 @@ import pathlib
 
 import pytest
 
-from cria import denial, loop, prompts, wsview, writeproxy
+from cria import denial, loop, prompts, wsview, writeproxy, returnedpolicies, toolstages
 from tests.test_o15_the_ledger_basis_is_the_latest_touch import (
     JAVA, WHOLE, _call, _ledger, _line_with, _numbered, _res, _view_of)
 from tests.test_c13b_the_wire_claims_are_true import ROOT
@@ -119,7 +119,7 @@ def test_literal_marker_text_in_a_real_file_is_counted_as_the_file():
 
 def test_a_missing_dependency_note_is_not_counted():
     msgs = [_call("r", path="error.log"), _res("r", "ModuleNotFoundError: No module named 'example_pkg'\n")]
-    writeproxy._note_missing_dependency(msgs, None, None)
+    returnedpolicies._note_missing_dependency(toolstages.ReturnedHistory(msgs, {}, None, '', True))
     assert "Note" in msgs[1]["content"] or len(msgs[1]["content"]) > 60
     assert loop._extract_reads(msgs)["error.log"][1] == "1 lines"
 
@@ -218,7 +218,7 @@ def test_redaction_carries_the_boundary_forward_and_the_note_is_not_counted():
     from tests.test_o15_the_ledger_basis_is_the_latest_touch import _call, _res
     payload = "ModuleNotFoundError: No module named 'example_pkg'\n"
     msgs = [_call("r", path="error.log"), _res("r", payload)]
-    writeproxy._note_missing_dependency(msgs, None, None)
+    returnedpolicies._note_missing_dependency(toolstages.ReturnedHistory(msgs, {}, None, '', True))
     assert msgs[-1]["content"] != payload
     red = writeproxy.redact_secrets(msgs, ["example_pkg"])
     assert "***" in red[-1]["content"] and "example_pkg" not in red[-1]["content"]

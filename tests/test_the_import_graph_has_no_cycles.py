@@ -20,13 +20,15 @@ import ast
 import pathlib
 import unittest
 
+import pytest
+
 CRIA = pathlib.Path(__file__).resolve().parent.parent / "cria"
 
 
-def import_graph() -> dict:
-    """`{module: {modules it imports}}` for every sibling under `cria/`, at any nesting depth."""
+def import_graph(root=CRIA) -> dict:
+    """Sibling edges from relative/absolute package imports, including deferred/type bodies."""
     g = {}
-    for f in sorted(CRIA.glob("*.py")):
+    for f in sorted(root.glob("*.py")):
         edges = set()
         for n in ast.walk(ast.parse(f.read_text())):
             if isinstance(n, ast.ImportFrom) and n.level == 1:
@@ -34,6 +36,14 @@ def import_graph() -> dict:
                     edges.add(n.module.split(".")[0])
                 else:                              # from . import x, y
                     edges.update(a.name for a in n.names)
+            elif isinstance(n, ast.ImportFrom) and n.level == 0:
+                if n.module == 'cria':              # from cria import x [as alias]
+                    edges.update(a.name.split('.')[0] for a in n.names)
+                elif (n.module or '').startswith('cria.'):
+                    edges.add(n.module.split('.')[1])  # from cria.x[.y] import value
+            elif isinstance(n, ast.Import):
+                edges.update(a.name.split('.')[1] for a in n.names
+                             if a.name.startswith('cria.'))  # import cria.x [as alias]
         g[f.stem] = edges
     return g
 
@@ -83,6 +93,44 @@ class TheGraphIsAcyclicTests(unittest.TestCase):
         from cria import groundtruth, loop
         self.assertIs(loop._STEP_ARTIFACT, groundtruth._STEP_ARTIFACT)
         self.assertTrue(groundtruth._STEP_LITERAL.pattern)   # the sibling it now sits beside
+
+
+@pytest.mark.parametrize('statement', [
+    'from cria import b',
+    'from cria import b as alias',
+    'from cria.b import value',
+    'from cria.b.deep import value',
+    'import cria.b',
+    'import cria.b as alias',
+    'import cria.b.deep as alias',
+    'from . import b',
+    'from .b import value',
+    'def deferred():\n    from cria import b',
+    'from typing import TYPE_CHECKING\nif TYPE_CHECKING:\n    from cria.b import value',
+    'class Outer:\n    def deferred(self):\n        import cria.b as alias',
+])
+def test_collector_detects_real_package_edges_in_literal_source(tmp_path, statement):
+    (tmp_path / 'a.py').write_text(statement + '\n')
+    (tmp_path / 'b.py').write_text('from . import a\n')
+    graph = import_graph(root=tmp_path)
+    assert graph == {'a': {'b'}, 'b': {'a'}}
+    assert cycles(graph) == [['a', 'b', 'a']]
+
+
+def test_external_and_package_only_imports_do_not_invent_sibling_cycles(tmp_path):
+    (tmp_path / 'a.py').write_text('''import cria
+import external.b as b
+from external import b
+from cria_extra.b import value
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    import outside.a
+from . import b
+''')
+    (tmp_path / 'b.py').write_text('from external.a import value\n')
+    graph = import_graph(root=tmp_path)
+    assert graph == {'a': {'b'}, 'b': set()}
+    assert cycles(graph) == []
 
 
 class TheDetectorItselfWorksTests(unittest.TestCase):

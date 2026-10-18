@@ -29,6 +29,7 @@ from cria.loop import Loop
 from cria.probegate import SECTION_PREFIX as P, SECTION_SUFFIX as S
 
 from test_loop import (_Classification, _Recorder, _Rlog, _body, _body_with_probe, _ctx, _done,
+                       _enable_test_planning,
                        _plan, _tc_id, _toolcall)
 
 
@@ -107,7 +108,7 @@ def _run_to_red_gate(reasoner, plan_items=2):
     """Drive a plan until the coder claims done and the gate comes back RED. Returns the loop, the
     coder stub, the rlog and the completion the red gate produced."""
     coder = _Recorder([_toolcall(), _done(), _toolcall()])
-    loop = Loop(_ctx(coder, reasoner, _plan(plan_items), workspace_root=_ws()))
+    loop = Loop(_enable_test_planning(_ctx(coder, reasoner, _plan(plan_items), workspace_root=_ws())))
     rlog = _Rlog()
     loop.drive(_body(), "k", _Classification(), rlog)            # coder acts
     c2 = loop.drive(_body(), "k", _Classification(), rlog)       # coder claims done → gate goes out

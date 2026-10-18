@@ -13,6 +13,7 @@ import os
 from pathlib import Path
 import shutil
 import stat
+import sys
 
 REPOSITORY = Path(__file__).resolve().parents[1]
 
@@ -173,11 +174,12 @@ def close(record, *, repo=REPOSITORY, scratch_roots=None, dry_run=False):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('closure', type=Path, help='temporary complete operator closure JSON')
+    parser.add_argument('closure', type=Path, help='complete operator closure JSON; - reads stdin')
     parser.add_argument('--dry-run', action='store_true')
     args = parser.parse_args(argv)
     try:
-        removed = close(json.loads(args.closure.read_text()), dry_run=args.dry_run)
+        text = sys.stdin.read() if str(args.closure) == '-' else args.closure.read_text()
+        removed = close(json.loads(text), dry_run=args.dry_run)
     except (ValueError, OSError, TypeError) as e:
         parser.exit(1, f'cleanup denied/failed: {e}\n')
     print(json.dumps({'eligible' if args.dry_run else 'removed': removed}))

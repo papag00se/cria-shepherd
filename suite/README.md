@@ -155,25 +155,23 @@ retention. Keep active owners, unresolved failures, necessary current inputs/dea
 unapplied source/tests until disposition/application makes those copies unnecessary. Never infer
 closure from a finished model run, usefulness judgment, missing findings or an empty fix list.
 
-The current workflow has no automatic fix-acceptance event: `walk.py` creates reading assignments;
-`milestones.py` records task continuation, not fix dispositions. The coordinating owner therefore
-runs the concrete closure command immediately after the last authoritative fix disposition:
+**Prevent accumulation at creation.** Follow [`docs/walk-prompt.md`](../docs/walk-prompt.md) for the single-directory investigation workflow and bounded acceptance standard. Tests and follow-on tools must not depend on disposable review outputs; port necessary inputs into small repository regression fixtures.
+
+`walk.py` writes chunks and `assignments.json`, not a duplicate plan or placeholder findings. Readers create their own findings inside the same directory. An empty file does not establish reading coverage.
+
+The coordinating owner runs cleanup immediately after the last fix disposition and securing necessary changes. There is no separate cleanup review or permanent closure registry. Supply the declaration on stdin so cleanup does not require another file:
 
 ```bash
-python -B suite/close_walk.py /path/to/temporary-closure.json --dry-run
-python -B suite/close_walk.py /path/to/temporary-closure.json
-```
-
-Dry-run is optional, not another operator approval step. The temporary declaration is the complete
-operator closure event for that unit, not a second permanent registry. Example (absolute paths):
-
-```json
-{"unit":"walk-example","owner":"coordinator","closure":"final operator dispositions",
+python -B suite/close_walk.py - <<'JSON'
+{"unit":"walk-example","owner":"coordinator","closure":"final fix dispositions",
  "closed":true,"fixes":[{"id":"fix-1","disposition":"ACCEPTED","changes":[
  {"source":"/tmp/example/test_regression.py",
   "worktree":"/home/operator/src/cria-shepherd/tests/test_regression.py"}]}],
  "scratch":["/tmp/example"],"protected_paths":[],"call_logs":[]}
+JSON
 ```
+
+`--dry-run` is optional, not another approval step. An existing temporary JSON file is still accepted, but is not required and must not become a new permanent record. `milestones.py` records task continuation, not fix acceptance; completing a run alone does not authorize deletion.
 
 Declare every fix; only the exact two settled dispositions qualify. Declare each necessary unique
 source/test copy; identical regular-file bytes must already exist inside this worktree before

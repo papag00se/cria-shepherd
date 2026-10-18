@@ -23,7 +23,7 @@ calls. This note cannot fire on a model that never asks.
 import unittest
 from unittest import mock
 
-from cria import writeproxy
+from cria import returnedpolicies, writeproxy
 
 
 CACHE_MISS = "Chunk ID: abc\nWall time: 0.1 seconds\nProcess exited with code 1\nOutput:\n"
@@ -40,8 +40,8 @@ def _msgs(cmd, result):
 class TheNoteIsActuallyDeliveredTests(unittest.TestCase):
     def _run(self, cmd, result, eco="rust", root="/home/u/.cargo/registry/src"):
         msgs = _msgs(cmd, result)
-        with mock.patch.object(writeproxy, "_workspace_ecosystem", return_value=eco), \
-             mock.patch.object(writeproxy.probeparse, "dependency_source_root", return_value=root):
+        with mock.patch.object(returnedpolicies, "_workspace_ecosystem", return_value=eco), \
+             mock.patch.object(returnedpolicies.probeparse, "dependency_source_root", return_value=root):
             out = writeproxy.represent_inbound(msgs, None, "/w")
         return out[-1]["content"]
 
@@ -77,8 +77,8 @@ class TheNoteIsActuallyDeliveredTests(unittest.TestCase):
                             "name": "exec_command",
                             "arguments": '{"cmd": "find /w/.cargo/registry/src -name a%d.rs"}' % i}}]},
                      {"role": "tool", "tool_call_id": f"c{i}", "content": CACHE_MISS}]
-        with mock.patch.object(writeproxy, "_workspace_ecosystem", return_value="rust"), \
-             mock.patch.object(writeproxy.probeparse, "dependency_source_root", return_value="/r"):
+        with mock.patch.object(returnedpolicies, "_workspace_ecosystem", return_value="rust"), \
+             mock.patch.object(returnedpolicies.probeparse, "dependency_source_root", return_value="/r"):
             out = writeproxy.represent_inbound(msgs, None, "/w")
         notes = sum(1 for m in out if m.get("role") == "tool" and "wrong root" in str(m.get("content")))
         self.assertEqual(notes, 1)

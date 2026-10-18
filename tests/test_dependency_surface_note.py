@@ -18,7 +18,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from cria import depsurface, writeproxy
+from cria import depsurface, returnedpolicies, writeproxy
 
 ANCHOR_TEXT = "THE VERSION OF"   # the timeless template's own opening words
 
@@ -277,7 +277,7 @@ class BoundedNotesTests(_WorkspaceCase):
         out = self.represent([tool("build output")])
         rendered = out[0]["content"].count(ANCHOR_TEXT)
         self.assertGreater(rendered, 0)
-        self.assertLessEqual(rendered, writeproxy._MAX_NOTES_PER_REQUEST)
+        self.assertLessEqual(rendered, returnedpolicies._MAX_NOTES_PER_REQUEST)
 
     def test_delivered_state_is_checked_before_gather_no_repeated_disk_cost(self):
         self._write_go_mod(module="example.invalid/nonexistent")
@@ -326,15 +326,15 @@ class TotalByteBudgetTests(_WorkspaceCase):
 
     def test_many_anchored_coordinates_are_capped_by_total_bytes_and_labelled(self):
         self._many_dependencies(n=6)
-        real_cap = writeproxy._MAX_TOTAL_NOTE_BYTES_PER_REQUEST
-        real_max_notes = writeproxy._MAX_NOTES_PER_REQUEST
-        writeproxy._MAX_TOTAL_NOTE_BYTES_PER_REQUEST = 4000   # force the budget to bind in this test
-        writeproxy._MAX_NOTES_PER_REQUEST = 10                # let every dependency be attempted at once
+        real_cap = returnedpolicies._MAX_TOTAL_NOTE_BYTES_PER_REQUEST
+        real_max_notes = returnedpolicies._MAX_NOTES_PER_REQUEST
+        returnedpolicies._MAX_TOTAL_NOTE_BYTES_PER_REQUEST = 4000   # force the budget to bind in this test
+        returnedpolicies._MAX_NOTES_PER_REQUEST = 10                # let every dependency be attempted at once
         try:
             out = self.represent([tool("build output")])
         finally:
-            writeproxy._MAX_TOTAL_NOTE_BYTES_PER_REQUEST = real_cap
-            writeproxy._MAX_NOTES_PER_REQUEST = real_max_notes
+            returnedpolicies._MAX_TOTAL_NOTE_BYTES_PER_REQUEST = real_cap
+            returnedpolicies._MAX_NOTES_PER_REQUEST = real_max_notes
         content = out[0]["content"]
         total_note_bytes = len(content.encode()) - len("build output".encode())
         self.assertLessEqual(total_note_bytes, 4000 + 1500)   # budget plus one pointer-list sentence
@@ -372,12 +372,12 @@ class TotalByteBudgetTests(_WorkspaceCase):
                      "require example.invalid/newcomer v1.0.0\n"          # listed FIRST
                      "require example.invalid/nonexistent v1.4.0\n")      # already-anchored, listed SECOND
 
-        real_cap = writeproxy._MAX_TOTAL_NOTE_BYTES_PER_REQUEST
-        writeproxy._MAX_TOTAL_NOTE_BYTES_PER_REQUEST = len(anchored_text.encode()) + 200
+        real_cap = returnedpolicies._MAX_TOTAL_NOTE_BYTES_PER_REQUEST
+        returnedpolicies._MAX_TOTAL_NOTE_BYTES_PER_REQUEST = len(anchored_text.encode()) + 200
         try:
             second = self.represent([tool("t1", call_id="c1"), tool("t2", call_id="c2")])
         finally:
-            writeproxy._MAX_TOTAL_NOTE_BYTES_PER_REQUEST = real_cap
+            returnedpolicies._MAX_TOTAL_NOTE_BYTES_PER_REQUEST = real_cap
         # The already-anchored coordinate's text is untouched -- priority honoured.
         self.assertEqual(second[0]["content"], anchored_text)
         combined = "".join(m["content"] for m in second)
@@ -388,10 +388,10 @@ class TotalByteBudgetTests(_WorkspaceCase):
 
     def test_a_withheld_coordinate_is_never_gathered_again_R3_fix_2(self):
         self._many_dependencies(n=6)
-        real_cap = writeproxy._MAX_TOTAL_NOTE_BYTES_PER_REQUEST
-        real_max_notes = writeproxy._MAX_NOTES_PER_REQUEST
-        writeproxy._MAX_TOTAL_NOTE_BYTES_PER_REQUEST = 4000
-        writeproxy._MAX_NOTES_PER_REQUEST = 10
+        real_cap = returnedpolicies._MAX_TOTAL_NOTE_BYTES_PER_REQUEST
+        real_max_notes = returnedpolicies._MAX_NOTES_PER_REQUEST
+        returnedpolicies._MAX_TOTAL_NOTE_BYTES_PER_REQUEST = 4000
+        returnedpolicies._MAX_NOTES_PER_REQUEST = 10
         calls = {"n": 0}
         real_gather = depsurface.gather
 
@@ -409,8 +409,8 @@ class TotalByteBudgetTests(_WorkspaceCase):
                             tool("t3", call_id="c3")])
         finally:
             depsurface.gather = real_gather
-            writeproxy._MAX_TOTAL_NOTE_BYTES_PER_REQUEST = real_cap
-            writeproxy._MAX_NOTES_PER_REQUEST = real_max_notes
+            returnedpolicies._MAX_TOTAL_NOTE_BYTES_PER_REQUEST = real_cap
+            returnedpolicies._MAX_NOTES_PER_REQUEST = real_max_notes
         # Every coordinate was already attempted (anchored or withheld) on the first request (the cap
         # override lets all 6 be tried at once) -- later requests must not call gather() again at all.
         self.assertEqual(calls["n"], after_first,
@@ -421,10 +421,10 @@ class TotalByteBudgetTests(_WorkspaceCase):
         requests the WITHHELD SET and the total `gather()` COUNT must both stay fixed once every
         coordinate has been attempted once."""
         self._many_dependencies(n=5, module_prefix="example.invalid/five", members=70)
-        real_cap = writeproxy._MAX_TOTAL_NOTE_BYTES_PER_REQUEST
-        real_max_notes = writeproxy._MAX_NOTES_PER_REQUEST
-        writeproxy._MAX_TOTAL_NOTE_BYTES_PER_REQUEST = 5000   # binds well before all 5 fit
-        writeproxy._MAX_NOTES_PER_REQUEST = 10                # let all 5 be attempted on request 1
+        real_cap = returnedpolicies._MAX_TOTAL_NOTE_BYTES_PER_REQUEST
+        real_max_notes = returnedpolicies._MAX_NOTES_PER_REQUEST
+        returnedpolicies._MAX_TOTAL_NOTE_BYTES_PER_REQUEST = 5000   # binds well before all 5 fit
+        returnedpolicies._MAX_NOTES_PER_REQUEST = 10                # let all 5 be attempted on request 1
         calls = {"n": 0}
         real_gather = depsurface.gather
 
@@ -452,8 +452,8 @@ class TotalByteBudgetTests(_WorkspaceCase):
                                  "the total gather() COUNT must stay fixed -- no re-gathering")
         finally:
             depsurface.gather = real_gather
-            writeproxy._MAX_TOTAL_NOTE_BYTES_PER_REQUEST = real_cap
-            writeproxy._MAX_NOTES_PER_REQUEST = real_max_notes
+            returnedpolicies._MAX_TOTAL_NOTE_BYTES_PER_REQUEST = real_cap
+            returnedpolicies._MAX_NOTES_PER_REQUEST = real_max_notes
 
     def test_a_version_bump_or_removal_of_a_withheld_coordinate_stops_naming_it(self):
         """Independent review round 5: `withheld_pointers` must filter against the CURRENT
@@ -461,10 +461,10 @@ class TotalByteBudgetTests(_WorkspaceCase):
         bump leaves BOTH the old and new version listed, and a removed dependency is still named every
         turn: false present-tense facts about the project's current state."""
         self._many_dependencies(n=5, module_prefix="example.invalid/five", members=70)
-        real_cap = writeproxy._MAX_TOTAL_NOTE_BYTES_PER_REQUEST
-        real_max_notes = writeproxy._MAX_NOTES_PER_REQUEST
-        writeproxy._MAX_TOTAL_NOTE_BYTES_PER_REQUEST = 5000
-        writeproxy._MAX_NOTES_PER_REQUEST = 10
+        real_cap = returnedpolicies._MAX_TOTAL_NOTE_BYTES_PER_REQUEST
+        real_max_notes = returnedpolicies._MAX_NOTES_PER_REQUEST
+        returnedpolicies._MAX_TOTAL_NOTE_BYTES_PER_REQUEST = 5000
+        returnedpolicies._MAX_NOTES_PER_REQUEST = 10
         try:
             out1 = self.represent([tool("t1", call_id="c1")])
             combined1 = "".join(m["content"] for m in out1)
@@ -500,8 +500,8 @@ class TotalByteBudgetTests(_WorkspaceCase):
             # is correctly withheld under ITS OWN key -- named as the current fact.
             self.assertIn("example.invalid/five1 v1.1.0", combined2)
         finally:
-            writeproxy._MAX_TOTAL_NOTE_BYTES_PER_REQUEST = real_cap
-            writeproxy._MAX_NOTES_PER_REQUEST = real_max_notes
+            returnedpolicies._MAX_TOTAL_NOTE_BYTES_PER_REQUEST = real_cap
+            returnedpolicies._MAX_NOTES_PER_REQUEST = real_max_notes
 
 
 class AbstainMemoizationTests(_WorkspaceCase):

@@ -691,24 +691,68 @@ class GateTests(unittest.TestCase):
             # guard proved only at fetch_nav would be inert in production (cf. the raw-honours-find
             # fix, green at the inner function and never reached by a caller that nulled find first).
             from cria import writeproxy
+            from cria.loop import LoopStore
+            from unittest import mock
+            import os
+            import shlex
+            import subprocess
+            import tempfile
             url = "https://docs.example.com/big"
+            store = LoopStore()
+            owner = store.get_guard("sp1", create=True)
 
-            def lower(**kw):
-                comp = {"choices": [{"message": {"tool_calls": [{"id": "t1", "type": "function",
-                        "function": {"name": "web_fetch", "arguments": json.dumps({"url": url, **kw})}}]}}]}
-                writeproxy.translate_outbound(comp, {"name": "shell", "parameters": {}},
-                                              injected={"web_fetch"}, session="sp1")
-                return json.dumps(comp["choices"][0]["message"]["tool_calls"][0])
+            with tempfile.TemporaryDirectory() as workspace, mock.patch(
+                    "urllib.request.urlopen", side_effect=AssertionError("unexpected fixture network")) as network:
+                def lower(*, cid="t1", deliver=False, **kw):
+                    comp = {"choices": [{"message": {"tool_calls": [{"id": cid, "type": "function",
+                            "function": {"name": "web_fetch", "arguments": json.dumps({"url": url, **kw})}}]}}]}
+                    writeproxy.translate_outbound(comp, {"name": "shell", "parameters": {}},
+                                                  injected={"web_fetch"}, session="sp1",
+                                                  workspace_root=workspace, externalization_owner=owner)
+                    call = comp["choices"][0]["message"]["tool_calls"][0]
+                    if deliver:
+                        command = writeproxy._command_of(call["function"]["arguments"])
+                        sentinel, rest = command.split("\n", 1)
+                        header, rest = rest.split("\n", 1)
+                        encoded, tail = rest.split("\n__CRIA_SPILL__\n", 1)
+                        self.assertRegex(sentinel, r"^# ⟦ctx:tool⟧[A-Za-z0-9+/=]+$")
+                        self.assertEqual(header, "if mkdir -p ./tmp/reference && base64 -d > "
+                            "./tmp/reference/docs.example.com_big.txt <<'__CRIA_SPILL__'")
+                        self.assertIsNotNone(re.fullmatch(r"[A-Za-z0-9+/=\n]+", encoded))
+                        lexer = shlex.shlex(tail, posix=True, punctuation_chars=";")
+                        lexer.whitespace_split = True
+                        tokens = list(lexer)
+                        self.assertEqual(tokens[:3] + tokens[4:7] + tokens[8:],
+                            ["then", "printf", "%s", ";", "printf", r"\n%s\n",
+                             ";", "else", "exit", "1", ";", "fi"])
+                        self.assertEqual(len(tokens), 14)
+                        self.assertFalse(os.environ.get("BASH_ENV"))
+                        self.assertFalse(any(k.startswith("BASH_FUNC_") for k in os.environ))
+                        writeproxy.retain_externalizations(owner, comp)
+                        result = subprocess.run(["bash", "-c", command], cwd=workspace,
+                                                capture_output=True, text=True)
+                        self.assertEqual(result.returncode, 0, result.stderr)
+                        self.assertEqual(result.stderr, "")
+                        history = [{"role": "assistant", "tool_calls": [call]},
+                            {"role": "tool", "tool_call_id": call["id"], "content":
+                             f"Process exited with code {result.returncode}\nOutput:\n{result.stdout}"}]
+                        writeproxy.observe_externalization_results(store.get_guard("sp1"), history)
+                        represented = writeproxy.represent_inbound(history, workspace_root=workspace,
+                                                                  sess_key="sp1")
+                        self.assertIn("⟦ctx:stored⟧", result.stdout)
+                        self.assertNotIn("⟦ctx:stored⟧", represented[-1]["content"])
+                    return json.dumps(call)
 
-            first = lower()
-            self.assertIn("base64 -d", first)                     # first time: the doc is written out
-            wf.set_visible("sp1", [], [])                         # compaction: nothing visible now
-            again = lower()
-            self.assertIn(wf._spill_name(url), again)             # re-pointed at the file it has
-            self.assertNotIn("base64 -d", again)                  # ...not written over itself again
-            self.assertLess(len(again), len(first))
-            # ...but a TARGETED read is navigation, not a re-fetch, and must still be answered
-            self.assertNotIn(wf._spill_name(url), lower(find="/p42"))
+                first = lower(deliver=True)
+                self.assertIn("base64 -d", first)                     # first time: the doc is written out
+                wf.set_visible("sp1", [], [])                         # compaction: nothing visible now
+                again = lower(cid="t2")
+                self.assertIn(wf._spill_name(url), again)             # re-pointed at the file it has
+                self.assertNotIn("base64 -d", again)                  # ...not written over itself again
+                self.assertLess(len(again), len(first))
+                # ...but a TARGETED read is navigation, not a re-fetch, and must still be answered
+                self.assertNotIn(wf._spill_name(url), lower(cid="t3", find="/p42"))
+                network.assert_not_called()
         finally:
             wf.fetch = orig
 

@@ -8,12 +8,13 @@ reingested as fresh read provenance. No live server or shell is executed.
 import copy
 import io
 import json
+from dataclasses import replace
 from pathlib import Path
 from unittest.mock import patch
 
 import pytest
 
-from cria import bodykeys, contextfloor as cf, denial, loop, modelview, responses, selfcompact, server, upstream, wsview
+from cria import assistruntime, bodykeys, contextfloor as cf, denial, loop, modelview, responses, selfcompact, server, upstream, wsview
 from tests.test_a_judges_doubt_is_not_an_order import _session
 from tests.test_c13a_rejected_handoff_keeps_the_tool_ledger import _Srv, _Rlog, _harden
 from tests.wsfixture import survey
@@ -55,10 +56,41 @@ def _wire(messages, *, window=65536, level=5, reserve=1500):
     log = _Rlog()
     u = upstream.Upstream('http://fake.invalid', api_key='test-only', context_window=window,
                           engagement_level=level)
-    with patch('cria.upstream.urllib.request.urlopen', side_effect=answer), \
-            patch('cria.upstream.tokenratio.observed', return_value=1.05):
+    original = copy.deepcopy(messages)
+    selected_runtime = (assistruntime.current() if assistruntime.is_bound() else
+                        assistruntime.AssistRuntime.select(level=level))
+    selected = selected_runtime.capacity
+    runtime, density_models = selected_runtime, []
+    def density(model):
+        assert assistruntime.current() is runtime
+        assert runtime.capacity is controlled
+        density_models.append(model)
+        return 1.05
+    if selected is not None:
+        controlled = replace(selected, density=density)
+        assert controlled.policy is selected.policy and controlled.execute is selected.execute
+        runtime = replace(selected_runtime, ordered_stages=tuple(
+            controlled if member.policy.id == selected.policy.id else member
+            for member in selected_runtime.ordered_stages))
+        assert runtime.capacity is controlled
+        assert runtime.registrations is selected_runtime.registrations
+        assert all(after is (controlled if before is selected else before)
+                   for before, after in zip(selected_runtime.ordered_stages, runtime.ordered_stages))
+    with assistruntime.bound(runtime), \
+            patch('cria.upstream.urllib.request.urlopen', side_effect=answer), \
+            patch('cria.upstream.contextfloor.fit', wraps=cf.fit) as floor:
         u.chat({'model': 'test', 'messages': messages, bodykeys.OUTPUT_RESERVE: reserve}, log)
+    assert messages == original
+    if floor.called and selected is not None:
+        assert density_models == ['test']
+        assert all(call.kwargs['safety'] == 1.05 for call in floor.call_args_list)
+    else:
+        assert density_models == []
     assert len(sent) == 1
+    if window < 65536:
+        print('CONTROLLED DENSITY WIRE', json.dumps({'models': density_models,
+            'floor_safety': [call.kwargs['safety'] for call in floor.call_args_list],
+            'wire': sent[0]}, ensure_ascii=False))
     return sent[0]['messages'], log
 
 

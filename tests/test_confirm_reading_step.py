@@ -6,18 +6,14 @@ reasoner question decides, failing toward running the brake when it cannot answe
 """
 
 import json
-import os
+from dataclasses import replace
 import subprocess
 import tempfile
 import unittest
-from pathlib import Path
 
-from cria import config, loop, wsview
+from cria import config, loop, stepreview, wsview
 from cria.loop import _confirm_applies, step_names_absent_artifact
-
-
-CAPTURE = Path("/home/jesse/.cria/calls/20260921T131112-01a0c598-12c3-7973-8ebd-3f87b1ce0016")
-WORKSPACE = Path("/home/jesse/suite-runs/suite-feed-pipeline-java_ternary-bonsai-2_codex_pon_1790021450-8kp49tei")
+from tests.completion_fixtures import FIXTURES, seed_reading_workspace
 FEED_READING_STEP = ("Read data/feed_messy.csv in full and the first ~20 lines of data/feed.csv "
                      "to confirm the exact column layout and identify the specific malformed patterns "
                      "present (currency symbols, blank quantities, missing columns, quoted commas).")
@@ -85,7 +81,7 @@ class FeedCaptureConfirmationRegressionTests(unittest.TestCase):
     class _CapturedPositiveThenNoArtifact:
         def __init__(self):
             self.replies = [
-                (CAPTURE / "0100-critic.response.json").read_bytes(),
+                (FIXTURES / "reading_step_positive.json").read_bytes(),
                 json.dumps({"choices": [{"message": {"content": "NO"}}]}).encode(),
             ]
             self.bodies = []
@@ -94,22 +90,25 @@ class FeedCaptureConfirmationRegressionTests(unittest.TestCase):
             self.bodies.append(body)
             return self.replies.pop(0)
 
-    def test_c598_positive_reading_verdict_advances_without_confirmation(self):
-        self.assertTrue(CAPTURE.is_dir(), CAPTURE)
-        self.assertTrue(WORKSPACE.is_dir(), WORKSPACE)
+    def test_recorded_positive_reading_verdict_advances_without_confirmation(self):
+        workspace = self.enterContext(tempfile.TemporaryDirectory())
+        seed_reading_workspace(workspace)
         chat = self._CapturedPositiveThenNoArtifact()
-        view = wsview.View(str(WORKSPACE), "feed-read-confirm-replay")
+        view = wsview.View(workspace, "feed-read-confirm-replay")
         raw = subprocess.run(["bash", "-c", wsview.survey_command("feed-read-confirm-replay")],
-                             cwd=WORKSPACE, capture_output=True, text=True, check=True).stdout
+                             cwd=workspace, capture_output=True, text=True, check=True).stdout
         wsview.apply_survey(view, wsview.strip_survey(raw)[1])
         token = wsview.bind(view)
         self.addCleanup(wsview.unbind, token)
         ctx = loop.LoopContext(planner=None, coder_chat=None, reasoner_chat=chat, runs_dir="")
+        ctx.planner_enabled = True
+        ctx.pilot_runtime = replace(ctx.pilot_runtime, experimental_planning=True,
+            ordered_stages=ctx.pilot_runtime.ordered_stages + (stepreview.DEFINITION,))
         ctx.reasoner_role = config.Role(name="reasoner", backend="local")
         rlog = self._Rlog()
         verdict = loop.Loop(ctx)._verify(FEED_READING_STEP, "coder completed the reads", "", "",
                                          rlog, idx=3, total=10, key="feed-c598",
-                                         workspace_root=str(WORKSPACE))
+                                         workspace_root=workspace)
         self.assertTrue(verdict.done)
         self.assertIsNone(verdict.confirmation)
         self.assertEqual(len(chat.bodies), 2)

@@ -19,7 +19,8 @@ import unittest
 
 from cria import probediscovery, probegate
 from cria.config import Role
-from cria.loop import GuardState, module_state_steer, runner_reset_steer
+from cria.loop import GuardState, runner_reset_steer
+from pilot_support import module_result
 from cria.probegate import GateOutcome
 from cria.probeparse import ProbeResult
 from cria.proberun import ProbeReport
@@ -103,9 +104,9 @@ class C35JudgeGatePlumbingScrubTests(unittest.TestCase):
         result = ProbeResult(" ".join(command), 1, _CHECKER_TEXT)
         outcome = GateOutcome(ran=True, report=ProbeReport([], [candidate], [result]))
 
-        steer = module_state_steer(
+        steer = module_result(
             GuardState(), outcome, _capture_shaped_body(), _Log(),
-            reasoner_chat=reasoner, reasoner_role=Role(name="reasoner", backend="local"))
+            reasoner_chat=reasoner, reasoner_role=Role(name="reasoner", backend="local")).steer
 
         self.assertEqual(len(seen), 1)
         prompt = _prompt_text(seen[0])

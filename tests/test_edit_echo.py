@@ -172,9 +172,11 @@ class EditEchoTests(unittest.TestCase):
         seen = {}
         def run(level):
             routing = RoutingConfig(engagement_level=level)
-            h = SimpleNamespace(server=SimpleNamespace(cfg=SimpleNamespace(
-                routing=routing, safety=SimpleNamespace(external_dir_permission="write"))),
-                _shell_tool=_CMD_SHELL, _synthetic={"edit_file"}, _workspace_root=None)
+            h = server.CriaHandler.__new__(server.CriaHandler)
+            h.server = SimpleNamespace(cfg=SimpleNamespace(
+                routing=routing, safety=SimpleNamespace(external_dir_permission="write")),
+                loop_store=loop.LoopStore())
+            h._shell_tool, h._synthetic, h._workspace_root = _CMD_SHELL, {"edit_file"}, None
             comp = {"choices": [{"message": {"tool_calls": [{"id": "e1", "type": "function", "function": {
                 "name": "edit_file", "arguments": json.dumps({"path": "a.py", "old_string": "x", "new_string": "y"})}}]}}]}
             server.CriaHandler._translate_out(h, comp, "s", None)

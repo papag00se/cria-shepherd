@@ -132,12 +132,73 @@ class TheRetryIsGroundedLikeTheFirstPassTests(unittest.TestCase):
         self.assertEqual(src.count("session_key({}"), 1)
 
     def test_both_halves_use_the_same_workspace(self):
-        import inspect
+        """The retry once lost the disk grounding that the first writer received.
 
-        from cria import server as srv
-        src = inspect.getsource(srv._harden_compaction_reply)
-        self.assertEqual(src.count("_session_cwd("), 1)
-        self.assertIn("_workspace_listing(ws)", src)
+        A fresh harness cwd must beat a stale remembered cwd. Both real writer
+        calls must read that session's surveyed tree, not a different workspace
+        or merely the same manually supplied inventory string.
+        """
+        from unittest import mock
+
+        from cria import assistruntime, memoryhandoff, server as srv, wsview
+        from cria.config import IndicatorsConfig
+        from tests.test_harness_memory_boundaries import ResponseProvider, response_handler
+        from tests.test_harness_memory_source import Log, completion
+        from tests.wsfixture import survey
+
+        base = "/briefing-workspaces"
+        current, stale = base + "/current", base + "/stale"
+        key = "sid:briefing-writer-current-workspace"
+        view = wsview.View(base, key)
+        self.assertTrue(wsview.apply_survey(view, survey(
+            "D\tcurrent\nD\tstale\nF\t1\t6\tcurrent/resolve_handle.py\n"
+            "F\t1\t9\tstale/stale_only.py", root=base)))
+        root = assistruntime.AssistRuntime.select(level=3, registrations=(memoryhandoff.DEFINITION,))
+        provider = ResponseProvider(completion(""))  # genuine first-pass empty briefing
+        provider.verdict = True  # subsequent scripted three-lens positive replies
+        handler, sess = response_handler(provider, key)
+        handler.server.pilot_runtime = root
+        handler.server.compactor_upstream = provider
+        handler.server.cfg.indicators = IndicatorsConfig(enabled=False)
+        handler._route = srv.CriaHandler._route.__get__(handler)
+        handler._apply_route_role = srv.CriaHandler._apply_route_role.__get__(handler)
+        sess.workspace_root = current
+        sess.gate_plan = probegate.GatePlan(workspace=current, candidates=[])
+        body = {"model": "fixture", "messages": [
+            {"role": "user", "content": "<environment_context><cwd>" + current + "</cwd></environment_context>"},
+            *transcript(gate_blob(WARNINGS_ONLY, 1)),
+            {"role": "user", "content": "<<<LOCAL_COMPACT>>> Summarize this conversation"},
+        ]}
+        roots = []
+        real_inventory = srv.groundtruth.workspace_inventory
+        def inventory(workspace, *args, **kwargs):
+            roots.append(workspace)
+            return real_inventory(workspace, *args, **kwargs)
+        token = wsview.bind(view)
+        log = Log()
+        try:
+            with mock.patch.dict(srv._CWD_BY_SESSION, {key: stale}), \
+                    mock.patch.object(srv.groundtruth, "workspace_inventory", inventory), \
+                    assistruntime.bound(root):
+                output, _indicator = handler._produce_completion(body, log, key)
+        finally:
+            wsview.unbind(token)
+        self.assertEqual(len(provider.calls), 5)  # writer, retry, three independent validators
+        self.assertEqual([name for name, _fields in log.events].count("route.compaction_retry"), 1)
+        self.assertEqual(roots[:2], [current, current])
+        inventories = []
+        for request in provider.calls[:2]:
+            blocks = [message["content"] for message in request["messages"]
+                      if "resolve_handle.py" in str(message.get("content", ""))]
+            self.assertEqual(len(blocks), 1)
+            self.assertIn("resolve_handle.py", blocks[0])
+            self.assertNotIn("stale_only.py", str(request["messages"]))
+            inventories.append(blocks[0])
+        self.assertEqual(inventories[0], inventories[1])
+        self.assertIn("resolve_handle.py", output["choices"][0]["message"]["content"])
+        self.assertNotIn("stale_only.py", output["choices"][0]["message"]["content"])
+        self.assertEqual(sess.handoff_origin.reply, output["choices"][0]["message"]["content"])
+        self.assertFalse(sess.handoff_origin.dropped)
 
 
 class WhatThePlanWouldChangeIfItArrivedTests(unittest.TestCase):

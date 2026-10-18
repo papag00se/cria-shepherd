@@ -54,6 +54,9 @@ class Rlog:
     def emit(self, kind, **kw):
         self.events.append((kind, kw))
 
+    def decide(self, key, value, reason, **kw):
+        self.emit("decision", key=key, value=value, reason=reason, **kw)
+
 
 class TheClassifierIsNotAskedTests(unittest.TestCase):
     def handler(self, classifier):
@@ -75,10 +78,13 @@ class TheClassifierIsNotAskedTests(unittest.TestCase):
 
     def test_an_ordinary_turn_is_still_classified(self):
         calls = []
-        verdict = object()
-        h = self.handler(types.SimpleNamespace(
-            classify=lambda m, r: (calls.append(m), verdict)[1]))
-        self.assertIs(h._classify(body(compaction=False), Rlog()), verdict)
+        from cria.classify import Classifier
+        def chat(request, rlog):
+            calls.append(request)
+            return b'{"choices":[{"message":{"content":"{\\"engagement\\":\\"task\\",\\"task_type\\":\\"coding\\"}"}}]}'
+        h = self.handler(Classifier(types.SimpleNamespace(chat=chat)))
+        verdict = h._classify(body(compaction=False), Rlog())
+        self.assertEqual((verdict.engagement, verdict.task_type), ("task", "coding"))
         self.assertEqual(len(calls), 1)
 
     def test_no_classifier_configured_is_unchanged(self):

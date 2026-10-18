@@ -535,13 +535,50 @@ class TheStripperIsStillTheStripper(unittest.TestCase):
             _reply("Done.<|tool_call_start|>[list_dir(path='.')]<|tool_call_end|>"), MENU, Rec())),
             [("list_dir", {"path": "."})])
 
-    def test_the_dialect_table_names_only_measured_dialects(self):
-        """gemma-fable is deliberately absent — it produced this shape zero times in the corpus and
-        its parser salvages truncated calls, which this path forbids. If that changes, the entry and
-        its strict parser are added together."""
-        self.assertNotIn("gemma-fable", massage._REASONING_DIALECTS)
-        self.assertEqual(massage._REASONING_DIALECTS,
-                         ("lfm2-native", "hermes-json", "xml-function"))
+    def test_reasoning_recovers_complete_supported_dialects_without_gemma_salvage(self):
+        """Protect the former table test's incident through actual recovery behavior.
+
+        Complete supported reasoning frames recover. Gemma-fable's content parser
+        can salvage an incomplete argument, so it must not become a reasoning reader.
+        """
+        supported = (
+            (LFM2_VERBATIM, 'lfm2-native',
+             [('read_file', {'path': './tmp/reference/api.handle.me_openapi.json'})]),
+            ('I should search for it.\n<tool_call>\n'
+             '{"name": "web_search", "arguments": {"query": "Ada Handles API"}}\n</tool_call>',
+             'hermes-json', [('web_search', {'query': 'Ada Handles API'})]),
+            (XML_VERBATIM, 'xml-function', [('exec_command', {'cmd': 'ls -la'})]),
+        )
+        for reasoning, dialect, expected in supported:
+            with self.subTest(dialect=dialect):
+                rec = Rec()
+                comp = recover_leaked_tool_calls(_reply(reasoning), MENU, rec)
+                self.assertEqual(_calls(comp), expected)
+                self.assertEqual(comp['choices'][0]['finish_reason'], 'tool_calls')
+                self.assertEqual(comp['choices'][0]['message']['reasoning_content'], reasoning)
+                events = [fields for kind, fields in rec.events
+                          if kind == 'massage.reasoning_call_recovered']
+                self.assertEqual(len(events), 1)
+                self.assertEqual(events[0]['dialect'], dialect)
+                self.assertEqual(events[0]['calls'], [name for name, _args in expected])
+
+        gemma_cases = (
+            ('<|tool_call>call:read_file{path:<|"|>a.py<|"|>}<tool_call|>', 'a.py'),
+            ('<|tool_call>call:read_file{path:<|"|>./tmp/reference/api.handle',
+             './tmp/reference/api.handle'),
+        )
+        for gemma, path in gemma_cases:
+            with self.subTest(gemma=gemma):
+                rec = Rec()
+                comp = recover_leaked_tool_calls(_reply(gemma), MENU, rec)
+                self.assertEqual(_calls(comp), [])
+                self.assertEqual(comp['choices'][0]['finish_reason'], 'stop')
+                self.assertEqual(comp['choices'][0]['message']['reasoning_content'], gemma)
+                self.assertNotIn('massage.reasoning_call_recovered', rec.kinds())
+                # Same literal in content proves that accidentally sharing its
+                # salvaging parser would turn the refusal above into an action.
+                content = recover_leaked_tool_calls(_reply('', content=gemma), MENU, Rec())
+                self.assertEqual(_calls(content), [('read_file', {'path': path})])
 
 
 class ALiteralTheWireCannotCarryIsRefusedNotCrashed(unittest.TestCase):

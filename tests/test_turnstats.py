@@ -118,6 +118,7 @@ class FinalizeKeepsUnreportedCallsTests(unittest.TestCase):
     def _finalize(self, completion, stats_calls=5):
         import types as _t
         from cria.server import CriaHandler
+        from cria.loop import LoopStore
         from cria.turnstats import StatsStore
         store = StatsStore()
         st = store.get("k")
@@ -127,12 +128,12 @@ class FinalizeKeepsUnreportedCallsTests(unittest.TestCase):
         # `connect=False`: these tests isolate the TURN-STATS half of _finalize, and the connect
         # banner is a different mechanism that also lives there. Off keeps this fake honest about
         # what it is exercising rather than silently depending on the banner's own guards.
-        fake = _t.SimpleNamespace(
-            server=_t.SimpleNamespace(
-                cfg=_t.SimpleNamespace(indicators=_t.SimpleNamespace(enabled=True, stats=True,
-                                                                     connect=False)),
-                stats_store=store),
-            _decorate=lambda c: c)
+        fake = CriaHandler.__new__(CriaHandler)
+        fake.server = _t.SimpleNamespace(
+            cfg=_t.SimpleNamespace(indicators=_t.SimpleNamespace(enabled=True, stats=True,
+                                                                 connect=False)),
+            stats_store=store, loop_store=LoopStore())
+        fake._decorate = lambda c: c
         rlog = _t.SimpleNamespace(last_tok_per_s=None, gen_tokens=0, model_calls=0, events=None)
         CriaHandler._finalize(fake, completion, "k", rlog)
         return store.get("k")

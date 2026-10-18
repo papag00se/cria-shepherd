@@ -105,9 +105,10 @@ def test_home_and_its_ancestors_are_never_declared_roots(monkeypatch):
 def test_server_hands_the_declared_roots_to_translate_outbound(monkeypatch):
     from cria import server as srv
     from cria.config import Config
+    from cria.loop import LoopStore
     h = srv.CriaHandler.__new__(srv.CriaHandler)
     h.headers = {}
-    h.server = type("S", (), {"cfg": Config()})()
+    h.server = type("S", (), {"cfg": Config(), "loop_store": LoopStore()})()
     body = {"messages": MSGS, "tools": []}
 
     class R:

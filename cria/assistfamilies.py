@@ -1,13 +1,15 @@
 """Canonical assist-family identities and implementation ownership.
 
-This is a navigation/maintenance registry, not runtime dispatch or a plugin list.
-A family groups related policies and adapters; it is not an endorsement of every
-variant or evidence of isolated usefulness. Planning remains explicitly opt-in.
-Historical detail IDs are stable contract identities, not independent features.
+Families own maintenance responsibilities and frozen lineage, not runtime dispatch.
+Registered atomic membership is derived from production executable definitions;
+all other navigation coverage remains pending migration unless explicitly classified as
+an indivisible required source contract. Foundations, support,
+providers and native artifacts retain honest boundaries. Planning is opt-in.
+Historical detail IDs are stable contracts, not independent plugins or scores.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from types import MappingProxyType
 
 
@@ -25,18 +27,24 @@ class AssistFamily:
     contract: str
     details: tuple[str, ...]
     owners: tuple[SourceOwner, ...]
-    scope: str = "gated_runtime"  # navigation classification, never an enable switch
+    scope: str = "gated_runtime"  # applicability, never an enable switch
+    purpose: str = ""
+    boundary: str = ""
+    kind: str = "intervention"
+    coverage: str = "navigation_only_pending"
+    lineage: tuple[str, ...] = ()
 
 
-FAMILIES: tuple[AssistFamily, ...] = (
+_LINEAGE: tuple[AssistFamily, ...] = (
     AssistFamily(
         'F01', 'Recover text-encoded tool calls',
         'Recovery and file safety',
         'One recovery family with dialect/channel adapters and explicit admissibility rules; not permission to promote every apparent call.',
         ('A01', 'A02', 'A03', 'A04', 'A05', 'A06', 'A07', 'A09', 'A10', 'A11', 'A12', 'A13'),
         (
+            SourceOwner('cria/outputpolicies.py', 'recover_text_calls'),
             SourceOwner('cria/massage.py', 'recover_leaked_tool_calls'),
-            SourceOwner('cria/massage.py', 'recover_reasoning_tool_calls'),
+            SourceOwner('cria/outputpolicies.py', 'recover_reasoning_tool_calls'),
         ),
     ),
     AssistFamily(
@@ -45,9 +53,10 @@ FAMILIES: tuple[AssistFamily, ...] = (
         'Related protocol contamination repair; channel-prefix, fused-argument-tail and opener handling retain distinct loss risks.',
         ('A08', 'A30', 'context-30'),
         (
-            SourceOwner('cria/massage.py', '_strip_channel'),
+            SourceOwner('cria/callsyntax.py', '_strip_channel'),
+            SourceOwner('cria/callliterals.py', 'recover_fused_call'),
             SourceOwner('cria/massage.py', '_recover_fused_call'),
-            SourceOwner('cria/writeproxy.py', 'trim_fused_tail'),
+            SourceOwner('cria/callliterals.py', 'trim_fused_tail'),
         ),
     ),
     AssistFamily(
@@ -55,9 +64,7 @@ FAMILIES: tuple[AssistFamily, ...] = (
         'Recovery and file safety',
         'Already one implementation with numeric, boolean and structured-value policies.',
         ('A14', 'A15', 'A16'),
-        (
-            SourceOwner('cria/massage.py', 'coerce_args'),
-        ),
+        (),  # executable ownership is derived from the production definitions
     ),
     AssistFamily(
         'F04', 'Normalize tool names and argument shapes',
@@ -65,7 +72,7 @@ FAMILIES: tuple[AssistFamily, ...] = (
         'One tool-interface adaptation family; menu matching, shell/read conventions and envelope decoding are strategies, not independent features.',
         ('A17', 'A18', 'A19', 'A20', 'A21', 'A118', 'A120', 'A123'),
         (
-            SourceOwner('cria/massage.py', 'normalize_tool_calls'),
+            SourceOwner('cria/outputpolicies.py', 'normalize_tool_calls'),
             SourceOwner('cria/toolargs.py', 'parse_args'),
             SourceOwner('cria/shelltool.py', 'shell_args'),
         ),
@@ -76,9 +83,9 @@ FAMILIES: tuple[AssistFamily, ...] = (
         'One patch adaptation pipeline with format-specific stages; retain exact-edit semantics and risky inferred additions as separate historical contracts.',
         ('A22', 'A23', 'A24', 'A25', 'A26', 'A27', 'A28', 'A29'),
         (
-            SourceOwner('cria/massage.py', '_normalize_patch_body'),
-            SourceOwner('cria/massage.py', 'lower_edit_file'),
-            SourceOwner('cria/massage.py', 'add_file_to_write_file'),
+            SourceOwner('cria/callformats.py', '_normalize_patch_body'),
+            SourceOwner('cria/outputpolicies.py', 'lower_edit_file'),
+            SourceOwner('cria/outputpolicies.py', 'add_file_to_write_file'),
         ),
     ),
     AssistFamily(
@@ -89,16 +96,17 @@ FAMILIES: tuple[AssistFamily, ...] = (
         (
             SourceOwner('cria/jsontext.py', 'extract_json_object'),
             SourceOwner('cria/jsontext.py', 'loads'),
-            SourceOwner('cria/massage.py', 'repair_tool_args'),
+            SourceOwner('cria/outputpolicies.py', 'repair_tool_args'),
+            SourceOwner('cria/historyarguments.py', 'recover_arguments'),
         ),
     ),
     AssistFamily(
         'F07', 'Make historical tool calls wire-compatible',
         'Recovery and file safety',
-        'One historical-call integrity family, NOT one policy: lossless malformed-byte wrapping, inferred repair, orphan-result preservation and unanswered-call deletion must keep separate risk histories.',
+        'One historical-call integrity family, NOT one policy: required lossless malformed-byte wrapping remains when optional F06 literal recovery is disabled; orphan-result preservation and unanswered-call deletion keep separate risk histories. Final wire preparation owns integrity; the old public API is only canonical-selection compatibility dispatch.',
         ('A33', 'A34', 'context-15', 'parent-wire-unanswered'),
         (
-            SourceOwner('cria/massage.py', 'repair_history_tool_args'),
+            SourceOwner('cria/historyarguments.py', 'prepare_history'),
             SourceOwner('cria/contextfloor.py', 'ensure_tool_integrity'),
             SourceOwner('cria/upstream.py', 'Upstream._prep'),
         ),
@@ -109,7 +117,8 @@ FAMILIES: tuple[AssistFamily, ...] = (
         'One answer-recovery family with finished-reasoning, simpler-answer and longest-payload strategies. Deliberation is not automatically an intended answer.',
         ('A35', 'A36', 'A37'),
         (
-            SourceOwner('cria/massage.py', 'recover_reasoning_text'),
+            SourceOwner('cria/outputpolicies.py', 'recover_reasoning_text'),
+            SourceOwner('cria/outputpolicies.py', 'recover_text_answer'),
             SourceOwner('cria/massage.py', 'coerce_text_answer'),
         ),
     ),
@@ -132,7 +141,10 @@ FAMILIES: tuple[AssistFamily, ...] = (
         ('A39', 'T38', 'T39'),
         (
             SourceOwner('cria/writeproxy.py', 'advertise'),
-            SourceOwner('cria/toolmenu.py', 'cheatsheet'),
+            SourceOwner('cria/toolmenu.py', 'focus_menu'),
+            SourceOwner('cria/toolmenu.py', 'tool_instructions'),
+            SourceOwner('cria/loop.py', '_required_coder_base'),
+            SourceOwner('cria/loop.py', '_frame_for_item'),
             SourceOwner('cria/server.py', 'CriaHandler._setup_translation'),
         ),
     ),
@@ -163,10 +175,10 @@ FAMILIES: tuple[AssistFamily, ...] = (
         'One shared file-argument preparation and refusal path, with separate whole-write and exact-edit contracts. Absent/null values are not intentional empty strings; real falsy values retain their text. Decoding, protocol debris and candidate safety keep separate policies.',
         ('A54', 'A55', 'A56', 'A57', 'A58', 'A60', 'A61'),
         (
-            SourceOwner('cria/writeproxy.py', '_prepare_file_mutation'),
+            SourceOwner('cria/filecommands.py', '_prepare_file_mutation'),
             SourceOwner('cria/writeproxy.py', '_file_mutation_refusal'),
-            SourceOwner('cria/writeproxy.py', '_repair_double_escaped'),
-            SourceOwner('cria/writeproxy.py', '_protocol_debris'),
+            SourceOwner('cria/callliterals.py', '_repair_double_escaped'),
+            SourceOwner('cria/callliterals.py', '_protocol_debris'),
             SourceOwner('cria/writeproxy.py', 'translate_outbound'),
         ),
     ),
@@ -176,7 +188,7 @@ FAMILIES: tuple[AssistFamily, ...] = (
         'One file-read/result contract family: actual bytes/ranges, refusals, cuts and whole-read credit. File conflict explanation is a sibling result policy.',
         ('A59', 'A62', 'A63', 'A64', 'A65', 'A86', 'A87'),
         (
-            SourceOwner('cria/writeproxy.py', '_read_command'),
+            SourceOwner('cria/filecommands.py', '_read_command'),
             SourceOwner('cria/writeproxy.py', 'note_harness_cuts'),
             SourceOwner('cria/writeproxy.py', 'represent_inbound'),
             SourceOwner('cria/denial.py', 'read_instead_payload'),
@@ -190,8 +202,8 @@ FAMILIES: tuple[AssistFamily, ...] = (
         (
             SourceOwner('cria/loop.py', 'Loop.shrinking_write_check'),
             SourceOwner('cria/loop.py', 'Loop.unread_target_check'),
-            SourceOwner('cria/writeproxy.py', '_held_shrinking_write'),
-            SourceOwner('cria/writeproxy.py', '_read_in_place_of_write'),
+            SourceOwner('cria/shrinkprotection.py', 'check_write'),
+            SourceOwner('cria/filecommands.py', '_read_in_place_of_write'),
         ),
     ),
     AssistFamily(
@@ -224,7 +236,7 @@ FAMILIES: tuple[AssistFamily, ...] = (
         (
             SourceOwner('cria/writeproxy.py', 'represent_inbound'),
             SourceOwner('cria/writeproxy.py', '_debinarized'),
-            SourceOwner('cria/writeproxy.py', '_found_nothing'),
+            SourceOwner('cria/returnedpolicies.py', '_found_nothing'),
         ),
     ),
     AssistFamily(
@@ -242,8 +254,8 @@ FAMILIES: tuple[AssistFamily, ...] = (
         'One grounded dependency/environment advice family with package-resolution and source-search adapters; authoritative tool facts and prescriptions remain distinguishable.',
         ('A91', 'A94', 'A95', 'J56'),
         (
-            SourceOwner('cria/writeproxy.py', '_note_missing_dependency'),
-            SourceOwner('cria/writeproxy.py', '_note_dependency_search'),
+            SourceOwner('cria/returnedpolicies.py', '_note_missing_dependency'),
+            SourceOwner('cria/returnedpolicies.py', '_note_dependency_search'),
             SourceOwner('cria/loop.py', '_unresolved_deps'),
         ),
     ),
@@ -255,8 +267,8 @@ FAMILIES: tuple[AssistFamily, ...] = (
         (
             SourceOwner('cria/depsurface.py', 'anchor_state'),
             SourceOwner('cria/depsurface.py', 'is_withheld'),
-            SourceOwner('cria/writeproxy.py', '_note_dependency_surface'),
-            SourceOwner('cria/writeproxy.py', '_render_dependency_surface'),
+            SourceOwner('cria/returnedpolicies.py', '_note_dependency_surface'),
+            SourceOwner('cria/returnedpolicies.py', '_render_dependency_surface'),
         ),
     ),
     AssistFamily(
@@ -267,8 +279,9 @@ FAMILIES: tuple[AssistFamily, ...] = (
         (
             SourceOwner('cria/dirguard.py', 'path_refusal'),
             SourceOwner('cria/dirguard.py', 'command_refusal'),
-            SourceOwner('cria/writeproxy.py', '_external_refusal'),
-            SourceOwner('cria/writeproxy.py', '_targets_cria_home'),
+            SourceOwner('cria/outboundpolicies.py', '_external_refusal'),
+            SourceOwner('cria/filecommands.py', '_targets_cria_home'),
+            SourceOwner('cria/privatepaths.py', 'CRIA_HOME'),
             SourceOwner('cria/writeproxy.py', '_under_spill_dir'),
         ),
     ),
@@ -289,7 +302,7 @@ FAMILIES: tuple[AssistFamily, ...] = (
         ('A101', 'A102'),
         (
             SourceOwner('cria/dirguard.py', 'install_refusal'),
-            SourceOwner('cria/writeproxy.py', '_external_refusal'),
+            SourceOwner('cria/outboundpolicies.py', '_external_refusal'),
         ),
     ),
     AssistFamily(
@@ -355,6 +368,7 @@ FAMILIES: tuple[AssistFamily, ...] = (
         ('A124',),
         (
             SourceOwner('cria/shelltool.py', 'writes_something'),
+            SourceOwner('cria/toolwire.py', 'write_landed'),
             SourceOwner('cria/writeproxy.py', 'represent_inbound'),
         ),
     ),
@@ -393,11 +407,16 @@ FAMILIES: tuple[AssistFamily, ...] = (
     AssistFamily(
         'F34', 'Verify whole-task completion',
         'Verification and guidance',
-        'One completion-review lifecycle with primary critic, approval confirmation, scheduled checks, release-state ownership and truthful closing. Stages remain independently inspectable.',
+        'One completion-review lifecycle with primary critic, approval confirmation, scheduled checks, release-state ownership and truthful closing. Stages remain independently inspectable; optional act-first steering does not own the required activity clocks.',
         ('J08', 'J09', 'J10', 'J22', 'J23', 'J26', 'J27', 'J110'),
         (
             SourceOwner('cria/loop.py', 'judge_satisfaction'),
-            SourceOwner('cria/loop.py', '_confirm_completion'),
+            SourceOwner('cria/completionconfirmation.py', 'confirm'),
+            SourceOwner('cria/completionconfirmation.py', 'absent_artifact'),
+            SourceOwner('cria/completionconfirmation.py', 'restates_claim'),
+            SourceOwner('cria/completionredrive.py', 'execute'),
+            SourceOwner('cria/loop.py', '_settle_stalled_reply'),
+            SourceOwner('cria/loop.py', 'Loop._work_item'),
             SourceOwner('cria/loop.py', 'Loop._gate_single_done'),
             SourceOwner('cria/loop.py', 'Loop._periodic_satisfaction'),
             SourceOwner('cria/loop.py', 'satisfaction_done_note'),
@@ -409,8 +428,10 @@ FAMILIES: tuple[AssistFamily, ...] = (
         'One exact-form capability: measure actual bytes and independently extract/check required size and final line break.',
         ('J11', 'J12', 'J13'),
         (
-            SourceOwner('cria/loop.py', '_written_file_facts'),
-            SourceOwner('cria/loop.py', '_exact_form_blocks_completion'),
+            SourceOwner('cria/completionmeasure.py', 'written_file_facts'),
+            SourceOwner('cria/completionapproval.py', 'exact_form'),
+            SourceOwner('cria/loop.py', '_satisfaction_evidence'),
+            SourceOwner('cria/loop.py', 'judge_satisfaction'),
             SourceOwner('cria/filefacts.py', 'render'),
         ),
     ),
@@ -420,9 +441,18 @@ FAMILIES: tuple[AssistFamily, ...] = (
         'One missing-output/negative-diagnosis capability with exact quotes, narrow observation and persistent remediation state. These questions are not one interchangeable yes/no verdict.',
         ('J14', 'J15', 'J16', 'J17'),
         (
-            SourceOwner('cria/loop.py', 'observe_task_missing_file'),
-            SourceOwner('cria/loop.py', '_negative_diagnosis_nudge'),
-            SourceOwner('cria/loop.py', 'Loop._observe_missing_file_on_done'),
+            SourceOwner('cria/completiondiagnosis.py', 'ground_diagnosis'),
+            SourceOwner('cria/completiondiagnosis.py', 'arm_remediation'),
+            SourceOwner('cria/completiondiagnosis.py', 'acknowledge_delivery'),
+            SourceOwner('cria/completiondiagnosis.py', 'follow_up_nonwrite'),
+            SourceOwner('cria/completiondiagnosis.py', 'settle_remediation'),
+            SourceOwner('cria/completiondiagnosis.py', 'observe_missing_file'),
+            SourceOwner('cria/completiondiagnosis.py', 'deliver_gap'),
+            SourceOwner('cria/completiondiagnosis.py', 'observe_scheduled'),
+            SourceOwner('cria/completiondiagnosis.py', 'observe_terminal'),
+            SourceOwner('cria/completiondiagnosis.py', 'subject_is_exact_in_quote'),
+            SourceOwner('cria/completiondiagnosis.py', 'observed_successful_write'),
+            SourceOwner('cria/loop.py', '_observed_successful_write'),
         ),
     ),
     AssistFamily(
@@ -473,7 +503,7 @@ FAMILIES: tuple[AssistFamily, ...] = (
         (
             SourceOwner('cria/probediscovery.py', 'discover'),
             SourceOwner('cria/probeclassify.py', ''),
-            SourceOwner('cria/proberun.py', 'select_probes'),
+            SourceOwner('cria/proberun.py', 'select_completion_probes'),
             SourceOwner('cria/linterprobe.py', 'py_compile_argv'),
         ),
     ),
@@ -509,7 +539,8 @@ FAMILIES: tuple[AssistFamily, ...] = (
         ('J49', 'J50', 'J51', 'J52', 'J53', 'J54', 'J55'),
         (
             SourceOwner('cria/participation.py', ''),
-            SourceOwner('cria/loop.py', '_test_participation_blocks_completion'),
+            SourceOwner('cria/completionapproval.py', 'test_participation'),
+            SourceOwner('cria/loop.py', 'judge_satisfaction'),
             SourceOwner('cria/probegate.py', 'gate_passing_tests'),
             SourceOwner('cria/probediscovery.py', 'declared_test_source_paths'),
         ),
@@ -554,8 +585,11 @@ FAMILIES: tuple[AssistFamily, ...] = (
         'One grounded environment/runner reset family with JavaScript runner and Go module-state adapters; preserve exact ecosystem gates and independent judgments.',
         ('J83', 'J84'),
         (
-            SourceOwner('cria/loop.py', '_configured_js_test_failure'),
-            SourceOwner('cria/loop.py', 'module_state_steer'),
+            SourceOwner('cria/runnercontract.py', 'judge_runner_contract'),
+            SourceOwner('cria/runnercontract.py', 'failed_declared_runner'),
+            SourceOwner('cria/runnercontract.py', 'run_selected'),
+            SourceOwner('cria/loop.py', 'runner_reset_steer'),
+            SourceOwner('cria/loop.py', '_periodic_judgment_evidence'),
             SourceOwner('cria/prompts/runner_reset.txt', ''),
             SourceOwner('cria/prompts/module_state_reset.txt', ''),
         ),
@@ -566,8 +600,8 @@ FAMILIES: tuple[AssistFamily, ...] = (
         'One generation backstop/recovery family with reasoning/repetition/empty/near-window detectors. Readable-frame callbacks and truly silent HTTP sockets remain different observable paths.',
         ('J85', 'J86', 'J87', 'J88', 'J89', 'J90', 'J91', 'T24'),
         (
-            SourceOwner('cria/rumination.py', 'Detector'),
-            SourceOwner('cria/rumination.py', 'degenerate_wide'),
+            SourceOwner('cria/generationguards.py', 'Detector'),
+            SourceOwner('cria/generationguards.py', 'degenerate_wide'),
             SourceOwner('cria/upstream.py', 'Upstream.chat_watched'),
             SourceOwner('cria/loop.py', 'grounded_rumination_step'),
         ),
@@ -580,8 +614,11 @@ FAMILIES: tuple[AssistFamily, ...] = (
         (
             SourceOwner('cria/server.py', '_compaction_body'),
             SourceOwner('cria/server.py', '_harden_compaction_reply'),
+            SourceOwner('cria/reorientation.py', 'reorient'),
+            SourceOwner('cria/loop.py', 'Loop._prepare_coder_context'),
             SourceOwner('cria/loop.py', 'Loop._reasoned_reanchor'),
             SourceOwner('cria/selfcompact.py', 'work_ledger'),
+            SourceOwner('cria/memoryhandoff.py', ''),
         ),
     ),
     AssistFamily(
@@ -593,6 +630,13 @@ FAMILIES: tuple[AssistFamily, ...] = (
             SourceOwner('cria/planner.py', 'Planner.plan_for'),
             SourceOwner('cria/planner.py', 'Planner._gather_and_plan'),
             SourceOwner('cria/planner_tools.py', 'execute_tool'),
+            SourceOwner('cria/steppreparation.py', 'prepare_step'),
+            SourceOwner('cria/loop.py', 'Loop._prepare_coder_context'),
+            SourceOwner('cria/livingplan.py', 'propose_tail'),
+            SourceOwner('cria/livingplan.py', 'rederive_tail'),
+            SourceOwner('cria/livingplan.py', 'settle_empty'),
+            SourceOwner('cria/livingplan.py', 'reassess_compatibility'),
+            SourceOwner('cria/loop.py', 'reassess_remaining'),
             SourceOwner('cria/loop.py', 'Loop._replan_tail'),
         ),
         scope='experimental_planning',
@@ -603,6 +647,7 @@ FAMILIES: tuple[AssistFamily, ...] = (
         'One research-steering family: exact/near repeat policy, URL substitution, preserved-query advice, semantic release, failures and spilled-read poisoning. Denial and persistent poisoning remain separately visible risks; planner path stays opt-in.',
         ('J104', 'J111', 'J112', 'J113', 'J114', 'T64', 'T66', 'T67', 'T68', 'T69', 'T70', 'T79'),
         (
+            SourceOwner('cria/researchpolicies.py', ''),
             SourceOwner('cria/webfetch.py', 'gate_search'),
             SourceOwner('cria/webfetch.py', 'fetch_nav'),
             SourceOwner('cria/loop.py', 'guard_search_query'),
@@ -631,6 +676,7 @@ FAMILIES: tuple[AssistFamily, ...] = (
             SourceOwner('cria/refusalledger.py', 'refusal_events'),
             SourceOwner('cria/refusalledger.py', '_supersedes'),
             SourceOwner('cria/loop.py', '_session_refusals'),
+            SourceOwner('cria/loop.py', '_track_refused_names'),
         ),
     ),
     AssistFamily(
@@ -639,7 +685,7 @@ FAMILIES: tuple[AssistFamily, ...] = (
         'One classification/routing lifecycle with task selection, cache, enum handling, retry/fallback, auxiliary bypass and configured route admission. Defaults and fallback risks remain explicit.',
         ('parent-classify-task', 'parent-classify-selection', 'parent-classify-cache', 'parent-classify-enums', 'coverage-assist-01', 'coverage-assist-02', 'coverage-assist-03', 'T21'),
         (
-            SourceOwner('cria/classify.py', 'Classifier.classify'),
+            SourceOwner('cria/classify.py', 'Classifier._execute'),
             SourceOwner('cria/routing.py', 'Router'),
             SourceOwner('cria/server.py', 'CriaHandler._classify'),
         ),
@@ -651,7 +697,10 @@ FAMILIES: tuple[AssistFamily, ...] = (
         ('T01', 'T02', 'T03', 'T04', 'T05', 'T06', 'T07', 'context-02', 'context-06'),
         (
             SourceOwner('cria/upstream.py', 'Upstream._prep'),
-            SourceOwner('cria/upstream.py', 'Upstream._overflow_refit'),
+            SourceOwner('cria/capacitypolicy.py', 'choose_refit'),
+            SourceOwner('cria/capacitypolicy.py', 'dispatch'),
+            SourceOwner('cria/capacitypolicy.py', 'fit_density'),
+            SourceOwner('cria/upstream.py', 'Upstream._observe_capacity'),
             SourceOwner('cria/upstream.py', 'Upstream._open_with_refit'),
             SourceOwner('cria/contextfloor.py', 'fit'),
             SourceOwner('cria/tokenratio.py', 'record'),
@@ -687,7 +736,11 @@ FAMILIES: tuple[AssistFamily, ...] = (
         ('T22',),
         (
             SourceOwner('cria/upstream.py', 'Upstream.chat'),
-            SourceOwner('cria/failover.py', 'Failure'),
+            SourceOwner('cria/transientpolicy.py', 'Failure'),
+            SourceOwner('cria/transientpolicy.py', 'choose'),
+            SourceOwner('cria/transientpolicy.py', 'selected_choice'),
+            SourceOwner('cria/failover.py', 'classify_failure'),
+            SourceOwner('cria/failover.py', 'run'),
         ),
     ),
     AssistFamily(
@@ -733,7 +786,14 @@ FAMILIES: tuple[AssistFamily, ...] = (
             SourceOwner('cria/webfetch.py', 'find_json'),
             SourceOwner('cria/webfetch.py', 'outline_for_url'),
             SourceOwner('cria/webfetch.py', '_ref_map'),
+            SourceOwner('cria/discoverypolicy.py', 'discovery'),
+            SourceOwner('cria/discoverypolicy.py', 'observation'),
             SourceOwner('cria/apidiscovery.py', 'discover'),
+            SourceOwner('cria/webfetch.py', '_fetch_and_render'),
+            SourceOwner('cria/documentguidance.py', 'guidance'),
+            SourceOwner('cria/webfetch.py', 'guidance_services'),
+            SourceOwner('cria/webfetch.py', 'render_page'),
+            SourceOwner('cria/webfetch.py', '_spill_outline'),
         ),
     ),
     AssistFamily(
@@ -742,11 +802,24 @@ FAMILIES: tuple[AssistFamily, ...] = (
         'One spill/read-navigation capability with fetch/search/planner adapters, filenames/view gating, refusal outlines and reach disclosure. Command-size clipping remains a historically lower-rated policy.',
         ('T59', 'T60', 'T61', 'T62', 'T63', 'T65', 'T73', 'T78', 'T92', 'context-62'),
         (
+            SourceOwner('cria/externalization.py', 'externalize'),
+            SourceOwner('cria/externalization.py', 'State'),
+            SourceOwner('cria/externalization.py', 'Delivery'),
+            SourceOwner('cria/externalization.py', 'coder_fetch'),
+            SourceOwner('cria/externalization.py', 'coder_search'),
+            SourceOwner('cria/externalization.py', 'planner_fetch'),
+            SourceOwner('cria/externalization.py', 'planner_search'),
             SourceOwner('cria/webfetch.py', 'note_fetch_spill'),
             SourceOwner('cria/webfetch.py', 'search_spill_name'),
             SourceOwner('cria/writeproxy.py', '_spill_command'),
+            SourceOwner('cria/writeproxy.py', '_externalize_coder'),
+            SourceOwner('cria/writeproxy.py', 'retain_externalizations'),
+            SourceOwner('cria/writeproxy.py', 'observe_externalization_results'),
+            SourceOwner('cria/server.py', 'CriaHandler._handle_chat'),
             SourceOwner('cria/loop.py', '_label_spill_entries'),
             SourceOwner('cria/planner_tools.py', '_web_fetch'),
+            SourceOwner('cria/planner_tools.py', '_externalize_planner'),
+            SourceOwner('cria/planner_tools.py', 'retain_tool_result'),
         ),
     ),
     AssistFamily(
@@ -795,6 +868,8 @@ FAMILIES: tuple[AssistFamily, ...] = (
             SourceOwner('cria/contextfloor.py', '_protected_mask'),
             SourceOwner('cria/contextfloor.py', '_reduce_caller_spans'),
             SourceOwner('cria/contextfloor.py', '_compress_tools'),
+            SourceOwner('cria/preamblepolicy.py', 'reframe'),
+            SourceOwner('cria/loop.py', 'Loop._prepare_coder_context'),
             SourceOwner('cria/loop.py', '_frame_for_item'),
             SourceOwner('cria/loop.py', 'reframe_preamble'),
         ),
@@ -802,13 +877,21 @@ FAMILIES: tuple[AssistFamily, ...] = (
     AssistFamily(
         'F68', 'Reduce old history with truthful state',
         'Context and memory',
-        'One history-floor lifecycle: remove droppable history, maintain labelled state and handle floor-created orphan pairs/repeated digest cycles. Distinct from fitting-body wire repair.',
+        'Required complete wire-fit foundation: schema/caller/restored/output reductions, protected history dropping, labelled replacement notes, pair cleanup and honest remaining overflow share one pressure budget. Invocation remains at the final wire boundary under existing activation/window rules; no independently removable helper or new L0 fitting is implied.',
         ('context-12', 'context-14', 'context-16'),
         (
-            SourceOwner('cria/contextfloor.py', '_drop_oldest'),
-            SourceOwner('cria/contextfloor.py', '_compacted_note'),
             SourceOwner('cria/contextfloor.py', 'fit'),
+            SourceOwner('cria/contextfloor.py', '_compress_tools'),
+            SourceOwner('cria/contextfloor.py', '_reduce_caller_spans'),
+            SourceOwner('cria/contextfloor.py', '_reduce_restored_text'),
+            SourceOwner('cria/contextfloor.py', '_reduce_tool_outputs'),
+            SourceOwner('cria/contextfloor.py', '_drop_oldest'),
+            SourceOwner('cria/contextfloor.py', '_drop_protected_overflow'),
+            SourceOwner('cria/contextfloor.py', '_compacted_note'),
+            SourceOwner('cria/upstream.py', 'Upstream._prep'),
+            SourceOwner('tests/test_wire_fit_foundation_contract.py', ''),
         ),
+        coverage='required_wire_contract',
     ),
     AssistFamily(
         'F69', 'Fold repeated context evidence',
@@ -819,6 +902,8 @@ FAMILIES: tuple[AssistFamily, ...] = (
             SourceOwner('cria/dedup.py', 'fold_repeated_runs'),
             SourceOwner('cria/dedup.py', 'fold_repeated_actions'),
             SourceOwner('cria/focustrim.py', '_collapse_duplicates'),
+            SourceOwner('cria/ledgercopies.py', 'elide'),
+            SourceOwner('cria/loop.py', 'Loop._prepare_coder_context'),
             SourceOwner('cria/modelview.py', 'fold_evidence'),
             SourceOwner('cria/upstream.py', 'Upstream._prep'),
         ),
@@ -829,8 +914,10 @@ FAMILIES: tuple[AssistFamily, ...] = (
         'One compaction lifecycle: composition, write/refold, independent retrospective/scope/fidelity validation, echo rejection and retry throttle. Preserve three independent questions rather than merging verdict criteria.',
         ('context-35', 'context-36', 'context-37', 'context-39', 'context-40', 'context-41', 'context-42', 'context-43'),
         (
-            SourceOwner('cria/selfcompact.py', 'compact'),
+            SourceOwner('cria/selfcompact.py', 'rolling'),
+            SourceOwner('cria/memoryeffects.py', ''),
             SourceOwner('cria/selfcompact.py', 'compaction_request_parts'),
+            SourceOwner('cria/loop.py', 'Loop._prepare_coder_context'),
             SourceOwner('cria/loop.py', 'Loop._self_compact'),
             SourceOwner('cria/server.py', '_harden_compaction_reply'),
         ),
@@ -853,6 +940,8 @@ FAMILIES: tuple[AssistFamily, ...] = (
         'One restoration/provenance capability: fresh inventory/current text, named reduction stand-in, sent-body read credit, paired-result footer and dated ledger. Sent credit is not a durable ledger or a footer.',
         ('context-09', 'context-32', 'context-54', 'context-55', 'context-56', 'context-57', 'context-58'),
         (
+            SourceOwner('cria/contextrestoration.py', 'restore'),
+            SourceOwner('cria/loop.py', 'Loop._prepare_coder_context'),
             SourceOwner('cria/loop.py', '_restored_text_message'),
             SourceOwner('cria/groundtruth.py', 'workspace_inventory'),
             SourceOwner('cria/modelview.py', 'settle_restored_text'),
@@ -866,9 +955,10 @@ FAMILIES: tuple[AssistFamily, ...] = (
         'One lossy history-substitution family. Keep failure squashing, superseded writes and landed-payload substitution explicitly historically lower-rated, rather than endorsing them as harmless compression.',
         ('context-23', 'context-24', 'context-44'),
         (
+            SourceOwner('cria/loop.py', 'Loop._prepare_coder_context'),
             SourceOwner('cria/focustrim.py', '_drop_superseded_writes'),
             SourceOwner('cria/focustrim.py', '_repeat_failed'),
-            SourceOwner('cria/modelview.py', 'superseded_writes_truth'),
+            SourceOwner('cria/focustrim.py', 'superseded_writes_truth'),
             SourceOwner('cria/selfcompact.py', '_last_write_index_by_path'),
         ),
     ),
@@ -903,8 +993,139 @@ FAMILIES: tuple[AssistFamily, ...] = (
             SourceOwner('cria/loop.py', 'Loop._compact_done'),
             SourceOwner('cria/loop.py', '_briefing_from_history'),
         ),
+        scope='experimental_planning',
     ),
 )
 
+# Direct historical aliases only; a retired ID is never reused or a runtime gate.
+ALIASES = MappingProxyType({
+    "F27": "F40", "F41": "F40", "F42": "F40",
+    "F45": "F44", "F46": "F44", "F21": "F20", "F53": "F20",
+    "F37": "F33", "F39": "F50", "F02": "F01", "F38": "F34",
+    "F64": "F10", "F18": "F14",
+})
+
+# Positive purposes and maintenance boundaries are human judgments, not classifiers.
+# Historical contracts above remain provenance; these are today's responsibilities.
+_BOUNDARIES = {
+    "F01": ("Recover admissible model calls and remove coupled protocol debris.", "Call promotion and its cleanup share admission; prose-only answer recovery belongs to F08."),
+    "F03": ("Convert recovered arguments according to the request's declared schema.", "Schema authority permits exact type conversion, not JSON repair or invented arguments."),
+    "F04": ("Adapt tool names and argument envelopes to the available interface.", "Interface adapters do not own call admission, patch semantics or executor lowering."),
+    "F05": ("Translate supported patches while preserving mutation intent.", "Patch syntax and exact-edit translation differ from file argument validity and candidate safety."),
+    "F06": ("Read model JSON while preserving complete payload literals.", "Shared parsing and optional historical literal recovery do not own semantic admission, call identities or wire validity. Disabling recovery leaves F07's required lossless malformed-byte envelope intact."),
+    "F07": ("Keep historical calls and results representable on the wire.", "Final Upstream._prep invokes historyarguments.prepare_history for required lossless malformed-byte enveloping independently of F06's optional reconstruction. Public compatibility dispatch is not another implementation; role/pair integrity remains distinct."),
+    "F08": ("Recover intended text when no executable answer is expected.", "Text recovery never grants a recovered call permission to execute."),
+    "F09": ("Withhold incomplete actions and preserve their recovery status.", "Generation stop evidence governs quarantine; rumination and candidate validity have separate authorities."),
+    "F10": ("Advertise, focus and explain the available model tool interface.", "Native search aliases are menu adapters; lowering and research judgments retain separate ownership."),
+    "F11": ("Round-trip synthetic tools through harness primitives.", "Execution adapters preserve correlation and bytes; admission and safety policies remain consumers."),
+    "F12": ("Reject replacements that introduce proven syntax regressions.", "Language syntax evidence differs from argument preparation and destructive-resource analysis."),
+    "F13": ("Prepare valid whole-write and exact-edit arguments.", "Missing/null and intentional-empty values retain distinct contracts; syntax and safety are not argument validation."),
+    "F14": ("Represent returned tool bytes, coverage and outcomes truthfully.", "Read, binary and empty-result adapters preserve provenance; confidential data handling belongs to F19."),
+    "F15": ("Protect observed existing content from uninformed whole replacements.", "Unread substitution, fragment holds and landed-removal facts remain distinct policies, not generic syntax checks."),
+    "F16": ("Recover a whole pasted file or explain why its text did not execute.", "Whole-file judgment needs session/workspace evidence absent from ordinary dialect recovery."),
+    "F17": ("Order exact edits and report their actual landed changes.", "Edit locking, sequencing and anchor recovery differ from whole-write protection and general result rendering."),
+    "F19": ("Redact known credentials from replayed payloads.", "Confidentiality has its own protected resource; ordinary output interpretation cannot authorize disclosure."),
+    "F20": ("Ground dependency work in observed failures, API surfaces and resolver history.", "Separate atomic advice and evidence providers retain their authority: resolution success never proves API availability; runner resets belong to F47."),
+    "F22": ("Bound file and shell access to permitted locations.", "Lexical/resolved path adapters protect access; direct root destruction remains bounded even when access is unrestricted."),
+    "F23": ("Refuse proven direct root-wide deletion.", "This unrestricted-command backstop differs from permission containment and complete candidate-source review."),
+    "F24": ("Keep package installation within permitted project destinations.", "Install destination policy protects shared environments, not arbitrary filesystem mutations."),
+    "F25": ("Reject broad process-kill selectors.", "Process identity is the protected resource, distinct from files, installs and workspace access."),
+    "F26": ("Provide harness-observed workspace facts and deferred reads.", "Shared three-valued evidence supports many policies; disabling a consumer does not remove the evidence foundation."),
+    "F28": ("Review candidate source for proven unsafe filesystem mutation.", "Language adapters share proof policy; reviewed source and byte-bound refusals differ from direct shell-root detection."),
+    "F29": ("Adapt configured strict message-role templates at the wire.", "Opt-in role concatenation differs from historical call integrity and reasoning convention translation."),
+    "F30": ("Record actions that may invalidate workspace facts.", "Shared mutation provenance supplies freshness evidence without deciding any consumer's intervention."),
+    "F31": ("Isolate guard memory by session and task.", "State isolation is a foundation across policies, not another repetition detector or selection switch."),
+    "F32": ("Require explicit consent before experimental planning.", "Consent enforcement is independent of planning capabilities, engagement levels and family aliases."),
+    "F33": ("Support truthful judge inspection and safe critic answer reading.", "Inspection, closure and negative-only answer recovery retain distinct members; callers own the question, retries and release decision."),
+    "F34": ("Judge and settle whole-task completion, including bounded exits.", "Whole-task release owns its limits; step progress, exact form and test participation retain distinct questions."),
+    "F35": ("Compare measured file form with exact task requirements.", "Requirement extraction and arithmetic comparison are not broad satisfaction judgments."),
+    "F36": ("Ground negative completion diagnoses in task and current evidence.", "Quote verification and persistent remediation do not approve completion or author file contents."),
+    "F40": ("Select, transport, interpret and settle repository check evidence.", "One asynchronous check lifecycle owns cleanup; trigger policies and task-required test judgments consume its evidence without sharing release authority."),
+    "F43": ("Require observable task-relevant test participation.", "Mapping, execution and task-required end-to-end reach remain distinct from a green checker or broad critic approval."),
+    "F44": ("Respond to observed stuck work with fresh, vetted guidance.", "Detection, probing, authoring and vetting form one lifecycle; each trigger and failure direction remains an atomic contract."),
+    "F47": ("Judge whether failed declared tests need runner or module reanchoring.", "Independent ecosystem judgments own suppression state; they neither gather dependency API evidence nor own the probe."),
+    "F48": ("Stop degenerate generation and safely redrive the coder.", "Stream degeneration and empty responses differ from incomplete executable actions and semantic stuck-work detection."),
+    "F49": ("Resume work after a harness context handoff.", "Harness-owned history loss cannot retain rejected history; internal compaction can, and closing briefings have a different release moment."),
+    "F50": ("Gather, revise and verify explicitly requested experimental plans.", "Step lifecycle ownership includes verification but not whole-task release or shared judge/probe services; explicit consent remains required."),
+    "F51": ("Guide and limit repeated external research.", "Query/fetch judgments and repeat state differ from document transport, navigation and spill execution."),
+    "F52": ("Compose prior actions and labelled memory as completion evidence.", "Structured outcomes and summary claims retain different authority; this evidence adapter does not judge satisfaction."),
+    "F54": ("Classify tasks and admit configured routes.", "Task classification owns routing choices, not provider execution or transport retry permission."),
+    "F55": ("Measure context capacity and reserve room for an answer.", "Sizing and changed-body overflow retries differ from authority protection, history reduction and transient retries."),
+    "F56": ("Remove private wire hints and substitute inert prompt fields.", "Producer-owned envelope hygiene is not permission to reduce evidence or change protocol roles."),
+    "F57": ("Translate configured served-model reasoning conventions.", "Reasoning directives and sampling adapters differ from strict role alternation and answer recovery."),
+    "F58": ("Retry transient upstream failures under their retry contract.", "Transient failure permission cannot authorize resending an unchanged known-overflow body."),
+    "F59": ("Bridge Responses and Chat APIs while preserving caller intent.", "API messages, controls and events are protocol support, not coding-policy selection."),
+    "F60": ("Maintain stream keepalive and orderly shutdown.", "Connection lifecycle infrastructure does not judge or improve coding work."),
+    "F61": ("Fetch and represent external documents.", "Transport and MIME adapters differ from navigation, research steering and workspace spilling; shared reduction has other consumers."),
+    "F62": ("Navigate documents and expose observed API structure.", "Paging, references and discovery adapters do not own fetch transport or semantic research direction."),
+    "F63": ("Expose oversized research through guarded harness-readable spills.", "Spill location, execution and reach disclosure differ from fetching and repeated-research policy."),
+    "F65": ("Preserve checked-in native backend integration contracts.", "External templates and patches are artifacts, not registered runtime policies or evidence of deployment."),
+    "F66": ("Bridge explicitly configured CLI providers.", "Provider invocation/resume owns an optional execution boundary, not an ordinary assist-stage plugin."),
+    "F67": ("Protect task and active-question authority during context shaping.", "Optional frame producers differ from capacity measurement; floor pressure/protection helpers are shared navigation into the required F68 contract, not separately removable steering."),
+    "F68": ("Fit final requests with disclosed reductions and protected authority.", "One required source contract owns all pressure-only fitting helpers. Activation remains at the final wire boundary under existing level/window rules; optional steering, model-written memory, role/privacy integrity and capacity measurement remain distinct."),
+    "F69": ("Fold repeated evidence while preserving a surviving source.", "Deduplication requires truthful copy pointers; it differs from supersession and lossy payload substitution."),
+    "F70": ("Compact internal memory without changing task or facts.", "Independent retrospective/scope/fidelity judgments can reject and retain history; harness handoffs and closing briefings cannot use that settlement rule."),
+    "F71": ("Frame reducible evidence for internal inference calls.", "Whole-line blocks and transcript serialization serve judges, authors and compactors; support owns representation, never their semantic verdicts."),
+    "F72": ("Restore current workspace facts after context loss.", "Fresh bodies, dated ledgers and sent-body read credit differ from summary memory and the shared survey producer."),
+    "F73": ("Substitute superseded historical payloads with explicit provenance.", "Lossy substitution and failure squashing remain visible policies, not lossless duplicate folding."),
+    "F74": ("Sanitize replayed internal annotations and artifacts.", "Inbound transcript hygiene interprets producer markers; final private-wire stripping remains a separate foundation."),
+    "F75": ("Report the model-visible conversation usage to the harness.", "Usage measurement informs harness compaction without owning window fitting or context reduction."),
+    "F76": ("Carry closing work briefings into later tasks.", "Closing-time generated memory has different validation/provenance limits from rejected-handoff recovery and internal compaction."),
+}
+
+_TITLES = {
+    "F01": "Recover calls and clean coupled protocol debris",
+    "F10": "Expose and adapt lean tool interfaces",
+    "F14": "Represent tool results and read coverage truthfully",
+    "F20": "Ground dependency work in authoritative evidence",
+    "F33": "Support judge inspection and safe answer reading",
+    "F34": "Judge and settle whole-task completion",
+    "F40": "Own the repository-check evidence lifecycle",
+    "F44": "Respond to grounded stuck-work observations",
+    "F50": "Gather, maintain and verify optional plans",
+    "F68": "Fit final requests with disclosed reductions",
+}
+_FOUNDATIONS = {"F26", "F30", "F31", "F68"}
+_SUPPORT = {"F04", "F06", "F07", "F11", "F29", "F52", "F56", "F57", "F59", "F60", "F71", "F75"}
+
+
+def resolve_family(family_id: str) -> str:
+    """Resolve a current or historical identity; unknown identities are errors."""
+    current = ALIASES.get(family_id, family_id)
+    if current not in BY_ID:
+        raise ValueError("Unknown family identity: " + family_id)
+    return current
+
+
+def _current_families() -> tuple[AssistFamily, ...]:
+    result = []
+    for family in _LINEAGE:
+        if family.id in ALIASES:
+            continue
+        group = tuple(f for f in _LINEAGE if ALIASES.get(f.id, f.id) == family.id)
+        purpose, boundary = _BOUNDARIES[family.id]
+        kind = ("foundation" if family.id in _FOUNDATIONS else
+                "support" if family.id in _SUPPORT else
+                "artifact" if family.scope == "native_artifacts" else
+                "provider" if family.scope == "configured_cli_provider" else "intervention")
+        result.append(replace(
+            family, title=_TITLES.get(family.id, family.title), purpose=purpose,
+            boundary=boundary, contract=" ".join(f.contract for f in group), kind=kind,
+            details=tuple(d for f in group for d in f.details),
+            owners=tuple(dict.fromkeys(o for f in group for o in f.owners)),
+            lineage=tuple(f.id for f in group),
+            coverage="external_artifact" if kind == "artifact" else family.coverage,
+        ))
+    return tuple(result)
+
+
+FAMILIES = _current_families()
 BY_ID = MappingProxyType({family.id: family for family in FAMILIES})
 DETAIL_TO_FAMILY = MappingProxyType({detail: family.id for family in FAMILIES for detail in family.details})
+HISTORICAL_DETAIL_TO_FAMILY = MappingProxyType({detail: family.id for family in _LINEAGE for detail in family.details})
+
+
+def executable_definitions():
+    """Use the production registry itself, without a second atomic catalog."""
+    from .assistruntime import DEFINITIONS
+    return DEFINITIONS

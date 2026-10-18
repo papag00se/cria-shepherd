@@ -390,15 +390,12 @@ def discover(url: str, status: Optional[int], body: str,
     """Probe ``url`` when it answers like a protocol endpoint. ``None`` whenever there is nothing to
     say — an unrecognised URL, an unreachable server, a schema cria could not read. Never raises: a
     failed side quest must leave the ordinary GET result exactly as it was."""
-    kind = probe_kind(url, status, body, content_type)
-    if not kind:
-        return None
-    try:
-        return _mcp_discover(url) if kind == "mcp" else _graphql_discover(url)
-    except ProbeTooLarge:
-        return _unread(url, kind)
-    except Exception:  # noqa: BLE001 — discovery is best-effort by construction
-        return None
+    from . import assistbinding, discoverypolicy
+    definition = assistbinding.selected_definition(discoverypolicy.DEFINITION)
+    services = discoverypolicy.ObservationServices(
+        probe_kind, _mcp_discover, _graphql_discover, _unread, ProbeTooLarge)
+    return discoverypolicy.selected_observation(definition,
+        discoverypolicy.DiscoveryInput(url, status, body, content_type), services)
 
 
 def _unread(url: str, kind: str) -> Discovery:

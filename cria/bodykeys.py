@@ -76,6 +76,11 @@ RESTORED_FILES = "cria_restored_files"
 #: historical replacement pairs. Settled after the floor and stripped from each message.
 SUPERSEDED_WRITES = "cria_superseded_writes"
 
+#: Request-level immutable producer bindings for pending focus settlement. In-process
+#: authority only; retries/refits retain it even when optional new production is off.
+#: The wire consumes and strips this packet, never serializing its executors.
+FOCUS_PRODUCERS = "cria_focus_producers"
+
 # --- response-body hints: cria's own annotations on a completion --------------------------------
 
 #: Human-facing notes cria attaches to a completion for the operator's display, stripped before the
@@ -99,4 +104,4 @@ PAYLOAD_BOUNDARY = "cria_payload_boundary"
 #: Every key above. The wire strips this set wholesale, so adding a key here is all it takes to keep
 #: it off the API — the thing five scattered literals could not guarantee.
 ALL = (MERGE_TURNS, OUTPUT_RESERVE, LOST_CALL, PINNED_TASK, CONTEXT_REFIT_NO_CHANGE,
-       CALLER_INSTRUCTIONS, CALLER_PERSONA, CALLER_SPAN, RESTORED_FILES, COMPLETION_REMEDIATION, NOTES, RUMINATION, FENCED_REFUSED, PAYLOAD_BOUNDARY, SUPERSEDED_WRITES)
+       CALLER_INSTRUCTIONS, CALLER_PERSONA, CALLER_SPAN, RESTORED_FILES, COMPLETION_REMEDIATION, NOTES, RUMINATION, FENCED_REFUSED, PAYLOAD_BOUNDARY, SUPERSEDED_WRITES, FOCUS_PRODUCERS)

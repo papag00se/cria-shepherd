@@ -43,6 +43,7 @@ import tempfile
 from pathlib import Path
 import unittest
 
+from cria import assistruntime
 from cria.loop import CONTINUATION_MARKER, Loop, LoopStore, _history_root, _rewrite_summary_text
 
 
@@ -146,7 +147,7 @@ class ItIsWiredIntoTheDriverTests(unittest.TestCase):
 
     def _drive_continuation(self):
         from cria.loop import CONTINUATION_MARKER, Loop, _history_root
-        from tests.test_loop import _ctx, _Rlog, _SHELL
+        from tests.test_loop import _ctx, _enable_test_planning, _Rlog, _SHELL
 
         class _Class:
             def __init__(self, task_type="coding", engagement="task"):
@@ -157,7 +158,7 @@ class ItIsWiredIntoTheDriverTests(unittest.TestCase):
         _root_text, root_fp = _history_root([{"role": "user", "content": root}])
         coder = lambda b, r: b"{}"
 
-        l = Loop(_ctx(coder, None))
+        l = Loop(_enable_test_planning(_ctx(coder, None)))
         sk = "sid:x1"
         l._store.observe_shape(sk, root_fp, 40)  # prime a longer prior history under this root
 
@@ -169,7 +170,8 @@ class ItIsWiredIntoTheDriverTests(unittest.TestCase):
                                         "route is still missing."},
         ]
         body = {"messages": messages, "tools": [_SHELL]}
-        l._drive_locked(body, sk, _Class(), _Rlog())
+        with assistruntime.bound(l._ctx.pilot_runtime):
+            l._drive_locked(body, sk, _Class(), _Rlog())
         return l
 
     def test_exact_call_0124_toolless_checkpoint_records_the_rewrite_before_deferral(self):
@@ -239,7 +241,7 @@ class ItIsWiredIntoTheDriverTests(unittest.TestCase):
         """
         from cria import wsview
         from cria.planner import Planner
-        from tests.test_loop import _ctx, _Rlog, _SHELL
+        from tests.test_loop import _ctx, _enable_test_planning, _Rlog, _SHELL
 
         class _Class:
             task_type = "coding"
@@ -262,7 +264,7 @@ class ItIsWiredIntoTheDriverTests(unittest.TestCase):
                                 text=True, capture_output=True, check=True).stdout
         self.assertTrue(wsview.apply_survey(view, wsview.strip_survey(survey)[1]))
         provider = _Provider()
-        ctx = _ctx(lambda _body, _rlog: b"{}", None)
+        ctx = _enable_test_planning(_ctx(lambda _body, _rlog: b"{}", None))
         ctx.planner = Planner(provider)
         loop, key = Loop(ctx), "sid:cart-c13"
         root_task = "Fix the cart rounding bug and add its regression test."
@@ -278,7 +280,8 @@ class ItIsWiredIntoTheDriverTests(unittest.TestCase):
         ]
         token = wsview.bind(view)
         try:
-            loop._drive_locked({"messages": messages, "tools": [_SHELL]}, key, _Class(), _Rlog())
+            with assistruntime.bound(ctx.pilot_runtime):
+                loop._drive_locked({"messages": messages, "tools": [_SHELL]}, key, _Class(), _Rlog())
         finally:
             wsview.unbind(token)
         seed = provider.bodies[0]["messages"][-1]["content"]

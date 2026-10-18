@@ -39,7 +39,7 @@ import time
 import unittest
 from unittest import mock
 
-from cria import loop, probegate, shelltool
+from cria import loop, probegate, repositorychecks, shelltool
 from cria.probediscovery import ProbeCandidate, ProbeCost, ProbeKind
 
 # Verbatim from inbound-ce7f6c3d-responses.json, function_call_output for call_4b4fca253d184e38
@@ -793,7 +793,10 @@ class CompactionDuringRunningTransportPollsNotReplansTests(unittest.TestCase):
 
             # 3) harness compaction: the probe's RESULT is gone (empty content), rewritten=True.
             body = {"messages": [], "tools": [self._tool()]}
-            poll = loop._poll_running_plan_after_rewrite(gs, body, mock.Mock())
+            # Internal poll-policy unit, not selected-dispatch or production recovery proof.
+            poll = repositorychecks.poll_after_rewrite(
+                repositorychecks.Input(body, mock.Mock(), engagement=4, rewritten=True), gs,
+                repositorychecks.ProbeServices(loop._extract_cwd))
             self.assertIsNotNone(poll, "the still-running plan must be polled, not abandoned")
             self.assertEqual(gs.gate_plan.transport_id, original_transport_id,  # SAME plan
                              "compaction must not abandon the still-running gate for a new one")
@@ -813,11 +816,16 @@ class CompactionDuringRunningTransportPollsNotReplansTests(unittest.TestCase):
     def test_no_plan_or_a_terminal_plan_falls_through_to_none(self):
         gs = loop.GuardState()
         body = {"messages": [], "tools": [self._tool()]}
-        self.assertIsNone(loop._poll_running_plan_after_rewrite(gs, body, mock.Mock()))
+        # Internal poll-policy unit: no selected dispatcher or production recovery is exercised.
+        self.assertIsNone(repositorychecks.poll_after_rewrite(
+            repositorychecks.Input(body, mock.Mock(), engagement=4, rewritten=True), gs,
+            repositorychecks.ProbeServices(loop._extract_cwd)))
 
         gs.gate_plan = _plan()
         probegate.fail_transport(gs.gate_plan, "terminal for this test")
-        self.assertIsNone(loop._poll_running_plan_after_rewrite(gs, body, mock.Mock()))
+        self.assertIsNone(repositorychecks.poll_after_rewrite(
+            repositorychecks.Input(body, mock.Mock(), engagement=4, rewritten=True), gs,
+            repositorychecks.ProbeServices(loop._extract_cwd)))
 
     def test_the_poll_path_is_bounded_independently_of_max_probe_reissues(self):
         """A harness that compacts EVERY turn must not wedge in endless polling — bounded by its
@@ -828,7 +836,10 @@ class CompactionDuringRunningTransportPollsNotReplansTests(unittest.TestCase):
         body = {"messages": [], "tools": [self._tool()]}
         seen = 0
         for _ in range(loop.MAX_PROBE_REISSUES + 3):
-            if loop._poll_running_plan_after_rewrite(gs, body, mock.Mock()) is None:
+            # Deliberately exercise the internal poll policy with fresh, nonpending state.
+            if repositorychecks.poll_after_rewrite(
+                    repositorychecks.Input(body, mock.Mock(), engagement=4, rewritten=True), gs,
+                    repositorychecks.ProbeServices(loop._extract_cwd)) is None:
                 break
             seen += 1
         self.assertEqual(seen, loop.MAX_PROBE_REISSUES)
@@ -1056,7 +1067,10 @@ class GoneEnvelopeTests(unittest.TestCase):
         body = {"messages": [], "tools": [{"type": "function", "function": {
             "name": "exec_command",
             "parameters": {"type": "object", "properties": {"cmd": {"type": "string"}}}}}]}
-        self.assertIsNone(loop._poll_running_plan_after_rewrite(gs, body, mock.Mock()),
+        # Internal terminal-poll policy only, not production new-gate recovery proof.
+        self.assertIsNone(repositorychecks.poll_after_rewrite(
+            repositorychecks.Input(body, mock.Mock(), engagement=4, rewritten=True), gs,
+            repositorychecks.ProbeServices(loop._extract_cwd)),
                           "a plan the reader reported gone must never be polled again")
 
 

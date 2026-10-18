@@ -5,7 +5,7 @@ import tempfile
 import types
 import unittest
 
-from cria import wsview, writeproxy
+from cria import assistruntime, wsview, writeproxy
 from cria.loop import Loop, LoopContext, LoopStore
 from cria.planner import Planner
 
@@ -59,7 +59,9 @@ class PlannerSurveyBootstrapTests(unittest.TestCase):
     def _loop(self):
         self.planner = _Planner()
         return Loop(LoopContext(planner=self.planner, coder_chat=lambda *a: b"{}",
-                                reasoner_chat=lambda *a: b"{}", runs_dir=""), LoopStore())
+                                reasoner_chat=lambda *a: b"{}", runs_dir="",
+                                planner_enabled=True, pilot_runtime=assistruntime.AssistRuntime.select(
+                                    level=5, experimental_planning=True)), LoopStore())
 
     def _root(self):
         root = tempfile.mkdtemp(); pathlib.Path(root, "Cargo.toml").write_text("[package]\nname='x'\nversion='0'\n")
@@ -96,7 +98,9 @@ class PlannerSurveyBootstrapTests(unittest.TestCase):
         ])
         loop = Loop(LoopContext(planner=Planner(provider, max_gather_rounds=2),
                                 coder_chat=lambda *a: b'{"choices":[{"message":{"content":"work"}}]}',
-                                reasoner_chat=lambda *a: b"{}", runs_dir=""), LoopStore())
+                                reasoner_chat=lambda *a: b"{}", runs_dir="",
+                                planner_enabled=True, pilot_runtime=assistruntime.AssistRuntime.select(
+                                    level=5, experimental_planning=True)), LoopStore())
         token = wsview.bind(view)
         try:
             deferred = loop.drive(_body(root), key, _TASK, _Log())
@@ -150,7 +154,9 @@ class PlannerSurveyBootstrapTests(unittest.TestCase):
         ])
         loop = Loop(LoopContext(planner=Planner(provider, max_gather_rounds=2),
                                 coder_chat=lambda *a: b'{"choices":[{"message":{"content":"work"}}]}',
-                                reasoner_chat=lambda *a: b"{}", runs_dir=""), LoopStore())
+                                reasoner_chat=lambda *a: b"{}", runs_dir="",
+                                planner_enabled=True, pilot_runtime=assistruntime.AssistRuntime.select(
+                                    level=5, experimental_planning=True)), LoopStore())
         token = wsview.bind(view)
         try:
             rlog = _Log()
@@ -189,7 +195,9 @@ class PlannerSurveyBootstrapTests(unittest.TestCase):
         ])
         loop = Loop(LoopContext(planner=Planner(provider, max_gather_rounds=2),
                                 coder_chat=lambda *a: b'{"choices":[{"message":{"content":"work"}}]}',
-                                reasoner_chat=lambda *a: b"{}", runs_dir=""), LoopStore())
+                                reasoner_chat=lambda *a: b"{}", runs_dir="",
+                                planner_enabled=True, pilot_runtime=assistruntime.AssistRuntime.select(
+                                    level=5, experimental_planning=True)), LoopStore())
         continuation = {"messages": [
             {"role": "user", "content": "Earlier work was compacted; continue the remaining task."},
             {"role": "user", "content": f"<environment_context><cwd>{root}</cwd></environment_context>"},

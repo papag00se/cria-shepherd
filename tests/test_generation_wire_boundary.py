@@ -18,7 +18,7 @@ import urllib.request
 from unittest import mock
 
 import pytest
-from cria import bodykeys, failover, loop, massage, responses
+from cria import assistruntime, bodykeys, failover, loop, massage, responses
 from cria.config import Config, IndicatorsConfig, LoggingConfig, RoutingConfig, ServerConfig, UpstreamConfig
 from cria.events import EventLog
 from cria.server import CriaServer, CriaHandler
@@ -169,15 +169,25 @@ def handlers(tmp_path_factory):
                                          response.headers, response)
         return response
 
-    class Driver:
-        # The real driver owns session state; inbound handoff-origin checks consult it.
+    class Driver(loop.Loop):
+        # Keep the transport collaborator, but use the actual outer retained-output
+        # bridge and the handler's SAME store. No pasted offers are fabricated.
         def __init__(self):
-            self._store = server.loop_store
+            super().__init__(loop.LoopContext(planner=None, coder_chat=None, reasoner_chat=None,
+                runs_dir='', pilot_runtime=server.pilot_runtime), server.loop_store)
+            assert self._store is server.loop_store
+            self.delivery_arguments = []
+            self.collected = None
         def knows_session(self, key): return True
         def visible_context_tokens(self, *args, **kwargs): return 0
-        def drive(self, body, *args):
-            rlog = args[-1]
-            return massage.apply(json.loads(up.chat_watched(body, rlog)), body.get('tools'), rlog)
+        def drive(self, body, session_key, classification, rlog, *, pasted_delivery):
+            self.delivery_arguments.append(pasted_delivery)
+            self._ctx.pilot_runtime = assistruntime.current()
+            return super().drive(body, session_key, classification, rlog,
+                                 pasted_delivery=pasted_delivery)
+        def _drive_locked(self, body, session_key, classification, rlog, *, _semantic_owner=None):
+            self.collected = massage.apply(json.loads(up.chat_watched(body, rlog)), body.get('tools'), rlog)
+            return self.collected
 
     original_chat = up.chat
     def post(level, driver, api, stream, value, body_overrides=None, *, collect_eof=False):
@@ -196,10 +206,39 @@ def handlers(tmp_path_factory):
                 'tools': [{'type': 'function', **chat['tools'][0]['function']}], 'stream': stream}
         body.update(body_overrides or {})
         first_post = len(fake.posts)
-        with request(CriaHandler, server, 'POST', '/v1/' +
-                     ('chat/completions' if api == 'chat' else 'responses'),
-                     json.dumps(body).encode(), {'Content-Type': 'application/json'}.items()) as reply:
-            raw = reply.read()
+        registered, retained = [], []
+        real_defer = CriaHandler._defer_pasted_delivery
+        real_retain = CriaHandler._retain_pasted_output
+        def defer(handler, callback):
+            registered.append((handler, callback))
+            real_defer(handler, callback)
+            assert handler._pasted_retention is callback
+        def retain(handler, completion):
+            callback = getattr(handler, '_pasted_retention', None)
+            retained.append((handler, callback, completion))
+            result = real_retain(handler, completion)
+            assert result is completion and handler._pasted_retention is None
+            return result
+        with mock.patch.object(CriaHandler, '_defer_pasted_delivery', defer), \
+             mock.patch.object(CriaHandler, '_retain_pasted_output', retain):
+            with request(CriaHandler, server, 'POST', '/v1/' +
+                         ('chat/completions' if api == 'chat' else 'responses'),
+                         json.dumps(body).encode(), {'Content-Type': 'application/json'}.items()) as reply:
+                raw = reply.read()
+        if driver:
+            assert server.loop._store is server.loop_store
+            assert len(server.loop.delivery_arguments) == 1
+            supplied = server.loop.delivery_arguments[0]
+            assert supplied.__func__ is defer
+            if server.loop.collected is not None:
+                assert len(registered) == len(retained) == 1
+                handler, callback = registered[0]
+                assert supplied.__self__ is handler
+                assert retained[0][0] is handler and retained[0][1] is callback
+                assert callable(callback)
+            else:
+                # A raised transport error has no returned completion to retain.
+                assert registered == retained == []
         if os.environ.get('GENERATION_WIRE_RECEIPTS'):
             directory = Path(os.environ['GENERATION_WIRE_RECEIPTS']); directory.mkdir(parents=True, exist_ok=True)
             case_number += 1
