@@ -1,1 +1,1 @@
-Prefer reading the current file or rerunning the exact failing check over reconstructing or replacing a file from memory.
+Use the evidence already available rather than repeating a completed inspection; if a needed fact is missing or no longer current, inspect it.

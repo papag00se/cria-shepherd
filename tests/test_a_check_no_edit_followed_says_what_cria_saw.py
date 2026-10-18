@@ -193,6 +193,7 @@ REL = "src/main/java/pipeline/Importer.java"
 MAIN_GUARD = '[RUMINATION GUARD] Your last reasoning pass hit {{HITS}} second-guessing phrases ("actually", "wait", "let me reconsider", etc.) after ~{{TOKENS}} reasoning tokens and was aborted before it produced any output.\n\nNone of that reasoning survived, but the task and tool evidence above did. Continue from that evidence and take the smallest grounded next step as a single tool call. Prefer reading the current file or rerunning the exact failing check over reconstructing or replacing a file from memory. If what you are circling is an unread external fact, obtain it with a tool before proposing a change.'
 MAIN_GUARD_LENGTH = '[REASONING GUARD] Your last turn was stopped: it spent about {{TOKENS}} tokens reasoning and had not produced a tool call or an answer, so it was cut here — on this side of the model — before it ran out of room on its own.\n\nNone of that reasoning survived, but the task and tool evidence above did. Continue from that evidence and take the smallest grounded next step as a single tool call. Prefer reading the current file or rerunning the exact failing check over reconstructing or replacing a file from memory. If the missing fact concerns an external library or service, obtain it with a tool before proposing a change.'
 MAIN_STEP = "Prefer reading the current file or rerunning the exact failing check over reconstructing or replacing a file from memory."
+EVIDENCE_STEP = "Use the evidence already available rather than repeating a completed inspection; if a needed fact is missing or no longer current, inspect it."
 
 
 class TheRuminationStepIsGroundedOnlyWhenItIsTrue(unittest.TestCase):
@@ -351,8 +352,11 @@ class TheRuminationStepIsGroundedOnlyWhenItIsTrue(unittest.TestCase):
             self.assertIn("smallest grounded step is an edit", text)
             self.assertIn("If what you are circling", text) if arm is None else None
 
-    def test_default_guard_text_is_byte_identical(self):
-        main, main_len = MAIN_GUARD, MAIN_GUARD_LENGTH   # verbatim from origin/main before the clause became a fragment
+    def test_default_policy_changes_only_the_preference_clause(self):
+        # Preserve the original incident/whole-notice oracle; only the intentionally
+        # retired blanket reading preference changes in this later repair.
+        main = MAIN_GUARD.replace(MAIN_STEP, EVIDENCE_STEP)
+        main_len = MAIN_GUARD_LENGTH.replace(MAIN_STEP, EVIDENCE_STEP)
         self.assertEqual(prompts.render("rumination_guard", hits=9, tokens=8000), prompts.fill(main, hits=9, tokens=8000))
         self.assertEqual(prompts.render("rumination_guard_length", tokens=8000), prompts.fill(main_len, tokens=8000))
         msgs = read_msgs(REL, 1, 3, body="1: a")            # nothing grounds → the guard sends the default
