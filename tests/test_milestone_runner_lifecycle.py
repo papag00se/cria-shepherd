@@ -61,6 +61,41 @@ def test_natural_early_completion_needs_no_milestone_or_padding(tmp_path, monkey
     assert judgments == [] and events == []
 
 
+def test_quiescence_work_is_active_in_packet_judgment_and_row_time(tmp_path, monkeypatch):
+    clock, proc, ws, task, pacing, events, callbacks = rig(tmp_path, monkeypatch, exits_at=1000)
+    def pause():
+        clock.now += 90  # the current response/action completes before freezing
+        return True
+    callbacks['pause'] = pause
+    def judge(checkpoint):
+        policy = json.loads((checkpoint / 'policy.json').read_text())
+        assert policy['scheduled_active_minutes'] == 15
+        assert policy['actual_active_seconds'] == 990
+        assert 'scheduled 15min slot; actual active elapsed 16.500min' in (checkpoint / 'packet.txt').read_text()
+        clock.now += 120
+        return dict(usefulness_percent=0, decision='continue', reason='Inspected.',
+                    evidence=['source'], material_changes='None.')
+    monkeypatch.setattr(milestones, 'wait', judge)
+    terminal, judgments = run.monitor_milestones(proc, pacing, 'quiesce', ws, task, **callbacks)
+    assert terminal == 'exited'
+    assert judgments[0]['at_active_minutes'] == 15
+    assert judgments[0]['actual_active_seconds'] == 990
+    assert pacing.paused_seconds == 120
+    assert pacing.active_elapsed(clock.now) == 992  # includes ordinary monitor sleep
+
+
+def test_interrupted_quiescence_stops_harness_without_excluding_active_work(tmp_path, monkeypatch):
+    clock, proc, ws, task, pacing, events, callbacks = rig(tmp_path, monkeypatch)
+    def pause():
+        clock.now += 30
+        raise KeyboardInterrupt
+    callbacks['pause'] = pause
+    with pytest.raises(KeyboardInterrupt):
+        run.monitor_milestones(proc, pacing, 'interrupted-quiesce', ws, task, **callbacks)
+    assert events == [('stop', 930)]
+    assert pacing.paused_seconds == 0
+
+
 def test_interrupted_judgment_stops_the_owned_harness_not_leaves_it_paused(tmp_path, monkeypatch):
     _, proc, ws, task, pacing, events, callbacks = rig(tmp_path, monkeypatch)
     def interrupted(_):

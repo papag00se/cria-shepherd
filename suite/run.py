@@ -34,7 +34,6 @@ import tempfile
 import time
 import tomllib
 import uuid
-from contextlib import nullcontext
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -145,7 +144,8 @@ def _codex_argv(prompt: str, workspace=None):
     permissions = ('permissions={' + profile + '={filesystem={"/"="read",'
                    + writes + '},network={enabled=true}}}')
     return ['codex', 'exec', '-c', 'default_permissions=' + json.dumps(profile),
-            '-c', permissions, '-c', 'approval_policy="never"', prompt]
+            '-c', permissions, '-c', 'approval_policy="never"',
+            '-c', 'features.multi_agent=false', '-c', 'features.multi_agent_v2=false', prompt]
 
 HARNESSES = {"codex": _codex_argv}
 
@@ -574,15 +574,14 @@ def capture_manifest(session_dirs) -> dict:
     return {"complete": complete, "entries": entries}
 
 
-def shutdown_and_capture(proc, *, calls_dir, before_sessions, resume, stopper=None):
+def shutdown_and_capture(*, calls_dir, before_sessions, stop):
     """Stop the owned process group, then timestamp and discover the complete capture set.
 
     The row cutoff, session inventory, and snapshot all follow the shutdown barrier. This
     includes sessions/calls emitted by surviving children during the grace period and prevents
     post-cutoff responses from being counted as in-window evidence.
     """
-    resume()
-    (stopper or stop_process_group)(proc)
+    stop()  # one terminal owner closes admission, resumes and reaps before the cutoff
     stopped_at = time.time()
     new_sessions = [Path(calls_dir) / name for name in
                     set(p.name for p in Path(calls_dir).glob("2*")) - before_sessions]
@@ -722,10 +721,12 @@ class MilestonePacing:
         self.next_milestone += self.interval_seconds
 
 
-def milestone_progress(verdict: dict, minute: int) -> str:
+def milestone_progress(verdict: dict, minute: int, actual_active_seconds: float | None = None) -> str:
     """The canonical checkpoint progress report: always an inferred usefulness percentage."""
     control = "protected first 30min" if minute < 30 else f"decision={verdict['decision']}"
-    return (f"[milestone] {minute}min usefulness={verdict['usefulness_percent']}% "
+    when = (f"{minute}min" if actual_active_seconds is None else
+            f"scheduled {minute}min, actual active {actual_active_seconds / 60:.3f}min")
+    return (f"[milestone] {when} usefulness={verdict['usefulness_percent']}% "
             f"{control}: {verdict['reason']}\n"
             f"[material changes] {verdict['material_changes']}")
 
@@ -742,6 +743,40 @@ def milestone_terminal(verdict: dict, minute: int, at_limit: bool = False) -> st
     return None
 
 
+class HarnessControl:
+    """One process-group lifecycle for checkpointing and terminal cleanup."""
+    def __init__(self, proc, adapter):
+        self.proc, self.adapter = proc, adapter
+
+    def pause(self) -> bool:
+        if self.adapter is None:
+            raise ValueError('checkpointing requires the per-cell admission adapter')
+        if not self.adapter.quiesce(lambda: self.proc.poll() is None):
+            return False
+        try:
+            os.killpg(self.proc.pid, signal.SIGSTOP)
+            return True
+        except BaseException:
+            self.adapter.resume()
+            if self.proc.poll() is not None:
+                return False
+            raise
+
+    def resume(self):
+        if self.adapter is not None:
+            self.adapter.resume()
+        try:
+            os.killpg(self.proc.pid, signal.SIGCONT)
+        except ProcessLookupError:
+            pass
+
+    def stop(self):
+        if self.adapter is not None:
+            self.adapter.cancel()
+        self.resume()
+        stop_process_group(self.proc)
+
+
 def monitor_milestones(proc, pacing, run_id, ws, task_dir, *, pause, resume, stop):
     """Observe one harness; only the campaign agent's accepted judgments control its lifetime."""
     try:
@@ -752,12 +787,15 @@ def monitor_milestones(proc, pacing, run_id, ws, task_dir, *, pause, resume, sto
     while proc.poll() is None:
         if pacing.due(time.time()):
             minute = pacing.next_milestone // 60
-            pause_started = time.time()
-            if not pause():
-                break
+            pause_started = None
             try:
-                checkpoint = milestones.create(run_id, minute, ws, task_dir, judgments)
-                print(f"[milestone] {minute} active minutes -> {checkpoint}", flush=True)
+                if not pause():
+                    break
+                pause_started = time.time()
+                actual_active = pacing.active_elapsed(pause_started)
+                checkpoint = milestones.create(run_id, minute, ws, task_dir, judgments,
+                                               actual_active_seconds=actual_active)
+                print(f"[milestone] scheduled {minute}min; actual active elapsed {actual_active / 60:.3f}min -> {checkpoint}", flush=True)
                 print("[milestone] waiting for the campaign agent's inference judgment", flush=True)
                 verdict = milestones.wait(checkpoint)
             except BaseException:
@@ -765,9 +803,11 @@ def monitor_milestones(proc, pacing, run_id, ws, task_dir, *, pause, resume, sto
                 stop()
                 raise
             finally:
-                pacing.record_pause(time.time() - pause_started)
-            judgments.append({"at_active_minutes": minute, "checkpoint": str(checkpoint), **verdict})
-            print(milestone_progress(verdict, minute), flush=True)
+                if pause_started is not None:
+                    pacing.record_pause(time.time() - pause_started)
+            judgments.append({"at_active_minutes": minute, "actual_active_seconds": actual_active,
+                              "checkpoint": str(checkpoint), **verdict})
+            print(milestone_progress(verdict, minute, actual_active), flush=True)
             outcome = milestone_terminal(verdict, minute)
             if outcome is not None:
                 stop()
@@ -809,15 +849,25 @@ def throttled_mid_run(session_dir) -> str:
 RESTORED_CODEX_BINARY = Path.home() / ".local/share/mise/installs/codex/0.159.3/bin/codex"
 
 
+def _codex_adapter_provider():
+    home_config = tomllib.loads((SUITE_CODEX_HOME / 'config.toml').read_text())
+    provider = home_config.get('model_provider')
+    if not isinstance(provider, str) or not re.fullmatch(r'[A-Za-z0-9_-]+', provider):
+        raise ValueError('isolated Codex home needs an explicit provider')
+    record = home_config.get('model_providers', {}).get(provider, {})
+    if record.get('base_url', '').rstrip('/') != 'http://127.0.0.1:18085/v1' or record.get('wire_api') != 'responses':
+        raise ValueError('isolated Codex provider must route Responses to local cria')
+    return provider
+
+
+def codex_adapter_argv(argv, adapter_url):
+    provider = _codex_adapter_provider()
+    return [*argv[:-1], '-c', f'model_providers.{provider}.base_url=' + json.dumps(adapter_url), argv[-1]]
+
+
 def restored_codex_argv(argv, model, context, adapter_url, home=None):
     """Supported provider URL overrides only; explicit binary avoids mise latest drift."""
-    home_config = tomllib.loads((SUITE_CODEX_HOME / "config.toml").read_text())
-    provider = home_config.get("model_provider")
-    if not isinstance(provider, str) or not re.fullmatch(r"[A-Za-z0-9_-]+", provider):
-        raise ValueError("isolated Codex home needs an explicit provider")
-    record = home_config.get("model_providers", {}).get(provider, {})
-    if record.get("base_url", "").rstrip("/") != "http://127.0.0.1:18085/v1" or record.get("wire_api") != "responses":
-        raise ValueError("isolated Codex provider must route Responses to local cria")
+    argv = codex_adapter_argv(argv, adapter_url)
     if not RESTORED_CODEX_BINARY.is_file() or not os.access(RESTORED_CODEX_BINARY, os.X_OK):
         raise ValueError("tested pinned Codex 0.159.3 executable missing")
     version = sh(str(RESTORED_CODEX_BINARY), "--version").stdout.strip()
@@ -826,8 +876,7 @@ def restored_codex_argv(argv, model, context, adapter_url, home=None):
     provenance = {"binary": str(RESTORED_CODEX_BINARY.resolve()), "version": version,
                   "sha256": hashlib.sha256(RESTORED_CODEX_BINARY.read_bytes()).hexdigest(),
                   "config": l0_config_fingerprint(SUITE_CODEX_HOME / "config.toml")}
-    extra = ["-c", f"model_providers.{provider}.base_url=" + json.dumps(adapter_url),
-             "-c", "model=" + json.dumps(model), "-c", f"model_context_window={context}",
+    extra = ["-c", "model=" + json.dumps(model), "-c", f"model_context_window={context}",
              "-c", f"model_auto_compact_token_limit={int(context * .85)}"]
     if home is not None:
         catalog = local_codex_catalog(model, context, home)
@@ -921,6 +970,7 @@ def _main(scope) -> None:
 
     if args.harness == "codex":
         _require_codex_home()   # fail before any model swap if cria routing is not set up
+        _codex_adapter_provider()
 
     task_dir = SUITE / "tasks" / args.task
     prompt = (task_dir / "prompt.txt").read_text().strip()
@@ -966,6 +1016,9 @@ def _main(scope) -> None:
         spec = configure_cria(args.model, args.planner == "on")
     if env is None:
         env = _codex_env(dict(os.environ, **_isolated_installs(ws)), ws)
+    if adapter is None:
+        adapter = SamplingAdapter(None, RateLimitGate(l0_campaign.ROOT))
+        harness_argv = codex_adapter_argv(harness_argv, adapter.base_url)
     live_config = tomllib.loads(CRIA_TOML.read_text())
     planner_enabled_verified = live_config.get("planner", {}).get("enabled", False)
     repo_root = str(SUITE.parent)
@@ -994,7 +1047,7 @@ def _main(scope) -> None:
 
     if suite_scratch is not None:
         env['TMPDIR'] = str(suite_scratch)
-    with adapter if adapter is not None else nullcontext():
+    with adapter:
         t0 = time.time()
         with open(log_path, "w") as lf:
             # stdin MUST be closed explicitly: `codex exec` reads stdin to EOF as "additional input"
@@ -1005,31 +1058,15 @@ def _main(scope) -> None:
                                     stdin=subprocess.DEVNULL,
                                     stdout=lf, stderr=subprocess.STDOUT, env=env,
                                     start_new_session=True)
-        def pause_run() -> bool:
-            try:
-                os.killpg(proc.pid, signal.SIGSTOP)
-                return True
-            except ProcessLookupError:
-                return False
-
-        def resume_run():
-            try:
-                os.killpg(proc.pid, signal.SIGCONT)
-            except ProcessLookupError:
-                pass
-
-        def stop_run():
-            resume_run()
-            stop_process_group(proc)
-
+        control = HarnessControl(proc, adapter)
         pacing = MilestonePacing(started_at=t0, interval_minutes=args.milestone_minutes,
                                  budget_intervals=budget_intervals(task_dir))
         terminal, milestone_judgments = monitor_milestones(
-            proc, pacing, run_id, ws, task_dir, pause=pause_run, resume=resume_run, stop=stop_run)
+            proc, pacing, run_id, ws, task_dir, pause=control.pause, resume=control.resume, stop=control.stop)
         # Stop first. A child may still finish a response or create a new session during the grace
         # period, so the wall cutoff and session inventory must be taken only after the group is gone.
         t1, new_sessions, capture_snapshot = shutdown_and_capture(
-            proc, calls_dir=CALLS_DIR, before_sessions=before_sessions, resume=resume_run)
+            calls_dir=CALLS_DIR, before_sessions=before_sessions, stop=control.stop)
 
     # The primary directory is the one that carries the work, not the one that finished last.
     session_dir = max(new_sessions, key=lambda p: len(list(p.glob("*.response.json"))),

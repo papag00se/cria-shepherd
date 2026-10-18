@@ -1,4 +1,4 @@
-"""Per-cell loopback transport for source sampling at L0; never authors task content."""
+"""Per-cell checkpoint admission and optional source sampling; never authors task content."""
 from __future__ import annotations
 import email.utils
 import fcntl
@@ -8,7 +8,7 @@ import math
 import re
 import threading
 import time
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -125,10 +125,13 @@ class RateLimitGate:
 class SamplingAdapter:
     """Single-forward HTTP adapter. Responses and SSE bytes are relayed without rewriting."""
     def __init__(self, knobs, gate, target=('127.0.0.1',18085)):
-        self.knobs = validate_knobs(knobs)
+        self.knobs = validate_knobs(knobs) if knobs is not None else None
         self.gate, self.target = gate, target
         self.injected = []
         self.forward_lock = threading.Lock()
+        self._admission = threading.Condition()
+        self._paused = self._closed = False
+        self._inflight = self._parked = 0
         adapter = self
         class Handler(BaseHTTPRequestHandler):
             protocol_version = 'HTTP/1.1'
@@ -136,16 +139,36 @@ class SamplingAdapter:
             def do_GET(self): self.forward()
             def do_POST(self): self.forward()
             def forward(self):
+                if self.path not in ('/v1/responses','/v1/responses/compact','/v1/models','/health'):
+                    self.send_error(404); return
+                if self.headers.get('Transfer-Encoding'):
+                    self.send_error(400,'chunked request bodies unsupported'); return
+                # A checkpoint parks a NEW request before it can advance the producer.
+                # Existing responses finish while the client is still running. GETs do
+                # not represent the client's next model turn and cannot establish idle.
+                inference = self.command == 'POST' and self.path in ('/v1/responses','/v1/responses/compact')
+                admission = adapter.admit() if inference else nullcontext(True)
+                with admission as admitted:
+                    if not admitted:
+                        self.close_connection = True
+                        try:
+                            self.send_response(503, 'Request not forwarded during suite checkpoint')
+                            self.send_header('Retry-After', '0')
+                            self.send_header('Content-Length', '0')
+                            self.send_header('Connection', 'close')
+                            self.end_headers()
+                        except OSError:
+                            pass  # a parked client may already have timed out
+                        return
+                    self.forward_admitted()
+
+            def forward_admitted(self):
                 # Serialize both directions until a full reply has updated the shared gate.
                 with adapter.forward_lock:
                     connection = None
                     try:
-                        if self.path not in ('/v1/responses','/v1/responses/compact','/v1/models','/health'):
-                            self.send_error(404); return
-                        if self.headers.get('Transfer-Encoding'):
-                            self.send_error(400,'chunked request bodies unsupported'); return
                         raw = self.rfile.read(int(self.headers.get('Content-Length',0)))
-                        if self.command == 'POST':
+                        if self.command == 'POST' and adapter.knobs is not None:
                             raw = inject_sampling(raw,adapter.knobs)
                             adapter.injected.append({'path':self.path,'fields':dict(adapter.knobs)})
                         # Incoming retry hints and upstream hints share the same deadline.
@@ -176,6 +199,69 @@ class SamplingAdapter:
         self.server = ThreadingHTTPServer(('127.0.0.1',0),Handler)
         self.thread = threading.Thread(target=self.server.serve_forever,daemon=True)
 
+    @contextmanager
+    def admit(self):
+        with self._admission:
+            rejected = self._closed
+            parked = self._paused and not rejected
+            if parked:
+                self._parked += 1
+                self._admission.notify_all()
+                try:
+                    self._admission.wait_for(lambda: not self._paused)
+                finally:
+                    self._parked -= 1
+                    self._admission.notify_all()
+            elif not rejected:
+                self._inflight += 1
+        try:
+            # Every request parked during a checkpoint is rejected, even if it
+            # survived its deadline. Never infer retry identity or replay a reply.
+            yield not (parked or rejected)
+        finally:
+            if not (parked or rejected):
+                with self._admission:
+                    self._inflight -= 1
+                    self._admission.notify_all()
+
+    def quiesce(self, alive):
+        """Drain inference at a serial client's next request, without freezing it.
+
+        Caller precondition: model requests are serial and each reply is consumed
+        before the next request. A parked parallel client is not an acknowledgement.
+        Read-only GET traffic is deliberately outside this inference boundary.
+        """
+        with self._admission:
+            if self._closed:
+                return False
+            self._paused = True
+            self._admission.notify_all()
+            try:
+                while True:
+                    if self._closed or not alive():
+                        self._paused = False
+                        self._admission.notify_all()
+                        return False
+                    if not self._inflight and self._parked:
+                        return True
+                    self._admission.wait(.05)
+            except BaseException:
+                self._paused = False
+                self._admission.notify_all()
+                raise
+
+    def resume(self):
+        with self._admission:
+            self._paused = False
+            self._admission.notify_all()
+
+    def cancel(self):
+        """Terminal cleanup wakes waiters but cannot admit another model request."""
+        with self._admission:
+            self._closed = True
+            self._paused = False
+            self._admission.notify_all()
+
     @property
     def base_url(self):
         return f'http://127.0.0.1:{self.server.server_port}/v1'
@@ -184,4 +270,5 @@ class SamplingAdapter:
         self.thread.start(); return self
 
     def __exit__(self,*_):
+        self.cancel()
         self.server.shutdown(); self.server.server_close(); self.thread.join()

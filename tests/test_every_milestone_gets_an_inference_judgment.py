@@ -35,7 +35,9 @@ def test_checkpoint_freezes_the_workspace_for_read_only_inspection(tmp_path, mon
 
     assert (checkpoint / "workspace" / "answer.txt").read_text() == "at the tick\n"
     packet = (checkpoint / "packet.txt").read_text()
-    assert "run-1 at 30 active minutes" in packet
+    assert "run-1; scheduled 30min slot" in packet
+    assert "actual active elapsed not recorded" in packet
+    assert json.loads((checkpoint / 'policy.json').read_text())['actual_active_seconds'] is None
     assert str(checkpoint / "workspace") in packet
     assert "Deliver the answer." in packet
     assert "TASK METADATA" not in packet

@@ -30,6 +30,33 @@ def test_explicit_machine_policy_grants_only_exact_cell_paths(tmp_path, monkeypa
     fs = permissions['permissions'][profile]['filesystem']
     assert fs == {'/': 'read', str(workspace): 'write', str(state): 'write'}
     assert argv[-1] == 'task'
+    assert 'features.multi_agent=false' in argv
+    assert 'features.multi_agent_v2=false' in argv
+
+
+def test_checkpoint_transport_override_preserves_permissions_and_shared_config(tmp_path, monkeypatch):
+    policy = tmp_path / 'policy.toml'
+    policy.write_text('workspace_sandbox=true\n')
+    monkeypatch.setattr(run, 'SUITE_CODEX_POLICY', policy)
+    home = tmp_path / 'codex-home'; home.mkdir()
+    config = home / 'config.toml'
+    original = ('model_provider="local"\n[model_providers.local]\n'
+                'base_url="http://127.0.0.1:18085/v1"\nwire_api="responses"\n'
+                '[features]\nmulti_agent=true\nmulti_agent_v2=true\n')
+    config.write_text(original)
+    monkeypatch.setattr(run, 'SUITE_CODEX_HOME', home)
+    workspace = tmp_path / 'cell'; workspace.mkdir()
+    state = tmp_path / 'scratch'
+    monkeypatch.setattr(run, '_cell_install_root', lambda _ws: state)
+    base = run._codex_argv('task', workspace)
+    adapted = run.codex_adapter_argv(base, 'http://127.0.0.1:12345/v1')
+    assert adapted[:len(base)-1] == base[:-1]
+    assert adapted[-3:] == ['-c', 'model_providers.local.base_url="http://127.0.0.1:12345/v1"', 'task']
+    assert config.read_text() == original
+    feature_overrides = {key: value for arg in adapted if arg.startswith('features.')
+                         for key, value in tomllib.loads(arg)['features'].items()}
+    assert feature_overrides == {'multi_agent': False, 'multi_agent_v2': False}
+    assert not any(value.startswith(('model=', 'temperature=', 'model_context_window=')) for value in adapted)
 
 
 @pytest.mark.skipif(not shutil.which('codex'), reason='local Codex sandbox integration')

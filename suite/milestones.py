@@ -34,8 +34,12 @@ def checkpoint_name(run_id: str, minute: int) -> str:
     return f"{run_id}.{minute:03d}min"
 
 
+def _elapsed_text(seconds: float | None) -> str:
+    return 'not recorded' if seconds is None else f'{seconds / 60:.3f}min'
+
+
 def create(run_id: str, minute: int, ws: Path, task_dir: Path,
-           previous: list[dict] | None = None) -> Path:
+           previous: list[dict] | None = None, *, actual_active_seconds: float | None = None) -> Path:
     """Freeze one live workspace and return its checkpoint directory."""
     out = ROOT / checkpoint_name(run_id, minute)
     snapshot = out / "workspace"
@@ -47,14 +51,15 @@ def create(run_id: str, minute: int, ws: Path, task_dir: Path,
     seed = task_dir / "seed"
     baseline = workspace_evidence.tree(seed) if seed.is_dir() else "(empty baseline)"
     prior = "\n".join(
-        f"{v['at_active_minutes']} min judgment: {v['usefulness_percent']}%, "
+        f"Scheduled {v['at_active_minutes']}min; actual active elapsed "
+        f"{_elapsed_text(v.get('actual_active_seconds'))} judgment: {v['usefulness_percent']}%, "
         f"{v['decision']}: {v['reason']}\nMaterial changes: {v.get('material_changes', 'not recorded')}\n"
         f"Prior frozen snapshot (inspect read-only): "
         f"{v['checkpoint']}/workspace" for v in (previous or [])) or "No earlier milestone judgment."
     packet = "\n".join([
         SYSTEM.read_text().strip(),
         "", "=" * 78, "",
-        f"CHECKPOINT: {run_id} at {minute} active minutes", "",
+        f"CHECKPOINT: {run_id}; scheduled {minute}min slot; actual active elapsed {_elapsed_text(actual_active_seconds)}", "",
         f"THE TASK THE CODER WAS GIVEN:\n{prompt}", "",
         f"BASELINE SEED DIRECTORY (inspect read-only):\n{seed}", "",
         f"BASELINE SEED TREE (before coder started):\n{baseline}", "",
@@ -63,7 +68,9 @@ def create(run_id: str, minute: int, ws: Path, task_dir: Path,
         "COMPLETE FROZEN WORKSPACE TREE (all entries; symlinks are not followed):\n"
         f"{workspace_evidence.tree(snapshot)}", "",
     ])
-    (out / "policy.json").write_text(json.dumps({"pacing_policy": "requirement-pace-15m-protected-30m-v2"}) + "\n")
+    (out / "policy.json").write_text(json.dumps({
+        "pacing_policy": "requirement-pace-15m-protected-30m-v2",
+        "scheduled_active_minutes": minute, "actual_active_seconds": actual_active_seconds}) + "\n")
     (out / "packet.txt").write_text(packet)
     return out
 

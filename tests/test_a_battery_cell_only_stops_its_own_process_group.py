@@ -63,10 +63,11 @@ def test_run_caller_includes_grace_period_session_and_response_in_post_stop_cuto
 
     monkeypatch.setattr(run.os, "killpg", killpg)
     started = run.time.time() - 10
+    def stop():
+        events.append(("resume",))
+        run.stop_process_group(proc, grace=0, sleeper=lambda _: None)
     stopped_at, sessions, snapshot = run.shutdown_and_capture(
-        proc, calls_dir=calls, before_sessions=before,
-        resume=lambda: events.append(("resume",)),
-        stopper=lambda p: run.stop_process_group(p, grace=0, sleeper=lambda _: None))
+        calls_dir=calls, before_sessions=before, stop=stop)
     wall_seconds = stopped_at - started
     response = sessions[0] / "0001-coder-s1.response.json"
     assert not child_live
