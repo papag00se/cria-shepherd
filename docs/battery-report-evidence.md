@@ -1639,3 +1639,17 @@ Means use selected independently judged logical cells once; zeros count, pending
 Throughput coverage and authoritative source runs:
 L5/ornith1.5_9b: tok/s6/6; sources shipping-rates-rb_ornith1.5_9b_codex_poff_1791502183, cart-billing-go_ornith1.5_9b_codex_poff_1791506005, orders-api-py_ornith1.5_9b_codex_poff_1791509968, feed-pipeline-java_ornith1.5_9b_codex_poff_1792293884, handles-cli-node_ornith1.5_9b_codex_poff_1791516530, rust-toml-cli_ornith1.5_9b_codex_poff_1791518629
 Standing metric sources L5/ornith1.5_9b: {"cart-billing-go": "cart-billing-go_ornith1.5_9b_codex_poff_1791506005", "feed-pipeline-java": "feed-pipeline-java_ornith1.5_9b_codex_poff_1792293884", "handles-cli-node": "handles-cli-node_ornith1.5_9b_codex_poff_1791516530", "orders-api-py": "orders-api-py_ornith1.5_9b_codex_poff_1791509968", "rust-toml-cli": "rust-toml-cli_ornith1.5_9b_codex_poff_1791518629", "shipping-rates-rb": "shipping-rates-rb_ornith1.5_9b_codex_poff_1791502183"}
+
+
+## Standing update — ornith-java-cell-loop-20261018 — L5
+
+ornith1.5_9b: usefulness6/6, minutes6/6, calls6/6.
+Pending cells retain prior standings; metrics use matching authoritative judged result rows only, never historical rounded row means. Unknown metrics are excluded.
+
+ ornith1.5_9b: usefulness1/1, minutes1/1, calls1/1, tok/s1/1.
+Means use selected independently judged logical cells once; zeros count, pending/unjudged cells and failed originals do not. Missing, non-numeric or invalid metrics are excluded, not fabricated as zero. Minutes are authoritative wall_seconds/60, including judge waits (not active-work minutes); operator-ended measurement basis remains in attempt provenance. Token rate is the arithmetic mean of known per-task avg_tok_s values, displayed to one decimal; each run rate uses timed output tokens over timed generation seconds across all captured phases, not coder-only speed or wall-time throughput. A mean with incomplete coverage is a partial known-metric mean.
+
+
+Throughput coverage and authoritative source runs:
+L5/ornith1.5_9b: tok/s6/6; sources shipping-rates-rb_ornith1.5_9b_codex_poff_1791502183, cart-billing-go_ornith1.5_9b_codex_poff_1791506005, orders-api-py_ornith1.5_9b_codex_poff_1791509968, feed-pipeline-java_ornith1.5_9b_codex_poff_1792297428, handles-cli-node_ornith1.5_9b_codex_poff_1791516530, rust-toml-cli_ornith1.5_9b_codex_poff_1791518629
+Standing metric sources L5/ornith1.5_9b: {"cart-billing-go": "cart-billing-go_ornith1.5_9b_codex_poff_1791506005", "feed-pipeline-java": "feed-pipeline-java_ornith1.5_9b_codex_poff_1792297428", "handles-cli-node": "handles-cli-node_ornith1.5_9b_codex_poff_1791516530", "orders-api-py": "orders-api-py_ornith1.5_9b_codex_poff_1791509968", "rust-toml-cli": "rust-toml-cli_ornith1.5_9b_codex_poff_1791518629", "shipping-rates-rb": "shipping-rates-rb_ornith1.5_9b_codex_poff_1791502183"}
