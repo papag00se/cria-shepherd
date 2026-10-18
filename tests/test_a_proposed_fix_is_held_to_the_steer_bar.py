@@ -132,6 +132,7 @@ class EveryJudgeSiteIsWiredTests(unittest.TestCase):
         import json as _json
         from unittest import mock
 
+        from cria.assistruntime import AssistRuntime
         from cria.config import Role
         from cria.loop import Loop, LoopContext
 
@@ -143,7 +144,8 @@ class EveryJudgeSiteIsWiredTests(unittest.TestCase):
 
         def a_loop(chat):
             ctx = LoopContext(planner=None, coder_chat=lambda b, r: b"{}", reasoner_chat=chat,
-                              reasoner_role=role(), runs_dir="")
+                              reasoner_role=role(), runs_dir="", planner_enabled=True,
+                              pilot_runtime=AssistRuntime.select(experimental_planning=True))
             return Loop(ctx)
 
         calls = []

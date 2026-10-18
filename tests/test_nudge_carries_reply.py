@@ -103,25 +103,30 @@ class TheTruncationGuardIsWiredAtBothSitesTests(unittest.TestCase):
         """Drive the REAL `_gate_single_done` (the plan-off half) with a paste that fires the
         nudge, once whole and once cut off at the output cap — a source-text grep for
         `massage.is_truncated(comp)` can tell the call is spelled somewhere in the function; it
-        cannot tell whether the frame the coder is re-driven with actually honours it."""
+        cannot tell whether the frame the coder is re-driven with actually honours it.
+        The selected pasted-file owner now prepares the pending nudge in the shared coder turn;
+        prepare that real result before testing the driver's delivery, rather than bypassing it."""
         for finish, want_carried in (("stop", True), ("length", False)):
             with self.subTest(finish=finish):
                 captured = {}
 
-                def fake_coder_turn(sess, framed, body, step, rlog):
+                def fake_coder_turn(sess, framed, body, step, rlog, **kwargs):
                     captured["messages"] = framed["messages"]
                     return {"choices": [{"message": {"role": "assistant", "tool_calls": [
                         {"id": "c1", "type": "function",
                          "function": {"name": "write_file", "arguments": "{}"}}]}}]}
 
-                lp = loop.Loop.__new__(loop.Loop)
+                lp = loop.Loop(loop.LoopContext(None, None, None))
                 lp._coder_turn = fake_coder_turn
                 sess = loop.PlanSession(plan=Plan(id="x", task="t", created="c",
                                                   items=[PlanItem("write the script")]))
                 comp = {"choices": [{"finish_reason": finish,
                                      "message": {"role": "assistant", "content": PASTED}}]}
                 framed = {"messages": [{"role": "user", "content": "do it"}]}
-                lp._gate_single_done(sess, comp, framed, {"messages": []}, "k1", _RlogB())
+                from cria.assistruntime import AssistRuntime
+                lp._pasted_redrive(sess, comp, {"messages": []}, _RlogB(), plan_off=True)
+                lp._gate_single_done(sess, comp, framed, {"messages": []}, "k1", _RlogB(),
+                    completion_act_first=AssistRuntime.select().completion_act_first)
                 msgs = captured["messages"]
                 carried = any(m["role"] == "assistant" and m.get("content") == PASTED for m in msgs)
                 self.assertEqual(carried, want_carried)
@@ -134,11 +139,13 @@ class TheTruncationGuardIsWiredAtBothSitesTests(unittest.TestCase):
                 captured = {}
                 calls = []
 
-                def fake_coder_turn(sess, framed, body, step, rlog):
+                def fake_coder_turn(sess, framed, body, step, rlog, **kwargs):
                     calls.append(1)
                     if len(calls) == 1:   # the pasted-file turn that trips the nudge
-                        return {"choices": [{"finish_reason": finish,
+                        completion = {"choices": [{"finish_reason": finish,
                                              "message": {"role": "assistant", "content": PASTED}}]}
+                        lp._pasted_redrive(sess, completion, body, rlog, step=step)
+                        return completion
                     # the re-driven attempt: capture its frame, then stop the recursion
                     captured["messages"] = framed["messages"]
                     return {"choices": [{"message": {"role": "assistant", "tool_calls": [
@@ -149,13 +156,18 @@ class TheTruncationGuardIsWiredAtBothSitesTests(unittest.TestCase):
                 loop.guard_intervene = lambda *a, **k: None
                 loop.guard_periodic_gate = lambda *a, **k: None
                 try:
-                    lp = loop.Loop.__new__(loop.Loop)
-                    lp._ctx = _MultiCtx()
+                    from cria.assistruntime import AssistRuntime
+                    lp = loop.Loop(loop.LoopContext(None, None, None, planner_enabled=True,
+                        pilot_runtime=AssistRuntime.select(experimental_planning=True),
+                        self_compact=False, focus_trim=False,
+                        satisfaction_check_start=10 ** 9, satisfaction_check_every=0))
                     lp._coder_turn = fake_coder_turn
                     item = PlanItem("write the script")
                     sess = loop.PlanSession(plan=Plan(id="x", task="t", created="c", items=[item]))
                     body = {"messages": [{"role": "user", "content": "do it"}], "tools": []}
-                    lp._work_item(sess, "k1", body, _RlogB(), item, 1)
+                    from cria.assistruntime import bound
+                    with bound(lp._ctx.pilot_runtime):
+                        lp._work_item(sess, "k1", body, _RlogB(), item, 1)
                 finally:
                     loop.guard_intervene, loop.guard_periodic_gate = saved
                 msgs = captured["messages"]
@@ -166,18 +178,6 @@ class TheTruncationGuardIsWiredAtBothSitesTests(unittest.TestCase):
 class _RlogB:
     def emit(self, *a, **k):
         pass
-
-
-class _MultiCtx:
-    reasoner_chat = None
-    reasoner_role = None
-    coder_role = None
-    self_compact = False
-    focus_trim = False
-    satisfaction_check_start = 10 ** 9
-    satisfaction_check_every = 0
-    workspace_root = None
-    assists = True          # the engagement ladder's top rung; this double drives the full loop
 
 
 class TheSessionFieldTests(unittest.TestCase):

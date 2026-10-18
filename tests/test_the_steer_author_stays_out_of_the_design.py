@@ -2,7 +2,7 @@
 
 **THE PROSE WAS REWRITTEN ON 2026-08-19** (operator: "that whole steer_diagnose could be written
 better without anecdotes"). Every rule below survives; the two measurements moved into
-`loop.author_steer`'s docstring, because `prompts.load` ships the whole file to the model and an
+`groundedaction.GroundedActions.author`'s docstring, because `prompts.load` ships the whole file to the model and an
 anecdote there is tokens the supervisor pays on every steer. These tests now anchor on the RULE
 rather than on one spelling of it — pinning the sentence made them change-detectors on a prose file.
 
@@ -57,11 +57,11 @@ class TheAuthorMayNotPickTheApproachTests(unittest.TestCase):
         """A rule with its incident attached survives the next person who thinks it is fussy — but
         the incident belongs in the CODE, not in the prompt. `prompts.load` ships every byte to the
         model, so an anecdote there is tokens the supervisor pays for on every steer (operator,
-        2026-08-19). The measurement lives in `author_steer`'s docstring; the prompt states the rule.
+        2026-08-19). The measurement lives in `GroundedActions.author`'s docstring; the prompt states the rule.
         """
         import inspect
-        from cria import loop
-        doc = inspect.getdoc(loop.author_steer) or ""
+        from cria.groundedaction import GroundedActions
+        doc = inspect.getdoc(GroundedActions.author) or ""
         self.assertIn("nine checks", doc)
         self.assertNotIn("nine checks", self.body)
 
@@ -84,8 +84,8 @@ class TheAuthorMayNotInventACauseTests(unittest.TestCase):
 
     def test_the_rule_carries_its_evidence_IN_THE_CODE(self):
         import inspect
-        from cria import loop
-        doc = inspect.getdoc(loop.author_steer) or ""
+        from cria.groundedaction import GroundedActions
+        doc = inspect.getdoc(GroundedActions.author) or ""
         self.assertIn("twenty-four", doc)
         self.assertNotIn("twenty-four", self.body)
 

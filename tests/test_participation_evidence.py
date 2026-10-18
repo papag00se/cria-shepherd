@@ -249,7 +249,9 @@ class GateAndJudgeWiringTests(unittest.TestCase):
             return json.dumps({"choices": [{"message": {"content":
                 '{"done": false, "reason": "source reach unknown", "proposed_fix": "verify it"}'}}]}).encode()
 
-        context = loop.LoopContext(planner=None, coder_chat=judge, reasoner_chat=judge, runs_dir="")
+        from cria.assistruntime import AssistRuntime
+        context = loop.LoopContext(planner=None, coder_chat=judge, reasoner_chat=judge, runs_dir="",
+            planner_enabled=True, pilot_runtime=AssistRuntime.select(experimental_planning=True))
         subject = loop.Loop(context)
         done, _reason = subject._verify("implement app.py", "done", "", "", _Rlog(),
                                         participation_facts=facts)

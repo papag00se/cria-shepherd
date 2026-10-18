@@ -197,7 +197,9 @@ class CallerCoverageTests(unittest.TestCase):
         for first in (VERDICT_0123, None):
             with self.subTest(retry=first is None):
                 chat, calls = self.chat([_grounding()])
-                critic = loop.Loop(loop.LoopContext(None, None, chat, reasoner_role=ROLE))
+                from cria.assistruntime import AssistRuntime
+                critic = loop.Loop(loop.LoopContext(None, None, chat, reasoner_role=ROLE,
+                    planner_enabled=True, pilot_runtime=AssistRuntime.select(experimental_planning=True)))
                 verdicts = [(first, "raw")]
                 if first is None:
                     verdicts.append((VERDICT_0123, "raw"))
@@ -213,7 +215,9 @@ class CallerCoverageTests(unittest.TestCase):
     def test_step_without_root_authority_cannot_authorize_a_missing_output(self):
         _bind(self)
         chat, calls = self.chat([])
-        critic = loop.Loop(loop.LoopContext(None, None, chat, reasoner_role=ROLE))
+        from cria.assistruntime import AssistRuntime
+        critic = loop.Loop(loop.LoopContext(None, None, chat, reasoner_role=ROLE,
+            planner_enabled=True, pilot_runtime=AssistRuntime.select(experimental_planning=True)))
         with mock.patch.object(critic, "_verdict", return_value=(VERDICT_0123, "raw")), \
              mock.patch.object(loop, "_dump_verify"):
             out = critic._verify(TASK, "", "", "", _Rlog(), workspace_root=ROOT)

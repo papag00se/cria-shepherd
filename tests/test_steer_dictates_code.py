@@ -470,8 +470,8 @@ class ThePromptAndTheMatcherAgreeTests(unittest.TestCase):
     anywhere. A named constant on the other word (`DICTATES`, which the code never tests for) was a
     drift guard pointing away from the drift.
 
-    This is structural on purpose: the prompt is a data file and the matcher is code, so no input
-    exercises "these two agree"."""
+    The prompt exposes the answer tokens, and the live matcher must honor the descriptive token
+    while rejecting dictation and unreadable answers."""
 
     def test_the_matchers_sentinel_is_offered_by_the_prompt(self):
         from cria import prompts
@@ -482,11 +482,19 @@ class ThePromptAndTheMatcherAgreeTests(unittest.TestCase):
         from cria import prompts
         self.assertIn("DICTATES", prompts.load("steer_dictates_code"))
 
-    def test_the_matcher_compares_against_the_named_constant(self):
-        import inspect
-        src = inspect.getsource(loop._dictates_code)
-        self.assertIn("_DESCRIBES", src)
-        self.assertNotIn('!= "DESCRIBES"', src)
+    def test_the_matcher_accepts_the_prompts_descriptive_answer_only(self):
+        """Exercise the live adapter: prompt/code drift must not reject a valid description,
+        and a dictation or unreadable reply must still fail closed."""
+        directive = "Replace the incorrect return value"
+        for answer, dictates in ((loop._DESCRIBES, False), ("DICTATES", True), ("", True)):
+            with self.subTest(answer=answer):
+                questions = []
+                def ask(system, user):
+                    questions.append(system)
+                    return answer
+                self.assertEqual(loop._dictates_code(directive, ask=ask, presumed=True), dictates)
+                self.assertEqual(len(questions), 1)
+                self.assertIn(loop._DESCRIBES, questions[0])
 
 
 if __name__ == "__main__":

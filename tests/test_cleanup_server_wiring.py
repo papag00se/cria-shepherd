@@ -3,12 +3,13 @@ import json
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
+from cria.loop import LoopStore
 from cria.server import CriaHandler
 
 
 def test_server_uses_static_analysis_not_configured_reasoner():
     handler = object.__new__(CriaHandler)
-    handler.server = SimpleNamespace(reasoner_role=object(), reasoner_upstream=SimpleNamespace(
+    handler.server = SimpleNamespace(loop_store=LoopStore(), reasoner_role=object(), reasoner_upstream=SimpleNamespace(
         chat=Mock(side_effect=AssertionError('no inference allowed'))),
         cfg=SimpleNamespace(safety=SimpleNamespace(external_dir_permission='none'),
                             routing=SimpleNamespace(done_refusals=False, assists_enabled=False)))

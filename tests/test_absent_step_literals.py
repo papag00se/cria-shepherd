@@ -97,7 +97,11 @@ class ItIsEvidenceNotAGateTests(unittest.TestCase):
             calls.append(body)
             return json.dumps(replies[min(len(calls) - 1, len(replies) - 1)]).encode()
 
-        L = Loop(_ctx(None, chat, None))
+        from cria.assistruntime import AssistRuntime
+        ctx = _ctx(None, chat, None)
+        ctx.planner_enabled = True
+        ctx.pilot_runtime = AssistRuntime.select(experimental_planning=True)
+        L = Loop(ctx)
         item = ("Write live_test.py: a standalone script that calls the real API to resolve the "
                 "handle 'goose' and 'papagoose' and prints the results.")
         ok, reason = L._verify(item, "coder summary", "", "", _Rlog(), workspace_root=d)

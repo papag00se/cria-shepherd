@@ -72,6 +72,7 @@ class TheJudgeGetsNamesNotSignatures(unittest.TestCase):
         2026-08-19; fixed with it."""
         import unittest.mock
         from cria.assistruntime import AssistRuntime
+        from cria.config import Role
         from cria.loop import Loop, PlanSession
         from cria.plan import Plan, PlanItem
 
@@ -83,7 +84,7 @@ class TheJudgeGetsNamesNotSignatures(unittest.TestCase):
             planner_enabled = True
             pilot_runtime = AssistRuntime.select(experimental_planning=True)
             reasoner_chat = object()
-            reasoner_role = object()
+            reasoner_role = Role(name="reasoner", backend="local")
             satisfaction_check_start = 80
             satisfaction_check_every = 20
             runs_dir = ""
@@ -122,7 +123,7 @@ class TheJudgeGetsNamesNotSignatures(unittest.TestCase):
                              items=[PlanItem(text="step one"), PlanItem(text="step two")])
             tail_plan.items[0].done = True
             sess4 = PlanSession(plan=tail_plan)
-            with unittest.mock.patch.object(loop, "reassess_remaining", lambda *a, **k: []):
+            with unittest.mock.patch.object(loop, "summarize", return_value='[]'):
                 lp4._replan_tail(sess4, body, 1, _RLog())
 
         self.assertEqual(len(calls), 4, "all four known call sites must reach the judge")

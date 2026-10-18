@@ -205,9 +205,8 @@ class ItIsWiredIntoTheOutboundViewTests(unittest.TestCase):
         self.assertTrue(any(k == "context.repeat_dedup" for k, _ in rlog.events))
 
     def test_both_driver_paths_reach_it(self):
-        """plan-ON and plan-off both go through _elide_ledger_copies; a fix on one path only is the
-        recurring shape of this codebase's regressions. Spy on the real function and drive both
-        halves for real — a driver that dropped its call would leave that half of the pair empty."""
+        """Both real drivers must replace a repeated fetched result with a pointer to its
+        intact facts anchor, not merely mention the legacy helper's name."""
         from cria import loop
         from cria.loop import Loop, LoopContext, PlanSession
         from cria.plan import Plan, PlanItem
@@ -230,35 +229,44 @@ class ItIsWiredIntoTheOutboundViewTests(unittest.TestCase):
         shell = {"type": "function", "function": {"name": "shell",
                  "parameters": {"type": "object", "properties": {"command": {"type": "array"}}}}}
 
+        frames = []
         def coder(body, rlog):
+            frames.append(body["messages"])
             return json.dumps({"choices": [{"message": {"role": "assistant", "tool_calls": [
                 {"id": "c1", "type": "function",
                  "function": {"name": "shell", "arguments": "{}"}}]}}]}).encode()
 
-        body = {"messages": [{"role": "user", "content": "resolve a handle"}],
+        from cria import assistruntime, selfcompact
+        url = "https://api.handle.me/openapi.json"
+        payload = "GET /handles → " + ("literal fields " * 100).rstrip()
+        pages = {url: ("HTTP 200", "", payload)}
+        body = {"messages": [{"role": "user", "content": "resolve a handle"},
+                call("fetch spec", "fetch"), tool("  " + payload, "fetch")],
                 "tools": [shell], "stream": True}
-        pages = {"https://api.handle.me/openapi.json": (200, "/handles/{handle}")}
 
-        calls = []
-
-        def spy(msgs, sess, rlog=None):
-            calls.append(len(msgs))
-            return msgs
-
-        with unittest.mock.patch.object(loop, "_elide_ledger_copies", spy):
+        with assistruntime.bound(assistruntime.AssistRuntime.select(experimental_planning=True)):
             ctx = LoopContext(planner=_Planner(_plan(2)), coder_chat=coder, reasoner_chat=coder,
-                              runs_dir="")
+                              runs_dir="", planner_enabled=True, focus_trim=False,
+                              pilot_runtime=assistruntime.AssistRuntime.select(experimental_planning=True))
             sess = PlanSession(plan=_plan(2))
             sess.fetched_pages = pages
             Loop(ctx)._work_item(sess, "k", body, _RLog(), sess.plan.items[0], 1)
 
             ctx2 = LoopContext(planner=_Planner(_plan(1)), coder_chat=coder, reasoner_chat=coder,
-                               planner_enabled=False, runs_dir="")
+                               planner_enabled=False, runs_dir="", focus_trim=False)
             sess2 = PlanSession(plan=_plan(1), synthetic=True)
             sess2.fetched_pages = pages
-            Loop(ctx2)._drive_single_item(sess2, body, "sid:x", _RLog())
+            with assistruntime.bound(ctx2.pilot_runtime):
+                Loop(ctx2)._drive_single_item(sess2, body, "sid:x", _RLog())
 
-        self.assertEqual(len(calls), 2, "both plan-ON and plan-off must reach the elide step")
+        self.assertEqual(len(frames), 2)
+        for messages in frames:
+            duplicate = next(m for m in messages if m.get("tool_call_id") == "fetch")
+            self.assertNotIn(payload, duplicate["content"])
+            self.assertIn("IN FULL", duplicate["content"])
+            anchors = [m["content"] for m in messages
+                       if m.get("content", "").startswith(selfcompact.FACTS_MARKER)]
+            self.assertTrue(any(payload in anchor for anchor in anchors))
 
     def test_the_note_never_names_the_shim(self):
         import re
