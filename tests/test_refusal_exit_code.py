@@ -88,8 +88,12 @@ class OneOwnerTests(unittest.TestCase):
                             comp = {"choices":[{"message":{"tool_calls":[{
                                 "id":"guard", "type":"function", "function":{
                                     "name":name, "arguments":json.dumps(args)}}]}}]}
+                            # Both the mutation adapter and selected protocol policy
+                            # use the same toolwire refusal owner, imported at their seams.
+                            from cria import outboundpolicies, toolwire
                             with mock.patch.object(writeproxy, "_refusal_command",
-                                                   wraps=writeproxy._refusal_command) as owner:
+                                                   wraps=toolwire._refusal_command) as owner, \
+                                    mock.patch.object(outboundpolicies, "_refusal_command", owner):
                                 writeproxy.translate_outbound(comp, shell, injected={name},
                                                               workspace_root=directory)
                                 owner.assert_called_once()

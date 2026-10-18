@@ -231,7 +231,10 @@ class CartCriticCaptureReplayTests(unittest.TestCase):
             return self._completion(json.dumps(verdict))
 
         critic = loop.Loop(loop.LoopContext(None, None, chat,
-                                             reasoner_role=Role(name="reasoner", backend="local")))
+                                             reasoner_role=Role(name="reasoner", backend="local"),
+                                             planner_enabled=True,
+                                             pilot_runtime=loop.assistruntime.AssistRuntime.select(
+                                                 experimental_planning=True)))
         rlog = _Rlog()
         result = critic._verify(self.STEP, "", "", evidence, rlog,
                                 workspace_root="", idx=1, total=1, key="cart-0233")
@@ -264,7 +267,10 @@ class CartCriticCaptureReplayTests(unittest.TestCase):
             return replies.pop(0)
 
         critic = loop.Loop(loop.LoopContext(None, None, chat,
-                                             reasoner_role=Role(name="reasoner", backend="local")))
+                                             reasoner_role=Role(name="reasoner", backend="local"),
+                                             planner_enabled=True,
+                                             pilot_runtime=loop.assistruntime.AssistRuntime.select(
+                                                 experimental_planning=True)))
         result = critic._verify(step, "", "", "", _Rlog(), idx=1, total=1, key="compiler",
                                 red_findings=checker_line)
 

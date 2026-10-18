@@ -4552,7 +4552,7 @@ class Loop:
         if effect.action is stepreview.StepAction.ADVANCE:
             if effect.red_gate_advance:
                 rlog.emit('loop.gate_red_advance', level='warn', step=idx,
-                    findings=_clip(sess.last_gate_flag or '', 200), reason=_clip(result.reason, 200))
+                    findings=sess.last_gate_flag or '', reason=result.reason)
             return self._advance(sess, key, body, idx, total, rlog)
         if effect.action is stepreview.StepAction.RENUDGE:
             sess.verify_fails += effect.verify_failures

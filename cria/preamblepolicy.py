@@ -92,7 +92,10 @@ def workspace_instructions(cwd: str, relayed: str, workspace: Callable[[str], Wo
         return Instructions(Provenance.UNSURVEYED)
     blob = " ".join(relayed.split())
     for name in INSTRUCTION_FILES:
-        own = (view.read(Path(cwd) / name) or "").strip()
+        observed = view.read(Path(cwd) / name)
+        if observed is None:
+            continue
+        own = observed.strip()
         if own and " ".join(own.split()) in blob:
             return Instructions(Provenance.VERIFIED, own, name)
     return Instructions(Provenance.UNVERIFIED)

@@ -248,7 +248,8 @@ class StructuralAuthorRefusalRecoveryTests(unittest.TestCase):
             engine = loop.Loop(loop.LoopContext(
                 planner=Planner(), coder_chat=writer, reasoner_chat=Reasoner(), runs_dir="",
                 workspace_root=root, reasoner_role=Role(name="reasoner", backend="local"),
-                focus_trim=False, self_compact=False,
+                focus_trim=False, self_compact=False, planner_enabled=True,
+                pilot_runtime=loop.assistruntime.AssistRuntime.select(experimental_planning=True),
             ))
             rlog = _Rlog()
             body = {"messages": [{"role": "user", "content": "Repair the importer."}],
@@ -265,7 +266,9 @@ class StructuralAuthorRefusalRecoveryTests(unittest.TestCase):
             ]}
             engine.drive(probe_body, "scratch-key", Classification(), rlog)
 
-        injected = writer.bodies[-1]["messages"][-1]["content"]
+        # Current workspace/facts notes may follow the steer in shared preparation.
+        injected = "\n\n".join(m.get("content") or ""
+                                 for m in writer.bodies[-1]["messages"])
         self.assertNotIn("In one edit pass resolve both compile errors", injected)
         # guard_probe_steer owns an existing fact-only fallback for a declined author.  The
         # candidate must not erase it merely to make the recovered model directive disappear.

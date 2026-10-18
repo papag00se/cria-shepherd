@@ -133,8 +133,9 @@ class BothDriversKeepTheFetchLedger(unittest.TestCase):
         sent = json.dumps(rec.bodies[-1]["messages"], ensure_ascii=False)
         self.assertIn("/handles/{handle}", sent)   # ...on the plan-off path too
 
-    def test_both_place_it_in_the_protected_head(self):
-        # After the system message(s): always visible, never the oldest droppable turn.
+    def test_both_place_current_facts_after_historical_work(self):
+        # Both drivers now share preparation: current authority follows history.
+        # The facts marker, not obsolete head placement, protects it at the floor.
         from cria import selfcompact
 
         rec = _Recorder([_toolcall()])
@@ -145,7 +146,12 @@ class BothDriversKeepTheFetchLedger(unittest.TestCase):
                                  "tools": [_SHELL]}, _Rlog(), sess.plan.items[0], 1)
         msgs = rec.bodies[-1]["messages"]
         sys_idx = max(i for i, m in enumerate(msgs) if m["role"] == "system")
-        self.assertIn(selfcompact.FACTS_MARKER, msgs[sys_idx + 1].get("content") or "")
+        facts = [i for i, m in enumerate(msgs)
+                 if selfcompact.FACTS_MARKER in (m.get("content") or "")]
+        self.assertEqual(len(facts), 1)
+        self.assertGreater(facts[0], sys_idx)
+        self.assertEqual(facts[0], len(msgs) - 1)
+        self.assertIn("/h", msgs[facts[0]]["content"])
 
         rec2 = _Recorder([_toolcall()])
         l2 = _single_loop(rec2)

@@ -333,7 +333,8 @@ def test_text_delivery_acknowledges_before_task_gate_without_approving_task(monk
             return io.BytesIO(b'{"tokens":[1],"data":[]}')
         return io.BytesIO(b'{"choices":[{"finish_reason":"stop","message":{"role":"assistant","content":"Context received; work remains."}}]}')
     monkeypatch.setattr(driver._ctx.coder_chat.__self__, '_receive_open', transport)
-    def task_gate(session, completion, framed, raw, session_key, log):
+    def task_gate(session, completion, framed, raw, session_key, log, *, completion_act_first):
+        assert completion_act_first is driver._ctx.pilot_runtime.completion_act_first
         assert not completion['choices'][0]['message'].get('tool_calls')
         assert driver._store.observe_shape_with_ticket(key, loop._history_root(body['messages'])[1], len(body['messages'])) is None
         assert not session.plan.items[0].done

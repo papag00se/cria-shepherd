@@ -27,12 +27,15 @@ def test_admission_fresh_import_orders(first):
     script = f'''import importlib
 importlib.import_module("cria.{first}")
 from cria import assistruntime, classify, completionapproval, completiondiagnosis, completionconfirmation, runnercontract, repositorychecks, evidencesummary, memoryhandoff, semanticquery, stalledwork, pastedfile, toolmenu
+from cria import capacitypolicy, transientpolicy, discoverypolicy, documentguidance, externalization, completionredrive
 r = assistruntime.AssistRuntime.select(level=5)
 expected = ((assistruntime.ARGUMENTS, assistruntime.MODULE, assistruntime.TASK_REVIEW)
             + assistruntime.TOOL_DEFINITIONS + assistruntime.RESEARCH_DEFINITIONS
             + assistruntime.HISTORY_DEFINITIONS + assistruntime.ADMISSION_DEFINITIONS
             + assistruntime.GENERATION_DEFINITIONS + assistruntime.CONTEXT_DEFINITIONS
-            + completionapproval.PRE_RELEASE + completiondiagnosis.DEFINITIONS + completionconfirmation.DEFINITIONS + (runnercontract.DEFINITION,) + repositorychecks.DEFINITIONS + (evidencesummary.DEFINITION, memoryhandoff.DEFINITION) + semanticquery.DEFINITIONS + (stalledwork.DEFINITION, pastedfile.DEFINITION))
+            + completionapproval.PRE_RELEASE + completiondiagnosis.DEFINITIONS + completionconfirmation.DEFINITIONS + (runnercontract.DEFINITION,) + repositorychecks.DEFINITIONS + (evidencesummary.DEFINITION, memoryhandoff.DEFINITION) + semanticquery.DEFINITIONS + (stalledwork.DEFINITION, pastedfile.DEFINITION)
+            + (capacitypolicy.DEFINITION, transientpolicy.TRANSIENT_RECOVERY, discoverypolicy.DEFINITION,
+               documentguidance.DEFINITION, externalization.DEFINITION, completionredrive.DEFINITION))
 assert r.definitions == expected
 assert tuple(d.policy.id for d in r.definitions) == tuple(d.policy.id for d in expected)
 assert all(actual is canonical for actual, canonical in zip(r.definitions, expected, strict=True))

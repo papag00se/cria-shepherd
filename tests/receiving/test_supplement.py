@@ -2,7 +2,7 @@ import copy,dataclasses,hashlib,http.client,inspect,json,urllib.error,urllib.req
 from unittest.mock import patch
 from pathlib import Path
 import pytest
-from cria import __main__ as entry,server,upstream,receivecapture as rc,contextfloor
+from cria import __main__ as entry,server,upstream,receivecapture as rc,contextfloor,assistruntime
 from .fixtures import Lower,Log,FaultFile,FinalMeta,wire,cfg,BODY,entrypoint
 from .test_assembly import tx,invoke
 @pytest.mark.parametrize('endpoint',['shared','served-secondary','keyed-secondary'])
@@ -54,7 +54,7 @@ def test_cleanup_before_actual_overflow_owner(tmp_path,fault,monkeypatch):
   except urllib.error.HTTPError as e:errors.append(e);raise
  kwargs={'capture_dir':tmp_path/'captures','capture_rendered':False,'context_window':49152}
  if 'open_request' in inspect.signature(upstream.Upstream).parameters:kwargs['open_request']=supplied
- u=upstream.Upstream('http://fixture.invalid',**kwargs);original=u._overflow_refit;preps=[]
+ u=upstream.Upstream('http://fixture.invalid',**kwargs);runtime=assistruntime.current();original=runtime.capacity.execute;preps=[]
  def overflow(*a,**kw):
   state={'error_closed':errors[0].closed,'finished':receipts[0].finished,'meta_closed':receipts[0].meta.closed,'refs':lower.sockets[0]._io_refs,'raw_closed':all(r.closed for r in lower.sockets[0].raws)}
   timing.append(state);(tmp_path/'pre-real-refit.json').write_text(json.dumps(timing,indent=2)+'\n')
@@ -62,10 +62,13 @@ def test_cleanup_before_actual_overflow_owner(tmp_path,fault,monkeypatch):
   assert state['refs']==0
   return original(*a,**kw)
  def prep(*a,**kw):preps.append(kw);return (b'{}' if len(preps)==1 else b'{"refitted":true}'),335,str(tmp_path/f'prep-{len(preps)}.json')
- monkeypatch.setattr(u,'_overflow_refit',overflow);monkeypatch.setattr(u,'_prep',prep);monkeypatch.setattr(urllib.request,'urlopen',lambda req,timeout:supplied(req,timeout=timeout))
+ selected=dataclasses.replace(runtime.capacity,execute=overflow)
+ runtime=dataclasses.replace(runtime,ordered_stages=tuple(selected if d is runtime.capacity else d for d in runtime.ordered_stages))
+ monkeypatch.setattr(u,'_prep',prep);monkeypatch.setattr(urllib.request,'urlopen',lambda req,timeout:supplied(req,timeout=timeout))
  result=None;primary=None
  try:
-  try:result=u._open_with_refit({'model':'supplied'},False,Log())
+  try:
+   with assistruntime.bound(runtime):result=u._open_with_refit({'model':'supplied'},False,Log())
   except BaseException as e:primary=e
   if fault is None:
    assert len(timing)==1 and result is not None and len(receipts)==2

@@ -15,13 +15,13 @@ _ROOT = pathlib.Path(__file__).resolve().parent.parent / "cria"
 
 # file:line is deliberately NOT the key — line numbers move. The key is the expression, per file.
 _ALLOWED = {
-    ("loop.py", "cleaned[i][:160]"): "an EVENT field for the operator's jsonl, not model-facing text",
-    ("loop.py", "cleaned.strip().splitlines()[1:]"): "parsing: drops a header line, keeps the rest",
+    ("livingplan.py", "cleaned[i][:160]"): "an EVENT field for the operator's jsonl, not model-facing text",
+    ("completionconfirmation.py", "cleaned.strip().splitlines()[1:]"): "parsing: drops a header line, keeps the rest",
     ("loop.py", "_task_key(task)[:8]"): "a short id for a filename/log, not prose",
     ("loop.py", "d[1:]"): "strips one leading character",
     ("plan.py", "lines[i + 1:]"): "parsing: the remainder of a block",
     ("planner.py", "key[:8]"): "a short id, not prose",
-    ("planner_tools.py", "ln[:2]"): "reads the first two characters to classify a line",
+    ("externalization.py", "ln[:2]"): "reads the first two characters to classify a line",
     ("probegate.py", "ran[:-1]"): "grammar: 'a, b and c' — every item is printed",
     ("probegate.py", "text[max(0, i - 80):i + 160]"): "a search WINDOW over text cria reads itself",
     ("probeparse.py", "toks[2:]"): "parsing: argv tail",
@@ -34,9 +34,9 @@ _ALLOWED = {
     ("dedup.py", "us[cur:]"): "splits a message at its pointer boundaries; every unit on both sides is emitted or replaced by the pointer for an identical copy shown in full",
     ("dedup.py", "us[cur:a]"): "splits a message at its pointer boundaries; every unit on both sides is emitted or replaced by the pointer for an identical copy shown in full",
     ("modelview.py", "lines[n:]"): "parsing: the text after the retained-results list, kept whole",
-    ("writeproxy.py", "lines[:cut]"): "the caller states the cut in the same result",
+    ("callliterals.py", "lines[:cut]"): "the caller states the cut in the same result",
     ("writeproxy.py", "raw[i:i + width]"): "chunking for a hexdump — every byte is emitted",
-    ("writeproxy.py", "command.lstrip().splitlines()[:2]"): "a label for cria's own log line",
+    ("outboundpolicies.py", "command.lstrip().splitlines()[:2]"): "a label for cria's own log line",
 }
 
 
