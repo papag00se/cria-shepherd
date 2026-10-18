@@ -11,7 +11,8 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from cria import groundtruth, loop, planner, wsview
+from cria import groundtruth, livingplan, loop, planner, wsview
+from test_loop import _select_test_planning
 from cria.config import Role
 from cria.plan import Plan, PlanItem
 
@@ -285,6 +286,7 @@ class WiringTests(unittest.TestCase):
                           PlanItem("step 2"), PlanItem("step 3")])
         sess = loop.PlanSession(plan=plan)
         sess.fetched_pages = dict(LEDGER)
+        _select_test_planning(ctx, planner.COVERAGE, livingplan.DEFINITION)
         loop.Loop(ctx)._replan_tail(sess, {"messages": []}, 1, _Rlog())
         self.assertGreaterEqual(len(bodies), 2, "re-derivation, then the noise judge")
         self.assertIn("resolved_addresses", bodies[1]["messages"][-1]["content"])

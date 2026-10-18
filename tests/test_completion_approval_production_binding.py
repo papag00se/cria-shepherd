@@ -357,7 +357,11 @@ def test_step_verification_positive_is_not_a_whole_task_approval(monkeypatch):
         raise AssertionError('whole-task approval entered from STEP verification')
     selected = runtime(participation=replace(policy.PARTICIPATION, execute=poison),
                        exact=replace(policy.EXACT_FORM, execute=poison, measure=poison))
-    driver = loop.Loop(loop.LoopContext(planner=None, coder_chat=poison, reasoner_chat=poison, runs_dir=''))
+    from cria import stepreview
+    from test_loop import _select_test_planning
+    context = _select_test_planning(loop.LoopContext(
+        planner=None, coder_chat=poison, reasoner_chat=poison, runs_dir=''), stepreview.DEFINITION)
+    driver = loop.Loop(context)
     monkeypatch.setattr(driver, '_verdict', lambda *args, **kwargs: ({'done': True, 'reason': 'step only'}, '{}'))
     monkeypatch.setattr(loop, '_verdict_nudge', lambda *args, **kwargs: loop.VerdictNudge('step only'))
     with assistruntime.bound(selected):

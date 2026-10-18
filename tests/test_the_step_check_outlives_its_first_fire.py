@@ -29,11 +29,15 @@ import dataclasses
 import json
 import unittest
 
-from cria import loop
+from cria import loop, stepreview
 from cria.loop import Loop, PlanSession
 from cria.plan import Plan, PlanItem
 
-from test_loop import _ctx, _Rlog
+from test_loop import _ctx as _base_ctx, _Rlog, _select_test_planning
+
+
+def _ctx(*args, **kwargs):
+    return _select_test_planning(_base_ctx(*args, **kwargs), stepreview.DEFINITION)
 
 
 def _step_plan(n=1, *, all_done=False):

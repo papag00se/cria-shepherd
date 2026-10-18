@@ -515,21 +515,24 @@ class PeriodicStepConfirmationTests(unittest.TestCase):
                          created="2026-01-01T00:00:00+00:00", items=[item, loop.PlanItem("step 2")])
         ctx = loop.LoopContext(planner=None, coder_chat=None, reasoner_chat=_PSCReasoner(done=done),
                                runs_dir="")
-        drv = loop.Loop(ctx)
+        from cria import stepreview
+        from test_loop import _select_test_planning
+        drv = loop.Loop(_select_test_planning(ctx, stepreview.DEFINITION))
         sess = loop.PlanSession(plan=plan)
         sess.drive_count = 12  # first cadence tick — STEP_CHECK_EVERY
         return drv, sess, item
 
-    def test_unrooted_confirmation_stays_observe_only(self):
-        """`confirm_unchecked` approves ordinary claims but cannot authorize this schedule."""
+    def test_unrooted_confirmation_cannot_authorize_scheduled_advance(self):
+        """An ordinary claim can pass unrooted; scheduled advancement still needs observation."""
         drv, sess, item = self._loop_and_sess(done=True)
         rlog = _PSCRlog()
         result = drv._periodic_step_check(sess, "k", {"messages": []}, 1, 2, rlog)
         self.assertIsNone(result)
         self.assertFalse(item.done)
-        sat = [kw for k, kw in rlog.events if k == "loop.periodic_step_satisfied"]
-        self.assertTrue(sat)
-        self.assertTrue(sat[0]["observe_only"])
+        checks = [kw for k, kw in rlog.events if k == "loop.periodic_step_check"]
+        self.assertEqual(len(checks), 1)
+        self.assertFalse(checks[0]["done"], "an unrooted scheduled claim has no advance authority")
+        self.assertNotIn("loop.periodic_step_satisfied", rlog.kinds())
 
     def test_observed_success_advances_through_advance(self):
         """Fails before: the old observe-only block left this genuine confirmation at step 1."""

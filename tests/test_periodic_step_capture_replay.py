@@ -13,7 +13,12 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from cria import config, loop, wsview
+from cria import assistruntime, config, loop, stepreview, wsview
+from test_loop import _select_test_planning
+
+
+def _step_context(**kwargs):
+    return _select_test_planning(loop.LoopContext(**kwargs), stepreview.DEFINITION)
 
 
 STEP = ("Add a status column to the orders table (default 'pending') and create an index on the "
@@ -81,9 +86,10 @@ class FeedObserveOnlyCaptureReplayTests(unittest.TestCase):
             token = wsview.bind(view)
             self.addCleanup(wsview.unbind, token)
             sess, driver, rlog = self._session(root), loop.Loop(
-                loop.LoopContext(planner=None, coder_chat=None, reasoner_chat=None, runs_dir="")), _Rlog()
+                _step_context(planner=None, coder_chat=None, reasoner_chat=None, runs_dir="")), _Rlog()
             unobserved = loop.Verification(True, verdict["reason"],
                                            loop.Confirmation(captured_confirmation == "YES", False))
+            self.enterContext(assistruntime.bound(driver._ctx.pilot_runtime))
             observed = loop.Verification(True, verdict["reason"],
                                          loop.Confirmation(captured_confirmation == "YES", True))
             with (patch.object(driver, "_verify", side_effect=[unobserved, observed]) as verify,
@@ -108,7 +114,7 @@ class FeedObserveOnlyCaptureReplayTests(unittest.TestCase):
                 advanced = driver._periodic_observation_after_probe(sess, "feed", returned, rlog)
             self.assertEqual(advanced, {"next": "Write REVIEW.md"})
             self.assertTrue(view.surveyed)
-            self.assertTrue(sess.plan.items[0].done)
+            self.assertTrue(sess.plan.items[0].done, rlog.events)
             self.assertEqual(sess.plan.current().text, "Write REVIEW.md")
             self.assertEqual(verify.call_count, 2, "the unobserved positive must be judged again after survey")
             kinds = [kind for kind, _ in rlog.events]
@@ -124,9 +130,10 @@ class FeedObserveOnlyCaptureReplayTests(unittest.TestCase):
             token = wsview.bind(view)
             self.addCleanup(wsview.unbind, token)
             sess, driver, rlog = self._session(root), loop.Loop(
-                loop.LoopContext(planner=None, coder_chat=None, reasoner_chat=None, runs_dir="")), _Rlog()
+                _step_context(planner=None, coder_chat=None, reasoner_chat=None, runs_dir="")), _Rlog()
             unobserved = loop.Verification(True, verdict["reason"],
                                            loop.Confirmation(captured_confirmation == "YES", False))
+            self.enterContext(assistruntime.bound(driver._ctx.pilot_runtime))
             with (patch.object(driver, "_verify", return_value=unobserved) as verify,
                   patch.object(driver, "_work", return_value={"same": "threading"})):
                 first = driver._periodic_step_check(sess, "feed", self._body(root), 1, 2, rlog)
@@ -169,8 +176,7 @@ class OrdersDrive12PeriodicReplayTests(unittest.TestCase):
             loop.PlanItem(STEP), loop.PlanItem("step 2"),
         ])
         session = loop.PlanSession(plan=plan, workspace_root=str(workspace), drive_count=12)
-        context = loop.LoopContext(planner=None, coder_chat=None, reasoner_chat=replies, runs_dir="")
-        context.planner_enabled = True
+        context = _step_context(planner=None, coder_chat=None, reasoner_chat=replies, runs_dir="")
         context.reasoner_role = config.Role(name="reasoner", backend="local")
         driver = loop.Loop(context)
         rlog = _Rlog()
