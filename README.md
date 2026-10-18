@@ -68,9 +68,21 @@ disabled = ["schema-argument-conversion", "historical-argument-recovery"]
 
 These stable IDs come from the actual [argument-conversion](cria/argumentconversion.py) and [historical-recovery](cria/historyarguments.py) definitions. Omitting this section, or using `disabled = []`, adds no opt-outs; existing engagement levels and applicability still apply. This control cannot enable a policy above its existing level.
 
-Only `disabled` is supported here, as an array of strings. Unknown IDs, duplicate IDs, unknown keys, wrong value types and disabling a dependency of a still-selected policy are configuration errors, not ignored requests. Family labels are not selection IDs. See the [generated source map](docs/assist-inventory/REPORT.md) for current registrations and pending coverage; not every legacy family has migrated.
+`disabled` is an array of strings; optional `profile` defaults to `"default"`. Unknown IDs, duplicate IDs, unknown keys, wrong value types and disabling a dependency of a still-selected policy are configuration errors, not ignored requests. Family labels are not selection IDs. See the [generated source map](docs/assist-inventory/REPORT.md) for current registrations and pending coverage; not every legacy family has migrated.
 
 Required wire-validity, privacy and fitting contracts retain their existing applicability independently of optional selections. For example, disabling historical recovery still preserves malformed argument bytes in a valid, lossless envelope. Experimental planning remains OFF by default and requires separate explicit `enabled = true` under `[planner]`; assist selection does not enable it. Developer boundaries are documented in the [architecture contract](docs/shephard.md#assist-and-family-boundaries).
+
+### Exact Rank-4 ablation
+
+```toml
+[assists]
+profile = "rank4-ablation"
+
+[planner]
+enabled = false
+```
+
+This explicit experimental profile disables exactly the 48 Rank-4 atomic IDs in [the ranking](docs/audits/assist-principles-ranking.md), assessed at `079116e4c99635722a0f3327246fd9e359586eb5`. The frozen selection lives in `cria/assistprofiles.py`; later repairs do not remove IDs from the experiment. It preserves level-eligible Rank 1–3 capabilities, mandatory foundations, native-call quarantine and final-wire invariants. It does not enable planning or raise engagement levels. Additional `disabled` entries are rejected with this exact profile. Omitting the profile retains ordinary behavior. Request events record `assist_profile` and the actual selected `pilot_assists`; retain the deployed commit and config alongside each run receipt. Selection is not evidence of usefulness.
 
 ### Logs and captures
 

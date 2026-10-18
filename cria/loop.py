@@ -51,6 +51,8 @@ from .upstream import UpstreamProtocolError
 from . import bodykeys, dirguard, generation, generationguards, modelview, wsview, stalledwork, groundedaction, writeobservation, pastedfile, livingplan, stepreview, completedwork, completionredrive
 from . import callcapture, dedup, denial, editrecovery, execcheck, filefacts, focustrim, groundtruth, indicators, massage, participation, probediscovery, probegate, probeparse, proberun, prompts, reasoning, selfcompact, shellshape, toolmenu, urlgrounding, verifytools, webfetch
 from .upstream import CallerContextRetryNoChange, ContextRefitNoChange
+from . import admission
+from .admission import has_actionable_tools as _has_actionable_tools
 from .classify import JUDGE_MAX_TOKENS, _task_key, latest_user_text
 from . import jsontext, planner, refusalledger, writeproxy
 from .jsontext import extract_json_object, strip_think
@@ -2843,9 +2845,10 @@ class Loop:
             if not initial_enabled:
                 # PLAN-OFF: the whole task is ONE implicit step — synthesize a degenerate 1-item plan
                 # and drive it through the single-item path (raw-task framing + the off-ramps). A
-                # non-coding turn is NOT ours (mirrors the old _produce_completion direct-coder gate) —
-                # proxy it. A live synthetic session (loaded above) skips this entirely.
-                if classification is None or classification.task_type != "coding":
+                # selected non-coding verdict is NOT ours — proxy it. When classification is
+                # disabled, shared admission uses harness capabilities, not a synthetic verdict.
+                # A live synthetic session (loaded above) skips this entirely.
+                if not admission.starts_driver(body, classification, planning=False):
                     return None
                 sess = _plan_off_session(_synthetic_plan(latest_user_text(messages)), briefing)
                 # PERSISTENCE (Invariant 3, load-bearing): a stable ``sid:`` key persists + resumes;
@@ -2874,7 +2877,7 @@ class Loop:
                 # question stays a question (proxied), never hijacked into a plan.
                 pure_handoff = rewritten and latest_user_text(messages).strip() == root_text.strip()
                 was_task = bool(briefing) or self._store.shape_done(session_key)
-                classified_task = classification is not None and classification.engagement == "task"
+                classified_task = admission.starts_driver(body, classification, planning=True)
                 if rewritten and ((was_task and pure_handoff) or classified_task):
                     # Post-compaction continuation: plan the REMAINING work from the harness's summary
                     # via the rewrite frame — never as a fresh task, and never stacking cria's own
@@ -2901,7 +2904,7 @@ class Loop:
                     rlog.emit("loop.start", id=plan.id, steps=len(plan.items), continued=True, rewritten=True)
                     self._persist_plan(plan, rlog)
                 else:
-                    if (classification is None or classification.engagement != "task") and not bootstrap_finished:
+                    if not classified_task and not bootstrap_finished:
                         return None  # a pending rewrite (if any) stays pending for a later task turn
                     # A fresh planner has no synchronous harness channel. Survey a known harness root
                     # before its view-backed gather; no shell and rootless paths retain their old route.
@@ -2935,7 +2938,7 @@ class Loop:
                         # must NOT fall to the unguarded proxy (it freewheels and can stop with no reason):
                         # drive the whole task as ONE synthetic guarded step, keeping the gate/guards/steers.
                         if getattr(self._ctx.planner, "_retriable_failure", False) \
-                                or classification is None or classification.task_type != "coding":
+                                or not admission.starts_driver(body, classification, planning=False):
                             return self._decline_bootstrap(session_key,
                                 bootstrap if bootstrap_finished else None, outcome)
                         sess = _plan_off_session(_synthetic_plan(latest_user_text(messages)), briefing)
@@ -6628,20 +6631,13 @@ def _has_tool_calls(completion: dict) -> bool:
 # trained-model absence of a tool call. NOT lowered or forwarded — the driver folds it into the
 # normal flow (a lone call → a plain-text 'done' that runs the SAME LEG0 → gate → verdict a bare done
 # does). Description in prompts/tool_descs.txt (tunable). Advertised on coder turns only.
-TASK_COMPLETE_TOOL = "task_complete"
+TASK_COMPLETE_TOOL = admission.TASK_COMPLETE_TOOL
 
 
 def _tool_name(tc) -> str:
     """The name of a tool CALL or tool SCHEMA (both nest it under `function`)."""
     fn = (tc.get("function") or tc) if isinstance(tc, dict) else {}
     return fn.get("name") or ""
-
-
-def _has_actionable_tools(tools) -> bool:
-    """True if the harness advertised ANY tool the coder can ACT with — anything other than the
-    completion tool. A coding turn with none (Codex's post-auto-compaction request can arrive
-    tool-less) can only call ``task_complete`` forever, so cria must not drive it."""
-    return any(_tool_name(t) and _tool_name(t) != TASK_COMPLETE_TOOL for t in tools or [])
 
 
 def _completion_tool() -> dict:

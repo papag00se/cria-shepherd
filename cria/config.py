@@ -571,12 +571,14 @@ class PlannerConfig:
 class AssistConfig:
     """Atomic opt-outs for the executable pilots only; other policies are unchanged."""
     disabled: tuple[str, ...] = ()
+    profile: str = "default"
 
     def __post_init__(self):
         from .assistruntime import validate_selection_ids
+        from .assistprofiles import resolve
         if not isinstance(self.disabled, tuple) or any(not isinstance(x, str) for x in self.disabled):
             raise ValueError("[assists] disabled must be an array of atomic IDs")
-        validate_selection_ids(self.disabled)
+        validate_selection_ids(resolve(self.profile, self.disabled))
 
 
 @dataclass(frozen=True)
@@ -599,7 +601,8 @@ class Config:
 
     def __post_init__(self):
         from .assistruntime import AssistRuntime
-        AssistRuntime.select(level=self.routing.engagement_level, disabled=self.assists.disabled)
+        AssistRuntime.select(level=self.routing.engagement_level, disabled=self.assists.disabled,
+                             profile=self.assists.profile)
 
     @classmethod
     def load(cls, path: str | os.PathLike[str] | None = None) -> "Config":
@@ -651,12 +654,12 @@ class Config:
 
 
 def _assists(data: dict) -> AssistConfig:
-    if not isinstance(data, dict) or set(data) - {"disabled"}:
-        raise ValueError("[assists] supports only disabled pilot atomic IDs")
+    if not isinstance(data, dict) or set(data) - {"disabled", "profile"}:
+        raise ValueError("[assists] supports only profile and disabled atomic IDs")
     disabled = data.get("disabled", [])
     if not isinstance(disabled, list) or any(not isinstance(x, str) for x in disabled):
         raise ValueError("[assists] disabled must be an array of atomic IDs")
-    return AssistConfig(tuple(disabled))
+    return AssistConfig(tuple(disabled), profile=data.get("profile", "default"))
 
 
 def _read_toml(p: Path) -> dict:

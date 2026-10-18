@@ -25,7 +25,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from . import bodykeys, dirguard, memoryhandoff
 from . import (callcapture, compat, focustrim, groundtruth, massage, modelview, probegate, prompts,
                responses, rumination, selfcompact)
-from . import classify
+from . import admission, classify
 from .classify import Classifier
 from . import content_reduce
 from .content_reduce import est_tokens
@@ -178,7 +178,7 @@ SESSION_HEADER = "X-Cria-Session-Id"
 # Names are cheap and the context floor is the one place a list may be narrowed (#5).
 _COMPACT_TOP_MAX = None
 _COMPACT_KIDS_MAX = None
-LOCAL_COMPACT_MARKER = "<<<LOCAL_COMPACT>>>"
+LOCAL_COMPACT_MARKER = admission.LOCAL_COMPACT_MARKER
 
 
 def _latest_user_text(messages: list) -> str:
@@ -766,6 +766,7 @@ class CriaServer(ThreadingHTTPServer):
         # construction must not change another request's unbound library opt-out.
         self.pilot_runtime = assistruntime.AssistRuntime.select(
             level=cfg.routing.engagement_level, disabled=cfg.assists.disabled,
+            profile=cfg.assists.profile,
             experimental_planning=cfg.planner.enabled and cfg.routing.assists_enabled)
         _warn_config(cfg, has_reasoner, has_coder, log)
         # Always build the loop when a coder exists; require a reasoner only when the planner is ON.
@@ -979,6 +980,7 @@ class CriaHandler(BaseHTTPRequestHandler):
         stream = bool(body.get("stream"))
         rlog.emit(
             "request.recv",
+            assist_profile=assistruntime.current().profile,
             pilot_assists=assistruntime.current().selected,
             model=body.get("model"),
             stream=stream,
@@ -1464,23 +1466,22 @@ class CriaHandler(BaseHTTPRequestHandler):
         finally:
             hb.stop()
 
-    def _engages_loop(self, sk: str, classification) -> bool:
+    def _engages_loop(self, sk: str, classification, body=None, compaction=False) -> bool:
         """Should this turn go through the loop (cria's ONE coder driver) rather than the proxy?
         A KNOWN session always continues — a mid-plan tool result / a post-compaction continuation
         classifies as non-task, and gating on per-turn classification would abandon the work. For a
         FRESH turn, classification gates STARTING: planner ON → an ``engagement == "task"``; planner
-        OFF → a ``task_type == "coding"`` (the synthetic 1-item path). Used by BOTH producers so the
-        buffered and streaming transports dispatch identically."""
+        OFF → a ``task_type == "coding"`` (the synthetic 1-item path). With classification disabled,
+        shared admission instead uses actionable harness capabilities, excluding auxiliary requests;
+        no semantic verdict is manufactured. BOTH producers and the driver use that same contract."""
         loop = self.server.loop
         if loop is None:
             return False
         if loop.knows_session(sk):
             return True
-        if classification is None:
-            return False
-        if self.server.cfg.planner.enabled:
-            return classification.engagement == "task"
-        return classification.task_type == "coding"
+        return admission.starts_driver(body or {}, classification,
+                                       planning=self.server.cfg.planner.enabled,
+                                       compaction=compaction)
 
     def _produce_stream(self, body: dict, rlog):
         """The SSE chunk generator. The blocking model work happens here on the first
@@ -1502,7 +1503,7 @@ class CriaHandler(BaseHTTPRequestHandler):
             # ONE coder driver: engage the loop when it should (a known session, or a fresh turn the
             # loop would start — see _engages_loop). It drives a real multi-item plan OR the synthetic
             # 1-item plan-off path; both come back as a completion. Otherwise fall through to the proxy.
-            if self._engages_loop(sk, classification):
+            if self._engages_loop(sk, classification, body, compaction):
                 completion = server.loop.drive(body, sk, classification, rlog,
                     pasted_delivery=self._defer_pasted_delivery)
                 if completion is not None:
@@ -1544,7 +1545,7 @@ class CriaHandler(BaseHTTPRequestHandler):
         # path) whenever it should; otherwise proxy. See _engages_loop — a known session ALWAYS
         # continues (a mid-plan tool result / continuation classifies as non-task, and gating on that
         # would abandon the work: "stopped after a command"); classification only gates STARTING.
-        if self._engages_loop(sess_key, classification):
+        if self._engages_loop(sess_key, classification, body, compaction):
             # The model-visible size is taken BEFORE the drive (a finished session drops its state)
             # and from the same framing the coder prompt is built from — see Loop.visible_context_tokens.
             visible = server.loop.visible_context_tokens(
@@ -1680,7 +1681,8 @@ class CriaHandler(BaseHTTPRequestHandler):
         # + its tool TYPES (catches a non-`function` type our converter would drop) vs what SURVIVES
         # cria's convert + focus. inbound>0 but after==0 ⇒ cria dropped them; inbound==0 ⇒ harness sent none.
         _raw_tools = rbody.get("tools") or []
-        rlog.emit("request.recv", api="responses", pilot_assists=assistruntime.current().selected,
+        rlog.emit("request.recv", api="responses", assist_profile=assistruntime.current().profile,
+                  pilot_assists=assistruntime.current().selected,
                   model=body.get("model"), stream=stream,
                   n_messages=len(body.get("messages", [])),
                   inbound_tools=len(_raw_tools),

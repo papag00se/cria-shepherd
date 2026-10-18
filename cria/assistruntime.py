@@ -8,6 +8,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field, fields
 
 from .assistcontract import ExecutableDefinition, Reference
+from . import assistprofiles
 from . import assistbinding, completionapproval, completiondiagnosis, completionconfirmation, runnercontract, repositorychecks, evidencesummary, memoryhandoff, semanticquery, stalledwork, groundedaction, planner, pastedfile, livingplan, stepreview, completedwork, capacitypolicy, transientpolicy, discoverypolicy, documentguidance, externalization, completionredrive
 
 from .argumentconversion import ArgumentDefinition, ArgumentInput, ArgumentResult, DEFINITION as ARGUMENTS
@@ -118,6 +119,7 @@ class AssistRuntime:
     ordered_stages: tuple[ExecutableDefinition, ...] = TOOL_DEFINITIONS + RESEARCH_DEFINITIONS + HISTORY_DEFINITIONS + ADMISSION_DEFINITIONS + GENERATION_DEFINITIONS + CONTEXT_DEFINITIONS + completionapproval.PRE_RELEASE + completiondiagnosis.DEFINITIONS + completionconfirmation.DEFINITIONS + (runnercontract.DEFINITION,) + repositorychecks.DEFINITIONS + (evidencesummary.DEFINITION, memoryhandoff.DEFINITION) + semanticquery.DEFINITIONS + (stalledwork.DEFINITION, pastedfile.DEFINITION, capacitypolicy.DEFINITION, transientpolicy.TRANSIENT_RECOVERY, discoverypolicy.DEFINITION, documentguidance.DEFINITION, externalization.DEFINITION, completionredrive.DEFINITION)
     registrations: tuple[ExecutableDefinition, ...] = DEFINITIONS
     experimental_planning: bool = False
+    profile: str = "default"
     initial_planning: planner.PlanningSelection = field(init=False, repr=False)
     living_plan: livingplan.LivingSelection = field(init=False, repr=False)
     step_review: stepreview.StepSelection = field(init=False, repr=False)
@@ -164,6 +166,13 @@ class AssistRuntime:
                     raise ValueError("Argument policy registered at the wrong stage")
                 raise ValueError("Replacement must preserve its registered policy contract")
         validate(self.definitions)
+        excluded = assistprofiles.resolve(self.profile, ())
+        if self.profile != "default":
+            expected = configured_definitions(self.registrations, level=self.engagement_level,
+                                              disabled=excluded,
+                                              experimental_planning=self.experimental_planning)
+            if ids != [d.policy.id for d in expected]:
+                raise ValueError("Assist bindings do not match the exact selected profile")
         object.__setattr__(self, "wire_folds", self.bindings("wire-evidence-fold"))
         approvals = {}
         for definition in self.definitions:
@@ -372,26 +381,23 @@ class AssistRuntime:
         return tuple(d for d in self.definitions if d.policy.stage == stage)
 
     @classmethod
-    def select(cls, *, level=5, disabled=(), registrations=None, experimental_planning=False):
+    def select(cls, *, level=5, disabled=(), registrations=None, experimental_planning=False,
+               profile="default"):
         if type(experimental_planning) is not bool:
             raise ValueError('Experimental planning consent must be explicitly boolean')
         registry = DEFINITIONS if registrations is None else registrations
         validate(registry)
+        disabled = assistprofiles.resolve(profile, disabled)
         validate_selection_ids(disabled, registry)
-        initial_ids = {d.policy.id for d in planner.DEFINITIONS + livingplan.DEFINITIONS
-                       + (stepreview.DEFINITION, completedwork.DEFINITION)}
-        eligible = (registry if experimental_planning else
-                    tuple(d for d in registry if d.policy.id not in initial_ids))
-        eligible_disabled = tuple(name for name in disabled
-                                  if experimental_planning or name not in initial_ids)
-        chosen = select_definitions(eligible, level=level, disabled=eligible_disabled)
+        chosen = configured_definitions(registry, level=level, disabled=disabled,
+                                        experimental_planning=experimental_planning)
         by_id = {d.policy.id: d for d in chosen}
         typed_ids = {ARGUMENTS.policy.id, MODULE.policy.id, TASK_REVIEW.policy.id}
         return cls(by_id.get(ARGUMENTS.policy.id),
                    (by_id[MODULE.policy.id],) if MODULE.policy.id in by_id else (),
                    by_id.get(TASK_REVIEW.policy.id), level,
                    tuple(d for d in chosen if d.policy.id not in typed_ids), registry,
-                   experimental_planning=experimental_planning)
+                   experimental_planning=experimental_planning, profile=profile)
 
     def arguments(self, source: ArgumentInput, log=None) -> ArgumentResult:
         if self.argument_conversion is None:
@@ -441,6 +447,17 @@ def select_definitions(registrations: tuple[ExecutableDefinition, ...], *, level
         if definition.policy.id in selected and not set(definition.policy.dependencies) <= selected:
             raise ValueError("Disabled dependency for assist: " + definition.policy.id)
     return tuple(d for d in registrations if d.policy.id in selected)
+
+
+def configured_definitions(registry, *, level, disabled, experimental_planning):
+    """Select capabilities without granting experimental planning consent."""
+    initial_ids = {d.policy.id for d in planner.DEFINITIONS + livingplan.DEFINITIONS
+                   + (stepreview.DEFINITION, completedwork.DEFINITION)}
+    eligible = (registry if experimental_planning else
+                tuple(d for d in registry if d.policy.id not in initial_ids))
+    eligible_disabled = tuple(name for name in disabled
+                              if experimental_planning or name not in initial_ids)
+    return select_definitions(eligible, level=level, disabled=eligible_disabled)
 
 
 DEFAULT = AssistRuntime()
