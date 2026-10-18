@@ -1,0 +1,2 @@
+Automatic check result (not an action chosen by the coder):
+{{RESULT}}

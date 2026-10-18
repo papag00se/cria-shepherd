@@ -212,7 +212,7 @@ class GroundedActions:
         reasoner_chat, reasoner_role = source.reasoner_chat, source.reasoner_role
         workspace_root, gs, body, rlog = source.workspace_root, source.facts, source.body, source.log
         condition, outcome, truth_text = source.condition, source.outcome, source.truth_text
-        session_turns = selfcompact.stub_old_write_args(self.facts.drop_harness_frame(probegate.clean_gate_results(self.facts.reasoner_session(body.get('messages', [])), getattr(gs, 'gate_plan', None))))
+        session_turns = selfcompact.stub_old_write_args(self.facts.drop_harness_frame(probegate.check_evidence_messages(self.facts.reasoner_session(body.get('messages', [])), getattr(gs, 'gate_plan', None))))
         session_blocks = [self.facts.mark_own_notes(selfcompact.serialize([turn], defang=True)) for turn in session_turns]
         touched = self.facts.touched_paths(body.get('messages', []))
         recent = list(getattr(gs, 'recent_writes', None) or []) + touched if gs is not None else touched

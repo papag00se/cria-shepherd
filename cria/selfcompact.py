@@ -331,7 +331,12 @@ def _defanged_line(m: dict) -> str:
 
     Every line carries its role prefix; no message is exempt, because no message is cut."""
     role = m.get("role")
-    text = _text(m).strip()
+    text = _text(m)
+    if role == "observation":
+        # Source-labelled automatic checks are already evidence, not coder speech.
+        # Keep their command/output whitespace; the outer composer supplies wire roles.
+        return text
+    text = text.strip()
     calls = m.get("tool_calls") or []
     if calls:
         bits = []

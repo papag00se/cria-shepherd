@@ -11162,12 +11162,14 @@ def _mark_own_notes(session: str) -> str:
     # for cria's next directive, with more confidence each round.
     own = (indicators.SENTINEL, selfcompact.SUMMARY_MARKER, "⟦ctx:steer⟧", CONTINUATION_MARKER)
     out = []
-    for line in session.splitlines():
+    for line in session.splitlines(keepends=True):
         if any(mark in line for mark in own):
-            out.append(f"{line}   [EARLIER NOTE FROM THIS SYSTEM — not evidence]")
+            content = line.splitlines()[0]
+            ending = line[len(content):]
+            out.append(f"{content}   [EARLIER NOTE FROM THIS SYSTEM — not evidence]{ending}")
         else:
             out.append(line)
-    return "\n".join(out)
+    return "".join(out)
 
 
 def _label_spill_entries(disk: str) -> str:

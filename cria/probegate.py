@@ -2260,6 +2260,47 @@ def clean_gate_results(messages: list, plan: "GatePlan | None" = None, *,
     return out
 
 
+def check_evidence_messages(messages: list, plan: "GatePlan | None" = None) -> list:
+    """Keep automatic checks as observations, never actions attributed to the coder.
+
+    The ordinary coder view retains retypable probe commands. A reasoner judging
+    progress must also retain who requested them: a green automatic gate after a
+    refused action is not a successful action chosen by the coder. Capture ownership
+    before cleaning removes the gate stamp; an unstamped identical command stays a
+    coder action. Results retain the existing cleaner's exact rendering. The internal
+    observation role is consumed by selfcompact.serialize, never sent as a wire role.
+    """
+    automatic = gate_call_ids(messages)
+    cleaned = clean_gate_results(messages, plan)
+    if not automatic:
+        return cleaned
+    out = []
+    for message in cleaned:
+        calls = message.get("tool_calls") or []
+        if message.get("role") == "assistant" and any(c.get("id") in automatic for c in calls):
+            if message.get("content"):
+                out.append({**message, "tool_calls": []})
+            for call in calls:
+                if call.get("id") not in automatic:
+                    out.append({**message, "content": "", "tool_calls": [call]})
+                    continue
+                args = jsontext.loads(call["function"]["arguments"])
+                command = args.get("cmd", args.get("command", ""))
+                if isinstance(command, list):
+                    command = "\n".join(str(part) for part in command)
+                out.append({"role": "observation", "content": prompts.render(
+                    "automatic_check_request", command=command)})
+            continue
+        identity = message.get("tool_call_id") or message.get("call_id")
+        if identity in automatic and (message.get("role") == "tool"
+                                      or message.get("type") == "function_call_output"):
+            out.append({"role": "observation", "content": prompts.render(
+                "automatic_check_result", result=message.get("content", message.get("output", "")))})
+        else:
+            out.append(message)
+    return out
+
+
 # A harness that REFUSES to run the gate at all (sandbox policy, no shell, a rejected verb) returns no
 # section markers, which interpret_gate correctly reads as "nothing ran" — correct, and completely
 # silent. cria then loses its single largest assist on every turn with nothing in the log to say so.
