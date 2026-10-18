@@ -350,7 +350,8 @@ def test_public_scheduled_observation_requires_own_complete_raw_reading_and_fres
         assert len(seen) == 1 and session.periodic_observation  # required post-survey check remains
         assert session.gate_plan is not plan and session.gate_plan.surveyed_before
         final_plan = session.gate_plan
-        final_raw = f"{probegate.SECTION_PREFIX}git{probegate.SECTION_SUFFIX}\nabc\n"
+        from tests.gatefixture import completed_cleanup
+        final_raw = completed_cleanup(root) + f"{probegate.SECTION_PREFIX}git{probegate.SECTION_SUFFIX}\nabc\n"
         result = driver.drive(returned_body(body, issued, page(final_plan, final_raw)), KEY, None, log)
         assert len(seen) == 2 and measured == [None, content]
         assert seen[1] is not seen[0] and seen[1].original_task == TASK

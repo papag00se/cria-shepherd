@@ -22,6 +22,7 @@ from cria import bodykeys, loop, massage, wsview
 from cria.writeproxy import original_call, translate_outbound
 from tests.test_loop import _Recorder, _Rlog, _ctx, _single_loop, _synth
 from tests.wsfixture import survey
+from tests.lowering_assertions import write_did_run
 
 FIX = Path(__file__).parent / "fixtures" / "phi4_java_a2"
 ROOT = "/home/jesse/suite-runs/suite-feed-pipeline-java_phi4_codex_poff_1791698490-30m9mppf"
@@ -161,10 +162,10 @@ def test_the_a3_unread_writes_are_answered_with_the_files_and_nothing_is_written
             continue                                                    # the coder's own exec_command
         path = json.loads(orig["arguments"]).get("path")
         by_path[path] = (tc, cmd)
-    assert "write_bytes" in by_path["REVIEW.md"][1]                      # a new file is written as before
+    assert write_did_run(by_path["REVIEW.md"][1])                      # a new file is written as before
     for path, seed in (("pom.xml", SEED_POM), (JAVA, SEED_JAVA)):
         tc, cmd = by_path[path]
-        assert "write_bytes" not in cmd and "survey" not in cmd.lower().split("printf")[0]
+        assert not write_did_run(cmd) and "survey" not in cmd.lower().split("printf")[0]
         out = _run(cmd, tmp_path)
         assert out.returncode == 0
         assert (tmp_path / path).read_text() == seed                    # not written
@@ -181,10 +182,10 @@ def test_the_a3_unread_writes_are_answered_with_the_files_and_nothing_is_written
         lp = _single_loop(lambda b, r: b"{}", workspace_root=ROOT)
         lp._store.put("sid:g4", sess)
         assert lp.unread_target_check("sid:g4", msgs, ROOT)(path) == ""
-        again = _call("write_file", {"path": path, "content": "class A {}"})
+        again = _call("write_file", {"path": path, "content": '<project/>' if path == 'pom.xml' else 'class A {}'})
         translate_outbound(again, _CMD_SHELL, injected={"write_file"}, workspace_root=ROOT,
                            unread_target=lp.unread_target_check("sid:g4", msgs, ROOT))
-        assert "write_bytes" in _cmd(again)
+        assert write_did_run(_cmd(again))
 
 
 def test_the_repeat_write_with_no_read_in_history_is_answered_again_never_passed(view):
@@ -193,7 +194,7 @@ def test_the_repeat_write_with_no_read_in_history_is_answered_again_never_passed
     for _ in range(3):
         comp = _call("write_file", {"path": "pom.xml", "content": PLACEHOLDER})
         translate_outbound(comp, _CMD_SHELL, injected={"write_file"}, workspace_root=ROOT, unread_target=check)
-        assert "write_bytes" not in _cmd(comp) and "cat " in _cmd(comp)
+        assert not write_did_run(_cmd(comp)) and "cat " in _cmd(comp)
 
 
 def test_the_answer_is_represented_as_the_coders_write_call_and_records_the_read(view, tmp_path):
@@ -238,17 +239,17 @@ def test_any_content_is_answered_not_a_spelling_of_one(view):
         comp = _call("write_file", {"path": "pom.xml", "content": content})
         translate_outbound(comp, _CMD_SHELL, injected={"write_file"}, workspace_root=ROOT,
                            unread_target=_check(view))
-        assert "write_bytes" not in _cmd(comp) and content not in _cmd(comp)
+        assert not write_did_run(_cmd(comp)) and content not in _cmd(comp)
 
 
 def test_the_hold_is_per_path(view):
     check = _check(view)
     other = _call("write_file", {"path": JAVA, "content": "class A {}"})
     translate_outbound(other, _CMD_SHELL, injected={"write_file"}, workspace_root=ROOT, unread_target=check)
-    assert "write_bytes" not in _cmd(other) and f"{JAVA} already exists" in _cmd(other)
+    assert not write_did_run(_cmd(other)) and f"{JAVA} already exists" in _cmd(other)
     fresh = _call("write_file", {"path": "NEW.md", "content": "n"})
     translate_outbound(fresh, _CMD_SHELL, injected={"write_file"}, workspace_root=ROOT, unread_target=check)
-    assert "write_bytes" in _cmd(fresh)
+    assert write_did_run(_cmd(fresh))
 
 
 def _shell_read(command, result="<project>\n</project>", call_id="s1"):
@@ -263,7 +264,7 @@ def test_a_shell_command_that_prints_the_whole_file_is_a_read_so_no_hold(view):
         comp = _call("write_file", {"path": "pom.xml", "content": "<project/>"})
         translate_outbound(comp, _CMD_SHELL, injected={"write_file"}, workspace_root=ROOT,
                            unread_target=_check(view, messages=_shell_read(command)))
-        assert "write_bytes" in _cmd(comp), command
+        assert write_did_run(_cmd(comp)), command
 
 
 def test_a_shell_command_that_only_names_or_cuts_the_file_is_not_a_read(view):
@@ -275,7 +276,7 @@ def test_a_shell_command_that_only_names_or_cuts_the_file_is_not_a_read(view):
         comp = _call("write_file", {"path": "pom.xml", "content": "<project/>"})
         translate_outbound(comp, _CMD_SHELL, injected={"write_file"}, workspace_root=ROOT,
                            unread_target=_check(view, messages=_shell_read(command)))
-        assert "write_bytes" not in _cmd(comp), command
+        assert not write_did_run(_cmd(comp)), command
 
 
 def test_a_shell_command_naming_a_different_file_is_not_a_read_of_this_one(view):
@@ -283,7 +284,7 @@ def test_a_shell_command_naming_a_different_file_is_not_a_read_of_this_one(view)
         comp = _call("write_file", {"path": "pom.xml", "content": "<project/>"})
         translate_outbound(comp, _CMD_SHELL, injected={"write_file"}, workspace_root=ROOT,
                            unread_target=_check(view, messages=_shell_read(command)))
-        assert "write_bytes" not in _cmd(comp), command
+        assert not write_did_run(_cmd(comp)), command
 
 
 def test_a_refused_or_empty_shell_result_is_not_a_read(view):
@@ -292,7 +293,7 @@ def test_a_refused_or_empty_shell_result_is_not_a_read(view):
         comp = _call("write_file", {"path": "pom.xml", "content": "<project/>"})
         translate_outbound(comp, _CMD_SHELL, injected={"write_file"}, workspace_root=ROOT,
                            unread_target=_check(view, messages=_shell_read("cat pom.xml", result)))
-        assert "write_bytes" not in _cmd(comp)
+        assert not write_did_run(_cmd(comp))
 
 
 def test_a_read_only_the_ledger_remembers_is_not_the_text_in_the_window(view):
@@ -301,7 +302,7 @@ def test_a_read_only_the_ledger_remembers_is_not_the_text_in_the_window(view):
     comp = _call("write_file", {"path": "pom.xml", "content": "<project/>"})
     translate_outbound(comp, _CMD_SHELL, injected={"write_file"}, workspace_root=ROOT,
                        unread_target=_check(view, read=["pom.xml"]))
-    assert "write_bytes" not in _cmd(comp)
+    assert not write_did_run(_cmd(comp))
 
 
 def test_a_file_the_coder_read_in_this_conversation_may_be_rewritten(view):
@@ -311,14 +312,14 @@ def test_a_file_the_coder_read_in_this_conversation_may_be_rewritten(view):
     comp = _call("write_file", {"path": "pom.xml", "content": "<project/>"})
     translate_outbound(comp, _CMD_SHELL, injected={"write_file"}, workspace_root=ROOT,
                        unread_target=_check(view, messages=msgs))
-    assert "write_bytes" in _cmd(comp)
+    assert write_did_run(_cmd(comp))
 
 
 def test_a_new_file_is_never_refused(view):
     comp = _call("write_file", {"path": "REVIEW.md", "content": "# review\n"})
     translate_outbound(comp, _CMD_SHELL, injected={"write_file"}, workspace_root=ROOT,
                        unread_target=_check(view))
-    assert "write_bytes" in _cmd(comp)
+    assert write_did_run(_cmd(comp))
 
 
 def test_an_unsurveyed_workspace_says_nothing(view):
@@ -328,7 +329,7 @@ def test_an_unsurveyed_workspace_says_nothing(view):
         comp = _call("write_file", {"path": "pom.xml", "content": "<project/>"})
         translate_outbound(comp, _CMD_SHELL, injected={"write_file"}, workspace_root=ROOT,
                            unread_target=_check(fresh))
-        assert "write_bytes" in _cmd(comp)               # unknown is not "exists" (#11b)
+        assert write_did_run(_cmd(comp))               # unknown is not "exists" (#11b)
     finally:
         wsview.unbind(token)
 
@@ -342,7 +343,7 @@ def test_a_session_that_does_not_keep_the_record_makes_no_claim(view):
 def test_the_lowering_without_the_check_is_unchanged(view):
     comp = _call("write_file", {"path": "pom.xml", "content": "<project/>"})
     translate_outbound(comp, _CMD_SHELL, injected={"write_file"}, workspace_root=ROOT)
-    assert "write_bytes" in _cmd(comp)
+    assert write_did_run(_cmd(comp))
 
 
 # ── the pasted-file recovery's own refusal ───────────────────────────────────────────────────────

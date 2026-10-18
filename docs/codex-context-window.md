@@ -63,9 +63,7 @@ CPU-only default-parity and dense-burst regressions are documented in the
 
 ## What L1-L5 report: the model-visible context, pre-floor
 
-At L1-L5 cria does not forward native usage; it reports `input_tokens` = the PRE-FLOOR size
-(chars/4 of messages + tool schema, the context floor's own estimate) of the conversation the
-**model** is shown for this session — not the whole inbound request. One owner, `cria/modelview.py`:
+At L1-L5 the existing usage facade reports **estimated continuing model-visible context**, not native generation consumption. `input_tokens` is the PRE-FLOOR size (chars/4 of messages + tool schema, the context floor's own estimate) of the conversation the **model** is shown for this session — not the whole inbound request. `output_tokens` is the same estimator applied to the public reply that can return as model-visible history: public content and calls, with human-only indicator/transcript content and gate plumbing handled by their canonical projections. Private reasoning fields do not become that history. Reply sizing happens before synthetic lowering, so harness execution scaffolding is not mistaken for coder text. One owner, `cria/modelview.py`:
 
 - **Loop turns** (coder, gate survey/launch/poll, transport pages, completion checks; Chat and
   Responses, stream and buffered): `Loop.visible_context_tokens`, which sizes the exact framing the
@@ -88,6 +86,8 @@ At L1-L5 cria does not forward native usage; it reports `input_tokens` = the PRE
   stamped gate call. The floor/refit statements below apply to L3-L5 only; at L1/L2 the server's own
   answer settles window fit, as it always did.
 
+The usage object labels these top-level counts with `context_estimate: {estimated: true, scope: "continuing-model-visible-context", method: "contextfloor.est_total"}`. It also carries the **unchanged original Chat-Completions usage object** under `native_usage`, including native cached-input/output details. Responses JSON and SSE preserve both fields; native detail counts are not attached to estimated context counts. Native consumption, billing and human performance metrics must use the native object or the original upstream events/captures, never the facade estimate. Missing native usage stays missing/empty, not an invented measured zero. No private-token count is inferred by subtracting chars/4 reasoning estimates from native consumption. L0's standard measured usage and details are unchanged.
+
 Why: a harness compacts when the reported size crosses its trigger. Counting gate plumbing made
 phi4 (16,384 window; Codex trigger `int(16384*.85)=13,926`) compact 11-48 times per L5 cell — 31 of 31
 over-trigger reports followed by a Codex compaction in `feed-pipeline-java_phi4_codex_poff_1791646575`
@@ -101,7 +101,7 @@ final-wire refit (`Upstream._prep`) fit the wire to the window whatever the harn
 reported number is the pre-floor model-visible size, so it only under-counts cria-authored additions
 of a few hundred bytes. L0 is untouched (native usage, above). Chat-Completions **streaming** reports
 no cria usage at all (upstream's own usage, if any, passes through); that is unchanged.
-Tests: `tests/test_model_visible_usage.py` (real captured Codex requests).
+Tests: `tests/test_model_visible_usage.py` (real captured Codex requests), `tests/test_continuing_context_usage.py` (context/native separation through production reporting and Chat/Responses JSON/SSE), and `tests/test_pinned_codex_continuing_context.py` (actual pinned Codex with a sandboxed isolated home and fake endpoints only). The pinned-client controls demonstrate premature compaction under the old consumption contract, retention of the public action/result under the corrected projection, and legitimate compaction for large public output. This establishes the local accounting/compaction boundary, not usefulness causality across whole runs.
 
 ## Incomplete tool history must remain renderable
 

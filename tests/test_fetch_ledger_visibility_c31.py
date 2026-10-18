@@ -230,7 +230,7 @@ class FrozenCompactionCopyMakesNoLocationClaimTests(unittest.TestCase):
         for m in out:
             c = m.get("content") or ""
             for line in c.splitlines():
-                if self.URL in line and "conversation" in line:
+                if line.startswith('- ' + self.URL) and "conversation" in line:
                     lines.append(line)
         return lines
 
@@ -263,7 +263,9 @@ class FrozenCompactionCopyMakesNoLocationClaimTests(unittest.TestCase):
                                               visible=set(), location=False)
         self.assertEqual(self._location_lines(delivered), [live_line])
         # Byte-exact elision replaces the entry prefix, not its differing location suffix.
-        self.assertEqual(delivered[2], {'role': 'user', 'content': history_header + pointer + absent_suffix})
+        address = (f' [fetch-record entry - {self.URL}, lines 1–1, '
+                   f'start column 1, end column {len(entry_prefix)}]')
+        self.assertEqual(delivered[2], {'role': 'user', 'content': history_header + pointer + address + absent_suffix})
         self.assertEqual(out[2]['content'], history_header + stale_line)
         self.assertIsNot(delivered[2], out[2])
         self.assertEqual(len(delivered), len(out))

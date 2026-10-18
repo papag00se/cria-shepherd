@@ -86,5 +86,8 @@ def test_the_coder_frame_tells_the_model_the_declared_root_is_readable(cell):
     install, ws, rbody = cell
     body = responses.to_chat_body(rbody)
     framed = loop._frame_for_item(body["messages"], "t", "", 0, 1, synthetic=True, workspace_root=str(ws))
-    assert "READ these directories outside it" in framed[0]["content"]
-    assert str(install) in framed[0]["content"]
+    text = framed[0]['content']
+    assert 'additional writable roots outside the project' in text
+    assert 'active permissions remain authoritative' in text
+    assert 'For dependency inspection, use read-only commands there' in text
+    assert str(install) in text

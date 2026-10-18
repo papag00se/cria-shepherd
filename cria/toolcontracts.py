@@ -47,7 +47,9 @@ class ShrinkFinding(TypedDict):
 
 
 ShrinkCheck = Callable[[str, str, str], ShrinkFinding | None]
-EditSequence = tuple[str, int, list[int], bool]
+# Group credential, this call index, predecessors, ALL participants. Closure
+# depends on observed completion, never an assumption that the last call ran last.
+EditSequence = tuple[str, int, list[int], list[int]]
 
 
 @dataclass(frozen=True)

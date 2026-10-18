@@ -100,7 +100,8 @@ def test_producer_source_parity_and_history_authority():
     assert result.offered == {'a.py': expected_hash}
     assert result.named == ('a.py',)
     assert result.message == {'role': 'user', 'content': CURRENT_HEADER + '\n----- a.py -----\none\ntwo\n',
-        bodykeys.RESTORED_FILES: {'offered': {'a.py': expected_hash}, 'named': ['a.py']}}
+        bodykeys.RESTORED_FILES: {'offered': {'a.py': expected_hash}, 'named': ['a.py'],
+            'content_sha256': hashlib.sha256((CURRENT_HEADER + '\n----- a.py -----\none\ntwo\n').encode()).hexdigest()}}
 
 
 def test_disabled_and_unsurveyed_do_not_gather_or_demand():

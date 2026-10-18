@@ -1,0 +1,1 @@
+⟦ctx:mutation-unknown⟧ Writing `%%NAME%%` failed after a target-changing operation was attempted: %%ERR%%. The file may have changed; an in-place write may also affect its hard-linked aliases. Neither the original nor the replacement contents are confirmed as current. Read the current file before another targeted edit.

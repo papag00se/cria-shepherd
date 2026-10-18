@@ -20,7 +20,7 @@ repeated identical calls are already folded to a marker, stale ⟦ctx:files⟧ l
 filtered, superseded write payloads are already stubbed — this is the same doctrine applied to
 cria's own ledger renderings.
 
-Pure module: no I/O, no imports from the loop. The caller supplies the ledger text, the pointer
+No workspace I/O or imports from the loop. The caller supplies the ledger text, the pointer
 note (a prompts/ template — model-facing strings live in files), and the marker prefix of the
 owner block that must never be touched.
 """
@@ -29,11 +29,18 @@ from __future__ import annotations
 
 import re
 
+from . import bodykeys, prompts
+
 # A unit shorter than this is not worth a pointer, and short strings ("HTTP 200") legitimately
 # recur in unrelated content — the floor keeps matching to blocks that cannot collide by accident.
 MIN_UNIT_CHARS = 200
 
-_BLANK_RUN = re.compile(r"\n{3,}")
+class LedgerUnit(str):
+    """Exact text plus an address inside its authoritative fetch-record entry."""
+    def __new__(cls, value: str, entry: str, first: int, last: int, columns=None):
+        obj = super().__new__(cls, value)
+        obj.entry, obj.first, obj.last, obj.columns = entry, first, last, columns
+        return obj
 
 
 def ledger_units(ledger: str) -> list[str]:
@@ -50,21 +57,28 @@ def ledger_units(ledger: str) -> list[str]:
     if not ledger:
         return []
     lines = ledger.splitlines()
-    units: list[str] = []
+    units: list[LedgerUnit] = []
     block: list[str] = []
+
+    def collect(entry_lines):
+        entry = entry_lines[0].split(" → ", 1)[0]
+        units.append(LedgerUnit("\n".join(entry_lines), entry, 1, len(entry_lines)))
+        units.extend(LedgerUnit(ln, entry, n, n) for n, ln in enumerate(entry_lines, 1)
+                     if ln.startswith((" ", "\t")))
+
     for ln in lines:
         if ln.startswith("- "):
             if block:
-                units.append("\n".join(block))
+                collect(block)
             block = [ln]
         elif block and (ln.startswith(" ") or ln.startswith("\t")):
             block.append(ln)
         else:
             if block:
-                units.append("\n".join(block))
+                collect(block)
             block = []
     if block:
-        units.append("\n".join(block))
+        collect(block)
     # INDENTED ONLY — A FLUSH-LEFT LINE IS A LABEL, NOT CONTENT. The long-line granularity exists
     # for the field-shape lines, which are an entry's indented continuation; this used to take every
     # non-entry line, and a SECTION HEADER is a non-entry line too. The size floor was doing the
@@ -85,7 +99,8 @@ def ledger_units(ledger: str) -> list[str]:
     # This function's own docstring already stated the rule — "The ledger's header line is never a
     # unit: a pointer must not replace the block's own label" — and enforced it only for the `- `
     # form. Indentation is the property that actually separates the two (#5b, #5).
-    units.extend(ln for ln in lines if ln.startswith((" ", "\t")))
+    # Indented lines are collected only within their owning entry above: a
+    # naked matching line has no authoritative address to point back to.
     # longest first, so an entry block is excised whole before its own lines could match the
     # remainder; the size floor drops short entries and blank lines.
     out = [u for u in units if len(u) >= MIN_UNIT_CHARS]
@@ -94,18 +109,28 @@ def ledger_units(ledger: str) -> list[str]:
 
 
 def elide_text(text: str, units: list[str], note: str) -> tuple[str, int]:
-    """Excise byte-identical occurrences of ``units`` from ``text``. The FIRST excision in this
-    text becomes ``note`` (one pointer per message, not one per unit); the rest vanish. Blank runs
-    left behind are collapsed. Returns ``(new_text, n_excised)`` — ``(text, 0)`` untouched when
-    nothing matched."""
-    n = 0
-    for u in units:
-        while u in text:
-            text = text.replace(u, note if n == 0 else "", 1)
-            n += 1
-    if n:
-        text = _BLANK_RUN.sub("\n\n", text)
-    return text, n
+    """Replace EACH exact copy with an address, preserving multiplicity and position.
+
+    Locations come from the canonical renderer, never a guess about source text.
+    One pass over the original prevents references being matched as source data.
+    Unaddressed strings are not eligible; whitespace outside copies is untouched.
+    """
+    addressed = {}
+    for unit in units:
+        if isinstance(unit, LedgerUnit):
+            addressed.setdefault(str(unit), unit)
+    if not addressed:
+        return text, 0
+    matches = re.compile("|".join(re.escape(u) for u in sorted(addressed, key=len, reverse=True)))
+
+    def reference(match):
+        unit = addressed[match.group()]
+        span = (prompts.render('ledger_dedup_columns', FIRST_COLUMN=unit.columns[0],
+                               LAST_COLUMN=unit.columns[1]) if unit.columns else '')
+        return prompts.render("ledger_dedup_reference", NOTE=note, ENTRY=unit.entry,
+                              FIRST=unit.first, LAST=unit.last, SPAN=span)
+
+    return matches.subn(reference, text)
 
 
 def elide_from_messages(msgs: list[dict], units: list[str], note: str, *,
@@ -118,12 +143,39 @@ def elide_from_messages(msgs: list[dict], units: list[str], note: str, *,
     the full copy by definition. Returns ``(msgs, 0)`` (the SAME list) when nothing matched."""
     if not units:
         return msgs, 0
+    # Only point at exact text that actually survives in the owner block. Derive
+    # locations from that block, not a separately rendered ledger's line counts.
+    owner = next((m.get("content") for m in msgs if isinstance(m.get("content"), str)
+                  and m["content"].lstrip().startswith(skip_prefix)), "")
+    addressed = []
+    owner_units = ledger_units(owner)
+    for unit in units:
+        # Preserve whole-line addresses where available before choosing a span
+        # inside a larger entry (which may contain that same line more than once).
+        targets = sorted(owner_units, key=lambda target: target != unit)
+        for target in targets:
+            start = target.find(unit)
+            if start < 0:
+                continue
+            before, through = target[:start], target[:start + len(unit)]
+            first = target.first + before.count('\n')
+            last = target.first + through.count('\n')
+            columns = ((len(before.rsplit('\n', 1)[-1]) + 1, len(through.rsplit('\n', 1)[-1]))
+                       if unit != target else None)
+            addressed.append(LedgerUnit(str(unit), target.entry, first, last, columns))
+            break
+    units = addressed
+    if not units:
+        return msgs, 0
     out: list[dict] = []
     total = 0
     for m in msgs:
         c = m.get("content")
         if (m.get("role") in ("user", "tool") and isinstance(c, str)
-                and not c.lstrip().startswith(skip_prefix)):
+                and not c.lstrip().startswith(skip_prefix)
+                and bodykeys.RESTORED_FILES not in m):
+            # A current-file block is literal file evidence, not a ledger rendering.
+            # Keep repeated lines, their positions, and the producer's exact credit.
             new, n = elide_text(c, units, note)
             if n:
                 out.append({**m, "content": new})

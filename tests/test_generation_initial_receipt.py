@@ -5,7 +5,7 @@ import io
 import json
 
 import pytest
-from cria import assistruntime, bodykeys, generationguards as guards
+from cria import assistruntime, bodykeys, generationguards as guards, modelview
 from cria.config import Role
 from cria.upstream import Upstream
 from tests import test_text_write_recovery as tw
@@ -54,7 +54,7 @@ def test_actual_paste_check_gets_initial_wire_credit_then_final_reply_replaces_i
         session.plan.task, session.workspace_root = tw.TASK, tw.ROOT
         offered = {tw.JAVA: 'authenticated-wire-sha'}
         framed = {'tools': tools, 'messages': [{'role': 'user', 'content': 'whole original source text',
-                      bodykeys.RESTORED_FILES: {'offered': offered}}]}
+                      bodykeys.RESTORED_FILES: modelview.restored_hint('whole original source text', offered)}]}
         with assistruntime.bound(driver._ctx.pilot_runtime):
             driver._coder_turn(session, framed, {'messages': []}, step=1, rlog=tw._Log())
         assert checked

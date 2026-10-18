@@ -59,7 +59,7 @@ def restore(source: RestoreInput, *, enabled: bool = True) -> RestoreResult:
     if not offered and not text:
         return RestoreResult(None, {})
     return RestoreResult({"role": "user", "content": text,
-                          bodykeys.RESTORED_FILES: {"offered": dict(offered), "named": sorted(named)}},
+                          bodykeys.RESTORED_FILES: modelview.restored_hint(text, offered, sorted(named))},
                          offered, tuple(named))
 
 

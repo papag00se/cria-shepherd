@@ -53,7 +53,7 @@ class Definition:
 
 DEFINITION = Definition(Policy(
     "ledger-copy-pointers", "coder-ledger-copy-elision", 4, family_id="F69",
-    prompts=("ledger_dedup_note",), services=("authoritative-fetch-ledger", "byte-exact-dedup"),
+    prompts=("ledger_dedup_note", "ledger_dedup_reference", "ledger_dedup_columns"), services=("authoritative-fetch-ledger", "byte-exact-dedup"),
     hooks=(Reference("cria/loop.py", "Loop._prepare_coder_context"),
            Reference("cria/loop.py", "_elide_ledger_copies"),
            Reference("cria/loop.py", "Loop._work_item"),

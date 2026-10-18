@@ -20,6 +20,7 @@ from cria.config import Role
 from cria.writeproxy import represent_inbound, translate_outbound
 from tests.test_loop import _single_loop, _synth
 from tests.wsfixture import survey
+from tests.lowering_assertions import write_did_run
 
 HERE = Path(__file__).parent
 REPO = HERE.parent
@@ -198,16 +199,16 @@ def test_a_write_that_keeps_most_of_the_file_is_never_asked(view):
     judge = _Judge("OTHER")
     check, _ = _check(judge)
     _, cmd = _lower("pom.xml", SEED_POM.replace("</project>", "<!-- x -->\n</project>"), check)
-    assert "write_bytes" in cmd and judge.prompts == []
+    assert write_did_run(cmd) and judge.prompts == []
 
 
 def test_a_new_file_and_a_file_with_unknown_text_are_never_asked(view):
     judge = _Judge("OTHER")
     check, _ = _check(judge)
     _, cmd = _lower("NEW.md", "x\n", check)
-    assert "write_bytes" in cmd
+    assert write_did_run(cmd)
     _, cmd = _lower("unread.txt", "x\n", check)          # on disk, but cria holds no text of it
-    assert "write_bytes" in cmd and judge.prompts == []
+    assert write_did_run(cmd) and judge.prompts == []
 
 
 def test_no_reasoner_or_assists_off_means_no_check(view):

@@ -462,11 +462,13 @@ class DetachedInterpreterPreferenceTests(unittest.TestCase):
     def test_the_launch_prefers_bash_when_available(self):
         with tempfile.TemporaryDirectory() as ws:
             plan = probegate.plan_gate(ws)
-        self.assertIn('command -v bash', plan.script)
-        self.assertIn('__cria_gate_sh="bash"', plan.script)
-        self.assertIn('__cria_gate_sh="sh"', plan.script)     # the fallback still exists
-        self.assertIn('__cria_gate_run="setsid $__cria_gate_sh"', plan.script)
-        self.assertIn('__cria_gate_run="$__cria_gate_sh"', plan.script)
+        self.addCleanup(_dispose_current, plan.transport_id)
+        script = _current_launch(plan.transport_id, ["printf 'BASH=%s\\n' \"${BASH_VERSION:-absent}\""])
+        out = subprocess.run(['bash', '-c', script], capture_output=True, text=True, timeout=10)
+        self.assertEqual(out.returncode, 0, out.stderr)
+        output = _read_current(plan.transport_id)
+        self.assertIn('BASH=', output)
+        self.assertNotIn('BASH=absent', output)
 
     def test_real_shell_selects_bash_when_on_path(self):
         """Mechanical proof against a real shell, not just a text assertion on the composed script."""
@@ -491,9 +493,9 @@ class NoUnexportedLauncherVariableTests(unittest.TestCase):
 
     def _cmd_file_body(self, plan: probegate.GatePlan) -> str:
         script = plan.script
-        start = script.index("<<'__CRIA_GATE_BODY__'") + len("<<'__CRIA_GATE_BODY__'")
-        end = script.index("\n__CRIA_GATE_BODY__\n", start)
-        return script[start:end].lstrip("\n")
+        start = script.index("<<'__CTX_GATE_REQUEST__'\n") + len("<<'__CTX_GATE_REQUEST__'\n")
+        end = script.index('\n__CTX_GATE_REQUEST__', start)
+        return json.loads(script[start:end])['body']
 
     def test_the_launcher_defines_no_variable_the_body_reads(self):
         """The two launcher-only variables (`__cria_gate_file`, `__cria_gate_cmd`) are never
@@ -523,6 +525,44 @@ class NoUnexportedLauncherVariableTests(unittest.TestCase):
                               timeout=30)
         self.assertNotIn("unbound variable", proc.stderr,
                          f"stdout={proc.stdout!r} stderr={proc.stderr!r}")
+
+
+def _current_paths(tid):
+    root = os.path.join(tempfile.gettempdir(), '.gate-private-' + tid)
+    return os.path.join(root, '.cria-gate-' + tid + '.spool'), os.path.join(root, '.cria-gate-' + tid + '-cmd.sh')
+
+
+def _current_launch(tid, body, wait_s=0.3):
+    spool, _ = _current_paths(tid)
+    return '\n'.join([
+        f'__cria_gate_file="{spool}"',
+        probegate._helper_install_leg(),
+        *probegate._gate_launch_guard(tid, os.getcwd(), body, ':', poll_wait_s=wait_s),
+    ])
+
+
+def _dispose_current(tid):
+    from cria import gatecleanup
+    spool, _ = _current_paths(tid)
+    if not os.path.exists(os.path.dirname(spool)):
+        return
+    _read_current(tid)
+    command = gatecleanup.dispose_command(probegate.helper_runner(), tid, spool)
+    result = subprocess.run(['bash', '-c', command], capture_output=True, text=True, timeout=10)
+    if result.returncode:
+        raise AssertionError(result.stderr)
+
+
+def _read_current(tid):
+    spool, _ = _current_paths(tid)
+    reader = probegate._transport_reader(f'"{spool}"', 0, tid, wait_s=8)
+    result = subprocess.run(['bash', '-c', reader], capture_output=True, text=True, timeout=15)
+    plan = _plan()
+    plan.transport_id = tid
+    state = probegate.ingest_transport(plan, result.stdout)
+    if state != 'complete':
+        raise AssertionError(result.stdout + result.stderr)
+    return bytes(plan.transport_data).decode()
 
 
 def _launch_script(spool: str, cmd_file: str, body_lines: list, guard_lines: list, tid: str,
@@ -578,12 +618,16 @@ class ProcessGroupKillSurvivalTests(unittest.TestCase):
 
     def setUp(self):
         self.tid = probegate.GatePlan(workspace="").transport_id  # a fresh, real 24-hex token
+        self.addCleanup(_dispose_current, self.tid)
         tmp = tempfile.gettempdir()
         self.spool = f"{tmp}/.cria-gate-{self.tid}.spool"
         self.done = self.spool + ".done"
         self.cmd_file = f"{tmp}/.cria-gate-{self.tid}-cmd.sh"
 
     def tearDown(self):
+        if '.gate-private-' in self.spool:
+            _dispose_current(self.tid)
+            return
         for p in (self.spool, self.done, self.cmd_file):
             try:
                 os.unlink(p)
@@ -617,10 +661,9 @@ class ProcessGroupKillSurvivalTests(unittest.TestCase):
         """Passes-after: same kill, same timing, the CURRENT `_gate_launch_guard` — run, mark done,
         and clean up the cmd file are now ONE command `setsid` covers end to end, so the marker and
         the cleanup both survive the group kill."""
-        guard = probegate._gate_launch_guard(f'"{self.spool}"', f'"{self.cmd_file}"',
-                                             ["sleep 2", "echo PROBEDONE"])
-        script = _launch_script(self.spool, self.cmd_file, ["sleep 2", "echo PROBEDONE"], guard,
-                                self.tid, wait_s=0.3)
+        self.spool, self.cmd_file = _current_paths(self.tid)
+        self.done = self.spool + '.done'
+        script = _current_launch(self.tid, ['sleep 2', 'echo PROBEDONE'], wait_s=0.3)
         self._killpg_run(script)
         deadline = time.monotonic() + 8.0
         while not os.path.exists(self.done) and time.monotonic() < deadline:
@@ -639,10 +682,9 @@ class ProcessGroupKillSurvivalTests(unittest.TestCase):
         instant the foreground read returns — another shape the harness's own exec plumbing can
         take (reviewer's `sim.py` `pty` mode)."""
         import pty
-        guard = probegate._gate_launch_guard(f'"{self.spool}"', f'"{self.cmd_file}"',
-                                             ["sleep 2", "echo PROBEDONE"])
-        script = _launch_script(self.spool, self.cmd_file, ["sleep 2", "echo PROBEDONE"], guard,
-                                self.tid, wait_s=0.3)
+        self.spool, self.cmd_file = _current_paths(self.tid)
+        self.done = self.spool + '.done'
+        script = _current_launch(self.tid, ['sleep 2', 'echo PROBEDONE'], wait_s=0.3)
         try:
             pid, fd = pty.fork()
         except OSError:
@@ -678,7 +720,16 @@ class SpoolPermissionsTests(unittest.TestCase):
     def test_the_launch_leg_sets_a_restrictive_umask(self):
         with tempfile.TemporaryDirectory() as ws:
             plan = probegate.plan_gate(ws)
-        self.assertIn("umask 077", plan.script)
+        # Allocation modes, not a shell-wide umask change, protect private resources.
+        tid = plan.transport_id
+        self.addCleanup(_dispose_current, tid)
+        subprocess.run(['bash', '-c', 'umask 000\n' + _current_launch(tid, ['sleep 1'])],
+                       capture_output=True, text=True, timeout=10, check=True)
+        spool, cmd = _current_paths(tid)
+        self.assertEqual(os.stat(os.path.dirname(spool)).st_mode & 0o777, 0o700)
+        for path in (spool, cmd):
+            self.assertEqual(os.stat(path).st_mode & 0o777, 0o600)
+        _read_current(tid)
 
     def test_a_real_launch_creates_owner_only_files(self):
         """Stat the files WHILE the probe is still running (a slow probe, a short poll wait),
@@ -688,8 +739,9 @@ class SpoolPermissionsTests(unittest.TestCase):
         spool, cmd_file = f"{tmp}/.cria-gate-{tid}.spool", f"{tmp}/.cria-gate-{tid}-cmd.sh"
         self.addCleanup(lambda: [os.path.exists(p) and os.unlink(p)
                                  for p in (spool, cmd_file, spool + ".done")])
-        guard = probegate._gate_launch_guard(f'"{spool}"', f'"{cmd_file}"', ["sleep 2", "echo ok"])
-        script = _launch_script(spool, cmd_file, ["sleep 2", "echo ok"], guard, tid, wait_s=0.3)
+        spool, cmd_file = _current_paths(tid)
+        self.addCleanup(_dispose_current, tid)
+        script = _current_launch(tid, ['sleep 2', 'echo ok'], wait_s=0.3)
         subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=30)
         self.assertTrue(os.path.exists(spool), "the spool must exist while the probe is still running")
         self.assertEqual(os.stat(spool).st_mode & 0o777, 0o600,
@@ -711,9 +763,10 @@ class SpoolPermissionsTests(unittest.TestCase):
         self.addCleanup(lambda: [os.path.exists(p) and os.unlink(p)
                                  for p in (spool, cmd_file, spool + ".done")])
         body = ["umask", "sleep 1", "echo ok"]
-        guard = probegate._gate_launch_guard(f'"{spool}"', f'"{cmd_file}"', body)
-        # The LAUNCHING shell's own umask — the harness's umask — is 0022, not cria's narrowed 0077.
-        script = "umask 022\n" + _launch_script(spool, cmd_file, body, guard, tid, wait_s=0.3)
+        spool, cmd_file = _current_paths(tid)
+        self.addCleanup(_dispose_current, tid)
+        # The native check must inherit the harness's umask unchanged.
+        script = 'umask 022\n' + _current_launch(tid, body, wait_s=0.3)
         subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=30)
         # Mid-flight (the probe is still sleeping): cria's own two files are still owner-only.
         self.assertEqual(os.stat(spool).st_mode & 0o777, 0o600,
@@ -979,6 +1032,9 @@ class LostFinalPageRecoveryTests(unittest.TestCase):
         self.spool = f"{tempfile.gettempdir()}/.cria-gate-{self.tid}.spool"
 
     def tearDown(self):
+        if '.gate-private-' in self.spool:
+            _dispose_current(self.tid)
+            return
         for p in (self.spool, self.spool + ".done"):
             try:
                 os.unlink(p)
@@ -1007,9 +1063,11 @@ class LostFinalPageRecoveryTests(unittest.TestCase):
         self.assertFalse(plan.transport_complete)
 
     def test_after_the_fix_a_lost_final_page_is_recovered_by_a_repoll(self):
-        with open(self.spool, "wb") as f:
-            f.write(b"complete gate output")
-        open(self.spool + ".done", "w").close()
+        self.spool, _ = _current_paths(self.tid)
+        self.addCleanup(_dispose_current, self.tid)
+        subprocess.run(['bash', '-c', _current_launch(self.tid, ["printf 'complete gate output'"])],
+                       capture_output=True, text=True, timeout=10, check=True)
+        _read_current(self.tid)
         reader = probegate._transport_reader(f'"{self.spool}"', 0, self.tid, wait_s=0.3)
 
         first = subprocess.run(["bash", "-c", reader], capture_output=True, text=True, timeout=10)
@@ -1023,7 +1081,8 @@ class LostFinalPageRecoveryTests(unittest.TestCase):
         second = subprocess.run(["bash", "-c", reader], capture_output=True, text=True, timeout=10)
         state = probegate.ingest_transport(plan, second.stdout)
         self.assertEqual(state, "complete", "the re-poll must recover the SAME bytes at the SAME offset")
-        self.assertEqual(bytes(plan.transport_data), b"complete gate output")
+        self.assertTrue(bytes(plan.transport_data).startswith(b'complete gate output'))
+        self.assertEqual(second.stdout, first.stdout)
 
 
 class GoneEnvelopeTests(unittest.TestCase):
@@ -1044,7 +1103,7 @@ class GoneEnvelopeTests(unittest.TestCase):
 
     def test_a_real_missing_spool_produces_the_gone_envelope(self):
         tid = probegate.GatePlan(workspace="").transport_id
-        missing = f"/tmp/.cria-gate-{tid}-does-not-exist.spool"
+        missing, _ = _current_paths(tid)
         self.assertFalse(os.path.exists(missing))
         reader = probegate._transport_reader(f'"{missing}"', 0, tid, wait_s=0.3)
         out = subprocess.run(["bash", "-c", reader], capture_output=True, text=True, timeout=10)

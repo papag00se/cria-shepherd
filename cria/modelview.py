@@ -20,9 +20,15 @@ tool schema) — the size the model would need BEFORE `contextfloor.fit` trims a
 deliberately not multiplied by `tokenratio` (a conservative, rise-fast safety factor for the floor,
 whose EWMA reads ~1.6 on tiny judge calls) — that would report a larger number than the model's real
 token count; phi4's coder frames measure 10,388 est vs ~10,553 real (1.02x).
+
+Reply occupancy uses the same estimator over the public/history projection, not
+native completion consumption (which can include private reasoning). The facade
+labels its estimates and preserves the full native usage object separately.
 """
 from __future__ import annotations
 
+import copy
+import hashlib
 import re
 from dataclasses import dataclass
 from typing import Callable
@@ -30,7 +36,7 @@ from typing import Callable
 from .assistcontract import Policy, Reference
 from .memoryeffects import Effect
 
-from . import bodykeys, contextfloor, dedup, focustrim, probegate, prompts, selfcompact
+from . import bodykeys, contextfloor, dedup, focustrim, generation, indicators, probegate, prompts, selfcompact
 
 # The messages that carry the repo's own check evidence into the model's view, each rendered by a
 # different owner: the compaction continuation freezes the gate's findings into the harness's history
@@ -114,6 +120,36 @@ def visible_tokens(messages: list[dict], tools, *, fold: bool = False,
     if fold:
         shown = fold_selected(WireInput(shown), definitions).messages
     return contextfloor.est_total(shown, tools)
+
+
+CONTEXT_ESTIMATE = {'estimated': True, 'scope': 'continuing-model-visible-context',
+                    'method': 'contextfloor.est_total'}
+
+
+def reply_tokens(completion: dict) -> int:
+    """Estimate the public reply that can return as model-visible history.
+
+    Private reasoning fields are not token-bearing input to the shared estimator.
+    Human-only indicator/transcript content uses its existing inbound projection;
+    stamped gate calls use the same wire projection as input usage. Run BEFORE
+    synthetic lowering so harness execution plumbing is not counted as coder text.
+    This is not native generation consumption or a reasoning-token split.
+    """
+    safe = generation.safe_completion(completion)
+    message = (safe.get('choices') or [{}])[0].get('message') or {}
+    shown, _ = indicators.strip_history([message])
+    return visible_tokens(shown, None)
+
+
+def continuing_usage(completion: dict, input_tokens: int, *, reply_estimate: int | None = None) -> dict:
+    """The L1+ context facade, with native consumption kept separately and intact."""
+    usage = completion.get('usage') or {}
+    native = (usage['native_usage'] if usage.get('context_estimate') == CONTEXT_ESTIMATE
+              and isinstance(usage.get('native_usage'), dict) else usage)
+    output = reply_tokens(completion) if reply_estimate is None else reply_estimate
+    return {'prompt_tokens': input_tokens, 'completion_tokens': output,
+            'total_tokens': input_tokens + output,
+            'context_estimate': dict(CONTEXT_ESTIMATE), 'native_usage': copy.deepcopy(native)}
 
 
 @dataclass(frozen=True)
@@ -291,20 +327,28 @@ def settle_delivery(source: DeliveryInput) -> DeliveryResult:
     return DeliveryResult(messages, effect, delivered, source.pending_paths)
 
 
+def restored_hint(content: str, offered: dict, named=()) -> dict:
+    """Bind offered file hashes to the exact literal text the producer authored."""
+    return {"offered": dict(offered), "named": list(named),
+            "content_sha256": hashlib.sha256(content.encode()).hexdigest()}
+
+
 def settle_restored_text(messages: list[dict]) -> tuple[list[dict], dict]:
     """``(messages, {rel: sha1})`` — what the restored-file-text block delivered in THIS body.
 
     The block is added before the floor, which may reduce it to a stand-in or drop it; the ledger line
     that said "its current text is below" and the whole-read credit for the write hold were both decided
     before that. A claim about the body must be made of the body that is sent (#24), so it is settled here,
-    after the floor: a surviving block (the message still carries its ``bodykeys.RESTORED_FILES`` hint)
-    delivers exactly what it offered; otherwise nothing was delivered, and every ledger line that said
+    after the floor: a surviving, byte-exact block authenticated by its producer hint
+    delivers what it offered; a copied hint on changed/missing text delivers nothing. Every ledger line that said
     otherwise says the plain absence again. Identity when no block was ever offered."""
     from . import bodykeys
     delivered: dict = {}
     for m in messages:
         hint = m.get(bodykeys.RESTORED_FILES) if isinstance(m, dict) else None
-        if isinstance(hint, dict):
+        content = m.get("content") if isinstance(m, dict) else None
+        if (isinstance(hint, dict) and isinstance(content, str)
+                and hint.get("content_sha256") == hashlib.sha256(content.encode()).hexdigest()):
             delivered.update(hint.get("offered") or {})
     labels = prompts.load_map("fetched_facts_sections")
     below, absent = labels["read_restored"], labels["read_out_of_view"]

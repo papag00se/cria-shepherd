@@ -1,0 +1,1 @@
+These checks use the original workspace, not a copy. Native project build/test outputs remain project-owned; cleanup reclaims only exclusively allocated private harness scratch.

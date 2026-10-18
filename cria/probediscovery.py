@@ -204,6 +204,9 @@ class ProbeCandidate:
     # completion -- the participation inference reads this to withhold ``participants`` rather than
     # naming files the chain may never have reached.
     test_source_paths_multi_segment: bool = False
+    # Authored compile floor, not a guess from argv or artifact filenames.
+    # Its bytecode is auxiliary scratch, never a project build deliverable.
+    private_python_cache: bool = False
     """Did cria AUTHOR this argv, or did it read it off the project?
 
     `cargo test --no-fail-fast`, `go vet ./...`, `bundle exec rspec` come from the project's own
@@ -467,10 +470,12 @@ def cand(kind: ProbeKind, command: list[str], working_dir: Path, confidence: int
          composed_by_cria: bool = False,
          ecosystem: Ecosystem | None = None,
          participation_inputs: tuple[str, ...] | None = None,
-         participation_inputs_complete: bool | None = None) -> ProbeCandidate:
+         participation_inputs_complete: bool | None = None,
+         private_python_cache: bool = False) -> ProbeCandidate:
     return ProbeCandidate(
         kind=kind,
         command=list(command),  # fresh list — callers may reuse prefixes
+        private_python_cache=private_python_cache,
         # A multi-line token is an inline PROGRAM: no project config produces one, so it is cria's
         # by construction and says so whether or not the caller remembered to. A future floor probe
         # cannot leak by omission.
@@ -1203,7 +1208,7 @@ def syntax_floor_candidates(root: Path) -> list[ProbeCandidate]:
         out.append(cand(ProbeKind.SyntaxCheck,
                         ["python3", "-m", "compileall", "-q", "-x", _COMPILEALL_SKIP_RE, "."],
                         root, 95, 95, ProbeCost.Cheap, composed_by_cria=True,
-                        ecosystem=Ecosystem.Python, participation_inputs=tuple(py),
+                        ecosystem=Ecosystem.Python, participation_inputs=tuple(py), private_python_cache=True,
                         participation_inputs_complete=wsview.current().listed_everything(str(root)),
                         reason="Python files present: parse floor"))
     for f in linterprobe.collect_files(str(root), ["js", "mjs", "cjs"])[:MAX_FLOOR_FILES_PER_LANG]:

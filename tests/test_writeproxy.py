@@ -7,7 +7,7 @@ import os
 import unittest
 from unittest import mock
 
-from cria import webfetch
+from cria import denial, webfetch
 from cria import writeproxy
 
 from cria.config import CRIA_HOME
@@ -95,7 +95,8 @@ class TranslateWriteTests(unittest.TestCase):
         calls = comp["choices"][0]["message"]["tool_calls"]
         self.assertEqual(len(calls), 1)            # no chunking
         cmd = _lowered_cmd(comp)
-        self.assertIn("write_bytes", cmd)
+        restored = represent_inbound(_history_from(comp))
+        self.assertEqual(json.loads(restored[0]['tool_calls'][0]['function']['arguments'])['content'], big)
         self.assertIn("os.replace", cmd)           # atomic: temp then replace
         self.assertIn("def _v(", cmd)              # validate-before-write is composed in
         self.assertIn("⟦ctx:tool⟧", cmd)          # the stateless sentinel
@@ -144,20 +145,35 @@ class WriteWithNoContentTests(unittest.TestCase):
         translate_outbound(comp, _CMD_SHELL, injected={"write_file"})
         return _lowered_cmd(comp)
 
+    def _execute(self, command):
+        with tempfile.TemporaryDirectory() as directory:
+            path = pathlib.Path(directory) / 'keep.py'
+            path.write_text('before = 1\n')
+            result = subprocess.run(['sh', '-c', command], cwd=directory, capture_output=True, text=True)
+            return result.stdout + result.stderr, path.read_text()
+
     def test_an_absent_content_is_refused_not_written_as_empty(self):
         cmd = self._cmd({"path": "keep.py"})
         self.assertIn("content", cmd)
         self.assertIn("cut off", cmd)
-        self.assertNotIn("write_bytes", cmd)      # nothing was lowered to disk
+        output, held = self._execute(cmd)
+        self.assertEqual(held, 'before = 1\n')
+        self.assertTrue(denial.is_denied(output))
+        self.assertNotIn(writeproxy._WROTE, output)
 
     def test_a_null_content_is_refused_not_written_as_empty(self):
         cmd = self._cmd({"path": "keep.py", "content": None})
         self.assertIn("cut off", cmd)
-        self.assertNotIn("write_bytes", cmd)
+        output, held = self._execute(cmd)
+        self.assertEqual(held, 'before = 1\n')
+        self.assertTrue(denial.is_denied(output))
+        self.assertNotIn(writeproxy._WROTE, output)
 
     def test_an_intentional_empty_string_still_writes(self):
         cmd = self._cmd({"path": "keep.py", "content": ""})
-        self.assertIn("write_bytes", cmd)
+        output, held = self._execute(cmd)
+        self.assertEqual(held, '')
+        self.assertIn(writeproxy._WROTE, output)
         self.assertNotIn("cut off", cmd)
 
     def test_a_falsy_but_real_content_is_not_discarded(self):
@@ -768,18 +784,11 @@ class EditCommandTests(unittest.TestCase):
     longer composed here; cria.editrecovery turns the facts into the one directive (see EditRecoveryTests)."""
 
     def _run(self, content, old, new):
-        import base64, json, os, subprocess, sys, tempfile
-        from cria.writeproxy import _EDIT_PY, _VALIDATE_FN, _WROTE
         from cria import editrecovery
         fd, path = tempfile.mkstemp(suffix=".py")
         os.write(fd, content.encode()); os.close(fd)
-        b = lambda x: base64.b64encode(x.encode()).decode()
-        from cria import content_reduce
-        script = (_VALIDATE_FN + _EDIT_PY).format(path=b(path), old=b(old), new=b(new),
-                                                  wrote=_WROTE, editfail=editrecovery.EDITFAIL, packblock="",
-                                                  echodef="", echocall="", posx="", posf="",
-                                                  cap=content_reduce.INLINE_RESULT_MAX_BYTES)
-        r = subprocess.run([sys.executable, "-c", script], capture_output=True, text=True)
+        command = writeproxy._edit_command(path, old, new)
+        r = subprocess.run(['sh', '-c', command], capture_output=True, text=True)
         out = open(path).read(); os.unlink(path)
         msg = (r.stdout + r.stderr).strip()
         fail = None
@@ -1269,9 +1278,15 @@ class MissingPathRefusalTests(unittest.TestCase):
         self.assertIn("path", cmd)
 
     def test_intact_calls_still_lower(self):
-        self.assertIn("write_bytes", self._cmd("write_file", {"path": "a.py", "content": "x"}))
+        write = self._cmd("write_file", {"path": "a.py", "content": "x"})
         edit = self._cmd("edit_file", {"path": "a.py", "old_string": "x", "new_string": "y"})
         self.assertNotIn("malformed", edit)
+        with tempfile.TemporaryDirectory() as directory:
+            for command, expected in ((write, 'x'), (edit, 'y')):
+                result = subprocess.run(['sh', '-c', command], cwd=directory, capture_output=True, text=True)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual((pathlib.Path(directory) / 'a.py').read_text(), expected)
+                self.assertIn(writeproxy._WROTE, result.stdout)
 
 
 class InvertedRangeTests(unittest.TestCase):

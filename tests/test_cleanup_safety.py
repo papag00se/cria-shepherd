@@ -23,8 +23,7 @@ def lower(name, args, previous=None):
         {'id': 'one', 'type': 'function', 'function': {'name': name, 'arguments': json.dumps(args)}}]}}]}
     view = SimpleNamespace(read_bytes=lambda path: previous.encode() if previous is not None else None)
     with patch.object(writeproxy.wsview, 'current', return_value=view), \
-            patch.object(writeproxy, '_survey_due', return_value=False), \
-            patch.object(writeproxy, '_litter_leg', return_value=''):
+            patch.object(writeproxy, '_survey_due', return_value=False):
         writeproxy.translate_outbound(completion, {'name': 'exec_command', 'schema': {'properties': {'cmd': {'type': 'string'}}}},
                                       injected={'write_file', 'edit_file'}, workspace_root='/remote/project')
     return json.loads(completion['choices'][0]['message']['tool_calls'][0]['function']['arguments'])['cmd']

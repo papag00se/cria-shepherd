@@ -765,6 +765,8 @@ def compose_probe_command(c: ProbeCandidate, timeout_s: float) -> str:
     if not c.command:
         raise ValueError(EMPTY_COMMAND_SUMMARY)
     argv = " ".join(shlex.quote(t) for t in c.command)
+    if c.private_python_cache:
+        argv = 'env PYTHONPYCACHEPREFIX="${CTX_PROBE_AUX:?}/pycache" ' + argv
     return (
         f"cd {shlex.quote(str(c.working_dir))} && "
         f"timeout -k {TIMEOUT_KILL_GRACE_S} {timeout_s:g} {argv} </dev/null 2>&1; "

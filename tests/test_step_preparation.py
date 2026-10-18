@@ -36,7 +36,7 @@ FROZEN_CODER = """You are a coding agent running in a terminal on the user's com
 
 # How to work
 - Keep working until the work you were handed this turn is complete. Don't stop to report intermediate progress unless you are genuinely blocked or finished.
-- Work in the project's current working directory: create and edit files, and run your commands, inside it, using relative paths (or absolute paths that stay under it). If a working-environment/cwd line is shown, that directory is the project. Writes stay inside the project; READING installed libraries and dependency caches that the environment makes readable is allowed, with read-only commands, and is the way to check a library's real API.
+- Work in the project's current working directory: create and edit files, and run your commands, inside it, using relative paths (or absolute paths that stay under it). If a working-environment/cwd line is shown, that directory is the project. Keep project files and edits inside the project. Any use of additional directories is governed by the harness's active permissions, including its declared writable roots. Read-only inspection of installed libraries and dependency caches that the environment makes readable is allowed, and is the way to check a library's real API.
 - Act with tools - if you say you will do something, emit the tool call for it in the SAME turn.
 - If you already read a file or ran a command and its result is still in this conversation, use that result — do not read or run the same thing again; if neither the result nor the file's current text is here any more, you have no copy of it, so read it again.
 
@@ -63,7 +63,7 @@ You are the caller agent. Preserve every requirement.
 
 Permissions: the writable roots are `/workspace` and `/dependencies`.
 
-You may WRITE only inside the project, but this environment lets you READ these directories outside it: /dependencies. Use read-only commands there (ls, find, cat, grep, and an archive/binary inspector such as `unzip -l`, `jar tf` or `javap`). To check what an installed library really offers before you code against it, list the archive's contents and print the signatures of the class you will call; `read_file` cannot open an archive."""
+The harness declares these additional writable roots outside the project: /dependencies. Its active permissions remain authoritative; this note adds no access to other directories. For dependency inspection, use read-only commands there (ls, find, cat, grep, and an archive/binary inspector such as `unzip -l`, `jar tf` or `javap`). To check what an installed library really offers before you code against it, list the archive's contents and print the signatures of the class you will call; `read_file` cannot open an archive."""
 FROZEN_MENU = """Tools available this turn, listed in the order you should PREFER them — call these exact names with these argument shapes. Reach for a purpose-built tool below before a raw shell command.
 - read a file with `shell` running `cat <path>` (there is no read_file tool this turn).
 - shell — LAST RESORT, for commands with no dedicated tool above (build, test, git, package installs, mkdir/rm). Per the tool's own argument schema. Do NOT use it to read, write, or list files when a focused tool exists. A focused tool cannot open an archive or compiled binary: inspect those here with a read-only command (e.g. list a jar/zip's entries, print a compiled class's signatures)."""

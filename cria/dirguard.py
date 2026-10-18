@@ -880,9 +880,11 @@ def dependency_roots(messages, workspace: str | None = None) -> tuple[str, ...]:
 
 
 def readable_roots_note(messages, workspace: str | None) -> str:
-    """The deterministic FACT of which directories outside the project the coder may READ (read-only
-    commands). "" when the harness declared nothing beyond the project, so every other session's
-    prompt is unchanged."""
+    """Restate harness-declared writable roots without downgrading them to read-only.
+
+    API inspection uses read-only commands, but this note neither grants extra
+    access nor overrides the caller's permission policy. Empty without trusted roots.
+    """
     roots = _run_roots(messages, workspace)
     if not roots:
         return ""

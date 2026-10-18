@@ -31,13 +31,27 @@ def test_source_parity_and_anchor_survival():
     # Independent full-content oracle: the legacy adapter can now call the same
     # source and its equality above alone would no longer prove lossless elision.
     assert result.messages == [messages[0],
-        {'role': 'tool', 'tool_call_id': 'fetch', 'content': 'PAGES YOU HAVE ALREADY FETCHED\n' + POINTER},
+        {'role': 'tool', 'tool_call_id': 'fetch', 'content': 'PAGES YOU HAVE ALREADY FETCHED\n' + POINTER
+         + ' [fetch-record entry - https://example.test, lines 1–2]'},
         anchor]
     assert result.excised == 1
     assert result.messages[-1] is anchor
     assert result.messages[0] is messages[0]
     assert duplicate['content'] == ledger
     events.emit.assert_called_once_with('context.ledger_dedup', reshape='dedup', excised=1)
+
+
+def test_a_location_free_prefix_resolves_to_exact_characters_in_the_surviving_owner():
+    ledger = '- https://example.test → HTTP 200 ' + 'status detail ' * 20
+    suffix = ' Its body is in this conversation above.'
+    owner = {'role': 'user', 'content': '⟦ctx:facts⟧\nPAGES YOU HAVE ALREADY FETCHED\n' + ledger + suffix}
+    duplicate = {'role': 'tool', 'content': 'before\n' + ledger + '\n\n' + ledger + '\nafter'}
+    result = policy.elide(policy.LedgerCopyInput([duplicate, owner], lambda: ledger))
+    address = (POINTER + ' [fetch-record entry - https://example.test, lines 1–1, '
+               + f'start column 1, end column {len(ledger)}]')
+    assert result.messages == [{'role': 'tool', 'content': 'before\n' + address + '\n\n' + address + '\nafter'}, owner]
+    assert result.messages[-1] is owner and owner['content'].endswith(ledger + suffix)
+    assert result.excised == 2
 
 
 def test_no_anchor_or_changed_anchor_cannot_leave_dangling_pointer():

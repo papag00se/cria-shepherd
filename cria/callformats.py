@@ -142,15 +142,36 @@ def _strip_ab(path: str) -> str:
 
 def _unified_to_native(body: str) -> str:
     lines = body.splitlines()
+    # Native operations already identify their files. Header-looking +/- hunk
+    # payload must not synthesize another operation (including a deletion).
+    if any(line.startswith(("*** Update File:", "*** Add File:", "*** Delete File:"))
+           for line in lines):
+        return body
     out: list[str] = []
+    remaining: list[int] | None = None
     i = 0
     while i < len(lines):
         line, nxt = lines[i], (lines[i + 1] if i + 1 < len(lines) else "")
+        if remaining is not None:
+            if line.startswith((" ", "-")):
+                remaining[0] -= 1
+            if line.startswith((" ", "+")):
+                remaining[1] -= 1
+            out.append(line)
+            if remaining == [0, 0]:
+                remaining = None
+            i += 1
+            continue
+        hunk = re.match(r"^@@\s+-\d+(?:,(\d+))?\s+\+\d+(?:,(\d+))?\s+@@", line)
+        if hunk:
+            remaining = [int(value) if value is not None else 1 for value in hunk.groups()]
+            if remaining == [0, 0]:
+                remaining = None
         if line.startswith("--- ") and nxt.startswith("+++ "):
-            old, new = line[4:].strip(), nxt[4:].strip()
-            if "/dev/null" in old:
+            old, new = line[4:].split("\t", 1)[0].strip(), nxt[4:].split("\t", 1)[0].strip()
+            if old == "/dev/null":
                 out.append(f"*** Add File: {_strip_ab(new)}")
-            elif "/dev/null" in new:
+            elif new == "/dev/null":
                 out.append(f"*** Delete File: {_strip_ab(old)}")
             else:
                 out.append(f"*** Update File: {_strip_ab(new)}")

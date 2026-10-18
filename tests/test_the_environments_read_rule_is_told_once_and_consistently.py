@@ -46,7 +46,9 @@ def test_the_coder_frame_carries_the_fact_only_when_roots_are_declared():
 
 def test_the_rules_the_model_reads_no_longer_forbid_what_is_allowed():
     sys_txt = prompts.load("coder_system")
-    assert "EVERYTHING inside" not in sys_txt and "READING installed libraries" in sys_txt
+    assert 'EVERYTHING inside' not in sys_txt
+    assert 'Read-only inspection of installed libraries and dependency caches' in sys_txt
+    assert "harness's active permissions, including its declared writable roots" in sys_txt
     assert "archive" in prompts.load("cheatsheet")
     refusal = prompts.load("external_path_refusal")
     assert "every file you read or write" not in refusal and "installed-library" not in refusal

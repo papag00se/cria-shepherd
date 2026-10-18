@@ -1554,8 +1554,9 @@ class CriaHandler(BaseHTTPRequestHandler):
             completion = server.loop.drive(body, sess_key, classification, rlog,
                 pasted_delivery=self._defer_pasted_delivery)
             if completion is not None:
+                reply_estimate = modelview.reply_tokens(completion)
                 out = self._finalize(self._translate_out(completion, sess_key, rlog), sess_key, rlog)
-                _report_context_usage(out, visible, rlog)
+                _report_context_usage(out, visible, rlog, reply_estimate=reply_estimate)
                 return out, None  # loop path carries no indicator
         provider, indic = self._route(body, classification, rlog, compaction)
         rlog.phase = "proxy"
@@ -1590,6 +1591,8 @@ class CriaHandler(BaseHTTPRequestHandler):
         if massage.is_truncated(comp):
             indic.note = "⚠ output truncated at the token limit"
             rlog.emit("response.truncated")
+        reply_estimate = (modelview.reply_tokens(comp)
+                          if server.cfg.routing.engagement_level != config.PURE_PROXY else None)
         out = self._finalize(self._translate_out(comp, sess_key, rlog), sess_key, rlog)
         # L0 forwards the backend's measured usage; chars/4 is observation, not accounting.
         # The harness uses this count to compact before the next request fills the native window.
@@ -1601,7 +1604,7 @@ class CriaHandler(BaseHTTPRequestHandler):
             _report_context_usage(out, modelview.visible_tokens(
                 shown.get("messages") or [], shown.get("tools"),
                 fold=bool(self.server.cfg.routing.context_fixes),
-                definitions=server.pilot_runtime.wire_folds), rlog)
+                definitions=server.pilot_runtime.wire_folds), rlog, reply_estimate=reply_estimate)
         if commit_handoff is not None:
             commit_handoff(out)
         return out, indic
@@ -1892,18 +1895,20 @@ def _incoming_ctx_tokens(body: dict, rlog=None) -> int:
     return msg + tools
 
 
-def _report_context_usage(completion: dict, ctx_tokens: int, rlog) -> None:
-    """Report token accounting to the connected harness at L1-L5 (L0 forwards the backend's native
-    usage instead): set input_tokens to ``ctx_tokens`` — the PRE-FLOOR size of the conversation the
-    MODEL is shown for this session (`modelview`), not the whole inbound request and not whichever
-    internal cria call produced this completion. cria's gate plumbing and ⟦cria⟧ status text are
-    not in it, so they cannot make a harness compact; when the real conversation outgrows the window
-    the number does, and the harness keeps its own compaction policy. Window fit never depends on the
-    harness reacting: the context floor (+ the measured final-wire refit) owns it at the upstream call."""
+def _report_context_usage(completion: dict, ctx_tokens: int, rlog, *,
+                          reply_estimate: int | None = None) -> None:
+    """Report estimated continuing context at L1-L5, not generation consumption.
+
+    Input remains the shared pre-floor model-visible estimate. Output is the
+    public/history-projected reply, captured before synthetic lowering by callers.
+    Native usage/details remain separate, unchanged; no private token count is
+    inferred or subtracted. L0 and native Chat streaming retain their contracts.
+    Final-wire fitting remains independent of the harness's compaction decision.
+    """
     if ctx_tokens <= 0:
         return
-    u = completion.get("usage") or {}
-    out = u.get("completion_tokens") or 0
-    completion["usage"] = {"prompt_tokens": ctx_tokens, "completion_tokens": out,
-                           "total_tokens": ctx_tokens + out}
-    rlog.emit("usage.context_reported", input_tokens=ctx_tokens, output_tokens=out)
+    usage = modelview.continuing_usage(completion, ctx_tokens, reply_estimate=reply_estimate)
+    completion["usage"] = usage
+    rlog.emit("usage.context_reported", input_tokens=ctx_tokens,
+              output_tokens=usage['completion_tokens'], context_estimate=usage['context_estimate'],
+              native_usage=usage['native_usage'])

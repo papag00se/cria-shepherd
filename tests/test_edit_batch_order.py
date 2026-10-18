@@ -11,6 +11,7 @@ import tempfile
 import threading
 import time
 import unittest
+from unittest import mock
 
 from cria import prompts, writeproxy
 from cria.writeproxy import translate_outbound
@@ -19,11 +20,18 @@ _FX = json.loads((pathlib.Path(__file__).parent / "fixtures" / "a11_call24_batch
 _SHELL = {"name": "exec_command", "schema": {"properties": {"cmd": {"type": "string"}}}}
 
 
-def _lower(edits, path=None):
+def _lower(edits, path=None, *, sequences=None):
     comp = {"choices": [{"message": {"tool_calls": [
         {"id": f"c{i}", "type": "function", "function": {"name": "edit_file", "arguments": json.dumps(
             {"path": path or _FX["path"], **e})}} for i, e in enumerate(edits)]}}]}
-    translate_outbound(comp, _SHELL, injected={"edit_file"})
+    original = writeproxy._edit_sequence
+    def observed(*args):
+        result = original(*args)
+        if sequences is not None:
+            sequences.update(result)
+        return result
+    with mock.patch.object(writeproxy, '_edit_sequence', side_effect=observed):
+        translate_outbound(comp, _SHELL, injected={"edit_file"})
     return [json.loads(tc["function"]["arguments"])["cmd"] for tc in comp["choices"][0]["message"]["tool_calls"]]
 
 
@@ -69,10 +77,19 @@ class BatchOrderTests(unittest.TestCase):
 
     def test_a_resent_identical_batch_gets_its_own_queue(self):
         edits = [{"old_string": "a", "new_string": "b"}, {"old_string": "b", "new_string": "c"}]
-        first, second = _lower(edits, path="f.txt"), _lower(edits, path="f.txt")
-        import re
-        tok = lambda c: re.search(r"\.cria-edits-'\+'([0-9a-f]+)", c).group(1)
-        self.assertNotEqual(tok(first[1]), tok(second[1]))
+        first_facts, second_facts = {}, {}
+        with mock.patch.object(writeproxy, 'EDIT_SEQ_WAIT_SECONDS', .2):
+            first = _lower(edits, path='f.txt', sequences=first_facts)
+            second = _lower(edits, path='f.txt', sequences=second_facts)
+        self.assertNotEqual(first_facts[1][0], second_facts[1][0])
+        with tempfile.TemporaryDirectory() as directory, tempfile.TemporaryDirectory() as scratch:
+            path = pathlib.Path(directory, 'f.txt')
+            path.write_text('a')
+            self.assertIn(writeproxy._WROTE, _run(first[0], directory, scratch).stdout)
+            # A previous batch's completed predecessor must not satisfy a retry's queue.
+            result = _run(second[1], directory, scratch)
+            self.assertEqual(path.read_text(), 'c')
+            self.assertIn(writeproxy.EDIT_ORDER_LATE, result.stdout + result.stderr)
 
     def test_the_wait_is_shorter_than_the_yield_the_call_gets(self):
         """The lowered call is not given a time budget; a harness yields a running command at ~10 s, so a
@@ -127,19 +144,32 @@ class BatchOrderTests(unittest.TestCase):
         self.assertNotIn(editrecovery.ORDER_LATE, text)
 
     def test_a_refused_predecessor_releases_the_queue(self):
-        cmds = _lower([{"old_string": "line 1", "new_string": "one"}, {"old_string": "line 2", "new_string": "two"}],
+        cmds = _lower([{"old_string": "line 1", "new_string": None}, {"old_string": "line 2", "new_string": "two"}],
                       path="f.txt")
         tmp = tempfile.mkdtemp()
-        # run the release leg for call 0 the way a refused call would, then the successor must not wait
-        import re
-        turn = re.search(r"\.cria-edits-'\+'([0-9a-f]+)", cmds[1]).group(1)
         d = tempfile.mkdtemp()
         pathlib.Path(d, "f.txt").write_text("line 1\nline 2\n")
-        subprocess.run(["bash", "-c", writeproxy._seq_release(turn, 0)], env={**os.environ, "TMPDIR": tmp}, check=True)
+        # Run the actual refused producer, not a regex reconstruction of its release leg.
+        refused = _run(cmds[0], d, tmp)
+        self.assertNotIn(writeproxy._WROTE, refused.stdout)
         t0 = time.time()
         r = _run(cmds[1], d, tmp)
         self.assertLess(time.time() - t0, 5)
         self.assertNotIn(writeproxy.EDIT_ORDER_LATE, r.stdout)
+        self.assertEqual(pathlib.Path(d, 'f.txt').read_text(), 'line 1\ntwo\n')
+        self.assertEqual(os.listdir(tmp), [])
+
+    def test_a_last_refusal_does_not_retire_a_live_predecessors_group(self):
+        cmds = _lower([{'old_string': 'a', 'new_string': 'b'}, {'old_string': 'b', 'new_string': None}], path='f.txt')
+        with tempfile.TemporaryDirectory() as directory, tempfile.TemporaryDirectory() as scratch:
+            path = pathlib.Path(directory, 'f.txt')
+            path.write_text('a')
+            _run(cmds[1], directory, scratch)  # last call refused before the first even starts
+            self.assertTrue(os.listdir(scratch))
+            result = _run(cmds[0], directory, scratch)
+            self.assertEqual(path.read_text(), 'b')
+            self.assertIn(writeproxy._WROTE, result.stdout)
+            self.assertEqual(os.listdir(scratch), [])
 
     def test_one_edit_per_file_carries_no_queue(self):
         cmds = _lower([{"old_string": "a", "new_string": "b"}], path="f.txt")

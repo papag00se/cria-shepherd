@@ -12,23 +12,25 @@ upstream: `plan_gate` now states which of its own bytes are showable, so a new i
 the day it is written, by never being on the list (#4).
 """
 
+import os
 import pathlib
+import subprocess
+import sys
 import tempfile
 import unittest
+from unittest import mock
 
-from cria import probegate
+from cria import probediscovery, probegate, proberun
 
 
 class TheCleanupLegIsStrippedTests(unittest.TestCase):
     def setUp(self):
-        probegate._LITTER_QUEUE.clear()
         self.ws = tempfile.mkdtemp()
         pathlib.Path(self.ws, "pyproject.toml").write_text("[project]\nname='x'\nversion='0'\n")
         pathlib.Path(self.ws, "test_orders.py").write_text("def test_a():\n    assert True\n")
 
     def _shown(self):
-        """What the coder reads back of a gate that had litter to clear first."""
-        probegate._queue_litter(self.ws, ["tests/__pycache__/test_db.cpython-312.pyc", "orders.db"])
+        """Only declared checker commands, never the cleanup instrumentation."""
         return probegate._strip_gate_plumbing(probegate.plan_gate(self.ws).script)
 
     def test_the_model_sees_only_its_own_checks(self):
@@ -44,15 +46,32 @@ class TheCleanupLegIsStrippedTests(unittest.TestCase):
         """Hiding cria's leg must not hide the coder's checks with it."""
         self.assertTrue(self._shown().strip())
 
-    def test_the_removal_itself_still_names_the_paths(self):
-        """Stripping is for the model's view only — the harness must still get the command."""
-        probegate._queue_litter(self.ws, ["orders.db"])
-        self.assertIn("orders.db", probegate.litter_removal_command(self.ws))
+    def test_the_harness_receives_cleanup_but_the_coder_does_not(self):
+        """The incident was an internal program presented as the coder's work."""
+        plan = probegate.plan_gate(self.ws)
+        self.assertIn(f'gate launch {plan.transport_id}', plan.script)
+        self.assertNotIn(plan.transport_id, self._shown())
+        self.assertNotIn('_gate_aux_cleanup', self._shown())
 
     def test_the_leg_really_is_in_the_script_that_ran(self):
-        """Otherwise every assertion above passes for the wrong reason."""
-        probegate._queue_litter(self.ws, ["orders.db"])
-        self.assertIn("orders.db", probegate.plan_gate(self.ws).script)
+        """Actual private bytes disappear before handoff; a declaration alone is not enough."""
+        program = ("import os; from pathlib import Path; "
+                   "(Path(os.environ['CTX_PROBE_AUX'])/'proof').write_text('private'); print('NATIVE CHECKER OUTPUT')")
+        candidate = probediscovery.ProbeCandidate(probediscovery.ProbeKind.BuildCheck,
+            [sys.executable, '-c', program], pathlib.Path(self.ws), 100, 100, probediscovery.ProbeCost.Cheap,
+            False, False, False, 'private fixture', composed_by_cria=True)
+        with tempfile.TemporaryDirectory() as harness, mock.patch.object(proberun, 'select_completion_probes', return_value=[candidate]):
+            plan = probegate.plan_gate(self.ws)
+            result = subprocess.run(['sh', '-c', plan.script], cwd=self.ws,
+                env={**os.environ, 'TMPDIR': harness}, capture_output=True, text=True, check=True)
+            outcome = probegate.interpret_gate(plan, result.stdout)
+            self.assertTrue(plan.transport_complete)
+            self.assertFalse(probegate.gate_is_partial(outcome))
+            self.assertFalse((pathlib.Path(plan.transport_path).parent / 'aux').exists())
+            shown = probegate.clean_gate_output(plan.transport_data.decode(), plan)
+            self.assertIn('NATIVE CHECKER OUTPUT', shown)
+            self.assertNotIn('_gate_aux_cleanup', shown)
+            self.assertNotIn('os.unlink', shown)
 
 
 if __name__ == "__main__":

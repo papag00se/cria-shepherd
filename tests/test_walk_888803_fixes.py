@@ -991,8 +991,10 @@ class TheOfflineLegOnlyRunsWhenItCanAnswerTests(unittest.TestCase):
             # echoed value back out of the transported gate stream rather than the launcher's stdout.
             marker = f"{probegate.proberun.TEST_EC_VAR}=$__cria_ec"
             self.assertEqual(plan.script.count(marker), 1, plan.script)
+            # The body crosses a JSON request now; encode the injected newline
+            # rather than corrupting the transport payload before it can launch.
             script = plan.script.replace(
-                marker, marker + "\necho FINAL_TEST_EC=$__cria_test_ec", 1)
+                marker, marker + "\\necho FINAL_TEST_EC=$__cria_test_ec", 1)
             proc = subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=120)
             probegate.interpret_gate(plan, proc.stdout)
             decoded = probegate.transported_result(plan)

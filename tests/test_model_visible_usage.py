@@ -180,7 +180,11 @@ def test_a_gate_transport_turn_with_no_upstream_call_reports_the_model_visible_s
         # and the real menu difference (8,088 reported vs 8,697 offline, 7%) is now what is measured.
         offline = _loop().visible_context_tokens(_chat("7cc1bf39"), "sid:x")
         assert abs(reported - offline) <= offline * 0.10
-        assert result["usage"]["output_tokens"] == 0
+        # The public synthetic action occupies history even though no generation ran.
+        from cria import modelview
+        assert result["usage"]["output_tokens"] == modelview.reply_tokens(poll)
+        assert result["usage"]["native_usage"] == poll.get("usage", {})
+        assert result["usage"]["context_estimate"]["estimated"] is True
         assert "usage.context_reported" in h.kinds()
     finally:
         h.close()

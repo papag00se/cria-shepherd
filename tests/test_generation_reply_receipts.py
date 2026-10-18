@@ -6,7 +6,7 @@ import json
 
 import pytest
 
-from cria import assistruntime, bodykeys, generationguards as guards, loop
+from cria import assistruntime, bodykeys, generationguards as guards, loop, modelview
 from unittest.mock import Mock
 from test_generation_driver_policy import setup_driver
 from test_loop import _Rlog
@@ -47,7 +47,7 @@ def test_final_coder_reply_receipt_not_initial_or_auxiliary(synthetic, retry, mo
     session.plan_off = synthetic
     offered = {'kept.txt': 'original-sha'}
     body['messages'].append({'role': 'user', 'content': 'restored original whole text',
-                            bodykeys.RESTORED_FILES: {'offered': offered}})
+                            bodykeys.RESTORED_FILES: modelview.restored_hint('restored original whole text', offered)})
     posts = []
     up = driver._ctx.coder_chat.__self__
     def send(request, **options):
@@ -68,7 +68,7 @@ def test_final_coder_reply_receipt_not_initial_or_auxiliary(synthetic, retry, mo
             changed['messages'] = [m for m in changed['messages'] if not m.get(bodykeys.RESTORED_FILES)]
             completion = services.retry(changed, changed.get('tools'))
         up.chat({'messages': [{'role': 'user', 'content': 'auxiliary restored text',
-                              bodykeys.RESTORED_FILES: {'offered': {'aux.txt': 'wrong'}}}]}, services.log)
+                              bodykeys.RESTORED_FILES: modelview.restored_hint('auxiliary restored text', {'aux.txt': 'wrong'})}]}, services.log)
         return guards.RecoveryResult(completion, guards.RecoveryStatus.RECOVERED if retry else guards.RecoveryStatus.UNCHANGED)
     definition = replace(guards.RUNAWAY, execute=execute)
     runtime = assistruntime.AssistRuntime.select(level=5)

@@ -167,7 +167,8 @@ class PlannerSurveyBootstrapTests(unittest.TestCase):
             # N1: the survey's questions are the JSON argument of its helper call.
             script = json.loads(started["choices"][0]["message"]["tool_calls"][0]
                                 ["function"]["arguments"])["command"][-1]
-            self.assertIn('"want": []', script)
+            from tests.gatefixture import launch_request
+            self.assertIn('"want": []', launch_request(script)['survey'])
             self.assertNotIn("loop.planner_survey_deferred", [event[0][0] for event in rlog.events])
             self.assertEqual(len(provider.bodies), 3)
             tool_results = [m["content"] for m in provider.bodies[1]["messages"]

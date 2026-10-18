@@ -30,8 +30,8 @@ import re
 from dataclasses import dataclass
 from shlex import quote as _qbash  # one bash-quoting rule (was a hand-rolled _qbash)
 
-from . import bodykeys, brave, denial, depsurface, dirguard, editrecovery, prompts, webfetch, wsview, toolstages
-from .toolstages import LoweringRequest, OutboundCall, ShellCommand, ReturnedResult, ReturnedHistory
+from . import bodykeys, brave, denial, depsurface, dirguard, editrecovery, editsequence, ownedfiles, prompts, webfetch, wsview, toolstages
+from .toolstages import EditSequence, LoweringRequest, OutboundCall, ShellCommand, ReturnedResult, ReturnedHistory
 from .returnedpolicies import (_rejected_payload_note, _collapse_rejected_payload,
                                _render_dependency_surface, _found_nothing, _blind_pipe_failure)
 from .outboundpolicies import _external_refusal, _spill_read_command
@@ -239,7 +239,8 @@ _HD_PY = "__CRIA_PY_EOF__"
 EDIT_ORDER_LATE = editrecovery.ORDER_LATE
 EDIT_SEQ_DIR = ".cria-edits-"            # under $TMPDIR (else /tmp) — never in the user's tree
 EDIT_SEQ_WAIT_SECONDS = 5     # under the ~10 s a harness's exec yields without a budget (probegate.GATE_POLL_WAIT_S)
-_TMP_SUFFIX = ".tmp-partial"   # never carries the marker: a leftover is a filename the model can ls
+_TMP_SUFFIX = ownedfiles.TEMP_SUFFIX   # shared atomic resource contract; no PID-derived allocations
+EDIT_MUTATION_UNKNOWN = '⟦ctx:mutation-unknown⟧'
 _FETCH_TIMEOUT_S = 20
 # Ask Brave for its per-request maximum so a lower-ranked but authoritative page (9th, 12th…) is
 # actually IN the response — then the parser shows ALL of them (no display slice) and discloses the
@@ -503,20 +504,16 @@ if _bp is not None and not _bp.is_dir():
     sys.exit(base64.b64decode('{parentfile}').decode().replace('%%NAME%%',str(p)).replace('%%BLOCK%%',str(_bp)))
 p.parent.mkdir(parents=True,exist_ok=True)
 # The SAME directory lock the edit executor takes, so a write and an edit sent in one batch cannot interleave;
-# and a temp name of its own (the pid) so two of them can never share one.
+# the atomic helper exclusively allocates its own temporary inode.
 import fcntl
 try:
     _lk=os.open(os.path.realpath(str(p.parent)),os.O_RDONLY); fcntl.flock(_lk,fcntl.LOCK_EX)
 except OSError:
     pass
-tmp=str(p)+'.'+str(os.getpid())+'{suffix}'
 try:
-    pathlib.Path(tmp).write_bytes(raw)
-    os.replace(tmp,str(p))
-except BaseException:
-    try: os.unlink(tmp)
-    except OSError: pass
-    raise
+    _atomic_replace(p,raw)
+except _TargetMutationUncertain as _e:
+    sys.exit(base64.b64decode('{uncertain}').decode().replace('%%NAME%%',p.name).replace('%%ERR%%',_e.strerror or str(_e)))
 print('{wrote}')
 '''
 
@@ -547,6 +544,7 @@ def _write_command(path: str, content: str) -> str:
     fetch-spill path, where it WAS observed, states its own bound and cuts with disclosure."""
     py = (_VALIDATE_FN + _WRITE_PY).format(path=_b64(path), content=_b64(content),
                                            suffix=_TMP_SUFFIX, wrote=_WROTE,
+                                           uncertain=_b64(prompts.load('edit_mutation_unknown')),
                                            # Both are REFUSALS decided inside the lowered heredoc —
                                            # validate-before-lower rejected the content, or the path
                                            # is a directory. Nothing was written either way, so both
@@ -559,6 +557,7 @@ def _write_command(path: str, content: str) -> str:
                                            # FileExistsError traceback — cause invisible, three
                                            # identical retries, tests never landed. Name the block.
                                            parentfile=_b64(denial.mark(prompts.load("write_parent_is_file"))))
+    py = ownedfiles.ATOMIC_REPLACE_PROGRAM + py
     return WriteCommand(f"python3 - <<'{_HD_PY}'\n{py}{_HD_PY}", path, content)
 
 
@@ -607,23 +606,18 @@ _before=_v(str(p),s)
         _e=_v(str(p),res)
         if _e is not None:
             _fail('would_break',err=_e)
+    _inplace_started=False
     try:
-        if os.stat(str(rp)).st_nlink>1:          # a hard link: a swap would split it from its other names
-            rp.write_text(res)                   # — write in place (still under the lock)
+        if os.stat(str(rp)).st_nlink>1:          # replacing would split the hard-linked names
+            with rp.open('r+') as _stream:       # open without truncating: pre-open refusal is still nonmutating
+                _inplace_started=True
+                _stream.truncate(0)             # a failure from here onward has uncertain mutation
+                _stream.write(res)
         else:
-            _t=str(rp)+'.'+str(os.getpid())+'%%SUFFIX%%'   # atomic: a reader never sees the file half-written
-            try:
-                pathlib.Path(_t).write_text(res)
-                _st=os.stat(str(rp)); os.chmod(_t,_st.st_mode&0o7777)
-                try: os.chown(_t,_st.st_uid,_st.st_gid)
-                except OSError: pass
-                os.replace(_t,str(rp))
-            except BaseException:
-                try: os.unlink(_t)
-                except OSError: pass
-                raise
+            _atomic_replace(rp,res.encode(),preserve=True)
     except OSError as _e:
-        sys.exit(base64.b64decode('%%UNWRITABLE%%').decode().replace('%%NAME%%',p.name).replace('%%ERR%%',_e.strerror or str(_e)))
+        _template='%%UNCERTAIN%%' if _inplace_started or isinstance(_e,_TargetMutationUncertain) else '%%UNWRITABLE%%'
+        sys.exit(base64.b64decode(_template).decode().replace('%%NAME%%',p.name).replace('%%ERR%%',_e.strerror or str(_e)))
     print('{wrote}')
     if _late: print('%%LATE%%')
     {echocall}sys.exit()
@@ -798,32 +792,27 @@ _EDIT_PACK_BLOCK = r'''    # The report is plumbing the harness keeps and counts
 # directory lock, until each has left a done-mark (written at process exit, whether it applied, was refused or
 # failed). A predecessor that never arrives inside the bound is not waited for further: the edit applies and
 # its result says it ran early. A turn with a single edit per file carries none of this.
-_EDIT_SEQ_BLOCK = r'''import time,atexit,shutil
-_sd=os.path.join(os.environ.get('TMPDIR') or '/tmp','%(dir)s'+%(turn)r)
-def _done():
-    try: open(os.path.join(_sd,'%(idx)d'),'w').close()
-    except OSError: pass
-    if %(last)r: shutil.rmtree(_sd,ignore_errors=True)   # the last of the group has every predecessor's mark (or gave up)
+_EDIT_SEQ_BLOCK = r'''import time,atexit
+_seq_deadline=time.monotonic()+%(wait)r
 try:
-    for _o in os.listdir(os.path.dirname(_sd)):              # marks left by a turn that never finished
-        _q=os.path.join(os.path.dirname(_sd),_o)
-        if _o.startswith('%(dir)s') and time.time()-os.stat(_q).st_mtime>3600: shutil.rmtree(_q,ignore_errors=True)
-    os.makedirs(_sd,exist_ok=True)
-    atexit.register(_done)
-    _miss=lambda: [k for k in %(preds)r if not os.path.exists(os.path.join(_sd,str(k)))]
-    _t0=time.time()
-    while _miss() and time.time()-_t0<%(wait)r: time.sleep(0.05)
+    _sequence=_seq_open(%(turn)r,%(dir)r,%(participants)r,_seq_deadline)
+    atexit.register(_seq_done,_sequence,%(idx)r)
+    _miss=lambda: _seq_missing(_sequence,%(preds)r)
+    while _miss() and time.monotonic()<_seq_deadline: time.sleep(0.05)
     _late=bool(_miss())
-except OSError:
-    pass
+except (OSError,ValueError):
+    _late=bool(%(preds)r)
 '''
 
 
-def _seq_release(turn: str, idx: int) -> str:
-    """Shell leg that marks call ``idx`` of ``turn`` done when its command never reaches the edit heredoc (a
-    refusal answered it) — so the edits queued behind it do not wait out the bound for a call that is over."""
-    return (f'mkdir -p "${{TMPDIR:-/tmp}}/{EDIT_SEQ_DIR}{turn}" 2>/dev/null; '
-            f': > "${{TMPDIR:-/tmp}}/{EDIT_SEQ_DIR}{turn}/{idx}" 2>/dev/null\n')
+def _seq_release(sequence: EditSequence) -> str:
+    """A refused call completes only its authenticated marker, never a name-shaped file."""
+    turn, idx, _preds, participants = sequence
+    py = (editsequence.PROGRAM + '\ntry:\n'
+          + f'    _sequence=_seq_open({turn!r},{EDIT_SEQ_DIR!r},{participants!r},time.monotonic()+{EDIT_SEQ_WAIT_SECONDS!r})\n'
+          + f'    _seq_done(_sequence,{idx!r})\n'
+          + 'except (OSError,ValueError):\n    pass\n')
+    return f"python3 - <<'{_HD_PY}'\n{py}{_HD_PY}\n"
 
 
 def render_edit_echo(content: str, path: str) -> str:
@@ -870,7 +859,7 @@ def render_edit_echo(content: str, path: str) -> str:
 
 
 def _edit_command(path: str, old: str, new: str, pack: bool = False, echo: bool = False,
-                  seq: tuple[str, int, list[int], bool] | None = None) -> str:
+                  seq: EditSequence | None = None) -> str:
     py = (_VALIDATE_FN + _EDIT_PY).format(
         echodef=(_ECHO_DEF.format(ctx=ECHO_CONTEXT, maxb=ECHO_MAX_BYTES, wire=ECHO_WIRE_MAX_BYTES,
                                      zprefix=editrecovery.PACKED_PREFIX, editview=EDIT_VIEW) if echo else ""),
@@ -882,10 +871,13 @@ def _edit_command(path: str, old: str, new: str, pack: bool = False, echo: bool 
                                                      if pack else ''),
                                           cap=content_reduce_mod.INLINE_RESULT_MAX_BYTES)
     py = py.replace('%%UNWRITABLE%%', _b64(denial.mark(prompts.load("edit_unwritable"))))
+    py = py.replace('%%UNCERTAIN%%', _b64(prompts.load("edit_mutation_unknown")))
+    py = ownedfiles.ATOMIC_REPLACE_PROGRAM + py
     if seq is not None:
-        turn, idx, preds, last = seq
-        py = py.replace("#%%SEQ%%\n", _EDIT_SEQ_BLOCK % dict(dir=EDIT_SEQ_DIR, turn=turn, idx=idx, preds=list(preds),
-                                                       wait=EDIT_SEQ_WAIT_SECONDS, last=last))
+        turn, idx, preds, participants = seq
+        py = editsequence.PROGRAM + py.replace("#%%SEQ%%\n", _EDIT_SEQ_BLOCK % dict(
+            dir=EDIT_SEQ_DIR, turn=turn, idx=idx, preds=list(preds),
+            participants=list(participants), wait=EDIT_SEQ_WAIT_SECONDS))
     return f"python3 - <<'{_HD_PY}'\n{py}{_HD_PY}"
 
 
@@ -1191,15 +1183,6 @@ SURVEY_EVERY = 4
 _SURVEY_SEQ: dict[str, int] = {}
 
 
-def _litter_leg(workspace_root: str | None) -> str:
-    """The queued gate-litter removal, or "". One line, so the gate keeps owning WHAT is litter and
-    this only asks whether anything is waiting to go out."""
-    if not workspace_root:
-        return ""
-    from .probegate import litter_removal_command
-    return litter_removal_command(workspace_root)
-
-
 def _survey_due(session: str | None, name: str) -> bool:
     """Whether this lowered call should carry the workspace survey.
 
@@ -1221,7 +1204,7 @@ def _survey_due(session: str | None, name: str) -> bool:
 
 
 def _edit_sequence(tool_calls: list, injected: set) -> dict:
-    """``{call index: (group token, index, predecessor indexes, is-last)}`` for the edit calls of ONE turn that share a file
+    """``{call index: (group token, index, predecessor indexes, all participant indexes)}`` for the edit calls of ONE turn that share a file
     with an earlier edit call of the same turn. Everything else is absent: a lone edit per file runs unqueued."""
     by_path: dict[str, list[int]] = {}
     for i, tc in enumerate(tool_calls):
@@ -1240,7 +1223,7 @@ def _edit_sequence(tool_calls: list, injected: set) -> dict:
     for ix in group:
         token = hashlib.sha1((nonce + str(ix)).encode()).hexdigest()[:16]
         for n, i in enumerate(ix):
-            out[i] = (token, i, ix[:n], n == len(ix) - 1)
+            out[i] = (token, i, ix[:n], ix)
     return out
 
 
@@ -1368,15 +1351,8 @@ def translate_outbound(completion: dict, shell_tool: dict, rlog=None, injected: 
                     elif rlog is not None:
                         rlog.emit("wsview.survey_not_carried", level="info", left=room,
                                   need=wsview.TREE_MIN_BYTES)
-                # AND TAKE CRIA'S OWN LITTER OUT WITH IT. The gate's probes create untracked files in
-                # the coder's workspace; cria cannot unlink them itself (that filesystem is the
-                # harness's), so the removal rides on a command cria composes. The next GATE carries
-                # it too — this is the leg that matters when there is no next gate, which is the case
-                # where the litter would otherwise sit in the user's repo for good (#7).
                 if ti in edit_seq and EDIT_SEQ_DIR not in cmd:   # answered without running the edit: release the queue
-                    cmd = _seq_release(edit_seq[ti][0], ti) + cmd
-                if (rm := _litter_leg(workspace_root)):
-                    cmd = f"{rm}\n{cmd}"
+                    cmd = _seq_release(edit_seq[ti]) + cmd
                 rebuilt.append(_shell_call(tc.get("id"), shell_tool, f"{_sentinel(name, fn.get('arguments'))}\n{cmd}"))
                 pending = (getattr(externalization_owner, 'externalization_offers', None) or {}).get(str(tc.get('id') or ''))
                 if pending is not None:
@@ -1507,7 +1483,9 @@ _REJECTED_PAYLOAD_CHARS = 400
 
 
 def _failed_edit_ids(messages: list[dict]) -> set[str]:
-    """tool_call_ids whose write/edit result came back as a failure — the payload never hit disk.
+    """Calls explicitly refused before mutation, NOT arbitrary execution/I/O failures.
+
+    A partial or uncertain mutation cannot earn a 'never reached disk' draft label.
 
     Keyed on cria's OWN marker. Every edit-failure directive is composed by `editrecovery.compose`
     and every one of them is prefixed with `EDIT_MARK` (see `_tag`), so the marker is the
@@ -1695,6 +1673,11 @@ def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | Non
             # anything else looks at the result, so no downstream check ever sees a byte the model
             # did not ask for, and fold what it says into the view.
             content, survey = wsview.strip_survey(content)
+            if tid in write_paths and _strip_exec_envelope(content).lstrip().startswith(EDIT_MUTATION_UNKNOWN):
+                # The in-place hardlink writer may have changed every alias. Their
+                # identities are not surveyed, so invalidate all held candidates
+                # BEFORE this result's fresh survey can attest current bodies.
+                view.note_unknown_mutation()
             # A LANDED EDIT CRIA KNOWS EXACTLY KEEPS THE HELD BODY CURRENT. Applied BEFORE this
             # result's own survey: that survey reports the post-edit size, which would otherwise drop
             # the pre-edit body as stale before the edit could be applied to it — and the survey is

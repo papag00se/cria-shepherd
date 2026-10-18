@@ -1,0 +1,1 @@
+{{NOTE}} [fetch-record entry {{ENTRY}}, lines {{FIRST}}–{{LAST}}{{SPAN}}]

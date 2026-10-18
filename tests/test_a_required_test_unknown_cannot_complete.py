@@ -246,7 +246,8 @@ run();
         candidate = next(c for c in plan.candidates if c.kind is probediscovery.ProbeKind.Test)
         self.assertEqual(candidate.test_source_paths, (root + "/" + path,))
         # N1: the survey's per-call questions are its JSON argument, not text formatted into a program.
-        self.assertIn('"want": ["tests/lookup.test.cjs"]', plan.script)
+        from tests.gatefixture import launch_request
+        self.assertIn('"want": ["tests/lookup.test.cjs"]', launch_request(plan.script)['survey'])
 
         returned_survey = survey(
             f"F\t2\t{len(source)}\t{path}",

@@ -98,9 +98,11 @@ class CompleteEvidenceCrossesAsynchronousTurnsTests(unittest.TestCase):
             # program (shared by every gate of every session of this cria build, never per-gate), which
             # is deliberately not part of the queued per-gate cleanup.
             helper = probegate._helper_name()
-            self.assertEqual(sorted(os.listdir(spooldir)),
-                             sorted([os.path.basename(plan.transport_path),
-                                     os.path.basename(plan.transport_path) + ".done", helper]))
+            namespace = pathlib.Path(plan.transport_path).parent
+            self.assertEqual(sorted(os.listdir(spooldir)), sorted([namespace.name, helper]))
+            self.assertEqual(sorted(os.listdir(namespace)), sorted([
+                '.owner', '.started', os.path.basename(plan.transport_path),
+                os.path.basename(plan.transport_path) + '.done']))
             cleanup = probegate.spool_cleanup_command(workspace)
             self.assertTrue(cleanup)
             run(cleanup, workspace, spooldir)

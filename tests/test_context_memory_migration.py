@@ -271,7 +271,7 @@ def test_wire_check_runs_fold_only_when_the_later_exact_source_survives():
 def test_delivery_never_turns_offer_or_stand_in_into_whole_read_credit():
     offered = {"a": "exact-body-hash"}
     block = {"role": "user", "content": "⟦ctx:current⟧\nactual bytes",
-             bodykeys.RESTORED_FILES: {"offered": offered, "named": ["a", "b"]}}
+             bodykeys.RESTORED_FILES: modelview.restored_hint("⟦ctx:current⟧\nactual bytes", offered, ["a", "b"])}
     source = modelview.DeliveryInput([block], offered, ("b",))
     delivered = modelview.settle_delivery(source)
     assert delivered.effect is Effect.DELIVERED and delivered.delivered == offered

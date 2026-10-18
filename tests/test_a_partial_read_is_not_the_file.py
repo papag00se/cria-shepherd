@@ -13,6 +13,7 @@ from cria import loop, wsview
 from cria.writeproxy import translate_outbound
 from tests.test_loop import _single_loop, _synth
 from tests.wsfixture import survey
+from tests.lowering_assertions import write_did_run
 
 FIX = json.loads((Path(__file__).parent / "fixtures" / "phi4_java_a4" / "0047-partial-read-then-write.json").read_text())
 ROOT = "/home/jesse/suite-runs/suite-feed-pipeline-java_phi4_codex_poff_1791705464-r09m6ths"
@@ -49,24 +50,24 @@ def _read(start=None, end=None, body=None, rid="r1"):
 def test_the_a4_prefix_read_does_not_lift_the_hold(view):
     """The real exchange: pom.xml lines 1-8 of 29, then the whole-file write the coder sent."""
     cmd = _result(FIX["read_exchange"])
-    assert "write_bytes" not in cmd and "already exists on disk" in cmd
+    assert not write_did_run(cmd) and "already exists on disk" in cmd
 
 
 def test_a_whole_read_lifts_it(view):
-    assert "write_bytes" in _result(_read(body="<project>\n</project>"))
+    assert write_did_run(_result(_read(body="<project>\n</project>")))
 
 
 def test_a_window_that_runs_into_the_end_of_the_file_is_the_whole_file(view):
     body = "\n".join(f"{i}: l{i}" for i in range(1, 6))
-    assert "write_bytes" in _result(_read(1, 50, body))      # asked for 50, got 5: EOF reached
-    assert "write_bytes" in _result(_read(1, None, body))    # start_line=1 alone reads to the end
+    assert write_did_run(_result(_read(1, 50, body)))      # asked for 50, got 5: EOF reached
+    assert write_did_run(_result(_read(1, None, body)))    # start_line=1 alone reads to the end
 
 
 def test_a_window_that_stops_where_it_was_told_to_is_not(view):
     body = "\n".join(f"{i}: l{i}" for i in range(1, 9))
-    assert "write_bytes" not in _result(_read(1, 8, body))
-    assert "write_bytes" not in _result(_read(5, 50, "5: a\n6: b"))     # does not open at line 1
-    assert "write_bytes" not in _result(_read(None, 8, body))          # an end-only range is a prefix
+    assert not write_did_run(_result(_read(1, 8, body)))
+    assert not write_did_run(_result(_read(5, 50, "5: a\n6: b")))     # does not open at line 1
+    assert not write_did_run(_result(_read(None, 8, body)))          # an end-only range is a prefix
 
 
 def test_a_ledger_entry_without_text_in_the_window_is_not_a_read(view):
@@ -110,7 +111,7 @@ def test_a_cat_of_another_directorys_pom_does_not_lift_the_hold(view):
         msgs = [{"role": "assistant", "tool_calls": [{"id": "s1", "type": "function", "function": {
                     "name": "exec_command", "arguments": json.dumps({"cmd": command})}}]},
                 {"role": "tool", "tool_call_id": "s1", "content": "<project/>"}]
-        assert "write_bytes" not in _result(msgs), command
+        assert not write_did_run(_result(msgs)), command
 
 
 def test_extract_whole_reads_ignores_refused_and_empty_results():

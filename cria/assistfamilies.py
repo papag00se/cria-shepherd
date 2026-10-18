@@ -84,6 +84,7 @@ _LINEAGE: tuple[AssistFamily, ...] = (
         ('A22', 'A23', 'A24', 'A25', 'A26', 'A27', 'A28', 'A29'),
         (
             SourceOwner('cria/callformats.py', '_normalize_patch_body'),
+            SourceOwner('cria/callformats.py', '_unified_to_native'),
             SourceOwner('cria/outputpolicies.py', 'lower_edit_file'),
             SourceOwner('cria/outputpolicies.py', 'add_file_to_write_file'),
         ),
@@ -151,11 +152,18 @@ _LINEAGE: tuple[AssistFamily, ...] = (
     AssistFamily(
         'F11', 'Execute synthetic tools through the harness',
         'Recovery and file safety',
-        'One lowering/round-trip family with write/edit/list/web adapters. Atomicity, metadata, matching and native-tool delegation remain explicit contracts.',
+        'One lowering/round-trip family with write/edit/list/web adapters. Exclusive atomic resources, authenticated batch markers, truthful uncertain-mutation results and fact invalidation are required shared executor support, not additional assists. Matching and native-tool delegation remain explicit contracts.',
         ('A40', 'A41', 'A42', 'A43', 'A44', 'A66', 'A116-fetch', 'A116-search'),
         (
             SourceOwner('cria/writeproxy.py', 'translate_outbound'),
             SourceOwner('cria/writeproxy.py', 'represent_inbound'),
+            SourceOwner('cria/writeproxy.py', '_write_command'),
+            SourceOwner('cria/writeproxy.py', '_edit_command'),
+            SourceOwner('cria/writeproxy.py', '_seq_release'),
+            SourceOwner('cria/ownedfiles.py', 'ATOMIC_REPLACE_PROGRAM'),
+            SourceOwner('cria/ownedfiles.py', 'DIRECTORY_PROGRAM'),
+            SourceOwner('cria/editsequence.py', 'PROGRAM'),
+            SourceOwner('cria/wsview.py', 'View.note_unknown_mutation'),
         ),
     ),
     AssistFamily(
@@ -334,7 +342,7 @@ _LINEAGE: tuple[AssistFamily, ...] = (
         (
             SourceOwner('cria/probegate.py', 'sweep_litter'),
             SourceOwner('cria/probegate.py', '_queue_spool_cleanup'),
-            SourceOwner('cria/writeproxy.py', '_litter_leg'),
+            SourceOwner('cria/gatecleanup.py', 'PROGRAM'),
         ),
     ),
     AssistFamily(
@@ -903,6 +911,9 @@ _LINEAGE: tuple[AssistFamily, ...] = (
             SourceOwner('cria/dedup.py', 'fold_repeated_actions'),
             SourceOwner('cria/focustrim.py', '_collapse_duplicates'),
             SourceOwner('cria/ledgercopies.py', 'elide'),
+            SourceOwner('cria/dedup.py', 'ledger_units'),
+            SourceOwner('cria/dedup.py', 'elide_text'),
+            SourceOwner('cria/dedup.py', 'elide_from_messages'),
             SourceOwner('cria/loop.py', 'Loop._prepare_coder_context'),
             SourceOwner('cria/modelview.py', 'fold_evidence'),
             SourceOwner('cria/upstream.py', 'Upstream._prep'),
@@ -944,6 +955,7 @@ _LINEAGE: tuple[AssistFamily, ...] = (
             SourceOwner('cria/loop.py', 'Loop._prepare_coder_context'),
             SourceOwner('cria/loop.py', '_restored_text_message'),
             SourceOwner('cria/groundtruth.py', 'workspace_inventory'),
+            SourceOwner('cria/modelview.py', 'restored_hint'),
             SourceOwner('cria/modelview.py', 'settle_restored_text'),
             SourceOwner('cria/modelview.py', 'retained_results_truth'),
             SourceOwner('cria/upstream.py', 'Upstream._prep'),
@@ -976,10 +988,12 @@ _LINEAGE: tuple[AssistFamily, ...] = (
     AssistFamily(
         'F75', 'Report model-visible usage',
         'Context and memory',
-        'A harness-facing usage boundary, not another context-fitting policy.',
+        'A labelled continuing-context estimate for harness compaction, with native generation consumption preserved separately; not another context-fitting policy.',
         ('context-34',),
         (
             SourceOwner('cria/modelview.py', 'visible_tokens'),
+            SourceOwner('cria/modelview.py', 'continuing_usage'),
+            SourceOwner('cria/server.py', '_report_context_usage'),
             SourceOwner('cria/loop.py', 'Loop.visible_context_tokens'),
             SourceOwner('cria/server.py', '_incoming_ctx_tokens'),
         ),

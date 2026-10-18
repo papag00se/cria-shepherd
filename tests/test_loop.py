@@ -1135,7 +1135,9 @@ def _result_for(completion, first: str = "EXIT:0", git: str = "abc") -> str:
     if not names:
         names = ["probe-0"]
     parts = [f"{P}{n}{S}\n" + (first if i == 0 else "EXIT:0") + "\n" for i, n in enumerate(names)]
-    return "".join(parts) + f"{P}git{S}\n{git}\n"
+    from tests.gatefixture import completed_cleanup, launch_request
+    cleanup = completed_cleanup(launch_request(script)['workspace']) if GATE_SENTINEL in script else ''
+    return "".join(parts) + cleanup + f"{P}git{S}\n{git}\n"
 
 
 class _Recorder:
@@ -2078,7 +2080,8 @@ def _gate_result(gs, first: str = "EXIT:0", git: str = "abc") -> str:
     from cria.probegate import SECTION_PREFIX as P, SECTION_SUFFIX as S
     n = len((gs.gate_plan.candidates if gs.gate_plan else []) or [])
     parts = [f"{P}probe-{i}{S}\n" + (first if i == 0 else "EXIT:0") + "\n" for i in range(max(n, 1))]
-    return "".join(parts) + f"{P}git{S}\n{git}\n"
+    from tests.gatefixture import completed_cleanup
+    return "".join(parts) + completed_cleanup(gs.gate_plan.workspace) + f"{P}git{S}\n{git}\n"
 
 
 class PeriodicGateTests(unittest.TestCase):

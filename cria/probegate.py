@@ -40,7 +40,7 @@ import zlib
 from collections import OrderedDict
 from dataclasses import dataclass, field
 
-from . import dirguard, dedup, jsontext, wsview
+from . import dirguard, dedup, gatecleanup, jsontext, ownedfiles, wsview
 from . import participation, probediscovery, probeparse, prompts, proberun
 
 # Leading ``path:line[:col][:]`` location prefix a linter prints before the diagnostic. Stripping it
@@ -57,9 +57,10 @@ from .probeparse import COMPILES_FIRST, runner_and_tally, runner_tally  # noqa: 
 # prefix names the section ("probe-0", "git"). Chosen to never collide with tool output.
 from .toolwire import SECTION_PREFIX, GATE_SENTINEL, write_landed
 SECTION_SUFFIX = "___"
-# Section carrying the untracked paths the probes themselves created — cria's own litter, listed by the
-# harness's shell and removed by :func:`sweep_litter` on cria's side. A signal for cria, never the model.
-LITTER_SECTION = "litter"
+# Historical path listings are not removal acknowledgements. New gates finish cleanup on the
+# harness and carry actual removed paths / failures before the final workspace survey.
+LITTER_SECTION = "litter"  # historical listings, not confirmation of removal
+LITTER_REMOVED_SECTION = "litter-removed"
 # Per-probe wall-clock bound. Was 45 s (codex-local's COMPLETION_PROBE_TIMEOUT), which is fine for a
 # syntax floor and far too short for what this gate actually selects: a full test suite, a cold
 # `cargo check`, a `tsc` build. That is not merely a slow gate — `completion_block_nudge` fails CLOSED
@@ -140,7 +141,7 @@ def _helper_reader_program() -> str:
     ``total`` and ``sha256`` are over the raw spool either way, and the next offset is the raw bytes
     delivered, so cria's offset/hash/total checks are unchanged."""
     return f'''if sys.argv[1] == "reader":
-    import base64, hashlib, os, time
+    import atexit, base64, hashlib, os, time
     try:
         import zlib
     except ImportError:
@@ -148,36 +149,41 @@ def _helper_reader_program() -> str:
     path, offset, tid, wait_s = sys.argv[2], int(sys.argv[3]), sys.argv[4], float(sys.argv[5])
     opening = {TRANSPORT_PREFIX!r} + tid + {TRANSPORT_SUFFIX!r}
     closing = {TRANSPORT_END_PREFIX!r} + tid + {TRANSPORT_SUFFIX!r}
-    done_path = path + ".done"
-    deadline = time.monotonic() + wait_s
-    while not os.path.exists(done_path) and os.path.exists(path) and time.monotonic() < deadline:
-        time.sleep(0.2)
-    if not os.path.exists(path):
+    path = os.path.abspath(path)
+    try:
+        context, descriptor = _gate_reader_open(path,tid)
+        atexit.register(os.close,descriptor)
+        atexit.register(_owned_close,context)
+        complete = _gate_reader_wait(context,tid,wait_s)
+    except FileNotFoundError:
         print(opening)
         print("gone\\t1")
         print(closing)
         sys.exit(0)
-    if not os.path.exists(done_path):
-        try:
-            started = os.path.getctime(path)
-            elapsed = max(0.0, time.time() - started)
-        except OSError:
-            elapsed = 0.0
+    except Exception as exc:
+        print(opening)
+        print("error\\t" + base64.b64encode(str(exc).encode()).decode())
+        print(closing)
+        sys.exit(0)
+    if not complete:
+        elapsed = max(0.0,time.time()-os.fstat(descriptor).st_ctime)
         print(opening)
         print("path\\t" + base64.b64encode(path.encode()).decode())
         print("running\\t" + str(round(elapsed, 1)))
         print(closing)
         sys.exit(0)
     try:
-        total = os.path.getsize(path)
+        total = os.fstat(descriptor).st_size
         if offset < 0 or offset > total:
             raise ValueError("offset outside spool")
         digest = hashlib.sha256()
-        with open(path, "rb") as source:
+        with os.fdopen(os.dup(descriptor), "rb") as source:
             for block in iter(lambda: source.read(65536), b""):
                 digest.update(block)
             source.seek(offset)
             window = source.read({TRANSPORT_RAW_PAGE_MAX})
+        if not _owned_valid(context):
+            raise ValueError("namespace_identity_changed")
         chunk, wire, enc = window[:{TRANSPORT_CHUNK_BYTES}], None, "raw"
         if zlib is not None:
             n = len(window)
@@ -206,13 +212,15 @@ def _helper_reader_program() -> str:
 
 @functools.lru_cache(maxsize=1)
 def _helper_source() -> str:
-    """The ONE harness-side program: ``reader`` (page transport) and ``survey`` (workspace survey).
+    """The ONE harness-side program: page transport, survey and gate cleanup.
 
     Pure function of cria's own constants — no session, path or probe in it — so its text, and the
     content hash its file is named by, are identical in every call and every process. A cria change
     that alters either program changes the name, so a stale helper can never answer for new code."""
-    return ("import sys\n" + _helper_reader_program() + 'if sys.argv[1] != "survey":\n    sys.exit(2)\n'
-            + wsview.survey_helper_program())
+    return ("import sys\n" + gatecleanup.NAMESPACE_PROGRAM + _helper_reader_program()
+            + 'if sys.argv[1] == "gate":\n    sys.argv=sys.argv[1:]\n'
+            + f'    _gate_program={gatecleanup.PROGRAM!r}\n    exec(_gate_program)\n    sys.exit(0)\n'
+            + 'if sys.argv[1] != "survey":\n    sys.exit(2)\n' + wsview.survey_helper_program())
 
 
 def _helper_name() -> str:
@@ -264,15 +272,12 @@ def _helper_install_leg() -> str:
     planted or truncated file is OVERWRITTEN by the same atomic replace. cria's own invariant code,
     named by the hash of its text."""
     h = helper_path_expr()
-    beside = f'"${{TMPDIR:-/tmp}}/{_helper_name()}.$$"'
     check = f'python3 -c {shlex.quote(_helper_loader(verify_only=True))} {h}'
+    source = base64.b64encode(_helper_source().encode()).decode()
+    installer = (ownedfiles.ATOMIC_REPLACE_PROGRAM + 'import base64,sys\n'
+                 + f'_atomic_replace(sys.argv[1],base64.b64decode({source!r}))\n')
     return (f'if ! {check} 2>/dev/null; then\n'
-            f'cat > {beside} <<\'{_HELPER_HEREDOC}\'\n'
-            f'{_helper_source()}{_HELPER_HEREDOC}\n'
-            # Only a COMPLETE write earns the final name (a full disk must not leave half a program
-            # under the name that means "this program"); `$?` here is the `cat`'s own status.
-            f'[ $? -eq 0 ] && python3 -c "import os, sys; os.replace(sys.argv[1], sys.argv[2])" '
-            f'{beside} {h}\n'
+            f'python3 - {h} <<\'{_HELPER_HEREDOC}\'\n{installer}{_HELPER_HEREDOC}\n'
             'fi\n')
 
 
@@ -342,86 +347,35 @@ def _transport_reader(path_arg: str, offset: int, transport_id: str, *,
         path_arg, offset, transport_id, wait_s)
 
 
-def _gate_launch_guard(spool_arg: str, cmd_arg: str, parts: list[str]) -> list[str]:
-    """The lines that start the composed probe block DETACHED, idempotently.
+def _gate_launch_guard(transport_id: str, workspace: str, parts: list[str], survey: str,
+                       poll_wait_s: float = GATE_POLL_WAIT_S, scope_dirs: tuple[str, ...] = ()) -> list[str]:
+    """Launch one authenticated private harness resource, idempotently.
 
-    Written to run BEFORE the offset-0 :func:`_transport_reader` call, guarded so re-sending this
-    exact block (cria's own retry when it has learned nothing yet — see
-    :func:`continue_transport_command`) never launches a second copy: if the spool or its ``.done``
-    marker already exists, the probes are already running or already finished and this leg is a
-    no-op.
+    A detached Python supervisor owns the entire lifetime: native commands with
+    original cwd/argv/umask, private auxiliary cleanup, original-workspace survey,
+    then the completion marker. Reaping the caller's process group cannot split
+    that lifecycle. The cache helper is installed once before this call.
 
-    DETACHED so the harness's own exec yield only bounds the READ, never the check: `setsid` (when
-    on PATH) puts the block in a new session with no controlling terminal, so it outlives the harness
-    reaping this call's process group; a plain background job is the fallback. Both the launched
-    command's own I/O and the surrounding group's are redirected to ``/dev/null``/the spool — an
-    inherited pipe end left open in a still-running detached child is exactly what would hang the
-    NEXT read of this same call (or a test's `subprocess.run(capture_output=True)`).
-
-    EVERYTHING AFTER THE PROBE BLOCK MUST RUN INSIDE THE SAME DETACHED SESSION TOO — not just the
-    probe block itself. The first shape of this function put `setsid` in front of only the probe
-    invocation, inside a `( setsid sh cmd ; : > done ; python3 -c unlink ) &` wrapper: `setsid`
-    detaches the probe, but the surrounding `( … )` subshell that WAITS for it and then writes the
-    ``.done`` marker and unlinks the cmd file stays a member of the HARNESS's own process group. A
-    harness that reaps that process group the instant the exec call returns (reproduced on real
-    Codex 0.156 against a 14s probe: the spool filled with the probe's own real output, but
-    ``.done`` never appeared and the cmd file was never removed) kills that waiting subshell before
-    it ever writes the marker — so a gate that used to finish INLINE within the old yield now polls
-    all the way to `transport_deadline_s` and ends terminal UNKNOWN, worse than before C28. The fix
-    is to make the WHOLE sequence — run, mark done, clean up — the single command `setsid` (or the
-    plain fallback) detaches: `$__cria_gate_run -c '<run, mark, clean>' … &`, using `$0` inside that
-    inline script for the interpreter name so it is named only once.
-
-    INTERPRETER: `bash` when it is on PATH, else `sh`. Before C28 `parts` ran inline in whatever
-    shell the HARNESS itself used to run the whole composed script — Codex's own exec tool is
-    `bash -lc`, and probe composition (`proberun.compose_probe_command`, the offline `unshare` leg,
-    `wsview.survey_command`) was never written against POSIX `sh` specifically. Detaching into a
-    bare `sh` would swap that shell out from under commands that happened to work only because bash
-    was running them — a silent behavior change with no `test_gate_script_is_read_only.py`-style
-    guard to catch it, since `sh` is frequently a bash symlink on the very machine that would hide
-    the regression. `setsid` and the interpreter choice are independent knobs (either may be absent).
-
-    `umask 077` around ONLY the file creation, then RESTORED before the detached launch: the spool
-    carries the coder's own check output and the cmd file the composed probe commands, and
-    `mktemp`'s own default (owner-only, 0600) is what this replaced — a fixed deterministic name
-    must not widen that. But a umask is PROCESS-WIDE and inherited by children: a bare `umask 077`
-    with no restore leaked into the detached session and every probe it runs, silently narrowing the
-    mode of every file the repo's OWN checks create in the coder's workspace (reviewer evidence: a
-    probe's own `umask` printed 0077 instead of the harness's 0022 on real Codex; a check asserting
-    an output file's mode 0644 went from green to red). The harness's umask is saved before the
-    narrowing and restored immediately after both files exist, so only cria's OWN two files are
-    affected and the detached session — hence every probe — inherits the harness's original umask
-    unchanged, exactly as it did before C28.
-
-    No `rm`: the Codex sandbox rejects the WHOLE script when it contains one
-    (test_gate_script_is_read_only.py); cleanup is `os.unlink` — the launch script unlinks itself
-    once the block is done, exactly like the spool is unlinked by the final page read.
+    Positive exclusive directory/file allocation replaces name-only truncation.
+    The marker credential and descriptor identities authorize retries; an existing
+    unrelated path is never adopted. Source files are neither copied nor deleted.
     """
-    body = "\n".join(parts) if parts else ":"
-    tag = "__CRIA_GATE_BODY__"
-    # Run the probe body via `$0` (the interpreter name passed as $0 below) so it is named once;
-    # then, in the SAME process/session, mark done and unlink the cmd file. All three legs are one
-    # `sh -c '…'` argument, so `setsid` (or its absence) covers every one of them, not just the
-    # first.
-    detached = ('$0 "$1" </dev/null >"$2" 2>&1; : > "$2.done"; '
-               'python3 -c "import os, sys; os.unlink(sys.argv[1])" "$1" >/dev/null 2>&1')
+    launch = gatecleanup.launch_command(helper_runner(), transport_id, workspace,
+        "\n".join(parts) if parts else ":", survey, _marker(LITTER_REMOVED_SECTION), scope_dirs)
+    opening, closing = shlex.quote(_transport_marker(transport_id)), shlex.quote(_transport_marker(transport_id, end=True))
+    error_encoder = shlex.quote('import base64,sys; print(base64.b64encode(sys.stdin.buffer.read()).decode())')
     return [
-        f"if [ ! -e {spool_arg} ] && [ ! -e {spool_arg}.done ]; then",
-        "__cria_gate_umask=$(umask)",
-        "umask 077",
-        f": > {spool_arg} || exit 98",
-        f"cat > {cmd_arg} <<'{tag}'",
-        body,
-        tag,
-        'umask "$__cria_gate_umask"',
-        'if command -v bash >/dev/null 2>&1; then __cria_gate_sh="bash"; '
-        'else __cria_gate_sh="sh"; fi',
-        'if command -v setsid >/dev/null 2>&1; then __cria_gate_run="setsid $__cria_gate_sh"; '
-        'else __cria_gate_run="$__cria_gate_sh"; fi',
-        f'$__cria_gate_run -c \'{detached}\' "$__cria_gate_sh" {cmd_arg} {spool_arg} '
-        f'</dev/null >/dev/null 2>&1 &',
-        "disown 2>/dev/null || true",
-        "fi",
+        '__cria_launch_error=$({\n' + launch + '} 2>&1)',
+        '__cria_launch_status=$?',
+        'if [ "$__cria_launch_status" -eq 0 ]; then',
+        _helper_reader_call('"$__cria_gate_file"', 0, transport_id, poll_wait_s),
+        'elif [ "$__cria_launch_status" -eq 3 ]; then',
+        f"printf '%s\\n{HELPER_GONE_FIELD}\\t1\\n%s\\n' {opening} {closing}",
+        'else',
+        f"printf '%s\\nerror\\t' {opening}",
+        f'printf %s "$__cria_launch_error" | python3 -c {error_encoder}',
+        f"printf '%s\\n' {closing}",
+        'fi',
     ]
 
 
@@ -515,6 +469,7 @@ class GateOutcome:
     participation: participation.ParticipationReport | None = None
     transport_pending: bool = False  # more checked pages are required before parsing
     transport_unknown: bool = False  # transport ended incomplete/invalid; never a clean result
+    scope_unknown: bool = False  # original source identity or owned auxiliary closure not established
 
 
 def _marker(section_id: str) -> str:
@@ -842,37 +797,14 @@ def plan_gate(workspace: str, session: str = "", rlog=None, *,
         plan.ran_in = _checks_ran_elsewhere(workspace, plan.candidates)
 
     parts: list[str] = [f"cd {shlex.quote(workspace)} || exit 97"] if workspace else []
-    # FIRST, remove what the LAST gate's probes left behind. cria cannot delete on the harness's
-    # filesystem itself, so the removal rides on the next script it composes — before the pre-probe
-    # `git status` below, so this gate's own untracked-file baseline is taken after the cleanup and
-    # the litter is never attributed to the coder.
-    if workspace and (rm := litter_removal_command(workspace)):
-        parts.append(rm)
     # Reviewer 6510f2dd follow-up: reclaim any PRIOR gate's spool (+``.done``) cria has already fully
     # ingested — the reader no longer self-deletes on the final read (see `_transport_reader`), so
     # this is the one remaining place cleanup happens. Same shape as the litter leg above: queued when
     # `ingest_transport` verified the hash, removed here by the NEXT gate, never an `rm`, never a glob.
-    if workspace and (spool_cleanup := spool_cleanup_command(workspace)):
-        parts.append(spool_cleanup)
-    # THE GATE MUST NOT LEAVE STATE BEHIND. It runs the repo's own tests in the LIVE workspace, and a
-    # test that writes — a database file, a fixture, an output artifact — leaves that behind for the
-    # next gate to trip over. cria then reports a failure it manufactured itself, under the strongest
-    # header it has. Measured on the six-language battery: a leftover orders.db from one gate run
-    # made the next run's schema assertions fail, and the coder was sent to debug cria's litter.
-    #
-    # Principle 7 already says cria never pollutes the user's workspace; running tests there is the
-    # one place it did. The fix is bounded and needs no per-language knowledge: record the untracked
-    # files before the probes, and remove exactly the ones that appeared during them. Tracked files
-    # are never touched, and with no git the whole thing abstains rather than guessing.
-    #
-    # The REMOVAL happens on cria's side (:func:`sweep_litter`), not in this script. A `rm` here is
-    # not merely inelegant — the Codex sandbox HARD-REJECTS the whole exec ("rm -f style commands are
-    # not permitted"), so an `rm` in the cleanup killed EVERY gate in EVERY language, and the gate
-    # abstained silently because a rejected exec returns no probe sections. writeproxy.py:801 records
-    # the same sandbox rejection breaking every web_search. cria composes read-only shell; when
-    # something must be deleted, cria deletes it itself, under the dirguard's bounds.
-    if workspace:
-        parts.append("__cria_pre=$(git status --porcelain 2>/dev/null | sed -n 's/^?? //p' | sort)")
+    spool_cleanup = spool_cleanup_command(workspace) if workspace else ''
+    # Native build/test output belongs to the project. No snapshot or untracked
+    # enumeration gives this gate ownership of ANY original-workspace path.
+    # The supervisor separately allocates and settles its own private scratch.
     for i, c in enumerate(plan.candidates):
         parts.append(f"echo {_marker(f'probe-{i}')}")
         parts.append(proberun.compose_probe_command(c, COMPLETION_PROBE_TIMEOUT_S))
@@ -889,16 +821,8 @@ def plan_gate(workspace: str, session: str = "", rlog=None, *,
     if offline:
         parts.append(f"echo {_marker('offline')}")
         parts.append(offline)
-    if workspace:
-        # Exactly what the probes created, LISTED for cria to remove. The files present now that were
-        # not present before; anything git tracks never appears in this list at all.
-        parts.append(f"echo {_marker(LITTER_SECTION)}")
-        parts.append("__cria_post=$(git status --porcelain 2>/dev/null | sed -n 's/^?? //p' | sort)")
-        # POSIX sh only — no process substitution. The harness's shell is not guaranteed to be bash,
-        # and a bashism here would fail silently and leave the litter behind.
-        parts.append('if [ -z "$__cria_pre" ]; then __cria_new=$__cria_post; '
-                     'else __cria_new=$(printf \'%s\\n\' "$__cria_post" | grep -vxF "$__cria_pre"); fi')
-        parts.append('printf \'%s\\n\' "$__cria_new"')
+    # Private scratch cleanup and the following survey are supervisor-finalized,
+    # even when the native body exits early. They never inherit its last cwd.
     # THE CHANGED-FILES SIGNAL IS GONE, and it never was one. `git status --porcelain | sha1sum` ran
     # on EVERY gate — roughly 1,500 round trips over twelve days of logs — was parsed into
     # `GateOutcome.git_state`, stored on `GuardState.gate_git`, and read by NOTHING: `grep -rn
@@ -917,7 +841,7 @@ def plan_gate(workspace: str, session: str = "", rlog=None, *,
     # The survey rides inside the same lossless spool. It keeps its own structural tree bound (a
     # folded directory is explicit UNKNOWN), but it no longer competes with probe bytes for one
     # harness result and therefore needs no per-gate byte arithmetic.
-    parts.append(wsview.survey_command(session, cd=workspace, helper=helper_runner()))
+    survey_command = wsview.survey_command(session, cd=workspace, helper=helper_runner())
     # STATE IT NOW, while cria still knows. A probe the coder could retype is one line of argv; a
     # manifest check cria composed is a multi-line inline program. The distinction is free here and
     # unrecoverable downstream — see GATE_SENTINEL.
@@ -932,17 +856,16 @@ def plan_gate(workspace: str, session: str = "", rlog=None, *,
     # cannot know `${TMPDIR:-/tmp}`'s resolved value (#23c — that's the HARNESS's environment), but a
     # fixed name lets `continue_transport_command` retry this exact launch text verbatim while it has
     # learned nothing yet, and `_gate_launch_guard` makes that retry a no-op once the block is started.
-    spool = f'"${{TMPDIR:-/tmp}}/.cria-gate-{plan.transport_id}.spool"'
-    cmd_file = f'"${{TMPDIR:-/tmp}}/.cria-gate-{plan.transport_id}-cmd.sh"'
+    spool = f'"${{TMPDIR:-/tmp}}/{gatecleanup.PRIVATE_PREFIX}{plan.transport_id}/.cria-gate-{plan.transport_id}.spool"'
     plan.transport_deadline_s = _gate_deadline_s(len(plan.candidates) + (1 if offline else 0))
     plan.script = "\n".join([
         _gate_sentinel(retypable),
         f"__cria_gate_file={spool}",
-        f"__cria_gate_cmd={cmd_file}",
-        # N1: the helper must exist BEFORE the detached block starts (its survey leg runs it).
+        # The helper owns positive allocation before detaching any native work.
         *([] if plan.helpers_ready else [_helper_install_leg().rstrip("\n")]),
-        *_gate_launch_guard('"$__cria_gate_file"', '"$__cria_gate_cmd"', parts),
-        _helper_reader_call('"$__cria_gate_file"', 0, plan.transport_id, plan.transport_poll_wait_s),
+        *([spool_cleanup] if spool_cleanup else []),
+        *_gate_launch_guard(plan.transport_id, workspace, parts, survey_command, plan.transport_poll_wait_s,
+                           tuple(dict.fromkeys([workspace, *(str(c.working_dir) for c in plan.candidates)])) if workspace else ()),
     ])
     return plan
 
@@ -963,7 +886,8 @@ def gate_is_partial(outcome) -> bool:
     or failed page transport is partial for the same reason, before sections may be parsed at all."""
     return bool(getattr(outcome, "unran", None)
                 or getattr(outcome, "transport_pending", False)
-                or getattr(outcome, "transport_unknown", False))
+                or getattr(outcome, "transport_unknown", False)
+                or getattr(outcome, "scope_unknown", False))
 
 
 def split_sections(text: str) -> dict[str, str]:
@@ -1426,11 +1350,14 @@ def clean_gate_output(raw: str, plan: "GatePlan | None" = None, *, annotate: boo
     timed_out_output: list[str] = []
     timeout_notes: list[str] = []   # one per genuinely-timed-out (EXIT 124) section, ALWAYS populated
     completed_output: list[str] = []
-    _sections = split_sections(raw)
+    # Historical transport replay can still contain the final survey. It is not
+    # part of the last cleanup/checker section (interpret_gate strips it too).
+    _sections = split_sections(wsview.strip_survey(raw)[0])
+    cleanup_note = cleanup_fact(_sections, plan.workspace if plan and plan.transport_required else None)
     for sid, body in _sections.items():
         # `git` is no longer EMITTED (see plan_gate), but a gate result already in a session's
         # history still carries that section, and it must never read as a probe's output.
-        if sid in ("git", LITTER_SECTION):  # cria's own bookkeeping — signal for cria, noise for the model
+        if sid in ("git", LITTER_SECTION, LITTER_REMOVED_SECTION):  # not checker output
             continue
         # The offline re-run is an INSTRUMENT READING, not a check. It is the same suite with the
         # network taken away, so on a genuinely live suite it is SUPPOSED to fail — and this loop
@@ -1659,12 +1586,12 @@ def clean_gate_output(raw: str, plan: "GatePlan | None" = None, *, annotate: boo
         # checker's verbatim output).
         if timeout_notes:
             msg += "\n" + "\n".join(timeout_notes)
-        return msg
+        return msg + cleanup_note
     if failed_no_detail:            # ran, exited non-zero, no usable output → a failure with no location
         msg = CHECKS_MARKER + " " + prompts.load("checks_failed_no_detail")
         if timeout_notes:
             msg += "\n" + "\n".join(timeout_notes)
-        return msg
+        return msg + cleanup_note
     if could_not_run and (timeout_notes or timed_out_output):
         # C39b: named, with its command when the plan/facts know it — even when it printed nothing.
         # This supersedes the older uniform "could_not_run and timed_out_output" wording for every
@@ -1684,11 +1611,11 @@ def clean_gate_output(raw: str, plan: "GatePlan | None" = None, *, annotate: boo
             parts.append(prompts.render("checks_timeout", command="a check") + " "
                          + prompts.render("checks_timeout_printed",
                                           printed="\n".join(timed_out_output)))
-        return CHECKS_MARKER + " " + "\n".join(parts)
+        return CHECKS_MARKER + " " + "\n".join(parts) + cleanup_note
     if could_not_run:               # couldn't launch/timed out → cria's own setup gap; stay neutral
         # NOT a pass (never claim clean), NOT a fix request (the model can't fix cria's absent tool),
         # NOT a specific confession — just a non-actionable placeholder so the model relies on itself.
-        return CHECKS_MARKER + " " + prompts.load("checks_no_usable_result")
+        return CHECKS_MARKER + " " + prompts.load("checks_no_usable_result") + cleanup_note
     # This is evidence, not an authored success verdict. Preserve all completed checker output;
     # only the final wire floor owns size pressure. Scope/zero-test lines must survive even when
     # later discovery metadata changes or a historical transport no longer has its live plan.
@@ -1744,7 +1671,7 @@ def clean_gate_output(raw: str, plan: "GatePlan | None" = None, *, annotate: boo
             plan.offline_fact = offline
     for note in _advisory_note(dropped_advisories):
         clean += " " + note
-    return clean
+    return clean + cleanup_note
 
 
 def _advisory_note(count: int) -> list[str]:
@@ -2342,53 +2269,27 @@ def refusal_reason(result_text: str) -> str:
     return ""
 
 
-# Litter one gate's probes created, waiting for the NEXT gate script to remove it. Keyed by
-# workspace because that is what the removal command needs, and bounded like every other
-# per-session store here.
-_LITTER_QUEUE: dict[str, list[str]] = {}
-
-
-def _queue_litter(workspace: str, rels: list[str]) -> None:
-    if not workspace:
-        return
-    if len(_LITTER_QUEUE) > 256:
-        _LITTER_QUEUE.clear()
-    q = _LITTER_QUEUE.setdefault(workspace, [])
-    for r in rels:
-        if r not in q:
-            q.append(r)
-    del q[:-256]
-
-
-def litter_removal_command(workspace: str) -> str:
-    """The shell leg that removes the previous gate's litter, or "" when there is none.
-
-    A `python3` unlink rather than `rm`: the harness sandbox rejects an exec containing `rm` and
-    takes every probe in the script down with it, which is how a cleanup once killed every gate in
-    every language. Paths are workspace-relative and were already bounded by `sweep_litter`; the
-    program refuses an absolute path or a `..` a second time, because this is the leg that deletes.
-    """
-    q = _LITTER_QUEUE.pop(workspace, None)
-    if not q:
+def cleanup_fact(sections: dict, expected_workspace: str | None = None) -> str:
+    """Keep the gate's own mutation facts separate from native checker lines."""
+    if LITTER_REMOVED_SECTION not in sections:
         return ""
-    prog = ("import os,shutil,sys\n"
-            "for rel in " + repr(q) + ":\n"
-            "    if os.path.isabs(rel) or '..' in rel.split('/'):\n"
-            "        continue\n"
-            "    t = os.path.join(os.getcwd(), rel)\n"
-            "    try:\n"
-            "        if os.path.islink(t) or os.path.isfile(t):\n"
-            "            os.unlink(t)\n"
-            "        elif os.path.isdir(t):\n"
-            "            shutil.rmtree(t)\n"
-            "    except OSError:\n"
-            "        pass\n")
-    return "{ python3 - <<'__CRIA_LITTER__'\n" + prog + "__CRIA_LITTER__\n} >/dev/null 2>&1"
+    record = gatecleanup.report(sections[LITTER_REMOVED_SECTION], expected_workspace)
+    if record is None:
+        return "\n" + prompts.load("checks_cleanup_unknown")
+    removed, failed = record
+    notes = [prompts.load('checks_original_scope')]
+    if removed:
+        notes.append(prompts.render("checks_artifacts_removed",
+                                   paths="\n".join(json.dumps(path) for path in removed)))
+    if failed:
+        notes.append(prompts.render("checks_cleanup_failed",
+                                   failures="\n".join(json.dumps(item) for item in failed)))
+    return "\n" + "\n".join(notes) if notes else ""
 
 
 # Spool (+``.done``) paths cria has FULLY ingested (hash-verified) and no longer needs, waiting for
-# the NEXT gate composed for this workspace to remove them — same pattern as `_LITTER_QUEUE`, but
-# for cria's OWN transport files rather than the probes' litter. Reviewer 6510f2dd follow-up: the
+# the NEXT gate composed for this workspace to remove them. These are cria's OWN transport files,
+# not workspace paths: workspace cleanup is completed inside its gate before evidence returns. Reviewer 6510f2dd follow-up: the
 # reader no longer self-deletes on the final read (a lost-and-repolled final page must be able to
 # re-read the SAME bytes), so something else has to reclaim a spool once cria is truly done with it.
 # Paths here are ONLY ones `ingest_transport` itself validated and stored as `plan.transport_path`
@@ -2409,57 +2310,36 @@ def _queue_spool_cleanup(workspace: str, spool_path: str) -> None:
 
 def spool_cleanup_command(workspace: str) -> str:
     """The shell leg that removes PRIOR gate spools (+ ``.done`` markers) cria has already fully
-    ingested, or "" when there is none. Same no-`rm` reasoning as :func:`litter_removal_command`:
+    ingested, or "" when there is none. Same no-`rm` reasoning as harness-side workspace cleanup:
     the Codex sandbox rejects the whole script when it sees one. Never a glob — only the exact
     paths cria itself learned from a hash-verified page and is therefore certain are its own.
     """
     paths = _SPOOL_CLEANUP_QUEUE.pop(workspace, None)
     if not paths:
         return ""
-    prog = ("import os\n"
-            "for p in " + repr(paths) + ":\n"
-            "    for f in (p, p + '.done'):\n"
-            "        try:\n"
-            "            os.unlink(f)\n"
-            "        except OSError:\n"
-            "            pass\n")
-    return "{ python3 - <<'__CRIA_SPOOL_CLEANUP__'\n" + prog + "__CRIA_SPOOL_CLEANUP__\n} >/dev/null 2>&1"
+    commands = []
+    for path in paths:
+        name = os.path.basename(path)
+        token = name.removeprefix('.cria-gate-').removesuffix('.spool')
+        commands.append(gatecleanup.dispose_command(helper_runner(), token, path))
+    return '{\n' + '\n'.join(commands) + '\n} >/dev/null 2>&1'
 
 
 def sweep_litter(plan: GatePlan, sections: dict) -> list[str]:
-    """Remove the untracked files the gate's OWN probes created. Returns what was removed.
-
-    The list comes from the harness's shell (git's ``??`` set, before minus after); the removal happens
-    here so cria never composes a destructive command — the Codex sandbox rejects the whole exec when it
-    sees one, which silently killed every gate (see :func:`plan_gate`).
-
-    Bounded three ways, because this deletes files: git must call the path UNTRACKED (a tracked file can
-    never appear), the path must resolve INSIDE the workspace (no absolute paths, no ``..``, no following
-    a symlink out), and any failure is skipped rather than escalated. Nothing here guesses."""
-    body = (sections or {}).get(LITTER_SECTION)
+    """Read completed harness removals; no server-side filesystem act or deferred mutation."""
+    record = gatecleanup.report((sections or {}).get(LITTER_REMOVED_SECTION),
+                                plan.workspace if plan.transport_required else None)
     root = getattr(plan, "workspace", "") or ""
-    if not body or not root:
+    if record is None or not root:
         return []
     removed: list[str] = []
-    queue: list[str] = []
-    for rel in (ln.strip() for ln in body.splitlines()):
-        # ONE OWNER for "does this path leave the workspace". This used to be a hand-rolled
-        # realpath-the-parent dance here, correct but private, while writeproxy asked dirguard a
-        # LEXICAL version of the same question and the two disagreed on a symlink pointing out.
-        # Both answers were right for their caller and neither had a name, so execcheck and
-        # planner_tools — which also act in the workspace — checked nothing at all.
-        if not rel or os.path.isabs(rel) or dirguard.escapes_workspace(rel, root):
+    for rel in record[0]:
+        # This is only report validation. Actual resolution and deletion occurred on the harness.
+        if not rel or os.path.isabs(rel) or dirguard.is_external(rel, root):
             continue
-        queue.append(rel)
         removed.append(rel)
-    # THE REMOVAL HAPPENS ON THE HARNESS'S SIDE, because that is whose filesystem this is. cria used
-    # to unlink these paths itself — correct only while the two machines are the same one, and a
-    # silent no-op otherwise, which would leave the gate's own litter behind for the next gate to
-    # report as the repo's failure. So the paths are QUEUED and the next gate script removes them
-    # before it runs anything (see plan_gate). Still not an `rm`: the Codex sandbox hard-rejects the
-    # whole exec when it sees one, and a rejected exec kills every probe in the script.
-    if queue:
-        _queue_litter(plan.workspace, queue)
+    # The harness already removed these before the survey and transport cutoff.
+    # Historical litter listings are deliberately not treated as completed removals.
     return removed
 
 
@@ -2482,6 +2362,13 @@ def interpret_gate(plan: GatePlan, result_text: str, rlog=None) -> GateOutcome:
     # cria's own instrumentation, it belongs to no probe, and left in place it would land inside
     # whichever section happened to be open when it started.
     result_text, survey = wsview.strip_survey(result_text)
+    sections = split_sections(result_text)
+    cleanup_record = gatecleanup.report(sections.get(LITTER_REMOVED_SECTION),
+                                       plan.workspace if plan.transport_required else None)
+    scope_unknown = bool((cleanup_record is not None and cleanup_record[1])
+                         or (plan.transport_required and cleanup_record is None))
+    if scope_unknown:
+        wsview.current().note_unknown_mutation()
     survey_applied = False
     if survey:
         # A SURVEY THAT DID NOT LAND IS AN EVENT, NOT AN ABSENCE (#12). `apply_survey` refuses a
@@ -2496,8 +2383,8 @@ def interpret_gate(plan: GatePlan, result_text: str, rlog=None) -> GateOutcome:
                       closed=wsview.SURVEY_CLOSE in survey, **wsview.last_reject())
     sections = split_sections(result_text)
     participation_events = []
-    # Before anything else: take back what the probes left behind. Runs even when the gate FAILED —
-    # a suite that errors halfway still wrote its fixtures, and the next gate would inherit them.
+    # Read the harness's completed cleanup record, including when checks failed.
+    # No cleanup is deferred to another gate or a coder tool.
     swept = sweep_litter(plan, sections)
     # ran is TRUE only if an actual check section came back — NOT just the always-present git snapshot.
     # An empty / no-code repo yields zero candidates, so plan_gate composes a git-ONLY script; treating
@@ -2512,8 +2399,9 @@ def interpret_gate(plan: GatePlan, result_text: str, rlog=None) -> GateOutcome:
             refused=refusal_reason(result_text),
             replan_after_survey=bool(survey_applied and not plan.surveyed_before),
             participation=plan.participation,
+            scope_unknown=scope_unknown,
         )
-    out = GateOutcome(ran=True, swept=swept)
+    out = GateOutcome(ran=True, swept=swept, scope_unknown=scope_unknown)
 
     results = []
     for i, c in enumerate(plan.candidates):

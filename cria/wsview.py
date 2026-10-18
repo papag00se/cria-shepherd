@@ -841,6 +841,17 @@ class View:
         """A command that could have changed the workspace ran; the survey is now behind the disk."""
         self._ran_a_mutator = True
 
+    def note_unknown_mutation(self) -> None:
+        """An in-place write failed; unsurveyed aliases make held bytes uncertain.
+
+        This asserts no successful replacement and infers no alias from a name.
+        Forget every possibly aliased body, including prior-request candidates;
+        later harness observations may attest fresh bytes in the usual way.
+        """
+        self.note_a_mutator_ran()
+        for rel in set(self._files) | set(self._bodies) | set(self._cache_candidates):
+            self.note_changed(rel)
+
     def note_edited(self, path, old: str, new: str) -> bool:
         """An edit landed whose replacement cria knows exactly: keep the held body CURRENT.
 

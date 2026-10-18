@@ -1,0 +1,2 @@
+⟦ctx:checks-cleanup⟧ The harness could not reclaim these check-generated artifacts, or could not establish cleanup ownership. These are cleanup results, not checker diagnostics:
+{{FAILURES}}

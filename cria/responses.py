@@ -16,6 +16,7 @@ that, and it sidesteps incremental chat-SSE↔Responses-SSE delta translation.
 
 from __future__ import annotations
 
+import copy
 import json
 import uuid
 from collections.abc import Iterator
@@ -509,6 +510,11 @@ def _map_usage(u) -> dict:
         result["input_tokens_details"] = dict(u["prompt_tokens_details"])
     if isinstance(u.get("completion_tokens_details"), dict):
         result["output_tokens_details"] = dict(u["completion_tokens_details"])
+    # L1+ uses an explicitly labelled context estimate for compaction. Native
+    # generation accounting keeps its original schema/details in a separate field.
+    for key in ('context_estimate', 'native_usage'):
+        if isinstance(u.get(key), dict):
+            result[key] = copy.deepcopy(u[key])
     return result
 
 

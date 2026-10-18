@@ -8,17 +8,17 @@ it second: an `rm -rf` cleaning up after the probes killed EVERY gate, in every 
 24-cell battery arm — silently, because a refused exec returns no section markers and that is
 indistinguishable from "no gate was composed".
 
-So: cria composes READ-ONLY shell. When something must be deleted, cria deletes it itself
-(:func:`cria.probegate.sweep_litter`), where no sandbox policy stands between the intent and the act.
-And when a harness refuses anyway, it must land in the log instead of disabling a subsystem in silence.
+So: no destructive shell verb may make the sandbox reject the whole gate. Owned reclamation is a
+bounded Python program run by the HARNESS inside that same gate, never server-side deletion or a
+hidden mutation on the next coder tool. Refusals must remain visible, not disable a subsystem silently.
 """
 
 import os
-import subprocess
 
 import pytest
 
 from cria import probegate
+from test_gate_cleanup_finishes_before_coder_resumes import allocated_resource, private_aux, finish_cleanup
 
 
 # The verbs the sandbox rejects. Matched as whole words so `format!` / `performance` can't trip it.
@@ -63,12 +63,12 @@ def test_the_minimal_gate_is_read_only_too():
 
 
 def test_litter_bookkeeping_never_reaches_the_model(tmp_path):
-    """The pre/post untracked snapshot is cria's plumbing. The coder sees probe commands, not this."""
-    script = probegate.plan_gate(_workspace(tmp_path, {"app.py": "x = 1\n"})).script
-    assert "__cria_pre" in script, "the snapshot itself should still be composed"
-    shown = probegate._strip_gate_plumbing(script)
-    for var in ("__cria_pre", "__cria_post", "__cria_new"):
-        assert var not in shown, f"{var} leaked into the model's view of the gate command"
+    """Positive resource allocation is private plumbing, never the coder's work."""
+    plan = probegate.plan_gate(_workspace(tmp_path, {"app.py": "x = 1\n"}))
+    assert f'gate launch {plan.transport_id}' in plan.script
+    shown = probegate._strip_gate_plumbing(plan.script)
+    for value in (plan.transport_id, '__cria_launch_error', '_gate_aux_cleanup', 'namespace_identity_changed'):
+        assert value not in shown
 
 
 def test_a_refused_gate_is_loud_not_silent():
@@ -106,33 +106,27 @@ def _litter_sections(paths):
     return {probegate.LITTER_SECTION: "\n".join(paths)}
 
 
-def _sweep_and_remove(ws, paths):
-    """The real two-step: cria queues what the probes created, and the HARNESS removes it.
-
-    cria cannot unlink a file on a filesystem it does not own — off a shared box its own `os.unlink`
-    was a silent no-op and the litter stayed. So the removal is a bounded `python3` leg cria composes
-    and the harness runs, exactly like every other act in the workspace."""
-    plan = probegate.GatePlan(workspace=str(ws))
-    removed = probegate.sweep_litter(plan, _litter_sections(paths))
-    cmd = probegate.litter_removal_command(str(ws))
-    if cmd:
-        subprocess.run(["sh", "-c", cmd], cwd=str(ws), capture_output=True)
+def _sweep_and_remove(resource):
+    """The actual harness cleanup consumes an allocated capability, never names."""
+    (removed, failed), _ = finish_cleanup(resource)
+    assert failed == []
     return removed
 
 
 def test_sweep_removes_exactly_what_the_probes_created(tmp_path):
     ws = tmp_path
     (ws / "kept.py").write_text("x = 1\n")
-    (ws / "orders.db").write_text("sqlite")
-    (ws / "artifacts").mkdir()
-    (ws / "artifacts" / "out.bin").write_text("junk")
-
-    removed = _sweep_and_remove(ws, ["orders.db", "artifacts"])
-
-    assert sorted(removed) == ["artifacts", "orders.db"]
-    assert not (ws / "orders.db").exists()
-    assert not (ws / "artifacts").exists()
-    assert (ws / "kept.py").exists(), "a file the probes did not create was removed"
+    (ws / 'orders.db').write_text('project data')
+    resource = allocated_resource(tmp_path)
+    aux = private_aux(resource)
+    (aux / 'orders.db').write_text('owned scratch')
+    (aux / 'artifacts').mkdir()
+    (aux / 'artifacts/out.bin').write_text('owned scratch')
+    removed = _sweep_and_remove(resource)
+    assert set(removed) == {'aux/orders.db', 'aux/artifacts/out.bin', 'aux/artifacts/', 'aux/'}
+    assert not aux.exists()
+    assert (ws / 'orders.db').read_text() == 'project data'
+    assert (ws / 'kept.py').exists()
 
 
 def test_sweep_cannot_escape_the_workspace(tmp_path):
@@ -140,10 +134,11 @@ def test_sweep_cannot_escape_the_workspace(tmp_path):
     ws.mkdir()
     outside = tmp_path / "precious.txt"
     outside.write_text("do not delete")
-    removed = _sweep_and_remove(ws, ["../precious.txt", str(outside), "sub/../../precious.txt"])
-
-    assert removed == []
-    assert outside.exists(), "the sweep deleted a file outside the workspace"
+    paths = ['../precious.txt', str(outside), 'sub/../../precious.txt']
+    assert probegate.sweep_litter(probegate.GatePlan(workspace=str(ws)), _litter_sections(paths)) == []
+    resource = allocated_resource(ws)
+    assert _sweep_and_remove(resource) == ['aux/']
+    assert outside.read_text() == 'do not delete'
 
 
 def test_sweep_unlinks_a_symlink_rather_than_following_it(tmp_path):
@@ -151,17 +146,20 @@ def test_sweep_unlinks_a_symlink_rather_than_following_it(tmp_path):
     ws.mkdir()
     outside = tmp_path / "target.txt"
     outside.write_text("keep me")
-    link = ws / "link.txt"
+    resource = allocated_resource(ws)
+    link = private_aux(resource) / 'link.txt'
+    project_link = ws / 'link.txt'
     try:
         os.symlink(outside, link)
+        os.symlink(outside, project_link)
     except (OSError, NotImplementedError):
         pytest.skip("symlinks unavailable")
 
-    removed = _sweep_and_remove(ws, ["link.txt"])
-
-    assert removed == ["link.txt"]
+    removed = _sweep_and_remove(resource)
+    assert set(removed) == {'aux/link.txt', 'aux/'}
     assert not link.exists() and not link.is_symlink()
-    assert outside.exists(), "followed a symlink out of the workspace and deleted the target"
+    assert project_link.is_symlink()
+    assert outside.read_text() == 'keep me'
 
 
 def test_sweep_abstains_without_a_workspace_or_a_section(tmp_path):
