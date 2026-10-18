@@ -1,23 +1,24 @@
-# Assist modularity — remaining work
+# Assist modularity — completed
 
 ## Deliverable
 
 Make every runtime intervention understandable, independently selectable where its contract permits, and straightforward to replace or remove, without duplicated decisions or unnecessary machinery.
 
-The implementation and family consolidation are recorded as complete. Do not restart that work. Finish the remaining integration failures and deliver a working, tested refactor.
+Implementation, family consolidation and remaining integration repairs are complete. Do not restart completed work.
 
-## Remaining fixes
+## Final result
 
-- Repair optional STEP verification and living-plan test setup for the actual selected dependencies and explicit consent. Keep ordinary planning OFF. Resolve the rootless periodic-observation expectation without inventing observations or silently approving unfinished work.
-- Repair remaining callback, parser, and moved-implementation test incompatibilities. The last status also names the unresolved H200 case; identify its actual failure rather than treating that label as a specification.
-- Keep generated assist navigation consistent with the final implementation.
-- Fix any remaining genuine regressions exposed by the integrated test suite. Do not weaken valid assertions to obtain a pass.
+- Optional STEP verification and living-plan fixtures now use actual selected dependencies and explicit consent; ordinary planning remains OFF. Rootless unknown observations remain fail-closed.
+- Callback, parser, moved-owner, search spill, handler/store and recovered-write fixtures follow the production lifecycle while preserving their behavioral requirements. Moved-owner guards include behavioral fault checks rather than relying only on old wrapper source text.
+- Red-gate advance events retain complete checker findings and reason instead of clipping away the actual diagnostic. Workspace instruction reads distinguish unknown from observed empty text explicitly.
+- Generated assist navigation matches the final implementation.
+- All 52 previously failing test files pass together: 1,169 tests and 234 subtests. The final full `python -m pytest` passes: 10,209 passed, 217 skipped in 368.77 seconds. The assist-map/planner/walk/closure focused checks also pass. These are offline integration results, not a Bonsai efficacy judgment or native coverage for skipped prerequisites.
 
 ## Already completed
 
 Carry forward the recorded completed implementation, registration/selection, driver/evidence ownership, taxonomy and documentation work. Subsequent repairs A–J are recorded as completed: pending-nudge recursion, dependency cycles, original-task adapter handling, duplicate observation in a test caller, refusal-count tests, generation callback setup, controlled retention fixtures, historical rationale placement, registration expectations, and handler/store fixtures. Do not repeat them without a concrete new failure.
 
-The latest recorded complete suite run failed; later focused repairs do not establish a complete-suite pass. Remaining failures may be test incompatibilities or production defects; that distinction must come from the actual failure.
+The original failed complete-suite run remains historical evidence. The final complete-suite pass above supersedes its unresolved status without erasing the original failures.
 
 Uniform extra event tags were an assistant-added requirement and remain out of scope.
 
