@@ -435,7 +435,7 @@ def test_public_real_floor_changed_wire_retry_is_bounded(monkeypatch, streaming,
         "⟦ctx:compacted⟧ 1 earlier turn(s) were compacted to fit the context window.\n"
         "Summary of what those turns contained:\n• › [assistant] 3,000 bytes of text\n"
         "Lines beginning › name a turn whose own content did not fit this note. The line says what the turn was; its text is not in the window any more, and nothing here is a quote of it.\n"
-        "Everything above describes turns that have already happened. Where it quotes a file, that is what the file said THEN — the workspace has moved on since, so its current text is what read_file returns now, or a later copy of it in this conversation if there is one.")}
+        "Everything above describes past turns. A quoted file is what the file said THEN, not proof of later change or current contents. Use a later copy of it in this conversation, if available and not overtaken by mutation, rather than rereading.")}
     expected_refit = json.dumps({"model": "capacity-fixture", "messages": [note,
         {"role": "user", "content": "root"}, {"role": "user", "content": "hello"}],
         "max_tokens": 32, "stream": streaming}).encode()

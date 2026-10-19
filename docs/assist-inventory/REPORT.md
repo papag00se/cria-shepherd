@@ -2137,6 +2137,7 @@ Frozen detail assignments and judgments remain in [detail-history.json](detail-h
 - [`cria/contextfloor.py:_compacted_note`](../../cria/contextfloor.py#L944)
 - [`cria/upstream.py:Upstream._prep`](../../cria/upstream.py#L378)
 - [`tests/test_wire_fit_foundation_contract.py`](../../tests/test_wire_fit_foundation_contract.py)
+- [`tests/test_compaction_does_not_claim_the_workspace_changed.py:test_exact48_real_driver_final_post_keeps_history_dated_without_a_change_claim`](../../tests/test_compaction_does_not_claim_the_workspace_changed.py#L37)
 
 **Historical families:** F68.
 

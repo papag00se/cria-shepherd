@@ -1034,12 +1034,10 @@ def _compacted_note(dropped_msgs: list[dict], dropped: int, msg_budget: int) -> 
     # contained", at the top of the prompt. Three of the four had no caveat at all, because those
     # dropped spans held only reads. The model was chasing a stale-state bug at the time.
     #
-    # The caveat is unconditional because it is unconditionally true: this note describes the PAST.
+    # Past observations need dated provenance, even after read-only turns. They do not prove
+    # a later mutation: compaction itself never establishes that the workspace changed.
     if digests:
-        parts.append("Everything above describes turns that have already happened. Where it quotes a "
-                     "file, that is what the file said THEN — the workspace has moved on since, so "
-                     "its current text is what read_file returns now, or a later copy of it in "
-                     "this conversation if there is one.")
+        parts.append(prompts.load("compacted_history_provenance").strip())
     return {"role": "user", "content": "\n".join(parts)}
 
 

@@ -898,6 +898,8 @@ _LINEAGE: tuple[AssistFamily, ...] = (
             SourceOwner('cria/contextfloor.py', '_compacted_note'),
             SourceOwner('cria/upstream.py', 'Upstream._prep'),
             SourceOwner('tests/test_wire_fit_foundation_contract.py', ''),
+            SourceOwner('tests/test_compaction_does_not_claim_the_workspace_changed.py',
+                        'test_exact48_real_driver_final_post_keeps_history_dated_without_a_change_claim'),
         ),
         coverage='required_wire_contract',
     ),
