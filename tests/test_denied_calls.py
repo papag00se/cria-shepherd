@@ -254,8 +254,10 @@ class WorkLogLabelsTheCallNotTheBodyTests(unittest.TestCase):
         msgs = _turn("c1", "write_file", '{"path":"a.py"}', "wrote a.py") + \
             _turn("c2", "exec_command", '{"cmd":"pytest -q"}', "3 passed")
         self.assertEqual(self._log(msgs),
-                         '$ write_file {"path":"a.py"}\n  -> wrote a.py\n'
-                         '$ exec_command {"cmd":"pytest -q"}\n  -> 3 passed')
+                         '$ write_file {"path":"a.py"}\n[tool call id: "c1"]\n'
+                         '[tool result call id: "c1"]\n  -> wrote a.py\n'
+                         '$ exec_command {"cmd":"pytest -q"}\n[tool call id: "c2"]\n'
+                         '[tool result call id: "c2"]\n  -> 3 passed')
 
     def test_boundary_bearing_refusal_keeps_exact_arguments_body_and_call_frame(self):
         # The decoded OpenAI text fields, including their EOF boundary bytes, are evidence.  A
@@ -265,7 +267,8 @@ class WorkLogLabelsTheCallNotTheBodyTests(unittest.TestCase):
         label = prompts.load("work_log_denied")
         rendered = self._log(_turn("refused", "read_file", args, body))
 
-        self.assertEqual(rendered, f"$ read_file {label} {args}\n  -> {body}")
+        self.assertEqual(rendered, f'$ read_file {label} {args}\n[tool call id: "refused"]\n'
+                         f'[tool result call id: "refused"]\n  -> {body}')
         self.assertEqual(next(line for line in rendered.splitlines() if line.startswith("$ read_file")),
                          f"$ read_file {label} ")
         self.assertIn(args, rendered)
@@ -302,15 +305,17 @@ class WorkLogLabelsTheCallNotTheBodyTests(unittest.TestCase):
     def test_nonempty_whitespace_result_is_preserved_but_empty_result_stays_absent(self):
         whitespace = " \r\n\t"
         self.assertEqual(self._log(_turn("empty", "exec_command", '{"cmd":"true"}', "")),
-                         '$ exec_command {"cmd":"true"}')
+                         '$ exec_command {"cmd":"true"}\n[tool call id: "empty"]')
         self.assertEqual(self._log(_turn("space", "exec_command", '{"cmd":"printf"}', whitespace)),
-                         '$ exec_command {"cmd":"printf"}\n  -> ' + whitespace)
+                         '$ exec_command {"cmd":"printf"}\n[tool call id: "space"]\n'
+                         '[tool result call id: "space"]\n  -> ' + whitespace)
 
     def test_ordinary_refused_framing_is_unchanged(self):
         args = '{"path":"ordinary"}'
         body = denial.mark("ordinary refusal text")
         self.assertEqual(self._log(_turn("ordinary", "read_file", args, body)),
-                         f"$ read_file {args} {prompts.load('work_log_denied')}\n  -> {body}")
+                         f'$ read_file {args} {prompts.load("work_log_denied")}\n'
+                         f'[tool call id: "ordinary"]\n[tool result call id: "ordinary"]\n  -> {body}')
 
     def test_literal_boundary_blocks_reach_evidence_owners_and_fold_only_when_identical(self):
         # This stays below the model-summary threshold.  It proves the immediate real consumers
@@ -318,8 +323,11 @@ class WorkLogLabelsTheCallNotTheBodyTests(unittest.TestCase):
         # whitespace normalizer, performs the allowed reduction.
         args = "\n\t{\"path\":\"tmp/a\",\"payload\":\"" + ("x" * 260) + "\"}\r\n"
         result = "\n" + ("literal tool result " * 18) + "\r\n"
-        messages = (_turn("one", "read_file", args, result)
-                    + _turn("two", "read_file", args, result))
+        # An identical replay of one receipt may fold; distinct native IDs may not.
+        messages = _turn("one", "read_file", args, result) * 2
+        distinct = self._log(_turn("one", "read_file", args, result)
+                             + _turn("two", "read_file", args, result))
+        self.assertEqual(loop._dedup_evidence(distinct), distinct)
         log = self._log(messages)
         folded = loop._dedup_evidence(log)
         sess = loop.PlanSession(plan=loop.Plan(id="p", task="t", created="c", items=[]))
@@ -362,7 +370,8 @@ class TheSearchDenialIsLabelledNotDeletedTests(unittest.TestCase):
                                    self.NOTE))
         lines = log.splitlines()
         self.assertIn(prompts.load("work_log_denied"), lines[0])
-        self.assertTrue(lines[1].startswith("  -> "), "the call was left with no result line at all")
+        self.assertEqual(lines[1:3], ['[tool call id: "r1"]', '[tool result call id: "r1"]'])
+        self.assertTrue(lines[3].startswith("  -> "), "the call was left with no result line at all")
         self.assertIn("off-target", log)
 
     def test_the_denial_note_carries_the_shared_mark_not_a_private_one(self):

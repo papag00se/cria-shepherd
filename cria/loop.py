@@ -5525,6 +5525,7 @@ def _work_log(messages: list[dict], *, keep_checks: bool = False, rlog=None,
     # Loaded per call like every other model-facing string, so the wording is tunable without a code
     # change (#22). It says one thing and stops there: the call did not run.
     DENIED_CALL_LABEL = prompts.load("work_log_denied")
+    receipt_labels = prompts.load_map("work_log_receipt_labels")
     # Same scrub chain every other reasoner-facing serialization uses (author_steer, _summarize_single,
     # _self_compact): without clean_gate_results, cria's OWN gate probe renders here as a coder action —
     # `$ shell {"command": "cd … || exit 97\necho ___CRIA_GATE_…\npytest …"}` — and its raw output as
@@ -5562,9 +5563,16 @@ def _work_log(messages: list[dict], *, keep_checks: bool = False, rlog=None,
                 frame_mark = mark if mark and ("\n" in args or "\r" in args) else ""
                 suffix_mark = "" if frame_mark else mark
                 lines.append(f"$ {fn.get('name')}{frame_mark} {args}{suffix_mark}")
+                if tc.get("id"):
+                    lines.append(prompts.fill(receipt_labels["call"],
+                                              call_id=json.dumps(tc["id"], ensure_ascii=False)))
         elif role == "tool":
             c = str(m.get("content") or "")
             if c and not _is_cria_scaffolding(c, keep_checks=keep_checks):
+                if m.get("tool_call_id"):
+                    label = prompts.fill(receipt_labels["result"],
+                                         call_id=json.dumps(m["tool_call_id"], ensure_ascii=False))
+                    lines.append(label)
                 lines.append(f"  -> {c}")
     if rlog is not None and (labelled or unpaired):
         rlog.emit("loop.work_log_denied", level="info", labelled=labelled, unpaired=unpaired)

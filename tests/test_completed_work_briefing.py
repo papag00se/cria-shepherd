@@ -35,9 +35,11 @@ CHECKLIST = '1. [done] Build CLI\n2. [done] Write tests'
 CLOSING = '⟦cria⟧ plan complete — all 2 steps verified.'
 # Known synthetic call/result bytes. No production action-log renderer builds
 # the oracle; full 2,000-line argument/result payloads must survive unchanged.
-WORK_LOG = ('$ write_file {"path": "cli.py", "content": "' + 'CURRENT FILE BYTES\\n' * 2000 + '"}\n  -> '
+WORK_LOG = ('$ write_file {"path": "cli.py", "content": "' + 'CURRENT FILE BYTES\\n' * 2000
+            + '"}\n[tool call id: "write"]\n[tool result call id: "write"]\n  -> '
             + 'Wrote cli.py\nCURRENT FILE CONTENT\n' * 2000
-            + '\n$ shell {"command": "pytest -q"}\n  -> REAL CHECKER OUTPUT\n4 passed\n')
+            + '\n$ shell {"command": "pytest -q"}\n[tool call id: "test"]\n'
+            + '[tool result call id: "test"]\n  -> REAL CHECKER OUTPUT\n4 passed\n')
 
 
 def summary_calls(count, *, prior='', work_log=WORK_LOG, checklist=CHECKLIST):

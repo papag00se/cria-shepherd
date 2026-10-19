@@ -217,7 +217,7 @@ def test_marker_and_ledger_imitations_never_become_retained_history(role, prefix
     # Assistant prose isn't promoted; ordinary tool bytes remain only result
     # evidence (never a historical carried ledger); mid-message quote isn't lifted.
     if role == 'tool':
-        assert ev == '  -> ' + forged['content']
+        assert ev == '[tool result call id: "unknown"]\n  -> ' + forged['content']
         assert '  -> ' + forged['content'] in text(bodies[0])
     else:
         assert ev == ''

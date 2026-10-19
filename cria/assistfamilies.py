@@ -672,6 +672,7 @@ _LINEAGE: tuple[AssistFamily, ...] = (
         (
             SourceOwner('cria/loop.py', '_satisfaction_evidence'),
             SourceOwner('cria/loop.py', '_work_log'),
+            SourceOwner('cria/prompts/work_log_receipt_labels.txt', ''),
             SourceOwner('cria/loop.py', '_mark_own_notes'),
         ),
     ),
@@ -896,6 +897,7 @@ _LINEAGE: tuple[AssistFamily, ...] = (
             SourceOwner('cria/contextfloor.py', '_drop_oldest'),
             SourceOwner('cria/contextfloor.py', '_drop_protected_overflow'),
             SourceOwner('cria/contextfloor.py', '_compacted_note'),
+            SourceOwner('cria/prompts/compacted_modified_paths.txt', ''),
             SourceOwner('cria/upstream.py', 'Upstream._prep'),
             SourceOwner('tests/test_wire_fit_foundation_contract.py', ''),
             SourceOwner('tests/test_compaction_does_not_claim_the_workspace_changed.py',

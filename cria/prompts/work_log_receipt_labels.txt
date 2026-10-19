@@ -1,0 +1,2 @@
+call = [tool call id: {{CALL_ID}}]
+result = [tool result call id: {{CALL_ID}}]

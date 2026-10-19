@@ -152,8 +152,7 @@ elif mode=='worker':
             except OSError as error: scope_errors.append(dict(path=directory,error=str(error)))
         context['aux_identity']=_owned_id(os.stat('aux',dir_fd=context['fd'],follow_symlinks=False))
         environment=dict(os.environ)
-        environment['TMPDIR']=os.path.join(context['parent_path'],context['name'],'aux')
-        environment['CTX_PROBE_AUX']=environment['TMPDIR']
+        environment['CTX_PROBE_AUX']=os.path.join(context['parent_path'],context['name'],'aux')
         output=os.open(_gate_spool_name(token),os.O_WRONLY|os.O_APPEND|os.O_NOFOLLOW,dir_fd=context['fd'])
         with os.fdopen(output,'wb',buffering=0) as stream:
             try:

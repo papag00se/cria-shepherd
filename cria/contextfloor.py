@@ -835,7 +835,7 @@ def _modified_files(msgs: list[dict]) -> list[str]:
             continue
         for tc in m.get("tool_calls") or []:
             fn = tc.get("function") or {}
-            # …AND IT HAS TO HAVE LANDED. The note this feeds says the files are "still on disk",
+            # …AND IT HAS TO HAVE LANDED. The note this feeds names historical modifications,
             # and nothing here checked. Walked on feed-pipeline-java x nemotron-elastic
             # 20260820T103857: a `pom.xml` write cria itself refused as malformed XML was named in
             # that sentence. Its two siblings — selfcompact's stubber and focustrim's superseded-
@@ -1022,8 +1022,7 @@ def _compacted_note(dropped_msgs: list[dict], dropped: int, msg_budget: int) -> 
 
     files = _modified_files(dropped_msgs)
     if files:
-        parts.append("Files modified in them (still on disk — if no later copy of one is in "
-                     "this conversation, read it to get its current contents): " + ", ".join(files) + ".")
+        parts.append(prompts.render("compacted_modified_paths", files=", ".join(files)))
     # …AND SAY IT EVEN WHEN THE DROPPED TURNS ONLY READ. The line above fires only when the dropped
     # span itself contains a WRITE, but staleness does not depend on that: a turn that merely READ a
     # file is summarised here with that file's contents, and any LATER turn can have rewritten it.
