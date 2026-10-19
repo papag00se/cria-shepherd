@@ -408,6 +408,8 @@ _LINEAGE: tuple[AssistFamily, ...] = (
         (
             SourceOwner('cria/loop.py', '_judge_completion'),
             SourceOwner('cria/groundtruth.py', 'files_for_a_judge'),
+            SourceOwner('cria/prompts/judge_files.txt', ''),
+            SourceOwner('tests/test_a_toolless_judge_retry_keeps_the_workspace_facts.py', ''),
             SourceOwner('cria/verifytools.py', 'verdict_tool'),
             SourceOwner('cria/wsview.py', 'View'),
         ),

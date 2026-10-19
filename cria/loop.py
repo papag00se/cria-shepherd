@@ -847,7 +847,7 @@ def _critic_verdict(system: str, user: str, reasoner_chat, reasoner_role, rlog, 
     try:
         comp = _judge_completion(
             reasoner_chat, role, system, user, rlog, phase=phase,
-            workspace_root="" if reasoning_off else workspace_root,
+            workspace_root=workspace_root, allow_inspection=not reasoning_off,
             verdict_key=verdict_key, seed_files=True, evidence_blocks=evidence_blocks,
             evidence_intro=None, force_think_off=reasoning_off)
         vtext = _completion_text(comp)
@@ -1031,6 +1031,7 @@ def _judge_completion(chat_fn, role, system: str, user: str, rlog, *, phase: str
                       verdict_key: str = "",
                       verdict_schema: str = "",
                       seed_files: bool = False,
+                      allow_inspection: bool = True,
                       evidence_blocks: list[str] | None = None,
                       evidence_intro: str | None = "composed_evidence_intro") -> dict:
     """ONE judge completion whose author may first LOOK — the shared inspection loop behind the step
@@ -1062,7 +1063,8 @@ def _judge_completion(chat_fn, role, system: str, user: str, rlog, *, phase: str
             *([{"role": "user", "content": prompts.load(evidence_intro)}] if evidence_intro else []),
             *({"role": "user", "content": block} for block in evidence_blocks if block.strip()),
         ]
-    inspectable = bool(workspace_root) and wsview.current(workspace_root).surveyed
+    workspace_known = bool(workspace_root) and wsview.current(workspace_root).surveyed
+    inspectable = workspace_known and allow_inspection
     # HAND IT THE FILES RATHER THAN MAKE IT ASK. The loop below is the judge naming one file, cria
     # reading it, and the whole conversation being re-sent — 1,511 rounds across the captures, 87% of
     # them fetching exactly one file, at a cost that grows with every round (47K -> 62K -> 83K ->
@@ -1075,7 +1077,7 @@ def _judge_completion(chat_fn, role, system: str, user: str, rlog, *, phase: str
     # reasoner died four times. Its answer was a LIST plus tools, and it measured out at 210K -> 89K
     # chars with zero dead calls. That decision stands where it was made. Judges are different: the
     # context floor is their only window-fit point, so this site does not preselect or clip files.
-    if inspectable and seed_files:
+    if workspace_known and seed_files:
         seeded = groundtruth.files_for_a_judge(workspace_root)
         if seeded:
             # BEFORE the question, not after it. The files are context; the thing being asked has to
@@ -1907,7 +1909,7 @@ def judge_satisfaction(task: str, evidence: str, reasoner_chat, reasoner_role, r
     # "satisfied" that exists ONLY because the careful pass failed is downgraded and we fail CLOSED. A
     # false "done" over fake work is far worse than a few more work turns.
     retry = _satisfaction_verdict(system, asked, reasoner_chat, reasoner_role, rlog, reasoning_off=True,
-                                  evidence_blocks=blocks)
+                                  workspace_root=workspace_root, evidence_blocks=blocks)
     if retry is not None:
         retry = _fill_missing_verdict_flag(retry, "satisfied", rlog, "satisfaction-retry")
     if retry is None:
