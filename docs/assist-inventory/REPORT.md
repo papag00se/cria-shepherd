@@ -1266,21 +1266,21 @@ Frozen detail assignments and judgments remain in [detail-history.json](detail-h
   Structural migration claim: pending integration.
   Prompts: periodic_gate, probe_transport_unknown, tests_regressed, checks_completed, checks_completed_section, checks_no_output, checks_artifacts_removed, checks_cleanup_failed, checks_cleanup_unknown, checks_original_scope. Dependencies: none.
   Hooks: [`cria/loop.py:guard_gate_op`](../../cria/loop.py#L7054), [`cria/loop.py:guard_gate_replan_after_survey`](../../cria/loop.py#L7060), [`cria/loop.py:guard_periodic_replan_after_survey`](../../cria/loop.py#L7066), [`cria/loop.py:guard_gate_transport`](../../cria/loop.py#L7073), [`cria/loop.py:guard_periodic_gate`](../../cria/loop.py#L7360), [`cria/loop.py:guard_periodic_result`](../../cria/loop.py#L7432), [`cria/loop.py:guard_gate_verdict`](../../cria/loop.py#L7730), [`cria/loop.py:record_gate_state`](../../cria/loop.py#L7711), [`cria/loop.py:guard_probe_reissue`](../../cria/loop.py#L7325), [`cria/loop.py:passing_test_regression`](../../cria/loop.py#L8116), [`cria/loop.py:Loop._work_item`](../../cria/loop.py#L3490), [`cria/loop.py:Loop._verify_after_probe`](../../cria/loop.py#L3872), [`cria/loop.py:Loop._drive_single_item`](../../cria/loop.py#L4902).
-  Regressions: [`tests/test_repository_check_policy.py:test_admission_matches_current_periodic_owner`](../../tests/test_repository_check_policy.py#L97), [`tests/test_repository_check_policy.py:test_periodic_result_matches_current_owner`](../../tests/test_repository_check_policy.py#L205), [`tests/test_repository_check_policy.py:test_shared_settlement_matches_current_owner`](../../tests/test_repository_check_policy.py#L180), [`tests/test_repository_check_policy.py:test_task_and_step_rewrite_order`](../../tests/test_repository_check_policy.py#L312), [`tests/test_repository_check_policy.py:test_disabled_and_replacement_do_not_touch_unselected_state`](../../tests/test_repository_check_policy.py#L408).
+  Regressions: [`tests/test_repository_check_policy.py:test_admission_matches_current_periodic_owner`](../../tests/test_repository_check_policy.py#L97), [`tests/test_repository_check_policy.py:test_periodic_result_matches_current_owner`](../../tests/test_repository_check_policy.py#L205), [`tests/test_repository_check_policy.py:test_shared_settlement_matches_current_owner`](../../tests/test_repository_check_policy.py#L180), [`tests/test_repository_check_policy.py:test_task_and_step_rewrite_order`](../../tests/test_repository_check_policy.py#L312), [`tests/test_repository_check_policy.py:test_disabled_and_replacement_do_not_touch_unselected_state`](../../tests/test_repository_check_policy.py#L408), [`tests/test_historical_gate_scope_remains_bound.py:test_real_exact48_driver_final_post_keeps_historical_cleanup_facts`](../../tests/test_historical_gate_scope_remains_bound.py#L97).
 
 **Principal navigation/support owners (not exhaustive stage bindings):**
-- [`cria/probegate.py:sweep_litter`](../../cria/probegate.py#L2328)
-- [`cria/probegate.py:_queue_spool_cleanup`](../../cria/probegate.py#L2300)
+- [`cria/probegate.py:sweep_litter`](../../cria/probegate.py#L2359)
+- [`cria/probegate.py:_queue_spool_cleanup`](../../cria/probegate.py#L2331)
 - [`cria/gatecleanup.py:PROGRAM`](../../cria/gatecleanup.py#L118)
 - [`cria/probediscovery.py:discover`](../../cria/probediscovery.py#L405)
 - [`cria/probeclassify.py`](../../cria/probeclassify.py)
 - [`cria/proberun.py:select_completion_probes`](../../cria/proberun.py#L200)
 - [`cria/linterprobe.py:py_compile_argv`](../../cria/linterprobe.py#L177)
 - [`cria/proberun.py:compose_probe_command`](../../cria/proberun.py#L755)
-- [`cria/probegate.py:ingest_transport`](../../cria/probegate.py#L530)
-- [`cria/probegate.py:fail_transport`](../../cria/probegate.py#L479)
+- [`cria/probegate.py:ingest_transport`](../../cria/probegate.py#L533)
+- [`cria/probegate.py:fail_transport`](../../cria/probegate.py#L482)
 - [`cria/loop.py:guard_gate_transport`](../../cria/loop.py#L7073)
-- [`cria/probegate.py:interpret_gate`](../../cria/probegate.py#L2346)
+- [`cria/probegate.py:interpret_gate`](../../cria/probegate.py#L2376)
 - [`cria/probeparse.py`](../../cria/probeparse.py)
 - [`cria/proberun.py:completion_probe_digest`](../../cria/proberun.py#L684)
 - [`cria/loop.py:record_gate_state`](../../cria/loop.py#L7711)
@@ -1317,7 +1317,7 @@ Frozen detail assignments and judgments remain in [detail-history.json](detail-h
 - [`cria/participation.py`](../../cria/participation.py)
 - [`cria/completionapproval.py:test_participation`](../../cria/completionapproval.py#L117)
 - [`cria/loop.py:judge_satisfaction`](../../cria/loop.py#L1810)
-- [`cria/probegate.py:gate_passing_tests`](../../cria/probegate.py#L1688)
+- [`cria/probegate.py:gate_passing_tests`](../../cria/probegate.py#L1710)
 - [`cria/probediscovery.py:declared_test_source_paths`](../../cria/probediscovery.py#L703)
 
 **Historical families:** F43.

@@ -445,6 +445,9 @@ class GatePlan:
     # Structured build/source/test reach from THIS plan's interpreted gate event.  Populated only
     # by :func:`interpret_gate`; selection alone never creates participation facts.
     participation: participation.ParticipationReport | None = None
+    # False only for historical transports whose originating request facts are unavailable.
+    # A receipt cannot authenticate itself by supplying its own workspace claim.
+    transport_scope_known: bool = True
 
 
 @dataclass
@@ -547,9 +550,10 @@ def ingest_transport(plan: GatePlan, result_text: str, *, now: float | None = No
     # C39b: register THIS transport's per-section facts as soon as this plan is known to own it —
     # `plan.candidates` and `plan.transport_id` are both set at compose time, independent of how far
     # the transport itself has progressed, so this need not wait for completion. A no-op once
-    # already registered (see `_register_transport_facts`) and harmless for a plan with no
+    # already registered (see `_register_transport_facts`) and retains scope even with no
     # candidates (a git-only gate, `transport_required=False` fixtures).
-    _register_transport_facts(plan.transport_id, plan.candidates)
+    _register_transport_facts(plan.transport_id, plan.candidates, plan.workspace,
+                              scope_known=plan.transport_scope_known)
     if not plan.transport_required:
         return "legacy"
     if plan.transport_complete:
@@ -1224,24 +1228,35 @@ class _SectionFact:
 # gate's timeout renders with the same generic "a check" label base already used for any transport
 # whose facts were never known (unchanged fallback, see `_command_for_sid`).
 _TRANSPORT_FACTS_MAX = 500
-_transport_facts: "OrderedDict[str, list[_SectionFact]]" = OrderedDict()
+@dataclass(frozen=True)
+class _TransportFacts:
+    workspace: str
+    sections: tuple[_SectionFact, ...]
 
 
-def _register_transport_facts(transport_id: str, candidates: list) -> None:
-    """Record THIS transport's per-section facts, once. Called from :func:`ingest_transport` (the
+_transport_facts: "OrderedDict[str, _TransportFacts]" = OrderedDict()
+
+
+def _register_transport_facts(transport_id: str, candidates: list, workspace: str, *,
+                              scope_known: bool) -> None:
+    """Record THIS transport's original request scope and per-section facts, once.
+
+    Called from :func:`ingest_transport` (the
     one place every transport -- live or historical replay -- is fed its bytes) so both `plan_gate`
     callers and hand-built test plans (which assign `.candidates` directly, never calling
     `plan_gate`) register identically. A no-op once a transport_id is already known: facts are a
     property of the PLAN that composed the script, immutable for that transport's whole life, so a
     later caller re-ingesting the same id (e.g. `clean_gate_results` replaying an older page) must
     never overwrite the original with an empty/partial view."""
-    if not transport_id or not candidates or transport_id in _transport_facts:
+    # Empty candidate sets still carry an original bootstrap scope. Cold history
+    # has neither authority to assert a scope nor permission to seed this owner.
+    if not transport_id or not scope_known or transport_id in _transport_facts:
         return
-    _transport_facts[transport_id] = [
+    _transport_facts[transport_id] = _TransportFacts(workspace, tuple(
         _SectionFact(kind=c.kind, composed_by_cria=bool(getattr(c, "composed_by_cria", False)),
                     command=tuple(getattr(c, "command", None) or ()))
         for c in candidates
-    ]
+    ))
     _transport_facts.move_to_end(transport_id)
     while len(_transport_facts) > _TRANSPORT_FACTS_MAX:
         _transport_facts.popitem(last=False)
@@ -1250,7 +1265,14 @@ def _register_transport_facts(transport_id: str, candidates: list) -> None:
 def _facts_for_transport(transport_id: str) -> list:
     """This transport's persisted per-section facts, or ``[]`` when none were ever registered (a
     transport that predates this mechanism, or aged out of the bound)."""
-    return list(_transport_facts.get(transport_id) or [])
+    facts = _transport_facts.get(transport_id)
+    return list(facts.sections) if facts is not None else []
+
+
+def _workspace_for_transport(transport_id: str) -> str | None:
+    """Original request scope, never inferred from a cleanup receipt or spool name."""
+    facts = _transport_facts.get(transport_id)
+    return facts.workspace if facts is not None else None
 
 
 def _command_for_sid(plan, sid: str) -> str:
@@ -1353,7 +1375,7 @@ def clean_gate_output(raw: str, plan: "GatePlan | None" = None, *, annotate: boo
     # Historical transport replay can still contain the final survey. It is not
     # part of the last cleanup/checker section (interpret_gate strips it too).
     _sections = split_sections(wsview.strip_survey(raw)[0])
-    cleanup_note = cleanup_fact(_sections, plan.workspace if plan and plan.transport_required else None)
+    cleanup_note = cleanup_fact(_sections, plan)
     for sid, body in _sections.items():
         # `git` is no longer EMITTED (see plan_gate), but a gate result already in a session's
         # history still carries that section, and it must never read as a probe's output.
@@ -2042,8 +2064,9 @@ def clean_gate_results(messages: list, plan: "GatePlan | None" = None, *,
             # like an offset regression, so use its verified session state directly.
             transport_states[transport_id] = plan
             continue
-        historical = GatePlan(workspace="", transport_required=True,
-                              transport_id=transport_id)
+        scope = _workspace_for_transport(transport_id)
+        historical = GatePlan(workspace=scope if scope is not None else '', transport_required=True,
+                              transport_id=transport_id, transport_scope_known=scope is not None)
         # C39b: hand this rebuilt plan its OWN transport's persisted facts (kind, composed_by_cria,
         # command — see `_register_transport_facts`), so a section that timed out on THIS now-older
         # transport still names its command exactly as it did while this was the newest gate. A
@@ -2269,11 +2292,19 @@ def refusal_reason(result_text: str) -> str:
     return ""
 
 
-def cleanup_fact(sections: dict, expected_workspace: str | None = None) -> str:
+def _cleanup_record(sections: dict, plan: GatePlan | None = None) -> tuple[list[str], list[dict]] | None:
+    """Authenticate against the originating request, not a receipt's scope claim."""
+    if plan is not None and plan.transport_required and not plan.transport_scope_known:
+        return None
+    return gatecleanup.report(sections.get(LITTER_REMOVED_SECTION),
+                              plan.workspace if plan and plan.transport_required else None)
+
+
+def cleanup_fact(sections: dict, plan: GatePlan | None = None) -> str:
     """Keep the gate's own mutation facts separate from native checker lines."""
     if LITTER_REMOVED_SECTION not in sections:
         return ""
-    record = gatecleanup.report(sections[LITTER_REMOVED_SECTION], expected_workspace)
+    record = _cleanup_record(sections, plan)
     if record is None:
         return "\n" + prompts.load("checks_cleanup_unknown")
     removed, failed = record
@@ -2327,8 +2358,7 @@ def spool_cleanup_command(workspace: str) -> str:
 
 def sweep_litter(plan: GatePlan, sections: dict) -> list[str]:
     """Read completed harness removals; no server-side filesystem act or deferred mutation."""
-    record = gatecleanup.report((sections or {}).get(LITTER_REMOVED_SECTION),
-                                plan.workspace if plan.transport_required else None)
+    record = _cleanup_record(sections or {}, plan)
     root = getattr(plan, "workspace", "") or ""
     if record is None or not root:
         return []
@@ -2363,8 +2393,7 @@ def interpret_gate(plan: GatePlan, result_text: str, rlog=None) -> GateOutcome:
     # whichever section happened to be open when it started.
     result_text, survey = wsview.strip_survey(result_text)
     sections = split_sections(result_text)
-    cleanup_record = gatecleanup.report(sections.get(LITTER_REMOVED_SECTION),
-                                       plan.workspace if plan.transport_required else None)
+    cleanup_record = _cleanup_record(sections, plan)
     scope_unknown = bool((cleanup_record is not None and cleanup_record[1])
                          or (plan.transport_required and cleanup_record is None))
     if scope_unknown:

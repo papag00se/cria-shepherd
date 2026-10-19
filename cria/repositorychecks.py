@@ -470,7 +470,9 @@ DEFINITION = Definition(Policy(
     regressions=tuple(Reference("tests/test_repository_check_policy.py", name) for name in (
         "test_admission_matches_current_periodic_owner", "test_periodic_result_matches_current_owner",
         "test_shared_settlement_matches_current_owner", "test_task_and_step_rewrite_order",
-        "test_disabled_and_replacement_do_not_touch_unselected_state")), migrated=False),
+        "test_disabled_and_replacement_do_not_touch_unselected_state")) + (
+        Reference("tests/test_historical_gate_scope_remains_bound.py",
+                  "test_real_exact48_driver_final_post_keeps_historical_cleanup_facts"),), migrated=False),
     admit, resume, observe_acting_turn, completion_result, replan, reissue)
 DEFINITIONS = (DEFINITION,)
 
