@@ -56,6 +56,7 @@ RUNG_KINDS: dict[int, tuple[str, ...]] = {
         "http.access", "request.recv", "response.sent", "server.", "env.", "capture.",
         "upstream.", "usage.", "ctx.estimate", "context.window", "context.calibrated",
         "decision", "route.classify", "compat.", "harness.truncated_a_result",
+        "context.prefix",  # observes prepared bytes; does not reshape the request
         "config.warn",   # cria reporting on its OWN configuration; not a change to anything
     ),
     cfgmod.TOOL_CALL_FIXES: (

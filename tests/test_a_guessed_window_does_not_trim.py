@@ -87,7 +87,7 @@ class TheAsymmetryIsGoneTests(unittest.TestCase):
         """Both directions refuse the same guess. The abort guard has always read
         `not self._window_guessed`; the floor now does too."""
         import inspect
-        src = inspect.getsource(upstream.Upstream._prep)
+        src = inspect.getsource(upstream.Upstream._prep_wire)
         self.assertIn("_window_guessed", src)
 
 

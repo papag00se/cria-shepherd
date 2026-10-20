@@ -50,9 +50,11 @@ def _reply(text):
                          b"data: [DONE]\n"])
 
 
-def _context(url):
+def _context(url, real=45_000):
+    # The input still fits; the backend can reject the combined generation request.
+    # No-change controls must not depend on serializing known-oversized input.
     return json_reply({"error": {
-        "n_prompt_tokens": 90_000, "n_ctx": WINDOW,
+        "n_prompt_tokens": real, "n_ctx": WINDOW,
         "message": "request exceeds available context",
     }}, status=400)
 
@@ -79,6 +81,8 @@ class _Transport:
         self.calls += 1
         if self.mode == "context":
             return _context(url)
+        if self.mode == "unfittable_context":
+            return _context(url, real=90_000)
         if self.mode == "context_then_summary":
             if self.calls == 1:
                 return _context(url)
@@ -88,7 +92,7 @@ class _Transport:
             # inner body after normal floor state evolves; its empty successful
             # answer makes summarize open the ordinary same-role outer retry.
             if self.calls == 1:
-                return _context(url)
+                return _context(url, real=90_000)
             if self.calls == 2:
                 return _reply("")
             if self.calls == 3:
@@ -178,6 +182,16 @@ class CallerContextNoopRetryTests(unittest.TestCase):
         up, tr, rlog = self._upstream(), _Transport("context"), _Rlog("grounded")
         evidence = self._grounded(up, tr, rlog)
         self._assert_suppressed_context(evidence, tr, rlog)
+
+    def test_known_unfittable_protected_evidence_is_not_posted_again(self):
+        up, tr, rlog = self._upstream(), _Transport("unfittable_context"), _Rlog("unfittable")
+        evidence = self._satisfaction(up, tr, rlog, replace(OFF, reasoning="on"))
+        self.assertEqual(len(tr.posts), 1)
+        self.assertIn("x" * 60_001, evidence)
+        self.assertNotIn("recovered summary", evidence)
+        self.assertTrue(rlog.named("context.refit"))
+        self.assertTrue(any(event["over_budget"] for event in rlog.named("context.floor")))
+        self.assertEqual(len(self._captured_bodies(rlog)), 1)
 
     def test_changed_forced_off_final_wire_after_context_still_posts_and_recovers(self):
         up, tr, rlog = self._upstream(), _Transport("context_then_summary"), _Rlog("changed")

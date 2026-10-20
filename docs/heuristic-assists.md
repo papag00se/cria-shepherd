@@ -2,6 +2,8 @@
 
 Mechanism notes organized by interaction type—not a count of independent assists. The canonical [family and migration map](assist-inventory/REPORT.md) supplies current responsibilities, distinguishing boundaries, stable aliases, principal navigation owners and frozen historical lineage; its single family source is [`cria/assistfamilies.py`](../cria/assistfamilies.py). Registered atomic metadata comes directly from production executable definitions; unmigrated navigation coverage remains explicitly pending, not accepted runtime ownership. Families group maintenance responsibilities, not switches or endorsements. [Architecture doctrine](shephard.md#assist-and-family-boundaries) defines atomic/family creation and consolidation. Planning remains explicitly opt-in and OFF by default. Design rationale lives in [local-coder-massaging.md](local-coder-massaging.md); architecture and research boundaries in [shephard.md](shephard.md).
 
+Assists are **L5 only**. This catalog also describes L0–L4 wire fixes, cria tools, context fitting (including history compaction) and completion brakes; their presence here does not make them assists. The `rank4-ablation` profile removes only the nine ranked definitions with `default_level = 5`, preserving all level-eligible L0–L4 mechanisms. Disabling the former full list of 48 also removed 39 non-assist mechanisms and therefore did not isolate assists. The [ranking](audits/assist-principles-ranking.md) remains a historical assessment of all registered definitions, not the profile's disabled set.
+
 ## Nudges — directives/refusals the model sees
 
 - **Repetition guard** — same tool + args 3× in-window → run the repo's checks, then a grounded reasoner redirect (canned fallback).

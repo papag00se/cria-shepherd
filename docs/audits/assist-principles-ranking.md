@@ -21,6 +21,8 @@ Within each tier, registry order is retained; it is **not** a finer ranking. Ran
 
 **Retention remains unproven:** §1 requires current counterfactual benefit evidence. This assessment supplies none, including for rank 1. It also does not manufacture a universal violation merely because a new ablation was not performed here.
 
+**Current profile boundary (operator decision): assists are L5 only.** This historical ranking includes definitions at every engagement level; its 48 Rank-4 rows remain unchanged. The `rank4-ablation` profile now disables only the nine Rank-4 definitions with `default_level = 5` (`cria/assistprofiles.py::RANK4_ABLATION_DISABLED`). The other 39 are L0–L4 wire fixes, cria tools, context fitting (including `rolling-transcript-memory` at L4 and `harness-memory-handoff` at L3), or completion brakes, so an assist-only ablation must retain them when level-eligible. The original all-48 selection incorrectly removed those mechanisms. `RANK4_DISABLED` preserves that ranking record, not the active profile. Historical runs keep their original identity and captures; compare their deployed revision and recorded `pilot_assists`, not the unchanged profile name alone. This policy correction does not resolve the source conflicts recorded below or establish benefit.
+
 ## Rank 1 — Aligned in inspected behavior
 
 | Registry # | Atomic ID | Principles | Reason and committed evidence | Relevant tests inspected |

@@ -11,10 +11,10 @@ from pathlib import Path
 import subprocess
 
 import pytest
-from cria import assistprofiles, assistruntime, config, loop, server
+from cria import assistprofiles, assistruntime, config, loop, prompts, server
 from suite import run
 from test_engagement_levels import _Harness
-from test_server import _FakeUpstream
+from test_server import _CLASSIFY_JSON, _FakeUpstream, _compaction_validation_verdict
 
 
 @pytest.mark.skipif(not run.RESTORED_CODEX_BINARY.exists(), reason='pinned Codex integration')
@@ -24,10 +24,10 @@ def test_pinned_client_compacts_for_retained_context_not_private_consumption(tmp
     large_public = mode == 'large-public'
     native = {'prompt_tokens': 13734, 'completion_tokens': 32467, 'total_tokens': 46201,
               'prompt_tokens_details': {'cached_tokens': 13004}}
-    calls, wire = [], []
+    calls, wire, upstream_phases = [], [], []
     def drive(self, body, key, classification, rlog, *, pasted_delivery=None):
         assert assistruntime.current().profile == 'rank4-ablation'
-        assert not set(assistruntime.current().selected).intersection(assistprofiles.RANK4_DISABLED)
+        assert not set(assistruntime.current().selected).intersection(assistprofiles.RANK4_ABLATION_DISABLED)
         calls.append(copy.deepcopy(body))
         if len(calls) == 1:
             message = {'role': 'assistant',
@@ -45,9 +45,28 @@ def test_pinned_client_compacts_for_retained_context_not_private_consumption(tmp
     monkeypatch.setattr(loop.Loop, 'drive', drive)
     def summary(handler):
         body = json.loads(handler.rfile.read(int(handler.headers['Content-Length'])))
-        assert not body.get('tools'), 'only the compaction proxy may reach this fake upstream'
+        assert not body.get('tools'), 'coding must use the scripted driver'
+        system = body['messages'][0]['content']
+        # The profile keeps L1 classification and L3 harness-memory handoff. Their
+        # judges need real fixture answers; summary prose makes recognition abstain
+        # and classification retry/fall back, misrouting compaction into the driver.
+        if system == prompts.load('classify'):
+            upstream_phases.append('classifier')
+            handler._json(_CLASSIFY_JSON)
+            return
+        verdict = _compaction_validation_verdict(system)
+        if 'ASKING FOR A SUMMARY OF THE CONVERSATION SO FAR' in system:
+            upstream_phases.append('compaction-recognize')
+            content = 'YES'
+        elif verdict:
+            upstream_phases.append('compaction-validate')
+            content = verdict
+        else:
+            assert system == prompts.load('selfcompact_summary')
+            upstream_phases.append('summary')
+            content = 'The task requested echo context-proof. The echo succeeded.'
         handler._json(json.dumps({'choices': [{'message': {'role': 'assistant',
-            'content': 'The task requested echo context-proof. The echo succeeded; finish now.'},
+            'content': content},
             'finish_reason': 'stop'}], 'usage': {
                 'prompt_tokens': 500, 'completion_tokens': 20, 'total_tokens': 520}}).encode())
     monkeypatch.setattr(_FakeUpstream, 'do_POST', summary)
@@ -87,7 +106,7 @@ def test_pinned_client_compacts_for_retained_context_not_private_consumption(tmp
     monkeypatch.setattr(server.CriaHandler, '_raw_write', capture)
     try:
         assert harness.cria.cfg.assists.profile == 'rank4-ablation'
-        assert len(harness.cria.pilot_runtime.selected) == 27
+        assert set(harness.cria.pilot_runtime.selected).isdisjoint(assistprofiles.RANK4_ABLATION_DISABLED)
         assert not harness.cria.cfg.planner.enabled
         fake_provider = f'http://127.0.0.1:{harness.fake.server_address[1]}'
         assert harness.cria.cfg.upstream.base_url == fake_provider
@@ -105,6 +124,9 @@ def test_pinned_client_compacts_for_retained_context_not_private_consumption(tmp
                   if line.startswith('data: ')]
         replies = [event['response'] for event in events if event.get('type') == 'response.completed']
         assert replies and len(calls) == 2
+        assert upstream_phases.count('classifier') == 1
+        assert upstream_phases.count('summary') == int(legacy or large_public)
+        assert upstream_phases.count('compaction-recognize') == int(legacy or large_public)
         usage = replies[0]['usage']
         trigger = int(49152 * .85)
         if legacy or large_public:

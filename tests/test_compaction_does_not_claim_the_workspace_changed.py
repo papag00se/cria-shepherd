@@ -34,7 +34,7 @@ def test_dated_read_provenance_does_not_assert_a_workspace_mutation(tmp_path, ch
 
 
 @pytest.mark.parametrize('changed', [False, True])
-def test_exact48_real_driver_final_post_keeps_history_dated_without_a_change_claim(tmp_path, monkeypatch, changed):
+def test_rank4_ablation_real_driver_final_post_keeps_history_dated_without_a_change_claim(tmp_path, monkeypatch, changed):
     monkeypatch.chdir(tmp_path)
     source = tmp_path / 'source.txt'
     source.write_text('previous source observation\n')

@@ -54,8 +54,8 @@ def test_final_wire_retains_permission_authority_without_inventing_restrictions(
     # Real source/API research and the original task remain present, not removed for progress.
     assert 'READ that external source documentation before writing code against it' in text
     assert body['messages'][1]['content'] in text
-    assert not set(runtime.selected).intersection(assistprofiles.RANK4_DISABLED)
-    assert len(runtime.selected) == 27
+    assert set(runtime.selected) == (set(assistruntime.AssistRuntime.select(level=5).selected)
+                                     - set(assistprofiles.RANK4_ABLATION_DISABLED))
 
 
 def test_user_text_cannot_create_external_grants():

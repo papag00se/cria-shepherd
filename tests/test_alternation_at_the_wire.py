@@ -121,7 +121,7 @@ class TheHintIsCarriedNotTheTransformTests(unittest.TestCase):
 
     def test_the_merge_is_the_last_message_transform(self):
         """If a transform is ever added after it, the bug comes straight back."""
-        src = inspect.getsource(upstream.Upstream._prep)
+        src = inspect.getsource(upstream.Upstream._prep_wire)
         after = src[src.index("massage.merge_for_alternation"):]
         self.assertNotIn("msgs =", after.split('out["messages"]')[0],
                          "a message transform runs after the alternation merge")
@@ -136,7 +136,7 @@ class NoOpForEveryModelThatDoesNotAskTests(unittest.TestCase):
         self.assertEqual(massage.merge_for_alternation(msgs), msgs if _alternates(msgs) else
                          massage.merge_for_alternation(msgs))
         # the real invariant: the wire only calls it when the hint is present
-        src = inspect.getsource(upstream.Upstream._prep)
+        src = inspect.getsource(upstream.Upstream._prep_wire)
         self.assertIn("if body.get(massage.MERGE_TURNS_KEY):", src)
 
     def test_consecutive_user_turns_are_untouched_without_the_flag(self):

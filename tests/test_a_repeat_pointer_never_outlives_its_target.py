@@ -17,9 +17,11 @@ class _Rlog:
 
     def __init__(self):
         self.events = []
+        self.fields = []
 
     def emit(self, kind, **k):
         self.events.append(kind)
+        self.fields.append((kind, k))
 
 
 def _call(tid, cmd="cat F.java"):
@@ -44,7 +46,10 @@ def _text(ms):
 def _prep(msgs, window, rlog=None):
     up = upstream.Upstream("http://unused", context_window=window,
                            engagement_level=config.MAX_ENGAGEMENT_LEVEL)
-    raw, _e, _c = up._prep({"model": "m", "messages": msgs}, False, rlog or _Rlog())
+    # The fixed windows and size assertions below specify this density. Keep
+    # observations from other requests to model "m" intact and out of this oracle.
+    raw, _e, _c = up._prep({"model": "m", "messages": msgs}, False, rlog or _Rlog(),
+                           safety_override=contextfloor.SAFETY_FACTOR)
     return json.loads(raw)["messages"]
 
 
@@ -55,14 +60,28 @@ def test_the_loop_call_site_no_longer_folds_whole_messages():
 
 def test_the_old_order_dangles_somewhere_and_the_wire_never_does():
     old_dangles = False
+    prepared = refused = 0
     for window in range(700, 6000, 25):
         pre, _n = modelview.fold_repeats(_msgs())              # what the call site used to do
         fitted, _t, _r = contextfloor.fit(pre, None, window=window, reserve=0, safety=1.0)
         if NOTE in _text(fitted) and MARK not in _text(fitted):
             old_dangles = True
-        sent = _text(_prep(_msgs(), window))
+        log = _Rlog()
+        try:
+            messages = _prep(_msgs(), window, log)
+        except upstream.UpstreamError as exc:
+            assert 'context window' in str(exc)
+            floor = [e for kind, e in log.fields if kind == 'context.floor'][-1]
+            assert floor['over_budget']
+            assert floor['msg_after'] * floor['safety'] > window
+            refused += 1
+            continue
+        assert contextfloor.est_total(messages, None) * contextfloor.SAFETY_FACTOR <= window
+        prepared += 1
+        sent = _text(messages)
         assert (MARK in sent) or (NOTE not in sent), window    # a pointer only ever has its copy
     assert old_dangles, "the sweep must reproduce the incident shape under the old order"
+    assert prepared and refused, "exercise valid wires and refusals of impossible protected tails"
 
 
 def test_a_fitting_body_is_folded_once_at_the_wire_and_reported():

@@ -94,7 +94,7 @@ def test_retry_cannot_overwrite_the_original_scope_with_another_workspace(tmp_pa
     assert prompts.load('checks_cleanup_unknown') not in text and 'aux/compiled' in text
 
 
-def test_real_exact48_driver_final_post_keeps_historical_cleanup_facts(tmp_path, monkeypatch):
+def test_real_rank4_ablation_driver_final_post_keeps_historical_cleanup_facts(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     runtime = assistruntime.AssistRuntime.select(level=5, profile='rank4-ablation')
     with assistruntime.bound(runtime):

@@ -6,6 +6,8 @@ Canonical family metadata: [`cria/assistfamilies.py`](../../cria/assistfamilies.
 
 Planning remains OFF unless explicitly enabled. Families are not switches or efficacy scores. Supporting components and external artifacts are not removable steering policies.
 
+Assists are **L5 only**. Registered definitions also cover L0–L4 wire fixes, cria tools, context fitting (including history compaction) and completion brakes; registry membership is not an assist count. The `rank4-ablation` profile disables only the nine Rank-4 definitions with `default_level = 5`, retaining all level-eligible L0–L4 mechanisms. The historical 48-entry ranking record is not the active disabled set; see the [profile contract](../../README.md#exact-rank-4-ablation).
+
 Frozen detail assignments and judgments remain in [detail-history.json](detail-history.json). Current ownership resolves direct aliases; no stored history or captures are rewritten.
 
 ## Current families
@@ -301,7 +303,7 @@ Frozen detail assignments and judgments remain in [detail-history.json](detail-h
   Caller triggers: none.
   Structural migration claim: pending integration.
   Prompts: none. Dependencies: none.
-  Hooks: [`cria/upstream.py:Upstream._prep`](../../cria/upstream.py#L378), [`cria/massage.py:repair_history_tool_args`](../../cria/massage.py#L291).
+  Hooks: [`cria/upstream.py:Upstream._prep`](../../cria/upstream.py#L456), [`cria/massage.py:repair_history_tool_args`](../../cria/massage.py#L291).
   Regressions: [`tests/test_history_argument_policy.py:test_full_history_keeps_names_ids_roles_outputs_and_literal_values`](../../tests/test_history_argument_policy.py#L37), [`tests/test_history_argument_policy.py:test_final_prep_repairs_a_downstream_append_with_optional_recovery_disabled`](../../tests/test_history_argument_policy.py#L199), [`tests/test_history_argument_policy.py:test_public_compat_and_final_prep_use_the_same_replacement_raw_bytes_and_logs`](../../tests/test_history_argument_policy.py#L291).
 
 **Principal navigation/support owners (not exhaustive stage bindings):**
@@ -332,8 +334,8 @@ Frozen detail assignments and judgments remain in [detail-history.json](detail-h
 
 **Principal navigation/support owners (not exhaustive stage bindings):**
 - [`cria/historyarguments.py:prepare_history`](../../cria/historyarguments.py#L91)
-- [`cria/contextfloor.py:ensure_tool_integrity`](../../cria/contextfloor.py#L516)
-- [`cria/upstream.py:Upstream._prep`](../../cria/upstream.py#L378)
+- [`cria/contextfloor.py:ensure_tool_integrity`](../../cria/contextfloor.py#L620)
+- [`cria/upstream.py:Upstream._prep`](../../cria/upstream.py#L456)
 
 **Historical families:** F07.
 
@@ -994,7 +996,7 @@ Frozen detail assignments and judgments remain in [detail-history.json](detail-h
 **Principal navigation/support owners (not exhaustive stage bindings):**
 - [`cria/config.py:Role.apply`](../../cria/config.py#L302)
 - [`cria/massage.py:merge_for_alternation`](../../cria/massage.py#L320)
-- [`cria/upstream.py:Upstream._prep`](../../cria/upstream.py#L378)
+- [`cria/upstream.py:Upstream._prep`](../../cria/upstream.py#L456)
 
 **Historical families:** F29.
 
@@ -1268,7 +1270,7 @@ Frozen detail assignments and judgments remain in [detail-history.json](detail-h
   Structural migration claim: pending integration.
   Prompts: periodic_gate, probe_transport_unknown, tests_regressed, checks_completed, checks_completed_section, checks_no_output, checks_artifacts_removed, checks_cleanup_failed, checks_cleanup_unknown, checks_original_scope. Dependencies: none.
   Hooks: [`cria/loop.py:guard_gate_op`](../../cria/loop.py#L7064), [`cria/loop.py:guard_gate_replan_after_survey`](../../cria/loop.py#L7070), [`cria/loop.py:guard_periodic_replan_after_survey`](../../cria/loop.py#L7076), [`cria/loop.py:guard_gate_transport`](../../cria/loop.py#L7083), [`cria/loop.py:guard_periodic_gate`](../../cria/loop.py#L7370), [`cria/loop.py:guard_periodic_result`](../../cria/loop.py#L7442), [`cria/loop.py:guard_gate_verdict`](../../cria/loop.py#L7740), [`cria/loop.py:record_gate_state`](../../cria/loop.py#L7721), [`cria/loop.py:guard_probe_reissue`](../../cria/loop.py#L7335), [`cria/loop.py:passing_test_regression`](../../cria/loop.py#L8126), [`cria/loop.py:Loop._work_item`](../../cria/loop.py#L3492), [`cria/loop.py:Loop._verify_after_probe`](../../cria/loop.py#L3874), [`cria/loop.py:Loop._drive_single_item`](../../cria/loop.py#L4904).
-  Regressions: [`tests/test_repository_check_policy.py:test_admission_matches_current_periodic_owner`](../../tests/test_repository_check_policy.py#L97), [`tests/test_repository_check_policy.py:test_periodic_result_matches_current_owner`](../../tests/test_repository_check_policy.py#L205), [`tests/test_repository_check_policy.py:test_shared_settlement_matches_current_owner`](../../tests/test_repository_check_policy.py#L180), [`tests/test_repository_check_policy.py:test_task_and_step_rewrite_order`](../../tests/test_repository_check_policy.py#L312), [`tests/test_repository_check_policy.py:test_disabled_and_replacement_do_not_touch_unselected_state`](../../tests/test_repository_check_policy.py#L408), [`tests/test_historical_gate_scope_remains_bound.py:test_real_exact48_driver_final_post_keeps_historical_cleanup_facts`](../../tests/test_historical_gate_scope_remains_bound.py#L97).
+  Regressions: [`tests/test_repository_check_policy.py:test_admission_matches_current_periodic_owner`](../../tests/test_repository_check_policy.py#L97), [`tests/test_repository_check_policy.py:test_periodic_result_matches_current_owner`](../../tests/test_repository_check_policy.py#L205), [`tests/test_repository_check_policy.py:test_shared_settlement_matches_current_owner`](../../tests/test_repository_check_policy.py#L180), [`tests/test_repository_check_policy.py:test_task_and_step_rewrite_order`](../../tests/test_repository_check_policy.py#L312), [`tests/test_repository_check_policy.py:test_disabled_and_replacement_do_not_touch_unselected_state`](../../tests/test_repository_check_policy.py#L408), [`tests/test_historical_gate_scope_remains_bound.py:test_real_rank4_ablation_driver_final_post_keeps_historical_cleanup_facts`](../../tests/test_historical_gate_scope_remains_bound.py#L97).
 
 **Principal navigation/support owners (not exhaustive stage bindings):**
 - [`cria/probegate.py:sweep_litter`](../../cria/probegate.py#L2359)
@@ -1431,13 +1433,13 @@ Frozen detail assignments and judgments remain in [detail-history.json](detail-h
   Caller triggers: none.
   Structural migration claim: pending integration.
   Prompts: rumination_guard_window, rumination_guard_dead_stream, rumination_guard_degenerate, rumination_guard_length, rumination_guard, rumination_next_step_grounded. Dependencies: none.
-  Hooks: [`cria/server.py:CriaServer.__init__`](../../cria/server.py#L704), [`cria/upstream.py:Upstream.chat_watched`](../../cria/upstream.py#L983), [`cria/loop.py:guard_rumination`](../../cria/loop.py#L10863).
+  Hooks: [`cria/server.py:CriaServer.__init__`](../../cria/server.py#L704), [`cria/upstream.py:Upstream.chat_watched`](../../cria/upstream.py#L1139), [`cria/loop.py:guard_rumination`](../../cria/loop.py#L10863).
   Regressions: [`tests/test_generation_guard_policies.py:test_stream_abort_authority`](../../tests/test_generation_guard_policies.py#L85), [`tests/test_generation_guard_policies.py:test_runaway_recovery_parity`](../../tests/test_generation_guard_policies.py#L200), [`tests/test_generation_guard_policies.py:test_clock_and_wire_timeouts_have_their_own_facts`](../../tests/test_generation_guard_policies.py#L110), [`tests/test_generation_guard_policies.py:test_quarantined_exhaustion_keeps_original_reply_and_event_bytes`](../../tests/test_generation_guard_policies.py#L231), [`tests/test_generation_guard_policies.py:test_selected_replacements_are_called_in_order_and_keep_distinct_results`](../../tests/test_generation_guard_policies.py#L445).
 
 **Principal navigation/support owners (not exhaustive stage bindings):**
 - [`cria/generationguards.py:Detector`](../../cria/generationguards.py#L50)
 - [`cria/generationguards.py:degenerate_wide`](../../cria/generationguards.py#L95)
-- [`cria/upstream.py:Upstream.chat_watched`](../../cria/upstream.py#L983)
+- [`cria/upstream.py:Upstream.chat_watched`](../../cria/upstream.py#L1139)
 - [`cria/loop.py:grounded_rumination_step`](../../cria/loop.py#L10718)
 
 **Historical families:** F48.
@@ -1746,13 +1748,13 @@ Frozen detail assignments and judgments remain in [detail-history.json](detail-h
   Regressions: [`tests/test_capacity_policy.py:test_literal_changed_wire`](../../tests/test_capacity_policy.py#L55), [`tests/test_capacity_production_binding.py:test_original_public_no_change`](../../tests/test_capacity_production_binding.py#L80).
 
 **Principal navigation/support owners (not exhaustive stage bindings):**
-- [`cria/upstream.py:Upstream._prep`](../../cria/upstream.py#L378)
+- [`cria/upstream.py:Upstream._prep`](../../cria/upstream.py#L456)
 - [`cria/capacitypolicy.py:choose_refit`](../../cria/capacitypolicy.py#L54)
 - [`cria/capacitypolicy.py:dispatch`](../../cria/capacitypolicy.py#L119)
 - [`cria/capacitypolicy.py:fit_density`](../../cria/capacitypolicy.py#L73)
-- [`cria/upstream.py:Upstream._observe_capacity`](../../cria/upstream.py#L633)
-- [`cria/upstream.py:Upstream._open_with_refit`](../../cria/upstream.py#L650)
-- [`cria/contextfloor.py:fit`](../../cria/contextfloor.py#L327)
+- [`cria/upstream.py:Upstream._observe_capacity`](../../cria/upstream.py#L789)
+- [`cria/upstream.py:Upstream._open_with_refit`](../../cria/upstream.py#L806)
+- [`cria/contextfloor.py:fit`](../../cria/contextfloor.py#L408)
 - [`cria/tokenratio.py:record`](../../cria/tokenratio.py#L49)
 
 **Historical families:** F55.
@@ -1777,7 +1779,7 @@ Frozen detail assignments and judgments remain in [detail-history.json](detail-h
 
 **Principal navigation/support owners (not exhaustive stage bindings):**
 - [`cria/modelview.py:wire_messages`](../../cria/modelview.py#L52)
-- [`cria/upstream.py:Upstream._prep`](../../cria/upstream.py#L378)
+- [`cria/upstream.py:Upstream._prep`](../../cria/upstream.py#L456)
 - [`cria/bodykeys.py`](../../cria/bodykeys.py)
 - [`cria/prompts/__init__.py:fill`](../../cria/prompts/__init__.py#L25)
 
@@ -1804,7 +1806,7 @@ Frozen detail assignments and judgments remain in [detail-history.json](detail-h
 **Principal navigation/support owners (not exhaustive stage bindings):**
 - [`cria/config.py:Role.apply`](../../cria/config.py#L302)
 - [`cria/reasoning.py:detect_served_style`](../../cria/reasoning.py#L41)
-- [`cria/upstream.py:Upstream._reconcile_reasoning_convention`](../../cria/upstream.py#L316)
+- [`cria/upstream.py:Upstream._reconcile_reasoning_convention`](../../cria/upstream.py#L394)
 
 **Historical families:** F57.
 
@@ -1834,7 +1836,7 @@ Frozen detail assignments and judgments remain in [detail-history.json](detail-h
   Regressions: [`tests/test_transient_recovery_policy.py:test_literal_choices`](../../tests/test_transient_recovery_policy.py#L25), [`tests/test_transient_recovery_production_binding.py:test_original_chat_timeout_bytes`](../../tests/test_transient_recovery_production_binding.py#L51).
 
 **Principal navigation/support owners (not exhaustive stage bindings):**
-- [`cria/upstream.py:Upstream.chat`](../../cria/upstream.py#L913)
+- [`cria/upstream.py:Upstream.chat`](../../cria/upstream.py#L1069)
 - [`cria/transientpolicy.py:Failure`](../../cria/transientpolicy.py#L15)
 - [`cria/transientpolicy.py:choose`](../../cria/transientpolicy.py#L109)
 - [`cria/transientpolicy.py:selected_choice`](../../cria/transientpolicy.py#L152)
@@ -2101,9 +2103,9 @@ Frozen detail assignments and judgments remain in [detail-history.json](detail-h
   Regressions: [`tests/test_preamble_policy_source.py:test_source_parity`](../../tests/test_preamble_policy_source.py#L62), [`tests/test_preamble_policy_source.py:test_real_coder_and_reasoner_body_parity`](../../tests/test_preamble_policy_source.py#L145), [`tests/test_common_context_preparation.py:test_absent_context_selection_never_runs_optional_leaf_detection`](../../tests/test_common_context_preparation.py#L275).
 
 **Principal navigation/support owners (not exhaustive stage bindings):**
-- [`cria/contextfloor.py:_protected_mask`](../../cria/contextfloor.py#L656)
-- [`cria/contextfloor.py:_reduce_caller_spans`](../../cria/contextfloor.py#L417)
-- [`cria/contextfloor.py:_compress_tools`](../../cria/contextfloor.py#L453)
+- [`cria/contextfloor.py:_protected_mask`](../../cria/contextfloor.py#L782)
+- [`cria/contextfloor.py:_reduce_caller_spans`](../../cria/contextfloor.py#L521)
+- [`cria/contextfloor.py:_compress_tools`](../../cria/contextfloor.py#L557)
 - [`cria/preamblepolicy.py:reframe`](../../cria/preamblepolicy.py#L104)
 - [`cria/loop.py:Loop._prepare_coder_context`](../../cria/loop.py#L5192)
 - [`cria/loop.py:_frame_for_item`](../../cria/loop.py#L6145)
@@ -2130,18 +2132,18 @@ Frozen detail assignments and judgments remain in [detail-history.json](detail-h
 - None (not an acceptance claim).
 
 **Principal navigation/support owners (not exhaustive stage bindings):**
-- [`cria/contextfloor.py:fit`](../../cria/contextfloor.py#L327)
-- [`cria/contextfloor.py:_compress_tools`](../../cria/contextfloor.py#L453)
-- [`cria/contextfloor.py:_reduce_caller_spans`](../../cria/contextfloor.py#L417)
-- [`cria/contextfloor.py:_reduce_restored_text`](../../cria/contextfloor.py#L205)
-- [`cria/contextfloor.py:_reduce_tool_outputs`](../../cria/contextfloor.py#L554)
-- [`cria/contextfloor.py:_drop_oldest`](../../cria/contextfloor.py#L784)
-- [`cria/contextfloor.py:_drop_protected_overflow`](../../cria/contextfloor.py#L727)
-- [`cria/contextfloor.py:_compacted_note`](../../cria/contextfloor.py#L944)
+- [`cria/contextfloor.py:fit`](../../cria/contextfloor.py#L408)
+- [`cria/contextfloor.py:_compress_tools`](../../cria/contextfloor.py#L557)
+- [`cria/contextfloor.py:_reduce_caller_spans`](../../cria/contextfloor.py#L521)
+- [`cria/contextfloor.py:_reduce_restored_text`](../../cria/contextfloor.py#L286)
+- [`cria/contextfloor.py:_reduce_tool_outputs`](../../cria/contextfloor.py#L658)
+- [`cria/contextfloor.py:_drop_oldest`](../../cria/contextfloor.py#L924)
+- [`cria/contextfloor.py:_drop_protected_overflow`](../../cria/contextfloor.py#L853)
+- [`cria/contextfloor.py:_compacted_note`](../../cria/contextfloor.py#L1079)
 - [`cria/prompts/compacted_modified_paths.txt`](../../cria/prompts/compacted_modified_paths.txt)
-- [`cria/upstream.py:Upstream._prep`](../../cria/upstream.py#L378)
+- [`cria/upstream.py:Upstream._prep`](../../cria/upstream.py#L456)
 - [`tests/test_wire_fit_foundation_contract.py`](../../tests/test_wire_fit_foundation_contract.py)
-- [`tests/test_compaction_does_not_claim_the_workspace_changed.py:test_exact48_real_driver_final_post_keeps_history_dated_without_a_change_claim`](../../tests/test_compaction_does_not_claim_the_workspace_changed.py#L37)
+- [`tests/test_compaction_does_not_claim_the_workspace_changed.py:test_rank4_ablation_real_driver_final_post_keeps_history_dated_without_a_change_claim`](../../tests/test_compaction_does_not_claim_the_workspace_changed.py#L37)
 
 **Historical families:** F68.
 
@@ -2175,16 +2177,16 @@ Frozen detail assignments and judgments remain in [detail-history.json](detail-h
   Caller triggers: none.
   Structural migration claim: pending integration.
   Prompts: repeated_message_note. Dependencies: none.
-  Hooks: [`cria/upstream.py:Upstream._prep`](../../cria/upstream.py#L378), [`cria/modelview.py:visible_tokens`](../../cria/modelview.py#L110).
-  Regressions: [`tests/test_context_memory_migration.py:test_wire_stages_preserve_source_and_selection_without_gathering_on_bypass`](../../tests/test_context_memory_migration.py#L235), [`tests/test_a_repeat_pointer_never_outlives_its_target.py:test_the_old_order_dangles_somewhere_and_the_wire_never_does`](../../tests/test_a_repeat_pointer_never_outlives_its_target.py#L56), [`tests/test_context_wire_selection.py:test_wire_uses_exact_selected_fold_without_default_fallback`](../../tests/test_context_wire_selection.py#L22), [`tests/test_context_wire_selection.py:test_changed_trial_refits_original_unfolded_history_with_identical_budgets`](../../tests/test_context_wire_selection.py#L44).
+  Hooks: [`cria/upstream.py:Upstream._prep`](../../cria/upstream.py#L456), [`cria/modelview.py:visible_tokens`](../../cria/modelview.py#L110).
+  Regressions: [`tests/test_context_memory_migration.py:test_wire_stages_preserve_source_and_selection_without_gathering_on_bypass`](../../tests/test_context_memory_migration.py#L235), [`tests/test_a_repeat_pointer_never_outlives_its_target.py:test_the_old_order_dangles_somewhere_and_the_wire_never_does`](../../tests/test_a_repeat_pointer_never_outlives_its_target.py#L61), [`tests/test_context_wire_selection.py:test_wire_uses_exact_selected_fold_without_default_fallback`](../../tests/test_context_wire_selection.py#L22), [`tests/test_context_wire_selection.py:test_changed_trial_refits_original_unfolded_history_with_identical_budgets`](../../tests/test_context_wire_selection.py#L44).
 - `wire-repeated-check-evidence` — [`cria/modelview.py:REPEATED_CHECKS`](../../cria/modelview.py); execute `fold_check_runs`.
   Stage `wire-evidence-fold`; default level 3; scope `runtime`.
   State: none. Services: surviving-check-carriers.
   Caller triggers: none.
   Structural migration claim: pending integration.
   Prompts: repeated_message_note. Dependencies: none.
-  Hooks: [`cria/upstream.py:Upstream._prep`](../../cria/upstream.py#L378), [`cria/modelview.py:visible_tokens`](../../cria/modelview.py#L110).
-  Regressions: [`tests/test_context_memory_migration.py:test_wire_check_runs_fold_only_when_the_later_exact_source_survives`](../../tests/test_context_memory_migration.py#L258), [`tests/test_c13b_the_wire_claims_are_true.py:test_every_line_a_pointer_replaced_is_shown_in_the_body_sent`](../../tests/test_c13b_the_wire_claims_are_true.py#L213), [`tests/test_context_wire_selection.py:test_changed_trial_refits_original_unfolded_history_with_identical_budgets`](../../tests/test_context_wire_selection.py#L44).
+  Hooks: [`cria/upstream.py:Upstream._prep`](../../cria/upstream.py#L456), [`cria/modelview.py:visible_tokens`](../../cria/modelview.py#L110).
+  Regressions: [`tests/test_context_memory_migration.py:test_wire_check_runs_fold_only_when_the_later_exact_source_survives`](../../tests/test_context_memory_migration.py#L258), [`tests/test_c13b_the_wire_claims_are_true.py:test_every_line_a_pointer_replaced_is_shown_in_the_body_sent`](../../tests/test_c13b_the_wire_claims_are_true.py#L220), [`tests/test_context_wire_selection.py:test_changed_trial_refits_original_unfolded_history_with_identical_budgets`](../../tests/test_context_wire_selection.py#L44).
 - `ledger-copy-pointers` — [`cria/ledgercopies.py:DEFINITION`](../../cria/ledgercopies.py); execute `elide`.
   Stage `coder-ledger-copy-elision`; default level 4; scope `runtime`.
   State: none. Services: authoritative-fetch-ledger, byte-exact-dedup.
@@ -2204,7 +2206,7 @@ Frozen detail assignments and judgments remain in [detail-history.json](detail-h
 - [`cria/dedup.py:elide_from_messages`](../../cria/dedup.py#L136)
 - [`cria/loop.py:Loop._prepare_coder_context`](../../cria/loop.py#L5192)
 - [`cria/modelview.py:fold_evidence`](../../cria/modelview.py#L92)
-- [`cria/upstream.py:Upstream._prep`](../../cria/upstream.py#L378)
+- [`cria/upstream.py:Upstream._prep`](../../cria/upstream.py#L456)
 
 **Historical families:** F69.
 
@@ -2309,7 +2311,7 @@ Frozen detail assignments and judgments remain in [detail-history.json](detail-h
 - [`cria/modelview.py:restored_hint`](../../cria/modelview.py#L330)
 - [`cria/modelview.py:settle_restored_text`](../../cria/modelview.py#L336)
 - [`cria/modelview.py:retained_results_truth`](../../cria/modelview.py#L251)
-- [`cria/upstream.py:Upstream._prep`](../../cria/upstream.py#L378)
+- [`cria/upstream.py:Upstream._prep`](../../cria/upstream.py#L456)
 
 **Historical families:** F72.
 
@@ -2343,7 +2345,7 @@ Frozen detail assignments and judgments remain in [detail-history.json](detail-h
   Caller triggers: none.
   Structural migration claim: pending integration.
   Prompts: superseded_writes_dropped, superseded_writes_unavailable. Dependencies: none.
-  Hooks: [`cria/loop.py:Loop._prepare_coder_context`](../../cria/loop.py#L5192), [`cria/loop.py:Loop._work_item`](../../cria/loop.py#L3492), [`cria/loop.py:Loop._drive_single_item`](../../cria/loop.py#L4904), [`cria/server.py:CriaHandler._focus_trim`](../../cria/server.py#L1303), [`cria/upstream.py:Upstream._prep`](../../cria/upstream.py#L378).
+  Hooks: [`cria/loop.py:Loop._prepare_coder_context`](../../cria/loop.py#L5192), [`cria/loop.py:Loop._work_item`](../../cria/loop.py#L3492), [`cria/loop.py:Loop._drive_single_item`](../../cria/loop.py#L4904), [`cria/server.py:CriaHandler._focus_trim`](../../cria/server.py#L1303), [`cria/upstream.py:Upstream._prep`](../../cria/upstream.py#L456).
   Regressions: [`tests/test_context_memory_migration.py:test_supersession_producer_and_final_settlement_have_one_definition`](../../tests/test_context_memory_migration.py#L215), [`tests/test_c21_superseded_preservation_wire.py:test_real_floor_pressure_qualifies_the_missing_write_not_the_later_source`](../../tests/test_c21_superseded_preservation_wire.py#L89), [`tests/test_c21_superseded_preservation_wire.py:test_refused_newest_never_displaces_landed_content_or_rejected_bytes`](../../tests/test_c21_superseded_preservation_wire.py#L133), [`tests/test_common_context_preparation.py:test_absent_context_selection_never_runs_optional_leaf_detection`](../../tests/test_common_context_preparation.py#L275).
 
 **Principal navigation/support owners (not exhaustive stage bindings):**

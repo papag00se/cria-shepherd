@@ -228,6 +228,12 @@ def render(families: tuple[AssistFamily, ...] = FAMILIES, history: dict | None =
         "this report never executes policies or creates a second atomic catalog.", "",
         "Planning remains OFF unless explicitly enabled. Families are not switches or efficacy scores. "
         "Supporting components and external artifacts are not removable steering policies.", "",
+        "Assists are **L5 only**. Registered definitions also cover L0–L4 wire fixes, cria tools, "
+        "context fitting (including history compaction) and completion brakes; registry membership "
+        "is not an assist count. The `rank4-ablation` profile disables only the nine Rank-4 "
+        "definitions with `default_level = 5`, retaining all level-eligible L0–L4 mechanisms. "
+        "The historical 48-entry ranking record is not the active disabled set; see the "
+        "[profile contract](../../README.md#exact-rank-4-ablation).", "",
         "Frozen detail assignments and judgments remain in [detail-history.json](detail-history.json). "
         "Current ownership resolves direct aliases; no stored history or captures are rewritten.", "",
         "## Current families", "", "| ID | Responsibility | Kind | Coverage |",

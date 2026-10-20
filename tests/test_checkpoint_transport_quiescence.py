@@ -20,11 +20,12 @@ from unittest.mock import Mock
 import pytest
 
 from cria import server
-from cria.assistprofiles import RANK4_DISABLED
+from cria.assistprofiles import RANK4_ABLATION_DISABLED
 from cria.config import AssistConfig, Config, IndicatorsConfig, LoggingConfig, Role, RoutingConfig, ServerConfig
 from cria.events import EventLog
 from suite import milestones, run
 from suite.sampling_adapter import RateLimitGate, SamplingAdapter
+from test_server import _CLASSIFY_JSON
 
 
 CLIENT = r'''
@@ -65,7 +66,8 @@ else: raise RuntimeError(errors)
 def test_real_stream_is_consumed_before_sigstop_and_retry_does_not_lose_action(tmp_path, monkeypatch):
     entered, release = threading.Event(), threading.Event()
     judge_entered, judge_release = threading.Event(), threading.Event()
-    coder = Mock()
+    coder, classifier = Mock(), Mock()
+    classifier.chat.return_value = _CLASSIFY_JSON
     def reply(*_args, **_kwargs):
         entered.set()
         assert release.wait(10)
@@ -77,10 +79,14 @@ def test_real_stream_is_consumed_before_sigstop_and_retry_does_not_lose_action(t
                 'id':'original-action','type':'function','function':{
                     'name':'exec_command','arguments':'{"cmd":"echo action"}'}}]}}]}).encode()
     coder.chat_watched.side_effect = reply
-    monkeypatch.setattr(server.Router, 'endpoint_for', lambda *_a: coder)
+    monkeypatch.setattr(server.Router, 'endpoint_for',
+                        lambda _router, role: classifier if role == 'classifier' else coder)
     cfg = Config(server=ServerConfig(host='127.0.0.1', port=0, heartbeat_seconds=.02),
         assists=AssistConfig(profile='rank4-ablation'),
-        routing=RoutingConfig(engagement_level=5, roles={'coder':Role(name='coder', backend='local')}),
+        # The L5-only ablation retains L1 classification: supply its answer so this
+        # fresh request enters the real driver before exercising checkpoint delivery.
+        routing=RoutingConfig(engagement_level=5, roles={
+            name:Role(name=name, backend='local') for name in ('coder', 'classifier')}),
         logging=LoggingConfig(dir=str(tmp_path/'logs'), capture_dir=str(tmp_path/'calls'), console=False),
         indicators=IndicatorsConfig(enabled=False))
     log = EventLog(dir=cfg.logging.dir, console=False)
@@ -129,11 +135,14 @@ def test_real_stream_is_consumed_before_sigstop_and_retry_does_not_lose_action(t
                 assert finished['errors']  # the never-forwarded parked request was retried
                 assert coder.chat_watched.call_count==1  # then the real periodic gate, not a new coder action
                 events = [json.loads(line) for line in log.path.read_text().splitlines()]
+                classifier.chat.assert_called_once()
+                assert not any(event['kind'].startswith(('route.classify_error', 'route.classify_unparsed'))
+                               for event in events)
                 received = [event for event in events if event['kind']=='request.recv']
                 assert len(received)==2  # parked attempt never reaches the real producer
                 assert all(event['assist_profile']=='rank4-ablation' and
                            set(event['pilot_assists'])==set(application.pilot_runtime.selected) and
-                           not set(event['pilot_assists']) & set(RANK4_DISABLED) for event in received)
+                           not set(event['pilot_assists']) & set(RANK4_ABLATION_DISABLED) for event in received)
                 assert cfg.planner.enabled is False
                 assert outcome[0][0]=='exited'
                 policy=json.loads((milestones.ROOT/'fixture.015min/policy.json').read_text())

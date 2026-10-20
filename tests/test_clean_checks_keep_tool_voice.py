@@ -4,7 +4,7 @@ import json
 import pytest
 
 from cria import assistruntime, bodykeys, probediscovery, probegate, upstream
-from cria.assistprofiles import RANK4_DISABLED
+from cria.assistprofiles import RANK4_ABLATION_DISABLED
 from test_gate_outlives_the_harness_yield import _page
 from test_upstream import _Rlog
 
@@ -135,4 +135,4 @@ def test_large_clean_output_uses_existing_labelled_final_wire_floor():
     assert all(not set(bodykeys.ALL) & m.keys() for m in sent['messages'])
     calls = {tc['id'] for m in sent['messages'] for tc in m.get('tool_calls', [])}
     assert all(m['tool_call_id'] in calls for m in sent['messages'] if m['role'] == 'tool')
-    assert not set(selected.selected) & set(RANK4_DISABLED)
+    assert not set(selected.selected) & set(RANK4_ABLATION_DISABLED)

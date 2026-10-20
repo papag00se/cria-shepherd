@@ -15,10 +15,13 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import threading
 import time
 import urllib.error
 import urllib.request
 from pathlib import Path
+from collections import OrderedDict
+from dataclasses import dataclass, field
 from typing import Iterator
 
 from . import bodykeys
@@ -40,6 +43,77 @@ _MAX_PROPS_ATTEMPTS = 3
 _PROPS_RETRY_EVERY = 50
 # Fail-fast budget for the debug-only /apply-template render (shares the single inference slot).
 _RENDER_TIMEOUT_S = 8
+_MAX_PREFIX_SESSIONS = 256
+
+
+@dataclass
+class _RoleFit:
+    floor: contextfloor.FitState = field(default_factory=contextfloor.FitState)
+    scope: object = None
+
+
+@dataclass
+class _SessionWire:
+    lock: object = field(default_factory=threading.RLock)
+    roles: OrderedDict[str, _RoleFit] = field(default_factory=OrderedDict)
+    previous: bytes | None = None
+    basis: str = ""
+    messages: tuple[str, ...] = ()
+    inputs: tuple[str, ...] = ()
+    tools: str = ""
+    phase: str | None = None
+
+
+def _prefix_projection(body):
+    """Observable message/schema projection, distinct from a rendered prompt."""
+    return (json.dumps(body.get('tools')) + '\n' + '\n'.join(
+        json.dumps(m, sort_keys=True) for m in body.get('messages', []))).encode()
+
+
+def _observe_prefix(state, out, original, rendered, rlog, *, reduced, invalidated):
+    basis = 'rendered-prompt' if rendered is not None else 'messages-and-tools'
+    current = rendered.encode() if rendered is not None else _prefix_projection(out)
+    previous = state.previous if state is not None and state.basis == basis else None
+    shared = len(os.path.commonprefix([previous, current])) if previous is not None else 0
+    messages = tuple(contextfloor._fingerprint(m) for m in out.get('messages', []))
+    inputs = tuple(contextfloor._fingerprint(m) for m in original.get('messages', []))
+    tools = contextfloor._fingerprint(out.get('tools'))
+    changed = next((i for i, (a, b) in enumerate(zip(state.messages, messages)) if a != b),
+                   min(len(state.messages), len(messages))) if state is not None else 0
+    if previous is None:
+        reason = 'basis_changed' if state is not None and state.previous is not None else 'no_previous_request'
+    elif previous == current:
+        reason = 'identical'
+    elif state.phase != getattr(rlog, 'phase', None):
+        reason = 'phase_changed'
+    elif tools != state.tools:
+        reason = 'tools_changed'
+    elif invalidated:
+        reason = 'reduction_source_changed'
+    elif reduced:
+        reason = 'history_reduced'
+    elif inputs[:len(state.inputs)] != state.inputs:
+        reason = 'input_changed'
+    elif messages[:len(state.messages)] == state.messages:
+        reason = 'append'
+    else:
+        reason = 'wire_transform'
+    marker = None
+    if changed < len(out.get('messages', [])):
+        text = contextfloor._msg_text(out['messages'][changed])
+        start = text.find('⟦ctx:')
+        end = text.find('⟧', start) if start >= 0 else -1
+        marker = text[start:end + 1] if end >= 0 else None
+    rlog.emit('context.prefix', reshape=None, basis=basis, shared_bytes=shared,
+              previous_bytes=len(previous) if previous is not None else None,
+              request_bytes=len(current), reason=reason, changed_message=changed,
+              marker=marker, reduction_source_changed=invalidated,
+              comparison_scope='session', phase=getattr(rlog, 'phase', None),
+              previous_phase=state.phase if state is not None else None)
+    if state is not None:
+        state.previous, state.basis = current, basis
+        state.messages, state.inputs, state.tools = messages, inputs, tools
+        state.phase = getattr(rlog, 'phase', None)
 
 # A kill can lose at most this much reasoning. Small enough that the tail of a thought survives,
 # large enough that streaming does not become one write syscall per token.
@@ -152,6 +226,10 @@ class Upstream:
         # Defaults to the top of the ladder: an Upstream built without an opinion behaves as it
         # always did, so nothing outside a ladder run changes.
         self._engagement_level = engagement_level
+        # Process-local, bounded session state. Only fitting is partitioned by
+        # role; observation compares every request in actual preparation order.
+        self._prefix_sessions = OrderedDict()
+        self._prefix_lock = threading.Lock()
         self._base_url = base_url.rstrip("/")
         self._chat_url = self._base_url + "/v1/chat/completions"
         self._timeout = timeout_seconds
@@ -376,7 +454,33 @@ class Upstream:
                       to_style="openai", enable_thinking=enable, reasoning_effort=body["reasoning_effort"])
 
     def _prep(self, body: dict, stream: bool, rlog, safety_override: float | None = None,
-              _previous_fit: bytes | None = None) -> tuple[bytes, int, str | None]:
+              _previous_fit: bytes | None = None, _wire_overhead: int = 0) -> tuple[bytes, int, str | None]:
+        """Prepare at the sole wire boundary, serializing each session's fitting state."""
+        session = getattr(rlog, 'session', None)
+        phase = getattr(rlog, 'phase', None) or 'proxy'
+        role = 'coder' if phase.startswith('coder-') else phase
+        state = None
+        if isinstance(session, str) and session:
+            with self._prefix_lock:
+                key = session
+                state = self._prefix_sessions.pop(key, None) or _SessionWire()
+                self._prefix_sessions[key] = state
+                while len(self._prefix_sessions) > _MAX_PREFIX_SESSIONS:
+                    self._prefix_sessions.popitem(last=False)
+        if state is None:
+            return self._prep_wire(body, stream, rlog, safety_override, _previous_fit,
+                                   _wire_overhead=_wire_overhead)
+        with state.lock:
+            fitting = state.roles.pop(role, None) or _RoleFit()
+            state.roles[role] = fitting
+            while len(state.roles) > _MAX_PREFIX_SESSIONS:
+                state.roles.popitem(last=False)
+            return self._prep_wire(body, stream, rlog, safety_override, _previous_fit, state, fitting,
+                                   _wire_overhead)
+
+    def _prep_wire(self, body: dict, stream: bool, rlog, safety_override=None,
+                   _previous_fit=None, prefix_state=None, fitting=None,
+                   _wire_overhead=0) -> tuple[bytes, int, str | None]:
         """Serialize the request and return ``(bytes, sent_estimate)``: apply the CONTEXT FLOOR
         (guarantee it fits the window, budgeting with the model's LEARNED density ratio), force the
         stream flag, and MERGE adjacent assistant messages. Codex splits one assistant turn into a
@@ -401,6 +505,8 @@ class Upstream:
         wire_folds = runtime.wire_folds if self._context_fixes else ()
         out = {**body, "stream": stream}
         msgs = body.get("messages")
+        fitted_source = None
+        reduced = invalidated = False
         if isinstance(msgs, list):
             # A stamped gate call is cria-authored provenance, not marker-shaped text guessed from
             # history. Clean only those linked calls/results at the final coder-bound wire boundary;
@@ -441,6 +547,18 @@ class Upstream:
                 safety = (safety_override if safety_override is not None else
                           capacitypolicy.fit_density(body.get("model"), runtime.capacity))
                 pinned = str(body.get(bodykeys.PINNED_TASK) or "")
+                source, source_tools = msgs, tools_in
+                if prefix_state is not None:
+                    root = next((m for m in msgs if m.get('role') == 'user'), None)
+                    scope = (body.get('model'), runtime.selected, pinned,
+                             contextfloor._fingerprint(root))
+                    if fitting.scope != scope:
+                        fitting.floor = contextfloor.FitState()
+                        fitting.scope = scope
+                    msgs, tools_in, invalidated = fitting.floor.reuse(msgs, tools_in)
+                fit_options = {'headroom': True} if prefix_state is not None else {}
+                if _wire_overhead:
+                    fit_options['wire_overhead'] = _wire_overhead
                 # THE ONE-COPY FOLD (modelview.fold_evidence) NEVER RUNS BEFORE THE FLOOR DECIDES
                 # WHAT SURVIVES. A pointer says "the full copy is further down"; the floor may drop
                 # or shrink that copy (an unprotected ⟦ctx:checks⟧ result is a lever-3/4 candidate
@@ -450,16 +568,35 @@ class Upstream:
                 # conversation instead; the fold is applied once more below, over whatever survived.
                 trial = modelview.fold_selected(modelview.WireInput(msgs), wire_folds).messages
                 fitted, tools, rep = contextfloor.fit(
-                    trial, tools_in, window=window, reserve=reserve, safety=safety, pinned_task=pinned)
+                    trial, tools_in, window=window, reserve=reserve, safety=safety, pinned_task=pinned,
+                    **fit_options)
+                history_changed = fitted != trial
                 if trial is not msgs and fitted != trial:      # the floor removed or shrank a message
                     fitted, tools, rep = contextfloor.fit(
-                        msgs, tools_in, window=window, reserve=reserve, safety=safety, pinned_task=pinned)
+                        msgs, tools_in, window=window, reserve=reserve, safety=safety, pinned_task=pinned,
+                        **fit_options)
+                    history_changed = fitted != msgs
+                reduced = history_changed or tools != tools_in
+                history_fitted = fitted if history_changed else msgs
+                if (prefix_state is not None and reduced
+                        and (msgs != source or tools_in != source_tools)):
+                    # A NEW reduction is authored from original evidence, not from
+                    # yesterday's stand-in. Otherwise protected notes accumulate,
+                    # consume the window and become summaries of summaries.
+                    fitted, tools, rep = contextfloor.fit(
+                        source, source_tools, window=window, reserve=reserve, safety=safety,
+                        pinned_task=pinned, **fit_options)
+                    history_fitted = fitted
+                # Optional folds own their own delivery-dependent pointers. Save
+                # only actual floor edits; repeat folding still runs afresh below.
+                fitted_source = (source, source_tools, history_fitted, tools)
+                fitted_estimate = contextfloor.est_total(fitted, tools)
                 msgs = fitted
                 if rep.applied or rep.over_budget:
                     lvl = "warning" if rep.over_budget else "info"
                     rlog.emit("context.floor", reshape="floor-trim", level=lvl, safety=round(safety, 2),
                               **rep.as_event())
-                if rep.tools_compressed and tools is not None:
+                if tools != body.get('tools') and tools is not None:
                     out["tools"] = tools  # send the bounded tool schema, not the fat original
             # UNCONDITIONAL tool-integrity: an orphan `tool` (its assistant call folded by self-compaction,
             # or dropped) 400s a strict template EVERY turn — and the floor's orphan strip runs only when
@@ -554,6 +691,7 @@ class Upstream:
         # role or a coder call without a fresh observer remains silent rather than inheriting state.
         data = json.dumps(out).encode("utf-8")
         rendered = None
+        real = None
         if (isinstance(msgs, list) and window and self._api_key is None
                 and isinstance(self._props, dict) and self._props.get("chat_template")):
             # Average density cannot settle THIS prompt: numeric evidence can run much
@@ -568,7 +706,20 @@ class Upstream:
                         raise UpstreamError("Measured input cannot fit the context window without losing protected input")
                     tighter = max(safety, real / max(sent_estimate, 1))
                     return self._prep(body, stream, rlog, safety_override=tighter,
-                                      _previous_fit=data)
+                                      _previous_fit=data, _wire_overhead=_wire_overhead)
+        if (isinstance(msgs, list) and window and real is None
+                and sent_estimate * safety > window - rep.reserve):
+            # All protocol repairs, settlements and labels have now run. Never
+            # POST or capture a request the one floor still knows cannot fit.
+            if rep.over_budget or data == _previous_fit:
+                raise UpstreamError("Input cannot fit the context window without losing protected input")
+            # Structural wire growth is measured in the same estimate space,
+            # separately from model density and the role's generation reserve.
+            overhead = max(_wire_overhead, sent_estimate - fitted_estimate)
+            rlog.emit('context.wire_refit', reshape=None, wire_overhead=overhead,
+                      fitted_estimate=fitted_estimate, final_estimate=sent_estimate)
+            return self._prep(body, stream, rlog, safety_override=safety,
+                              _previous_fit=data, _wire_overhead=overhead)
         phase = getattr(rlog, "phase", None)
         state = getattr(rlog, "coder_preframe", None)
         receipt = None
@@ -587,6 +738,11 @@ class Upstream:
                                                                  "engagement_level": selection.engagement_level})
         if receipt is not None:
             rlog.emit("loop.coder_preframe_serialized", **receipt, capture_path=capture_path)
+        if prefix_state is not None and fitted_source is not None and not rep.over_budget:
+            fitting.floor.remember(*fitted_source)
+        if prefix_state is not None:
+            _observe_prefix(prefix_state, out, body, rendered, rlog,
+                            reduced=reduced, invalidated=invalidated)
         return data, sent_estimate, capture_path
 
     def _window_at_least(self, prompt_tokens, rlog) -> None:

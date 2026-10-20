@@ -46,6 +46,9 @@ figure so the real rendered prompt lands under the window.
 """
 from __future__ import annotations
 
+import copy
+import difflib
+import hashlib
 import json
 import math
 import re
@@ -66,25 +69,26 @@ _REDUCED_MARK = "⟦ctx:reduced⟧"
 _RESTORED_HINT = "cria_restored_files"
 # The stand-in note preserves a content_reduce()d digest of each dropped turn — not just the filenames
 # it modified — so a dropped test-failure/error output survives as a SUMMARY rather than vanishing. The
-# digests together occupy at most this share of the message budget (split across the dropped turns, each
-# with a per-turn floor) so the stand-in note can't itself blow the window. content_reduce is lossless-
-# first and guarded (never a blind slice); a turn whose content it can't summarize under budget is
+# digest payload is allotted this share of the message budget (split across the dropped turns, each
+# with a per-turn floor). The complete note, including all labels, is measured by the drop loops.
+# content_reduce is lossless-first and guarded (never a blind slice); a turn whose content it can't
+# summarize under budget is
 # disclosed as omitted, never re-embedded verbatim (that would defeat the drop).
 _NOTE_DIGEST_FRACTION = 0.25
 _MIN_NOTE_DIGEST_TOKENS = 256   # total floor: even a tight budget leaves room for a real summary
 _MIN_PER_TURN_TOKENS = 64       # per-turn floor: each digested turn gets at least this much room
-# ...but a stand-in may never cost as much as what it stands in for. A share of the BUDGET alone let a
-# note re-embed a whole dropped turn verbatim whenever that turn fit under the per-turn allowance, so
+# A share of the BUDGET alone let a note re-embed a whole dropped turn verbatim whenever that turn
+# fit under the per-turn allowance, so
 # the drop saved nothing (measured: a 1,215-token turn dropped, a 1,244-token note inserted — the
 # transcript ENDED UP LARGER). The floor then read "still over budget" and escalated to lever 5,
 # deleting the model's most recent turns for no gain: 350 turns + 736 protected messages destroyed in
-# one 30-minute run, over_budget declared 60 times. Every drop must net at least (1 - this) of what it
-# removed, and the drop loops count the same bound against the budget instead of discovering it after.
+# one 30-minute run, over_budget declared 60 times. The digest allowance must reclaim at least
+# (1 - this) of the removed content; required stubs and framing can cost more than that allowance.
+# Complete framing is measured by the drop loops, never guessed.
 _NOTE_MAX_SHARE_OF_DROPPED = 0.6   # every drop must reclaim substantial space. Tighter starves
                                    # the digest: a fetched HTML page — the biggest thing these
                                    # transcripts drop — compresses about 2x, and a 0.4 share would
                                    # reject it and lose the page's substance to buy back 20% more.
-_NOTE_FRAME_TOKENS = 48         # the note's own header/file-list overhead, counted with its digests
 # Tools whose target file a dropped turn MODIFIED — a durable fact worth keeping across the drop.
 _WRITE_TOOL_NAMES = toolargs.WRITE_TOOL_NAMES
 
@@ -119,6 +123,11 @@ DEFAULT_GEN_RESERVE = 4096
 # Lever 5 keeps this many trailing messages when forced to drop inside the protected span —
 # the active work (the newest tool call/result pairs) survives even a hard overflow.
 OVERFLOW_KEEP_TAIL = 8
+# Distinct live obligations: becoming the current request is a stronger change
+# than merely remaining in a recent tail; a newly paired live result also matters.
+_LIVE_REQUEST = 1
+_LIVE_TAIL = 2
+_LIVE_PAIR = 4
 # Never trim the conversation below this estimate — the active turn must survive even
 # when tool schemas are pathologically large; if it still won't fit, that's surfaced,
 # not hidden.
@@ -127,6 +136,9 @@ MIN_MSG_BUDGET = 512
 # starts truncating its descriptions. Half leaves at least half the budget for the
 # system prompt + conversation, which the model actually reasons over.
 MAX_TOOL_FRACTION = 0.5
+# Reclaim a quarter of the usable history budget at an actual overflow, rather than
+# replacing the head-of-prompt note again on every appended tool turn.
+HISTORY_HEADROOM = 0.25
 # Description-length caps tried, longest first, until the tool schema fits its budget.
 # 0 = drop the description entirely (name + parameter structure still identify the tool).
 # A TOOL WITH NO DESCRIPTION IS NOT A SMALLER TOOL, IT IS AN UNUSABLE ONE. The last rung used to be
@@ -165,6 +177,7 @@ class FloorReport:
     restored_reduced: int = 0   # lever 2c: the restored file-text block swapped for a labelled stand-in
     caller_reduced: int = 0     # lever 2b: harness-instruction spans swapped for a labelled stand-in
     over_budget: bool = False  # even after every lever the request still won't fit — surfaced loudly
+    wire_overhead: int = 0     # measured estimate-space growth from subsequent wire transforms
     fields: dict = field(default_factory=dict)
 
     def as_event(self) -> dict:
@@ -179,7 +192,75 @@ class FloorReport:
             "orphans_removed": self.orphans_removed, "over_budget": self.over_budget,
             **({"caller_reduced": self.caller_reduced} if self.caller_reduced else {}),
             **({"restored_reduced": self.restored_reduced} if self.restored_reduced else {}),
+            **({"wire_overhead": self.wire_overhead} if self.wire_overhead else {}),
         }
+
+
+def _fingerprint(value) -> str:
+    """Include private provenance: changed restoration/focus authority must invalidate reuse."""
+    # A typed producer notice and its JSON-round-tripped list have identical JSON
+    # but different authority. Never let a cached edit restore lost provenance.
+    hints = sorted((key, type(item).__module__, type(item).__qualname__)
+                   for key, item in value.items() if key in bodykeys.ALL) if isinstance(value, dict) else []
+    encoded = json.dumps((value, hints), sort_keys=True, default=repr).encode()
+    return hashlib.sha256(encoded).hexdigest()
+
+
+@dataclass
+class FitState:
+    """Session-owned exact floor edits, never a cached conversation or remembered facts.
+
+    The affected source prefix must match, and edited history cannot have become
+    live input after a rewind. Fresh tail facts and appended results remain fresh.
+    Invalidated history edits lose their disclosure too; an unchanged reduced caller
+    span has its own exact source identity.
+    Commit only the settled fit, never a folded trial or a rejected measured refit.
+    """
+    source: tuple[str, ...] = ()
+    live_sources: tuple[int, ...] = ()
+    edits: tuple[tuple[int, int, list[dict]], ...] = ()
+    callers: dict = field(default_factory=dict)
+    tool_source: str = ""
+    tools: object = None
+
+    def reuse(self, messages, tools):
+        work = [copy.deepcopy(self.callers.get(_fingerprint(m), m)) for m in messages]
+        fingerprints = tuple(_fingerprint(m) for m in work[:len(self.source)])
+        invalidated = bool(self.source and fingerprints != self.source)
+        if not invalidated:
+            live = _live_obligations(work)
+            # A matching prefix can end earlier after a rewind. Its former
+            # history may now be the request, live notes or tail we must retain.
+            invalidated = any(live[i] & ~self.live_sources[i]
+                              for start, end, _ in self.edits for i in range(start, end))
+        if not invalidated:
+            for start, end, replacement in reversed(self.edits):
+                work[start:end] = copy.deepcopy(replacement)
+        if self.tool_source == _fingerprint(tools):
+            tools = copy.deepcopy(self.tools)
+        return work, tools, invalidated
+
+    def remember(self, original, original_tools, fitted, fitted_tools):
+        # Caller replacement is independent of history shape. A shrinking restored
+        # block must not make the same removed persona reappear ahead of all history.
+        by_source = {_fingerprint(m): replacement for m, replacement in
+                     zip(original, _reduce_caller_spans(original)[0]) if m != replacement}
+        fitted_keys = {_fingerprint(m) for m in fitted}
+        self.callers = {key: copy.deepcopy(value) for key, value in
+                        (self.callers | by_source).items() if _fingerprint(value) in fitted_keys}
+        base = [self.callers.get(_fingerprint(m), m) for m in original]
+        before = tuple(_fingerprint(m) for m in base)
+        after = tuple(_fingerprint(m) for m in fitted)
+        edits = []
+        for kind, start, end, new_start, new_end in difflib.SequenceMatcher(
+                a=before, b=after, autojunk=False).get_opcodes():
+            if kind != 'equal':
+                edits.append((start, end, copy.deepcopy(fitted[new_start:new_end])))
+        # An insertion also needs its left source anchor, including an end insertion.
+        required = max((max(start, end) for start, end, _ in edits), default=0)
+        self.source, self.edits = before[:required], tuple(edits)
+        self.live_sources = _live_obligations(base)[:required]
+        self.tool_source, self.tools = _fingerprint(original_tools), copy.deepcopy(fitted_tools)
 
 
 # The ⟦ctx:current⟧ marker (literal: contextfloor imports no loop/modelview; a test pins it). The stand-in this
@@ -295,7 +376,7 @@ def _msg_text(m: dict) -> str:
 
 
 def _msgs_tokens(messages: list[dict]) -> int:
-    return sum(est_tokens(_msg_text(m)) for m in messages)
+    return est_total(messages, None)
 
 
 def content_text(messages, tools) -> str:
@@ -325,7 +406,8 @@ def _sniff_content_type(s: str) -> str | None:
 
 
 def fit(messages: list[dict], tools, *, window: int, reserve: int,
-        safety: float = SAFETY_FACTOR, pinned_task: str = "") -> tuple[list[dict], object, FloorReport]:
+        safety: float = SAFETY_FACTOR, pinned_task: str = "",
+        headroom: bool = False, wire_overhead: int = 0) -> tuple[list[dict], object, FloorReport]:
     """Return ``(messages, tools, report)`` reshaped to fit ``window`` (accounting for the
     ``tools`` schema and a generation ``reserve``). Pure — does not mutate the inputs;
     reduced/dropped messages and compressed tools are new objects. ``safety`` inflates the
@@ -338,7 +420,8 @@ def fit(messages: list[dict], tools, *, window: int, reserve: int,
     irreducible overflow is returned with ``report.over_budget=True``, NOT declared fit.
     Activation and final serialization/refusal remain the caller's wire responsibility.
     """
-    rep = FloorReport(window=window, reserve=reserve, reserve_requested=reserve)
+    rep = FloorReport(window=window, reserve=reserve, reserve_requested=reserve,
+                      wire_overhead=max(0, wire_overhead))
     if not isinstance(messages, list) or not messages or window <= 0:
         rep.tool_tokens = rep.tool_tokens_before = est_tokens(json.dumps(tools)) if tools else 0
         return messages, tools, rep
@@ -359,7 +442,7 @@ def fit(messages: list[dict], tools, *, window: int, reserve: int,
     reserve = max(0, min(reserve, window - input_room))
     rep.reserve = reserve
     # Budget in ESTIMATE space: real ≈ est × safety must fit window − reserve.
-    target_est = int((window - reserve) / safety)
+    target_est = int((window - reserve) / safety) - rep.wire_overhead
     rep.tool_tokens_before = est_tokens(json.dumps(tools)) if tools else 0
     rep.msg_tokens_before = _msgs_tokens(messages)
 
@@ -371,19 +454,29 @@ def fit(messages: list[dict], tools, *, window: int, reserve: int,
     rep.tool_tokens = tool_tokens
 
     # --- Lever 2: what's left is the conversation budget. ---
-    msg_budget = target_est - tool_tokens
+    # Whole-request chars/4 rounds once. Allocate the schema's fractional token
+    # as well when reduction is needed, rather than independently rounding it away.
+    tool_budget = math.ceil(len(json.dumps(tools)) / 4) if tools else 0
+    msg_budget = target_est - tool_budget
     if msg_budget < MIN_MSG_BUDGET:
         msg_budget = MIN_MSG_BUDGET  # keep the active turn even if tools are pathological
 
-    fits_at_start = rep.msg_tokens_before <= msg_budget and not rep.tools_compressed
+    fits_at_start = est_total(messages, tools) <= target_est and not rep.tools_compressed
     work = list(messages)
-    if rep.msg_tokens_before > msg_budget:
+    if est_total(messages, tools) > target_est:
         # --- Lever 2b: the harness's own standing instructions go BEFORE any conversation evidence.
         work, rep.caller_reduced = _reduce_caller_spans(work)
         # --- Lever 2c: cria's own restored file text, derived and re-derivable, before any evidence.
         work, rep.restored_reduced = _reduce_restored_text(work, msg_budget)
         # --- Lever 3: reduce the bulkiest tool OUTPUTS before deleting any turn. ---
         work, rep.outputs_reduced = _reduce_tool_outputs(work, msg_budget)
+        hard_budget = msg_budget
+        if headroom and _msgs_tokens(work) > hard_budget:
+            # Headroom never initiates reduction on a fitting request and never
+            # expands the set of content eligible for removal. The live core wins.
+            core_tokens = _msgs_tokens(_input_core(work, pinned_task))
+            msg_budget = max(int(hard_budget * (1 - HISTORY_HEADROOM)),
+                             min(core_tokens, hard_budget), MIN_MSG_BUDGET)
         # --- Lever 4: drop oldest droppable turns until it fits. ---
         if _msgs_tokens(work) > msg_budget:
             work, rep.turns_dropped = _drop_oldest(work, msg_budget, pinned_task)
@@ -391,7 +484,7 @@ def fit(messages: list[dict], tools, *, window: int, reserve: int,
         work, rep.orphans_removed = _strip_orphan_tools(work)
 
     rep.msg_tokens_after = _msgs_tokens(work)
-    over = (rep.msg_tokens_after + tool_tokens) * safety > (window - reserve)
+    over = (est_total(work, tools) + rep.wire_overhead) * safety > (window - reserve)
     if over:
         # --- Lever 5 (LAST RESORT, ported from codex-local §27 drop_to_fit): the PROTECTED span
         # itself is over budget. That happens on long agentic conversations whose last USER
@@ -401,12 +494,23 @@ def fit(messages: list[dict], tools, *, window: int, reserve: int,
         # known-doomed request helps no one: drop the OLDEST turns INSIDE the protected span —
         # always keeping system messages, the last user message (the request), and the most
         # recent tail — then re-strip orphans.
-        msg_budget = max(target_est - tool_tokens, MIN_MSG_BUDGET)
-        work, rep.protected_dropped = _drop_protected_overflow(work, msg_budget)
+        hard_budget = max(target_est - tool_budget, MIN_MSG_BUDGET)
+        work, rep.protected_dropped = _drop_protected_overflow(
+            work, msg_budget, sacrifice_budget=hard_budget)
         work, more_orphans = _strip_orphan_tools(work)
         rep.orphans_removed += more_orphans
         rep.msg_tokens_after = _msgs_tokens(work)
-        over = (rep.msg_tokens_after + tool_tokens) * safety > (window - reserve)
+        over = (est_total(work, tools) + rep.wire_overhead) * safety > (window - reserve)
+    if over:
+        # Reductions can change the required core: caller/restored text shrinks,
+        # while complete history disclosures add framing that the initial core
+        # did not contain. Once the reduction levers are exhausted, output room
+        # must yield to these actual survivors just as it yields to the initial
+        # core above. This changes the input reservation, never a generation cap.
+        required = math.ceil((est_total(work, tools) + rep.wire_overhead) * safety)
+        if required <= window:
+            rep.reserve = min(reserve, window - required)
+            over = False
     rep.applied = not fits_at_start or rep.reserve != rep.reserve_requested
     # Honest signal: if even the last resort couldn't make it fit (system + request + minimal
     # tail alone exceed the window), surface it rather than pretend.
@@ -577,13 +681,14 @@ def _reduce_tool_outputs(messages: list[dict], msg_budget: int) -> tuple[list[di
         # Aim this output at a share of the remaining budget, not below a usable floor.
         cap = max(256, msg_budget // 4)
         new_text = content_reduce(text, _sniff_content_type(text), cap)
-        if est_tokens(new_text) < sz:
+        labelled = prompts.render("reduced_result", body=new_text)
+        if est_tokens(labelled) < sz:
             # LABEL it, AND SAY WHAT THE LABEL MEANS. content_reduce is genuinely lossy, and this
             # swapped the result in with no marker at all until a bare glyph was added — a glyph no
             # prompt file, no system prompt and no legend ever explained. A disclosure no reader can
             # decode is not one, so the sentence rides with it (#5, #22).
-            out[i] = {**m, "content": prompts.render("reduced_result", body=new_text)}
-            total = total - sz + est_tokens(new_text)
+            out[i] = {**m, "content": labelled}
+            total = _msgs_tokens(out)
             reduced += 1
     return out, reduced
 
@@ -651,6 +756,27 @@ def _active_start(messages: list[dict], last_user: int) -> int:
            and _msg_text(messages[start - 1]).lstrip().startswith(_ACTIVE_NOTE_MARKERS)):
         start -= 1
     return start
+
+
+def _live_obligations(messages: list[dict]) -> tuple[int, ...]:
+    """Current request/notes and recent tail, independent of sacrificable historical anchors.
+
+    Reuse may retain an earlier labelled reduction of a live result, but cannot
+    treat a newly live source as the historical evidence that reduction replaced.
+    Include callers of live results, as the input-core budget does.
+    """
+    last_user = max((i for i, m in enumerate(messages) if m.get('role') == 'user'), default=-1)
+    live = [0] * len(messages)
+    for i in range(max(0, len(messages) - OVERFLOW_KEEP_TAIL), len(messages)):
+        live[i] |= _LIVE_TAIL
+    if last_user >= 0:
+        for i in range(_active_start(messages, last_user), last_user + 1):
+            live[i] |= _LIVE_REQUEST
+    ids = {m.get('tool_call_id') for i, m in enumerate(messages) if live[i] and m.get('role') == 'tool'}
+    for i, m in enumerate(messages):
+        if any(tc.get('id') in ids for tc in m.get('tool_calls') or []):
+            live[i] |= _LIVE_PAIR
+    return tuple(live)
 
 
 def _protected_mask(messages: list[dict], pinned_task: str = "") -> list[bool]:
@@ -724,7 +850,8 @@ def _protected_mask(messages: list[dict], pinned_task: str = "") -> list[bool]:
     return prot
 
 
-def _drop_protected_overflow(messages: list[dict], msg_budget: int) -> tuple[list[dict], int]:
+def _drop_protected_overflow(messages: list[dict], msg_budget: int, *,
+                             sacrifice_budget: int | None = None) -> tuple[list[dict], int]:
     """Last resort when the PROTECTED span alone is over budget: drop its oldest turns,
     never touching (a) system/developer messages, (b) the last user message — the request
     being answered, (c) the trailing OVERFLOW_KEEP_TAIL messages — the active work. Drops
@@ -735,12 +862,12 @@ def _drop_protected_overflow(messages: list[dict], msg_budget: int) -> tuple[lis
     the window still doesn't fit (fit must be guaranteed or the model errors on every call)."""
     work = list(messages)
     dropped = 0
-    dropped_tokens = 0
     removed: list[dict] = []
+    note = None
     # The stand-in note this lever appends counts against the budget too — dropping to exactly the
     # budget and THEN adding a note leaves the request over, which is how a "last resort" ended up
     # firing on nearly every request of a long run.
-    while _msgs_tokens(work) + _note_cost_bound(dropped_tokens, msg_budget) > msg_budget:
+    while _msgs_tokens(work + ([note] if note else [])) > msg_budget:
         last_user = -1
         for i, m in enumerate(work):
             if m.get("role") == "user":
@@ -752,21 +879,34 @@ def _drop_protected_overflow(messages: list[dict], msg_budget: int) -> tuple[lis
         victim = next((i for i, m in enumerate(work)
                        if _droppable(i, m) and not _has_protect_marker(m)), None)
         if victim is None:
+            if (sacrifice_budget is not None and _msgs_tokens(work + ([note] if note else []))
+                    <= sacrifice_budget):
+                break  # headroom alone never justifies sacrificing a protected anchor
             # Only protect-marked turns are left. Sacrificing one is the worst loss there is (it is the
             # summary standing in for everything already gone), so pay it ONLY when it actually buys the
-            # fit: if dropping every remaining droppable turn STILL leaves the request over budget, the
-            # anchors would be destroyed for nothing. Stop instead and let over_budget say so honestly.
+            # fit. Measure complete prospective notes for candidate prefixes before sacrificing
+            # any anchor. Digest allowances are not bounds on their labels or modified-file lists.
             remaining = [i for i, m in enumerate(work) if _droppable(i, m)]
-            freed = sum(est_tokens(_msg_text(work[i])) for i in remaining)
-            if not remaining or (_msgs_tokens(work) - freed
-                                 + _note_cost_bound(dropped_tokens + freed, msg_budget)) > msg_budget:
+            # Feasibility belongs to the hard window. An unattainable headroom
+            # preference cannot stop the sacrifice that would make this fit.
+            feasible_budget = sacrifice_budget if sacrifice_budget is not None else msg_budget
+            feasible = False
+            for count in range(1, len(remaining) + 1):
+                victims = set(remaining[:count])
+                prospective_removed = removed + [work[i] for i in remaining[:count]]
+                prospective_note = _compacted_note(prospective_removed, len(prospective_removed), msg_budget)
+                prospective = [m for i, m in enumerate(work) if i not in victims] + [prospective_note]
+                if _msgs_tokens(prospective) <= feasible_budget:
+                    feasible = True
+                    break
+            if not feasible:
                 break
             victim = remaining[0]
         if victim is None:
             break  # only the irreducible core remains
-        dropped_tokens += est_tokens(_msg_text(work[victim]))
         removed.append(work.pop(victim))
         dropped += 1
+        note = _compacted_note(removed, dropped, msg_budget)
     if removed:
         # DISCLOSE the removal, exactly as _drop_oldest does. This lever silently popped whole turns —
         # including protect-marked anchors when nothing else was droppable — so the model's history had
@@ -777,7 +917,7 @@ def _drop_protected_overflow(messages: list[dict], msg_budget: int) -> tuple[lis
         for i, m in enumerate(work):
             if m.get("role") == "user":
                 at = i + 1
-        work.insert(at, _compacted_note(removed, dropped, msg_budget))
+        work.insert(at, note)
     return work, dropped
 
 
@@ -788,25 +928,24 @@ def _drop_oldest(messages: list[dict], msg_budget: int, pinned_task: str = "") -
     of what exists on disk (spirit of trim/state_extract — deterministic, no LLM).
 
     The note is part of the result, so it is part of the arithmetic: stop when the survivors PLUS the
-    note fit, not when the survivors alone do (see ``_note_cost_bound``)."""
+    complete note fit, not when the survivors or a digest allowance alone do."""
     prot = _protected_mask(messages, pinned_task)
     keep = [True] * len(messages)
-    total = _msgs_tokens(messages)
     dropped = 0
-    dropped_tokens = 0
+    removed = []
+    note = None
     for i, m in enumerate(messages):
-        if total + _note_cost_bound(dropped_tokens, msg_budget) <= msg_budget:
+        kept = [m for i, m in enumerate(messages) if keep[i]]
+        if _msgs_tokens(kept + ([note] if note else [])) <= msg_budget:
             break
         if prot[i]:
             continue
-        size = est_tokens(_msg_text(m))
-        total -= size
-        dropped_tokens += size
         keep[i] = False
         dropped += 1
+        removed.append(m)
+        note = _compacted_note(removed, dropped, msg_budget)
     kept = [m for i, m in enumerate(messages) if keep[i]]
     if dropped:
-        note = _compacted_note([m for i, m in enumerate(messages) if not keep[i]], dropped, msg_budget)
         kept = _insert_after_leading_system(kept, note)
     return kept, dropped
 
@@ -847,17 +986,13 @@ def _modified_files(msgs: list[dict]) -> list[str]:
     return out
 
 
-def _note_cost_bound(dropped_tokens: int, msg_budget: int) -> int:
-    """The most the stand-in note may cost, given how much was dropped for it.
-
-    ONE definition shared by the drop loops (which must stop early enough to leave room for it) and by
-    the note builder (which must honour it) — so the two cannot disagree, which is exactly how the
-    floor used to end up bigger than it started."""
+def _note_digest_budget(dropped_tokens: int, msg_budget: int) -> int:
+    """Digest payload allowance only; complete notes are rendered and measured by callers."""
     if dropped_tokens <= 0:
         return 0
     of_budget = max(_MIN_NOTE_DIGEST_TOKENS, int(msg_budget * _NOTE_DIGEST_FRACTION))
     of_dropped = int(dropped_tokens * _NOTE_MAX_SHARE_OF_DROPPED)
-    return min(of_budget, of_dropped) + _NOTE_FRAME_TOKENS
+    return min(of_budget, of_dropped)
 
 
 _REPEAT_SUFFIX = "   [identical result, {n} times in a row]"
@@ -945,15 +1080,15 @@ def _compacted_note(dropped_msgs: list[dict], dropped: int, msg_budget: int) -> 
     """The synthesized stand-in for the dropped turns: a content_reduce()d digest of what each turn
     CONTAINED (so a dropped test-failure/error output survives as a summary, not just a filename) plus
     the full list of files those turns modified. Digests are lossless-first (content_reduce, never a
-    blind slice) and bounded BOTH by a share of the budget and by a share of what was dropped, so the
-    note can neither blow the window nor cost as much as the turns it replaces."""
+    blind slice). Digest payload is allotted a share of the budget and of what was dropped;
+    the drop loops measure the complete note, including stubs, labels and modified paths,
+    before deciding whether the resulting request fits."""
     parts = [f"{_COMPACTED_MARK} {dropped} earlier turn(s) were compacted to fit the context window."]
 
-    # Per-turn digests. The digests together may occupy at most the same bound the drop loops budgeted
-    # for (share of the budget AND share of what was dropped); split it across the dropped turns, each
+    # Per-turn digests. The payload allowance is separate from measured complete framing
+    # (share of the budget AND share of what was dropped); split it across the dropped turns, each
     # with a per-turn floor so a digest stays usable — but never a floor larger than the whole bound.
-    note_budget = max(0, _note_cost_bound(sum(est_tokens(_msg_text(m)) for m in dropped_msgs),
-                                          msg_budget) - _NOTE_FRAME_TOKENS)
+    note_budget = _note_digest_budget(_msgs_tokens(dropped_msgs), msg_budget)
     # BREADTH FIRST. The share is what each turn may take on the FIRST pass, and one turn may not
     # spend another's. `digest_reduce` is lossless-first and returns code and prose UNCHANGED — by
     # design, after the word-stripper inverted a negation — so a single dropped `write_file` payload

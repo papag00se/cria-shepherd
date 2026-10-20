@@ -591,7 +591,8 @@ class OverflowRefitTests(unittest.TestCase):
 
     def _big_body(self):
         # Enough messages that a tighter density visibly trims MORE of them on the refit.
-        msgs = [{"role": "user", "content": "payload " * 80} for _ in range(200)]
+        # Distinct turns keep duplicate folding from erasing the reducible history.
+        msgs = [{"role": "user", "content": f"Turn {n}: " + "payload " * 80} for n in range(200)]
         return {"model": "m", "messages": msgs}
 
     def test_overflow_triggers_a_single_refit_retry_that_succeeds(self):

@@ -38,7 +38,7 @@ def test_shared_work_log_preserves_exact_ids_and_out_of_order_result_bytes():
 
 
 @pytest.mark.parametrize('synthetic', [True, False])
-def test_exact48_real_driver_final_judge_post_retains_receipt_correlation(monkeypatch, synthetic):
+def test_rank4_ablation_real_driver_final_judge_post_retains_receipt_correlation(monkeypatch, synthetic):
     up = Upstream('http://fixture', context_window=49152, capture_dir=None, capture_rendered=False)
     action = loop._completion_toolcalls([{'id': 'acting', 'type': 'function', 'function': {
         'name': 'write_file', 'arguments': '{"path":"artifact.txt","content":"work"}'}}])

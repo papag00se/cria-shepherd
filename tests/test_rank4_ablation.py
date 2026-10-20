@@ -8,9 +8,10 @@ from types import SimpleNamespace
 from unittest.mock import Mock
 
 from cria import classify, loop, massage, server, upstream, webfetch
-from cria.assistprofiles import RANK4_DISABLED, RANKING_REVISION
+from cria.assistprofiles import RANK4_ABLATION_DISABLED, RANK4_DISABLED, RANKING_REVISION
 from cria.config import LoggingConfig
 from test_upstream import _Rlog
+from test_server import _CLASSIFY_JSON
 
 import pytest
 
@@ -24,17 +25,32 @@ def ranked_ids(rank):
     return tuple(re.findall(r'^\| \d+ \| `([^`]+)`', section, re.M))
 
 
+def _levels():
+    return {d.policy.id: d.policy.default_level for d in assistruntime.DEFINITIONS}
+
+
+def test_assist_ablation_never_disables_levels_0_to_4():
+    """Assists are L5 only. Wire fixes, cria's tools, context fitting (incl. history compaction)
+    and completion brakes at L0-L4 are not assists; an assist profile must never remove them."""
+    levels = _levels()
+    assert {i for i in RANK4_ABLATION_DISABLED if levels[i] != 5} == set()
+    # The profile is exactly the ranking's Rank-4 list restricted to L5.
+    assert set(RANK4_ABLATION_DISABLED) == {i for i in RANK4_DISABLED if levels[i] == 5}
+    for kept in ('rolling-transcript-memory', 'harness-memory-handoff', 'task-classification',
+                 'focused-tool-menu', 'generation-runaway-guard'):
+        assert kept in assistruntime.AssistRuntime.select(profile='rank4-ablation').selected
+
+
 @pytest.mark.parametrize('level', range(6))
-def test_profile_disables_exact_pinned_48_and_preserves_other_capabilities(level):
+def test_profile_disables_only_rank4_l5_assists_and_preserves_other_capabilities(level):
     cfg = Config(assists=AssistConfig(profile='rank4-ablation'))
     selected = assistruntime.AssistRuntime.select(profile=cfg.assists.profile, level=level)
     ordinary = assistruntime.AssistRuntime.select(level=level)
-    excluded = ranked_ids(4)
     assert RANKING_REVISION == '079116e4c99635722a0f3327246fd9e359586eb5'
-    assert excluded == RANK4_DISABLED
-    assert len(excluded) == len(set(excluded)) == 48
+    assert ranked_ids(4) == RANK4_DISABLED
+    assert len(RANK4_DISABLED) == len(set(RANK4_DISABLED)) == 48
+    excluded = RANK4_ABLATION_DISABLED
     assert set(selected.selected) == set(ordinary.selected) - set(excluded)
-    assert set(selected.selected) <= set(ranked_ids(1) + ranked_ids(2) + ranked_ids(3))
     assert not cfg.planner.enabled and not selected.experimental_planning
     # Capability selection with explicit experimental consent is also exact;
     # selecting this profile alone must never supply that consent.
@@ -62,9 +78,9 @@ def test_profile_cannot_be_relabelled_or_silently_redistribute_bindings():
     selected = assistruntime.AssistRuntime.select(profile='rank4-ablation')
     with pytest.raises(ValueError, match='exact selected profile'):
         replace(selected, argument_conversion=None)
-    runaway = next(d for d in ordinary.ordered_stages if d.policy.id == 'generation-runaway-guard')
+    stalled = next(d for d in ordinary.ordered_stages if d.policy.id == 'grounded-stalled-work')
     with pytest.raises(ValueError, match='exact selected profile'):
-        replace(selected, ordered_stages=selected.ordered_stages + (runaway,))
+        replace(selected, ordered_stages=selected.ordered_stages + (stalled,))
 
 
 def test_toml_profile_reaches_real_server_without_enabling_planning(tmp_path, monkeypatch):
@@ -79,12 +95,17 @@ def test_toml_profile_reaches_real_server_without_enabling_planning(tmp_path, mo
     expected = assistruntime.AssistRuntime.select(profile='rank4-ablation')
     assert instance.pilot_runtime == expected
     assert instance.loop is not None and not instance.loop._ctx.planner_enabled
+    # Task classification is L1, not an assist: the profile keeps it.
+    assert 'task-classification' in instance.pilot_runtime.selected
     with assistruntime.bound(instance.pilot_runtime):
-        service = classify.Classifier(Mock())
+        provider = Mock()
+        provider.chat.return_value = _CLASSIFY_JSON
+        service = classify.Classifier(provider)
         handler = server.CriaHandler.__new__(server.CriaHandler)
         handler.server = SimpleNamespace(classifier=service)
-        assert handler._classify({'messages': [{'role': 'user', 'content': 'Change a file'}]}, Mock()) is None
-        service._provider.chat.assert_not_called()
+        verdict = handler._classify({'messages': [{'role': 'user', 'content': 'Change a file'}]}, Mock())
+        assert verdict.task_type == 'coding' and verdict.engagement == 'task'
+        provider.chat.assert_called_once()
 
 
 def test_profile_controls_recovery_and_research_without_removing_quarantine(monkeypatch):
@@ -99,11 +120,12 @@ def test_profile_controls_recovery_and_research_without_removing_quarantine(monk
             assert webfetch.gate_search('rank4', 'widget api docs') is not None
         with assistruntime.bound(selected):
             completion = {'choices': [{'finish_reason': 'stop', 'message': {'content': LEAK}}]}
-            assert massage.apply(completion, MENU, tool_call_fixes=True)['choices'][0]['message']['content'] == LEAK
-            assert webfetch.gate_search('rank4', 'widget api docs') is None
-            assert webfetch.gate_search('rank4', 'widget api docs') is None
-            # The retained output-truncation lifecycle is not the disabled runaway
-            # lifecycle. Malformed native calls must still be quarantined.
+            # Text-call recovery (L1) and search admission (L2) are not assists: kept.
+            assert massage.apply(completion, MENU, tool_call_fixes=True)['choices'][0]['message']['tool_calls']
+            assert webfetch.gate_search('rank4', 'widget api docs') is not None
+            assert webfetch.gate_search('rank4', 'widget api docs') is not None
+            # Output-truncation and runaway recovery are both retained below L5.
+            # Malformed native calls must still be quarantined.
             partial = {'choices': [{'finish_reason': 'tool_calls', 'message': {
                 'tool_calls': [{'id': 'partial', 'type': 'function', 'function': {
                     'name': 'native_write', 'arguments': '{"path":"x","content":"unfinished'}}]}}]}

@@ -10,6 +10,7 @@ result + the same block, a steer without it, a window 300 tokens under the body.
 conversation instead and folds what survived. L0-L2 never fold at all (no context surgery there).
 """
 import json
+import pytest
 
 from cria import config, contextfloor, modelview, prompts, upstream
 
@@ -21,8 +22,11 @@ BLOCK = "".join(f"[ERROR] /w/src/Main.java:[{i},3] cannot find symbol number {i}
 class _Rlog:
     phase = "coder-s1"
 
-    def emit(self, *a, **k):
-        pass
+    def __init__(self):
+        self.events = []
+
+    def emit(self, kind, **fields):
+        self.events.append((kind, fields))
 
 
 def _messages():
@@ -37,14 +41,25 @@ def _messages():
     ]
 
 
-def _prep(msgs, window, level=config.MAX_ENGAGEMENT_LEVEL):
+def _prep(msgs, window, level=config.MAX_ENGAGEMENT_LEVEL, rlog=None):
     up = upstream.Upstream("http://unused", context_window=window, engagement_level=level)
-    raw, _est, _cap = up._prep({"model": "m", "messages": msgs}, False, _Rlog())
+    # Match the declared density used by this fixed-window fixture's assertions.
+    raw, _est, _cap = up._prep({"model": "m", "messages": msgs}, False, rlog or _Rlog(),
+                             safety_override=contextfloor.SAFETY_FACTOR)
     return json.loads(raw)["messages"]
 
 
 def _text(msgs):
     return "\n".join(str(m.get("content") or "") for m in msgs)
+
+
+def _with_later_work():
+    # Keep pressure after the newest diagnostic so fitting must reconsider that
+    # copy. The bare six-message fixture fits as soon as its protected copy does.
+    msgs = _messages()
+    history = [{'role': 'assistant', 'content': f'Prior unrelated work {i}.\n'
+                + 'Completed an earlier inspection.\n' * 20} for i in range(12)]
+    return msgs[:-1] + history + msgs[-1:]
 
 
 def test_the_reproduction_shape_folds_as_a_pre_floor_fold_would():
@@ -63,19 +78,38 @@ def test_the_old_order_left_a_dangling_pointer_the_floor_reproduction():
 
 
 def test_the_floor_that_drops_the_kept_copy_never_leaves_a_pointer_without_its_target():
-    msgs = _messages()
-    trimmed = 0
+    msgs = _with_later_work()
+    trimmed = refused = 0
     for window in range(520, 4000, 8):
-        sent = _prep(msgs, window)
+        log = _Rlog()
+        try:
+            sent = _prep(msgs, window, rlog=log)
+        except upstream.UpstreamError as exc:
+            # This sweep also includes windows too small for the protected full
+            # diagnostic. They must refuse, never ship an oversized body.
+            assert 'context window' in str(exc)
+            floor = [e for kind, e in log.events if kind == 'context.floor'][-1]
+            assert floor['over_budget']
+            assert floor['msg_after'] * floor['safety'] > window
+            refused += 1
+            continue
         text = _text(sent)
+        assert contextfloor.est_total(sent, None) * contextfloor.SAFETY_FACTOR <= window
         trimmed += "⟦ctx:compacted⟧" in text
         assert (DIAG in text) or (NOTE not in text), window       # a pointer only ever has its copy
     assert trimmed                                                # the sweep did exercise the floor
+    assert refused                                                # irreducible cases stayed unsent
 
 
 def test_the_window_of_the_reproduction_carries_the_diagnostic_in_full():
-    sent = _prep(_messages(), 600)
+    # The original 600-token fixture returned the full diagnostic in an oversized
+    # request. Preserve that boundary as a refusal, then prove the valid wire.
+    with pytest.raises(upstream.UpstreamError, match='context window'):
+        _prep(_messages(), 600)
+    sent = _prep(_with_later_work(), 2500)
     assert DIAG in _text(sent) and NOTE not in _text(sent)
+    assert '⟦ctx:compacted⟧' in _text(sent)
+    assert contextfloor.est_total(sent, None) * contextfloor.SAFETY_FACTOR <= 2500
 
 
 def test_a_body_that_fits_unfolded_is_still_folded_once_at_the_wire():

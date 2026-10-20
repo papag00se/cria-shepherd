@@ -12,6 +12,8 @@ For each `[milestone]` notice, the campaign agent inspects the frozen current an
 
 Planning defaults to **off** in both `run.py` and `battery_run.py`, including L5 and the CRIA arm. It is retained only for explicit experiments (`--planner on`); neither selecting a level nor swapping a model is consent to enable it. Ordinary runs require no planner flag.
 
+Assists are **L5 only**. When the tested server selects `[assists] profile = "rank4-ablation"`, it disables only the nine Rank-4 definitions with `default_level = 5`; level-eligible L0–L4 wire fixes, cria tools, context fitting (including history compaction) and completion brakes remain active. The original profile disabled all 48 ranked definitions, including 39 below L5, so those historical runs did not isolate assists. Keep their provenance unchanged and compare deployed revisions/configs and request-event `pilot_assists`; the profile name alone cannot distinguish the two selections. Planning still requires separate opt-in. See the [profile contract](../README.md#exact-rank-4-ablation).
+
 ```bash
 python3 suite/run.py \
   --task cart-billing-go \

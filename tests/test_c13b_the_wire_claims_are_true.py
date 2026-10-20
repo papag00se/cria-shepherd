@@ -15,6 +15,7 @@ unfolded) plus the workspace's own `Importer.java` (243 lines, 9,123 B) and `pom
 import itertools
 import json
 from pathlib import Path
+import pytest
 
 from cria import bodykeys, config, contextfloor as cf, loop, modelview, prompts, upstream, wsview
 from tests.test_a_judges_doubt_is_not_an_order import _session
@@ -193,8 +194,11 @@ def test_a_ranged_reading_and_an_unsurveyed_workspace_are_left_alone():
 class _Rlog:
     phase = "coder-s1"
 
-    def emit(self, *a, **k):
-        pass
+    def __init__(self):
+        self.events = []
+
+    def emit(self, kind, **fields):
+        self.events.append((kind, fields))
 
 
 def _unfolded_continuation():
@@ -204,9 +208,12 @@ def _unfolded_continuation():
     return head + FX["summarizer_failures_segment"] + tail
 
 
-def _prep(msgs, window):
+def _prep(msgs, window, rlog=None):
     up = upstream.Upstream("http://unused", context_window=window, engagement_level=config.MAX_ENGAGEMENT_LEVEL)
-    raw, _e, _c = up._prep({"model": "m", "messages": msgs}, False, _Rlog())
+    # These fixed-window captures are evaluated at their declared density,
+    # independently of learned observations left by other requests to model "m".
+    raw, _e, _c = up._prep({"model": "m", "messages": msgs}, False, rlog or _Rlog(),
+                         safety_override=cf.SAFETY_FACTOR)
     return json.loads(raw)["messages"]
 
 
@@ -218,9 +225,22 @@ def test_every_line_a_pointer_replaced_is_shown_in_the_body_sent():
     msgs = [{"role": "system", "content": FX["system"]}, {"role": "user", "content": FX["task"]},
             {"role": "user", "content": full},
             {"role": "user", "content": FX["wire_files"]}, {"role": "user", "content": FX["wire_facts"]}]
-    for window in (16384, 3000):
-        sent = _prep(msgs, window)
+    # The original 3000-token control is smaller than the protected captured
+    # system/task/continuation. Previously it serialized known overflow.
+    with pytest.raises(upstream.UpstreamError, match='context window'):
+        _prep(msgs, 3000)
+    history = [{'role': 'assistant', 'content': f'Historical observation {i}:\n' + 'History evidence.\n' * 80}
+               for i in range(24)]
+    padded = msgs[:2] + history + msgs[2:]
+    for window, source in ((16384, msgs), (11000, padded)):
+        log = _Rlog()
+        sent = _prep(source, window, log)
+        assert cf.est_total(sent, None) * cf.SAFETY_FACTOR <= window
+        if source is padded:
+            assert any(e['turns_dropped'] > 0 for kind, e in log.events if kind == 'context.floor')
         text = "\n".join(str(m.get("content") or "") for m in sent)
+        if source is padded:
+            assert NOTE in text  # the full-line assertions also run after a real history drop
         if NOTE not in text:
             continue
         for ln in full.splitlines():
