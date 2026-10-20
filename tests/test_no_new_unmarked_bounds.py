@@ -33,7 +33,6 @@ _ALLOWED = {
     ("webfetch.py", "s[-4:]"): "head…tail form: the marker is in the f-string",
     ("dedup.py", "us[cur:]"): "splits a message at its pointer boundaries; every unit on both sides is emitted or replaced by the pointer for an identical copy shown in full",
     ("dedup.py", "us[cur:a]"): "splits a message at its pointer boundaries; every unit on both sides is emitted or replaced by the pointer for an identical copy shown in full",
-    ("modelview.py", "lines[n:]"): "parsing: the text after the retained-results list, kept whole",
     ("callliterals.py", "lines[:cut]"): "the caller states the cut in the same result",
     ("writeproxy.py", "raw[i:i + width]"): "chunking for a hexdump — every byte is emitted",
     ("outboundpolicies.py", "command.lstrip().splitlines()[:2]"): "a label for cria's own log line",

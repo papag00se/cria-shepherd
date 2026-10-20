@@ -223,13 +223,11 @@ def fold_selected(source: WireInput,
                       tuple(applied), repeats)
 
 
-# The continuation names, at the moment it is rendered, the paired tool results the harness handed
-# over. By the time the body is serialized the floor, the gate cleaning and the orphan repair have
-# all had their say, so what that list promises ("their full original output remains in their paired
-# tool messages") can be false of the body the model actually receives: phi4 A2 call 0043 listed five
-# call ids and the body held one pair; call 0020 listed three and held none (#5b). So the list is
-# made true HERE, at the last point before serialization (#24): only ids whose assistant call AND
-# tool result are both in the outgoing messages stay on it; none left says so.
+# Older continuations promised full outputs in a duplicated call-id inventory (phi4 A2 call 0043
+# listed five pairs, but the wire held one). Refreshing that inventory after each floor fixed the
+# promise but rewrote early history on every appended result. New continuations refer to the native
+# paired messages and their own availability labels. Move recognized legacy footers to a dated
+# quotation at the tail without deleting their literal text. Unknown/quoted prose stays untouched.
 RETAINED_HEADER = "Retained authoritative paired tool results ("
 _PAIRED_LINE = re.compile(r"^- paired tool result \(call id: ([^)\s]+)\)$")
 
@@ -248,42 +246,87 @@ def _paired_ids(messages: list[dict]) -> set[str]:
     return called & answered
 
 
+def _inventory_span(text: str) -> tuple[int, int] | None:
+    """A complete known footer at the end, never a header-prefix match in prose.
+
+    This recognizes presentation, not ownership. Mutation additionally requires
+    the known frame and preserves the entire recognized span in a tail quotation.
+    """
+    if not text.startswith(CONTINUATION):
+        return None
+    end = len(text.rstrip('\r\n'))
+    for note in (
+        prompts.load('continuation_no_retained_results').strip(),
+        prompts.load('continuation_results_reference').strip()):
+        if text[:end].endswith('\n\n' + note):
+            return end - len(note), end
+    header = prompts.load('continuation_legacy_inventory').partition('{{TOOL_RESULTS}}')[0]
+    at = text.rfind('\n\n' + header, 0, end)
+    if at >= 0:
+        at += 2
+        lines = text[at + len(header):end].splitlines()
+        if lines and (lines == ['(none)'] or all(_PAIRED_LINE.fullmatch(line) for line in lines)):
+            return at, end
+    return None
+
+
+def continuation_core(text: str) -> str:
+    span = _inventory_span(text)
+    return text[:span[0]] + text[span[1]:] if span is not None else text
+
+
 def retained_results_truth(messages: list[dict]) -> list[dict]:
-    """``messages`` with every continuation's list of retained paired tool results made true of
-    THIS body. The same list when each listed id is paired in the body (or nothing is listed)."""
+    """Move recognized legacy inventories losslessly behind the existing history.
+
+    A fixed reference belongs in the old frame; the exact old wording, including
+    unmatched coordinates, remains quoted at the tail. Unknown handoff/quoted
+    passages are identity. Only the context floor can reduce the literal quote.
+    """
+    reference = prompts.load('continuation_results_reference').strip()
     out = None
-    paired = None
-    for i, m in enumerate(messages):
-        c = m.get("content") if isinstance(m, dict) else None
-        if not (m.get("role") == "user" and isinstance(c, str) and c.startswith(CONTINUATION)):
+    quotes = []
+    leads = [CONTINUATION + ' ' + prompts.load(name).split('\n\n', 1)[0].partition('{{')[0]
+             for name in ('compaction_reframe', 'compaction_reframe_empty',
+                          'compaction_reframe_dropped', 'compaction_reframe_dropped_facts')]
+    for i, message in enumerate(messages):
+        text = message.get('content')
+        if message.get('role') != 'user' or not isinstance(text, str):
             continue
-        at = c.rfind(RETAINED_HEADER)
-        if at < 0:
+        span = _inventory_span(text)
+        if (span is None or text[span[0]:span[1]] == reference
+                or not any(text.startswith(lead) for lead in leads)):
             continue
-        head_end = c.find("\n", at)
-        if head_end < 0:
-            continue
-        lines = c[head_end + 1:].split("\n")
-        listed = [(ln, _PAIRED_LINE.match(ln)) for ln in lines]
-        n = 0
-        while n < len(listed) and listed[n][1]:
-            n += 1
-        if n == 0:
-            continue                                    # "(none)" or nothing listed: nothing to correct
-        if paired is None:
-            paired = _paired_ids(messages)
-        kept = [ln for ln, mt in listed[:n] if mt.group(1) in paired]
-        if len(kept) == n:
-            continue
-        rest = "\n".join(lines[n:])
-        if kept:
-            section = c[at:head_end + 1] + "\n".join(kept)
-        else:
-            section = prompts.load("continuation_no_retained_results").strip()
         if out is None:
             out = list(messages)
-        out[i] = {**m, "content": c[:at] + section + (("\n" + rest) if rest else "")}
-    return out if out is not None else messages
+        out[i] = {**message, 'content': text[:span[0]] + reference + text[span[1]:]}
+        quotes.append({'role': 'user', bodykeys.ANNOTATION_SOURCE: bodykeys.AnnotationSource.INVENTORY,
+                       'content': prompts.render('continuation_inventory_quote',
+                                                 inventory=text[span[0]:span[1]]).strip()})
+    return out + quotes if out is not None else messages
+
+
+def prefix_source_parts(message: dict) -> tuple[str, str, str]:
+    """Small observation-only signatures for attributing an earlier byte change."""
+    from .contextfloor import _fingerprint
+    text = message.get('content')
+    dependencies = inventory = ''
+    core = text
+    if isinstance(text, str):
+        if text.startswith('⟦ctx:dependencies⟧'):
+            dependencies, core = text, ''
+        elif text.startswith('⟦ctx:inventory⟧'):
+            inventory, core = text, ''
+        elif message.get('role') == 'system':
+            # Historical captures used an inline generated build annotation.
+            template = prompts.load('readable_roots_build').rstrip('\n')
+            left, _, right = template.partition('{{DEPS}}')
+            match = re.search(re.escape(left) + r'.+?' + re.escape(right), text)
+            if match:
+                dependencies, core = match.group(), text[:match.start()] + text[match.end():]
+        span = _inventory_span(text)
+        if span is not None:
+            inventory, core = text[span[0]:span[1]], continuation_core(text)
+    return (_fingerprint({**message, 'content': core}), _fingerprint(dependencies), _fingerprint(inventory))
 
 
 # Compatibility import, not another implementation or independently selectable

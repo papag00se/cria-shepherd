@@ -62,6 +62,7 @@ class _SessionWire:
     inputs: tuple[str, ...] = ()
     tools: str = ""
     phase: str | None = None
+    source_parts: tuple[tuple[str, str, str], ...] = ()
 
 
 def _prefix_projection(body):
@@ -76,6 +77,7 @@ def _observe_prefix(state, out, original, rendered, rlog, *, reduced, invalidate
     previous = state.previous if state is not None and state.basis == basis else None
     shared = len(os.path.commonprefix([previous, current])) if previous is not None else 0
     messages = tuple(contextfloor._fingerprint(m) for m in out.get('messages', []))
+    source_parts = tuple(modelview.prefix_source_parts(m) for m in out.get('messages', []))
     inputs = tuple(contextfloor._fingerprint(m) for m in original.get('messages', []))
     tools = contextfloor._fingerprint(out.get('tools'))
     changed = next((i for i, (a, b) in enumerate(zip(state.messages, messages)) if a != b),
@@ -104,7 +106,20 @@ def _observe_prefix(state, out, original, rendered, rlog, *, reduced, invalidate
         start = text.find('⟦ctx:')
         end = text.find('⟧', start) if start >= 0 else -1
         marker = text[start:end + 1] if end >= 0 else None
-    rlog.emit('context.prefix', reshape=None, basis=basis, shared_bytes=shared,
+    break_source = None
+    if reason not in ('no_previous_request', 'identical', 'append'):
+        break_source = 'other'
+        old = state.source_parts[changed] if changed < len(state.source_parts) else None
+        new = source_parts[changed] if changed < len(source_parts) else None
+        if old and new and old[0] == new[0] and old[1] != new[1]:
+            break_source = 'dependency_annotation'
+        elif old and new and old[0] == new[0] and old[2] != new[2]:
+            break_source = 'inventory'
+        elif ((marker == '⟦ctx:compacted⟧' and text.startswith(marker)) or
+              (marker == '⟦ctx:reduced⟧' and changed < len(state.inputs)
+               and changed < len(inputs) and state.inputs[changed] == inputs[changed])):
+            break_source = 'floor'
+    rlog.emit('context.prefix', reshape=None, basis=basis, shared_bytes=shared, break_source=break_source,
               previous_bytes=len(previous) if previous is not None else None,
               request_bytes=len(current), reason=reason, changed_message=changed,
               marker=marker, reduction_source_changed=invalidated,
@@ -114,6 +129,7 @@ def _observe_prefix(state, out, original, rendered, rlog, *, reduced, invalidate
         state.previous, state.basis = current, basis
         state.messages, state.inputs, state.tools = messages, inputs, tools
         state.phase = getattr(rlog, 'phase', None)
+        state.source_parts = source_parts
 
 # A kill can lose at most this much reasoning. Small enough that the tail of a thought survives,
 # large enough that streaming does not become one write syscall per token.
@@ -512,6 +528,10 @@ class Upstream:
             # history. Clean only those linked calls/results at the final coder-bound wire boundary;
             # a body without one remains byte-identical.
             msgs = modelview.wire_messages(msgs)
+            if self._context_fixes:
+                # Move exact legacy footers losslessly to a quoted tail before
+                # fitting. Unknown prose stays intact; the floor owns reduction.
+                msgs = modelview.retained_results_truth(msgs)
             window = self._resolve_window(rlog)
             # A GUESSED WINDOW MAY NOT TRIM. `_resolve_window` returns `_FALLBACK_WINDOW` when
             # /props could not be read — an invented number, and the abort guard below already
@@ -606,8 +626,8 @@ class Upstream:
                                 else (msgs, 0))
             if deorphaned:
                 rlog.emit("context.deorphaned", reshape="deorphan", count=deorphaned, level="info")
-            # The continuation's list of retained paired tool results is made true of THIS body now
-            # that the floor and the orphan repair have settled what it holds (modelview, #24).
+            # Settle any legacy inventory to its stable reference before final folds. Native paired
+            # messages establish availability; a changing list must not rewrite an earlier handoff.
             if self._context_fixes:       # L0-L2 send what they were given (no context surgery)
                 msgs = modelview.retained_results_truth(msgs)
                 # Last, over what survived: every pointer's full copy is in `msgs` by construction.
@@ -672,7 +692,7 @@ class Upstream:
                                 if k not in (bodykeys.CALLER_INSTRUCTIONS, bodykeys.CALLER_PERSONA,
                                              bodykeys.CALLER_SPAN, bodykeys.RESTORED_FILES,
                                              bodykeys.PAYLOAD_BOUNDARY, bodykeys.SUPERSEDED_WRITES,
-                                             bodykeys.FOCUS_PRODUCERS)}
+                                             bodykeys.FOCUS_PRODUCERS, bodykeys.ANNOTATION_SOURCE)}
                                if isinstance(m, dict) else m for m in out["messages"]]
         # Historical arguments are a final-wire invariant: role merges/folds can
         # introduce calls after any earlier repair. Optional recovery is selected

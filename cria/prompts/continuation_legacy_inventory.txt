@@ -1,0 +1,2 @@
+Retained authoritative paired tool results (their full original output remains in their paired tool messages):
+{{TOOL_RESULTS}}

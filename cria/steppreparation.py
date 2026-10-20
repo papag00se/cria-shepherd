@@ -101,7 +101,8 @@ def assemble_base(source: BaseInput) -> BaseFrame:
         if persona_at < 0 and isinstance(candidate, str) and candidate and candidate in text:
             persona_at, persona = run + text.index(candidate), candidate
         run += len(text) + 2
-    roots_note = dirguard.readable_roots_note(messages, source.workspace_root)
+    roots_note = dirguard.readable_roots_note(messages, source.workspace_root, include_build=False)
+    messages = dirguard.annotate_build_locations(messages, source.workspace_root)
     messages = [m for m in messages if not (isinstance(m, dict) and m.get(bodykeys.CALLER_INSTRUCTIONS))]
     messages = probegate.clean_gate_results(messages, source.gate_plan)
     hint = services.menu_note(source.tools) if services.menu_note is not None else None

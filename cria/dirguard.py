@@ -22,7 +22,7 @@ import os
 import re
 import shlex
 
-from . import prompts, toolpath
+from . import bodykeys, prompts, toolpath
 
 LEVELS = ("none", "read", "write")
 
@@ -879,7 +879,7 @@ def dependency_roots(messages, workspace: str | None = None) -> tuple[str, ...]:
     return (*deps, *(r for r in roots if r not in deps))
 
 
-def readable_roots_note(messages, workspace: str | None) -> str:
+def readable_roots_note(messages, workspace: str | None, *, include_build: bool = True) -> str:
     """Restate harness-declared writable roots without downgrading them to read-only.
 
     API inspection uses read-only commands, but this note neither grants extra
@@ -888,9 +888,29 @@ def readable_roots_note(messages, workspace: str | None) -> str:
     roots = _run_roots(messages, workspace)
     if not roots:
         return ""
-    deps = build_dependency_locations(messages, roots)
+    deps = build_dependency_locations(messages, roots) if include_build else ()
     build = (prompts.fill(prompts.load("readable_roots_build"), deps=", ".join(deps)) if deps else "")
     return prompts.fill(prompts.load("readable_roots"), roots=", ".join(roots), build=build)
+
+
+def annotate_build_locations(messages, workspace: str | None) -> list[dict]:
+    """Place each observed location after its first source result, never in the system.
+
+    Rebuilding an appended history recreates exactly the same earlier annotations.
+    The authoritative tool text and native call coordinates remain untouched.
+    """
+    roots = _run_roots(messages, workspace)
+    seen: set[str] = set()
+    out = []
+    for message in messages:
+        out.append(message)
+        locations = [p for p in build_dependency_locations([message], roots) if p not in seen]
+        if locations:
+            out.append({'role': 'user', bodykeys.ANNOTATION_SOURCE: bodykeys.AnnotationSource.DEPENDENCY,
+                        'content': prompts.render('dependency_build_locations',
+                                                  locations=", ".join(locations)).strip()})
+            seen.update(locations)
+    return out
 
 
 def _in_declared_root(path: str, roots) -> bool:

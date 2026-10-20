@@ -302,7 +302,9 @@ def test_all_listed_pairs_withdrawn_by_real_floor_preserve_origin_and_next_actua
     shipped = runtime.harden('Do the next edit.', 'PLAN', hist)
     reframed = runtime.reframe(shipped, retained=pairs)
     continuation = reframed[-1]
-    assert all(f'call id: {cid}' in continuation['content'] for cid in ids)
+    reference = prompts.load('continuation_results_reference').strip()
+    assert continuation['content'].endswith(reference)
+    assert modelview.RETAINED_HEADER not in continuation['content']
     assert modelview._paired_ids(reframed) == ids
 
     # Real, incompressible intervening history makes the old pairs fall out of
@@ -317,11 +319,9 @@ def test_all_listed_pairs_withdrawn_by_real_floor_preserve_origin_and_next_actua
     assert any(k == 'context.floor' and f.get('turns_dropped', 0) for k, f in log.events)
     assert modelview._paired_ids(wire['messages']) == set()
     sent = next(m for m in wire['messages'] if (m.get('content') or '').startswith(loop.CONTINUATION_MARKER))
-    none = prompts.load('continuation_no_retained_results').strip()
-    assert sent['content'].endswith(none)
+    assert sent['content'].endswith(reference)
     assert modelview.RETAINED_HEADER not in sent['content']
-    header = '\n' + modelview.RETAINED_HEADER
-    assert sent['content'] == continuation['content'].rsplit(header, 1)[0] + '\n' + none
+    assert sent['content'] == continuation['content']  # actual pair removal never rewrites the handoff
     assert original in sent['content']  # every producer event survives byte-for-byte
 
     evidence = loop._satisfaction_evidence(wire['messages'], origin=runtime.sess.handoff_origin)

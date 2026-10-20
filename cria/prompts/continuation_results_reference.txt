@@ -1,0 +1,1 @@
+⟦ctx:inventory⟧ Paired tool results carry their call ids in their own messages. Use those messages for the observations actually available here; a call id alone does not establish that its result is present. A labelled summary is not the full original output. Newer results may follow this handoff.

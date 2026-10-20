@@ -5861,12 +5861,9 @@ class _HandoffOrigin:
         return summary == self.reply or (self.dropped and summary == self.reply.removeprefix(_PROSE_DROPPED_MARKER + "\n"))
 
     def matches_continuation(self, text: str) -> bool:
-        # The final wire can truthfully withdraw the paired-result footer. That
-        # footer is not the handoff or its ledger; compare the exact produced core.
-        header = "\n" + modelview.RETAINED_HEADER
-        withdrawn = "\n" + prompts.load("continuation_no_retained_results").strip()
-        core = text.removesuffix(withdrawn) if text.endswith(withdrawn) else text.rsplit(header, 1)[0]
-        return bool(self.continuation) and core == self.continuation.rsplit(header, 1)[0]
+        # Legacy inventory canonicalization changes only the generated footer.
+        # That footer is not the handoff or its ledger; compare the exact produced core.
+        return bool(self.continuation) and modelview.continuation_core(text).rstrip() == modelview.continuation_core(self.continuation).rstrip()
 
 
 def _workspace_is_empty(cwd: str) -> bool:
@@ -5891,35 +5888,6 @@ def _workspace_is_empty(cwd: str) -> bool:
     # an unanswered question keeps the normal reframe (the conservative direction this already had
     # for an unreadable directory).
     return False
-
-
-def _paired_tool_provenance(messages: list[dict]) -> str:
-    """The exact call coordinates whose result messages survived a harness compaction.
-
-    A compaction handoff is model-authored prose, whereas a ``tool`` message paired to an
-    assistant call is an observed harness result.  Keep both, but make that distinction
-    explicit at the point the handoff is reattributed.  This is deliberately structural:
-    call ids come from wire pairing, not result text or task vocabulary.  Do not name a
-    tool here: later inbound representation can re-present a lowered call under its
-    model-visible tool name, while its id remains the stable provenance coordinate.
-    """
-    calls: set[str] = set()
-    for message in messages:
-        if not isinstance(message, dict):
-            continue
-        for call in message.get("tool_calls") or []:
-            if isinstance(call, dict) and isinstance(call.get("id"), str):
-                calls.add(call["id"])
-    retained: list[str] = []
-    seen: set[str] = set()
-    for message in messages:
-        if not isinstance(message, dict) or message.get("role") != "tool":
-            continue
-        call_id = message.get("tool_call_id")
-        if isinstance(call_id, str) and call_id in calls and call_id not in seen:
-            retained.append(f"- paired tool result (call id: {call_id})")
-            seen.add(call_id)
-    return "\n".join(retained)
 
 
 def reframe_compaction(messages: list[dict], *, origin: _HandoffOrigin | None = None) -> tuple[list[dict], bool]:
@@ -5969,7 +5937,7 @@ def reframe_compaction(messages: list[dict], *, origin: _HandoffOrigin | None = 
             # Tag with a ⟦ctx:⟧ marker so classify.latest_user_text skips it — this reframe is cria
             # scaffolding, not the user's task; classifying it flips a coding session onto the reasoner.
             reframe = prompts.render(tmpl, summary=summary, cwd=cwd,
-                                     tool_results=_paired_tool_provenance(messages) or "(none)")
+                                     tool_results=prompts.load("continuation_results_reference").strip())
             content = f"{CONTINUATION_MARKER} {reframe}"
             if known:
                 origin.continuation = content

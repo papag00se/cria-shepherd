@@ -5,5 +5,4 @@ What follows is NOT a model's account of that work — none could be handed to y
 RE-DERIVED AT THE TIME OF THAT COMPACTION (not claimed, may be stale now):
 {{SUMMARY}}
 
-Retained authoritative paired tool results (their full original output remains in their paired tool messages):
 {{TOOL_RESULTS}}

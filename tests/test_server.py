@@ -618,7 +618,10 @@ class ResponsesInboundCaptureTests(unittest.TestCase):
         self.assertIn("If a handoff assertion conflicts with a retained tool result, the tool result wins.", reframe)
 
         call_id = "Bq2LzwjFawzxO2DH6b0lYvRdlZaj5OmD"
-        self.assertIn(f"paired tool result (call id: {call_id})", reframe)
+        # The inventory no longer re-lists call ids inside the continuation (that list changed
+        # every call and broke the cached prompt prefix); it points at the paired results, which
+        # keep their ids in their own messages. Asserted below: that result is retained.
+        self.assertIn("Paired tool results carry their call ids in their own messages", reframe)
         source_output = next(item["output"] for item in producer["input"]
                              if item.get("type") == "function_call_output" and item.get("call_id") == call_id)
         tool_call = next(message for message in messages if any(

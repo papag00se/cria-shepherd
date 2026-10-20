@@ -39,7 +39,10 @@ def test_no_declared_roots_or_unproven_cache_adds_nothing():
 def test_the_coder_frame_carries_the_fact_only_when_roots_are_declared():
     msgs = _msgs()
     framed = loop._frame_for_item(msgs, "t", "", 0, 1, synthetic=True, workspace_root=RUNS)
-    assert INSTALL + "/m2/repository" in framed[0]["content"]
+    assert INSTALL + "/m2/repository" not in framed[0]["content"]
+    assert any(INSTALL + "/m2/repository" in str(m.get('content')) and
+               str(m.get('content')).startswith('⟦ctx:dependencies⟧') for m in framed[1:])
+    assert any(m.get('content') == JTO for m in framed)
     plain = loop._frame_for_item([{"role": "user", "content": "x"}], "t", "", 0, 1, synthetic=True)
     assert "READ these directories" not in plain[0]["content"]
 

@@ -706,6 +706,25 @@ def _is_env_preamble(m: dict) -> bool:
     return bool(_ENV_PREAMBLE.search(_msg_text(m)))
 
 
+def _request_user(message: dict) -> bool:
+    """A producer-owned factual annotation is not a new user request."""
+    return (message.get('role') == 'user' and not any(
+        message.get(bodykeys.ANNOTATION_SOURCE) is source for source in bodykeys.AnnotationSource))
+
+
+def _last_user(messages: list[dict]) -> int:
+    return max((i for i, message in enumerate(messages) if _request_user(message)), default=-1)
+
+
+def _historical_annotation(message: dict) -> bool:
+    """Relocated historical wording is not live work, regardless of its position."""
+    return message.get(bodykeys.ANNOTATION_SOURCE) is bodykeys.AnnotationSource.INVENTORY
+
+
+def _live_tail(messages: list[dict]) -> set[int]:
+    return set([i for i, message in enumerate(messages) if not _historical_annotation(message)][-OVERFLOW_KEEP_TAIL:])
+
+
 def _input_core(messages: list[dict], pinned_task: str) -> list[dict]:
     """Input that must win over output room: initial environment/task and live tail.
 
@@ -713,20 +732,20 @@ def _input_core(messages: list[dict], pinned_task: str) -> list[dict]:
     compaction as history grows. Include paired calls for surviving tool results.
     """
     task_at = next((i for i, m in enumerate(messages)
-                    if m.get("role") == "user" and pinned_task
+                    if _request_user(m) and pinned_task
                     and _msg_text(m).strip() == pinned_task.strip()), None)
     if task_at is None:
         task_at = next((i for i, m in enumerate(messages)
-                        if m.get("role") == "user" and not _is_env_preamble(m)), -1)
-    last_user = max((i for i, m in enumerate(messages) if m.get("role") == "user"), default=-1)
-    tail = max(0, len(messages) - OVERFLOW_KEEP_TAIL)
+                        if _request_user(m) and not _is_env_preamble(m)), -1)
+    last_user = _last_user(messages)
+    tail = _live_tail(messages)
     keep = {i for i, m in enumerate(messages)
-            if (i <= task_at and m.get("role") == "user") or i >= tail or i == last_user
+            if (i <= task_at and m.get("role") == "user") or i in tail or i == last_user
             or m.get("role") in ("system", "developer") or _has_protect_marker(m)}
     # Reducible evidence is not the irreducible live input the reply room must yield to: counting the
     # restored file text here shrank the reply reserve by the block's size (reviewed on phi4 post-compaction
     # bodies: 1.7-2.3K tokens of room fell to 167-759).
-    keep -= {i for i, m in enumerate(messages) if _is_restored_text(m)}
+    keep -= {i for i, m in enumerate(messages) if _is_restored_text(m) or _historical_annotation(m)}
     ids = {messages[i].get("tool_call_id") for i in keep if messages[i].get("role") == "tool"}
     keep.update(i for i, m in enumerate(messages)
                 if any(tc.get("id") in ids for tc in m.get("tool_calls") or []))
@@ -765,9 +784,9 @@ def _live_obligations(messages: list[dict]) -> tuple[int, ...]:
     treat a newly live source as the historical evidence that reduction replaced.
     Include callers of live results, as the input-core budget does.
     """
-    last_user = max((i for i, m in enumerate(messages) if m.get('role') == 'user'), default=-1)
+    last_user = _last_user(messages)
     live = [0] * len(messages)
-    for i in range(max(0, len(messages) - OVERFLOW_KEEP_TAIL), len(messages)):
+    for i in _live_tail(messages):
         live[i] |= _LIVE_TAIL
     if last_user >= 0:
         for i in range(_active_start(messages, last_user), last_user + 1):
@@ -803,7 +822,7 @@ def _protected_mask(messages: list[dict], pinned_task: str = "") -> list[bool]:
     last_user, first_task = -1, -1
     wanted = pinned_task.strip()
     for i, m in enumerate(messages):
-        if m.get("role") == "user":
+        if _request_user(m):
             last_user = i
             # Prefer the task the session actually pinned. Environment banners are harness prose and
             # cannot be recognized reliably by an ever-growing phrase list. Exact equality is enough:
@@ -817,6 +836,8 @@ def _protected_mask(messages: list[dict], pinned_task: str = "") -> list[bool]:
     if first_task >= 0:
         prot[first_task] = True
     for i, m in enumerate(messages):
+        if _historical_annotation(m):
+            continue  # relocation cannot promote historical wording into an active request/anchor
         if m.get("role") in ("system", "developer"):
             prot[i] = True
         if last_user >= 0 and i >= active:
@@ -868,13 +889,11 @@ def _drop_protected_overflow(messages: list[dict], msg_budget: int, *,
     # budget and THEN adding a note leaves the request over, which is how a "last resort" ended up
     # firing on nearly every request of a long run.
     while _msgs_tokens(work + ([note] if note else [])) > msg_budget:
-        last_user = -1
-        for i, m in enumerate(work):
-            if m.get("role") == "user":
-                last_user = i
-        tail_start = max(len(work) - OVERFLOW_KEEP_TAIL, 0)
+        last_user = _last_user(work)
+        tail = _live_tail(work)
         def _droppable(i, m):
-            return i > last_user and i < tail_start and m.get("role") not in ("system", "developer")
+            return ((_historical_annotation(m) or (i > last_user and i not in tail))
+                    and m.get("role") not in ("system", "developer"))
         # Prefer an unmarked victim; fall back to a protect-marked one only if nothing else is left.
         victim = next((i for i, m in enumerate(work)
                        if _droppable(i, m) and not _has_protect_marker(m)), None)
@@ -915,7 +934,7 @@ def _drop_protected_overflow(messages: list[dict], msg_budget: int, *,
         # than displacing the task at the head.
         at = len(work)
         for i, m in enumerate(work):
-            if m.get("role") == "user":
+            if _request_user(m):
                 at = i + 1
         work.insert(at, note)
     return work, dropped

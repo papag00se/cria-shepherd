@@ -136,12 +136,18 @@ def test_below_context_fixes_nothing_is_folded_or_rewritten():
 
 
 def test_l0_is_byte_identical_for_a_continuation_that_lists_ids_the_body_lacks():
-    cont = ("⟦ctx:continuation⟧ frame\n\nRetained authoritative paired tool results (their full original "
+    lead = prompts.load('compaction_reframe').split('\n\n', 1)[0]
+    cont = ("⟦ctx:continuation⟧ " + lead + "\n\nRetained authoritative paired tool results (their full original "
             "output remains in their paired tool messages):\n- paired tool result (call id: call_x)")
     msgs = [{"role": "user", "content": "task"}, {"role": "user", "content": cont}]
     assert _prep(msgs, 1_000_000, config.PURE_PROXY) == msgs
     assert _prep(msgs, 1_000_000, config.SIMPLE_TOOLS) == msgs
-    assert "call_x" not in _text(_prep(msgs, 1_000_000, config.CONTEXT_FIXES))   # corrected only from L3
+    sent = _prep(msgs, 1_000_000, config.CONTEXT_FIXES)
+    assert prompts.load('continuation_results_reference').strip() in sent[1]['content']
+    assert 'call_x' not in sent[1]['content']  # presence promise corrected only from L3
+    assert cont.split('\n\n', 1)[1] in sent[-1]['content']  # unmatched historical text is never erased
+    assert sent[-1]['content'].startswith('⟦ctx:inventory⟧ Quoted historical wording')
+    assert modelview._paired_ids(sent) == set()
 
 
 def test_the_usage_report_is_the_wires_number_at_each_level():

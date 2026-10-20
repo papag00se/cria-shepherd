@@ -14,12 +14,23 @@ failure mode principle 24 was written after.
 
 It also broke an import cycle. `config` needed `MERGE_TURNS_KEY` from `massage`, `massage` imports
 `writeproxy`, `writeproxy` imports `config` — so the constant was fetched through a function-local
-import with a comment naming the cycle it was dodging. A leaf module with no imports of its own ends
+import with a comment naming the cycle it was dodging. A leaf module with no sibling imports ends
 that: every stage can name a key without depending on any other stage.
 
 A key here is cria-internal by definition. If it can reach the model server, it is a bug — the wire
 strips every one of them (`Upstream._prep`).
 """
+
+from enum import Enum
+
+
+class AnnotationSource(str, Enum):
+    """In-process producer identity; a JSON string cannot acquire this authority."""
+    DEPENDENCY = 'dependency_annotation'
+    INVENTORY = 'inventory'
+
+
+ANNOTATION_SOURCE = 'cria_annotation_source'
 
 # --- request-body hints: an earlier stage's intent, read by a later one -------------------------
 
@@ -104,4 +115,4 @@ PAYLOAD_BOUNDARY = "cria_payload_boundary"
 #: Every key above. The wire strips this set wholesale, so adding a key here is all it takes to keep
 #: it off the API — the thing five scattered literals could not guarantee.
 ALL = (MERGE_TURNS, OUTPUT_RESERVE, LOST_CALL, PINNED_TASK, CONTEXT_REFIT_NO_CHANGE,
-       CALLER_INSTRUCTIONS, CALLER_PERSONA, CALLER_SPAN, RESTORED_FILES, COMPLETION_REMEDIATION, NOTES, RUMINATION, FENCED_REFUSED, PAYLOAD_BOUNDARY, SUPERSEDED_WRITES, FOCUS_PRODUCERS)
+       CALLER_INSTRUCTIONS, CALLER_PERSONA, CALLER_SPAN, RESTORED_FILES, COMPLETION_REMEDIATION, NOTES, RUMINATION, FENCED_REFUSED, PAYLOAD_BOUNDARY, SUPERSEDED_WRITES, FOCUS_PRODUCERS, ANNOTATION_SOURCE)
