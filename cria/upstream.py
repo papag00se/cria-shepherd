@@ -228,6 +228,21 @@ def _abort_footer(aborted: dict) -> str:
     return f"⟦— reasoning stream ABORTED HERE by {which} —⟧\n"
 
 
+# Summary requests (self-compaction, harness compaction, briefing validation) carry the history
+# flattened to text and code, which tokenizes denser than the coder's JSON tool traffic. One ratio
+# per model let the coder's ~1.1 stand in for a summary's ~1.33 and under-fit by ~20% (run
+# 1792480002 call 0051). Each kind learns its own density; unseen kinds start at the default.
+_SUMMARY_PHASES = ("self-compact", "compactor", "compaction", "harness-compaction", "summar")
+
+
+def _density_key(model, rlog, body=None) -> str:
+    phase = getattr(rlog, "phase", None)
+    hinted = body.get(bodykeys.DENSITY_KIND) if isinstance(body, dict) else None
+    kind = (hinted if isinstance(hinted, str) and hinted else
+            "summary" if isinstance(phase, str) and phase.startswith(_SUMMARY_PHASES) else "")
+    return f"{model or ''}#{kind}" if kind else model
+
+
 class Upstream:
     """An OpenAI-compatible chat endpoint. With no ``api_key`` this is the local
     llama.cpp; with one it is an OpenAI-compatible *cloud* provider (Bearer auth) —
@@ -565,7 +580,8 @@ class Upstream:
                 tools_in = body.get("tools")
                 from . import capacitypolicy
                 safety = (safety_override if safety_override is not None else
-                          capacitypolicy.fit_density(body.get("model"), runtime.capacity))
+                          capacitypolicy.fit_density(_density_key(body.get("model"), rlog, body),
+                                                     runtime.capacity))
                 pinned = str(body.get(bodykeys.PINNED_TASK) or "")
                 source, source_tools = msgs, tools_in
                 if prefix_state is not None:
@@ -721,7 +737,11 @@ class Upstream:
             real = self._tokenize_prompt(rendered, rlog) if rendered is not None else None
             if real is not None:
                 rlog.emit("context.measured", tokens=real, n_ctx=window, reserve=rep.reserve)
-                if real > window:
+                tokenratio.record(_density_key(body.get("model"), rlog, body), real, sent_estimate)
+                # The reply's room is part of the fit. A prompt that merely fits the window
+                # leaves the answer no space: a self-compaction briefing measured 48,192 of a
+                # 49,152 window and was cut off after 959 tokens (run 1792480002 call 0051).
+                if real > window - rep.reserve:
                     if data == _previous_fit:
                         raise UpstreamError("Measured input cannot fit the context window without losing protected input")
                     tighter = max(safety, real / max(sent_estimate, 1))
@@ -788,7 +808,7 @@ class Upstream:
             self._window = prompt_tokens
             self._window_guessed = False   # measured, not invented — even though it is a lower bound
 
-    def _calibrate(self, model, usage, estimate: int, rlog) -> None:
+    def _calibrate(self, model, usage, estimate: int, rlog, body=None) -> None:
         """Learn the real÷estimate density from a call's REAL prompt-token count (server usage), so
         the floor budgets against truth on later turns. Best-effort — no-op without a usage count.
 
@@ -802,15 +822,15 @@ class Upstream:
         self._window_at_least(usage.get("total_tokens")
                               or ((prompt_tokens or 0) + (usage.get("completion_tokens") or 0))
                               or None, rlog)
-        shifted = tokenratio.record(model, prompt_tokens, estimate)
+        shifted = tokenratio.record(_density_key(model, rlog, body), prompt_tokens, estimate)
         if shifted is not None:
             rlog.emit("context.calibrated", model=model, real=prompt_tokens, est=estimate, ratio=round(shifted, 2))
 
-    def _observe_capacity(self, facts, model, rlog) -> None:
+    def _observe_capacity(self, facts, model, rlog, body=None) -> None:
         """Record authoritative counts/window; no optional refit choice or return value."""
         real, n_ctx = facts.rejection.real, facts.rejection.window
         sent_estimate = facts.prepared.estimate
-        tokenratio.record(model, real, sent_estimate)
+        tokenratio.record(_density_key(model, rlog, body), real, sent_estimate)
         density = float(real) / float(sent_estimate)
         rlog.emit("context.refit", level="warn", model=model, real=real, est=sent_estimate,
                   n_ctx=n_ctx, safety=round(density, 2))
@@ -842,7 +862,7 @@ class Upstream:
             return self._send_capacity(prepared, body, stream, rlog, attempt, runtime, transport)
 
         def observe(facts):
-            self._observe_capacity(facts, body.get('model'), rlog)
+            self._observe_capacity(facts, body.get('model'), rlog, body)
 
         def no_change(source, wire):
             rlog.emit('upstream.error', level='error', url=self._chat_url, error=str(source))
@@ -1071,7 +1091,7 @@ class Upstream:
             self._save_reasoning(capture_path, "".join(reasoning), None, rlog,
                                  ending="" if usage else "the stream ended without a usage block")
             tokens = (usage or {}).get("completion_tokens") or content_chunks
-            self._calibrate(body.get("model"), usage, sent_estimate, rlog)
+            self._calibrate(body.get("model"), usage, sent_estimate, rlog, body)
             tok_s = (
                 round(tokens / (t_end - t_first), 1)
                 if (t_first is not None and t_end > t_first and tokens)
@@ -1143,7 +1163,7 @@ class Upstream:
                 sleeper(action.wait_ms / 1000.0)
         t_end = time.monotonic()
         usage = (_try_json(raw) or {}).get("usage")
-        self._calibrate(body.get("model"), usage, sent_estimate, rlog)
+        self._calibrate(body.get("model"), usage, sent_estimate, rlog, body)
         tokens = (usage or {}).get("completion_tokens")
         tok_s = round(tokens / (t_end - t0), 1) if (tokens and t_end > t0) else None
         rlog.emit(
@@ -1341,7 +1361,7 @@ class Upstream:
         if not saved:
             self._save_reasoning(capture_path, "".join(reasoning), aborted, rlog)
         callcapture.capture_response(capture_path, completion, rlog)  # the assembled answer, on disk
-        self._calibrate(body.get("model"), usage, sent_estimate, rlog)
+        self._calibrate(body.get("model"), usage, sent_estimate, rlog, body)
         # FRAMES AND READABLE CHARS, ALWAYS. Diagnosing why a guard declined needs the numbers it
         # declined on, and nothing recorded them: the 12-minute dead call above could only be pinned
         # down by DEDUCING the frame count from which guards did NOT fire (#12).

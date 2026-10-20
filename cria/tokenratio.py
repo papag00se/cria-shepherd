@@ -46,6 +46,22 @@ def observed(model) -> float:
         return _ratios.get(model or "", DEFAULT_RATIO)
 
 
+def highest() -> float:
+    """The highest learned ratio for any key, or the default: a conservative density when the
+    exact request key is not known yet."""
+    with _lock:
+        return max(_ratios.values(), default=DEFAULT_RATIO)
+
+
+def observed_kind(kind: str) -> float:
+    """The highest learned ratio for any model's ``kind`` requests (keys ``model#kind``), or the
+    default until one is measured. Highest, because under-estimating overflows the window."""
+    suffix = "#" + kind
+    with _lock:
+        seen = [v for k, v in _ratios.items() if k.endswith(suffix)]
+    return max(seen) if seen else DEFAULT_RATIO
+
+
 def record(model, real_tokens, estimate) -> float | None:
     """Feed the server's REAL prompt-token count back. ``estimate`` is the chars/4 estimate of the
     SAME (sent) prompt — messages + tool schema — so the value is pure tokenizer density. Returns

@@ -155,10 +155,11 @@ def test_stock_stream_lifecycle_preserves_control_packets_and_role_settings():
                 )
             assert verdict == "SUPPORTED", case["id"]
             sent = bodies[-1]
-            calibration.assert_called_once_with(
+            calibration.assert_called_once()
+            # The request body now rides along so summary-kind density is learned separately.
+            assert calibration.call_args.args[:4] == (
                 "offline-wire-test", usage,
-                contextfloor.est_total(sent["messages"], sent.get("tools")), log,
-            )
+                contextfloor.est_total(sent["messages"], sent.get("tools")), log)
             assert sent["messages"] == [
                 {"role": "system", "content": prompts.render(
                     "steer_diagnostic_action", directive=case["candidate"],

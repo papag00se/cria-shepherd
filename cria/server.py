@@ -22,7 +22,7 @@ from dataclasses import dataclass, replace
 from collections.abc import Callable
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import bodykeys, dirguard, memoryhandoff
+from . import bodykeys, dirguard, handoffdistill, memoryhandoff
 from . import (callcapture, compat, focustrim, groundtruth, massage, modelview, probegate, prompts,
                responses, rumination, selfcompact)
 from . import admission, classify
@@ -458,8 +458,24 @@ def _handoff_facts(server, key, body, rlog, owner):
         carried_ledger=_carried_ledger(messages, origin=getattr(owner, "handoff_origin", None)))
 
 
+def _handoff_distiller(provider, server, rlog):
+    """Bind chunked distillation (handoffdistill) to the live provider's real window.
+
+    Abstains (None) when the window is unknown or guessed: without a real budget nothing can be
+    sized, and the single request plus the labelled floor remain the behavior."""
+    if provider is None:
+        return None
+    role = server.cfg.routing.roles.get("compactor") or server.cfg.routing.roles.get("reasoner")
+    def apply_role(body):
+        if role is not None:
+            role.apply(body, internal=True, rlog=rlog)
+    return handoffdistill.binder(provider.chat, handoffdistill.window_of(provider.chat, rlog),
+                                 SUMMARIZE_MAX_TOKENS, apply_role, rlog)
+
+
 def _compaction_body(pbody: dict, workspace_root: str | None = None, gate_plan=None,
-                     checks: str = "", checks_age: int = 0, *, definition=..., facts=None) -> dict:
+                     checks: str = "", checks_age: int = 0, *, definition=..., facts=None,
+                     distill=None) -> dict:
     """Selected Source framing, with no replacement when its lifecycle is absent.
 
     The compaction request, re-asked in CRIA'S OWN WORDS.
@@ -511,7 +527,10 @@ def _compaction_body(pbody: dict, workspace_root: str | None = None, gate_plan=N
     if facts is None:
         facts = memoryhandoff.SessionFacts(workspace_root=workspace_root or "",
             gate_plan=gate_plan, gate_flag=checks, gate_age=checks_age)
-    framed = definition.frame(pbody, facts, _handoff_services(), selected=True)
+    services = _handoff_services()
+    if distill is not None:
+        services = replace(services, distill=distill)
+    framed = definition.frame(pbody, facts, services, selected=True)
     if not isinstance(framed, dict) or not isinstance(framed.get("messages"), list):
         raise ValueError("Harness handoff framing must return a message body")
     return framed
@@ -663,7 +682,12 @@ def _harden_compaction_reply(comp: dict, body: dict, provider, server, rlog, ses
             raise ValueError("Invalid harness handoff producer settlement")
         settlement.append((reply, ledger, dropped))
     role = server.cfg.routing.roles.get("compactor") or server.cfg.routing.roles.get("reasoner")
-    result = definition.execute(comp, body, facts, _handoff_services(), selected=True,
+    services = _handoff_services()
+    distill = _handoff_distiller(provider, server, rlog)
+    if distill is not None:
+        # The empty/cut-off briefing retry re-frames the request; it must distill too.
+        services = replace(services, distill=distill)
+    result = definition.execute(comp, body, facts, services, selected=True,
         chat_fn=provider.chat if provider is not None else None,
         role=role, rlog=rlog, settle=settle, frame_hook=definition.frame)
     if (not isinstance(result, memoryhandoff.HandoffResult) or not isinstance(result.completion, dict)
@@ -790,6 +814,7 @@ class CriaServer(ThreadingHTTPServer):
                 selected = generationguards.SelectedGuards.from_definitions(runtime.definitions)
                 detector = selected.detector(lambda: coder_role.output_reserve if coder_role else None)
                 return _up.chat_watched(body, rlog, watch=detector.check if detector is not None else None)
+            coder_chat.upstream = _ep("coder")  # the window owner, for pre-floor sizing in the loop
 
             self.loop = Loop(
                 LoopContext(
@@ -1514,7 +1539,8 @@ class CriaHandler(BaseHTTPRequestHandler):
             sbody = _proxy_body(body)
             if self.server.cfg.routing.context_fixes and compaction and handoff is not None:
                 facts = _handoff_facts(server, sk, body, rlog, owner)
-                sbody = _compaction_body(sbody, definition=handoff, facts=facts)
+                sbody = _compaction_body(sbody, definition=handoff, facts=facts,
+                                         distill=_handoff_distiller(provider, server, rlog))
             stream = massage.massage_stream(
                 provider.stream_chat(self._apply_route_role(sbody, indic, rlog), rlog),
                 body.get("model", ""),
@@ -1564,7 +1590,8 @@ class CriaHandler(BaseHTTPRequestHandler):
         facts = None
         if self.server.cfg.routing.context_fixes and compaction and handoff is not None:
             facts = _handoff_facts(server, sess_key, body, rlog, owner)
-            pbody = _compaction_body(pbody, definition=handoff, facts=facts)
+            pbody = _compaction_body(pbody, definition=handoff, facts=facts,
+                                     distill=_handoff_distiller(provider, server, rlog))
         pbody, _ = self._focus_trim(pbody, rlog)
         pbody = self._apply_route_role(pbody, indic, rlog)
         raw = provider.chat(pbody, rlog)

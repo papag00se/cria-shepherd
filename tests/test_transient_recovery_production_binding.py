@@ -44,7 +44,7 @@ def chat_fixture(monkeypatch, outcomes):
         return SimpleNamespace(read=lambda: result,
                                close=lambda: events.append(("close",))), 73, "fake-capture"
     obj._open_with_refit = open_request
-    obj._calibrate = lambda model, usage, estimate, log: events.append(("calibrate", model, usage, estimate))
+    obj._calibrate = lambda model, usage, estimate, log, body=None: events.append(("calibrate", model, usage, estimate))
     return obj, events
 
 

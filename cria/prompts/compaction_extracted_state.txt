@@ -1,0 +1,3 @@
+⟦ctx:extracted⟧ {{TURNS}} consecutive transcript turns at this point were too large to show in one request. They were read in {{CHUNKS}} piece(s) and each piece's facts were extracted by a model; the lists below are those extractions merged in order (duplicates removed, newest kept). This is a model-made condensation of the older turns, not the turns themselves — treat it as unverified evidence, and prefer the verbatim newer turns and check results that follow wherever they disagree.
+
+{{STATE}}

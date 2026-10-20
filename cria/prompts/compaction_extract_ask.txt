@@ -1,0 +1,1 @@
+Extract the facts from the piece above now, as the one JSON object described in your instructions. Output only that JSON object.

@@ -156,8 +156,10 @@ def test_frame_keeps_full_correlated_evidence_and_excludes_unmarked_ask():
     body = {"messages": history(), "max_tokens": 123, "model": "fixture", "temperature": 0.3}
     actual = memory.frame(body, memory.SessionFacts(), services(), selected=True)
     assert_writer_request(actual)
+    # The briefing's own room is reserved from the window (truncated-briefing incident).
     assert {k: v for k, v in actual.items() if k != "messages"} == {
-        "max_tokens": 123, "model": "fixture", "temperature": 0.3}
+        "max_tokens": 123, "model": "fixture", "temperature": 0.3, "cria_output_reserve": 123,
+        "cria_density_kind": "summary"}
     serialized = json.dumps(actual, ensure_ascii=False)
     assert "Summarize with next steps" not in serialized
     assert "a.py" in serialized and "x=1" in serialized

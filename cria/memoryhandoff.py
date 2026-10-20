@@ -39,7 +39,7 @@ from dataclasses import dataclass, replace
 from typing import Callable, Iterable, Protocol
 import json
 
-from . import indicators, massage, prompts, selfcompact
+from . import bodykeys, indicators, massage, prompts, selfcompact
 from .assistcontract import ExecutableDefinition, Policy, Reference
 from .callsyntax import has_tool_call_leak, is_truncated
 from .memoryeffects import Effect
@@ -95,6 +95,9 @@ class EvidenceServices:
     validate: BriefingValidator
     proxy_body: Callable[[dict], dict]
     summarize_max_tokens: int
+    # Chunked distillation of an over-budget transcript (handoffdistill.distill bound to the live
+    # provider/window by the caller). None keeps the single-request evidence unchanged.
+    distill: Callable[[list[str], int], list[str]] | None = None
 
 
 @dataclass(frozen=True)
@@ -182,13 +185,23 @@ def evidence_messages(messages: list, services: EvidenceServices) -> list[dict]:
 def frame(body: dict, facts: SessionFacts, services: EvidenceServices, *, selected: bool) -> dict:
     if not selected:
         return body
-    return {**body, "messages": [
-        {"role": "system", "content": prompts.load("selfcompact_summary")},
-        *selfcompact.compaction_request_messages(
-            evidence_messages(body.get("messages", []), services),
-            services.inventory(facts.workspace_root), facts.gate_plan,
-            facts.gate_flag, facts.gate_age),
-    ]}
+    evidence = evidence_messages(body.get("messages", []), services)
+    composed = selfcompact.compaction_request_messages(
+        evidence, services.inventory(facts.workspace_root), facts.gate_plan,
+        facts.gate_flag, facts.gate_age)
+    if services.distill is not None:
+        history_count = len(selfcompact.compaction_evidence_messages(evidence, facts.gate_plan))
+        middle = services.distill([m["content"] for m in composed[1:-1]], history_count)
+        composed = [composed[0], *({"role": "user", "content": p} for p in middle), composed[-1]]
+    framed = {**body, "messages": [
+        {"role": "system", "content": prompts.load("selfcompact_summary")}, *composed]}
+    # The briefing's own room: without it the floor fills the window with evidence and the
+    # default reserve cut long briefings off mid-sentence.
+    if not isinstance(framed.get("max_tokens"), int):
+        framed["max_tokens"] = services.summarize_max_tokens
+    framed.setdefault(bodykeys.OUTPUT_RESERVE, framed["max_tokens"])
+    framed[bodykeys.DENSITY_KIND] = "summary"
+    return framed
 
 
 class FramingStage(Protocol):
@@ -282,7 +295,8 @@ def harden(completion: dict, body: dict, facts: SessionFacts, services: Evidence
 
 POLICY = Policy(
     "harness-memory-handoff", "harness-memory", 3, family_id="F49",
-    prompts=("recognize_compaction_request", "selfcompact_summary"),
+    prompts=("recognize_compaction_request", "selfcompact_summary", "compaction_extract",
+             "compaction_extract_ask", "compaction_extracted_state", "compaction_extracted_labels"),
     state="session producer record; shared write-result evidence observed before facts resolution",
     services=("original task", "workspace inventory", "gate evidence", "transcript",
               "three-lens validator", "provider", "authenticated carried ledger", "producer settlement"),

@@ -1,0 +1,24 @@
+You are extracting facts from ONE PIECE of an earlier coding session, so a later step can write a briefing for the same agent. You have NO tools. Do NOT write code, run anything, plan, or call a function. Output ONLY one JSON object.
+
+This piece is one of several, in order. Report only what THIS piece shows. Do not guess what happened before or after it.
+
+Return exactly these keys (use [] or "" when the piece shows nothing for a key):
+{
+  "objective": "the task goal as stated in this piece, if any",
+  "files_touched": ["path — what was done to it (read / created / edited / deleted)"],
+  "commands_run": ["the command — its outcome as shown (exit status, key output)"],
+  "errors": ["exact error text — file:line if shown — the command that produced it"],
+  "accepted_fixes": ["a change that a later result in THIS piece showed working, with that evidence"],
+  "rejected_ideas": ["an approach a real result in THIS piece disproved, and the result"],
+  "constraints": ["a requirement or limit stated by the task or a tool result"],
+  "environment": ["a fact about the environment that a tool result SHOWED (not an assumption)"],
+  "pending": ["a requirement still unmet at the end of this piece, with its evidence"],
+  "test_status": ["a test or build run and its actual outcome, as shown"],
+  "references": ["a URL, API, or library version actually read or fetched, and what it said"],
+  "latest_plan": ["the agent's stated next steps at the end of this piece, labelled as its plan"]
+}
+
+Rules:
+- Quote errors, paths, versions and numbers exactly as they appear.
+- Only report something as passing or failing if a command in this piece actually ran and showed it. A claim the agent made without a run is a claim: write "agent claimed …".
+- Keep each entry short and factual. No commentary.

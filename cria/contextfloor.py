@@ -103,7 +103,8 @@ _WRITE_TOOL_NAMES = toolargs.WRITE_TOOL_NAMES
 # / selfcompact.TASK_MARKER / loop.CONTINUATION_MARKER — contextfloor is low-level and imports none (avoids
 # a cycle); a test asserts they stay in sync.
 _PROTECT_MARKERS = ("⟦ctx:briefing⟧", "___CRIA_GATE_", _COMPACTED_MARK,
-                    "⟦ctx:rollup⟧", "⟦ctx:task⟧", "⟦ctx:facts⟧", "⟦ctx:continuation⟧")
+                    "⟦ctx:rollup⟧", "⟦ctx:task⟧", "⟦ctx:facts⟧", "⟦ctx:continuation⟧",
+                    "⟦ctx:extracted⟧")
 
 
 def _has_protect_marker(m: dict) -> bool:

@@ -49,10 +49,11 @@ def summary_calls(count, *, prior='', work_log=WORK_LOG, checklist=CHECKLIST):
             'PLAN (with status):\n' + checklist + '\n\n'
             "WORK LOG (the coder's actual actions and their results):\n" + work_log + '\n\n'
             'Produce the completed-work summary now.')
-    first = {'stream': False, 'max_tokens': 8192, 'temperature': 0.6,
+    # cria_density_kind: summary-kind token density hint, stripped at the wire.
+    first = {'stream': False, 'max_tokens': 8192, 'cria_density_kind': 'summary', 'temperature': 0.6,
              'chat_template_kwargs': {'enable_thinking': True},
              'messages': [{'role': 'system', 'content': SUMMARY_SYSTEM}, {'role': 'user', 'content': user}]}
-    retry = {'stream': False, 'max_tokens': 8192, 'temperature': 0.6,
+    retry = {'stream': False, 'max_tokens': 8192, 'cria_density_kind': 'summary', 'temperature': 0.6,
              'chat_template_kwargs': {'enable_thinking': False},
              'messages': [{'role': 'system', 'content': SUMMARY_SYSTEM + '\n\nDo not think out loud or narrate your reasoning. Respond directly.'},
                           {'role': 'user', 'content': user}]}

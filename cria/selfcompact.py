@@ -94,6 +94,7 @@ class CompactState:
     summary: str = ""      # the current rolling summary text
     covered: int = 0       # message INDEX the summary represents up to (throttle reference)
     attempted: int = 0     # message INDEX last offered to a summarizer, accepted or rejected
+    pressured: bool = False  # floor pressure already bought one throttle-bypassing attempt
 
 
 def _text(m: dict) -> str:
@@ -1051,6 +1052,9 @@ class RollingInput:
     refold_tokens: int = REFOLD_TOKENS
     rlog: object = None
     with_grounding: bool = False
+    # The coder view will not fit its window as is, so the floor would DROP turns. Summarize now
+    # rather than wait out the rejection throttle: folding loses less than dropping.
+    floor_pressure: bool = False
 
 
 @dataclass(frozen=True)
@@ -1133,7 +1137,8 @@ def rolling(source: RollingInput, state: CompactState, *, enabled: bool = True) 
                    if head_end <= base <= tail_start else None)
     never_attempted = state.attempted <= head_end
     should_summarize = ((not state.summary and never_attempted) or band_tokens is None
-                        or (band_tokens is not None and band_tokens >= recompact_tokens))
+                        or (band_tokens is not None and band_tokens >= recompact_tokens)
+                        or (source.floor_pressure and not state.pressured and base < tail_start))
     if not should_summarize and not state.summary:
         return RollingResult(messages, state, Effect.NO_OP)
     refold_effect = Effect.NO_OP
@@ -1153,8 +1158,13 @@ def rolling(source: RollingInput, state: CompactState, *, enabled: bool = True) 
         if summarizable:
             # Record the attempt BEFORE accepting its answer. Empty means fail closed, not "try the
             # identical span again one coder turn later".
+            # One bypass per run of rejections: an attempt that only happened because of floor
+            # pressure (less than a new band since the last offer) spends the bypass; a normal band
+            # attempt or an accepted briefing (below) restores it.
+            by_pressure = (bool(source.floor_pressure) and not never_attempted
+                           and band_tokens is not None and band_tokens < recompact_tokens)
             state = CompactState(summary=state.summary, covered=state.covered,
-                                 attempted=tail_start)
+                                 attempted=tail_start, pressured=by_pressure)
             fresh_text = (summarize(summarizable, newer_messages=messages[tail_start:])
                           if with_grounding else summarize(summarizable))
             fresh = strip_frame_echo(fresh_text, prompts.load("selfcompact_summary"))

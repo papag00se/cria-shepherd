@@ -1,0 +1,13 @@
+# Section headings for the merged chunk extractions (handoffdistill.render_state). Parsed by prompts.load_map.
+objective = GOAL AS RESTATED IN THESE TURNS (the original task text is authoritative)
+files_touched = FILES TOUCHED
+commands_run = COMMANDS RUN
+errors = ERRORS SEEN
+accepted_fixes = FIXES SHOWN WORKING
+rejected_ideas = APPROACHES DISPROVEN
+constraints = CONSTRAINTS
+environment = ENVIRONMENT (shown by a tool result)
+pending = STILL UNMET AS OF THESE TURNS (later turns may have resolved them)
+test_status = TEST / BUILD RUNS
+references = REFERENCES READ
+latest_plan = LATEST STATED PLAN (the agent's plan, not a fact)

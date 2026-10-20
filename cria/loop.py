@@ -48,7 +48,7 @@ from enum import Enum, auto
 from pathlib import Path
 
 from .upstream import UpstreamProtocolError
-from . import bodykeys, dirguard, generation, generationguards, modelview, wsview, stalledwork, groundedaction, writeobservation, pastedfile, livingplan, stepreview, completedwork, completionredrive
+from . import bodykeys, contextfloor, dirguard, handoffdistill, tokenratio, generation, generationguards, modelview, wsview, stalledwork, groundedaction, writeobservation, pastedfile, livingplan, stepreview, completedwork, completionredrive
 from . import callcapture, dedup, denial, editrecovery, execcheck, filefacts, focustrim, groundtruth, indicators, massage, participation, probediscovery, probegate, probeparse, proberun, prompts, reasoning, selfcompact, shellshape, toolmenu, urlgrounding, verifytools, webfetch
 from .upstream import CallerContextRetryNoChange, ContextRefitNoChange
 from . import admission
@@ -3774,7 +3774,8 @@ class Loop:
         return out
 
     def _self_compact(self, msgs: list[dict], sess: PlanSession, idx, rlog, *, force: bool = False,
-                      pinned_task: str | None = None, protected_prefix: bool = False) -> list[dict]:
+                      pinned_task: str | None = None, protected_prefix: bool = False,
+                      frame_tokens: int = 0) -> list[dict]:
         """THE self-compaction — one owner for BOTH drivers. Rolls the old work-history middle into a
         ⟦ctx:rollup⟧ summary via the shared summarize primitive. Orthogonal to sess.summary (the cheap
         completed-STEP axis in the protected system message). ``force`` (set at a step boundary)
@@ -3819,8 +3820,21 @@ class Loop:
                 evidence.append(task_fact)
             return history, evidence
 
+        def apply_role(body):
+            if role is not None:
+                role.apply(body, internal=True, rlog=rlog)
+        # Evidence too big for one writer request is distilled in pieces (handoffdistill), not
+        # dropped by the floor. The validators below still read the full transcript.
+        distill = handoffdistill.binder(chat_fn, handoffdistill.window_of(chat_fn, rlog),
+                                        ROLLUP_MAX_TOKENS, apply_role, rlog)
+
+        def writer_evidence(history, evidence):
+            turns = len(history) - (1 if task_fact else 0)
+            return distill(evidence, turns) if distill is not None else evidence
+
         def make_summary(mm: list[dict], *, newer_messages: list[dict]) -> str:
             history, evidence = evidence_for(mm, newer_messages=newer_messages)
+            evidence = writer_evidence(history, evidence)
             candidate = summarize(
                 chat_fn, role, prompts.load("selfcompact_summary"),
                 selfcompact.compaction_ask(), rlog,
@@ -3841,6 +3855,7 @@ class Loop:
             # fresh source of execution truth. Refolding gets the same newer scope.
             refold_history, refold_evidence = evidence_for(
                 [{"role": "assistant", "content": text}], newer_messages=newer_messages)
+            refold_evidence = writer_evidence(refold_history, refold_evidence)
             candidate = summarize(chat_fn, role, prompts.load("selfcompact_refold"),
                                   _ASK_USER_TURN, rlog, phase="self-compact-refold",
                                   max_tokens=ROLLUP_MAX_TOKENS, evidence_blocks=refold_evidence)
@@ -3853,6 +3868,7 @@ class Loop:
 
         result = selected.execute(selfcompact.RollingInput(
             msgs, make_summary, trigger_tokens=self._ctx.trigger_compaction, force=force,
+            floor_pressure=self._floor_would_drop(msgs, rlog, frame_tokens),
             # Common preparation holds required authority outside this historical scope.
             # Standalone compatibility callers still ask the source to publish its task frame.
             # The writer's task_fact above is grounding in either case, not output authority.
@@ -5212,9 +5228,11 @@ class Loop:
             is_live = message.get("role") == "user" and selfcompact.is_env_context(message)
             (live if is_live else history).append(message)
         if self._ctx.self_compact:
+            frame = [base.messages[0], *([root_message] if root_message is not None else []), *live]
             history = self._self_compact(history, sess, index, rlog,
                 force=bool(not synthetic and sess.compact_pending), pinned_task=root_task,
-                protected_prefix=True)
+                protected_prefix=True,
+                frame_tokens=contextfloor.est_total(frame, body.get("tools")))
         focus_bindings = runtime.bindings("coder-focus") if self._ctx.focus_trim else ()
         focused = focustrim.focus(focustrim.FocusInput(history), focus_bindings)
         history = focused.messages
@@ -5291,6 +5309,24 @@ class Loop:
         if self._ctx.coder_role is not None:
             self._ctx.coder_role.apply(framed, rlog=rlog)
         return framed, reoriented
+
+    def _floor_would_drop(self, msgs: list[dict], rlog, frame_tokens: int = 0) -> bool:
+        """Will the coder request built from ``msgs`` exceed its window, so the floor must DROP
+        turns? Rolling memory runs first and should fold them instead (run 1792480002: with every
+        early briefing rejected, the floor dropped 45-85 coder turns per call for ~20 minutes).
+
+        Sized as the floor sizes the coder request: the coder's OWN learned density (not another
+        request kind's), its reply reserve, and ``frame_tokens`` for the parts the caller keeps
+        outside ``msgs`` (system frame, root task, tool list). Unknown window abstains (False)."""
+        owner = getattr(self._ctx.coder_chat, "upstream", None)
+        window = handoffdistill.window_of(self._ctx.coder_chat, rlog)
+        if not window or owner is None:
+            return False
+        reserve = (getattr(self._ctx.coder_role, "output_reserve", None)
+                   or contextfloor.DEFAULT_GEN_RESERVE)
+        loaded = owner.loaded_model(rlog) if callable(getattr(owner, "loaded_model", None)) else None
+        density = tokenratio.observed(loaded or "")
+        return (contextfloor.est_total(msgs, None) + frame_tokens) * density + reserve > window
 
     def _self_compact_single(self, framed: dict, sess: PlanSession, rlog, root_task: str = "") -> dict:
         """The plan-OFF driver's adapter onto :meth:`_self_compact` — dict in, dict out. It had its own
@@ -7556,6 +7592,10 @@ def summarize(chat_fn, role, system: str, user: str, rlog, *, phase: str = "comp
                             for block in evidence_blocks if block and block.strip())
         messages.append({"role": "user", "content": user})
         call = {"stream": False, "max_tokens": max_tokens, "messages": messages}
+        if phase.startswith(("self-compact", "compactor", "compaction", "harness-compaction")):
+            # Only summary work over flattened history learns the summary density; judges,
+            # queries and steer authors keep the ordinary key (see upstream._density_key).
+            call[bodykeys.DENSITY_KIND] = "summary"
         r = role
         if reasoning_off:
             r = replace(role, reasoning="off") if role is not None else None

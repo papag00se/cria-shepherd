@@ -24,7 +24,8 @@ SUMMARY_LABEL = (
 
 def off_compactor_request(raw):
     """One frozen request fixture: the existing off/template role, without tools."""
-    return {"stream": False, "max_tokens": 8192, "temperature": 0.0,
+    # cria_density_kind is a private hint (summary-kind token density), stripped at the wire.
+    return {"stream": False, "max_tokens": 8192, "temperature": 0.0, "cria_density_kind": "summary",
             "chat_template_kwargs": {"enable_thinking": False}, "messages": [
                 {"role": "system", "content": SUMMARY_SYSTEM +
                  "\n\nDo not think out loud or narrate your reasoning. Respond directly."},
