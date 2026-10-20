@@ -518,6 +518,35 @@ def _segment_spans(command: str) -> list[tuple[int, int]]:
     return spans
 
 
+# WHERE THE OS KEEPS ITS PROGRAMS. A segment that RUNS one of these by its absolute path
+# (`/usr/bin/time -v java …`) executes a system tool; it does not read or write that path as data, and
+# it is the same act as the bare name a PATH lookup resolves (`time`, `java`), which this guard never
+# judges. The guard is about another PROJECT's files, not the OS's plumbing (see _EXEMPT_PREFIXES).
+# Only the command word is exempt: an argument, a redirect or a write under these directories is still
+# judged like any other path, and a program run from anywhere else (another project's script) still is.
+# Walked: feed-pipeline-java x ornith1.5_9b 1792474299 call 0079 — `for i in 1 2 3; do /usr/bin/time -v
+# java …` was refused as "Writing/reading outside the working directory … '/usr/bin/time'" with a
+# put-it-under-./tmp/ route that names nothing the coder could change (#5b); four captured sessions,
+# every system-directory refusal in the corpus is this one shape.
+_SYSTEM_PROGRAM_DIRS = frozenset({"/usr/bin", "/bin", "/usr/sbin", "/sbin", "/usr/local/bin"})
+# The text a segment may carry BEFORE its command word: shell compound keywords, `VAR=value`
+# assignments and the transparent prefix commands with their flags.
+_COMMAND_WORD_LEAD = re.compile(
+    r"^\s*(?:(?:do|then|else|elif|!|\{)\s+)*(?:\w+=\S*\s+)*"
+    r"(?:(?:sudo|env|command|nohup|time|exec|nice)\s+(?:-\S+\s+)*)*$")
+
+
+def _runs_system_program(command: str, segments, start: int, tok: str) -> bool:
+    """Is the rooted token at ``start`` the COMMAND WORD of its segment, naming a program in one of
+    the OS's program directories? Lexical, like the rest of the scan: nothing is resolved on disk."""
+    if os.path.dirname(os.path.normpath(tok)) not in _SYSTEM_PROGRAM_DIRS:
+        return False
+    for s, e in segments:
+        if s <= start <= e:
+            return bool(_COMMAND_WORD_LEAD.match(command[s:start]))
+    return False
+
+
 _SEGMENT_SEARCH_LEAD = re.compile(
     r"^\s*(?:\w+=\S*\s+)*(?:(?:sudo|env|time|nohup|xargs|command)\s+(?:-\S+\s+)*)*"
     r"(?:e?grep|fgrep|rg|ag|ack|sed|awk|gawk)\b", re.IGNORECASE)
@@ -1293,6 +1322,8 @@ def command_refusal(command: str, level: str, workspace: str | None, roots=()) -
                 or _is_param_value_quote(command, inside)):
             continue
         if _after_unresolved_expansion(command, m.start()):
+            continue
+        if inside is None and _runs_system_program(command, segments, m.start(), tok):
             continue
         # `n /1_000_000` is integer division, not a path outside the workspace.
         if _is_numeric_literal(tok):
