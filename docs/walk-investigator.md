@@ -1,15 +1,15 @@
-# Walk investigator and fixer
+# Walk investigator — Sol diagnosis, then Coder implementation
 
-Use the readers' cited observations to investigate demonstrated cria defects. Reader conclusions are leads: inspect the complete cited original prompt/reasoning/action/result and relevant source before treating a causal claim as established. Resolve missing context with adjacent sections or the original captures. Do not repeat an entire completed walk when a targeted verification can settle the question; never substitute snippets or grep for reading the interaction you are judging.
+Use the short [Sol analytical prompt](walk-sol.md) with the initial thoughts and mappings. Main/Sol may do this directly; no extra Sol child is required. Read both initial outputs, then challenge interpretations with targeted ORIGINAL reasoning/context, conflicting passages and alternative explanations. Correct the account in synthesis without repairing Luna's originals. Separate observations, inference and causal evidence; motivation is not correctness or execution. Date later reveals explicitly rather than attributing future knowledge to the earlier call.
 
-Trace context → recorded reasoning/action → consequence. If A leads to B and breaks C, repair A rather than automatically guarding B or C. First consider removing the harmful intervention, then correcting its upstream evidence, framing or shared owner. Follow `docs/principles.md`; do not blame the weights or introduce a task-, language-, model- or harness-specific workaround.
+## Follow reasoning to cria opportunities
 
-For a real candidate:
+The spirit of the walk is reasoning revealing clues about the actual context behind beliefs, decisions, reversals and missed opportunities—not an application-bug checklist. Trace context → recorded thought/action → observed consequence. Ask which assist was missing, silent, mistimed or wrong, and why an intervention did or did not land. Check authority, provenance, versions, final-wire delivery and tool facts where relevant. No model blame; an unexplained thought is a question, not a defect verdict.
 
-1. Check relevant code and commit history for existing shared logic and previous footguns. Correct or reuse the actual upstream owner rather than duplicating assists.
-2. Challenge the correction with adversarial reasoning and legitimate nearby cases.
-3. Replay the suspected cause and correction against real captured calls. Use repetitions appropriate to observed variance; one favorable reply is not proof. State the bounded conclusion and uncertainty, not a claim of universal usefulness.
-4. Write behavioral regression tests that fail before and pass after the fix; run focused checks while working and the integrated full suite at the end. Preserve valid existing assertions.
-5. Commit completed changes, integrate them into main and deploy as authorized for the active run/walk/fix goal. Never change runtime code/configuration during a benchmark cell or run concurrent inference on its GPU.
+Verify claimed chains against original interactions, relevant source/shared owners and executable read-only probes where appropriate. Search is navigation, not proof of absence. Challenge omissions and competing explanations, including prior commitments and stale diagnostics. Distinguish proposed actions from confirmed execution. Do not repeat an entire completed reading to settle a targeted question.
 
-A demonstrated local repair and relevant regression coverage can settle that repair without proving whole-task or universal benefit. Return concise findings, changes, tests and unresolved issues to the supervisor. Do not invent approval chains, freezes, hash/receipt warehouses, or repeated reviews. Preserve necessary tests/fixtures and actual call logs; temporary findings and investigation scratch follow the repository's closure policy.
+For each legitimate fix candidate state the exact incident evidence, upstream owner, falsifiable causal hypothesis, smallest harness/model/language-agnostic correction, validation and fails-before/passes-after regression criteria. Consider removing a harmful intervention before adding one; check nearby legitimate cases and relevant history. Replay captured boundaries where appropriate, with repetitions suited to variance; state bounded conclusions, not universal benefit. **No confirmed fix candidate** is a valid result; never invent one.
+
+## Implementation boundary
+
+Walking alone authorizes no source, configuration, campaign or live change. After a grounded candidate is selected and implementation authorized, Coder owns the cohesive fix and behavioral regression, focused tests and `python -m pytest`; normal review/commit/deployment policy applies. Do not silently promote a walk to a live fix. Keep original reader errors visible in the working evidence; preserve necessary regressions and actual call logs under existing retention policy, without extra approval chains or forensic warehouses.

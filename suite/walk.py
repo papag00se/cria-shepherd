@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
-"""Emit a captured run for a FULL line walk — every call, every line, zero truncation.
+"""Prepare lossless captured-call material for navigation, not a reader protocol.
+
+Official staged walking: docs/walk-prompt.md. Mixed context/response output from this utility
+must not be supplied as stage-1 reasoning-only evidence.
 
 Why this exists: a walk done through an ad-hoc digest script silently cut reasoning at a few
 hundred characters and tool arguments shorter still, and two real defects (a file the run DID
-create, and the harness's "unsupported call" replies) were invisible in the cut. The walk doctrine
-(docs/goals/regression-goal.md) says "read EVERY call in order — no grep, no sampling"; this tool is the
-one permitted way to materialize a capture for that reading, and it NEVER truncates content.
+create, and the harness's "unsupported call" replies) were invisible in the cut.
+This preparation utility NEVER truncates content; it does not require exhaustive context reading.
 
 For each call NNNN-<phase> in the capture directory it prints:
 
@@ -35,9 +37,8 @@ head and moved on, and 2,406 lines went unwalked without anything saying so.
     python3 suite/walk.py <session-name> --full-prompts      # no prefix-dedup at all
 
 With --segment-bytes or --reader-context-tokens, assignments.json assigns independent sections.
-Each section starts with its own complete context, reuses text ONLY within that section, and must
-be read in chunk order by one reader. Chunk boundaries do not reset a reader's context; section
-boundaries do. Budgets count actual emitted UTF-8 bytes, including references and complete new
+Each section starts with its own complete context and reuses text ONLY within that section.
+Reconstruction follows chunk order within a section; sections are independently reconstructible. Budgets count actual emitted UTF-8 bytes, including references and complete new
 reasoning/results. No call is split; an oversized single call is explicitly flagged.
 
 There is deliberately NO flag to shorten, sample, or filter content.

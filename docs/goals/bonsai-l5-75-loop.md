@@ -1,4 +1,6 @@
-# GOAL: lift every Bonsai 2 L5 battery cell above 75%
+# Historical goal: lift every Bonsai 2 L5 battery cell above 75%
+
+**Retired operational instructions.** This document preserves historical campaign intent and evidence only; none of its launch, branch, delegation, reading or repair-loop instructions are operative. It authorizes no resumption. All walking now follows [the sole official process](../walk-prompt.md), including stage-specific Luna prompts and Main/Sol diagnosis. Current repository/operator policy governs any separately authorized implementation or campaign.
 
 ## Mission
 
