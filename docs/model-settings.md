@@ -20,11 +20,12 @@ cria attaches the **role's** sampling + reasoning to **every request** it makes 
 
 ## Per-model recommended settings
 
-Sampling is **client-side** (`cria.toml`); set the role you're driving to these. Server launch (`models.toml`) is uniform except model + template (see §Server launch).
+Sampling is **client-side** (`cria.toml`); set the role you're driving to these. Server launch (`models.toml`) has model-specific runtime, context, cache and batching settings (see §Server launch); inspect `llama-fleet plan MODEL` for the current executable profile.
 
 | Model | Quant | Recommended sampling | Source | Notes |
 |-------|-------|----------------------|--------|-------|
 | **bonsai2** (27B; key was `ternary-bonsai-2` until 2026-09-27) *(was ternary-bonsai; Bonsai 1 retired + deleted 2026-09-18, sampling carried over unchanged)* | PQ2_0 (custom ternary g128) | **per-role, CANONICAL (m15-verified — see block below)**: coder `0.2/0.95/20`, reasoner `0.6/0.90/40`, classifier+compactor `temp 0`; `repeat_penalty 1.1` all | PrismML (Qwen3.6-derived) | needs Q2_0_g128 kernels (§Server launch — TurboQuant merged fork); ~8.0 GB on the 3080; `n_ctx_train` **262144** (comfortable @ 48K) |
+| **dory1.0_4b** (NVIDIA Nemotron-Labs-Dory1.0-4B, **three recurrent loops**) | Q5_K_M | coder/reasoner `temp 1.0, top_p 0.95, top_k 0, min_p 0, repeat_penalty 1`; classifier/compactor `temp 0`, no top-k/min-p restriction, repeat penalty 1 | [NVIDIA GGUF](https://huggingface.co/nvidia/NVIDIA-Nemotron-Labs-Dory1.0-4B-GGUF) | **Added 2026-10-20; registered, not activated.** Dedicated Dory runtime `9e2f3be`; 49,152 context, per-loop Q8/Q8 cache, Flash Attention, batch/microbatch 2048/1024, no context shifting or RAM prompt snapshots. No drafting by default; optional ngram-simple 12/32 for copying, no native MTP. RTX3090 measurements: ~56 tok/s on the short-context throughput workload; 39.2 tok/s at 46,039 input tokens, but that answer was only seven tokens—not a sustained decode benchmark. Copy-only drafting reached ~278 tok/s, not general coding speed. RTX3080 qualification and coding-usefulness evaluation remain pending. See [runtime, evidence and optimization guide](dory-runtime.md). |
 | **nemotron-elastic** (NVIDIA Nemotron-Labs-3-Elastic 12B-A2B) | Q4_K_M | coder/reasoner `temp 0.6, top_p 0.95`; classifier/compactor `temp 0` | [mradermacher GGUF](https://huggingface.co/mradermacher/NVIDIA-Nemotron-Labs-3-Elastic-12B-A2B-GGUF) (derived from DavidAU Elastic; exact historical stanza recovered from `models.toml.pre-retire-20260918`) | Historical path `/home/jesse/models/Nemotron-Elastic-12B/NVIDIA-Nemotron-Labs-3-Elastic-12B-A2B.Q4_K_M.gguf`; embedded template. Exact old per-model GPU-layer setting was inherited `auto`; current config preserves it explicitly. Q4_K_M is 9,641,803,360 bytes; downloaded from the verified repo and SHA-256 `7d6f134f14bde4b23dd3af537c510cb483b5119460b061b50a12a8747f0a22ce` matches its HF LFS OID. The same service ran successfully for 3d 13h (journal 2026-09-25); historical unit recorded 19.3G system memory peak / 9.1G swap peak, so observe host memory on reload. Historical 2026-09-27 ladder is L0–L4 only; old L5 is not a fresh result. |
 | **gemma4_12b** — historical non-QAT quantization (`gemma4` alias), **RETIRED + DELETED 2026-09-18**; historical settings kept for provenance, not a separate battery row | Q4_K_M | `temp 1.0, top_p 0.95, top_k 64, repeat_penalty 1.1` — ALL roles | Gemma 4 defaults (same pair the finetune's card pinned; kept identical so the 2026-08-05 ablation isolated weights) | replaced the yuxinlu1 finetune 2026-08-05 after repeated runs showed stock completing substantially more of the same lane |
 | **ornith1.5_9b** (Ornith 1.5, 9B; executable alias `ornith1.5`, older alias `ornith15`) | Q6_K | coder `temp 0.6, top_p 0.95, top_k 20, min_p 0, presence_penalty 0, repeat_penalty 1`; reasoner `temp 1.0, top_p 0.95, top_k 20, min_p 0, presence_penalty 1.5, repeat_penalty 1` | [ornith-ai card](https://huggingface.co/ornith-ai/Ornith-1.5-9B-GGUF) | **Current Ornith as of 2026-09-05.** Reasoning + XML tool calls are native in the embedded template; 262144-token training context. Previous testing was Ornith **1.0**, not 1.5. Stock b9893 cannot load the MTP block; dedicated upstream 74a7c897 does. Service and native tool/reasoning-toggle smoke verified at ~82 tok/s. |
@@ -51,6 +52,7 @@ Sampling is **client-side** (`cria.toml`); set the role you're driving to these.
 > | defiant-fable 9B | `qwen35` (33 blocks = 32 + 1 MTP) | | |
 > | ornith1.5 9B | `qwen35` | | |
 > | qwen3.8_9b_distill 9B | `qwen35` (33 blocks = 32 + 1 MTP) | | |
+> | dory1.0_4b 4B (three recurrent loops) | `dory` | | |
 > | phi4 14.7B | `phi3` | | |
 > | k2_horizon_7b 7B | `k2-horizon` | | |
 > | | | ling3-tiny 7.9B | `bailingmoe3` 128 (8) + 1 shared |
@@ -311,14 +313,19 @@ The fold preserves order, never drops text, and creates a user turn when a body 
 
 ---
 
-## Server launch (`models.toml`) — uniform except model + template
+## Server launch (`models.toml`)
 
-All models share: `-c 49152` (48K) · `-b 2048 -ub 512` · `-np 1` · `--device CUDA0 -ngl auto -sm none -mg 0` · `-ctk q8_0 -ctv q8_0` **(now every model, incl. ternary-bonsai-2; only the retired Bonsai 1 entry overrode it with `tbq3`)** · `-fa on --no-host --no-mmproj --no-warmup --jinja` · `--reasoning auto` (the *parsing* mode — distinct from per-request `enable_thinking`) · `--host 127.0.0.1 --port 18084`. **Sampling is NOT set here** (cria sends it per request).
+**Current Dory exception:** `dory1.0_4b` uses its dedicated installed runtime and libraries, `-c 49152 -b 2048 -ub 1024 -np 1`, Q8/Q8 KV, Flash Attention, `--gpu-layers 999 --fit off --split-mode none --device CUDA0`, `--no-context-shift --cache-ram 0 --jinja`, and `--override-kv dory.num_loops=int:3,dory.recurrent_kv_cache_mode=str:per_loop`. The GGUF defaults to four loops, so do not omit the override. Its normal service selects no speculation; optional optimized mode adds ngram-simple lookup/draft lengths 12/32. `llama-fleet plan dory1.0_4b` and `llama-fleet plan dory1.0_4b --mode optimized` show both exact profiles. The service is installed but disabled; switch only in an authorized free RTX3080 window. RTX3090 tuning was an explicitly authorized temporary exception to the usual device restriction, not a permanent fleet reassignment. Dory is not automatically added to the frozen eight-model campaign roster or given battery scores.
 
-Most models differ only by source + chat template (all in `~/shepherd-eval/templates/`). **Four override `binary` + `lib_dir`**, because their weight format or model layout needs support the stock build does not carry. In every case `lib_dir` must LEAD with the fork's own dir, then `cuda-12.8-local/lib64` and `/usr/lib/wsl/lib`.
+The older shared-launch description below is historical guidance, not a substitute for the current per-model fleet plan. In particular, its universal microbatch and GPU-fit claims do not qualify Dory on the RTX3080.
+
+Historical common settings: `-c 49152` (48K) · `-b 2048 -ub 512` · `-np 1` · `--device CUDA0 -ngl auto -sm none -mg 0` · `-ctk q8_0 -ctv q8_0` **(now every model, incl. ternary-bonsai-2; only the retired Bonsai 1 entry overrode it with `tbq3`)** · `-fa on --no-host --no-mmproj --no-warmup --jinja` · `--reasoning auto` (the *parsing* mode — distinct from per-request `enable_thinking`) · `--host 127.0.0.1 --port 18084`. **Sampling is NOT set here** (cria sends it per request).
+
+The historical entries below used source/template overrides (including templates in `~/shepherd-eval/templates/`) and dedicated binaries for unsupported weight formats or layouts. Their CUDA-12.8/WSL library paths are provenance, not Dory instructions: Dory uses its own installed runtime directory followed by fleet `libs/cuda13`, as shown in its current plan.
 
 | Model | Fork | Why |
 |-------|------|-----|
+| dory1.0_4b | `~/.local/share/cria/fleet/runtimes/dory-9e2f3be/bin/` (libraries there plus fleet `libs/cuda13`) | Dory architecture support and GPU scale/normalization placement fix, pinned `9e2f3be3947a7339ac8b93f9b9a8dabb8eeaf144`; source `~/src/llama.cpp-dory`. Do not substitute a stock binary without qualifying its Dory support. |
 | ternary-bonsai-2 **(live)** | `~/src/llama.cpp-prism2/b10685/llama-prism-b10685-7dffb15/` | `PQ2_0`/`PTQ1_0` ternary kernels + Hadamard activation runtime. Stock KV (`q8_0` both) — **never `-ctv q4_0`, it costs ~60× prefill at depth** |
 | defiant-fable | `~/src/llama.cpp-ornith15/build-cuda/bin/` (shared with ornith15) | Same failure, same fix: the stock build (upstream 2026-04-21 plus local CCCL patches) rejects the Qwen3.5 MTP block with `missing tensor 'blk.32.ssm_conv1d.weight'`. **Any qwen35 GGUF with `nextn_predict_layers=1` needs this build or a newer one** — check the header before assuming the stock build will do |
 | ornith15 | `~/src/llama.cpp-ornith15/build-cuda/bin/` | upstream 74a7c897. Stock b9893 rejects Ornith 1.5's final MTP block with missing `blk.32.ssm_conv1d.weight`; the dedicated current build loads it. |
@@ -326,6 +333,7 @@ Most models differ only by source + chat template (all in `~/shepherd-eval/templ
 
 | Model | Source | Template |
 |-------|--------|----------|
+| dory1.0_4b | `-m ~/models/cria/dory1.0_4b/NVIDIA-Nemotron-Labs-Dory1.0-4B-Q5_K_M.gguf` (dedicated Dory runtime; explicit three-loop override above) | Embedded template; `enable_thinking`, native tool calls, Jinja. `force_nonempty_content` is not implemented by this template. |
 | ternary-bonsai | `-m …/Ternary-Bonsai-27B/Ternary-Bonsai-27B-Q2_0.gguf` **(PrismML fork binary + lib_dir)** | *(embedded ChatML)* |
 | gemma4 | `-m …/gemma4-v2-Q4_K_M.gguf` | `gemma-toggle.jinja` |
 | ornith15 | `-hf ornith-ai/Ornith-1.5-9B-GGUF --hf-file Ornith-1.5-9B-Q6_K.gguf` **(dedicated upstream 74a7c897 binary + lib_dir)** | *(embedded Qwen3 XML tools + `enable_thinking`)* |

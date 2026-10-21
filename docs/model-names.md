@@ -1,6 +1,6 @@
 # Official model names
 
-These are the operator-defined project identities, recorded **2026-09-30**. Use these exact spellings in reports, documentation, agent findings and user-facing progress updates:
+These are the operator-defined project identities, recorded **2026-09-30**, with `dory1.0_4b` added to the lineup **2026-10-21**. Use these exact spellings in reports, documentation, agent findings and user-facing progress updates:
 
 | Official name | Existing executable / historical aliases |
 |---|---|
@@ -11,10 +11,13 @@ These are the operator-defined project identities, recorded **2026-09-30**. Use 
 | `k2_horizon_7b` | `k2-horizon` |
 | `phi4` | — |
 | `qwen3.8_9b_distill` | `qwen38-distill`, `defiant-fable` |
+| `dory1.0_4b` | —; installed fleet/API identity uses this exact name |
 
 **Defiant-Fable is the same logical model as `qwen3.8_9b_distill`** (owner correction during README review). Combine their cells at presentation boundaries; do not show a separate `defiant-fable` row. Preserve its original IDs in historical evidence.
 
 **Gemma4 and Gemma4 QAT are one logical model: `gemma4_12b`.** Quantization, QAT, a service unit name or a historical spelling does not create another battery row. Fresh judgments supersede only the matching cell; unreplaced historical L0–L4 and other cells remain visible.
+
+Dory is an additional registered model, not a replacement or alias for another model. Its [settings](model-settings.md) and [dedicated runtime/tuning guide](dory-runtime.md) retain the requested three-loop configuration. Registration does not activate its service, expand the frozen eight-model campaign roster, or create unmeasured battery standings.
 
 ## One owner, immutable provenance
 

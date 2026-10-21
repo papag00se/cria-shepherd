@@ -1,4 +1,4 @@
-"""Official project model identities (operator, 2026-09-30).
+"""Official project model identities (2026-09-30; Dory added 2026-10-21).
 
 Names identify logical models, not quantizations, service units or historical run IDs.
 Normalize at presentation/lookup boundaries; never rewrite archived evidence or an active
@@ -7,7 +7,7 @@ campaign's executable keys. See docs/model-names.md and AGENTS.md.
 
 OFFICIAL_NAMES = (
     "gemma4_12b", "ornith1.5_9b", "ling3.0_tiny", "bonsai2",
-    "k2_horizon_7b", "phi4", "qwen3.8_9b_distill",
+    "k2_horizon_7b", "phi4", "qwen3.8_9b_distill", "dory1.0_4b",
 )
 
 # Explicit compatibility names only: do not guess model identity from punctuation or size.

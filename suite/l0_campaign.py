@@ -99,8 +99,12 @@ def fleet_snapshot(*, level=0):
     config=tomllib.loads(CONFIG.read_text())
     roles=json.loads(ROLES.read_text())
     recipes=json.loads((FLEET/'profiles/model-recipes.json').read_text())
-    if config.get('operational_fleet_schema') != 1 or set(config['models']) != set(MODELS) or set(roles) != set(MODELS) or set(recipes) != set(MODELS):
-        raise ValueError('canonical fleet must contain exactly eight logical identities')
+    # The qualified campaign roster is frozen; the installed fleet can grow (Dory).
+    # Extra registrations must remain coherent, but are not admitted to this campaign.
+    registered = set(config['models'])
+    if (config.get('operational_fleet_schema') != 1 or not set(MODELS) <= registered
+        or set(roles) != registered or set(recipes) != registered):
+        raise ValueError('canonical fleet must coherently register every campaign model')
     assets={}
     def add(path,large=False):
         path=Path(path)

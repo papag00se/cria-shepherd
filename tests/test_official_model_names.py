@@ -26,6 +26,14 @@ def test_reports_use_official_names_without_rewriting_evidence(monkeypatch, lega
         assert f"| {legacy} |" not in text
 
 
+def test_registered_dory_has_an_official_identity_without_aliasing_another_model():
+    from suite.model_names import OFFICIAL_NAMES, canonical_name
+
+    # This spelling is the installed fleet/API identity, not a guessed size alias.
+    assert 'dory1.0_4b' in OFFICIAL_NAMES
+    assert canonical_name('dory1.0_4b') == 'dory1.0_4b'
+
+
 def test_aliases_share_one_row_and_latest_judgment_wins(monkeypatch):
     monkeypatch.setattr(battery_status, "_historical", lambda: {
         "frozen": {"gemma4": {"0": {"pct": [10, 20, 30, 40, 50, 60]}}}})

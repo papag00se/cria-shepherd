@@ -106,6 +106,7 @@ python -m pytest -q tests/test_recovered_arg_types.py \
 ## Documentation
 
 - [Configuration](cria.example.toml) and [model settings](docs/model-settings.md)
+- [Dory three-loop runtime, tuning results and qualification limits](docs/dory-runtime.md)
 - [Design principles](docs/principles.md) and [assist implementation](docs/heuristic-assists.md)
 - [Checks and completion review](docs/participation-evidence.md)
 - [Logging and troubleshooting](docs/observability.md)
