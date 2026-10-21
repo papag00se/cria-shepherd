@@ -1,0 +1,13 @@
+row = item_{{INDEX}} = {"enabled": True, "retries": {{RETRIES}}, "label": "worker_{{INDEX}}"}
+new_code = {{BLOCK}}\n\nWrite Python code implementing a bounded worker queue with retry handling, cancellation, and unit tests. Explain the locking decisions in comments.
+copy_code = {{BLOCK}}\n\nCopy the first 40 item definitions above exactly, starting with item_000. Output only those definitions.
+arithmetic = What is 237 + 486? Reply with only the number.
+tool_description = Look up weather in a city.
+tool_request = Call get_weather for Santa Clara.
+tool_result = {"temperature_c":22,"condition":"sunny"}
+tool_followup = Report the temperature in Celsius, without calling another tool.
+retrieval = The secret identifier is amber-7319.\n{{BLOCK}}\nWhat was the secret identifier? Reply only with that identifier.
+python = Write only Python code, no Markdown, defining add(a, b) that returns their sum.
+novel_lru = Write Python code implementing a fixed-capacity least-recently-used cache with get and put, including tests for eviction and replacement. Output code only.
+novel_toposort = Write Python code implementing topological sorting of a directed graph, including cycle detection and tests. Output code only.
+novel_interval = Write Python code implementing an interval set supporting insertion, merging overlaps, and membership queries, including boundary tests. Output code only.

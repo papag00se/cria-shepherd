@@ -21,16 +21,19 @@ import os
 import re
 import unittest
 
-_CRIA = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "cria")
-_PROMPTS = os.path.join(_CRIA, "prompts")
+_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_PROMPTS = os.path.join(_ROOT, "cria", "prompts")
 
 
 def _source() -> str:
     out = []
-    for d, _, files in os.walk(_CRIA):
-        if os.path.basename(d) == "prompts":
-            continue
-        out += [open(os.path.join(d, f), encoding="utf-8").read() for f in files if f.endswith(".py")]
+    # Shared model prompts also have real callers in suite/ and scripts/. Tests are
+    # deliberately not owners: a fixture mentioning a retired field cannot fill it.
+    for tree in ("cria", "suite", "scripts"):
+        for d, _, files in os.walk(os.path.join(_ROOT, tree)):
+            if os.path.basename(d) == "prompts":
+                continue
+            out += [open(os.path.join(d, f), encoding="utf-8").read() for f in files if f.endswith(".py")]
     return "\n".join(out)
 
 
@@ -51,7 +54,7 @@ class EveryTokenHasSomewhereToComeFromTests(unittest.TestCase):
                 with self.subTest(prompt=name, token=tok):
                     self.assertTrue(
                         tok.lower() in fragments or tok.lower() in kwargs or tok.lower() in literals,
-                        f"{name} declares {{{{{tok}}}}} and nothing in cria/ can fill it — "
+                        f"{name} declares {{{{{tok}}}}} and nothing in cria/, suite/ or scripts/ can fill it — "
                         f"the braces are what the model reads")
 
     def test_the_completion_re_nudge_is_whole(self):
