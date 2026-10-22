@@ -62,15 +62,14 @@ RANK4_DISABLED = (
 # compaction). The corrected profile initially excluded all nine L5 definitions. The operator
 # restored grounded-stalled-work and completed-work-briefing on 2026-10-22: reachable fallback
 # conflicts were not evidence of occurrence or net harm. Planning still needs explicit consent.
-# RANK4_DISABLED above stays as the ranking's record; the remaining seven opt-outs are exact.
+# The operator subsequently restored shrinking-file protection, plan revision and living-plan.
+# Planning stays OFF by default. RANK4_DISABLED remains the historical ranking record;
+# the remaining four opt-outs below are exact.
 RANK4_ABLATION_DISABLED = (
-    "experimental-living-plan",
     "experimental-plan-gather",
-    "experimental-plan-revision",
     "experimental-step-preparation",
     "outgoing-search-relevance",
     "search-spill-read-judgment",
-    "shrinking-file-protection",
 )
 
 
