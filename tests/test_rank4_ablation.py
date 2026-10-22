@@ -34,11 +34,22 @@ def test_assist_ablation_never_disables_levels_0_to_4():
     and completion brakes at L0-L4 are not assists; an assist profile must never remove them."""
     levels = _levels()
     assert {i for i in RANK4_ABLATION_DISABLED if levels[i] != 5} == set()
-    # The profile is exactly the ranking's Rank-4 list restricted to L5.
-    assert set(RANK4_ABLATION_DISABLED) == {i for i in RANK4_DISABLED if levels[i] == 5}
+    # Historical ranking membership is not evidence that an entire assist should be removed.
+    restored = {'grounded-stalled-work', 'experimental-completed-work-briefing'}
+    assert set(RANK4_ABLATION_DISABLED) == {i for i in RANK4_DISABLED if levels[i] == 5} - restored
     for kept in ('rolling-transcript-memory', 'harness-memory-handoff', 'task-classification',
                  'focused-tool-menu', 'generation-runaway-guard'):
         assert kept in assistruntime.AssistRuntime.select(profile='rank4-ablation').selected
+
+
+@pytest.mark.parametrize('level', range(6))
+@pytest.mark.parametrize('planning', [False, True])
+def test_restored_assists_keep_level_and_explicit_planning_boundaries(level, planning):
+    runtime = assistruntime.AssistRuntime.select(profile='rank4-ablation', level=level,
+                                               experimental_planning=planning)
+    assert ('grounded-stalled-work' in runtime.selected) is (level == 5)
+    assert ('experimental-completed-work-briefing' in runtime.selected) is (level == 5 and planning)
+    assert runtime.experimental_planning is planning
 
 
 @pytest.mark.parametrize('level', range(6))
@@ -78,9 +89,9 @@ def test_profile_cannot_be_relabelled_or_silently_redistribute_bindings():
     selected = assistruntime.AssistRuntime.select(profile='rank4-ablation')
     with pytest.raises(ValueError, match='exact selected profile'):
         replace(selected, argument_conversion=None)
-    stalled = next(d for d in ordinary.ordered_stages if d.policy.id == 'grounded-stalled-work')
+    excluded = next(d for d in ordinary.ordered_stages if d.policy.id == 'outgoing-search-relevance')
     with pytest.raises(ValueError, match='exact selected profile'):
-        replace(selected, ordered_stages=selected.ordered_stages + (stalled,))
+        replace(selected, ordered_stages=selected.ordered_stages + (excluded,))
 
 
 def test_toml_profile_reaches_real_server_without_enabling_planning(tmp_path, monkeypatch):
@@ -97,6 +108,8 @@ def test_toml_profile_reaches_real_server_without_enabling_planning(tmp_path, mo
     assert instance.loop is not None and not instance.loop._ctx.planner_enabled
     # Task classification is L1, not an assist: the profile keeps it.
     assert 'task-classification' in instance.pilot_runtime.selected
+    assert 'grounded-stalled-work' in instance.pilot_runtime.selected
+    assert 'experimental-completed-work-briefing' not in instance.pilot_runtime.selected
     with assistruntime.bound(instance.pilot_runtime):
         provider = Mock()
         provider.chat.return_value = _CLASSIFY_JSON

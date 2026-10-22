@@ -10,7 +10,7 @@ Start with [REPORT.md](REPORT.md): current maintenance responsibilities, disting
 
 [Architecture doctrine](../shephard.md#assist-and-family-boundaries) owns atomic/family qualifications and consolidation rules. Code checks structural completeness; humans judge conceptual boundaries. There is no required family count or English uniqueness classifier.
 
-Assists are L5 only. Registered definitions also include L0–L4 wire fixes, cria tools, context fitting (including history compaction) and completion brakes; the registry's full membership is not an assist count. The `rank4-ablation` profile removes only the nine Rank-4 definitions with `default_level = 5`, retaining all level-eligible L0–L4 mechanisms. The historical 48-entry ranking record remains provenance, not the active disabled set.
+Assists are L5 only. Registered definitions also include L0–L4 wire fixes, cria tools, context fitting (including history compaction) and completion brakes; the registry's full membership is not an assist count. The `rank4-ablation` profile removes the current operator-selected subset of Rank-4 definitions with `default_level = 5`, retaining all level-eligible L0–L4 mechanisms. The historical 48-entry ranking record remains provenance, not the active disabled set.
 
 Update family metadata in the registry and atomic metadata at its executable owner, never in the generated report. Regenerate with `python docs/assist-inventory/build_report.py`; verify with `--check`. Planning remains OFF unless explicitly enabled. Native artifacts and optional configured providers imply neither deployment nor architectural acceptance.
 
