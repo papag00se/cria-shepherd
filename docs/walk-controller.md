@@ -1,21 +1,24 @@
 # Walk controller
 
-Route through [the official entrypoint](walk-prompt.md); do not append this operational guidance to analytical prompts.
+Follow the [three-stage process](walk-prompt.md). Handle these mechanics outside the analytical prompts. The Walker role uses only [walk-role.md](walk-role.md); it must not require this document, the process overview or investigator guidance. Send the current stage's prompt text with input/output paths, nothing more.
 
-## Prepare and deliver
+## Prepare
 
-Select the calls/range explicitly; file count or size never justifies silently shortening that assignment. A full-run walk covers all available recorded reasoning in call order; a selected-call walk must not claim full-run coverage. Deliver each selected reasoning unit completely, including available partial reasoning from aborted calls; label missing recordings. Use lossless reversible representation if needed, not clipping or summaries. Size assignments before launch so the reasoning fits without compaction, use at most ten concurrent Walker children, and track progress through saved outputs rather than reader memory; record actual compactions/aborts and any resulting incomplete delivery rather than quietly claiming uninterrupted reading. This preserves the fidelity purpose of the older segmentation rule without reinstating exhaustive context reading or reusing one reader across independent cases; the same reader still owns stages 1 and 2 of its case.
+- State the assigned calls or range. Full-run walks cover all available reasoning in order; samples are labeled samples.
+- Supply complete recorded reasoning, including available partial traces; label missing material. Use lossless decoding, not clipping or summaries. Size assignments to fit without compaction; use at most ten concurrent Walkers. Record any actual compaction or delivery gap.
+- Keep source identities, extraction mappings, input/prompt hashes and initial outputs in one working directory with a small assignment record.
+- Withhold context and outcomes in stage 1. After saving the thoughts, provide full searchable same-call context in stage 2. Date any later reveals separately.
 
-Freeze source identity, extraction provenance and source/prompt hashes before reading, then freeze original thought and mapping outputs separately, including errors. One working directory and a small assignment record suffice. Stage 1 withholds context, current response actions and later outcomes. After thoughts are frozen, stage 2 makes the entire same-invocation context searchable, without requiring every context word to be read. Exact references must resolve to originals. `suite/walk.py` remains a lossless preparation/navigation utility, not a reader protocol: its mixed prompt/response chunks must NOT be given as stage-1 reasoning-only input. Reversible COPY references can reconstruct context; `--full-prompts` avoids reference reuse. No fullhex, co-retention or atomic audit gate is required.
+`suite/walk.py` prepares lossless navigation material, not stage-1 input: its chunks mix context and responses. Reconstruct context COPY references or use `--full-prompts`.
 
-Verify bounded delivery/access, not semantic perfection. Preserve initial outputs unchanged; at most one correction of an actual missing delivery per case, recorded separately. Do not ask Luna to repair interpretations or iterate toward a ledger score. If access remains blocked, report the incomplete case. Sol corrects interpretations in synthesis, not by editing reader originals.
+## Deliver
 
-Later reveals must be dated and labeled separately: distinguish what was available at the selected call from later source versions, actions, results or investigator discoveries. Never silently backfill an earlier belief with future evidence.
+Save initial thoughts and mappings unchanged. Check delivery, not semantic perfection. Allow one recorded correction for missing delivery; otherwise mark the case incomplete. Do not send interpretation-repair prompts. Main/Sol checks the drafts against originals.
 
-## Synthesize and report
+## Report
 
-Pass originals and initial outputs to Sol under [investigator guidance](walk-investigator.md). Successful drafting plus Sol challenge is the process, not unattended Luna accuracy. The offline held-out experiment supports that bounded use, not equal-difficulty or cost superiority.
+Distinguish useful drafts from unchecked accuracy. State coverage, familiarity and sampling limits; do not infer comparable difficulty or cost from unlike cases.
 
-If reporting full-workflow cost, include Controller/Main and Luna preparation, reading, challenge and reporting within explicit boundaries. Deduplicate native response IDs; cumulative totals cross-check rather than add. Normalize raw Pi usage as `normalized input = usage.input + usage.cacheRead + usage.cacheWrite` (raw `usage.input` excludes cache); cached input is a subset of that normalized input, and reasoning output is a subset of output; check other providers' conventions before combining. Include actual compactions and aborted calls, unknown consumption and excluded tails; reader-only usage must be labeled reader-only. Use native records, not a new accounting framework.
+For token totals, include Luna, Controller and Main within explicit start/end boundaries. Deduplicate native response IDs; cross-check cumulative totals rather than adding them. For raw Pi records, input includes `input + cacheRead + cacheWrite`; cache is a subset of that total, reasoning a subset of output. Check other providers' conventions. Include real compactions and aborted calls; disclose unknown usage and excluded tails. Label reader-only totals accordingly.
 
-Preserve actual model-call logs and necessary repository regressions. Existing retention policy governs settled scratch; this process does not authorize historical external-data cleanup.
+Keep actual call logs and necessary regressions. Follow existing scratch-retention policy; walking grants no historical-data cleanup permission.

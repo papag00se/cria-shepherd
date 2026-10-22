@@ -1,4 +1,4 @@
-"""Public Walker bootstrap routes to frozen analytical prompts, not an old protocol."""
+"""Controller routing and reader-only instructions remain separate."""
 import hashlib
 from pathlib import Path
 import re
@@ -11,7 +11,7 @@ def linked_documents(path):
     return {(path.parent / target).resolve() for target in re.findall(r'\]\(([^)#]+\.md)\)', text)}
 
 
-def test_fresh_walker_routes_to_all_stages_and_controller():
+def test_controller_process_routes_to_all_stages_and_controller():
     entry = ROOT / 'docs/walk-prompt.md'
     targets = linked_documents(entry)
     assert {ROOT / f'docs/{name}.md' for name in (
@@ -31,7 +31,7 @@ def test_authorized_short_analytical_prompts_are_verbatim():
         assert hashlib.sha256((ROOT / f'docs/{name}.md').read_bytes()).hexdigest() == digest
 
 
-def test_original_guidance_is_discoverable_from_fresh_entrypoint():
+def test_original_guidance_is_discoverable_from_controller_process():
     entry = (ROOT / 'docs/walk-prompt.md').read_text()
     # A real navigable section, not a vague assurance or a link to retired instructions.
     targets = re.findall(r'\]\(([^)#]+\.md)#(original-guidance-continuity)\)', entry)
@@ -41,6 +41,24 @@ def test_original_guidance_is_discoverable_from_fresh_entrypoint():
         headings = re.findall(r'^## (.+)$', document.read_text(), re.MULTILINE)
         assert anchor in {heading.lower().replace(' ', '-') for heading in headings}
         assert ROOT / 'docs/principles.md' in linked_documents(document)
+
+
+def test_luna_required_reading_does_not_route_into_controller_process():
+    # The role contract is delivered as text, never as a process-document bootstrap.
+    role = ROOT / 'docs/walk-role.md'
+    assert role.read_text().strip()
+    prohibited = {ROOT / f'docs/{name}.md' for name in (
+        'walk-prompt', 'walk-controller', 'walk-investigator', 'walk-sol'
+    )}
+    pending = [role, ROOT / 'docs/walk-reader.md', ROOT / 'docs/walk-context.md']
+    visited = set()
+    while pending:
+        document = pending.pop()
+        assert document not in prohibited
+        if document in visited:
+            continue
+        visited.add(document)
+        pending.extend(linked_documents(document))
 
 
 def test_current_callers_resolve_to_one_entrypoint():
