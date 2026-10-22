@@ -10,6 +10,17 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 
+def _project(source, ranges, *, opaque=False):
+    chars = list(source)
+    for start, end in ranges:
+        for i in range(start, end):
+            if chars[i] != '\n':
+                chars[i] = 'x' if opaque else ' '
+        if opaque:
+            chars[start] = '$'  # expanded operands remain unknown, never literal paths
+    return ''.join(chars)
+
+
 @dataclass(frozen=True)
 class HereDoc:
     operator: int
@@ -46,15 +57,10 @@ class Layout:
 
     @property
     def shell(self) -> str:
-        chars = list(self.source)
         ranges = list(self.syntax)
         for doc in self.documents:
             ranges.extend(((doc.operator, doc.word_end), doc.body, doc.terminator))
-        for start, end in ranges:
-            for i in range(start, end):
-                if chars[i] != '\n':
-                    chars[i] = ' '
-        return ''.join(chars)
+        return _project(self.source, ranges)
 
 
 def _word(source: str, start: int) -> tuple[str, int, bool] | None:
@@ -164,7 +170,26 @@ def layout(source: str) -> Layout:
     return Layout(source, tuple(docs), tuple(syntax), bool(pending or quote))
 
 
-def expansions(source: str, *, shell: bool = False) -> tuple[list[tuple[int, str]], bool]:
+@dataclass(frozen=True)
+class Substitution:
+    start: int
+    end: int
+    body: tuple[int, int]
+
+    def text(self, source: str) -> str:
+        return source[slice(*self.body)]
+
+
+def outer_shell(source: str, substitutions: list[Substitution]) -> str:
+    """Child commands are judged separately; their cwd is not their parent's.
+
+    Preserve original offsets and all outer syntax. An opaque dollar retains
+    unresolved expansion ownership if a substitution supplies a write target.
+    """
+    return _project(source, ((s.start, s.end) for s in substitutions), opaque=True)
+
+
+def expansions(source: str, *, shell: bool = False) -> tuple[list[Substitution], bool]:
     """Commands expanded in an UNQUOTED heredoc, even inside body quote marks.
 
     Escaped dollars/backticks are data; ordinary body quotes do not suppress
@@ -191,7 +216,7 @@ def expansions(source: str, *, shell: bool = False) -> tuple[list[tuple[int, str
                 j += 2 if source[j] == '\\' else 1
             if j >= len(source):
                 return commands, True
-            commands.append((i, source[i + 1:j])); i = j + 1
+            commands.append(Substitution(i, j + 1, (i + 1, j))); i = j + 1
             continue
         if source.startswith('$(', i) and not source.startswith('$((', i):
             j, depth, quote = i + 2, 1, ''
@@ -212,7 +237,7 @@ def expansions(source: str, *, shell: bool = False) -> tuple[list[tuple[int, str
                 j += 1
             if depth:
                 return commands, True
-            commands.append((i, source[i + 2:j - 1])); i = j
+            commands.append(Substitution(i, j, (i + 2, j - 1))); i = j
             continue
         i += 1
     return commands, False

@@ -514,6 +514,13 @@ def _segment_spans(command: str) -> list[tuple[int, int]]:
         elif c in "\"'":
             quote = c
         elif c in ";&|()\n":
+            # Redirect operators are not command boundaries: keep >& / <&,
+            # &> / &>> and >| intact for the shared redirection reader.
+            if (c == '&' and (command[i - 1:i] in ('>', '<')
+                              or command[i + 1:i + 2] == '>')):
+                continue
+            if c == '|' and command[i - 1:i] == '>':
+                continue
             spans.append((start, i)); start = i + 1
     spans.append((start, len(command)))
     return spans
@@ -686,6 +693,57 @@ def _route_input(commands, shell, index, workspace, cwd, *, sources=()):
         i += 1
 
 
+def _saved_scope_execution(script, targets, cwd, workspace, depth, *, opaque=False):
+    """Follow saved bytes across a child shell without exporting its cwd."""
+    unknown = _InputExecution('unknown', cwd, False)
+    if depth > 3:
+        return unknown
+    layout = shellinput.layout(script)
+    substitutions, undecidable = shellinput.expansions(layout.shell, shell=True)
+    shell = shellinput.outer_shell(layout.shell, substitutions)
+    commands = _input_commands(shell)
+    if layout.error or undecidable or commands is None:
+        return unknown
+    known, forwarded, exact, routed_until = list(targets), [], True, -1
+    for i, (start, end, args, _outputs, _inputs) in enumerate(commands):
+        if i <= routed_until:
+            continue
+        # Expansion happens before its enclosing command. Keep output custody
+        # for siblings and a consumer in that command, not just later segments.
+        for child in substitutions:
+            if not start <= child.start <= end:
+                continue
+            cur = _cwd_before(commands, shell, child.start, cwd)
+            execution = _saved_scope_execution(child.text(layout.source), known, cur,
+                                               workspace, depth + 1, opaque=opaque)
+            if not execution:
+                continue
+            if execution.kind != 'data':
+                return execution._replace(exact=exact and execution.exact)
+            known.extend(p for p in execution.outputs if p is not None)
+            forwarded.extend(execution.outputs)
+            exact = exact and execution.exact
+            opaque = opaque or any(p is None for p in execution.outputs)
+        execution = _saved_input_execution(commands, shell, i, known, cwd,
+                                           workspace, depth, opaque=opaque)
+        if execution:
+            if execution.kind != 'data':
+                return execution._replace(exact=exact and execution.exact)
+            known.extend(p for p in execution.outputs if p is not None)
+            forwarded.extend(execution.outputs)
+            exact = exact and execution.exact
+            opaque = opaque or any(p is None for p in execution.outputs)
+            routed_until = execution.last
+            continue
+        if args and args[:1] != ['cd'] and not command_only_reads(
+                shell[start:end], workspace, no_writes=True):
+            opaque = True
+    if forwarded or opaque:
+        return _InputExecution('data', cwd, exact and not opaque,
+                               tuple(forwarded) + ((None,) if opaque else ()))
+    return None
+
+
 def _saved_input_kind(words, inputs, targets, cwd, workspace, depth=0, *, opaque=False):
     """Direct execution, retaining stdin sources as well as word operands."""
     if not words:
@@ -707,32 +765,10 @@ def _saved_input_kind(words, inputs, targets, cwd, workspace, depth=0, *, opaque
             if stdin or uncertain:
                 return unknown  # -c input is not itself the script; custody is opaque
             for script in inner:
-                commands = _input_commands(script)
-                if commands is None:
-                    return unknown
-                known, forwarded, exact, routed_until = list(targets), [], True, -1
-                for i, (start, end, _args, _outputs, _inputs) in enumerate(commands):
-                    if i <= routed_until:
-                        continue
-                    execution = _saved_input_execution(commands, script, i, known, cwd,
-                                                       workspace, depth + 1, opaque=opaque)
-                    if execution:
-                        if execution.kind != 'data':
-                            return execution._replace(exact=exact and execution.exact)
-                        known.extend(p for p in execution.outputs if p is not None)
-                        forwarded.extend(execution.outputs)
-                        exact = exact and execution.exact
-                        opaque = opaque or any(p is None for p in execution.outputs)
-                        routed_until = execution.last
-                        continue
-                    # cd changes the consumer cwd, not saved bytes. Its exact
-                    # cwd is already carried by _cwd_before; do not confuse an
-                    # ascent within the project with lost byte custody.
-                    if _args[:1] != ['cd'] and not command_only_reads(
-                            script[start:end], workspace, no_writes=True):
-                        opaque = True
-                if forwarded:
-                    return _InputExecution('data', cwd, exact and not opaque, tuple(forwarded))
+                execution = _saved_scope_execution(script, targets, cwd, workspace,
+                                                   depth + 1, opaque=opaque)
+                if execution:
+                    return execution
             return None
         if stdin:
             if any(fd != '0' or op != '<' for fd, op, _p in inputs):
@@ -740,6 +776,11 @@ def _saved_input_kind(words, inputs, targets, cwd, workspace, depth=0, *, opaque
             return _InputExecution('shell', cwd, not opaque)
         if uncertain or (opaque and _operands(words[1:])):
             return unknown
+        if (len(words) > 1 and not words[1].startswith('-')
+                and _input_path(words[1], cwd) in normalized):
+            # After a proven script filename, expanded words are script argv,
+            # not a replacement shell program. Its body is still checked.
+            return _InputExecution('shell', cwd, not opaque)
         if any(any(c in a for c in '$`') for a in words[1:]):
             return unknown
         if any(_input_path(a, cwd) in normalized for a in _operands(words[1:])):
@@ -799,8 +840,7 @@ def _cwd_before(commands, shell, pos, cwd):
     return cur
 
 
-def _input_refusal(layout, level, workspace, roots, cwd, depth):
-    shell = layout.shell
+def _input_refusal(layout, shell, substitutions, level, workspace, roots, cwd, depth):
     commands = _input_commands(shell)
     if commands is None:
         return prompts.load('external_write_unproven')
@@ -814,8 +854,9 @@ def _input_refusal(layout, level, workspace, roots, cwd, depth):
             scripts, unknown = shellinput.expansions(body)
             if unknown:
                 return prompts.load('external_write_unproven')
-            for _offset, script in scripts:
-                refusal = command_refusal(script, level, workspace, roots, _cwd=cur, _depth=depth + 1)
+            for substitution in scripts:
+                refusal = command_refusal(substitution.text(body), level, workspace, roots,
+                                          _cwd=cur, _depth=depth + 1)
                 if refusal:
                     return refusal
         i, targets, kind, exact = _route_input(commands, shell, owner, workspace, cur)
@@ -825,9 +866,26 @@ def _input_refusal(layout, level, workspace, roots, cwd, depth):
             targets = [os.path.normpath(os.path.join(cur, target)) for target in targets]
             unknown_origin, routed_until = False, i
             for later, (start, end, words, outputs, _inputs) in enumerate(commands[i + 1:], i + 1):
-                if not words or later <= routed_until:
+                if later <= routed_until:
                     continue
                 later_cwd = _cwd_before(commands, shell, start, cwd)
+                for child in substitutions:
+                    if not start <= child.start <= end:
+                        continue
+                    execution = _saved_scope_execution(child.text(layout.source), targets,
+                                                       later_cwd, workspace, depth + 1,
+                                                       opaque=unknown_origin)
+                    if execution:
+                        exact = exact and execution.exact
+                        if execution.kind != 'data':
+                            kind, cur = execution.kind, execution.cwd
+                            break
+                        targets.extend(p for p in execution.outputs if p is not None)
+                        unknown_origin = unknown_origin or any(p is None for p in execution.outputs)
+                if kind != 'data':
+                    break
+                if not words:
+                    continue
                 execution = _saved_input_execution(commands, shell, later, targets, cwd,
                                                     workspace, depth, opaque=unknown_origin)
                 if execution:
@@ -1578,20 +1636,22 @@ def command_refusal(command: str, level: str, workspace: str | None, roots=(), *
     scripts, unknown = shellinput.expansions(layout.shell, shell=True)
     if unknown:
         return prompts.load('external_write_unproven')
+    outer_shell = shellinput.outer_shell(layout.shell, scripts)
     if scripts:
-        commands = _input_commands(layout.shell)
+        commands = _input_commands(outer_shell)
         if commands is None:
             return prompts.load('external_write_unproven')
-        for offset, script in scripts:
-            cur = _cwd_before(commands, layout.shell, offset, cwd)
-            refusal = command_refusal(script, level, workspace, roots, _cwd=cur, _depth=_depth + 1)
+        for substitution in scripts:
+            cur = _cwd_before(commands, outer_shell, substitution.start, cwd)
+            refusal = command_refusal(substitution.text(layout.source), level, workspace, roots,
+                                      _cwd=cur, _depth=_depth + 1)
             if refusal:
                 return refusal
     if layout.documents:
-        refusal = _input_refusal(layout, level, workspace, roots, cwd, _depth)
+        refusal = _input_refusal(layout, outer_shell, scripts, level, workspace, roots, cwd, _depth)
         if refusal:
             return refusal
-    command = layout.shell
+    command = outer_shell
     root_delete = root_recursive_delete_refusal(command)
     if root_delete:
         return root_delete
