@@ -26,8 +26,21 @@ def test_authorized_short_analytical_prompts_are_verbatim():
     for name, digest in {
         'walk-reader': '203e1a04ba0ecc04c8965b665201517598b27ec13ad7a94bf883b8234d1df518',
         'walk-context': '74e15a2dc4554a477de105edad4ac3dc88824c82fe379b374790e068741151da',
+        'walk-sol': 'f22b3becc6fd82afc069de019cadff89bf3061cd748f7bfe69a8077f049a6c0f',
     }.items():
         assert hashlib.sha256((ROOT / f'docs/{name}.md').read_bytes()).hexdigest() == digest
+
+
+def test_original_guidance_is_discoverable_from_fresh_entrypoint():
+    entry = (ROOT / 'docs/walk-prompt.md').read_text()
+    # A real navigable section, not a vague assurance or a link to retired instructions.
+    targets = re.findall(r'\]\(([^)#]+\.md)#(original-guidance-continuity)\)', entry)
+    assert targets
+    for target, anchor in targets:
+        document = ROOT / 'docs' / target
+        headings = re.findall(r'^## (.+)$', document.read_text(), re.MULTILINE)
+        assert anchor in {heading.lower().replace(' ', '-') for heading in headings}
+        assert ROOT / 'docs/principles.md' in linked_documents(document)
 
 
 def test_current_callers_resolve_to_one_entrypoint():
