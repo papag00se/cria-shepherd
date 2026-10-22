@@ -23,13 +23,14 @@ MUST_REFUSE = [
     'grep x input > "/tmp/outside/o"',
     'mv ../a b', 'touch ../t', 'mkdir ../d', 'ln -s a ../l', 'tee ../x', 'sed -i s/a/b/ ../f',
     'cp -t ../d a', 'cd .. && touch y', 'echo ok && rm ../root/input',
+    'echo x > "$HOME/x"',  # an unresolved write target is not proof of locality
 ]
 MUST_ALLOW = [
     'cp input ./tmp/x', 'rm sub/../y', 'echo x > ./tmp/x', 'echo x > sub/../y 2>&1', 'touch a/b/../c',
     'cat ../x', 'cp ../x y', 'ls ../root',                      # relative READS: unchanged
     'grep "/handles/x" f', 'grep -n "GET /a" f | sort', 'sed -i "s#/a/b#c#" f',
     'find . | xargs grep "/x"', 'echo hi >/dev/null 2>&1', 'cp -t d ../src', 'bash -c "echo x > out"',
-    "cat <<'EOF' > a\nx > ../b\nEOF", 'echo x > "$HOME/x"', 'cd sub && touch y', 'cd sub/.. && rm y',
+    "cat <<'EOF' > a\nx > ../b\nEOF", 'cd sub && touch y', 'cd sub/.. && rm y',
 ]
 
 

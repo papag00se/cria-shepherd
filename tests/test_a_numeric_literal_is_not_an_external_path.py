@@ -13,12 +13,16 @@ from cria import dirguard
 WS = "/home/jesse/suite-runs/wsx"
 
 
-def test_a_bare_numeric_literal_is_not_refused():
-    for cmd in ("long dollars = cents /1_000_000;",
+def test_arithmetic_data_is_not_refused_but_real_operands_are():
+    # Preserve the original heredoc incident, not the superseded spelling
+    # exemption that also allowed `cat /1_000_000` (a real filename).
+    for cmd in ("cat > tmp/source <<'EOF'\nlong dollars = cents /1_000_000;\nEOF",
                 "echo $(( total /1_000_000 ))",
                 "python3 -c 'print(n /1_000_000.0)'",
-                "awk '{s+=$1} END{print s /1000}'".replace("s /1000", "s/1000") + " ; x /1_000_000"):
+                "awk '{s+=$1} END{print s/1000}'"):
         assert dirguard.command_refusal(cmd, "none", WS) is None, cmd
+    for path in ('/1_000_000', '/3.14', '/1e6'):
+        assert dirguard.command_refusal('cat ' + path, 'none', WS) is not None
 
 
 def test_a_real_path_with_a_numeric_segment_is_still_judged():

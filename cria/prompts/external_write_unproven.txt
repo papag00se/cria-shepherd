@@ -1,0 +1,1 @@
+⟦ctx:denied⟧ This command's executed input or write destination cannot be established safely. Use an explicit literal project-local write target and a well-formed command; keep executable input separate from literal data. No command was run. A read-only inspection with literal paths remains available.

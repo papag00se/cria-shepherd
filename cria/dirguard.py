@@ -21,8 +21,9 @@ from __future__ import annotations
 import os
 import re
 import shlex
+from typing import NamedTuple
 
-from . import bodykeys, prompts, toolpath
+from . import bodykeys, prompts, shellinput, toolpath
 
 LEVELS = ("none", "read", "write")
 
@@ -560,12 +561,316 @@ def _segment_is_text_search(command: str, segments, pos: int) -> bool:
     return False
 
 
-_HEREDOC = re.compile(r"<<-?\s*(['\"]?)(\w+)\1[^\n]*\n.*?(?:\n\s*\2\s*(?=\n|$)|\Z)", re.DOTALL)
 _PREFIX_WORDS = {"sudo", "env", "command", "nohup", "time", "exec", "nice", "xargs"}
 _SHELLS = {"bash", "sh", "zsh", "dash", "ksh"}
 _DEST_LAST = {"cp", "ln", "install", "rsync"}
 _ALL_OPERANDS = {"mv", "rm", "rmdir", "touch", "mkdir", "tee", "unlink", "shred"}
 _SKIP_FIRST = {"chmod", "chown", "chgrp"}
+
+
+class _UnprovenWrite:
+    """A write whose destination cannot be established; not an invented path."""
+
+
+_UNPROVEN_WRITE = _UnprovenWrite()
+
+
+class _InputRefusal:
+    def __init__(self, message: str):
+        self.message = message
+
+
+def _shell_words(command: str) -> list[str] | None:
+    lexer = shlex.shlex(command, posix=True, punctuation_chars=";&|()<>\n")
+    lexer.whitespace = " \t\r"
+    lexer.commenters = ""
+    lexer.wordchars += "".join(c for c in "[]{}$,:@%+!^#=" if c not in lexer.wordchars)
+    try:
+        return list(lexer)
+    except ValueError:
+        return None
+
+
+def _command_words(words: list[str]) -> list[str]:
+    while words and (re.match(r"^\w+=", words[0]) or words[0] in _PREFIX_WORDS):
+        prefix = words[0] in _PREFIX_WORDS
+        words = words[1:]
+        while prefix and words and words[0].startswith("-"):
+            words = words[1:]
+    return words
+
+
+def _follow_cd(words: list[str], cur: str | None) -> str | None:
+    tgt = words[1] if len(words) == 2 else None
+    if tgt is None or tgt == "-" or any(c in tgt for c in "$`~"):
+        return None
+    if os.path.isabs(tgt):
+        return os.path.normpath(tgt)
+    if cur is not None:
+        return os.path.normpath(os.path.join(cur, tgt))
+    return None
+
+
+def _input_commands(shell: str):
+    """Command words, write targets and owned input redirects from the SAME lexer."""
+    commands = []
+    for start, end in _segment_spans(shell):
+        tokens = _shell_words(shell[start:end])
+        if tokens is None:
+            return None
+        words, outputs, inputs, i = [], [], [], 0
+        while i < len(tokens):
+            tok = tokens[i]
+            if tok and set(tok) <= _PUNCT:
+                if tok not in _REDIRECTS or i + 1 == len(tokens):
+                    return None
+                fd = words.pop() if words and words[-1].isdigit() else None
+                if "<" in tok:
+                    inputs.append((fd or '0', tok, tokens[i + 1]))
+                if ">" in tok and not (tok == ">&" and tokens[i + 1].isdigit()):
+                    outputs.append(tokens[i + 1])
+                i += 2
+            else:
+                words.append(tok); i += 1
+        words = _command_words(words)
+        targets, _inner = _segment_write_targets(words)
+        commands.append((start, end, words, outputs + targets, inputs))
+    return commands
+
+
+class _InputExecution(NamedTuple):
+    kind: str
+    cwd: str | None
+    exact: bool = True
+    outputs: tuple[str | None, ...] = ()
+    last: int = -1
+
+
+def _input_sources(words, inputs):
+    """One source view for execution AND saved-output custody."""
+    return [*words[1:], *(path for _fd, _op, path in inputs)]
+
+
+def _input_path(path, cwd):
+    if any(c in path for c in '$`'):
+        return None
+    if os.path.isabs(path):
+        return os.path.normpath(path)
+    return os.path.normpath(os.path.join(cwd, path)) if cwd else None
+
+
+def _route_input(commands, shell, index, workspace, cwd, *, sources=()):
+    """Follow the same stdin pipeline for immediate AND saved input."""
+    outputs, exact, i = [], True, index
+    while True:
+        start, end, words, targets, inputs = commands[i]
+        outputs.extend(targets)
+        if not words:
+            return i, outputs, 'unknown', False
+        cmd = os.path.basename(words[0])
+        if i != index and inputs:
+            return i, outputs, 'unknown', False  # a redirected pipeline loses custody
+        if cmd in _SHELLS or cmd in ('.', 'source'):
+            return i, outputs, 'shell', exact
+        if not _segment_reads([cmd, *words[1:]], workspace):
+            return i, outputs, 'unknown', False
+        args = words[1:]
+        if cmd not in ('cat', 'tee') or (cmd == 'cat' and any(
+                a != '-' and _input_path(a, cwd) not in sources for a in args)):
+            exact = False
+        if any(t in ('>>', '&>>') for t in (_shell_words(shell[start:end]) or [])):
+            exact = False
+        if (end >= len(shell) or shell[end] != '|' or shell[end:end + 2] == '||'
+                or i + 1 >= len(commands)):
+            return i, outputs, 'data', exact
+        i += 1
+
+
+def _saved_input_kind(words, inputs, targets, cwd, workspace, depth=0, *, opaque=False):
+    """Direct execution, retaining stdin sources as well as word operands."""
+    if not words:
+        return None
+    unknown = _InputExecution('unknown', cwd, False)
+    if depth > 3:
+        return unknown
+    cmd = os.path.basename(words[0])
+    normalized = set(targets)
+    stdin = any(_input_path(p, cwd) in normalized for _fd, _op, p in inputs)
+    uncertain = any(_input_path(p, cwd) is None for _fd, _op, p in inputs)
+    if opaque and '/' in words[0] and os.path.dirname(words[0]) not in _SYSTEM_PROGRAM_DIRS:
+        return unknown
+    if _input_path(words[0], cwd) in normalized:
+        return _InputExecution('shell', cwd, not opaque)
+    if cmd in _SHELLS or cmd in ('.', 'source'):
+        _targets, inner = _segment_write_targets(words)
+        if inner:
+            if stdin or uncertain:
+                return unknown  # -c input is not itself the script; custody is opaque
+            for script in inner:
+                commands = _input_commands(script)
+                if commands is None:
+                    return unknown
+                known, forwarded, exact, routed_until = list(targets), [], True, -1
+                for i, (start, end, _args, _outputs, _inputs) in enumerate(commands):
+                    if i <= routed_until:
+                        continue
+                    execution = _saved_input_execution(commands, script, i, known, cwd,
+                                                       workspace, depth + 1, opaque=opaque)
+                    if execution:
+                        if execution.kind != 'data':
+                            return execution._replace(exact=exact and execution.exact)
+                        known.extend(p for p in execution.outputs if p is not None)
+                        forwarded.extend(execution.outputs)
+                        exact = exact and execution.exact
+                        opaque = opaque or any(p is None for p in execution.outputs)
+                        routed_until = execution.last
+                        continue
+                    # cd changes the consumer cwd, not saved bytes. Its exact
+                    # cwd is already carried by _cwd_before; do not confuse an
+                    # ascent within the project with lost byte custody.
+                    if _args[:1] != ['cd'] and not command_only_reads(
+                            script[start:end], workspace, no_writes=True):
+                        opaque = True
+                if forwarded:
+                    return _InputExecution('data', cwd, exact and not opaque, tuple(forwarded))
+            return None
+        if stdin:
+            if any(fd != '0' or op != '<' for fd, op, _p in inputs):
+                return unknown
+            return _InputExecution('shell', cwd, not opaque)
+        if uncertain or (opaque and _operands(words[1:])):
+            return unknown
+        if any(any(c in a for c in '$`') for a in words[1:]):
+            return unknown
+        if any(_input_path(a, cwd) in normalized for a in _operands(words[1:])):
+            return _InputExecution('shell', cwd, not opaque)
+        if cwd is None and _operands(words[1:]):
+            return unknown
+    elif re.fullmatch(r'(?:python[\d.]*|pypy[\d.]*|perl[\d.]*|ruby[\d.]*|node|nodejs|php[\d.]*|lua[\d.]*)', cmd):
+        if stdin or uncertain or opaque or any(_input_path(a, cwd) in normalized
+                or any(c in a for c in '$`') for a in words[1:]):
+            return unknown
+    elif stdin or uncertain:
+        if not _segment_reads([cmd, *words[1:]], cwd):
+            return unknown
+    return None
+
+
+def _saved_input_execution(commands, shell, index, targets, cwd, workspace, depth=0, *, opaque=False):
+    start, _end, words, _outputs, inputs = commands[index]
+    cur = _cwd_before(commands, shell, start, cwd)
+    execution = _saved_input_kind(words, inputs, targets, cur, workspace, depth, opaque=opaque)
+    if execution:
+        return execution
+    if not words:
+        return None
+    cmd = os.path.basename(words[0])
+    if not _segment_reads([cmd, *words[1:]], workspace):
+        return None
+    # A reader can supply the saved bytes by filename OR retained stdin source.
+    paths = _input_sources(words, inputs)
+    matched = any(_input_path(p, cur) in targets for p in paths)
+    uncertain = any(_input_path(p, cur) is None for p in paths)
+    if not matched and not uncertain:
+        return None
+    last, writes, kind, exact = _route_input(commands, shell, index, workspace, cur, sources=targets)
+    if kind == 'data' and not writes:
+        return None
+    # A reader's saved output still owns these bytes even when no executable
+    # immediately follows. Resolve each writer at its own cwd, not the later
+    # consumer's, and carry opacity rather than silently discarding the edge.
+    outputs = tuple(_input_path(path, _cwd_before(commands, shell, start, cwd))
+                    for start, _end, _words, written, _inputs in commands[index:last + 1]
+                    for path in written)
+    consumer_cwd = _cwd_before(commands, shell, commands[last][0], cwd)
+    return _InputExecution(kind, consumer_cwd, exact and matched and not uncertain and not opaque,
+                           outputs, last)
+
+
+def _cwd_before(commands, shell, pos, cwd):
+    cur = cwd
+    for start, end, words, _, _inputs in commands:
+        if start <= pos <= end:
+            break
+        if words[:1] == ['cd']:
+            cur = _follow_cd(words, cur)
+        if shell[end:end + 1] in ('(', ')'):
+            cur = None
+    return cur
+
+
+def _input_refusal(layout, level, workspace, roots, cwd, depth):
+    shell = layout.shell
+    commands = _input_commands(shell)
+    if commands is None:
+        return prompts.load('external_write_unproven')
+    for doc in layout.documents:
+        owner = next((i for i, (s, e, _, _, _) in enumerate(commands) if s <= doc.operator <= e), None)
+        if owner is None:
+            return prompts.load('external_write_unproven')
+        cur = _cwd_before(commands, shell, doc.operator, cwd)
+        body = doc.text(layout.source)
+        if not doc.quoted:
+            scripts, unknown = shellinput.expansions(body)
+            if unknown:
+                return prompts.load('external_write_unproven')
+            for _offset, script in scripts:
+                refusal = command_refusal(script, level, workspace, roots, _cwd=cur, _depth=depth + 1)
+                if refusal:
+                    return refusal
+        i, targets, kind, exact = _route_input(commands, shell, owner, workspace, cur)
+        if kind == 'data' and targets:
+            if cur is None or any(any(c in target for c in '$`') for target in targets):
+                return prompts.load('external_write_unproven')
+            targets = [os.path.normpath(os.path.join(cur, target)) for target in targets]
+            unknown_origin, routed_until = False, i
+            for later, (start, end, words, outputs, _inputs) in enumerate(commands[i + 1:], i + 1):
+                if not words or later <= routed_until:
+                    continue
+                later_cwd = _cwd_before(commands, shell, start, cwd)
+                execution = _saved_input_execution(commands, shell, later, targets, cwd,
+                                                    workspace, depth, opaque=unknown_origin)
+                if execution:
+                    exact = exact and execution.exact
+                    if execution.kind == 'data':
+                        targets.extend(p for p in execution.outputs if p is not None)
+                        unknown_origin = unknown_origin or any(p is None for p in execution.outputs)
+                        routed_until = execution.last
+                        continue
+                    kind, cur = execution.kind, execution.cwd
+                    break
+                # A subsequent modification/copy or opaque nested command
+                # invalidates byte custody; do not analyze the old body as the
+                # consumer's current script. This is not general program taint.
+                _, inner = _segment_write_targets(words)
+                sources = _input_sources(words, _inputs)
+                mentions_input = any(_input_path(path, later_cwd) in targets for path in sources)
+                if outputs and (mentions_input or any(_input_path(path, later_cwd) is None for path in sources)):
+                    exact = False
+                    if later_cwd is None or any('$' in p or '`' in p for p in outputs):
+                        unknown_origin = True
+                    else:
+                        targets.extend(os.path.normpath(os.path.join(later_cwd, p)) for p in outputs)
+                if any(not command_only_reads(s, workspace, no_writes=True) for s in inner):
+                    exact, unknown_origin = False, True
+        if kind == 'unknown' or (kind == 'shell' and not exact):
+            return prompts.load('external_write_unproven')
+        if kind == 'shell':
+            body_commands = _input_commands(shellinput.layout(body).shell)
+            if body_commands is None:
+                return prompts.load('external_write_unproven')
+            for _, _, words, _, _inputs in body_commands:
+                if not words:
+                    continue
+                cmd = os.path.basename(words[0])
+                writes, inner = _segment_write_targets(words)
+                if (any(c in cmd for c in '$`') or (not writes and not inner and cmd not in _SHELLS
+                        and not _segment_reads([cmd, *words[1:]], workspace))):
+                    return prompts.load('external_write_unproven')
+            refusal = command_refusal(body, level, workspace, roots, _cwd=cur, _depth=depth + 1)
+            if refusal:
+                return refusal
+    return None
 
 
 def _operands(args: list[str]) -> list[str]:
@@ -580,11 +885,7 @@ def _operands(args: list[str]) -> list[str]:
 
 def _segment_write_targets(words: list[str]) -> tuple[list[str], list[str]]:
     """(paths this one simple command WRITES or deletes, nested shell scripts it runs)."""
-    while words and (re.match(r"^\w+=", words[0]) or words[0] in _PREFIX_WORDS):
-        was_prefix = words[0] in _PREFIX_WORDS
-        words = words[1:]
-        while was_prefix and words and words[0].startswith("-"):
-            words = words[1:]
+    words = _command_words(words)
     if not words:
         return [], []
     cmd, args = os.path.basename(words[0]), words[1:]
@@ -626,40 +927,42 @@ def _segment_write_targets(words: list[str]) -> tuple[list[str], list[str]]:
     return targets, []
 
 
-def _escaping_write_target(command: str, workspace: str | None, _cwd="", _depth=0) -> str | None:
+def _escaping_write_target(command: str, workspace: str | None, _cwd="", _depth=0, *,
+                           level="none", roots=()) -> str | _UnprovenWrite | _InputRefusal | None:
     """The first path a write/delete in ``command`` would touch OUTSIDE the workspace, resolved
     lexically (normpath, like :func:`is_external`) against the workspace — or None.
 
     The path scan in :func:`command_refusal` judges ROOTED tokens; a relative `../root/out` is
     not rooted, and a path inside a `bash -c "…"` string is read as a quoted pattern, so both walked
     through. Only write TARGETS are judged — redirects, tee/cp/mv/rm/ln/install/touch/mkdir/sed -i
-    operands and the like. Relative READS (`cat ../x`) are deliberately unchanged. Any target built
-    from an expansion cria cannot resolve abstains; so does a relative target after a `cd` it cannot
-    follow."""
-    if not workspace or _depth > 3:
+    operands and the like. Relative READS (`cat ../x`) are deliberately unchanged. A target built
+    from an unresolved expansion or reached after an unknown cwd is UNPROVEN, never permission
+    to proceed. Heredoc ownership is shared with the rooted scan; no header tail is discarded."""
+    if not workspace:
         return None
-    cwd = os.path.normpath(os.path.expanduser(workspace)) if not _cwd else _cwd
-    command = _HEREDOC.sub(" ", command)
-    lexer = shlex.shlex(command, posix=True, punctuation_chars=";&|()<>\n")
-    lexer.whitespace = " \t\r"
-    lexer.commenters = ""
-    lexer.wordchars += "".join(c for c in "[]{}$,:@%+!^#=" if c not in lexer.wordchars)
-    try:
-        words = list(lexer)
-    except ValueError:
-        return None
-    parens = "(" in command
+    if _depth > 3:
+        return _UNPROVEN_WRITE
+    cwd = os.path.normpath(os.path.expanduser(workspace)) if _cwd == "" else _cwd
+    layout = shellinput.layout(command)
+    if layout.error:
+        return _UNPROVEN_WRITE
+    command = layout.shell
+    words = _shell_words(command)
+    if words is None:
+        return _UNPROVEN_WRITE
     cur: str | None = cwd
     seg: list[str] = []
 
-    def judge(tok: str) -> str | None:
-        if not tok or tok == "-" or any(c in tok for c in "$`") or re.match(r"^~[^/]", tok):
-            return None
+    def judge(tok: str) -> str | _UnprovenWrite | None:
+        if not tok or tok == "-":
+            return _UNPROVEN_WRITE
+        if any(c in tok for c in "$`") or re.match(r"^~[^/]", tok):
+            return _UNPROVEN_WRITE
         p = os.path.expanduser(tok)
         rooted = os.path.isabs(p)
         if not rooted:
             if cur is None:
-                return None
+                return _UNPROVEN_WRITE
             p = os.path.join(cur, p)
         # A top-level ABSOLUTE target is the path scan's to judge (its dependency-cache and
         # declared-root policy lives there); only a relative one, or one inside a nested shell
@@ -669,17 +972,13 @@ def _escaping_write_target(command: str, workspace: str | None, _cwd="", _depth=
         full = os.path.normpath(p)
         return full if is_external(full, workspace) and not _exempt(full) else None
 
-    def flush() -> str | None:
+    def flush() -> str | _UnprovenWrite | _InputRefusal | None:
         nonlocal cur, seg
-        words_, seg = seg, []
+        words_, seg = _command_words(seg), []
         if not words_:
             return None
         if words_[0] == "cd":
-            tgt = words_[1] if len(words_) == 2 else None
-            if tgt is None or parens or tgt == "-" or any(c in tgt for c in "$`~"):
-                cur = None
-            elif cur is not None:
-                cur = os.path.normpath(tgt if os.path.isabs(tgt) else os.path.join(cur, tgt))
+            cur = _follow_cd(words_, cur)
             return None
         targets, inner = _segment_write_targets(words_)
         for t in targets:
@@ -687,9 +986,13 @@ def _escaping_write_target(command: str, workspace: str | None, _cwd="", _depth=
             if hit:
                 return hit
         for script in inner:
-            hit = _escaping_write_target(script, workspace, cur or "", _depth + 1) if cur else None
-            if hit:
-                return hit
+            # Nested execution returns to the SAME boundary owner. Calling only
+            # the target scan here would mask a nested heredoc without judging
+            # its input execution/expansions.
+            refusal = command_refusal(script, level, workspace, roots,
+                                      _cwd=cur, _depth=_depth + 1)
+            if refusal:
+                return _InputRefusal(refusal)
         return None
 
     i = 0
@@ -710,6 +1013,8 @@ def _escaping_write_target(command: str, workspace: str | None, _cwd="", _depth=
                 hit = flush()
                 if hit:
                     return hit
+                if '(' in w or ')' in w:
+                    cur = None  # grouped/substitution cwd must not leak into its parent
         else:
             seg.append(w)
         i += 1
@@ -1036,16 +1341,8 @@ def command_only_reads(command: str, workspace: str | None, *, no_writes: bool =
     whether a file it read is still current)."""
     if not command or "<<" in command or "`" in command or "$(" in command:
         return False
-    lexer = shlex.shlex(command, posix=True, punctuation_chars=";&|()<>\n")
-    lexer.whitespace = " \t\r"
-    lexer.commenters = ""
-    # punctuation_chars strips most symbols from wordchars, so `x[12]` or `{a,b}` would split into
-    # separate "words" and a glob/brace target could look like a plain one. Keep every other
-    # printable character inside the word so the target is judged whole.
-    lexer.wordchars += "".join(c for c in "[]{}$,:@%+!^#=" if c not in lexer.wordchars)
-    try:
-        words = list(lexer)
-    except ValueError:
+    words = _shell_words(command)
+    if words is None:
         return False
     seg: list[str] = []
     i = 0
@@ -1122,20 +1419,6 @@ def _dep_cache_root_hint(path: str) -> str:
         if marker in p:
             return subtree
     return ""
-
-
-# `/1_000_000` in `cents /1_000_000` is integer division, not a filesystem path: a single rooted
-# token that is ALL digits/underscores (with an optional decimal part), a shape no real path uses.
-# The path-token scan grabs it because a space precedes the `/`. Walked: feed-pipeline-java x
-# ornith15 1788907072 drew 11 "The path '/1_000_000' is outside it" refusals on a Java milli-cent
-# literal in a heredoc, which fed a false "the workspace was reset" belief that recharged the model's
-# verification loop. Same class as the quoted-pattern and URL-fragment false-positives already fixed.
-_NUMERIC_LITERAL = re.compile(r"^/\d[\d_]*(?:\.[\d_]+)?$")
-
-
-def _is_numeric_literal(tok: str) -> bool:
-    """True for a rooted arithmetic literal like ``/1_000_000`` or ``/3.14`` — never a real path."""
-    return bool(_NUMERIC_LITERAL.match(tok))
 
 
 def _typo_fold(s: str) -> str:
@@ -1275,17 +1558,43 @@ def root_recursive_delete_refusal(command: str) -> str | None:
     return None
 
 
-def command_refusal(command: str, level: str, workspace: str | None, roots=()) -> str | None:
+def command_refusal(command: str, level: str, workspace: str | None, roots=(), *,
+                    _cwd="", _depth=0) -> str | None:
     """The refusal for a RAW shell command, or None when allowed — heuristic: refuse when the command
     names an external absolute/``~`` path, weighed against whether it looks like a write. Under
     ``none`` any external path is refused; under ``read`` only an external WRITE is."""
     if not command:
         return None
+    # Root deletion is independent of external permission. Input execution is
+    # judged separately below, never confused with a cat's literal stdin.
+    if level == "write":
+        return root_recursive_delete_refusal(command)
+    if _depth > 3:
+        return prompts.load('external_write_unproven')
+    layout = shellinput.layout(command)
+    if layout.error:
+        return prompts.load('external_write_unproven')
+    cwd = os.path.normpath(os.path.expanduser(workspace)) if _cwd == "" and workspace else _cwd
+    scripts, unknown = shellinput.expansions(layout.shell, shell=True)
+    if unknown:
+        return prompts.load('external_write_unproven')
+    if scripts:
+        commands = _input_commands(layout.shell)
+        if commands is None:
+            return prompts.load('external_write_unproven')
+        for offset, script in scripts:
+            cur = _cwd_before(commands, layout.shell, offset, cwd)
+            refusal = command_refusal(script, level, workspace, roots, _cwd=cur, _depth=_depth + 1)
+            if refusal:
+                return refusal
+    if layout.documents:
+        refusal = _input_refusal(layout, level, workspace, roots, cwd, _depth)
+        if refusal:
+            return refusal
+    command = layout.shell
     root_delete = root_recursive_delete_refusal(command)
     if root_delete:
         return root_delete
-    if level == "write":
-        return None
     # An install writes outside the workspace WITHOUT naming a path, so it must be judged before
     # the path scan — which by construction finds nothing to refuse in it.
     installing = install_refusal(command, level, workspace)
@@ -1325,9 +1634,6 @@ def command_refusal(command: str, level: str, workspace: str | None, roots=()) -
             continue
         if inside is None and _runs_system_program(command, segments, m.start(), tok):
             continue
-        # `n /1_000_000` is integer division, not a path outside the workspace.
-        if _is_numeric_literal(tok):
-            continue
         if not is_external(tok, workspace) or _exempt(tok):
             continue
         # A READ of a dependency-artifact cache grounds an installed library's real API (javap a jar,
@@ -1355,7 +1661,11 @@ def command_refusal(command: str, level: str, workspace: str | None, roots=()) -
     if external is None:
         # Nothing ABSOLUTE tripped the scan. A WRITE can still leave the workspace by a relative
         # `..` path, or by an absolute one hidden inside a `bash -c` string; resolve each write target.
-        escaped = _escaping_write_target(command, workspace)
+        escaped = _escaping_write_target(command, workspace, _cwd, _depth, level=level, roots=roots)
+        if isinstance(escaped, _InputRefusal):
+            return escaped.message
+        if escaped is _UNPROVEN_WRITE:
+            return prompts.load('external_write_unproven')
         if escaped is None:
             return None
         return _refusal("Writing", escaped, workspace, roots, level)
