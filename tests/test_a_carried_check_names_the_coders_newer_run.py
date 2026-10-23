@@ -9,7 +9,7 @@ gate's commands and names the newest one."""
 import base64
 import json
 
-from cria import loop, server
+from cria import dirguard, loop, server
 
 FLAG = ("[GROUND TRUTH — the repo's own checks fail] ...\n"
         "$ mvn -q compile — Importer.java:1: package com.opencsv does not exist\n"
@@ -107,3 +107,99 @@ def test_the_exit_code_is_stated_only_when_the_gate_command_is_the_last_part():
 
 def test_the_note_never_says_the_output_is_available():
     assert "tool results" not in _code_of("mvn test")
+
+
+def test_a_filtered_native_check_survives_as_a_newer_fact_not_a_success():
+    # Trial011 CALL0051's command shape: tail exits zero even though Maven fails.
+    # At CALL0060 the older duplicate-method gate survived without a newer-run note.
+    s = _Sess()
+    s.action_seq = 7
+    history = _run("filtered", "cd /workspace && mvn -q compile 2>&1 | tail -30",
+                   "Process exited with code 0\nOutput:\n[ERROR] current type error\n")
+    original_history = json.dumps(history)
+    loop._track_own_checks(s, history)
+    s.action_seq = 8
+    note = server._last_checks_note(_Server(s), "k")
+    assert "NEWER than this block" in note and "`mvn -q compile`" in note
+    assert "1 of your calls before this handoff" in note
+    assert "exited with code" not in note  # the filter's status is not Maven's
+    assert json.dumps(history) == original_history  # never replace the tool's voice
+    assert s.last_gate_flag == FLAG  # a newer invocation is not a new gate verdict
+
+
+def test_filtered_check_recognition_is_not_a_maven_rule():
+    for command in ("python -m pytest -q", "cargo test --locked", "dotnet test"):
+        s = _Sess()
+        s.last_gate_flag = f"$ {command} — historical failure"
+        s.action_seq = 7
+        loop._track_own_checks(s, _run("filtered", f"{command} 2>&1 | tail -30",
+                                     "Process exited with code 0\nOutput:\nfailed\n"))
+        note = loop.newer_own_run(s)
+        assert f"`{command}`" in note and "exited with code" not in note
+
+
+def test_quoted_or_saved_check_text_is_not_an_invocation():
+    for command in (
+        'printf "%s\\n" "notes;mvn test;done"',
+        "echo notes\\; mvn test",
+        "cat > tmp/script <<'END'\nmvn test\nEND\n",
+        "printf '%s\\n' 'mvn test 2>&1 | tail -30'",
+    ):
+        assert _code_of(command) == "", command
+
+
+def test_quoted_redirect_data_does_not_block_legitimate_literal_input():
+    for literal in (">", "|", ";"):
+        shell = f"printf '%s' '{literal}' output.log\ncat <<'END'\nplain data\nEND\n"
+        assert dirguard.command_refusal(shell, "none", "/workspace") is None
+    shell = "printf '%s' '>' output.log > /outside/output\ncat <<'END'\nplain data\nEND\n"
+    assert dirguard.command_refusal(shell, "read", "/workspace") is not None
+
+
+def test_redirects_preserve_numeric_arguments_unless_descriptor_syntax_is_proven():
+    for command in ("mvn test 2 > output.log", "mvn test '2'>output.log",
+                    "mvn test ''2>output.log", r"mvn test \2>output.log"):
+        assert _code_of(command) == "", command
+    assert "`mvn test`" in _code_of("mvn test 2>output.log")
+    assert "`mvn test`" in _code_of("mvn test 2>&1 | tail -30")
+
+
+def test_an_attempt_is_not_promoted_to_completed_execution():
+    # Redirection or an earlier && member can fail before the check starts.
+    # The matched invocation was issued, but its result is not a new verdict.
+    for command in ("mvn test > /missing-parent/output", "false && mvn test"):
+        note = _code_of(command, "Process exited with code 1\nOutput:\nsetup failed\n")
+        assert "issued `mvn test`" in note
+        assert "does not establish that a check actually ran or passed" in note
+        assert "Any check result actually returned" in note
+
+
+def test_array_and_function_bodies_are_not_executed_check_commands():
+    for command in ("args=(mvn test)", "declare -a args=(mvn test)",
+                    "function checks {\nmvn test\n}"):
+        assert _code_of(command) == "", command
+    # Braces in an ordinary quoted argument do not make the script a group.
+    assert "`mvn test`" in _code_of("printf '%s' '{'; mvn test")
+
+
+def test_directory_wrapper_normalization_is_not_executable_identity():
+    # These do not invoke `mvn test`: env consumes mvn as an option operand,
+    # and command -v only looks up names. Directory analysis may unwrap prefixes;
+    # a check receipt cannot use that normalization as evidence of execution.
+    for command in ("env -u mvn test", "env --unset=mvn test", "command -v mvn test"):
+        assert _code_of(command) == "", command
+
+
+def test_background_and_pipeline_status_do_not_belong_to_the_check():
+    background = "python -c 'raise SystemExit(7)'"
+    pipeline = "python -c 'raise SystemExit(0)'"
+    for command, shell, status in ((background, background + " &", 0),
+                                   (pipeline, "set -o pipefail; false | " + pipeline, 1)):
+        s = _Sess()
+        s.last_gate_flag = f"$ {command} — historical failure"
+        s.action_seq = 7
+        loop._track_own_checks(s, _run("async", shell,
+                                     f"Process exited with code {status}\nOutput:\n"))
+        note = loop.newer_own_run(s)
+        assert f"`{command}`" in note
+        assert "exited with code" not in note

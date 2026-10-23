@@ -1,2 +1,2 @@
 
-Before this handoff was written, after that check, you ran {{COMMANDS}} yourself ({{AGO}}){{EXIT}}. That run is NEWER than this block, so wherever it differs from what is listed above, it is the current state and this block is not.
+Before this handoff was written, after that check, you issued {{COMMANDS}} in a shell run ({{AGO}}){{EXIT}}. That call is NEWER than this block. Issuing the command does not establish that a check actually ran or passed; shell status alone does not establish that either. Any check result actually returned by that later call supersedes the older result above where they differ.

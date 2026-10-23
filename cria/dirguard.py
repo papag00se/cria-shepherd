@@ -504,16 +504,30 @@ def _after_unresolved_expansion(command: str, start: int) -> bool:
     return False
 
 
-def _segment_spans(command: str) -> list[tuple[int, int]]:
-    """(start, end) of each shell segment — text between UNQUOTED ``; & | ( )`` and newlines."""
-    spans, start, quote = [], 0, ""
+def _unquoted_chars(command: str):
+    """Lexical shell syntax positions, sharing quote/backslash ownership."""
+    quote, escaped = "", False
     for i, c in enumerate(command):
+        if escaped:
+            escaped = False
+            continue
+        if c == "\\" and quote != "'":
+            escaped = True
+            continue
         if quote:
             if c == quote:
                 quote = ""
         elif c in "\"'":
             quote = c
-        elif c in ";&|()\n":
+        else:
+            yield i, c
+
+
+def _segment_spans(command: str) -> list[tuple[int, int]]:
+    """(start, end) of each shell segment — text between UNQUOTED ``; & | ( )`` and newlines."""
+    spans, start = [], 0
+    for i, c in _unquoted_chars(command):
+        if c in ";&|()\n":
             # Redirect operators are not command boundaries: keep >& / <&,
             # &> / &>> and >| intact for the shared redirection reader.
             if (c == '&' and (command[i - 1:i] in ('>', '<')
@@ -587,15 +601,36 @@ class _InputRefusal:
         self.message = message
 
 
-def _shell_words(command: str) -> list[str] | None:
+def _shell_tokens(command: str) -> list[tuple[str, int, int]] | None:
+    """The existing shlex words with their exact source spans, before quote removal."""
     lexer = shlex.shlex(command, posix=True, punctuation_chars=";&|()<>\n")
     lexer.whitespace = " \t\r"
     lexer.commenters = ""
     lexer.wordchars += "".join(c for c in "[]{}$,:@%+!^#=" if c not in lexer.wordchars)
+    tokens = []
     try:
-        return list(lexer)
+        while True:
+            # shlex's punctuation lexer retains lookahead characters separately
+            # from its StringIO cursor; they belong to the next token's span.
+            start = lexer.instream.tell() - len(lexer._pushback_chars)
+            word = lexer.get_token()
+            if word is None:
+                return tokens
+            end = lexer.instream.tell() - len(lexer._pushback_chars)
+            while start < end and command[start] in lexer.whitespace:
+                start += 1
+            whitespace = {start + p for p, c in _unquoted_chars(command[start:end])
+                          if c in lexer.whitespace}
+            while end > start and end - 1 in whitespace:
+                end -= 1
+            tokens.append((word, start, end))
     except ValueError:
         return None
+
+
+def _shell_words(command: str) -> list[str] | None:
+    tokens = _shell_tokens(command)
+    return None if tokens is None else [word for word, _, _ in tokens]
 
 
 def _command_words(words: list[str]) -> list[str]:
@@ -618,28 +653,46 @@ def _follow_cd(words: list[str], cur: str | None) -> str | None:
     return None
 
 
-def _input_commands(shell: str):
-    """Command words, write targets and owned input redirects from the SAME lexer."""
+def _input_commands(shell: str, *, unwrap: bool = True):
+    """Command words, write targets and owned input redirects from the SAME lexer.
+
+    Directory analysis unwraps transparent-looking prefixes. Receipt identity
+    requests raw argv instead: wrapper option operands are not proven executables.
+    """
     commands = []
     for start, end in _segment_spans(shell):
-        tokens = _shell_words(shell[start:end])
-        if tokens is None:
+        source = shell[start:end]
+        spans = _shell_tokens(source)
+        if spans is None:
             return None
-        words, outputs, inputs, i = [], [], [], 0
+        tokens = [word for word, _, _ in spans]
+        words, word_indices, outputs, inputs, i = [], [], [], [], 0
         while i < len(tokens):
             tok = tokens[i]
-            if tok and set(tok) <= _PUNCT:
+            _, begin, token_end = spans[i]
+            if tok and set(tok) <= _PUNCT and source[begin:token_end] == tok:
                 if tok not in _REDIRECTS or i + 1 == len(tokens):
                     return None
-                fd = words.pop() if words and words[-1].isdigit() else None
+                # A descriptor is an adjacent, wholly unquoted decimal token,
+                # not merely an argv value that happens to contain digits.
+                fd = None
+                if (words and word_indices[-1] == i - 1
+                        and re.fullmatch(r"[0-9]+", words[-1])):
+                    _, previous, finish = spans[i - 1]
+                    if finish == begin and source[previous:finish] == words[-1]:
+                        fd = words.pop()
+                        word_indices.pop()
                 if "<" in tok:
                     inputs.append((fd or '0', tok, tokens[i + 1]))
                 if ">" in tok and not (tok == ">&" and tokens[i + 1].isdigit()):
                     outputs.append(tokens[i + 1])
                 i += 2
             else:
-                words.append(tok); i += 1
-        words = _command_words(words)
+                words.append(tok)
+                word_indices.append(i)
+                i += 1
+        if unwrap:
+            words = _command_words(words)
         targets, _inner = _segment_write_targets(words)
         commands.append((start, end, words, outputs + targets, inputs))
     return commands

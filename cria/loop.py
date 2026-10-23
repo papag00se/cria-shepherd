@@ -49,7 +49,7 @@ from pathlib import Path
 
 from .upstream import UpstreamProtocolError
 from . import bodykeys, contextfloor, dirguard, handoffdistill, tokenratio, generation, generationguards, modelview, wsview, stalledwork, groundedaction, writeobservation, pastedfile, livingplan, stepreview, completedwork, completionredrive
-from . import callcapture, dedup, denial, editrecovery, execcheck, filefacts, focustrim, groundtruth, indicators, massage, participation, probediscovery, probegate, probeparse, proberun, prompts, reasoning, selfcompact, shellshape, toolmenu, urlgrounding, verifytools, webfetch
+from . import callcapture, dedup, denial, editrecovery, execcheck, filefacts, focustrim, groundtruth, indicators, massage, participation, probediscovery, probegate, probeparse, proberun, prompts, reasoning, selfcompact, shellinput, shellshape, toolmenu, urlgrounding, verifytools, webfetch
 from .upstream import CallerContextRetryNoChange, ContextRefitNoChange
 from . import admission
 from .admission import has_actionable_tools as _has_actionable_tools
@@ -8047,6 +8047,11 @@ def _track_own_checks(sess, messages: list[dict]) -> None:
     if getattr(sess, "own_check_runs", None) is None:
         sess.own_check_runs = []
     heads = _gate_commands(getattr(sess, "last_gate_flag", ""))
+    head_words = {}
+    for head in heads:
+        parsed = dirguard._input_commands(head, unwrap=False)
+        if parsed and len(parsed) == 1:
+            head_words[head] = parsed[0][2]
     own_gate = probegate.gate_call_ids(messages or [])   # cria's own gate command, by its provenance stamp
     for tid, cmd, res in _shell_runs(messages):
         if ("s", tid) in sess.own_check_seen:
@@ -8055,12 +8060,33 @@ def _track_own_checks(sess, messages: list[dict]) -> None:
         if (not heads or tid in own_gate
                 or getattr(sess, "action_seq", 0) <= getattr(sess, "last_gate_seq", 0)):
             continue
-        parts = [x.strip() for x in re.split(r"[\n;]|&&", cmd) if x.strip()]
-        named = [h for h in heads if h in parts]
+        # Share the shell owner's code/input and argv boundaries. A redirect or
+        # output filter does not turn a check into a different invocation, while
+        # quoted text and saved heredoc contents are not executed commands.
+        layout = shellinput.layout(cmd)
+        substitutions, unknown = shellinput.expansions(layout.shell, shell=True)
+        if layout.error or unknown:
+            continue
+        shell = shellinput.outer_shell(layout.shell, substitutions)
+        # This lexical owner cannot distinguish executable groups from array or
+        # function definitions. Do not promote stored body text to a run receipt.
+        if any(c in "(){}" for _, c in dirguard._unquoted_chars(shell)):
+            continue
+        parts = dirguard._input_commands(shell, unwrap=False)
+        if parts is None:
+            continue
+        named = [h for h, words in head_words.items()
+                 if any(part[2] == words for part in parts)]
         if named:
-            # The exit code is the LAST command's: it speaks for the gate's command only when that is it.
+            # A filter/background shell status is not the check's status; pipefail
+            # can also attribute an earlier pipeline member's failure to the shell.
+            # Only an exact final foreground command outside a pipeline owns it.
+            final = next((part for part in reversed(parts) if part[2]), None)
+            owns_status = bool(final and shell[final[0]:final[1]].strip() in named
+                               and not shell[final[1]:].strip()
+                               and not shell[:final[0]].rstrip().endswith("|"))
             m = selfcompact._EXIT.search(res)
-            code = int(m.group(1)) if m and parts[-1] in named else None
+            code = int(m.group(1)) if m and owns_status else None
             sess.own_check_runs.append((sess.action_seq, named, code))
 
 
