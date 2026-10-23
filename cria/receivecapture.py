@@ -18,6 +18,11 @@ class CaptureFailure(OSError):
     """Already received data could not be truthfully retained."""
 
 
+def metadata_path(capture_path) -> Path:
+    """The transport receipt is a companion of the request, never another request."""
+    return Path(str(capture_path) + '.receive.json')
+
+
 class Receipt:
     def __init__(self, capture_path, *, request_sha256, sink_factory=None):
         self.base = Path(capture_path)
@@ -33,7 +38,7 @@ class Receipt:
         # Intermediate redirect responses own segments, not the whole opening attempt.
         self.opening = 0
         self.terminal = None
-        self.meta_path = Path(str(self.base) + '.receive.json')
+        self.meta_path = metadata_path(self.base)
         self.meta = self._file(self.meta_path)
         try:
             self.origin = self._segment('origin')  # storage setup BEFORE dispatch

@@ -51,6 +51,11 @@ import re
 import sys
 from pathlib import Path
 
+# The documented file entrypoint must resolve the same project modules as suite.walk.
+if not __package__:
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from cria.receivecapture import metadata_path
+
 CALLS_ROOT = Path.home() / ".cria" / "calls"
 CHUNK_BYTES_DEFAULT = 64_000
 CHUNK_LINES_DEFAULT = 1_800   # under a 2,000-line read cap, with room for the reader's own framing
@@ -169,9 +174,13 @@ def resolve_capture(arg: str) -> Path:
 def list_calls(cap: Path):
     """(number, phase, stem) for every captured call, in call order."""
     out = []
-    for f in sorted(cap.iterdir()):
+    files = sorted(cap.iterdir())
+    # Use the transport producer's exact companion relation, not a phase suffix:
+    # dots and even 'json.receive' are legal phase labels of real requests.
+    receipts = {metadata_path(f) for f in files if _CALL_RE.match(f.name)}
+    for f in files:
         m = _CALL_RE.match(f.name)
-        if m and not f.name.endswith((".response.json",)):
+        if m and not f.name.endswith((".response.json",)) and f not in receipts:
             out.append((m.group(1), m.group(2), f.with_suffix("")))
     return out
 
