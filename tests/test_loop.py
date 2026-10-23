@@ -5501,7 +5501,8 @@ class WorkspaceInventoryTests(unittest.TestCase):
         self.assertIn(os.path.join("sub", "mod.py"), inv)
         self.assertLess(inv.index("README.md"), inv.index("mod.py"))   # newest first
         self.assertIn("survey is complete and current", inv)
-        self.assertIn("a file not listed here does not exist in the workspace", inv)
+        self.assertIn("Absence from this list is not proof", inv)
+        self.assertNotIn("a file not listed here does not exist", inv)
 
     def test_non_deliverable_dirs_are_pruned(self):
         from cria.loop import workspace_inventory
@@ -5523,7 +5524,8 @@ class WorkspaceInventoryTests(unittest.TestCase):
         for i in range(120):
             self.assertIn(f"f{i:03d}.txt (1 B)", inv)
         self.assertIn("survey is complete and current", inv)
-        self.assertIn("a file not listed here does not exist in the workspace", inv)
+        self.assertIn("Absence from this list is not proof", inv)
+        self.assertNotIn("a file not listed here does not exist", inv)
         self.assertNotIn("more file", inv)
 
     def test_empty_workspace_states_the_fact(self):

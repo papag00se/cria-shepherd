@@ -99,12 +99,15 @@ class PlannerInventoryWordingTests(unittest.TestCase):
         d = tempfile.mkdtemp()
         out = groundtruth.workspace_inventory(d, flavor="planner")
         self.assertNotIn("judging", out)
-        self.assertEqual(out, prompts.fill(prompts.load_map("workspace_inventory")["planner_empty"], root=d))
-        self.assertIn("current complete survey found no files", out)
+        labels = prompts.load_map("workspace_inventory")
+        self.assertEqual(out, prompts.fill(labels["planner_empty"], root=d) + "\n" + labels["scope"])
+        self.assertIn("none in this filtered inventory", out)
         self.assertNotIn("nothing has been built yet", out)
 
-    def test_the_judge_flavor_is_unchanged(self):
-        self.assertIn("at judging time", groundtruth.workspace_inventory(tempfile.mkdtemp()))
+    def test_the_judge_flavor_does_not_upgrade_an_empty_filtered_inventory(self):
+        out = groundtruth.workspace_inventory(tempfile.mkdtemp())
+        self.assertIn("none in this filtered inventory", out)
+        self.assertNotIn("workspace has no files", out)
 
     def test_a_populated_planner_listing_also_avoids_it(self):
         import os
@@ -123,7 +126,7 @@ class PlannerInventoryWordingTests(unittest.TestCase):
         inventory = prompts.fill(prompts.load_map("workspace_inventory")["planner_empty"], root=cwd)
         ask = prompts.load("plan_closing_ask")
         self.assertTrue(seed.startswith(inventory))
-        self.assertIn("current complete survey found no files", seed)
+        self.assertIn("none in this filtered inventory", seed)
         self.assertNotIn("nothing has been built yet", seed)
         self.assertNotIn("judging", seed)
         self.assertLess(seed.index(inventory), seed.index(task))

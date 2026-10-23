@@ -4,11 +4,12 @@
 # ("no obstacle blocks completion") with zero write actions in evidence and no README on disk
 # (run 0728-m4 step 3), and a FileNotFoundError over one file was read as "the directory does not
 # exist" (run 0728-m1 step 1). Both directions, one fact.
-# Headers describe the survey, not its freshness. Only the renderer's complete/current
-# scope line permits absence claims. Parsed by prompts.load_map.
+# Headers describe observations, not freshness or exhaustive coverage. Filtering is
+# independent of the underlying survey's coverage and age. Parsed by prompts.load_map.
 header = WORKSPACE FILES in {{ROOT}} (names observed in the workspace survey, newest first):
-complete = This survey is complete and current — a file not listed here does not exist in the workspace.
-empty = WORKSPACE FILES in {{ROOT}}: none — the workspace has no files at judging time.
+complete = The underlying survey is complete and current; this filtered inventory does not list every path.
+scope = This is a filtered inventory: build outputs (such as target/ and build/), installed dependencies, caches and internal metadata directories are omitted, and installed trees may be folded into counts. Absence from this list is not proof that a file or directory does not exist. Inspect the relevant directory before concluding it is absent.
+empty = WORKSPACE FILES in {{ROOT}}: none in this filtered inventory — omitted files may still exist.
 # The header states compaction ONLY when this body actually carries a compaction (a rollup, briefing,
 # continuation reframe, or context-floor digest). ornith1.5_9b / Java B2 read the unconditional clause
 # after a successful write with nothing dropped, concluded "the workspace keeps getting reset" and
@@ -17,12 +18,12 @@ coder_header = ⟦ctx:files⟧ YOUR WORKSPACE SURVEY (names observed, newest fir
 coder_header_compacted = ⟦ctx:files⟧ YOUR WORKSPACE SURVEY (names observed, newest first — older turns were compacted; remembered or summarized content does not establish current file state):
 coder_note = Use read_file for file contents. If a file's current text is not in this conversation, read it rather than reconstructing it from memory or from the summary; if its current text is here, use that copy.
 planner_header = WORKSPACE FILES in {{ROOT}} (names observed in the workspace survey, newest first):
-planner_empty = WORKSPACE FILES in {{ROOT}}: none — the current complete survey found no files.
+planner_empty = WORKSPACE FILES in {{ROOT}}: none in this filtered inventory — omitted files may still exist.
 # The steer author's template heads its disk section "THE FILES IT HAS BEEN CHANGING" — and on
 # nemotron-nano 1786243834 the ONLY entry was cria's own spilled reference copy under
 # tmp/read-only/, so the one prompt that needed "the coder has produced nothing" read as file
 # activity instead (the unstick reasoner answered ON_TRACK over an untouched workspace, five
-# times). Spill entries are LABELLED, never removed: the completeness clause stays true.
+# times). Spill entries are LABELLED, never removed: observed reference files remain visible.
 spill_note = — reference material saved into the read-only scratch directory for re-reading, not a deliverable
 # The BRIEFING writer's header. cria's rolling compaction and the harness's compaction handshake both
 # asked a model to describe the state of a workspace they had never been shown, and it filled the gap:
@@ -30,13 +31,13 @@ spill_note = — reference material saved into the read-only scratch directory f
 # next prompt's own ground-truth block listed six files, none of them tests/ — that path never existed
 # in the run. The existing repair (loop._briefing_disk_truth) answers the opposite direction, a
 # briefing that DENIES a file cria can see; nothing answered invention. So the writer is shown the
-# list, and the completeness clause below is what makes it decisive.
+# list, with explicit filtering, coverage and freshness limits.
 briefing_header = FILES ON DISK — WORKSPACE SURVEY (names observed, newest first). Its scope note below states whether it is complete and current; neither this heading nor older transcript mentions establish freshness, and the transcript's file mentions may be stale:
 
 install_prefix = \n  {{PREFIX}}/ — {{COUNT}} files installed here by a package manager on this session's own instruction; not your source, and not listed one by one.
 
-# WHEN THE SURVEY HIT ITS OWN BOUND. The completeness clause above is what makes the listing
-# decisive, and it may only be printed when the survey actually reached everything. A folded
+# WHEN THE SURVEY HIT ITS OWN BOUND. Underlying survey completeness may only be stated
+# when the survey actually reached everything; filtering is separately disclosed. A folded
 # directory, a drained queue or a root with more files than one survey carries all mean cria did not
 # look everywhere — and a path it did not reach is UNKNOWN, never absent (#5b, #11b).
 partial = This list is NOT complete — the survey of this workspace hit its own limit, so a file missing from this list may still exist. Use list_dir on a directory you expect before concluding anything is absent.

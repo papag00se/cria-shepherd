@@ -96,7 +96,9 @@ def test_the_observer_is_handed_the_listing_its_question_turns_on(surveyed):
     loop.observe_task_missing_file(FX["task"], workspace_root=ROOT, reasoner_chat=chat,
                                    reasoner_role=None, rlog=_Log())
     user = seen[0]["messages"][-1]["content"]
-    assert "This survey is complete and current — a file not listed here does not exist in the workspace." in user
+    assert "The underlying survey is complete and current" in user
+    assert "Absence from this list is not proof" in user
+    assert "a file not listed here does not exist" not in user
     assert prompts.load_map("workspace_inventory")["partial"] not in user
     assert prompts.load_map("workspace_inventory")["stale"] not in user
     assert "README.md (370 B)" in user and "REVIEW.md" not in user.split("THE USER'S ORIGINAL TASK")[0]

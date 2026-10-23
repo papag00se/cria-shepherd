@@ -43,6 +43,8 @@ class ReorientationFacts:
     # Already decoded by the shared content adapter, preserving multimodal handling.
     user_texts: tuple[str, ...]
     reasoner_available: bool
+    # Requirements are separate from the historical account, never evidence of work.
+    original_task: str = ""
 
 
 @dataclass(frozen=True)
@@ -112,7 +114,12 @@ def _reason(source: ReorientationInput) -> tuple[str, str]:
         return canned, "no-prose"
     inventory = source.inventory()
     grounding = summary if not inventory else summary + "\n\n" + inventory
-    text = source.author(AuthorRequest(prompts.load("reanchor_reasoned"), grounding))
+    task = facts.original_task.strip()
+    if not task or task.startswith(CONTINUATION_MARKER):
+        task = prompts.load("reanchor_missing_task")
+    author_context = prompts.render("reanchor_context", task=task, summary=summary,
+                                    inventory=inventory)
+    text = source.author(AuthorRequest(prompts.load("reanchor_reasoned"), author_context))
     if not text:
         return canned, "empty"
     lines = len(shellshape.command_lines(text))
@@ -147,12 +154,14 @@ class Definition:
 
 DEFINITION = Definition(Policy(
     "history-rewrite-reorientation", "post-history-rewrite", 4, family_id="F49",
-    prompts=("reanchor", "reanchor_reasoned", "nudge"),
+    prompts=("reanchor", "reanchor_reasoned", "reanchor_context", "reanchor_missing_task", "nudge"),
     state="optional preparation callback after framing; shared delivery acknowledgement caller-owned; no persistent judge cache",
-    services=("continuation-facts", "workspace-inventory", "shared-summary-provider"),
+    services=("original-task", "continuation-facts", "workspace-inventory", "shared-summary-provider"),
     hooks=(Reference("cria/loop.py", "Loop._prepare_coder_context"),
            Reference("cria/loop.py", "Loop._reasoned_reanchor"),
            Reference("cria/loop.py", "Loop._drive_single_item")),
-    regressions=(Reference("tests/test_context_reorientation_policy.py", "test_reasoned_source_parity"),
+    regressions=(Reference("tests/test_reorientation_keeps_requirements_separate_from_history.py",
+                           "test_preparation_author_receives_task_separately_and_coder_keeps_it"),
+                 Reference("tests/test_context_reorientation_policy.py", "test_reasoned_source_parity"),
                  Reference("tests/test_common_context_preparation.py", "test_absent_context_selection_never_runs_optional_leaf_detection")),
     migrated=False), reorient)

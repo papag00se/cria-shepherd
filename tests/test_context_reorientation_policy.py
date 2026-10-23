@@ -17,7 +17,11 @@ AUTHOR_SYSTEM = ("The coder's working history was just COMPACTED into the summar
     'and re-create files that already exist. From the summary, briefly orient the coder: state what has '
     'already been built (so it does not redo or duplicate it) and what still remains to finish the task, '
     'and tell it to INSPECT the existing files on disk before creating anything, then continue.\n\n'
-    'Say ONLY what the summary and the file listing beneath it state. If neither says what was built, '
+    'The separately labelled original task governs requirements: requirements are not evidence of completed work. '
+    'Do not relax, replace or drop them because the historical continuation describes a difficulty or a different approach. '
+    'If the original task is unavailable, do not infer its requirements from that continuation. '
+    'The coder retains any original task supplied separately; this directive does not replace it.\n\n'
+    'For claims about work already done or its present state, say ONLY what the summary and the file listing beneath it state. If neither says what was built, '
     'or neither says what remains, say plainly that it does not and tell the coder to read the files on '
     'disk to find out. Never fill either gap with a guess: a list of remaining work that turns out to be '
     'already done sends the coder back into finished code to break it.\n\n'
@@ -25,6 +29,14 @@ AUTHOR_SYSTEM = ("The coder's working history was just COMPACTED into the summar
     'the summary nor the file listing already names, and never tell the coder to start over, re-create, '
     'or begin a new project — whatever is on disk is the work, and a re-orientation that renames it destroys it.\n\n'
     'Output ONLY that directive to the coder — no preamble, no meta-commentary.')
+
+
+AUTHOR_CONTEXT = ('ORIGINAL TASK — governing requirements, not evidence of completed work:\n'
+    'ORIGINAL TASK\n\n'
+    'HISTORICAL CONTINUATION — an account of earlier work, not permission to change requirements:\n'
+    '⟦ctx:continuation⟧ summary\n\n'
+    'WORKSPACE INVENTORY — use its stated coverage, filtering and freshness limits:\n'
+    'current inventory')
 
 
 class Log:
@@ -38,7 +50,7 @@ class Log:
 def source(text='Inspect the existing files before creating anything.', **changes):
     log = Log()
     values = dict(rewritten=True,
-                  facts=lambda: policy.ReorientationFacts(('ORIGINAL TASK', '⟦ctx:continuation⟧ summary'), True),
+                  facts=lambda: policy.ReorientationFacts(('ORIGINAL TASK', '⟦ctx:continuation⟧ summary'), True, 'ORIGINAL TASK'),
                   inventory=Mock(return_value='current inventory'), author=Mock(return_value=text),
                   consume_rewrite=Mock(), log=log)
     return policy.ReorientationInput(**(values | changes))
@@ -60,7 +72,7 @@ def test_reasoned_source_parity(answer, reason, directive, events):
     assert result.consumed is True
     assert item.log.events == events
     item.author.assert_called_once_with(policy.AuthorRequest(
-        AUTHOR_SYSTEM, '⟦ctx:continuation⟧ summary\n\ncurrent inventory', 'reasoner'))
+        AUTHOR_SYSTEM, AUTHOR_CONTEXT, 'reasoner'))
     item.inventory.assert_called_once_with()
     item.consume_rewrite.assert_called_once_with()
 
@@ -92,7 +104,7 @@ def test_explicit_none_defers_acknowledgement_without_changing_prepared_directiv
     assert result == policy.ReorientationResult(
         {'role': 'user', 'content': '⟦ctx:steer⟧ Inspect the existing files.'}, 'authored', False)
     item.author.assert_called_once_with(policy.AuthorRequest(
-        AUTHOR_SYSTEM, '⟦ctx:continuation⟧ summary\n\ncurrent inventory', 'reasoner'))
+        AUTHOR_SYSTEM, AUTHOR_CONTEXT, 'reasoner'))
     item.inventory.assert_called_once_with()
     assert item.log.events == []
 
@@ -155,7 +167,7 @@ def test_shared_provider_adapter_preserves_exact_author_call_and_count():
     result = policy.reorient(item)
     assert result.reason == 'authored'
     provider.assert_called_once_with(chat, role, AUTHOR_SYSTEM,
-        '⟦ctx:continuation⟧ summary\n\ncurrent inventory', log, phase='reasoner')
+        AUTHOR_CONTEXT, log, phase='reasoner')
     providers.judge_completion.assert_not_called()
 
 

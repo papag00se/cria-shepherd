@@ -68,12 +68,11 @@ class TheEvidenceRuleAppliesBothWaysTests(unittest.TestCase):
         self.assertIn("You cannot read the files or run anything from here", self.body)
 
     def test_and_the_listing_does_not_soften_the_evidence_rule(self):
-        """Only a complete current survey settles existence, never a passing probe.
-        An unlisted path in an uncertain survey is unknown, not failed work."""
-        self.assertIn("When complete and current, the survey settles whether a file exists and nothing else",
-                      self.body)
+        """A listed path supports presence, never a passing probe.
+        An omitted path in a filtered inventory is unknown, not failed work."""
+        self.assertIn("A fresh listed path supports presence only, not behavior or task completion", self.body)
         self.assertIn("not contents, behavior or task completion", self.body)
-        self.assertIn("A partial, folded or stale survey leaves unlisted paths UNKNOWN", self.body)
+        self.assertIn("omitted or folded paths remain UNKNOWN, not absent", self.body)
         self.assertIn("Preserve later real tool evidence of creation, movement or deletion", self.body)
         # Both directions still need a real run, even with an authoritative names-only list.
         self.assertIn("check ACTUALLY RAN and passed", self.body)

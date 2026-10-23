@@ -84,14 +84,16 @@ class TheListingReachesTheWriterTests(unittest.TestCase):
 
 class TheListingIsDecisiveTests(unittest.TestCase):
     def test_the_briefing_flavor_keeps_the_completeness_clause(self):
-        """"Not listed = does not exist" is the clause that makes the section settle anything."""
+        """Survey completeness does not undo the renderer's independent exclusions."""
         import tempfile
         import pathlib
         with tempfile.TemporaryDirectory() as ws:
             pathlib.Path(ws, "a.rs").write_text("x")
             out = groundtruth.workspace_inventory(ws, flavor="briefing")
         self.assertIn("a.rs", out)
-        self.assertIn("a file not listed here does not exist", out.lower())
+        self.assertIn("survey is complete and current", out)
+        self.assertIn("Absence from this list is not proof", out)
+        self.assertNotIn("a file not listed here does not exist", out)
 
     def test_it_says_the_transcript_may_be_stale(self):
         import tempfile
@@ -142,9 +144,8 @@ class ThePromptTellsItWhatTheListMeansTests(unittest.TestCase):
 
     def test_absence_needs_complete_current_scope_not_merely_an_unlisted_path(self):
         """An unconditional listing rule can contradict writes after stale/partial surveys."""
-        self.assertIn("Only a survey labelled complete and current establishes that an unlisted file is absent",
-                      self.body)
-        self.assertIn("A partial, folded or stale survey leaves unlisted paths UNKNOWN", self.body)
+        self.assertIn("Even a survey labelled complete and current can have a filtered inventory", self.body)
+        self.assertIn("omitted or folded paths remain UNKNOWN, not absent", self.body)
         self.assertIn("Preserve later real tool evidence of creation, movement or deletion", self.body)
         self.assertNotIn("Never state that a file was created unless it is on that list", self.body)
         labels = prompts.load_map("workspace_inventory")
@@ -155,7 +156,7 @@ class ThePromptTellsItWhatTheListMeansTests(unittest.TestCase):
 
     def test_the_list_settles_existence_only(self):
         """It carries names and sizes. It cannot say whether a test passed."""
-        self.assertIn("settles whether a file exists and nothing else", self.body)
+        self.assertIn("A fresh listed path supports presence only, not behavior or task completion", self.body)
 
     def test_the_evidence_rule_still_stands(self):
         self.assertIn("Only state that tests PASS or the build WORKS if the transcript shows the "

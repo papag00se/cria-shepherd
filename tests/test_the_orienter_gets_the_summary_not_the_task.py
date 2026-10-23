@@ -70,8 +70,8 @@ class TheOrienterReadsTheMarkedTurnTests(unittest.TestCase):
     def test_a_real_compaction_is_oriented_from(self):
         self.assertIn("Already built", self._reanchor([self.TASK, _summary_turn("built X")]))
 
-    def test_the_task_is_not_what_the_reasoner_reads(self):
-        """It is handed the summary; being handed requirements is what produced the invention."""
+    def test_requirements_are_separate_from_the_summary_the_reasoner_reads(self):
+        """Give both sources without treating requirements as accomplishments."""
         from tests.test_loop import _Scripted, _done, _Rlog, _single_loop
         from cria.config import Role
         chat = _Chat("Already built: X.")
@@ -80,7 +80,9 @@ class TheOrienterReadsTheMarkedTurnTests(unittest.TestCase):
             {"messages": [self.TASK, _summary_turn("built the parser")]}, _Rlog())
         sent = repr(chat.seen)
         self.assertIn("built the parser", sent)
-        self.assertNotIn("Build a feed parser", sent)
+        self.assertIn("Build a feed parser", sent)
+        self.assertLess(sent.index("Build a feed parser"), sent.index("HISTORICAL CONTINUATION"))
+        self.assertIn("requirements are not evidence of completed work", sent)
 
     def test_it_reads_the_newest_marked_turn(self):
         """A long session compacts more than once; the stale summary must not win. Two marked turns
@@ -107,7 +109,7 @@ class ThePromptForbidsInventingTests(unittest.TestCase):
         the self-compaction briefing writer, already had. The rule names both sources, because a
         file the disk listing names IS grounded and refusing it would punish the seat for using the
         fact cria just handed it."""
-        self.assertIn("Say ONLY what the summary and the file listing beneath it state", self.BODY)
+        self.assertIn("For claims about work already done or its present state, say ONLY what the summary and the file listing beneath it state", self.BODY)
         self.assertIn("neither the summary nor the file listing already names", self.BODY)
 
     def test_a_missing_answer_is_disclosed_not_guessed(self):

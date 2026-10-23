@@ -1093,7 +1093,7 @@ Frozen detail assignments and judgments remain in [detail-history.json](detail-h
 
 **Principal navigation/support owners (not exhaustive stage bindings):**
 - [`cria/loop.py:_judge_completion`](../../cria/loop.py#L991)
-- [`cria/groundtruth.py:files_for_a_judge`](../../cria/groundtruth.py#L300)
+- [`cria/groundtruth.py:files_for_a_judge`](../../cria/groundtruth.py#L299)
 - [`cria/prompts/judge_files.txt`](../../cria/prompts/judge_files.txt)
 - [`tests/test_a_toolless_judge_retry_keeps_the_workspace_facts.py`](../../tests/test_a_toolless_judge_retry_keeps_the_workspace_facts.py)
 - [`cria/verifytools.py:verdict_tool`](../../cria/verifytools.py#L180)
@@ -1461,12 +1461,12 @@ Frozen detail assignments and judgments remain in [detail-history.json](detail-h
 **Registered atomic definitions:**
 - `history-rewrite-reorientation` — [`cria/reorientation.py:DEFINITION`](../../cria/reorientation.py); execute `reorient`.
   Stage `post-history-rewrite`; default level 4; scope `runtime`.
-  State: optional preparation callback after framing; shared delivery acknowledgement caller-owned; no persistent judge cache. Services: continuation-facts, workspace-inventory, shared-summary-provider.
+  State: optional preparation callback after framing; shared delivery acknowledgement caller-owned; no persistent judge cache. Services: original-task, continuation-facts, workspace-inventory, shared-summary-provider.
   Caller triggers: none.
   Structural migration claim: pending integration.
-  Prompts: reanchor, reanchor_reasoned, nudge. Dependencies: none.
+  Prompts: reanchor, reanchor_reasoned, reanchor_context, reanchor_missing_task, nudge. Dependencies: none.
   Hooks: [`cria/loop.py:Loop._prepare_coder_context`](../../cria/loop.py#L5173), [`cria/loop.py:Loop._reasoned_reanchor`](../../cria/loop.py#L5156), [`cria/loop.py:Loop._drive_single_item`](../../cria/loop.py#L4883).
-  Regressions: [`tests/test_context_reorientation_policy.py:test_reasoned_source_parity`](../../tests/test_context_reorientation_policy.py#L54), [`tests/test_common_context_preparation.py:test_absent_context_selection_never_runs_optional_leaf_detection`](../../tests/test_common_context_preparation.py#L275).
+  Regressions: [`tests/test_reorientation_keeps_requirements_separate_from_history.py:test_preparation_author_receives_task_separately_and_coder_keeps_it`](../../tests/test_reorientation_keeps_requirements_separate_from_history.py#L17), [`tests/test_context_reorientation_policy.py:test_reasoned_source_parity`](../../tests/test_context_reorientation_policy.py#L66), [`tests/test_common_context_preparation.py:test_absent_context_selection_never_runs_optional_leaf_detection`](../../tests/test_common_context_preparation.py#L275).
 - `harness-memory-handoff` — [`cria/memoryhandoff.py:DEFINITION`](../../cria/memoryhandoff.py); execute `harden`.
   Stage `harness-memory`; default level 3; scope `runtime`.
   State: session producer record; shared write-result evidence observed before facts resolution. Services: original task, workspace inventory, gate evidence, transcript, three-lens validator, provider, authenticated carried ledger, producer settlement.
@@ -1479,7 +1479,7 @@ Frozen detail assignments and judgments remain in [detail-history.json](detail-h
 **Principal navigation/support owners (not exhaustive stage bindings):**
 - [`cria/server.py:_compaction_body`](../../cria/server.py#L476)
 - [`cria/server.py:_harden_compaction_reply`](../../cria/server.py#L651)
-- [`cria/reorientation.py:reorient`](../../cria/reorientation.py#L130)
+- [`cria/reorientation.py:reorient`](../../cria/reorientation.py#L137)
 - [`cria/loop.py:Loop._prepare_coder_context`](../../cria/loop.py#L5173)
 - [`cria/loop.py:Loop._reasoned_reanchor`](../../cria/loop.py#L5156)
 - [`cria/selfcompact.py:work_ledger`](../../cria/selfcompact.py#L974)
@@ -2298,7 +2298,7 @@ Frozen detail assignments and judgments remain in [detail-history.json](detail-h
 - [`cria/contextrestoration.py:restore`](../../cria/contextrestoration.py#L49)
 - [`cria/loop.py:Loop._prepare_coder_context`](../../cria/loop.py#L5173)
 - [`cria/loop.py:_restored_text_message`](../../cria/loop.py#L9277)
-- [`cria/groundtruth.py:workspace_inventory`](../../cria/groundtruth.py#L348)
+- [`cria/groundtruth.py:workspace_inventory`](../../cria/groundtruth.py#L347)
 - [`cria/modelview.py:restored_hint`](../../cria/modelview.py#L373)
 - [`cria/modelview.py:settle_restored_text`](../../cria/modelview.py#L379)
 - [`cria/modelview.py:retained_results_truth`](../../cria/modelview.py#L278)

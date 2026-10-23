@@ -1,0 +1,8 @@
+ORIGINAL TASK — governing requirements, not evidence of completed work:
+{{TASK}}
+
+HISTORICAL CONTINUATION — an account of earlier work, not permission to change requirements:
+{{SUMMARY}}
+
+WORKSPACE INVENTORY — use its stated coverage, filtering and freshness limits:
+{{INVENTORY}}

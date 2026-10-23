@@ -233,10 +233,9 @@ _INVENTORY_EXCLUDE = BUILD_ARTIFACT_DIRS
 # died with two checks still red. Without those lines the same body estimates 23,661 tokens and fits
 # with room to spare, so this is sufficient on its own.
 #
-# FOLDED, NOT DROPPED. The listing's contract is that it is complete, so "not listed = does not
-# exist" always holds (the docstring calls that the one clause that makes it decisive, and it is the
-# operator's call). One summary line keeps the clause true — the directory is still reported, with
-# its file count — while costing tokens proportional to nothing.
+# FOLDED, NOT DROPPED. One summary line reports the observed directory and its file count,
+# without enumerating installed contents. That is presence evidence for the prefix, not an
+# absence check for any individual file inside it.
 # COMPOSER IS NOT HERE, DELIBERATELY. Its tree is the same shape and the same cost — reproduced with
 # an ordinary install: 425 `.php` files, 423 of them under `vendor/` — but composer writes packages
 # to `vendor/<vendor>/<package>/`, so no fixed prefix catches it, and a bare `vendor` would fold a
@@ -279,7 +278,7 @@ _SPILL_REL = _spill_rel()
 
 
 def _walk_entries(view, root: str) -> list[tuple[float, str, int | None]] | None:
-    """``(mtime, relpath, size)`` for every file in the workspace, or None when nobody has surveyed
+    """``(mtime, relpath, size)`` for every included file, or None when nobody has surveyed
     it yet. ONE walk for the two readers that answer the same question one level apart — what
     exists, and what is in it — so they can never see different trees (#11b)."""
     tree = view.walk(root, skip_names=_INVENTORY_EXCLUDE)
@@ -348,8 +347,8 @@ def files_for_a_judge(root: str | None) -> str:
 def workspace_inventory(root: str | None, flavor: str = "judge", compacted: bool = False) -> str:
     """Render the harness survey with its actual coverage and freshness.
 
-    Only a complete, unfolded, current survey supports absence. A bounded survey and
-    an overtaken survey are independent uncertainties; preserve both when both apply.
+    The inventory is always filtered, independently of survey coverage and freshness;
+    omission never proves workspace absence. Preserve bounded and overtaken caveats too.
     Unknown workspace/survey returns no inventory, never an empty-workspace claim.
     Rendering neither refreshes the survey nor changes its ownership state.
     """
@@ -357,9 +356,7 @@ def workspace_inventory(root: str | None, flavor: str = "judge", compacted: bool
         return ""
     entries = _walk_entries(wsview.current(root), root)
     if entries is None:
-        # NOTHING SURVEYED YET IS NOT AN EMPTY WORKSPACE. This listing's whole value is the clause
-        # "not listed = does not exist", and rendering the empty-workspace sentence from an
-        # unanswered question would put that clause behind a fact nobody established (#5b).
+        # An unanswered survey is not evidence of an empty inventory or workspace.
         return ""
     labels = prompts.load_map("workspace_inventory")
     entries, folded = _fold_install_prefixes(entries)
@@ -370,10 +367,9 @@ def workspace_inventory(root: str | None, flavor: str = "judge", compacted: bool
     # whole workspace read as `none — the workspace has no files at judging time` to every judge, the
     # planner and the briefing writer. The listing is still worth having; the CLAUSE is what has to
     # go (#5b, and #11b — a mechanism may only speak about what it reached).
-    # …AND NOTHING FOLDED. A folded directory is one the survey listed only as a count, so its files
-    # are absent from the walk while `complete` stays True. The install-prefix fold already earns the
-    # clause back by printing a line for what it folded; a view-level fold prints nothing, so the
-    # clause has to go instead.
+    # …AND NOTHING VIEW-FOLDED. The survey may report a directory only as a count while
+    # `complete` stays True; that is not exhaustive coverage. Renderer install-prefix folds are
+    # separately disclosed by the always-present filter scope; neither fold proves file absence.
     # …AND NOT OVERTAKEN. `complete`/`folded` answer whether the survey reached everything; they say
     # nothing about WHEN. A survey rides along only on a composed write/edit/list, so a run of the
     # coder's own shell commands moves the disk while the view stands still — and the listing then
@@ -392,16 +388,16 @@ def workspace_inventory(root: str | None, flavor: str = "judge", compacted: bool
     if not entries and not folded:
         if not complete:
             return ""          # nothing seen AND the survey was bounded — say nothing, not "empty"
-        # "at judging time" is the CRITIC's wording. The planner is not judging anything, and it read
-        # that phrase on every run once the inventory was shared with it.
-        return prompts.fill(labels["planner_empty" if flavor == "planner" else "empty"], root=root)
+        # Empty after filtering is not an empty workspace, for any reader.
+        return (prompts.fill(labels["planner_empty" if flavor == "planner" else "empty"], root=root)
+                + "\n" + labels["scope"])
     entries.sort(key=lambda e: (-e[0], e[1]))
     fold_lines = [prompts.fill(labels["install_prefix"], prefix=p, count=c)
                   for _, p, c in folded]
     if flavor == "coder":
         # The post-compaction files list for the CODER (operator's design: content lives on disk +
         # in read_file range; the compacted view carries the LIST, not the bytes).
-        lines = [labels["coder_header_compacted" if compacted else "coder_header"]]
+        lines = [labels["coder_header_compacted" if compacted else "coder_header"], labels["scope"]]
         lines += [_entry_line(rel, size) for _, rel, size in entries] + fold_lines
         # THE READ-FILE INSTRUCTION IS NOT THE COMPLETENESS CLAUSE. "the disk is the only current
         # version — do not reconstruct content from the summary" is true of a bounded or overtaken
@@ -411,11 +407,12 @@ def workspace_inventory(root: str | None, flavor: str = "judge", compacted: bool
         return "\n".join(lines)
     if flavor == "briefing":
         # The rolling/harness writer gets the same survey scope as every other reader.
-        lines = [labels["briefing_header"]]
+        lines = [labels["briefing_header"], labels["scope"]]
         lines += [_entry_line(rel, size) for _, rel, size in entries] + fold_lines
         lines.extend([labels["complete"]] if complete else caveats)
         return "\n".join(lines)
-    lines = [prompts.fill(labels["planner_header" if flavor == "planner" else "header"], root=root)]
+    lines = [prompts.fill(labels["planner_header" if flavor == "planner" else "header"], root=root),
+             labels["scope"]]
     lines += [_entry_line(rel, size) for _, rel, size in entries] + fold_lines
     lines.extend([labels["complete"]] if complete else caveats)
     return "\n".join(lines)

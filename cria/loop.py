@@ -5161,7 +5161,7 @@ class Loop:
         result = definition.execute(reorientation.ReorientationInput(True,
             lambda: reorientation.ReorientationFacts(tuple(_content_text(m.get("content"))
                 for m in body.get("messages", []) if m.get("role") == "user"),
-                self._ctx.reasoner_role is not None),
+                self._ctx.reasoner_role is not None, _history_root(body.get("messages", []))[0]),
             lambda: workspace_inventory(workspace_root or "", flavor="briefing"),
             reorientation.SummaryAuthor(summarize, self._ctx.reasoner_chat, self._ctx.reasoner_role, rlog),
             None, rlog))
@@ -5253,7 +5253,7 @@ class Loop:
         if reorient is not None and rewritten:
             result = reorient.execute(reorientation.ReorientationInput(True,
                 lambda: reorientation.ReorientationFacts(tuple(_msg_text_content(m) for m in raw
-                    if m.get("role") == "user"), self._ctx.reasoner_role is not None),
+                    if m.get("role") == "user"), self._ctx.reasoner_role is not None, root_task),
                 lambda: workspace_inventory(sess.workspace_root or "", flavor="briefing"),
                 reorientation.SummaryAuthor(summarize, self._ctx.reasoner_chat, self._ctx.reasoner_role, rlog),
                 None, rlog))
