@@ -35,6 +35,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
+from http.client import InvalidURL
 from typing import Any, Optional
 
 from . import apidiscovery, brave, denial, prompts
@@ -93,7 +94,8 @@ class FetchResult:
 def fetch(url: str, user_agent: Optional[str] = None) -> FetchResult:
     """One GET with a browser UA, size cap, timeout. http/https only (the Rust rejects other
     schemes; here it also closes urllib's ``file://`` handler). Raises ``ValueError`` on a bad
-    URL/scheme, ``OSError``/``urllib.error.URLError`` on a transport failure."""
+    URL/scheme, ``http.client.InvalidURL`` on a rejected HTTP request target,
+    ``OSError``/``urllib.error.URLError`` on a transport failure."""
     trimmed = (url or "").strip()
     if not trimmed:
         raise ValueError("web_fetch: url must not be empty")
@@ -1488,7 +1490,7 @@ def _fetch_and_render(url, find, cursor, cap_tokens, user_agent,
             r = fetch(url, user_agent)
         except ValueError as e:
             return str(e), None, False
-        except (urllib.error.URLError, OSError) as e:
+        except (urllib.error.URLError, OSError, InvalidURL) as e:
             return f"web_fetch error fetching {url}: {e}", None, False
         reduced, parsed = reduce_for_cache(r.body, r.content_type, url, raw)
         status, ct, truncated = r.status, r.content_type, r.truncated
