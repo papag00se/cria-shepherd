@@ -26,14 +26,13 @@ def test_root_disabled_repeat_bypasses_outer_defaults_detector_clearance_and_pla
         return rp.SEARCH.execute(source, state)
     outer = replace(rp.ResearchSelection(), search=replace(rp.SEARCH, execute=spy))
     runtime = assistruntime.AssistRuntime.select(disabled=(rp.SEARCH.policy.id,))
-    state = SimpleNamespace(web_session=session, query_verdicts={query: (True, '')},
+    state = SimpleNamespace(web_session=session,
                             rehunt_verdicts={}, fetched_pages={}, refused_names=set(), semantic_pending=None)
     coder = {'choices': [{'message': {'role': 'assistant', 'content': None, 'tool_calls': [
         {'id': 'search', 'type': 'function', 'function': {'name': 'web_search',
          'arguments': '{"query":"widget api docs"}'}}]}}]}
     body = {'messages': [{'role': 'user', 'content': 'Find widget documentation'}]}
     with rp.bound(outer), assistruntime.bound(runtime), \
-            patch.object(loop, 'judge_query', side_effect=AssertionError('cached unrelated question')), \
             patch.object(loop, 'judge_rehunt', side_effect=AssertionError('disabled repeat question')):
         assert loop.guard_search_query(state, coder, body, Mock(), Mock(), Mock()) is coder
         wf.allow_search(session, query)

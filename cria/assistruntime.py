@@ -140,7 +140,6 @@ class AssistRuntime:
     repository_checks: repositorychecks.Definition | None = field(init=False)
     evidence_summary: evidencesummary.Definition | None = field(init=False)
     harness_memory_handoff: memoryhandoff.HandoffDefinition | None = field(init=False)
-    query: semanticquery.QueryDefinition | None = field(init=False)
     rehunt: semanticquery.RehuntDefinition | None = field(init=False)
     stalled_work: stalledwork.Definition | None = field(init=False)
 
@@ -251,7 +250,7 @@ class AssistRuntime:
         object.__setattr__(self, "evidence_summary", evidence)
         object.__setattr__(self, "harness_memory_handoff",
                            memoryhandoff.selected_definition(self.definitions))
-        for name, canonical in (("query", semanticquery.QUERY), ("rehunt", semanticquery.REHUNT)):
+        for name, canonical in (("rehunt", semanticquery.REHUNT),):
             selected = None
             for definition in self.definitions:
                 if (not isinstance(definition, type(canonical))

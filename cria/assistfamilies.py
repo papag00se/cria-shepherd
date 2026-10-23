@@ -264,7 +264,6 @@ _LINEAGE: tuple[AssistFamily, ...] = (
         (
             SourceOwner('cria/returnedpolicies.py', '_note_missing_dependency'),
             SourceOwner('cria/returnedpolicies.py', '_note_dependency_search'),
-            SourceOwner('cria/loop.py', '_unresolved_deps'),
         ),
     ),
     AssistFamily(
@@ -654,7 +653,7 @@ _LINEAGE: tuple[AssistFamily, ...] = (
     AssistFamily(
         'F51', 'Guide and limit repeated web research',
         'Dependencies and research',
-        'One research-steering family: exact/near repeat policy, URL substitution, preserved-query advice, semantic release, failures and spilled-read poisoning. Denial and persistent poisoning remain separately visible risks; planner path stays opt-in.',
+        'One research-steering family: exact/near repeat policy, new-direction clearance, failure facts and incoming spilled-read judgment. Ordinary outgoing searches are not relevance-judged, rewritten or replaced. Denial and persistent poisoning remain separately visible risks; planner path stays opt-in.',
         ('J104', 'J111', 'J112', 'J113', 'J114', 'T64', 'T66', 'T67', 'T68', 'T69', 'T70', 'T79'),
         (
             SourceOwner('cria/researchpolicies.py', ''),

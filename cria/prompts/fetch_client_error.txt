@@ -3,7 +3,6 @@ no_body = That request FAILED and the failure is on your side (a 4xx is a client
 # CRIA CHOSE THE URL. The coder asked to search; cria replaced that call with a fetch of a url one of
 # its own reasoners recommended, and the url was wrong. Telling the coder to "correct the URL" here
 # points it at something it never wrote — see webfetch.client_error_note for the run this cost.
-ours = That fetch was not yours — it replaced the search you asked for, and the address it used does not exist. Nothing about it is yours to correct. Run the search you originally wanted.
 # A REFUSAL IS NOT A WRONG ADDRESS. The two lines above name ONE cause -- the URL, the path, or the
 # version segment was wrong -- and that is true of a 400 or a 404: a malformed request, or nothing at
 # that path. It is false of a refusal: a 401 wants credentials, a 429 wants a wait, and a 403 is very

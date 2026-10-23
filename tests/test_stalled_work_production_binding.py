@@ -669,25 +669,22 @@ def test_observation_failure_after_offered_steer_does_not_publish_delivery_or_lo
     root = runtime(chosen)
     name, args = ('web_search', {'query': 'requested API documentation'}) if semantic else ('read_file', {'path': 'next.txt'})
     if semantic:
-        def query(source, state, *, enabled=True):
-            call = source.coder['choices'][0]['message']['tool_calls'][0]
-            result = semanticquery.QueryResult(semanticquery.Action.NOTE, 'requested API documentation',
-                'specific API documentation', False, call['id'])
-            state.pending = result
-            return result
-        def publish(source, state, *, enabled=True):
-            semantic_deliveries.append(source.coder)
-            return semanticquery.settle_delivery(source, state)
-        query_definition = replace(semanticquery.QUERY, execute=query, settle=publish)
-        root = replace(root, ordered_stages=tuple(query_definition if d.policy.id == query_definition.policy.id else d
-            for d in root.ordered_stages if d.policy.id != semanticquery.REHUNT.policy.id))
+        def rehunt(source, state, *, enabled=True):
+            return semanticquery.RehuntResult('requested API documentation', 'previous API documentation',
+                                              True, True)
+        def publish(result, coder, session, log):
+            semantic_deliveries.append(coder)
+            return semanticquery.REHUNT.settle(result, coder, session, log)
+        rehunt_definition = replace(semanticquery.REHUNT, execute=rehunt, settle=publish)
+        root = replace(root, ordered_stages=tuple(rehunt_definition if d.policy.id == rehunt_definition.policy.id else d
+            for d in root.ordered_stages))
     driver, state, body, posted = rig(monkeypatch, root, synthetic=synthetic,
         replies=[acting('failed-return', name, args), acting('retry-compliance', name, args)])
     if semantic:
         body['tools'].append({'type': 'function', 'function': {'name': 'web_search', 'parameters': {
             'type': 'object', 'properties': {'query': {'type': 'string'}}, 'required': ['query']}}})
         driver._ctx.reasoner_role = config.Role(name='reasoner', backend='local')
-        driver._ctx.reasoner_chat = lambda *a: (_ for _ in ()).throw(AssertionError('selected query leaked inference'))
+        driver._ctx.reasoner_chat = lambda *a: (_ for _ in ()).throw(AssertionError('selected rehunt leaked inference'))
     state.redirect_due, state.repeat_count, state.repeat_action = True, 3, 'refused action'
     error, message = ((RejectedObservation, 'failed observation after real coder reply') if failure == 'raise'
                       else (TypeError, 'Stalled work replacement must return Result'))

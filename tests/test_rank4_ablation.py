@@ -38,7 +38,9 @@ def test_assist_ablation_never_disables_levels_0_to_4():
     restored = {'grounded-stalled-work', 'experimental-completed-work-briefing',
                 'shrinking-file-protection', 'experimental-plan-revision', 'experimental-living-plan',
                 'experimental-plan-gather'}
-    assert set(RANK4_ABLATION_DISABLED) == {i for i in RANK4_DISABLED if levels[i] == 5} - restored
+    assert 'outgoing-search-relevance' in RANK4_DISABLED  # immutable historical ranking
+    assert 'outgoing-search-relevance' not in levels  # deleted, not an opt-out
+    assert set(RANK4_ABLATION_DISABLED) == {i for i in RANK4_DISABLED if levels.get(i) == 5} - restored
     for kept in ('rolling-transcript-memory', 'harness-memory-handoff', 'task-classification',
                  'focused-tool-menu', 'generation-runaway-guard'):
         assert kept in assistruntime.AssistRuntime.select(profile='rank4-ablation').selected
@@ -94,7 +96,7 @@ def test_profile_cannot_be_relabelled_or_silently_redistribute_bindings():
     selected = assistruntime.AssistRuntime.select(profile='rank4-ablation')
     with pytest.raises(ValueError, match='exact selected profile'):
         replace(selected, argument_conversion=None)
-    excluded = next(d for d in ordinary.ordered_stages if d.policy.id == 'outgoing-search-relevance')
+    excluded = next(d for d in ordinary.ordered_stages if d.policy.id == 'search-spill-read-judgment')
     with pytest.raises(ValueError, match='exact selected profile'):
         replace(selected, ordered_stages=selected.ordered_stages + (excluded,))
 

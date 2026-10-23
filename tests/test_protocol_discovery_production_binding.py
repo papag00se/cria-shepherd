@@ -135,7 +135,7 @@ def test_failed_original_and_source_preserve_requested_rendering():
         assert web._fetch_and_render(URL, 'echo', 'c12', 4000, 'fake-UA', True) == (
             'ordinary requested bytes', 405, False)
         render.assert_called_once_with(URL, 405, 'text/plain', 'GET refused', None,
-                                       12, 4000, False, ours=False, _guidance=guidance)
+                                       12, 4000, False, _guidance=guidance)
         assert_guidance_identity(render, guidance)
         assert p.discovery(p.DiscoveryInput(URL, 405, 'GET refused', 'text/plain',
                                             'echo', 'c12', True), services()) == p.DiscoveryResult()
@@ -243,7 +243,7 @@ def test_absent_public_fetch_keeps_required_get():
         assert web.fetch_nav(URL, find='echo', cursor='c12', raw=True,
                              cap_tokens=4000, user_agent='fake-UA') == 'ordinary GET bytes'
         ordinary.assert_called_once_with(URL, 405, 'text/plain', 'GET refused', None,
-                                         0, 4000, False, ours=False, _guidance=guidance)
+                                         0, 4000, False, _guidance=guidance)
         assert_guidance_identity(ordinary, guidance)
         classify.assert_not_called()
         post.assert_not_called()
@@ -379,7 +379,7 @@ def test_public_empty_discovery_keeps_actual_requested_rendering(answer):
         render = stack.enter_context(patch.object(web, 'render_page', return_value='ordinary GET bytes'))
         assert web.fetch_nav(URL, find='echo', cursor='c12', raw=True, cap_tokens=4000) == 'ordinary GET bytes'
         render.assert_called_once_with(URL, 405, 'text/plain', 'GET refused', None,
-                                       0, 4000, False, ours=False, _guidance=guidance)
+                                       0, 4000, False, _guidance=guidance)
         assert_guidance_identity(render, guidance)
 
 

@@ -217,14 +217,12 @@ class GuardState:
     # the user's task actually done end-to-end?). Bounds the re-open-and-fix loop so a task the coder
     # genuinely can't finish still completes instead of looping forever. Parity with the plan-off critic.
     completion_checks: int = 0
-    # Per-search reasoned assist. OUTGOING: judge the query before it runs (guard_search_query) — cached
-    # per query in ``query_verdicts``. INCOMING: when the model READS a spilled search file, judge its
-    # relevance (_judge_search_reads); an off-target file goes in ``poisoned_search_files`` so its reads
+    # INCOMING: when the model READS a spilled search file, judge its relevance
+    # (_judge_search_reads); an off-target file goes in ``poisoned_search_files`` so its reads
     # are stripped going forward, and ``search_recommend`` steers the better query.
     judged_search_files: set = None     # spill files already read-judged (don't re-judge)
     poisoned_search_files: set = None   # spill files judged off-target → strip their reads going forward
     search_recommend: str = ""          # the last recommended query to steer
-    query_verdicts: dict = None         # outgoing query -> (on_target, recommendation); cached per query
     rehunt_verdicts: MutableMapping[str, bool] | None = None  # Source-owned live judgment/grant cache
     semantic_pending: semanticquery.PendingTurn | None = field(default=None, repr=False)
     web_session: str = ""               # the key webfetch's per-session search/fetch gates are keyed by,
@@ -887,40 +885,6 @@ def _satisfaction_verdict(system: str, user: str, reasoner_chat, reasoner_role, 
                             reasoning_off=reasoning_off, workspace_root=workspace_root,
                             verdict_key="satisfied", evidence_blocks=evidence_blocks)
     return obj
-
-
-def judge_query(reasoner_chat, reasoner_role, task: str, query: str, rlog, coder_tools: str = "",
-                tried: str = "") -> tuple[bool, str]:
-    """Judge an OUTGOING web_search query BEFORE it runs: is it searching for what the task needs? Returns
-    (on_target, recommendation) — recommendation is the better search string OR a concrete URL to fetch
-    instead (the caller substitutes a web_fetch when it's a URL). Fails OPEN (on_target True, no
-    recommendation) on a parse miss or no reasoner — never derail a search we couldn't judge."""
-    if assistruntime.current().query is None:
-        return True, ""
-    return semanticquery.Judge(summarize, reasoner_chat, reasoner_role, rlog).query(
-        semanticquery.QuestionFacts(task, coder_tools), query, tried)
-
-
-def _same_query(a: str, b: str) -> bool:
-    """Two search queries that would send the same thing to the search engine — case and surrounding
-    whitespace are not a redirect."""
-    return semanticquery.same_query(a, b)
-
-
-def _usable_query(rec: str) -> str:
-    """The judge's recommendation AS A SEARCH QUERY, or "" when it is not one.
-
-    `recommendation` is written straight into the coder's web_search arguments, so whatever shape the
-    reasoner answered in becomes the literal query. MEASURED across every session on 2026-07-27: 53 of
-    112 searches (47%, 87% in one run) were rewritten this way, into things like
-    `web_search('Ada Handles API documentation')` and `Search for "X" or "Y"` — the coder then searched
-    the web for that literal string, and in one case a perfectly good query (`api.handle.me
-    openapi.json`) was replaced by prose.
-
-    Shape, never keywords: a tool-call wrapper yields its argument; exactly ONE quoted span yields that
-    span; TWO or more are ambiguous and yield "" so the caller leaves the coder's own query alone —
-    cria substitutes only when it has a real query to substitute."""
-    return semanticquery.usable_query(rec)
 
 
 def judge_rehunt(reasoner_chat, reasoner_role, task: str, query: str, prior: str, rlog,
@@ -3069,9 +3033,8 @@ class Loop:
         _strip_completion_banners(coder)  # scrub cria's own banners the coder parroted
         if self._ctx.coder_role is not None:  # strip leaked reasoning from the coder's content when off
             _clean_completion(coder, self._ctx.coder_role)
-        # Judge an outgoing web_search's query (off-target → a better query). Before the tracking, so the
-        # repetition/write-streak guards see what's actually FORWARDED.
-        # Existing L5 query/history applicability stays here. Stalled-work policy is separately
+        # Overlapping searches may earn a new-direction clearance; ordinary searches are untouched.
+        # Existing L5 history applicability stays here. Stalled-work policy is separately
         # selected across its whole lifecycle; shared write facts and the forwarded-call clock
         # below are required even when that optional source is absent.
         if not coder.get(massage.LOST_CALL_KEY) and not coder.get(bodykeys.FENCED_REFUSED):
@@ -9551,27 +9514,6 @@ def _fetch_ground_truth(messages: list[dict], sess=None,
     return f"{out}\n\n{mismatch}" if mismatch else out
 
 
-def _unresolved_deps(sess) -> str:
-    """The dependencies this session's own toolchain refused and never afterwards resolved, read from
-    the authoritative RefusalLedger (not a transcript re-scan). Handed to the on-target query judge so
-    it cannot bless a package as viable on the strength of an HTTP 200 on that package's registry PAGE
-    while the same package has repeatedly failed to INSTALL or LOAD.
-
-    Walked on ornith15 x shipping-rates-rb: the judge read `eu_countries -> HTTP 200` and reasoned
-    "it did NOT fail, so I can recommend it" — but the gem's `require` failed every time (its
-    transitive `iso3166` dependency does not exist on rubygems). A page that answers is not a package
-    that loads, and the ledger already holds the difference. Empty (no block) when the ledger holds no
-    active refusal, so a clean session sends the judge nothing new."""
-    ledger = getattr(sess, "refusal_events", None)
-    if not isinstance(ledger, refusalledger.RefusalLedger):
-        return ""
-    active = ledger.active()
-    if not active:
-        return ""
-    deps = "\n".join(f"- {event.coordinate} ({event.ecosystem})" for event in active)
-    return prompts.render("unresolved_deps", deps=deps)
-
-
 # An HTTP failure the CODER's own process ACTUALLY HIT, in the exact form a RUNTIME prints it.
 #
 # THE FIRST CUT MATCHED A BARE `HTTP 404` AND SHIPPED A FALSE FACT. Test files are full of status
@@ -10673,11 +10615,6 @@ def search_file_text(workspace_root: str, rel: str) -> str:
     return wsview.current(workspace_root).read(Path(workspace_root) / rel.lstrip("./")) or ""
 
 
-def _looks_like_url(s: str) -> bool:
-    """A recommendation that is a concrete URL / domain+path to fetch, not a search phrase."""
-    return semanticquery.looks_like_url(s)
-
-
 def guard_search_query(sess: GuardState, coder: dict, body: dict,
                        reasoner_chat, reasoner_role, rlog, *, _defer: bool = False) -> dict:
     """Bind selected Source questions to live state and required raw research facts.
@@ -10686,12 +10623,10 @@ def guard_search_query(sess: GuardState, coder: dict, body: dict,
     Standalone compatibility callers retain this local return immediately.
     """
     runtime = assistruntime.current()
-    selected = semanticquery.Selection(runtime.rehunt, runtime.query)
+    selected = semanticquery.Selection(runtime.rehunt)
     messages = body.get("messages", [])
     source = semanticquery.TurnInput(coder, sess.web_session,
         lambda: semanticquery.QuestionFacts(latest_user_text(messages), _coder_tools_summary(body.get("tools"))),
-        lambda: _fetch_ground_truth(messages, sess), lambda: _unresolved_deps(sess),
-        lambda: selfcompact.serialize(_reasoner_session(messages)),
         semanticquery.Judge(summarize, reasoner_chat, reasoner_role, rlog))
     result = semanticquery.prepare_turn(source, sess, selected)
     if not _defer:

@@ -91,12 +91,6 @@ class A3_CriaDoesNotBlameTheCoderForItsOwnRequest(unittest.TestCase):
     def setUp(self):
         webfetch.clear_cache()
 
-    def test_a_url_cria_chose_is_not_the_coders_mistake(self):
-        webfetch.note_substituted("s", "https://rubygems.org/gems/eu-membership")
-        note = webfetch.client_error_note(404, "", ours=True)
-        self.assertNotIn("on your side", note)
-        self.assertIn("not yours", note)
-
     def test_a_url_the_coder_typed_still_is(self):
         self.assertIn("on your side", webfetch.client_error_note(404, ""))
 

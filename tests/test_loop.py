@@ -4427,7 +4427,7 @@ class SearchJudgeTests(unittest.TestCase):
                 {"new_direction": True, "on_target": True})}}]}).encode()
 
         guard_search_query(gs, self._search(q), self._body(), reasoner, self._role(), _Rlog())
-        self.assertEqual(calls["n"], 1)                 # the on-target judge only, no re-hunt call
+        self.assertEqual(calls["n"], 0)                 # exact repeats need no judgment
         self.assertIsNotNone(wf.gate_search("sk4", q))  # ...and the exact repeat stays refused
 
     def test_a_search_with_no_prior_costs_no_rehunt_call(self):
@@ -4446,16 +4446,9 @@ class SearchJudgeTests(unittest.TestCase):
 
         guard_search_query(gs, self._search("a brand new question"), self._body(), reasoner,
                            self._role(), _Rlog())
-        self.assertEqual(calls["n"], 1)          # the on-target judge only — no re-hunt call
+        self.assertEqual(calls["n"], 0)          # no prior means no judgment
         self.assertIsNone(gs.rehunt_verdicts)
 
-    def test_off_target_query_with_url_rec_becomes_a_fetch(self):
-        from cria.loop import guard_search_query, GuardState
-        out = guard_search_query(GuardState(), self._search("Cardano Wallet Backend API"), self._body(),
-                                 self._reasoner({"on_target": False, "recommendation": "https://api.handle.me/openapi.json"}),
-                                 self._role(), _Rlog())
-        self.assertEqual(self._fn(out)["name"], "web_fetch")
-        self.assertIn("api.handle.me/openapi.json", self._fn(out)["arguments"])
 
     def test_a_recommended_url_on_an_invented_host_is_not_substituted(self):
         # Substituting the coder's own tool call is the strongest thing this guard does, and the url
@@ -4471,46 +4464,20 @@ class SearchJudgeTests(unittest.TestCase):
         self.assertEqual(self._fn(out)["name"], "web_search")          # the coder's own search runs
         self.assertNotIn("totally-invented", self._fn(out)["arguments"])
 
-    def test_off_target_query_is_NOTED_not_rewritten(self):
-        """SURFACE, DO NOT SUBSTITUTE (#2's corollary). This used to replace the coder's search
-        arguments, so the question the coder asked was never asked and cria's replacement became the
-        record held against it. nemotron-elastic/rust 0006: the step in flight was "Read the
-        crates.io TOML crate documentation", the judge called that off-target, and cria searched
-        "rust toml dotted key path command line tool" instead — the documentation was never read.
 
-        The coder's search runs; the better query is offered as a note it can act on."""
-        from cria.loop import guard_search_query, GuardState
-        out = guard_search_query(GuardState(), self._search("random cardano stuff"), self._body(),
-                                 self._reasoner({"on_target": False, "recommendation": "api.handle.me handles endpoint"}),
-                                 self._role(), _Rlog())
-        self.assertEqual(self._fn(out)["name"], "web_search")
-        self.assertEqual(json.loads(self._fn(out)["arguments"])["query"], "random cardano stuff")
-        self.assertIn("api.handle.me handles endpoint", json.dumps(out))
-
-    def test_on_target_query_untouched_and_verdict_cached(self):
+    def test_normal_search_untouched_without_relevance_inference(self):
         from cria.loop import guard_search_query, GuardState
         gs = GuardState()
         calls = {"n": 0}
         def reasoner(b, r):
             calls["n"] += 1
             return json.dumps({"choices": [{"message": {"content": json.dumps({"on_target": True})}}]}).encode()
-        for _ in range(3):  # same query 3x → judged once (cached)
+        for _ in range(3):  # normal searches no longer have a relevance judge
             out = guard_search_query(gs, self._search("api.handle.me openapi.json"), self._body(), reasoner, self._role(), _Rlog())
         self.assertEqual(self._fn(out)["name"], "web_search")   # unchanged
-        self.assertEqual(calls["n"], 1)                          # cached after the first
+        self.assertEqual(calls["n"], 0)                          # no pre-search relevance inference
 
-    def test_judge_query_fails_open(self):
-        from cria.loop import judge_query
-        ok, rec = judge_query(lambda b, r: json.dumps({"choices": [{"message": {"content": "not json"}}]}).encode(),
-                              self._role(), "task", "query", _Rlog())
-        self.assertTrue(ok)          # parse miss → on-target (never derail)
-        self.assertEqual(rec, "")
 
-    def test_looks_like_url(self):
-        from cria.loop import _looks_like_url
-        self.assertTrue(_looks_like_url("https://api.handle.me/openapi.json"))
-        self.assertTrue(_looks_like_url("api.handle.me/openapi.json"))
-        self.assertFalse(_looks_like_url("api.handle.me handles endpoint"))   # a search phrase, not a URL
 
     # ---- the read-judge must judge the RESULTS, never cria's own envelope -------------------------
     _SPILL_REL = webfetch.search_spill_name("ada handles api")
@@ -5500,67 +5467,8 @@ class ReplannerToldNothingDefinesARouteTests(unittest.TestCase):
         self.assertNotIn("DEFINES a route", ev)
 
 
-class SearchRecommendationIsAQueryTests(unittest.TestCase):
-    """The search judge's `recommendation` is written straight into the coder's web_search arguments,
-    unvalidated — so whatever shape the reasoner answers in becomes the literal query.
-
-    MEASURED across every session today: 53 of 112 searches (47%, up to 87% in one run) were rewritten
-    this way, and the replacements are malformed:
-
-        "ada handles resolve endpoint pattern"  ->  web_search('Ada Handles API documentation')
-        "api.handle.me openapi.json"            ->  Search for "Cardano Ada Handle API openapi.json" or "api.h
-        "ADA Handle resolve endpoint pattern"   ->  Search for 'ADA Handles API documentation' instead of 'ADA
-
-    The coder then searches the web for the literal string `web_search('…')`, or for an instruction
-    sentence. The middle case replaced a perfectly good query. The guard exists for a real reason —
-    queries drifting to a different API is a documented poisoning route — but it must substitute a
-    QUERY, not whatever prose the judge replied with.
-
-    Shape-based, with a safe null: a tool-call wrapper yields its argument; a single quoted span
-    yields that span; TWO quoted spans are ambiguous and cria leaves the coder's own query alone."""
-
-    def _q(self, rec):
-        from cria.loop import _usable_query
-        return _usable_query(rec)
-
-    def test_a_tool_call_wrapper_yields_its_argument(self):
-        self.assertEqual(self._q("web_search('Ada Handles API documentation')"),
-                         "Ada Handles API documentation")
-
-    def test_an_instruction_sentence_yields_its_quoted_query(self):
-        self.assertEqual(self._q("Search for 'ADA Handles API documentation' instead of ADA"),
-                         "ADA Handles API documentation")
-
-    def test_two_quoted_candidates_are_ambiguous_and_yield_nothing(self):
-        self.assertEqual(self._q('Search for "Cardano Ada Handle openapi.json" or "api.handle.me spec"'), "")
-
-    def test_a_plain_query_passes_through(self):
-        self.assertEqual(self._q("Ada Handles API documentation"), "Ada Handles API documentation")
-
-    def test_a_wrapped_url_survives_for_the_fetch_path(self):
-        from cria.loop import _looks_like_url
-        q = self._q("web_search('https://api.handle.me')")
-        self.assertEqual(q, "https://api.handle.me")
-        self.assertTrue(_looks_like_url(q), "a URL recommendation must still reach the fetch branch")
 
 
-class IdenticalRequeryIsNotAnInterventionTests(unittest.TestCase):
-    """MEASURED over all 151 search judgements today: 16 recommendations were IDENTICAL to the query
-    they replaced and 8 more differed only in case or word order. cria rewrote the query to itself and
-    logged `action=requery`, so the record claims an intervention that never happened — and the
-    coder's own tool call was still touched for nothing.
-
-    Rewriting a query to itself is not a redirect. Say nothing and leave the call alone."""
-
-    def test_a_recommendation_equal_to_the_query_changes_nothing(self):
-        from cria.loop import _usable_query
-        self.assertEqual(_usable_query("ada handles api documentation"), "ada handles api documentation")
-
-    def test_case_only_differences_are_treated_as_the_same_query(self):
-        from cria.loop import _same_query
-        self.assertTrue(_same_query("Cardano Python SDK package name", "cardano python sdk package name"))
-        self.assertTrue(_same_query(" ada handles api  documentation ", "ada handles api documentation"))
-        self.assertFalse(_same_query("ada handles api documentation", "ada handles api openapi.json"))
 
 
 class WorkspaceInventoryTests(unittest.TestCase):

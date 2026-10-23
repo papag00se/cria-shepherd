@@ -1,27 +1,30 @@
-"""Selected semantic questions and retained public-driver delivery; scripted primitives only."""
+"""Selected new-direction clearance and retained public-driver delivery; scripted primitives only."""
 from copy import deepcopy
 from dataclasses import replace
 import io
 import json
-
 import pytest
-
-from cria import assistruntime, bodykeys, classify, config, loop, prompts, refusalledger, researchpolicies, semanticquery as policy, webfetch, wsview
+from cria import assistruntime, bodykeys, classify, config, loop, prompts, semanticquery as policy, webfetch, wsview
 from cria.plan import Plan, PlanItem
 from test_generation_driver_policy import setup_driver
 from test_loop import _Rlog
 
+
 TASK = 'resolve an Ada Handle via the API (api.handle.me)'
+
+
 QUERY = 'ADA Handle API resolve handle holder'
+
+
 PRIOR = 'ADA Handle API resolve handle to address holder address total handles'
+
+
 SESSION = 'driver-fixture'
-URL = 'https://api.handle.me/openapi.json'
 
 
-def runtime(*, query=policy.QUERY, rehunt=policy.REHUNT, level=5, disabled=(), reverse=False, experimental_planning=False):
+def runtime(*, rehunt=policy.REHUNT, level=5, disabled=(), experimental_planning=False):
     owned = {d.policy.id for d in policy.DEFINITIONS}
-    registrations = tuple(d for d in assistruntime.DEFINITIONS if d.policy.id not in owned) + (
-        (query, rehunt) if reverse else (rehunt, query))
+    registrations = tuple(d for d in assistruntime.DEFINITIONS if d.policy.id not in owned) + (rehunt,)
     return assistruntime.AssistRuntime.select(level=level, registrations=registrations, disabled=disabled,
                                              experimental_planning=experimental_planning)
 
@@ -55,7 +58,7 @@ def rig(monkeypatch, root, *, synthetic=True, answer=None, coder_replies=None):
     questions, posted = [], []
     def reasoner(frame, log):
         questions.append(deepcopy(frame))
-        verdict = ({'on_target': False, 'recommendation': 'Ada Handle API'} if answer is None else answer)
+        verdict = ({'new_direction': False} if answer is None else answer)
         return json.dumps({'choices': [{'message': {'role': 'assistant', 'content': json.dumps(verdict)}}]}).encode()
     driver._ctx.reasoner_chat = reasoner
     up = driver._ctx.coder_chat.__self__
@@ -73,43 +76,16 @@ def rig(monkeypatch, root, *, synthetic=True, answer=None, coder_replies=None):
 
 
 @pytest.mark.parametrize('synthetic', [False, True])
-@pytest.mark.parametrize('mode', ['both-disabled', 'below-level'])
-def test_public_absence_runs_neither_question_or_optional_cache_work(monkeypatch, synthetic, mode):
+@pytest.mark.parametrize('mode', ['disabled', 'below-level'])
+def test_public_absence_runs_no_question_or_optional_cache_work(monkeypatch, synthetic, mode):
     root = runtime(level=4 if mode == 'below-level' else 5,
-        disabled=tuple(d.policy.id for d in policy.DEFINITIONS) if mode == 'both-disabled' else ())
+        disabled=tuple(d.policy.id for d in policy.DEFINITIONS) if mode == 'disabled' else ())
     driver, state, body, questions, posted = rig(monkeypatch, root, synthetic=synthetic)
     out = driver.drive(body, SESSION, None, _Rlog())
     assert len(posted) == 1
     assert out['choices'][0]['message']['tool_calls'] == search_completion()['choices'][0]['message']['tool_calls']
     assert questions == []
     assert bodykeys.NOTES not in out
-    assert state.query_verdicts is None and state.rehunt_verdicts is None
-
-
-@pytest.mark.parametrize('synthetic', [False, True])
-def test_public_exact_selected_relevance_executes_stages_and_settles_on_same_reply(monkeypatch, synthetic):
-    seen = []
-    def execute(source, state):
-        seen.append(('execute', source, state))
-        return policy.QUERY.execute(source, state)
-    def stage(source, state):
-        seen.append(('stage', source, state))
-        return policy.QUERY.stage(source, state)
-    def settle(source, state):
-        seen.append(('settle', source, state))
-        return policy.QUERY.settle(source, state)
-    chosen = replace(policy.QUERY, execute=execute, stage=stage, settle=settle)
-    driver, state, body, questions, posted = rig(monkeypatch,
-        runtime(query=chosen, disabled=(policy.REHUNT.policy.id,)), synthetic=synthetic)
-    out = driver.drive(body, SESSION, None, _Rlog())
-    assert len(posted) == 1 and len(questions) == 1
-    assert [item[0] for item in seen] == ['execute', 'stage', 'settle']
-    assert seen[0][2].verdicts is state.query_verdicts
-    assert seen[1][1].coder is out and seen[2][1].coder is out
-    assert seen[1][1].result is seen[2][1].result
-    assert out[bodykeys.NOTES] == [f"'{QUERY}' may be off-target for this task — 'Ada Handle API' would search "
-        'for what the task actually needs. Your search runs either way; re-run it with that if you agree.']
-    assert state.query_verdicts == {QUERY: (False, 'Ada Handle API')}
     assert state.rehunt_verdicts is None
 
 
@@ -127,7 +103,7 @@ def test_public_exact_rehunt_replacement_defers_then_uses_canonical_public_admis
         return policy.REHUNT.settle(result, coder, session, log)
     chosen = replace(policy.REHUNT, execute=execute, settle=settle)
     driver, state, body, questions, posted = rig(monkeypatch,
-        runtime(rehunt=chosen, disabled=(policy.QUERY.policy.id,)), synthetic=synthetic,
+        runtime(rehunt=chosen), synthetic=synthetic,
         answer={'new_direction': True})
     out = driver.drive(body, SESSION, None, _Rlog())
     assert [item[0] for item in seen] == ['execute', 'settle']
@@ -137,102 +113,7 @@ def test_public_exact_rehunt_replacement_defers_then_uses_canonical_public_admis
     assert questions[0]['messages'][0]['content'] == prompts.load('search_rehunt_judge')
     assert webfetch.gate_search(SESSION, QUERY) is None
     assert webfetch.gate_search(SESSION, QUERY) is not None
-    assert state.query_verdicts is None and state.semantic_pending is None
-
-
-@pytest.mark.parametrize('level', range(6))
-def test_canonical_two_independent_registrations_and_exact_frozen_projection(level):
-    root = assistruntime.AssistRuntime.select(level=level)
-    for definition, field in ((policy.QUERY, 'query'), (policy.REHUNT, 'rehunt')):
-        assert sum(d is definition for d in assistruntime.DEFINITIONS) == 1
-        assert getattr(root, field) is (definition if level == 5 else None)
-        with pytest.raises(AttributeError):
-            setattr(root, field, None)
-        assert definition.policy.family_id == 'F51'
-        assert definition.policy.migrated is False
-    assert loop.GuardState().semantic_pending is None
-
-
-@pytest.mark.parametrize('synthetic', [False, True])
-@pytest.mark.parametrize('disabled', [(), (policy.QUERY.policy.id,), (policy.REHUNT.policy.id,)])
-def test_public_distinct_questions_independence_order_and_canonical_clearance(monkeypatch, synthetic, disabled):
-    webfetch.set_visible(SESSION, [], [PRIOR])
-    root = runtime(disabled=disabled)
-    driver, state, body, questions, posted = rig(monkeypatch, root, synthetic=synthetic,
-        answer={'new_direction': True, 'on_target': False, 'recommendation': 'Ada Handle API'})
-    log = _Rlog()
-    out = driver.drive(body, SESSION, None, log)
-    query_on, rehunt_on = policy.QUERY.policy.id not in disabled, policy.REHUNT.policy.id not in disabled
-    expected = ([prompts.load('search_rehunt_judge')] if rehunt_on else []) + ([prompts.load('search_query_judge')] if query_on else [])
-    assert [q['messages'][0]['content'] for q in questions] == expected
-    assert len(posted) == 1
-    assert out['choices'][0]['message']['tool_calls'] == search_completion()['choices'][0]['message']['tool_calls']
-    assert (bodykeys.NOTES in out) is query_on
-    assert state.query_verdicts == ({QUERY: (False, 'Ada Handle API')} if query_on else None)
-    assert state.rehunt_verdicts == ({QUERY: True} if rehunt_on else None)
-    assert (webfetch.gate_search(SESSION, QUERY) is None) is rehunt_on
-    assert webfetch.gate_search(SESSION, QUERY) is not None
-    events = [(event, fields) for event, fields in log.events
-              if event in ('loop.search_query_judged', 'loop.search_rehunt_cleared')]
-    assert events == ([('loop.search_rehunt_cleared', {'query': QUERY, 'prior': PRIOR.lower()})] if rehunt_on else []) + (
-        [('loop.search_query_judged', {'action': 'noted', 'query': QUERY, 'rec': 'Ada Handle API'})] if query_on else [])
     assert state.semantic_pending is None
-    # Same task, same live state: cached true never grants another clearance.
-    driver.drive(body, SESSION, None, _Rlog())
-    assert [q['messages'][0]['content'] for q in questions] == expected
-    assert webfetch.gate_search(SESSION, QUERY) is not None
-
-
-@pytest.mark.parametrize('synthetic', [False, True])
-@pytest.mark.parametrize('late', ['retained', 'equal-copy', 'replacement', 'none', 'exception', 'changed-call', 'owner-replacement'])
-def test_public_late_return_alone_commits_substituted_fetch(monkeypatch, synthetic, late):
-    driver, state, body, questions, posted = rig(monkeypatch,
-        runtime(disabled=(policy.REHUNT.policy.id,)), synthetic=synthetic,
-        answer={'on_target': True, 'recommendation': URL})
-    log = _Rlog()
-    method = '_drive_single_item' if synthetic else '_work'
-    original = getattr(driver, method)
-    staged = []
-    def decide_late(*args, **kwargs):
-        candidate = original(*args, **kwargs)
-        staged.append(candidate)
-        assert state.semantic_pending is not None
-        assert state.semantic_pending.coder is candidate
-        assert not webfetch.was_substituted(SESSION, URL)
-        assert not any(event == 'loop.search_query_judged' for event, _ in log.events)
-        if late == 'equal-copy':
-            return deepcopy(candidate)
-        if late == 'replacement':
-            return search_completion('replacement-owned search')
-        if late == 'none':
-            return None
-        if late == 'exception':
-            raise RuntimeError('late public return failed')
-        if late == 'changed-call':
-            candidate['choices'][0]['message']['tool_calls'][0]['function']['arguments'] = '{"url":"https://other.test/"}'
-        if late == 'owner-replacement':
-            fresh = loop._session_from_dict(loop._session_to_dict(state))
-            assert fresh is not None and fresh is not state
-            driver._store.put(SESSION, fresh)
-        return candidate
-    monkeypatch.setattr(driver, method, decide_late)
-    if late == 'exception':
-        with pytest.raises(RuntimeError, match='late public return failed'):
-            driver.drive(body, SESSION, None, log)
-    else:
-        out = driver.drive(body, SESSION, None, log)
-        if late == 'retained':
-            assert out is staged[0]
-            assert out['choices'][0]['message']['tool_calls'] == [{'id': 's', 'type': 'function',
-                'function': {'name': 'web_fetch', 'arguments': '{"url": "https://api.handle.me/openapi.json"}'}}]
-        elif late == 'none':
-            assert out is None
-    assert len(posted) == 1 and len(questions) == 1
-    assert webfetch.was_substituted(SESSION, URL) is (late == 'retained')
-    assert [(event, fields) for event, fields in log.events if event == 'loop.search_query_judged'] == (
-        [('loop.search_query_judged', {'action': 'fetch', 'query': QUERY, 'rec': URL})] if late == 'retained' else [])
-    assert state.semantic_pending is None
-    assert driver._store.get(SESSION).semantic_pending is None
 
 
 @pytest.mark.parametrize('synthetic', [False, True])
@@ -245,7 +126,7 @@ def test_public_discarded_positive_rehunt_earns_first_retained_grant_without_rea
         return policy.REHUNT.execute(source, state)
     chosen = replace(policy.REHUNT, execute=execute)
     driver, state, body, questions, posted = rig(monkeypatch,
-        runtime(rehunt=chosen, disabled=(policy.QUERY.policy.id,)), synthetic=synthetic,
+        runtime(rehunt=chosen), synthetic=synthetic,
         answer={'new_direction': True})
     original_records = None
     if cache_origin == 'loaded-owner-manual-plain':
@@ -319,7 +200,7 @@ def test_public_rehunt_changed_call_id_cannot_settle_or_spend_first_grant(monkey
         return policy.REHUNT.settle(result, coder, session, log)
     chosen = replace(policy.REHUNT, settle=settle)
     driver, state, body, questions, posted = rig(monkeypatch,
-        runtime(rehunt=chosen, disabled=(policy.QUERY.policy.id,)), synthetic=synthetic,
+        runtime(rehunt=chosen), synthetic=synthetic,
         answer={'new_direction': True})
     method = '_drive_single_item' if synthetic else '_work'
     original = getattr(driver, method)
@@ -375,7 +256,7 @@ def test_public_historical_positive_unknown_spend_never_invents_a_grant(monkeypa
     fresh_query = QUERY + ' lookup'
     replies = ([search_completion(fresh_query)] if promote else []) + [search_completion()]
     driver, state, body, questions, posted = rig(monkeypatch,
-        runtime(disabled=(policy.QUERY.policy.id,)), answer={'new_direction': True}, coder_replies=replies)
+        runtime(), answer={'new_direction': True}, coder_replies=replies)
     records = {QUERY: True}
     state.rehunt_verdicts = records
     log = _Rlog()
@@ -410,7 +291,7 @@ def test_public_cached_rehunt_respects_selected_execute_clearance_veto(monkeypat
         return replace(result, clearance_requested=False)
     chosen = replace(policy.REHUNT, execute=execute)
     driver, state, body, questions, posted = rig(monkeypatch,
-        runtime(rehunt=chosen, disabled=(policy.QUERY.policy.id,)), answer={'new_direction': True})
+        runtime(rehunt=chosen), answer={'new_direction': True})
     log = _Rlog()
     for _ in range(2):
         driver.drive(body, SESSION, None, log)
@@ -432,7 +313,7 @@ def test_public_rehunt_settlement_veto_does_not_spend_ungranted_eligibility(monk
         return policy.REHUNT.settle(result, coder, session, log)
     chosen = replace(policy.REHUNT, settle=settle)
     driver, state, body, questions, posted = rig(monkeypatch,
-        runtime(rehunt=chosen, disabled=(policy.QUERY.policy.id,)), answer={'new_direction': True})
+        runtime(rehunt=chosen), answer={'new_direction': True})
     log = _Rlog()
     driver.drive(body, SESSION, None, log)
     assert webfetch.gate_search(SESSION, QUERY) is not None
@@ -448,39 +329,13 @@ def test_public_rehunt_settlement_veto_does_not_spend_ungranted_eligibility(monk
     assert sum(event == 'loop.search_rehunt_cleared' for event, _ in log.events) == 1
 
 
-@pytest.mark.parametrize('reverse', [False, True])
-def test_public_question_order_does_not_follow_registration_accident(monkeypatch, reverse):
-    webfetch.set_visible(SESSION, [], [PRIOR])
-    driver, state, body, questions, posted = rig(monkeypatch, runtime(reverse=reverse),
-        answer={'new_direction': False, 'on_target': True})
-    driver.drive(body, SESSION, None, _Rlog())
-    assert len(posted) == 1
-    assert [q['messages'][0]['content'] for q in questions] == [
-        prompts.load('search_rehunt_judge'), prompts.load('search_query_judge')]
-    assert state.rehunt_verdicts == {QUERY: False} and state.query_verdicts == {QUERY: (True, '')}
-    assert webfetch.gate_search(SESSION, QUERY) is not None
-
-
-def test_public_repeat_owner_none_leaves_relevance_independently_enabled(monkeypatch):
-    webfetch.set_visible(SESSION, [], [PRIOR])
-    driver, state, body, questions, posted = rig(monkeypatch,
-        runtime(disabled=(researchpolicies.SEARCH.policy.id,)),
-        answer={'new_direction': True, 'on_target': False, 'recommendation': 'Ada Handle API'})
-    log = _Rlog()
-    out = driver.drive(body, SESSION, None, log)
-    assert len(posted) == 1
-    assert [q['messages'][0]['content'] for q in questions] == [prompts.load('search_query_judge')]
-    assert state.rehunt_verdicts is None and state.query_verdicts == {QUERY: (False, 'Ada Handle API')}
-    assert bodykeys.NOTES in out
-    assert not any(event == 'loop.search_rehunt_cleared' for event, _ in log.events)
-
 
 @pytest.mark.parametrize('synthetic', [False, True])
 @pytest.mark.parametrize('late', ['retained', 'none', 'replacement', 'exception', 'equal-copy'])
 def test_fresh_public_owner_settles_or_discards_with_existing_persistence_contract(monkeypatch, tmp_path, late, synthetic):
     driver, seeded, body, questions, posted = rig(monkeypatch,
-        runtime(disabled=(policy.REHUNT.policy.id,), experimental_planning=not synthetic),
-        answer={'on_target': True, 'recommendation': URL})
+        runtime(experimental_planning=not synthetic),
+        answer={'new_direction': True})
     # Use a genuinely empty real Store. No pre-seeded session participates in
     # creation, ownership discovery, retention or cancellation for this request.
     state_path = tmp_path / 'unstable-sessions.json'
@@ -489,7 +344,7 @@ def test_fresh_public_owner_settles_or_discards_with_existing_persistence_contra
     key = loop.session_key({}, body['messages'])
     assert not loop._stable_session(key)
     assert store.get(key) is None
-    webfetch.reset_session(key)
+    webfetch.set_visible(key, [], [PRIOR])
     classification = classify.Classification(engagement='task', task_type='coding',
         reason='Explicit synthetic coding classification for the real fresh-session creation path.')
     planner_calls = []
@@ -518,8 +373,8 @@ def test_fresh_public_owner_settles_or_discards_with_existing_persistence_contra
         candidates.append(candidate)
         assert owner.semantic_pending is not None
         assert owner.semantic_pending.coder is candidate
-        assert not webfetch.was_substituted(key, URL)
-        assert not any(event == 'loop.search_query_judged' for event, _ in log.events)
+        assert webfetch.gate_search(key, QUERY) is not None
+        assert not any(event == 'loop.search_rehunt_cleared' for event, _ in log.events)
         if late == 'none':
             return None
         if late == 'replacement':
@@ -539,8 +394,7 @@ def test_fresh_public_owner_settles_or_discards_with_existing_persistence_contra
             out = driver.drive(body, key, classification, log)
             if late == 'retained':
                 assert out is candidates[0]
-                assert out['choices'][0]['message']['tool_calls'] == [{'id': 's', 'type': 'function',
-                    'function': {'name': 'web_fetch', 'arguments': '{"url": "https://api.handle.me/openapi.json"}'}}]
+                assert out['choices'][0]['message']['tool_calls'] == search_completion()['choices'][0]['message']['tool_calls']
             elif late == 'none':
                 assert out is None
             elif late == 'equal-copy':
@@ -552,10 +406,11 @@ def test_fresh_public_owner_settles_or_discards_with_existing_persistence_contra
         assert len(planner_calls) == (0 if synthetic else 1)
         assert len(posted) == 1 and len(questions) == 1
         assert owners[0].semantic_pending is None
-        assert owners[0].query_verdicts == {QUERY: (True, URL)}
-        assert webfetch.was_substituted(key, URL) is (late == 'retained')
-        assert [(event, fields) for event, fields in log.events if event == 'loop.search_query_judged'] == (
-            [('loop.search_query_judged', {'action': 'fetch', 'query': QUERY, 'rec': URL})] if late == 'retained' else [])
+        assert owners[0].rehunt_verdicts == {QUERY: True}
+        assert (webfetch.gate_search(key, QUERY) is None) is (late == 'retained')
+        assert webfetch.gate_search(key, QUERY) is not None
+        assert [(event, fields) for event, fields in log.events if event == 'loop.search_rehunt_cleared'] == (
+            [('loop.search_rehunt_cleared', {'query': QUERY, 'prior': PRIOR.lower()})] if late == 'retained' else [])
         if synthetic:
             assert store.get(key) is None
             assert not state_path.exists()
@@ -564,101 +419,8 @@ def test_fresh_public_owner_settles_or_discards_with_existing_persistence_contra
             assert state_path.exists()
             durable = json.loads(state_path.read_text())['sessions'][key]
             assert durable['plan']['id'] == 'fresh-step-owner'
-            for transient in ('semantic_pending', 'query_verdicts', 'rehunt_verdicts'):
+            for transient in ('semantic_pending', 'rehunt_verdicts'):
                 assert transient not in durable
     finally:
         wsview.unbind(token)
         webfetch.reset_session(key)
-
-
-@pytest.mark.parametrize('definition,field', [
-    (policy.QUERY, 'execute'), (policy.QUERY, 'deliver'),
-    (policy.QUERY, 'stage'), (policy.QUERY, 'settle'),
-    (policy.REHUNT, 'execute'), (policy.REHUNT, 'settle')])
-def test_registration_rejects_missing_selected_lifecycle_callback(definition, field):
-    malformed = replace(definition, **{field: None})
-    with pytest.raises(ValueError):
-        if definition is policy.QUERY:
-            runtime(query=malformed)
-        else:
-            runtime(rehunt=malformed)
-
-
-def test_public_url_substitution_does_not_leave_unused_search_clearance(monkeypatch):
-    webfetch.set_visible(SESSION, [], [PRIOR])
-    driver, state, body, questions, posted = rig(monkeypatch, runtime(),
-        answer={'new_direction': True, 'on_target': True, 'recommendation': URL})
-    log = _Rlog()
-    out = driver.drive(body, SESSION, None, log)
-    assert out['choices'][0]['message']['tool_calls'][0]['function']['name'] == 'web_fetch'
-    assert len(questions) == 2 and len(posted) == 1
-    assert webfetch.was_substituted(SESSION, URL)
-    assert webfetch.gate_search(SESSION, QUERY) is not None
-    assert not any(event == 'loop.search_rehunt_cleared' for event, _ in log.events)
-
-
-def test_public_relevance_receives_real_fetch_and_loader_refusal_authority(monkeypatch):
-    driver, state, body, questions, posted = rig(monkeypatch,
-        runtime(disabled=(policy.REHUNT.policy.id,)), answer={'on_target': True})
-    fetched = {'https://rubygems.org/gems/eu_countries': (200, '')}
-    state.fetched_pages = fetched
-    ledger = refusalledger.RefusalLedger([refusalledger.RefusalEvent(
-        ecosystem='rubygems', raw_coordinate='eu_countries', package='eu_countries', version='',
-        outcome=refusalledger.REFUSED, evidence='cannot load such file -- iso3166', sequence=1)])
-    state.refusal_events = ledger
-    out = driver.drive(body, SESSION, None, _Rlog())
-    assert len(posted) == 1 and len(questions) == 1
-    question = questions[0]['messages'][-1]['content']
-    assert 'eu_countries' in question and '200' in question
-    assert 'could not install or load' in question.lower()
-    assert state.refusal_events is ledger
-    assert state.fetched_pages == fetched
-    assert bodykeys.NOTES not in out
-    assert state.query_verdicts == {QUERY: (True, '')}
-
-
-def test_public_new_task_owner_does_not_inherit_previous_query_cache(monkeypatch):
-    driver, old, body, questions, posted = rig(monkeypatch,
-        runtime(disabled=(policy.REHUNT.policy.id,)))
-    driver.drive(body, SESSION, None, _Rlog())
-    old_cache = old.query_verdicts
-    next_task = 'Read the current API documentation at api.handle.me for the next task.'
-    fresh = loop._plan_off_session(loop._synthetic_plan(next_task), '')
-    assert fresh.query_verdicts is None and fresh.rehunt_verdicts is None
-    driver._store.drop(SESSION)
-    driver._store.put(SESSION, fresh)
-    body['messages'] = [{'role': 'user', 'content': next_task}]
-    driver.drive(body, SESSION, None, _Rlog())
-    assert len(questions) == 2 and len(posted) == 2
-    assert old.query_verdicts is old_cache
-    assert fresh.query_verdicts == {QUERY: (False, 'Ada Handle API')}
-    assert fresh.query_verdicts is not old_cache
-    assert fresh.semantic_pending is None and old.semantic_pending is None
-
-
-def test_live_cache_reference_reset_and_real_store_durable_cleanliness(monkeypatch, tmp_path):
-    driver, state, body, questions, posted = rig(monkeypatch, runtime(),
-        answer={'on_target': False, 'recommendation': 'Ada Handle API'})
-    driver.drive(body, SESSION, None, _Rlog())
-    cache = state.query_verdicts
-    store = loop.LoopStore(str(tmp_path / 'sessions.json'))
-    store.put(SESSION, state)
-    store.persist(SESSION)
-    assert store.get(SESSION) is state
-    assert store.get(SESSION).query_verdicts is cache
-    encoded = json.loads((tmp_path / 'sessions.json').read_text())
-    for name in ('query_verdicts', 'rehunt_verdicts', 'semantic_pending'):
-        assert name not in encoded['sessions'][SESSION]
-    restored = loop.LoopStore(str(tmp_path / 'sessions.json')).get(SESSION)
-    assert restored is not state
-    assert restored.query_verdicts is None and restored.rehunt_verdicts is None and restored.semantic_pending is None
-    state.fetched_pages = {'https://api.handle.me/': ('HTTP 200', '')}
-    policy.reset_turn(state)
-    assert state.query_verdicts is None and state.rehunt_verdicts is None and state.semantic_pending is None
-    assert state.fetched_pages == {'https://api.handle.me/': ('HTTP 200', '')}
-    driver.drive(body, SESSION, None, _Rlog())
-    assert len(questions) == 2 and len(posted) == 2
-    assert state.query_verdicts == {QUERY: (False, 'Ada Handle API')}
-    store.drop(SESSION)
-    store.put(SESSION, restored)
-    assert store.get(SESSION).query_verdicts is None

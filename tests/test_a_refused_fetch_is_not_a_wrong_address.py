@@ -64,12 +64,6 @@ class AWrongAddressStillReadsAsOneTests(unittest.TestCase):
     def test_a_server_error_is_still_silent(self):
         self.assertEqual(webfetch.client_error_note(503, "gateway down"), "")
 
-    def test_a_url_cria_chose_still_says_so_first(self):
-        """The `ours` case outranks both: blaming the coder for a request cria authored is the
-        false fact this function was last fixed for."""
-        out = webfetch.client_error_note(403, "challenge", ours=True)
-        self.assertIn("was not yours", out)
-
 
 if __name__ == "__main__":
     unittest.main()

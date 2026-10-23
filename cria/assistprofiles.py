@@ -65,10 +65,10 @@ RANK4_DISABLED = (
 # The operator subsequently restored shrinking-file protection, plan revision and living-plan.
 # The operator subsequently restored plan-gather selection as well, without enabling planning.
 # Planning stays OFF by default. RANK4_DISABLED remains the historical ranking record;
-# the remaining three opt-outs below are exact.
+# Outgoing search relevance was subsequently deleted, not merely disabled.
+# The remaining two opt-outs below are exact; historical RANK4_DISABLED is unchanged.
 RANK4_ABLATION_DISABLED = (
     "experimental-step-preparation",
-    "outgoing-search-relevance",
     "search-spill-read-judgment",
 )
 
