@@ -268,13 +268,6 @@ class GuardState:
     redirect_due: bool = False  # refusals tripped → gate + redirect before next coder turn
     redirect_probe: bool = False  # the in-flight gate feeds a reasoner-authored redirect (loop only)
     nudge_reason: str = ""  # a steer to hand the coder on its next work turn
-    # Guidance delivered but not yet acted upon: preserved across requests as explicitly historical
-    # context (labeled "Previously requested:") so the model retains awareness of what it was asked
-    # to do even after prerequisite inspection turns. Cleared when acted upon or after N turns of
-    # non-compliance to prevent stale directives from haunting a session indefinitely.
-    pending_delivered_guidance: str = ""  # the original nudge_reason that was delivered but not acted on
-    pending_guidance_turns: int = 0  # how many turns this guidance has been pending; cleared at threshold
-    MAX_PENDING_GUIDANCE_TURNS = 3  # max turns to preserve unacted-upon guidance before clearing
     # The last gap the PERIODIC completion check named to the coder. Its only job is to stop the
     # same verdict being re-delivered: that check fires on a drive counter, so an unchanged workspace
     # produces an unchanged verdict, and one cycle-2 cell produced twelve consecutive identical ones.
@@ -299,7 +292,6 @@ class GuardState:
     # message that is not there (nemotron-nano 1786243834 call 0073: told to resend content the frame
     # had dropped, the model re-read the spec a 7th time instead)
     steer_source: str = ""  # human label of which guard produced the pending steer (for the ⟦cria⟧ note)
-    pending_guidance_source: str = ""  # source label for the pending delivered guidance
     coder_turns: int = 0  # acting coder turns since the last gate — drives the PERIODIC check-in
     # THE DRIVE THE PERIODIC STEP CHECK LAST RAN ON. It used to stamp a `coder_turns` TICK, which the
     # gate zeroes every 15 turns: 12 was the only multiple of 12 that counter could hold, so the memo
@@ -3544,20 +3536,11 @@ class Loop:
             # relying on this one-shot nudge slot.
             if sess.nudge_reason != sess.completion_remediation_reason:
                 msgs = msgs + [{"role": "user", "content": prompts.render("nudge", reason=sess.nudge_reason)}]
-                # Preserve the delivered guidance for historical context if the coder doesn't act on it
-                sess.pending_delivered_guidance = sess.nudge_reason
-                sess.pending_guidance_turns = 0
-                sess.pending_guidance_source = sess.steer_source
             sess.nudge_reason = ""
             steered, sess.steer_source = sess.steer_source, ""  # set only for a GUARD steer, not a verify re-nudge
         if remediation:
             msgs = msgs + [{"role": "user", "content": prompts.render(
                 "nudge", reason=sess.completion_remediation_reason)}]
-        # Add pending historical guidance if it exists
-        if getattr(sess, "pending_delivered_guidance", ""):
-            historical = _pending_guidance_historical_context(sess)
-            if historical:
-                msgs = msgs + [{"role": "user", "content": f"⟦ctx:steer⟧ {historical}"}]
         framed, _ = self._prepare_coder_context(sess, body, rlog, synthetic=False,
             index=idx, total=total, item=item.text, notes=msgs)
         _stalled_frame(sess, framed, msgs)
@@ -3571,10 +3554,6 @@ class Loop:
         if _has_tool_calls(coder):
             sess.step_tool_calls += 1  # the coder ACTED this step (the did-real-work leg's signal)
             sess.gate_fresh = False    # independent required evidence freshness
-            # Clear pending guidance once the coder acts — the delivery has been acknowledged
-            sess.pending_delivered_guidance = ""
-            sess.pending_guidance_turns = 0
-            sess.pending_guidance_source = ""
             thrash = self._replan_if_thrashing(sess, key, body, idx, rlog)  # tool-call thrash escape
             if thrash is not None:
                 return thrash
@@ -4999,10 +4978,6 @@ class Loop:
         # grounded negative reaches this coder turn rather than waiting for another request.
         if steer is None and sess.nudge_reason:
             steer, sess.nudge_reason = sess.nudge_reason, ""
-            # Preserve delivered guidance for historical context across prerequisite inspection
-            sess.pending_delivered_guidance = steer
-            sess.pending_guidance_turns = 0
-            sess.pending_guidance_source = sess.steer_source
         # PERIODIC gate: every N acting turns, run the checks and insert ground truth — only when nothing
         # else is steering this turn (a guard steer / re-anchor takes precedence).
         # LEVEL 5 — ASSISTS_ENABLED, same rule as the other call site: scheduled, so it is an assist.
@@ -5013,12 +4988,6 @@ class Loop:
                 return periodic
         record_coder_preframe(rlog, sess, sess.plan.current(), 1, 1, driver="plan_off")
         extra = []
-        # Add pending historical guidance if it exists
-        if getattr(sess, "pending_delivered_guidance", ""):
-            historical = _pending_guidance_historical_context(sess)
-            if historical:
-                extra.append({"role": "user", "content": f"⟦ctx:steer⟧ {historical}"})
-        
         if steer:  # inject the steer into the coder framing this turn
             extra.append({"role": "user", "content": prompts.render("nudge", reason=steer)})
         framed, reoriented = self._prepare_coder_context(sess, body, rlog, synthetic=True,
@@ -8221,33 +8190,6 @@ def _gate_notes(sess) -> str:
             and lines.get("green")):
         return with_observed(lines["green"])
     return with_observed("") if observed else ""
-
-
-def _pending_guidance_historical_context(sess) -> str:
-    """Format previously delivered guidance as explicit historical context, so the model
-    remembers what it was asked to do even after prerequisite inspection turns.
-    
-    Returns the guidance labeled as "Previously requested:" if it's still pending, otherwise "".
-    This preserves delivery across turns without blindly repeating the same directive.
-    """
-    if not getattr(sess, "pending_delivered_guidance", ""):
-        return ""
-    
-    # Increment turn counter and check if we've exceeded the threshold
-    sess.pending_guidance_turns = getattr(sess, "pending_guidance_turns", 0) + 1
-    if sess.pending_guidance_turns > sess.MAX_PENDING_GUIDANCE_TURNS:
-        # Clear stale unacted-upon guidance
-        sess.pending_delivered_guidance = ""
-        sess.pending_guidance_turns = 0
-        sess.pending_guidance_source = ""
-        return ""
-    
-    # Format as historical context, not as a new demand
-    guidance_text = f"Previously requested: {sess.pending_delivered_guidance}"
-    if getattr(sess, "pending_guidance_source", ""):
-        guidance_text += f" (from {sess.pending_guidance_source})"
-    
-    return guidance_text
 
 
 def _briefing_gate_ground_truth(sess) -> str:

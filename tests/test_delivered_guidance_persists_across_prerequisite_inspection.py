@@ -1,130 +1,55 @@
-"""Guidance delivered to the coder should persist as explicitly historical context across
-prerequisite inspection, so the model knows what it was asked to do even after reading a file.
+"""Offline characterization of guidance custody, not a persistence policy.
 
-In ornith1.5_9b / Java run 17, a repair directive reached the coder and was understood. Its
-first action inspected the saved baseline rather than performing the repair. The directive was
-absent from the very next request, before the later compaction calls. An offline reproduction
-through the current driver confirms this one-shot note lifetime.
-
-Run 19 provides the contrast: guidance immediately produced edits, whose public tool calls
-carried the correction forward. So delivery is being acknowledged without establishing follow-through.
-
-The fix evaluates preserving previously delivered guidance as explicitly historical context across
-prerequisite inspection—not blindly repeating stale orders, banning reads, or restoring planning.
+These tests deliberately preserve the observed one-shot contract. They reject the
+checkpoint's duplicate-current-note behavior and distinguish retained transcript
+history from automatic replay. See docs/guidance-continuity.md.
 """
+import copy
+import io
 import json
-import tempfile
-import unittest
-from unittest import mock
+from unittest.mock import patch
 
+import pytest
 from cria import loop, prompts
+from test_generation_driver_policy import setup_driver
+from test_loop import _Rlog
 
 
-class _Rlog:
-    def __init__(self):
-        self.events = []
+@pytest.mark.parametrize('retain_history', [False, True])
+def test_real_driver_distinguishes_transient_note_from_historical_transcript(retain_history):
+    driver, session, body = setup_driver()
+    directive = 'Inspect the current source before repairing the reported discrepancy.'
+    session.nudge_reason = directive
+    posts = []
+    historical = 'Historical guidance previously delivered; not a current finding or renewed order:\n' + directive
 
-    def emit(self, kind, **kw):
-        self.events.append((kind, kw))
+    def transport(request, **kwargs):
+        if not request.full_url.endswith('/v1/chat/completions'):
+            return io.BytesIO(b'{"tokens":[1],"data":[]} ')
+        posts.append(json.loads(request.data))
+        return io.BytesIO(json.dumps(loop._completion_toolcalls([{
+            'id': 'inspect-' + str(len(posts)), 'type': 'function',
+            'function': {'name': 'read_file', 'arguments': '{"path":"notes.txt"}'}}])).encode())
 
+    up = driver._ctx.coder_chat.__self__
+    with patch.object(up, '_receive_open', transport):
+        reply = driver.drive(body, 'driver-fixture', None, _Rlog())
+        body = copy.deepcopy(body)
+        if retain_history:
+            # An explicit harness-retained historical record, not a session-level
+            # claim that a proposed note reached the final transport.
+            body['messages'].append({'role': 'user', 'content': historical})
+        body['messages'] += [reply['choices'][0]['message'], {
+            'role': 'tool', 'tool_call_id': 'inspect-1',
+            'content': 'Read-only inspection returned current text.'}]
+        driver.drive(body, 'driver-fixture', None, _Rlog())
 
-def _make_session():
-    """Create a minimal PlanSession for testing."""
-    return loop.PlanSession(
-        plan=loop.Plan(id="test", task="fix something", created="2026-01-01", status="in_progress"),
-        summary="",
-        prior_work="",
-        verify_fails=0,
-        generation_errors=[],
-        unexecuted_nudges=0,
-        latest_satisfaction=None,
-        workspace_root=tempfile.gettempdir(),
-    )
-
-
-def _body_with_messages(messages):
-    """Create a minimal request body with messages."""
-    return {
-        "messages": messages,
-        "tools": [],
-    }
-
-
-class DeliveredGuidancePersistenceTests(unittest.TestCase):
-    """Test that guidance delivered in one turn survives as historical context in the next."""
-
-    def test_guidance_in_nudge_reason_is_delivered_to_coder(self):
-        """When sess.nudge_reason is set, it should be delivered to the coder as a note."""
-        sess = _make_session()
-        sess.nudge_reason = "You need to make a specific code change here."
-        
-        rlog = _Rlog()
-        body = _body_with_messages([{"role": "user", "content": "task"}])
-        
-        # Mock the necessary dependencies for _prepare_coder_context
-        loop_inst = loop.Loop.__new__(loop.Loop)
-        loop_inst._ctx = mock.MagicMock()
-        loop_inst._ctx.self_compact = False
-        loop_inst._ctx.focus_trim = False
-        loop_inst._ctx.planner_enabled = False
-        loop_inst._ctx.coder_role = None
-        
-        with mock.patch("cria.loop.assistruntime") as mock_runtime:
-            mock_runtime.current.return_value.bindings.return_value = ()
-            mock_runtime.retain_focus_bindings.side_effect = lambda framed, focused, bindings: framed
-            
-            with mock.patch("cria.loop.contextrestoration"):
-                with mock.patch("cria.loop.ledgercopies"):
-                    with mock.patch("cria.loop.steppreparation"):
-                        with mock.patch("cria.loop.preamblepolicy"):
-                            with mock.patch("cria.loop.reorientation"):
-                                with mock.patch("cria.loop._ground_coder_view", side_effect=lambda x, _: x):
-                                    # Notes are passed to _prepare_coder_context; it should include nudge_reason
-                                    # For now, just verify the structure exists
-                                    self.assertEqual(sess.nudge_reason, "You need to make a specific code change here.")
-
-    def test_guidance_should_remain_after_first_delivery(self):
-        """After delivering guidance once, it should be preserved in session state for historical context."""
-        sess = _make_session()
-        guidance_text = "Repair the missing import statement."
-        sess.nudge_reason = guidance_text
-        
-        # Simulate what happens during a coder turn with guidance
-        # The current code clears nudge_reason immediately
-        initial_nudge = sess.nudge_reason
-        self.assertEqual(initial_nudge, guidance_text)
-        
-        # The session should remember the DELIVERED guidance for the NEXT request,
-        # not just clear it
-        # This is what we want to test: preserved_guidance_from_prior_request
-        # The session needs a new field or mechanism to retain delivered guidance
-
-
-class GuidanceHistoricalContextTests(unittest.TestCase):
-    """Test that delivered guidance appears as historical context in subsequent requests."""
-
-    def test_guidance_reappears_in_next_request_after_prerequisite_read(self):
-        """When guidance is delivered and the coder does a prerequisite read instead of the
-        intended action, the guidance should still appear in the next request as historical context.
-        
-        This prevents the model from 'forgetting' what it was asked to do just because its first
-        action was to read a file rather than make the edit.
-        """
-        # Setup: guidance was delivered in turn N, coder read a file instead of editing
-        # Expected: the guidance appears in turn N+1 with a marker like "Previously requested:" 
-        # or similar, so it's clear it was already delivered, not a new demand
-        
-        # This test documents the expected behavior - currently this fails
-        # because nudge_reason is cleared after the first delivery
-        
-        # The fix would be to:
-        # 1. Preserve nudge_reason in session even after delivery
-        # 2. In subsequent preparations, label it as historical/previously-requested
-        # 3. Only clear it after it's been acted upon OR after N turns of non-compliance
-        
-        # This remains open for implementation
-        pass
-
-
-if __name__ == "__main__":
-    unittest.main()
+    note = prompts.render('nudge', reason=directive)
+    assert len(posts) == 2
+    assert sum(m.get('content') == note for m in posts[0]['messages']) == 1
+    assert not any('Previously requested:' in str(m.get('content')) for m in posts[0]['messages'])
+    assert not any(m.get('content') == note for m in posts[1]['messages'])
+    assert any(m.get('content') == historical for m in posts[1]['messages']) is retain_history
+    assert session.nudge_reason == ''
+    assert not session.plan.items[0].done
+    assert all(any(m.get('content') == session.plan.task for m in p['messages']) for p in posts)
