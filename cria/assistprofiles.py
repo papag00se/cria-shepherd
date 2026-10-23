@@ -63,10 +63,10 @@ RANK4_DISABLED = (
 # restored grounded-stalled-work and completed-work-briefing on 2026-10-22: reachable fallback
 # conflicts were not evidence of occurrence or net harm. Planning still needs explicit consent.
 # The operator subsequently restored shrinking-file protection, plan revision and living-plan.
+# The operator subsequently restored plan-gather selection as well, without enabling planning.
 # Planning stays OFF by default. RANK4_DISABLED remains the historical ranking record;
-# the remaining four opt-outs below are exact.
+# the remaining three opt-outs below are exact.
 RANK4_ABLATION_DISABLED = (
-    "experimental-plan-gather",
     "experimental-step-preparation",
     "outgoing-search-relevance",
     "search-spill-read-judgment",

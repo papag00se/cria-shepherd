@@ -36,7 +36,8 @@ def test_assist_ablation_never_disables_levels_0_to_4():
     assert {i for i in RANK4_ABLATION_DISABLED if levels[i] != 5} == set()
     # Historical ranking membership is not evidence that an entire assist should be removed.
     restored = {'grounded-stalled-work', 'experimental-completed-work-briefing',
-                'shrinking-file-protection', 'experimental-plan-revision', 'experimental-living-plan'}
+                'shrinking-file-protection', 'experimental-plan-revision', 'experimental-living-plan',
+                'experimental-plan-gather'}
     assert set(RANK4_ABLATION_DISABLED) == {i for i in RANK4_DISABLED if levels[i] == 5} - restored
     for kept in ('rolling-transcript-memory', 'harness-memory-handoff', 'task-classification',
                  'focused-tool-menu', 'generation-runaway-guard'):
@@ -51,7 +52,7 @@ def test_restored_assists_keep_level_and_explicit_planning_boundaries(level, pla
     assert ('grounded-stalled-work' in runtime.selected) is (level == 5)
     assert ('experimental-completed-work-briefing' in runtime.selected) is (level == 5 and planning)
     assert ('shrinking-file-protection' in runtime.selected) is (level == 5)
-    for policy in ('experimental-plan-revision', 'experimental-living-plan'):
+    for policy in ('experimental-plan-revision', 'experimental-living-plan', 'experimental-plan-gather'):
         assert (policy in runtime.selected) is (level == 5 and planning)
     assert runtime.experimental_planning is planning
 
@@ -115,7 +116,7 @@ def test_toml_profile_reaches_real_server_without_enabling_planning(tmp_path, mo
     assert 'grounded-stalled-work' in instance.pilot_runtime.selected
     assert 'shrinking-file-protection' in instance.pilot_runtime.selected
     for policy in ('experimental-plan-revision', 'experimental-living-plan',
-                   'experimental-completed-work-briefing'):
+                   'experimental-plan-gather', 'experimental-completed-work-briefing'):
         assert policy not in instance.pilot_runtime.selected
     with assistruntime.bound(instance.pilot_runtime):
         provider = Mock()
