@@ -28,6 +28,7 @@ class AnnotationSource(str, Enum):
     """In-process producer identity; a JSON string cannot acquire this authority."""
     DEPENDENCY = 'dependency_annotation'
     INVENTORY = 'inventory'
+    GUIDANCE_HISTORY = 'guidance_history'
 
 
 ANNOTATION_SOURCE = 'cria_annotation_source'

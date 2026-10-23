@@ -3444,17 +3444,17 @@ class VerifyEvidenceTests(unittest.TestCase):
         self.assertNotIn("web_fetch", log)          # …and its ABSENCE is visible → research not obtained
 
     def test_excludes_probe_and_empty_keeps_coder_runs(self):
-        # The fixture uses the REAL emitted sentinels. It used to fake "PROBE_EXIT=0" — the NAME of the
-        # constant, never its value — so the guard it "covered" (`"PROBE_EXIT" not in c`) passed here
-        # while never firing once in production, and every raw probe dump reached the critic, the
-        # re-derivation, the satisfaction judge and the briefing as the coder's own tool output.
+        # The fixture once faked "PROBE_EXIT=0", leaving real raw probes in the log. Marker bytes
+        # alone are not ownership either (a coder can print EXIT:1). Stamp the producer-owned
+        # gate so the probe stays hidden without erasing ordinary checker output.
         from cria.loop import _work_log
         from cria import probegate, proberun
         gate_out = f"{probegate.SECTION_PREFIX}probe-0\n1 failed\n{proberun.PROBE_EXIT_SENTINEL}1"
         msgs = [
             {"role": "assistant", "tool_calls": [{"id": "g", "type": "function", "function": {
                 "name": "shell", "arguments": json.dumps(
-                    {"command": f"cd /w || exit 97\necho {probegate.SECTION_PREFIX}probe-0\npytest -q"})}}]},
+                    {"command": probegate._gate_sentinel(["pytest -q"]) +
+                     f"\ncd /w || exit 97\necho {probegate.SECTION_PREFIX}probe-0\npytest -q"})}}]},
             {"role": "tool", "tool_call_id": "g", "content": gate_out},         # cria's gate probe
             {"role": "tool", "content": ""},                                    # empty
             {"role": "tool", "content": "3 passed, 0 failed in 0.12s"},         # coder's own test run

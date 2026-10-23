@@ -719,7 +719,8 @@ def _last_user(messages: list[dict]) -> int:
 
 def _historical_annotation(message: dict) -> bool:
     """Relocated historical wording is not live work, regardless of its position."""
-    return message.get(bodykeys.ANNOTATION_SOURCE) is bodykeys.AnnotationSource.INVENTORY
+    return any(message.get(bodykeys.ANNOTATION_SOURCE) is source for source in (
+        bodykeys.AnnotationSource.INVENTORY, bodykeys.AnnotationSource.GUIDANCE_HISTORY))
 
 
 def _live_tail(messages: list[dict]) -> set[int]:

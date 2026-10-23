@@ -23,6 +23,7 @@ MARKED WHERE REFUSED, NEVER MATCHED BY WORDING. ``cria.denial`` is applied at th
 to refuse (``writeproxy._refusal_command``, the two read-size guards, ``webfetch._guard_msg``'s
 repeat-gate keys, the search-read denial). Nothing downstream asks what a result says.
 """
+import json
 import os
 import subprocess
 import tempfile
@@ -350,7 +351,8 @@ class WorkLogLabelsTheCallNotTheBodyTests(unittest.TestCase):
         from cria import probegate
 
         checker = "\n  " + probegate.CHECKS_MARKER + "\r\n    exact checker line\r\n"
-        messages = _turn("check", "exec_command", '{"cmd":"pytest"}', checker)
+        command = probegate._gate_sentinel(["pytest"]) + "\npytest"
+        messages = _turn("check", "exec_command", json.dumps({"cmd": command}), checker)
         self.assertNotIn(checker, loop._work_log(messages))
         self.assertIn(checker, loop._work_log(messages, keep_checks=True))
 
@@ -382,8 +384,8 @@ class TheSearchDenialIsLabelledNotDeletedTests(unittest.TestCase):
     def test_cria_gate_output_is_STILL_stripped(self):
         # The scaffolding filter kept its real job: cria's OWN probe run is not the coder's work.
         from cria import probegate, proberun
-        self.assertTrue(loop._is_cria_scaffolding(probegate.SECTION_PREFIX + "probe-0"))
-        self.assertTrue(loop._is_cria_scaffolding(proberun.PROBE_EXIT_SENTINEL + "0"))
+        self.assertTrue(loop._is_cria_scaffolding(probegate.SECTION_PREFIX + "probe-0", automatic=True))
+        self.assertTrue(loop._is_cria_scaffolding(proberun.PROBE_EXIT_SENTINEL + "0", automatic=True))
         self.assertFalse(loop._is_cria_scaffolding(self.NOTE))
 
 

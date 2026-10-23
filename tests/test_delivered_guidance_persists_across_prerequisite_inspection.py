@@ -1,8 +1,7 @@
-"""Offline characterization of guidance custody, not a persistence policy.
+"""Delivered notes survive prerequisite inspection as reducible history, not orders.
 
-These tests deliberately preserve the observed one-shot contract. They reject the
-checkpoint's duplicate-current-note behavior and distinguish retained transcript
-history from automatic replay. See docs/guidance-continuity.md.
+Both real drivers and their serialized HTTP bodies exercise the custody boundary.
+See docs/guidance-continuity.md.
 """
 import copy
 import io
@@ -15,9 +14,11 @@ from test_generation_driver_policy import setup_driver
 from test_loop import _Rlog
 
 
+@pytest.mark.parametrize('synthetic', [False, True])
 @pytest.mark.parametrize('retain_history', [False, True])
-def test_real_driver_distinguishes_transient_note_from_historical_transcript(retain_history):
+def test_real_driver_distinguishes_transient_note_from_historical_transcript(retain_history, synthetic):
     driver, session, body = setup_driver()
+    session.synthetic = session.plan_off = synthetic
     directive = 'Inspect the current source before repairing the reported discrepancy.'
     session.nudge_reason = directive
     posts = []
@@ -50,6 +51,9 @@ def test_real_driver_distinguishes_transient_note_from_historical_transcript(ret
     assert not any('Previously requested:' in str(m.get('content')) for m in posts[0]['messages'])
     assert not any(m.get('content') == note for m in posts[1]['messages'])
     assert any(m.get('content') == historical for m in posts[1]['messages']) is retain_history
+    assert any('⟦ctx:guidance-history⟧' in str(m.get('content')) and directive in str(m.get('content'))
+               for m in posts[1]['messages'])
+    assert session.guidance_history == [note]
     assert session.nudge_reason == ''
     assert not session.plan.items[0].done
     assert all(any(m.get('content') == session.plan.task for m in p['messages']) for p in posts)

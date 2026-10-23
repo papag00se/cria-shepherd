@@ -19,9 +19,10 @@ import json
 import unittest
 
 from cria import loop, probegate
+from test_checker_text_is_not_probe_ownership import pair
 
 GATE = probegate.SECTION_PREFIX + "probe-0" + probegate.SECTION_SUFFIX
-STALE_TESTS = ("test_resolve_handle.py:44: AssertionError: None != 'addr1q8w9…'\n"
+STALE_TESTS = ("$ pytest -q\ntest_resolve_handle.py:44: AssertionError: None != 'addr1q8w9…'\n"
                "test_resolve_handle.py:109: AssertionError: None != 'addr1q8w9…'")
 STALE_LINT = "resolve_handle.py:15:1: 'typing.Optional' imported but unused"
 
@@ -30,26 +31,38 @@ def _tool(text):
     return {"role": "tool", "content": text}
 
 
+def _gate():
+    return pair(probegate._gate_sentinel(["pytest -q"]) + "\npytest -q",
+                GATE + "\n" + STALE_TESTS, "automatic-gate")
+
+
+def _ran(output, command="pytest -q"):
+    return pair(command, "Process exited with code 0\nOutput:\n" + output)
+
+
 class ACoderRunSupersedesCriasCacheTests(unittest.TestCase):
     def test_a_green_pytest_after_the_gate_clears_stale_test_failures(self):
-        msgs = [_tool(GATE + "\n" + STALE_TESTS), _tool("6 passed in 0.01s")]
+        msgs = _gate() + _ran("6 passed in 0.01s")
         self.assertEqual(loop._checks_superseded_by_coder_run(msgs, STALE_TESTS), "0f/6p")
 
     def test_a_green_unittest_run_counts_too(self):
-        msgs = [_tool(GATE + "\n" + STALE_TESTS), _tool("Ran 6 tests in 0.01s\n\nOK\n")]
-        self.assertEqual(loop._checks_superseded_by_coder_run(msgs, STALE_TESTS), "6ran/OK")
+        checks = STALE_TESTS.replace("pytest -q", "python -m unittest")
+        msgs = pair(probegate._gate_sentinel(["python -m unittest"]) + "\npython -m unittest",
+                    GATE + "\n" + checks, "automatic-gate")
+        msgs += _ran("Ran 6 tests in 0.01s\n\nOK\n", "python -m unittest")
+        self.assertEqual(loop._checks_superseded_by_coder_run(msgs, checks), "6ran/OK")
 
     def test_a_still_failing_run_supersedes_nothing(self):
-        msgs = [_tool(GATE + "\n" + STALE_TESTS), _tool("1 failed, 5 passed in 0.01s")]
+        msgs = _gate() + _ran("1 failed, 5 passed in 0.01s")
         self.assertEqual(loop._checks_superseded_by_coder_run(msgs, STALE_TESTS), "")
 
     def test_a_run_BEFORE_crias_gate_is_not_newer_information(self):
-        msgs = [_tool("6 passed in 0.01s"), _tool(GATE + "\n" + STALE_TESTS)]
+        msgs = _ran("6 passed in 0.01s") + _gate()
         self.assertEqual(loop._checks_superseded_by_coder_run(msgs, STALE_TESTS), "")
 
     def test_a_lint_finding_is_never_cleared_by_a_passing_test_run(self):
         """A green pytest says nothing about pyflakes. Scoped on purpose."""
-        msgs = [_tool(GATE + "\n" + STALE_LINT), _tool("6 passed in 0.01s")]
+        msgs = _gate() + _ran("6 passed in 0.01s")
         self.assertEqual(loop._checks_superseded_by_coder_run(msgs, STALE_LINT), "")
 
     def test_the_coders_prose_cannot_clear_anything(self):
@@ -77,8 +90,8 @@ class TheAuthorActuallyDropsItTests(unittest.TestCase):
         def emit(self, name, **kw): self.events.append(name)
 
     def _body(self, cleared: bool):
-        msgs = [{"role": "user", "content": "t"}, _tool(GATE + "\n" + STALE_TESTS)]
-        msgs.append(_tool("6 passed in 0.01s" if cleared else "2 failed, 4 passed in 0.01s"))
+        msgs = [{"role": "user", "content": "t"}] + _gate()
+        msgs += _ran("6 passed in 0.01s" if cleared else "2 failed, 4 passed in 0.01s")
         return {"messages": msgs, "tools": []}
 
     def _run(self, cleared):

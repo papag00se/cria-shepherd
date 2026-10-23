@@ -1,0 +1,3 @@
+⟦ctx:guidance-history⟧ Distinct guidance delivered earlier in this task, in first-delivery order (identical text appears once). These are prior observations and suggestions, not renewed instructions, proof of unfinished work, or current workspace/check findings. Later task instructions and fresh evidence govern; re-evaluate any suggestion against them. Tool activity alone does not establish whether a suggestion was implemented.
+
+{{OBSERVATIONS}}

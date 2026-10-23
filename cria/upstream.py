@@ -761,6 +761,15 @@ class Upstream:
             return self._prep(body, stream, rlog, safety_override=safety,
                               _previous_fit=data, _wire_overhead=overhead)
         phase = getattr(rlog, "phase", None)
+        # Observe exact surviving offered notes only after final fitting and role
+        # repair. The caller commits these only when this transport returns.
+        if isinstance(phase, str) and phase.startswith('coder-'):
+            visible = [m.get('content') for m in out.get('messages', [])
+                       if isinstance(m.get('content'), str)]
+            rlog.guidance_on_wire = [m['content'] for m in body.get('messages', [])
+                if m.get('role') == 'user' and isinstance(m.get('content'), str)
+                and m['content'].startswith('⟦ctx:steer⟧ ')
+                and any(m['content'] in text for text in visible)]
         state = getattr(rlog, "coder_preframe", None)
         receipt = None
         if isinstance(phase, str) and phase.startswith("coder-") and isinstance(state, dict):

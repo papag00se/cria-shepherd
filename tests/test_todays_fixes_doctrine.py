@@ -76,9 +76,12 @@ class Rule15_MeasureFirst(unittest.TestCase):
     """Measure prevalence before building a heuristic. A detector built for a one-off is dead weight
     that can itself misfire."""
 
-    def test_every_new_detector_cites_its_base_rate_in_the_source(self):
+    def test_heuristic_detectors_cite_their_base_rate_in_the_source(self):
+        # Check visibility is now exact evidence containment, not the retired
+        # first-line/80-character detector. Its missing-evidence incident survives
+        # in test_checks_reattach and the shared-preamble lifecycle regressions;
+        # pinning the old '176' comment would not test either invariant.
         for fn, needle in ((steppreparation.prepare_step, "33"),  # 33 standing prompts; 15 carried findings
-                           (loop._checks_already_visible, "176"),  # 129 of 176
                            (execcheck.entrypoints, "")):
             src = inspect.getsource(fn) if fn is not execcheck.entrypoints \
                 else execcheck.__doc__

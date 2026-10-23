@@ -30,6 +30,7 @@ TWO HALVES, BOTH ALREADY HALF-BUILT IN CRIA.
 import unittest
 
 from cria import loop, probegate, prompts
+from test_checker_text_is_not_probe_ownership import pair
 
 
 def gate(finding):
@@ -49,19 +50,23 @@ def wrote(path):
 
 
 class WhatAGreenRunActuallyProvesTests(unittest.TestCase):
-    def supersede(self, finding, coder_output):
-        return loop._checks_superseded_by_coder_run([gate(finding), coder_ran(coder_output)], finding)
+    def supersede(self, finding, coder_output, command="pytest -q"):
+        checks = "$ " + command + "\n" + finding
+        messages = pair(probegate._gate_sentinel([command]) + "\n" + command,
+                        probegate.SECTION_PREFIX + "probe-0___\n" + finding, "g1")
+        messages += pair(command, "Process exited with code 0\nOutput:\n" + coder_output, "c9")
+        return loop._checks_superseded_by_coder_run(messages, checks)
 
     def test_a_compiled_languages_build_error_is_cleared_by_its_own_green_suite(self):
         """`cargo test` cannot report ok over an unresolved import. This missed before."""
         self.assertEqual(
             self.supersede("error[E0432]: unresolved import `toml::Rows`",
-                           "test result: ok. 6 passed; 0 failed"), "0f/6p")
+                           "test result: ok. 6 passed; 0 failed", "cargo test"), "0f/6p")
 
     def test_a_java_compile_error_is_cleared_by_a_green_junit_run(self):
         self.assertTrue(
             self.supersede("Importer.java:31: error: cannot find symbol",
-                           "Tests run: 9, Failures: 0, Errors: 0, Skipped: 0"))
+                           "Tests run: 9, Failures: 0, Errors: 0, Skipped: 0", "mvn test"))
 
     def test_a_test_failure_is_still_cleared_by_an_interpreted_runner(self):
         self.assertEqual(
@@ -71,7 +76,7 @@ class WhatAGreenRunActuallyProvesTests(unittest.TestCase):
     def test_minitest_too(self):
         self.assertEqual(
             self.supersede("test/test_rates.rb:15: Expected 0.0\n7 runs, 7 assertions, 1 failures",
-                           "7 runs, 7 assertions, 0 failures, 0 errors, 0 skips"), "0f/7p")
+                           "7 runs, 7 assertions, 0 failures, 0 errors, 0 skips", "ruby test/test_rates.rb"), "0f/7p")
 
     def test_a_lint_finding_is_NOT_cleared_by_a_green_interpreter(self):
         """Preserved exactly: an unused import fails pyflakes and runs fine."""

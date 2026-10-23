@@ -13,6 +13,11 @@ import inspect
 import unittest
 
 from cria import loop, probegate
+from test_checker_text_is_not_probe_ownership import pair
+
+
+def owned_check(payload):
+    return pair(probegate._gate_sentinel(["pytest -q"]) + "\npytest -q", payload, "c1")
 
 GREEN = probegate.CHECKS_MARKER + " the repo's own checks that ran reported no error-class problems."
 RED = probegate.CHECKS_MARKER + " the repo's own checks report these problems:\nx.py:1: boom"
@@ -22,30 +27,26 @@ class ScaffoldingSplitTests(unittest.TestCase):
     def test_a_check_block_is_hidden_from_the_coders_log(self):
         for payload in (GREEN, RED):
             with self.subTest(payload=payload[:26]):
-                self.assertTrue(loop._is_cria_scaffolding(payload))
+                self.assertTrue(loop._is_cria_scaffolding(payload, automatic=True))
 
     def test_and_kept_for_the_judge(self):
         for payload in (GREEN, RED):
             with self.subTest(payload=payload[:26]):
-                self.assertFalse(loop._is_cria_scaffolding(payload, keep_checks=True))
+                self.assertFalse(loop._is_cria_scaffolding(payload, automatic=True, keep_checks=True))
 
     def test_raw_probe_plumbing_stays_scaffolding_for_both_readers(self):
         for keep in (True, False):
             with self.subTest(keep_checks=keep):
                 self.assertTrue(loop._is_cria_scaffolding(
-                    probegate.SECTION_PREFIX + "1\npytest -q", keep_checks=keep))
-                self.assertTrue(loop._is_cria_scaffolding("EXIT:0", keep_checks=keep))
+                    probegate.SECTION_PREFIX + "1\npytest -q", automatic=True, keep_checks=keep))
+                self.assertTrue(loop._is_cria_scaffolding("EXIT:0", automatic=True, keep_checks=keep))
 
 
 class WiringTests(unittest.TestCase):
     def test_the_completion_judges_evidence_asks_for_them(self):
         """Driven end to end: a check block in the log must survive into the satisfaction judge's
         evidence, not just have `keep_checks=True` spelled somewhere in the caller's source."""
-        messages = [
-            {"role": "assistant", "tool_calls": [{"id": "c1", "type": "function",
-             "function": {"name": "shell", "arguments": "{}"}}]},
-            {"role": "tool", "tool_call_id": "c1", "content": GREEN},
-        ]
+        messages = owned_check(GREEN)
         self.assertIn("no error-class problems", loop._satisfaction_evidence(messages))
 
     def test_the_default_is_the_old_behaviour(self):
@@ -57,11 +58,7 @@ class WiringTests(unittest.TestCase):
     def test_the_default_still_hides_checks_from_the_coders_log(self):
         """The direct counter-case to the evidence test above: with the default (coder-log) reader,
         the SAME check block must NOT survive."""
-        messages = [
-            {"role": "assistant", "tool_calls": [{"id": "c1", "type": "function",
-             "function": {"name": "shell", "arguments": "{}"}}]},
-            {"role": "tool", "tool_call_id": "c1", "content": GREEN},
-        ]
+        messages = owned_check(GREEN)
         self.assertNotIn("no error-class problems", loop._work_log(messages))
 
 

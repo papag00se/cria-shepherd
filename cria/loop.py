@@ -268,6 +268,7 @@ class GuardState:
     redirect_due: bool = False  # refusals tripped → gate + redirect before next coder turn
     redirect_probe: bool = False  # the in-flight gate feeds a reasoner-authored redirect (loop only)
     nudge_reason: str = ""  # a steer to hand the coder on its next work turn
+    guidance_history: list[str] = field(default_factory=list)  # delivered observations, never pending orders
     # The last gap the PERIODIC completion check named to the coder. Its only job is to stop the
     # same verdict being re-delivered: that check fires on a drive counter, so an unchanged workspace
     # produces an unchanged verdict, and one cycle-2 cell produced twelve consecutive identical ones.
@@ -3006,7 +3007,7 @@ class Loop:
                        if pending_paste.carried_reply else [])
             framed = {**framed, 'messages': list(framed.get('messages', [])) + carried
                       + [pending_paste.user_turn]}
-        replies = _CoderReplyReceipts(self._ctx.coder_chat)
+        replies = _CoderReplyReceipts(self._ctx.coder_chat, sess)
         coder = massage.apply(_parse_completion(replies.chat(framed, rlog)), framed.get("tools"), rlog)
         initial_receipt = dict(replies.latest)
         initial_remediation = replies.latest_remediation
@@ -5175,6 +5176,13 @@ class Loop:
         """One preparation order; driver scheduling never chooses pipeline placement."""
         runtime = assistruntime.current()
         raw = body.get("messages") or []
+        # Historical observations enter before every reducer, never as live notes.
+        # They make no assertion about current correctness or uncompleted work.
+        prior_guidance = getattr(sess, 'guidance_history', ())
+        if prior_guidance:
+            raw = list(raw) + [{'role': 'user', 'content': prompts.render(
+                'guidance_history', observations='\n\n'.join(prior_guidance)),
+                bodykeys.ANNOTATION_SOURCE: bodykeys.AnnotationSource.GUIDANCE_HISTORY}]
         authority = _capture_context_facts(sess, raw)
         base = _required_coder_base(raw, tools=body.get("tools"), prior_work=sess.prior_work,
             workspace_root=sess.workspace_root, gate_plan=getattr(sess, "gate_plan", None),
@@ -5541,7 +5549,9 @@ def _work_log(messages: list[dict], *, keep_checks: bool = False, rlog=None,
     # not run: pytest only runs tests named test_*.py or *_test.py"; 0 of 8 reasoner-side ones did.
     # cria then asked those reasoners what the coder should do next and got "implement the API
     # calls" — the rename the coder had just decided on was dropped and never came back.
-    scrubbed = list(probegate.clean_gate_results(_reasoner_session(messages), gate_plan))
+    automatic = probegate.gate_call_ids(messages)
+    scrubbed = list(probegate.clean_gate_results(
+        _reasoner_session(messages), gate_plan, linked_only=True))
     denied_ids = {tid for m in scrubbed
                   if m.get("role") == "tool" and (tid := m.get("tool_call_id"))
                   and denial.is_denied(str(m.get("content") or ""))}
@@ -5555,7 +5565,7 @@ def _work_log(messages: list[dict], *, keep_checks: bool = False, rlog=None,
             for tc in m.get("tool_calls") or []:
                 fn = tc.get("function") or {}
                 args = str(fn.get("arguments", ""))
-                if _is_cria_scaffolding(args, keep_checks=keep_checks):
+                if _is_cria_scaffolding(args, automatic=tc.get("id") in automatic):
                     continue
                 mark = ""
                 if tc.get("id") in denied_ids:
@@ -5571,7 +5581,8 @@ def _work_log(messages: list[dict], *, keep_checks: bool = False, rlog=None,
                                               call_id=json.dumps(tc["id"], ensure_ascii=False)))
         elif role == "tool":
             c = str(m.get("content") or "")
-            if c and not _is_cria_scaffolding(c, keep_checks=keep_checks):
+            if c and not _is_cria_scaffolding(
+                    c, automatic=m.get("tool_call_id") in automatic, keep_checks=keep_checks):
                 if m.get("tool_call_id"):
                     label = prompts.fill(receipt_labels["result"],
                                          call_id=json.dumps(m["tool_call_id"], ensure_ascii=False))
@@ -5582,41 +5593,17 @@ def _work_log(messages: list[dict], *, keep_checks: bool = False, rlog=None,
     return "\n".join(lines)
 
 
-def _is_cria_scaffolding(text: str, *, keep_checks: bool = False) -> bool:
-    """Is this cria's own orchestration rather than the coder's work?
+def _is_cria_scaffolding(text: str, *, automatic: bool = False,
+                          keep_checks: bool = False) -> bool:
+    """Only a producer-owned gate call/result can be internal orchestration.
 
-    The old test was ``"PROBE_EXIT" not in c`` — the NAME of the constant, never its value. The emitted
-    sentinel is ``proberun.PROBE_EXIT_SENTINEL`` ("EXIT:") and the gate's section prefix is
-    ``probegate.SECTION_PREFIX`` ("___CRIA_GATE_"), so the literal it checked for occurs only in test
-    fixtures — the guard never fired in production and every raw probe dump landed in the work log as
-    the coder's own tool output. Keyed on the real constants now, so it cannot drift again.
-
-    A ⟦ctx:checks⟧ block is NOT scaffolding: it is cria's rendering of a real checker's real output.
-    Stripping it is right for a log that describes what the CODER did, and wrong for the judge that
-    decides whether the task is done — which is the one reader for whom "did the checks pass" is the
-    question. ``keep_checks`` says which reader this is.
-
-    Walked on ada-handles_mellum2_codex_poff_1785714194 call 0033: the satisfaction judge wrote "the
-    test suite test_resolve_handle.py passes" and nothing in its evidence said so. The string
-    `4 passed` appears nowhere in its prompt; the only pytest result it could see was the original
-    `3 failed, 1 passed`, because every check block had been stripped. cria then supplied the gap in
-    its own words — "Everything else the checks cover passed" — and the judge's verdict repeated that
-    sentence back. cria may SELECT which of a checker's real lines to show; it may never SUBSTITUTE
-    its own, and least of all to the judge that ends the session on the answer.
-
-    THE SEARCH-READ DENIAL IS NO LONGER HERE, and that is a fix, not an omission. It was added for
-    the right reason — the note is cria's voice and was being read as a tool's answer — but deleting
-    a tool RESULT does not delete the CALL that produced it, so the log kept the coder's
-    ``$ read_file …`` line and lost its ``->`` line entirely: a call that appears to have returned
-    nothing, about a file that is still sitting on disk. Measured 2026-08-03 over ~/.cria/calls: 229
-    coder turns across 9 runs, every one of them a hole. Deletion was the wrong tool for the job the
-    whole time; the note is now labelled by :func:`_work_log` as a call that did not run and shown
-    verbatim (#2 — the safe class of intervention is additive, never destructive).
+    Marker bytes are not ownership: a coder's Maven command can print ``EXIT:1``
+    and ordinary tool output can quote gate markers. Both must survive verbatim.
+    The caller captures gate IDs before cleaning strips their provenance stamp.
+    An owned gate's cleaned checker evidence is retained for completion judges,
+    but its automatic request must never be attributed to the coder's work.
     """
-    if probegate.CHECKS_MARKER in text:
-        return not keep_checks
-    return (probegate.SECTION_PREFIX in text
-            or proberun.PROBE_EXIT_SENTINEL in text)
+    return automatic and not (keep_checks and text.lstrip().startswith(probegate.CHECKS_MARKER))
 
 
 def _satisfaction_evidence(messages: list[dict], rlog=None, gate_plan=None,
@@ -7893,31 +7880,98 @@ def _checks_superseded_by_coder_run(messages: list[dict], checks: str) -> str:
     spelled, it is what the newer run establishes (#12: read the runner cria is holding, do not
     match English in the prose cria rendered).
 
-    And only results AFTER cria's last gate count — an older coder run is not newer information."""
-    if not checks:
+    Only paired runs after a producer-owned gate count. Command heads carry scope;
+    without them this function abstains. The whole invocation must match, and the
+    own-check parser must attribute a successful exit to it. Every carried command
+    needs a newer green result; newer red, pending or unknown runs withdraw that
+    proof. Tool output containing a tally is never proof of execution on its own.
+    """
+    from types import SimpleNamespace
+
+    heads = _gate_commands(checks)
+    if not heads or len(set(heads)) != len(heads):
+        # The finding renderer carries display commands, not a scope identity per head.
+        # Repeated heads may describe distinct scopes; one receipt cannot prove both.
         return ""
-    compile_class = not _is_test_finding(checks)
+
+    def matching_head(fn):
+        args = _args_of(fn.get("arguments") or "")
+        cmd = args.get("cmd", args.get("command"))
+        if (is_shell_tool_name(fn.get("name")) and isinstance(cmd, str)
+                and set(args) in ({"cmd"}, {"command"}) and cmd.strip() in heads):
+            return cmd.strip()
+        return ""
+
     msgs = messages or []
-    last_gate = -1
-    for i, m in enumerate(msgs):
-        c = m.get("content") if isinstance(m, dict) else None
-        if isinstance(c, str) and probegate.SECTION_PREFIX in c:
-            last_gate = i
-    for m in msgs[last_gate + 1:]:
-        if not isinstance(m, dict):
+    automatic = probegate.gate_call_ids(msgs)
+    last_gate = max((i for i, m in enumerate(msgs)
+                     if isinstance(m, dict)
+                     and (m.get("role") == "tool" or m.get("type") == "function_call_output")
+                     and (m.get("tool_call_id") or m.get("call_id")) in automatic), default=-1)
+    if last_gate < 0:
+        return ""             # cannot establish that a coder invocation is newer than the gate
+    unlanded = _unlanded_call_ids(msgs)
+    mutations, pending = set(), set()
+    last_mutation = -1
+    for i, message in enumerate(msgs):
+        if not isinstance(message, dict):
             continue
-        if m.get("role") not in ("tool", "function_call_output") and m.get("type") != "function_call_output":
+        if message.get("role") == "assistant":
+            for call in message.get("tool_calls") or []:
+                cid = call.get("id")
+                fn = call.get("function") or {}
+                if cid in automatic or cid in unlanded:
+                    continue
+                # The path owner cannot enumerate every shell mutation (e.g. mv has no redirect).
+                # Any shell invocation outside the exact carried check has uncertain scope/state;
+                # require its result before a qualifying check begins, without guessing its verbs.
+                uncertain_shell = is_shell_tool_name(fn.get("name")) and not matching_head(fn)
+                if _write_path(fn) is not None or _is_write_tool(fn.get("name")) or uncertain_shell:
+                    if not cid:
+                        return ""       # an unpaired mutation has no observable settlement
+                    mutations.add(cid)
+                    pending.add(cid)
+                    last_mutation = i
+        elif message.get("role") == "tool" or message.get("type") == "function_call_output":
+            cid = message.get("tool_call_id") or message.get("call_id")
+            if cid in mutations:
+                pending.discard(cid)
+                last_mutation = i
+    if pending:
+        return ""                       # a write or uncertain shell can still change checked state
+    # A check overlapping a write/uncertain shell is not proof about the settled workspace. Keep
+    # only invocations after settlement; refused and failed-to-apply calls are excluded by their owner.
+    later = msgs[max(last_gate, last_mutation) + 1:]
+    returned = {tid: (cmd, res) for tid, cmd, res in _shell_runs(later)}
+    outcomes = dict.fromkeys(heads, "")
+    compile_class = not _is_test_finding(checks)
+    # Order by invocation, not result arrival: an older slow green must not beat a newer red.
+    for message in later:
+        if not isinstance(message, dict) or message.get("role") != "assistant":
             continue
-        c = m.get("content") if m.get("content") is not None else m.get("output")
-        if not isinstance(c, str) or probegate.SECTION_PREFIX in c:
-            continue
-        runner, tally = probegate.runner_and_tally(c)
-        if not tally or not (tally.startswith("0f/") or tally.endswith("/OK")):
-            continue
-        if compile_class and runner not in probegate.COMPILES_FIRST:
-            continue          # a green interpreter proves nothing about a lint or compile finding
-        return tally
-    return ""
+        for call in message.get("tool_calls") or []:
+            head = matching_head(call.get("function") or {})
+            if not head or call.get("id") in automatic:
+                continue
+            outcomes[head] = ""       # pending/unknown/red never inherit an older green outcome
+            got = returned.get(call.get("id"))
+            if got is None:
+                continue
+            _, result = got
+            receipt = SimpleNamespace(last_gate_flag=checks, action_seq=1, last_gate_seq=0)
+            _track_own_checks(receipt, [
+                {"role": "assistant", "tool_calls": [call]},
+                {"role": "tool", "tool_call_id": call.get("id"), "content": result},
+            ])
+            # The own-check owner parses shell input, pairs receipts, and attributes exit status.
+            # A green-looking log without a proven successful check exit is not supersession.
+            if not getattr(receipt, "own_check_runs", None) or receipt.own_check_runs[-1][2] != 0:
+                continue
+            runner, tally = probegate.runner_and_tally(result)
+            if (tally and (tally.startswith("0f/") or tally.endswith("/OK"))
+                    and (not compile_class or runner in probegate.COMPILES_FIRST)):
+                outcomes[head] = tally
+    return next(reversed(outcomes.values())) if all(outcomes.values()) else ""
 
 
 def _checks_ran_before(paths: list[str]) -> str:
@@ -7984,22 +8038,16 @@ def _writes_since_last_gate(messages: list[dict], cap: int | None = None) -> lis
 
 
 def _checks_already_visible(body: dict, checks: str) -> bool:
-    """Is the check output the guard assumes the coder can see actually in this request?
+    """Only the complete offered evidence establishes its own visibility.
 
-    The suppression it gates was measured withholding cria's correction while nothing else carried
-    it: 129 of 176 coder prompts in one run had neither the checks nor a steer. Anchored on the
-    checker's own FIRST line rather than the whole block, because the block is re-rendered with
-    different framing in different places and an exact-match test would answer "no" every time.
+    Generic shared framing is not a finding. Alternate renderings may contain
+    equivalent evidence, but uncertainty must not suppress the authoritative copy;
+    the existing final-wire deduplicator can fold genuine repeated evidence.
     """
-    first = next((ln.strip() for ln in (checks or "").splitlines() if ln.strip()), "")
-    if not first:
-        return True          # nothing to re-show -> nothing withheld
-    needle = first.lstrip("•").strip()[:80]
-    for m in (body.get("messages") or []):
-        c = m.get("content")
-        if isinstance(c, str) and needle and needle in c:
-            return True
-    return False
+    if not checks.strip():
+        return True
+    return any(isinstance(m.get('content'), str) and checks in m['content']
+               for m in body.get('messages') or [])
 
 
 def _gate_commands(flag: str) -> list[str]:
@@ -8170,9 +8218,11 @@ def _gate_notes(sess) -> str:
     # RED FIRST. A step may now advance over a red gate the step critic attributed to another step's
     # work (_verify_after_probe), so the plan can reach its end with the checks still failing — which
     # was structurally impossible before, and is the one way this change could have opened a
-    # fail-OPEN on completion (principle 13). The judge gets the failure as a fact and holds the task.
+    # fail-OPEN on completion (principle 13). Preserve the observation without inventing currency;
+    # stale red is neither proof of a present failure nor proof of a repair.
     if getattr(sess, "last_gate_red", False) and getattr(sess, "last_gate_flag", ""):
-        return with_observed(prompts.fill(lines["red"], findings=sess.last_gate_flag.strip()))
+        key = 'red' if getattr(sess, 'gate_fresh', False) else 'historical_red'
+        return with_observed(prompts.fill(lines[key], findings=sess.last_gate_flag.strip()))
     if getattr(sess, "last_gate_testless", False):
         return with_observed(lines["testless"])
     skipped = getattr(sess, "last_gate_skipped", 0)
@@ -10771,8 +10821,9 @@ class _ObservedCoderRetries(generationguards.RetryServices):
 
 class _CoderReplyReceipts:
     """Call-local facts linking actual normalized coder replies to final wire reads."""
-    def __init__(self, chat):
+    def __init__(self, chat, session=None):
         self._chat = chat
+        self._session = session
         self.latest = {}
         self.latest_remediation = ""
         self._replies = []
@@ -10782,7 +10833,12 @@ class _CoderReplyReceipts:
         self.latest_remediation = ""
         rlog.restored_on_wire = {}
         subject = body.get(bodykeys.COMPLETION_REMEDIATION, "")
+        rlog.guidance_on_wire = []
         raw = self._chat(body, rlog)
+        if self._session is not None:
+            for note in getattr(rlog, 'guidance_on_wire', ()):
+                if note not in self._session.guidance_history:
+                    self._session.guidance_history.append(note)
         self.latest = dict(getattr(rlog, "restored_on_wire", None) or {})
         self.latest_remediation = subject
         return raw

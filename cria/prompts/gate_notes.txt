@@ -9,6 +9,7 @@
 # (loop._verify_after_probe), the completion judge must be told, or the run could finish red.
 # Precedence: red first — a failing check outranks a note about what a passing one did not cover.
 # Parsed by prompts.load_map.
+historical_red = [HISTORICAL CHECK OBSERVATION] The repo's own checks previously reported these failures, but their freshness against the current workspace is not established. This does not establish that the failures remain or that they were fixed. Prefer newer returned evidence; if current verification is unavailable, completion remains unverified.\n{{FINDINGS}}
 red = [GROUND TRUTH] The repo's own checks are currently FAILING:\n{{FINDINGS}}\nThese ran over the whole repository. Judge whether the task can be finished with them in this state.
 testless = [GROUND TRUTH] The checks passed but NO tests were actually executed (0 collected / no test probe ran). If this task required tests, green does NOT verify them; judge accordingly.
 skipped = [GROUND TRUTH] The test run reported {{COUNT}} test(s) SKIPPED. A skipped test verified NOTHING — if the task required a live/real check and the skipped tests are those checks, green does NOT verify them; read the skipped tests' own skip conditions before treating this as done.

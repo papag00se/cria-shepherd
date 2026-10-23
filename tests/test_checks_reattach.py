@@ -22,11 +22,11 @@ class VisibilityTests(unittest.TestCase):
             body("Write unit tests in `test_resolve_handle.py` that mock the API responses."),
             CHECKS))
 
-    def test_matches_through_different_framing(self):
-        # The same finding is re-rendered with different wrappers in different places; anchoring on
-        # the checker's own first line is what survives that.
+    def test_one_reframed_finding_does_not_prove_the_whole_check_block_visible(self):
+        # The second finding is absent. A partial alternate rendering must not
+        # suppress reattachment of the complete authoritative observation.
         reframed = "The repo checks report:\n  test_resolve_handle.py:48: AssertionError: Exception not raised"
-        self.assertTrue(loop._checks_already_visible(body(reframed), CHECKS))
+        self.assertFalse(loop._checks_already_visible(body(reframed), CHECKS))
 
     def test_empty_checks_are_treated_as_visible(self):
         self.assertTrue(loop._checks_already_visible(body("anything"), ""))
