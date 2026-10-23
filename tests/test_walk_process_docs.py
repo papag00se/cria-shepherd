@@ -43,6 +43,16 @@ def test_original_guidance_is_discoverable_from_controller_process():
         assert ROOT / 'docs/principles.md' in linked_documents(document)
 
 
+def test_controller_routes_to_a_real_functional_diagnosis_section():
+    entry = (ROOT / 'docs/walk-prompt.md').read_text()
+    targets = re.findall(r'\]\(([^)#]+\.md)#(functional-diagnosis)\)', entry)
+    assert targets, 'The controller must route synthesis to functional diagnosis, not only draft review'
+    for target, anchor in targets:
+        document = ROOT / 'docs' / target
+        headings = re.findall(r'^## (.+)$', document.read_text(), re.MULTILINE)
+        assert anchor in {heading.lower().replace(' ', '-') for heading in headings}
+
+
 def test_luna_required_reading_does_not_route_into_controller_process():
     # The role contract is delivered as text, never as a process-document bootstrap.
     role = ROOT / 'docs/walk-role.md'
