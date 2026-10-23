@@ -476,8 +476,14 @@ def test_real_summary_accepted_answer_and_original_reasoning_have_distinct_autho
         first = {"content": "Inspect a.py. Then change b.py."}
         first_finish, expected = "stop", None
         requests, phases = [author_request()], ["reasoner"]
-    elif scenario in ("reasoning-recovery", "private-first", "private-debris-first"):
-        raw = {"reasoning-recovery": "ON_TRACK", "private-first": "", "private-debris-first": "<tool_call>broken"}[scenario]
+    elif scenario == "private-debris-first":
+        # Malformed raw tool intent now fails at the summary producer BEFORE private
+        # salvage can reach this author. Its existing OFF retry supplies the public
+        # directive; the same incident no longer needs a downstream steer-recover call.
+        first = {"content": "<tool_call>broken", "reasoning_content": stuck}
+        first_finish = "stop"
+    elif scenario in ("reasoning-recovery", "private-first"):
+        raw = {"reasoning-recovery": "ON_TRACK", "private-first": ""}[scenario]
         first = {"content": raw, "reasoning_content": stuck}
         first_finish = "stop"
         phases = ["reasoner", "steer-recover"]
@@ -511,6 +517,11 @@ def test_real_summary_accepted_answer_and_original_reasoning_have_distinct_autho
         seen.append(body)
         observed_phases.append(rlog.phase)
         assert replies, "unexpected additional author/recovery call"
+        if scenario == "private-debris-first":
+            # This public answer belongs to the full grounded author request, not
+            # a different question asking for a directive extracted from private
+            # analysis. Bind the reply to its actual request, not merely a phase name.
+            assert body == requests[len(seen) - 1], "public answer requires the original grounded request"
         finish, message = replies.pop(0)
         return json.dumps({"choices": [{"finish_reason": finish, "message": message}]}).encode()
     body = {"messages": [{"role": "user", "content": "ORIGINAL TASK"}]}
@@ -527,10 +538,11 @@ def test_real_summary_accepted_answer_and_original_reasoning_have_distinct_autho
     elif scenario == "structural":
         events.append(("loop.steer_multiple_actions", {"level": "warn", "units": 2,
                                                        "head": "Inspect a.py. Then change b.py."}))
-    elif scenario in ("reasoning-recovery", "private-first", "private-debris-first"):
-        if scenario == "private-debris-first":
-            events.append(("massage.text_from_reasoning", {"reshape": "massage", "chars": 33,
-                            "assist_id": "tool-free-text-recovery", "family_id": "F08"}))
+    elif scenario == "private-debris-first":
+        events += [("massage.text_from_reasoning", {"reshape": "massage", "chars": 33,
+                    "assist_id": "tool-free-text-recovery", "family_id": "F08"}),
+                   ("summarize.leaked_tool_call", {"reshape": "recover", "level": "warn", "phase": "reasoner"})]
+    elif scenario in ("reasoning-recovery", "private-first"):
         if scenario == "private-first":
             events.append(("massage.reasoning_text_recovered", {"level": "info", "chars": 33,
                             "assist_id": "reasoning-text-recovery", "family_id": "F08"}))

@@ -7590,6 +7590,14 @@ def summarize(chat_fn, role, system: str, user: str, rlog, *, phase: str = "comp
                 # reasoning into empty content before `coerce_text_answer` runs; answer-vs-thinking
                 # recovery needs the original empty/ON_TRACK answer, not either mutated view.
                 capture.append(copy.deepcopy(received))
+            # Text-answer coercion can erase malformed call syntax and promote its private
+            # reasoning. Keep the existing leak detector's fact before either transform,
+            # but honor the role's existing private/public partition first.
+            raw_message = ((received.get("choices") or [{}])[0].get("message") or {})
+            raw_text = massage.content_text(raw_message.get("content"))
+            if role is not None:
+                raw_text = role.clean_content(raw_text)
+            raw_tool_leak = massage.has_tool_call_leak(raw_text)
             applied = massage.apply(received, None, rlog)
             # A summarize/redirect call offers NO tools, so ANY tool call the model produced (native, or
             # a dialect leak recover_leaked_tool_calls promoted) means it answered in ACT/PLAN mode, not
@@ -7609,7 +7617,7 @@ def summarize(chat_fn, role, system: str, user: str, rlog, *, phase: str = "comp
             # is re-injected as cria's summary and re-summarized next round — the rollup-of-a-rollup
             # selfcompact's anchor list exists to prevent.
             text = _strip_cria_banners(text, whole_namespace=True).strip()
-            if massage.has_tool_call_leak(text):
+            if raw_tool_leak or massage.has_tool_call_leak(text):
                 # A leaked/mangled tool call, not prose — fail this pass so the reasoning-off retry
                 # fires. Returning it would inject a wall of `<|tool_call>…` garbage as the briefing.
                 rlog.emit("summarize.leaked_tool_call", reshape="recover", level="warn", phase=rlog.phase)
