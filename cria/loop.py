@@ -4954,8 +4954,6 @@ class Loop:
             intervention = guard_intervene(sess, body, rlog, workspace_root=sess.workspace_root)
         if intervention is not None:
             return intervention
-        if steer is None and sess.nudge_reason:
-            steer, sess.nudge_reason = sess.nudge_reason, ""
         # The reset itself owns the first raw-task body.  Unlike a transient nudge, this is durable:
         # a restart between the coverage refusal and the coder call must not silently drop the exact
         # missing-deliverable evidence.  It is acknowledged only after this body reached the coder.
@@ -4971,11 +4969,15 @@ class Loop:
         # against a Loop with no context at all, and a gate in front of that would break it.
         done_now = None if not self._ctx.assists else self._periodic_satisfaction(
             sess, body, rlog, plan_off=True,
-            blocked=_satisfaction_blocker(steer=steer, rewritten=rewritten,
+            blocked=_satisfaction_blocker(steer=steer or sess.nudge_reason, rewritten=rewritten,
                                           done_probe=sess.done_probe, gate_red=sess.last_gate_red,
                                           gate_stall=sess.gate_stall))
         if done_now is not None:
             return done_now
+        # Resolve the pending note after the scheduled review can produce one, so a
+        # grounded negative reaches this coder turn rather than waiting for another request.
+        if steer is None and sess.nudge_reason:
+            steer, sess.nudge_reason = sess.nudge_reason, ""
         # PERIODIC gate: every N acting turns, run the checks and insert ground truth — only when nothing
         # else is steering this turn (a guard steer / re-anchor takes precedence).
         # LEVEL 5 — ASSISTS_ENABLED, same rule as the other call site: scheduled, so it is an assist.
