@@ -25,9 +25,12 @@ AUTHOR_SYSTEM = ("The coder's working history was just COMPACTED into the summar
     'or neither says what remains, say plainly that it does not and tell the coder to read the files on '
     'disk to find out. Never fill either gap with a guess: a list of remaining work that turns out to be '
     'already done sends the coder back into finished code to break it.\n\n'
-    'Point only at what already exists. Never name a project, crate, file, module or command that neither '
-    'the summary nor the file listing already names, and never tell the coder to start over, re-create, '
-    'or begin a new project — whatever is on disk is the work, and a re-orientation that renames it destroys it.\n\n'
+    'For assertions about existing work, never name a project, crate, file, module or command that neither '
+    'the summary nor the file listing already names. You may also name a target required by the separately '
+    'supplied original task solely to ask the coder to verify that requirement; '
+    'do not assert that it exists, is absent, is completed or remains unfinished without supporting evidence. '
+    'Never invent unrelated projects, crates, files, modules or commands, and never tell the coder to start '
+    'over, re-create, or begin a new project — whatever is on disk is the work, and a re-orientation that renames it destroys it.\n\n'
     'Output ONLY that directive to the coder — no preamble, no meta-commentary.')
 
 

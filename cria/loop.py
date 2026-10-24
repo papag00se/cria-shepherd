@@ -5155,7 +5155,7 @@ class Loop:
                 self._ctx.reasoner_chat, self._ctx.reasoner_role, rlog)))
 
     def _reasoned_reanchor(self, body: dict, rlog, workspace_root: str = "") -> str:
-        """Compatibility author: F49 owns exact-name grounding, not action vetting."""
+        """Compatibility author: F49 owns name grounding, not F44 action vetting."""
         definition = next(iter(assistruntime.current().bindings(reorientation.DEFINITION.policy.stage)), None)
         if definition is None:
             return ""
@@ -5165,7 +5165,8 @@ class Loop:
                 self._ctx.reasoner_role is not None, _history_root(body.get("messages", []))[0]),
             lambda: workspace_inventory(workspace_root or "", flavor="briefing"),
             reorientation.SummaryAuthor(summarize, self._ctx.reasoner_chat, self._ctx.reasoner_role, rlog),
-            None, rlog))
+            None, rlog, _composed_closed_ask(self._ctx.reasoner_chat,
+                self._ctx.reasoner_role, rlog, phase="reanchor-name-grounding")))
         if result.message is None:
             return ""
         prefix, _slot, suffix = prompts.load("nudge").partition("{{REASON}}")
@@ -5264,7 +5265,8 @@ class Loop:
                     if m.get("role") == "user"), self._ctx.reasoner_role is not None, root_task),
                 lambda: workspace_inventory(sess.workspace_root or "", flavor="briefing"),
                 reorientation.SummaryAuthor(summarize, self._ctx.reasoner_chat, self._ctx.reasoner_role, rlog),
-                None, rlog))
+                None, rlog, _composed_closed_ask(self._ctx.reasoner_chat,
+                    self._ctx.reasoner_role, rlog, phase="reanchor-name-grounding")))
             if result.message is not None:
                 history = history + [result.message]
             reoriented = result.message is not None

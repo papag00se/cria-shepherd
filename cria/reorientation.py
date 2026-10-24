@@ -1,21 +1,22 @@
 """Post-history-rewrite reorientation, separate from stalled-work judgments.
 
-The author uses the shared provider transport; F49 owns its distinct name check.
+The author uses the shared provider transport; F49 owns its distinct name grounding.
 No driver policy is imported. The original task is never used as a summary.
 """
 from dataclasses import dataclass
 import re
 from typing import Callable, Protocol
 
-from . import groundedaction, prompts, shellshape
+from . import groundedaction, jsontext, prompts, shellshape
 from .assistcontract import Policy, Reference
 
 CONTINUATION_MARKER = "⟦ctx:continuation⟧"
 DROPPED_PROSE_LEAD = "the handoff summary from that turn did not survive"
 MAX_COMMAND_LINES = 3
 
-# This is F49's narrower, deterministic name contract, not the grounded-action
-# pipeline. Bare word/word prose is deliberately not treated as an invented file.
+# F49 gathers unmatched spellings here, not their semantic role. The focused
+# question below distinguishes requirement verification from unsupported state.
+# Bare word/word prose is deliberately not treated as an invented file.
 _GROUNDABLE_NAME = re.compile(
     r"(?:[\w.-]*/(?:[\w.-]+/)*[\w-]+(?:\.[A-Za-z][\w-]*)?)"
     r"|(?:\b[\w-]+\.(?:py|rb|go|java|js|ts|rs|php|json|toml|ya?ml|md|txt|cfg|ini|xml|lock)\b)"
@@ -24,7 +25,7 @@ _PROSE_PAIRING = re.compile(r"^[A-Za-z][\w-]*(?:/[A-Za-z][\w-]*)+$")
 
 
 def invented_names(text: str, source: str) -> list[str]:
-    """Exact legacy name check; no workspace gathers or reasoner questions."""
+    """Gather unmatched legacy name spellings; this does not judge their meaning."""
     hay = (source or "").lower()
     out: list[str] = []
     for match in _GROUNDABLE_NAME.finditer(text or ""):
@@ -85,6 +86,8 @@ class ReorientationInput:
     author: Callable[[AuthorRequest], str]
     consume_rewrite: Callable[[], None] | None
     log: Log
+    # Shared closed-question transport; absent means unknown, never permission.
+    judge: Callable[[str, list[str]], str] | None = None
 
 
 @dataclass(frozen=True)
@@ -115,7 +118,8 @@ def _reason(source: ReorientationInput) -> tuple[str, str]:
     inventory = source.inventory()
     grounding = summary if not inventory else summary + "\n\n" + inventory
     task = facts.original_task.strip()
-    if not task or task.startswith(CONTINUATION_MARKER):
+    independent_task = bool(task and not task.startswith(CONTINUATION_MARKER))
+    if not independent_task:
         task = prompts.load("reanchor_missing_task")
     author_context = prompts.render("reanchor_context", task=task, summary=summary,
                                     inventory=inventory)
@@ -127,6 +131,25 @@ def _reason(source: ReorientationInput) -> tuple[str, str]:
         source.log.emit("loop.reanchor_refused", level="warn", lines=lines, head=_head(text))
         return canned, "script"
     invented = invented_names(text, grounding)
+    if invented and independent_task and source.judge is not None:
+        # Spelling gathers the candidates, never decides their semantic role.
+        # A required verification target need not already exist; an assertion
+        # that it exists still needs historical/inventory support.
+        accepted = False
+        try:
+            answer = source.judge(prompts.render("reanchor_name_grounding",
+                names=prompts.named_list(invented)), [author_context,
+                prompts.render("reanchor_candidate", directive=text)])
+            verdict = jsontext.loads(jsontext.strip_think(answer).strip())
+            accepted = isinstance(verdict, dict) and set(verdict) == {"grounded"} and verdict["grounded"] is True
+        except Exception:
+            # The existing canned notice remains available; no authored guidance
+            # is released on a provider, parsing, or undecidable judgment error.
+            pass
+        source.log.emit("loop.reanchor_name_grounding", accepted=accepted,
+                        names=prompts.named_list(invented))
+        if accepted:
+            return text, "authored"
     if invented:
         source.log.emit("loop.reanchor_ungrounded", level="warn",
                         names=prompts.named_list(invented), head=_head(text))
@@ -154,9 +177,10 @@ class Definition:
 
 DEFINITION = Definition(Policy(
     "history-rewrite-reorientation", "post-history-rewrite", 4, family_id="F49",
-    prompts=("reanchor", "reanchor_reasoned", "reanchor_context", "reanchor_missing_task", "nudge"),
+    prompts=("reanchor", "reanchor_reasoned", "reanchor_context", "reanchor_missing_task", "nudge",
+             "reanchor_name_grounding", "reanchor_candidate"),
     state="optional preparation callback after framing; shared delivery acknowledgement caller-owned; no persistent judge cache",
-    services=("original-task", "continuation-facts", "workspace-inventory", "shared-summary-provider"),
+    services=("original-task", "continuation-facts", "workspace-inventory", "shared-summary-provider", "shared-closed-question"),
     hooks=(Reference("cria/loop.py", "Loop._prepare_coder_context"),
            Reference("cria/loop.py", "Loop._reasoned_reanchor"),
            Reference("cria/loop.py", "Loop._drive_single_item")),
