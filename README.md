@@ -112,6 +112,7 @@ python -m pytest -q tests/test_recovered_arg_types.py \
 - [Logging and troubleshooting](docs/observability.md)
 - [Task battery](docs/task-battery.md)
 - [Research lineage and architecture](docs/shephard.md)
+- [Offline decision-model data audit and training research](docs/training/README.md)
 
 For contributions, start with [AGENTS.md](AGENTS.md).
 

@@ -1,0 +1,32 @@
+{
+  "schema": "synthetic-seed-structural-review-v1",
+  "source_sha256": "88ca1143ed1256ea9c81d35d25d9fa50cf35541ee8322f959685493f2229ff50",
+  "source_bytes": 123582,
+  "records": 72,
+  "groups": 18,
+  "families": {
+    "compactionrequest": 8,
+    "dictation": 8,
+    "exactform": 8,
+    "intake": 8,
+    "requiredoutput": 8,
+    "retrospective": 8,
+    "runtimee2e": 8,
+    "searchdirection": 8,
+    "wholefile": 8
+  },
+  "label_relations": {
+    "abstention": 9,
+    "base": 18,
+    "label_changing": 24,
+    "label_invariant": 21
+  },
+  "explicit_admission_blockers": {
+    "seed-v1-dictation-dotnet-diagnostic-d": "POLICY_SCOPE_UNRESOLVED_REFERENCE_PRESCRIPTION; withhold until independent policy adjudication; do not admit UNKNOWN as gold."
+  },
+  "semantic_review": "NOT_CERTIFIED",
+  "privacy_review": "NOT_CERTIFIED",
+  "provenance": "DECLARATIONS_CHECKED_NOT_INDEPENDENTLY_VERIFIED",
+  "native_fit": "NOT_MEASURED",
+  "training_admission": "NOT_GRANTED"
+}
