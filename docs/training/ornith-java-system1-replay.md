@@ -55,3 +55,11 @@ Private replay root: `~/.cria/experiments/ornith-java-system1-v1/`.
 Results SHA-256: `5eb4282e6e5c906b325f067f0c64db5387ffcb46267a37ae93912b9958b1a0b3`.
 
 The [130-case historical current-guard comparison](current-guard-comparison.md) remains the separate paired diagnostic result. Do not merge these ten TRAIN replays into its denominator or publish them as a new held-out score.
+
+## Expanded v2 follow-up
+
+After the [expanded six-task/synthetic fit](gliclass-expanded-v2.md), the new actual INT4 artifact was separately replayed on **the exact same ten cases**, on CPU. It retains **10/10 reviewed agreement**, the same as v1: two original unsafe PLAN approvals become blocks, four original RETROSPECTIVE false blocks are removed, and the existing command-dictation block remains. There are no new mistakes, but no additional improvement over v1 on this already-correct ten-case set.
+
+All ten remain TRAIN-exposed. These judgments address retrospective-plan leakage and code/command dictation only, not every observed Java failure mode. No Java task was rerun; task completion, usefulness improvement and the historical usefulness target remain unestablished by this replay. Nothing was deployed and no excluded case was released.
+
+Evidence: `~/.cria/experiments/ornith-java-system1-v2/{selection.json,execution-source.json,results.jsonl,completed.json,replay.exit}`. The wrapper reuses the original inference runner instead of duplicating its verdict/scoring semantics. It verifies unchanged selection inputs/targets against v2 TRAIN, original request/reply hashes, final native manifest and every INT4 shard hash before inference. `replay.exit` is 0. The complete first native packet was read, including the historical-next-step attribution in the run-025 0054 briefing, its exact rendered policy/state/token IDs and actual RETROSPECTIVE decision; encoder reasoning is absent (`null`). Results SHA256: `6d0019e61ca82a411df92d2a5595916a4b9a3fa681dfb0c4af22ee46a4a8be5e`.
