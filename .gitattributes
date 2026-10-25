@@ -1,2 +1,4 @@
 # Unified patch context encodes an unchanged empty line as one literal space.
 scripts/fleet_gpu_lease.patch whitespace=-blank-at-eol
+# Exact historical operator wording, including its original trailing spaces.
+tests/fixtures/walk-prompt-f36e880a.txt whitespace=-blank-at-eol
