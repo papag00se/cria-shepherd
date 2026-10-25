@@ -10,7 +10,7 @@ The earlier [OneJev result](onejev-q4-experiment.md) was **untrained**. It does 
 
 ## Frozen single-fit recipe
 
-Private root: `/home/jesse/.cria/training/onejev16-trained-v1/`; active qualified attempt: `run-002/`.
+Private root: `/home/jesse/.cria/training/onejev16-trained-v1/`; completed qualified fit: `run-002/`.
 
 - Official source checkpoint `OmniJev/OneJev1.6-0.8B`, revision `c89933c277629b707895bff752c61d2b0664c85e`.
 - Full language-model fine-tuning, not an inference-only test or a new randomly initialized classifier. Every language-model parameter belongs to the optimizer exactly once. Vision is not part of these text-only questions.
@@ -31,7 +31,7 @@ The public settings are recorded in [onejev-finetuning-recipe.json](onejev-finet
 
 An eight-example native learning check runs before the full fit, then the real fit reloads the original checkpoint so the check cannot initialize training. It uses admitted examples covering both labels of both questions in two TRAIN tasks, 128 declared updates and the same optimizer/readout/update path.
 
-The active attempt passed: exact optimizer membership; finite nonzero native gradients; changed first/last decoder witnesses and **both** answer-slot rows; **8/8 tiny targets learned**. That is a learning-mechanics check, not generalization. Full-dataset training has started.
+The active attempt passed: exact optimizer membership; finite nonzero native gradients; changed first/last decoder witnesses and **both** answer-slot rows; **8/8 tiny targets learned**. That is a learning-mechanics check, not generalization. The full fit completed all 12 epochs and 396 optimizer updates.
 
 The first attempt stopped **before any optimizer update** while serializing native Transformers loading facts containing sets. The repair reuses `suite.training_run.loading_receipt`, rather than creating another serializer. A regression fails before and passes after the repair. That failed attempt remains distinct from `run-002`; no failed result was overwritten or counted as training.
 
@@ -41,9 +41,21 @@ The source-bound full `python -m pytest` run passed **11,016 tests, 229 skipped*
 
 ## Final testing
 
-A detached finalizer waits for actual training completion, then converts/quantizes and runs the official native decision interface on the same **37 DEV plus 93 archive diagnostic examples** for both the original and trained Q4 model. Only the fixed final checkpoint is tested. Full state, policies, tokenization and native probability responses are captured. An exact frozen case count is an integrity check, not a row limit.
+The completed detached workflow converted/quantized the final checkpoint and ran the official native decision interface on the same **37 DEV plus 93 archive diagnostic examples** for both the original and trained Q4 model. Only the fixed final checkpoint is tested. Full state, policies, tokenization and native probability responses are captured. An exact frozen case count is an integrity check, not a row limit.
 
-These are whole-task-held historical diagnostics, **not fresh evaluation or human gold**. No result from them changes training, selects an epoch, releases a held label or establishes production readiness. The trained model's actual disagreement packets must be inspected before judging whether it is sufficient and invoking the GLiClass follow-up.
+These are whole-task-held historical diagnostics, **not fresh evaluation or human gold**. No result from them changes training, selects an epoch, releases a held label or establishes production readiness. Two trained disagreement packets were read in full, including native prompts, complete inputs, answer probabilities and the explicit absence of generated reasoning. A natural-language arithmetic repair was falsely flagged as code to copy; a briefing ending with an explicit next-action sequence was accepted as retrospective with probability 0.999993. These are still failures of the trained decision pipeline, not a conclusion about what the underlying weights can learn.
+
+### Completed result
+
+Training helped substantially, **but the trained four-bit decision pipeline is not reliable enough**. On the identical 130 historical diagnostic targets, agreement improved from **84/130 (64.6%)** to **120/130 (92.3%)**. Retrospective-versus-plan agreement was **107/112**; describes-versus-dictates agreement was **13/18**. The latter remains too weak: two of five descriptive directives were blocked and three of thirteen code-prescribing directives were missed. Two of twenty-eight plans were also missed; three of eighty-four retrospective briefings were falsely blocked. Targets and quarantines were not changed after observing the results.
+
+DEV agreement was 36/37; archive diagnostic agreement was 84/93. The aggregate is not a balanced fresh evaluation, and the rare-class denominators remain small. No intermediate checkpoint, seed or threshold was selected. The earlier untrained 24-case experiment remains unchanged.
+
+The actual trained Q4_K_M file is **529,296,928 bytes**, SHA-256 `219c7d6754191a966e8b345f8f7778df30d1ab2219404765c592b064a28f10f2`. It remains an experimental size exception, not a production admission. The FP32 reference checkpoint is retained. Full native calls, partition-specific confusion matrices and artifact provenance are in private `run-002/comparison.json` and `eval-{baseline,trained}/`; no example text is republished here.
+
+The initial finalizer completed conversion and quantization but stopped before evaluation because its external helper process lacked the repository import path. The corrected evaluation launcher explicitly sets `PYTHONPATH` to the repository; `evaluation.exit` is zero. The earlier `finalize.exit` failure was not overwritten. No retraining or repeated model selection was involved.
+
+This result activates the preapproved GLiClass follow-up below.
 
 ## Conditional GLiClass candidate
 
