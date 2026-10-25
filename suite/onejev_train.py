@@ -60,20 +60,9 @@ def slot_logits(torch, model, tokens, slot_ids):
 
 
 def training_step(torch, model, optimizer, encoded, weights, slot_ids, lr):
-    optimizer.zero_grad(set_to_none=True)
-    for group in optimizer.param_groups:
-        group['lr'] = lr
-    losses = []
-    for row in encoded:
-        logits = slot_logits(torch, model, row['tokens'], slot_ids)
-        loss = loss_at_slots(torch, logits, row['target'], weights[row['id']]) / len(encoded)
-        if not torch.isfinite(loss).item():
-            raise ValueError('nonfinite training loss')
-        loss.backward()
-        losses.append(float(loss.detach()))
-    norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0, error_if_nonfinite=True)
-    optimizer.step()
-    return {'weighted_loss': sum(losses), 'preclip_gradient_norm': float(norm), 'learning_rate_used': lr}
+    from suite.training_updates import accumulated_update
+    return accumulated_update(torch, model, optimizer, encoded, weights,
+        lambda row: slot_logits(torch, model, row['tokens'], slot_ids), loss_at_slots, lr)
 
 
 def lr_at(step, total, peak):
