@@ -1,0 +1,68 @@
+{
+  "model": "OmniJev/OneJev1.6-0.8B",
+  "source_revision": "c89933c277629b707895bff752c61d2b0664c85e",
+  "artifact": {
+    "format": "GGUF Q4_K_M",
+    "bytes": 529296960,
+    "sha256": "a22db794e13a8ecbe2e491ea2362eec2c76f91436cef272e237f9e0d208d1055",
+    "export": "official source checkpoint; supported --no-mtp conversion and standard quantization",
+    "published_artifact_used_for_inference": false
+  },
+  "authorization": "EXPERIMENT_ONLY_SIZE_EXCEPTION_NOT_DEPLOYMENT",
+  "interface": "official qev typed-choice option-slot probabilities",
+  "qev_commit": "0b9e163f8114f94a40598c59b0bac473ff446f3c",
+  "converter_runtime_commit": "8345f333951c661d166b00e6f9362e553768f292",
+  "scope": "BOUNDED_ADMITTED_TRAIN_REPLAY_NOT_FRESH_EVALUATION",
+  "selection": "first two sorted IDs per task/family/reviewed label, all three TRAIN tasks",
+  "count": 24,
+  "class_order": {
+    "retrospective": [
+      "RETROSPECTIVE",
+      "PLAN"
+    ],
+    "dictation": [
+      "DESCRIBES",
+      "DICTATES"
+    ]
+  },
+  "reviewed_target_by_prediction": {
+    "retrospective": [
+      [
+        1,
+        5
+      ],
+      [
+        0,
+        6
+      ]
+    ],
+    "dictation": [
+      [
+        3,
+        3
+      ],
+      [
+        3,
+        3
+      ]
+    ]
+  },
+  "reference_controls": {
+    "count": 2,
+    "selection": "post-hoc first disagreement per head; not evaluation or model selection",
+    "same_disagreeing_class_in_both": true
+  },
+  "evidence_sha256": {
+    "cohort_contract": "ae49d2facb25f5b5428bd0f9e55d5740f4f247d68df7d6e60b975549bf209c77",
+    "native_completed": "8fb89060896aa3821011eacbe3a6e0a27b518ee597bad2ce415b8e265c37cca2",
+    "native_results": "44ad71b7f3ad582df70de6272028993fcd260c39e187123f752de660d9814dce",
+    "native_calls": "c34821a1d432045bf87904b168990360f392768c0376c6cf5c71ccb004c780d0",
+    "native_wire": "f5c6194695aec5c1eb9e0021d4b24ca15dccb974f0d94545085e6a8d83a69489",
+    "reference_controls": "47d6e2e7f5eab282ae16a45302a31d4109f87f2612d5db2e074a24201d200996"
+  },
+  "quarantines_unchanged": true,
+  "trained": false,
+  "deployed": false,
+  "fresh_evaluation": false,
+  "human_gold": false
+}
