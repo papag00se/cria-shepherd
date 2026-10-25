@@ -1,0 +1,214 @@
+{
+  "schema": "decision-problem-focus-v1",
+  "status": "FROZEN_BEFORE_ANY_NEW_INFERENCE",
+  "active_targets": {
+    "retrospective": {
+      "problem": "A briefing that adds a repair plan can steer the coder away from grounded task history; earlier small-decision experiments confused historical code with operative advice.",
+      "critical_errors": [
+        "Treating a new repair prescription as mere history",
+        "Treating quoted past actions or unmet original outcomes as a fresh plan"
+      ],
+      "measure": [
+        "Per-class confusion and PLAN recall on real held-out tasks",
+        "Historical-attribution false positives",
+        "Hard-contrast performance separately from all real diagnostic traffic"
+      ]
+    },
+    "dictation": {
+      "problem": "A guidance message must not smuggle unverified literal code or commands to copy; error quotes and existing identifiers must remain usable.",
+      "critical_errors": [
+        "Approving new literal code as descriptive guidance",
+        "Blocking an existing-code/error quote merely because it resembles code"
+      ],
+      "measure": [
+        "DICTATES miss rate and DESCRIBES false-positive rate",
+        "Cosmetic rewrite invariance",
+        "Quoted reality versus literal prescription challenge coverage"
+      ]
+    }
+  },
+  "not_solved_by_these_targets": {
+    "completion_truth": "High-severity separate problem. No completion authority is trained here. Complete evidence in the prior satisfaction diagnostic exceeded short encoder windows; do not clip it or train a candidate-only surrogate.",
+    "stalled_work_and_rumination": "No new public-progress classifier: earlier seed sketches were withdrawn for inadequate evidence. A targeted complete-state packet and independently adjudicated outcomes remain required.",
+    "search_direction": "Direction reversals and normalized-equality bypass are documented opportunities, not established as repaired by either active head. Current search-rehunt remains separate; removed outgoing relevance stays removed.",
+    "upstream_missing_inputs": "The 132 unrecoverable candidate packets stay ineligible. A classifier must not compensate for missing evidence or receive these as negative/UNKNOWN training targets.",
+    "execution_freshness_ownership": "Remain deterministic, never learned from semantic labels."
+  },
+  "sampling": "Complete remaining known-lineage corpus, not favorable snippets or easy code areas; all raw inputs preserved and complete before labels. Six task families remain grouped across heads, sessions, retries/refolds and exact duplicates.",
+  "challenge_role": "20 exposed curated cases from the SAME real task-heldout diagnostic pool; not 20 additional independent examples, not a fresh benchmark, never calibration/training/augmentation sources.",
+  "challenge_pairs": [
+    {
+      "problem_contrast": "Literal new lookup versus required argument type",
+      "cases": [
+        {
+          "id": "dictation-a00cdaec921429ef88ca2bd323b5e3bb8d65ccb513fdf0d00b23a8dfa5ef3971",
+          "family": "dictation",
+          "input_sha256": "b7e8a6cfdd23086c627d701b3d36668c7abecb04fedadcc11e28f1f734d45bc9",
+          "label": "DICTATES"
+        },
+        {
+          "id": "dictation-2274c35038dec8515189273b90262b7ee3a04a49cf38b9ed55d690b737dda6e5",
+          "family": "dictation",
+          "input_sha256": "338b54c50cd82009db0db3069ceccdbc67dfb40092528a0fb1fc754bd44cb65c",
+          "label": "DESCRIBES"
+        }
+      ]
+    },
+    {
+      "problem_contrast": "Invalid versus valid-looking replacement syntax still dictates",
+      "cases": [
+        {
+          "id": "dictation-2d401c45e0011c2f08dad0668bb8232822883ddb9a9ca6315e1f336ad0698e73",
+          "family": "dictation",
+          "input_sha256": "8a88a1061fa595aa2aa4ea763a567dd943a188b997acdd382140745e57ae76cb",
+          "label": "DICTATES"
+        },
+        {
+          "id": "dictation-120cff51e8966518e1f824d559644de95d4f25fe0370e14c19019f2422c967ad",
+          "family": "dictation",
+          "input_sha256": "41689ab0dfccc40aa89439aff02c9068444e1fceee95b651d245ede131511a2a",
+          "label": "DICTATES"
+        }
+      ]
+    },
+    {
+      "problem_contrast": "Literal probe survives outcome rephrasing",
+      "cases": [
+        {
+          "id": "dictation-f529e856ed83f994f213196763eb467fc09784c932735c632537cd8790797932",
+          "family": "dictation",
+          "input_sha256": "968a461611f9203181e8860cda6cd54095ea16006cf6cb53e4006f1ae48ba033",
+          "label": "DICTATES"
+        },
+        {
+          "id": "dictation-009c6e8a26f15b3f1b6ea08202c154eff044e21705cdd272fdc9de6864d2fb19",
+          "family": "dictation",
+          "input_sha256": "133c90eec654dc5de472bfa2385fa6496f8c6c419d6c3a60d5a63d0b6d49ed61",
+          "label": "DICTATES"
+        }
+      ]
+    },
+    {
+      "problem_contrast": "Existing-call diagnosis versus literal new probe",
+      "cases": [
+        {
+          "id": "dictation-88d73ba1a4ccc8dc1062c71543fd0502513f05a341cf81824b506ec48de62cda",
+          "family": "dictation",
+          "input_sha256": "7aad7284008b09b9664d486a50b1b87a0fb137e72246aa2cceffbd719b6070f3",
+          "label": "DESCRIBES"
+        },
+        {
+          "id": "dictation-56dc643291ea7bb86bda56e225fde563174d46aff329276938a9f967993ee8e0",
+          "family": "dictation",
+          "input_sha256": "50fe425746d0097e80fb44f701f4baae37ad25eb525340c30a2f6905c239b8e4",
+          "label": "DICTATES"
+        }
+      ]
+    },
+    {
+      "problem_contrast": "Quoted existing package versus prescribed CLI call",
+      "cases": [
+        {
+          "id": "dictation-0374a3d79b9cc73f8e2e537ef035e644f54b3cefa4a02f879ed090b3e92268f2",
+          "family": "dictation",
+          "input_sha256": "f1c0cd0af4e6553228fd461f6ad690ea82ff1773dfb2548e8632a0304c2e6f40",
+          "label": "DESCRIBES"
+        },
+        {
+          "id": "dictation-31c729f6fcab80badc2c7c771d74edc5b2644d8c9471d45b76deef2de485bbb3",
+          "family": "dictation",
+          "input_sha256": "3a90b0b15de2f87a28e633d6704d72ea7fee112ba27e7cc3b011fe448c644bbc",
+          "label": "DICTATES"
+        }
+      ]
+    },
+    {
+      "problem_contrast": "New wrapping remedy versus failed historical edits",
+      "cases": [
+        {
+          "id": "retrospective-7a4737cbca9c629be9e5302e916f9c518459b323fe7f29151a3c7f1a1bfc8ee5",
+          "family": "retrospective",
+          "input_sha256": "99fcecc7badf85983c8051d09fb7b0777596fac210203edb631e8198df2ff916",
+          "label": "PLAN"
+        },
+        {
+          "id": "retrospective-8a6b9ee910cf99340308bc0b4147b3b53e10e26db53cb2da1c5a8ee47e6a4047",
+          "family": "retrospective",
+          "input_sha256": "15c4843e231a380cd3c8f51b4199ba9bce1e0ab99936dbf15876d01da86eaf99",
+          "label": "RETROSPECTIVE"
+        }
+      ]
+    },
+    {
+      "problem_contrast": "Operative signature-and-test advice versus missing-state report",
+      "cases": [
+        {
+          "id": "retrospective-5bba07383690fc3d41c845ca6c5bace0f61ab3e3de1b64d37b156d046c32fe81",
+          "family": "retrospective",
+          "input_sha256": "5d07e8ee4bf3fb8e934f7c3e0f0064f0dcb3e58ea3079af8b0682ddf0f3d212c",
+          "label": "PLAN"
+        },
+        {
+          "id": "retrospective-1c62d8e81fa6b0db241a9f324e63e8f1ff0b87c9d38291b6608aa038a7f1c917",
+          "family": "retrospective",
+          "input_sha256": "1c0c005621087cc436a57db3ac748ed878694d10a1ea9a17f99e6e62c0a09cf2",
+          "label": "RETROSPECTIVE"
+        }
+      ]
+    },
+    {
+      "problem_contrast": "Unmet E2E outcome versus specific next test action",
+      "cases": [
+        {
+          "id": "retrospective-9b1ee01944c14472da1dfa916b371cf879f9f9d32307c1479a423c4801235652",
+          "family": "retrospective",
+          "input_sha256": "59f22e48db51a223a0a02d4b53bb779c7a7af6b9ceb0952823b0b3b5806ff93d",
+          "label": "RETROSPECTIVE"
+        },
+        {
+          "id": "retrospective-01c3e78124b30bbcdcc083c85e012311a6605723b0c35801dfc33134175ecaab",
+          "family": "retrospective",
+          "input_sha256": "a511fabd24011d9effbafdcc6ddee0312768179ef29f04c71c3fffceef111926",
+          "label": "PLAN"
+        }
+      ]
+    },
+    {
+      "problem_contrast": "Broken-test history versus new lockfile-removal instruction",
+      "cases": [
+        {
+          "id": "retrospective-c443469575fc6f2ee7eee51f128254121ffdcd12ea00bc0b3bdd86def27303fb",
+          "family": "retrospective",
+          "input_sha256": "18628a569add24862c0e67f88b4fc1ec68300eca840d25c0b7bfcf8636ecae5f",
+          "label": "RETROSPECTIVE"
+        },
+        {
+          "id": "retrospective-915bdfa713cc1dc23eee2b254b4bd8dda1feb2de99fc5aa24f62b94b7d297580",
+          "family": "retrospective",
+          "input_sha256": "3dab7d6cc8bb4f1860db708a6f7c97860e77b160e4f226c1baf207ab9ff0222e",
+          "label": "PLAN"
+        }
+      ]
+    },
+    {
+      "problem_contrast": "Historical tool/code detail versus next Docker repair commands",
+      "cases": [
+        {
+          "id": "retrospective-4f69dd46601aa5abc3fb78269ae99f1ec6c07f53b06e44a8226f2484fa084e92",
+          "family": "retrospective",
+          "input_sha256": "8585f223cec1c64ad2627838f67211d8ea59a873a85e06e7ebfa5ef83ed456fa",
+          "label": "RETROSPECTIVE"
+        },
+        {
+          "id": "retrospective-e8b8368e27343ce1565f51261f05912c12d065be75db43d57657fc9349f368bb",
+          "family": "retrospective",
+          "input_sha256": "8d209c680b99beb5223d6157c2301ddfbe6b8af92e4cdc688b797c3748fcd0b8",
+          "label": "PLAN"
+        }
+      ]
+    }
+  ],
+  "unresolved_policy_boundaries": "Past unexecuted intent, prescription by reference, summary-author instructions and privacy/provenance uncertainty remain quarantined rather than forced into agreement.",
+  "prior_experiments": "Earlier diagnostic banks and replay controls remain explicitly exposed; do not promote them to untouched evaluation.",
+  "release_limit": "No evidence of improved usefulness, completion safety or deployed accuracy. No training/GPU clearance."
+}

@@ -1,0 +1,55 @@
+{
+  "method": "Pinned architecture tensor arithmetic, independently confirmed by CPU-only meta-device constructors; NOT trained weights, serving serialization, VRAM/RSS/latency measurement.",
+  "architecture_source_sha256": "29b598c408582bd53c0a48ae34dce2cb008aefc5f6087b03c310b5ce7bb0de9b",
+  "config_sha256": "0b8f2e4c6bff549b5c3fcfcb5da4265d1d24acd7e5159ae6956c7e85ac2de14e",
+  "formula": "V*H + L*(4*H^2 + 3*H*I) + (2*L+1)*H; first attention norm is identity, embeddings/final norms included; two biased Linear(H,2) heads = 2*(2*H+2). No MLM decoder or duplicate encoder.",
+  "encoder_parameters_derived": 68144640,
+  "two_heads_parameters_derived": 2052,
+  "fp16_encoder_fp32_heads_tensor_bytes_derived": 136297488,
+  "fp32_model_gradient_adam_two_moments_bytes_derived": 1090347072,
+  "bf16_autocast_copy_bytes_derived": 136293384,
+  "matched_cohort_max_native_tokens_measured": 2003,
+  "four_full_fp32_attention_matrices_at_matched_max_bytes": 513537152,
+  "four_full_fp32_attention_matrices_at_native_7999_bytes": 8189952128,
+  "workspace_warning": "Attention arithmetic is a component estimate, not an allocator/total-memory upper bound. Whole-layer gradient checkpointing, microbatch1, sequential models; no clipping to satisfy a memory estimate.",
+  "planned_gpu_ceiling_gib": 18,
+  "planned_host_ram_ceiling_gib": 16,
+  "planned_disk_reservation_gib": 6,
+  "ceilings_are": "Proposed experiment budgets, NOT measured availability, allocation or performance. Validate after explicit handover; OOM/unsupported operator stops the arm, never silently changes recipe/truncates input.",
+  "training_checkpoint_published_bytes": 273868198,
+  "training_checkpoint_published_sha256": "97ef650cbe35e69c363f28edbbc30be68912130d6a909de3a05714bd7bb1217d",
+  "training_checkpoint_local_download_or_hash_verification": "NOT_DONE; only config/tokenizer/card metadata downloaded",
+  "published_checkpoint_metadata_source": "https://huggingface.co/api/models/jhu-clsp/ettin-encoder-68m/tree/ac19ae4bc51093b31c475665ac872a936d056cc2?recursive=false&expand=false",
+  "deployment_weight_gate": "Actual entire bundle <250000000 bytes. Approx136.3MB tensor arithmetic leaves room, NOT certification. Count graph initializers/constants, both heads, all distinct backbones/shards/external tensors; the273.9MB training checkpoint is NOT a compliant serving artifact.",
+  "runtime_validation": "After authorization, verify CPU in-process FP16 operator support and parity against floating reference; measure cold/warm p50/p95, peak RSS, one/two concurrent calls and complete long inputs. INT8 is a separately frozen ablation, not an automatic fallback. Use admitted/local-approved inputs only; privacy/provenance holds are accounting, not a prediction panel. Any constructed long resource vectors are nonsemantic probes, never scored fresh examples. Measure a clean serving-only process separately from the larger FP32 reference/other experiments.",
+  "cpu_meta_preflight": {
+    "method": "CPU-only Torch meta-device constructors; no pretrained weight load, native input, forward call, optimizer, CUDA API or GPU access",
+    "counts": {
+      "encoder_parameters": 68144640,
+      "two_head_parameters": 2052
+    },
+    "packages": {
+      "torch": "2.8.0+cpu",
+      "transformers": "5.20.2",
+      "tokenizers": "0.23.3"
+    },
+    "torch_cuda_build": null,
+    "config_sha256": "0b8f2e4c6bff549b5c3fcfcb5da4265d1d24acd7e5159ae6956c7e85ac2de14e",
+    "script_sha256": "900a14f4e003b3582d02236d06171a1aefeb0c1af05cfe33021150c42c865504",
+    "limits": "Exact shape count only, not a training/serving memory, latency, serialization-size or quality measurement."
+  },
+  "cpu_environment_freeze_sha256": "aae8f4ce6fc93d64c84f1fea8eec9d0c4c79d1f3555e9019193675f4c20f3a4a",
+  "environment_provisioning": "Dedicated local CPU-only environment successfully installed torch2.8.0+cpu, transformers5.20.2, tokenizers0.23.3. GPU build/driver/runtime not queried, installed or validated.",
+  "host_snapshot": {
+    "observed_at_ns": 1792874728733428916,
+    "meminfo_kib": {
+      "MemTotal": 65538736,
+      "MemAvailable": 35420968
+    },
+    "disk_free_bytes": 303292272640,
+    "qualification": "Point-in-time host observation only; no resources reserved or workload cleared."
+  },
+  "planned_disk_reservation_scope": "6GiB for sequential experiment outputs/checkpoints; package caches and environment provisioning reported separately; only current optimizer state and final models proposed, no claim that all intermediate checkpoints fit.",
+  "training_wall_time": "UNMEASURED. Do not infer throughput from parameter count or earlier zero-shot CPU calls.",
+  "runtime_engine_scope": "Pinned Torch CPU in-process reference/prototype validation is an OFFLINE proposal, not an approved Cria runtime dependency. The production stdlib-only contract remains in force. A compatible production engine/dependency architecture is unresolved and requires separate design/approval; no mandatory runtime package was added."
+}

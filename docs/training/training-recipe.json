@@ -1,0 +1,106 @@
+{
+  "schema": "first-decision-training-recipe-v1",
+  "status": "FROZEN_PROPOSED_EXPERIMENT_NOT_EXECUTED_OR_AUTHORIZED",
+  "purpose": "Retrospection versus repair plans; existing-code/error diagnosis versus prescribed copyable code. No completion/progress/search substitute.",
+  "checkpoint": "jhu-clsp/ettin-encoder-68m",
+  "revision": "ac19ae4bc51093b31c475665ac872a936d056cc2",
+  "checkpoint_weight_artifact": "pytorch_model.bin",
+  "published_checkpoint_sha256": "97ef650cbe35e69c363f28edbbc30be68912130d6a909de3a05714bd7bb1217d",
+  "metadata_sha256": {
+    "README.md": "1b0dc5b2efba9309ca2645c6b0b167137b3a8c404c97bccee7abc8aa288c5f8d",
+    "config.json": "0b8f2e4c6bff549b5c3fcfcb5da4265d1d24acd7e5159ae6956c7e85ac2de14e",
+    "special_tokens_map.json": "ea97ecdbcc73713039d8d64dbb05e3689495c96657fbd9a18f5bed381be81049",
+    "tokenizer.json": "9fd55248d51d33976b324fc11592e28071da7d41e0e9401dfb7082e30574b7b1",
+    "tokenizer_config.json": "3cd2017ff46d0a527e5d39cae39272eccfa1f19bb9f89b05d166aab2e38354e2"
+  },
+  "native_fit_artifact_sha256": "2c0512fc6cd288e2941cef89e989486641b92ec8914f446e1eb7711a0107a141",
+  "native_limit": 7999,
+  "native_tokenizer": "tokenizers.Tokenizer.from_file pinned tokenizer.json; normalizer/postprocessor/native IDs verified; no wrapper reconstruction, hypotheses/chat prefixes, clipping, chunk voting or evidence omission",
+  "cohort": {
+    "train-real": 514,
+    "train-synthetic": 11,
+    "dev-real": 37,
+    "eval-diagnostic-real": 93
+  },
+  "cohort_file_sha256": {
+    "dev-real.jsonl": "a0047d442222399ddabc5c34934d5ed2128e833172c314343c47dbb992739c8b",
+    "eval-diagnostic-real.jsonl": "6e61b8690c2e595a74983ea60de88d78a9a6805ff9e34a3744d5df28512fde6a",
+    "quarantine.jsonl": "da57fd5238191f37b6fba95001d6c122eb68c14ebeaf8f2c22e43744941ee3ac",
+    "train-real.jsonl": "4455af31d4a1c4c3c796bef2e97365f23bb55f2080d05a1ca5d91cdbfc67d698",
+    "train-synthetic.jsonl": "27d6b2a3df2710f6208924c313d015684114ae1b23dd659a3055634590741d98"
+  },
+  "new_fit_does_not_release_holds": "All 94 real holds remain, including packet-origin hold on the2454-token case. Prepared split JSONL bytes are IDENTICAL across Ettin68 and the2048-token comparator.",
+  "architecture": "One fully trainable shared AutoModel encoder without MLM head; native attention-mask mean pooling including CLS/SEP, excluding padding; two independently initialized biased Linear(512,2) heads. Only the appropriate head computes loss per example.",
+  "label_order": {
+    "retrospective": [
+      "RETROSPECTIVE",
+      "PLAN"
+    ],
+    "dictation": [
+      "DESCRIBES",
+      "DICTATES"
+    ]
+  },
+  "seeds": [
+    17,
+    29,
+    43
+  ],
+  "arms": [
+    "real_only",
+    "real_plus_11_reviewed_standalone_synthetic"
+  ],
+  "epoch_count": 5,
+  "early_stopping_or_best_checkpoint_selection": false,
+  "batch": {
+    "microbatch": 1,
+    "gradient_accumulation": 16,
+    "dynamic_padding": "Full individual native input only; no length cap. Final short accumulated batch divides by its actual sample count.",
+    "sampler": "One seeded shuffle of all arm training IDs per epoch, each exactly once; no class/length/score sampling or replacement."
+  },
+  "optimizer": {
+    "type": "AdamW",
+    "encoder_lr": 2e-05,
+    "heads_lr": 0.0001,
+    "betas": [
+      0.9,
+      0.999
+    ],
+    "epsilon": 1e-08,
+    "weight_decay": 0.01,
+    "norm_and_bias_weight_decay": 0,
+    "gradient_norm_clip": 1.0,
+    "schedule": "Linear decay; warmup_steps=ceil(0.10*total_optimizer_steps), total_optimizer_steps=5*ceil(training_rows/16). Step scheduler only after an optimizer update."
+  },
+  "loss": "Cross entropy. Within each real TRAIN fold/arm, weight each real example by N_real/(K*n_task_family), where K counts nonempty real task/family strata; average real loss weight is1. Synthetic examples retain weight1, so the11seed rows do NOT become equal-weight new task families. No within-head class weighting, resampling, UNKNOWN targets or teacher/annotation features. All weighting is training-metadata-only, never based on labels/predictions.",
+  "precision": "FP32 master parameters/Adam states, BF16 autocast; eager attention explicitly, whole-layer gradient checkpointing, torch.compile disabled; no FlashAttention dependency or implicit kernel substitution.",
+  "fold_contract_sha256": "59e86bb8c96c43fc1de9accc52237731194ef54490383cc71c0479b15e8d0dc8",
+  "fitting": "For each arm/seed fit3whole-TRAIN-task exclusion folds across BOTH heads/shared encoder, then1final fit on allTRAIN. Standalone train-only synthetic groups may enter mixed arm fits, never calibration labels. 24sequential fits total; noDEV/EVAL fitting or seed selection.",
+  "calibration": "Per head and arm/seed, pool only real OOF logits; choose temperature by minimum TASK-MACRO OOF NLL over grid[0.25,0.5,1,2,4,8], each original task equally weighted; ties choose temperature nearest1then lower. Report pooled AND task-macro reliability/Brier and risk/coverage at confidence cuts[0.5,0.6,0.7,0.8,0.9,0.95,0.975,0.99]. No approved deployment threshold or diagnostic/fresh-eval tuning.",
+  "report": "All seeds/arms, not best run. Per-head confusion/missedPLAN/missedDICTATES/false blocks, per-task averages and pooled counts, class/slice/length/harness/language support, NO_FIT/runtime/missing evidence coverage. 20-case archived challenge remains subset of93diagnostics. Unscored94holds remain visible; no correctness credit for excluding hard ambiguity.",
+  "deployment_scope": "Shared encoder is an experimental sharing choice, not evidence of no negative transfer. Separate specialist comparison or broader backbone selection requires a separately frozen follow-up; deploying multiple encoders must pass the combined budget. No runtime authority from this recipe.",
+  "resource_plan_sha256": "09825d97190d99e7a09701aeb6d9e95d1f44b6f64358156279ae5cf55474a50c",
+  "execution_readiness": "Data, recipe and CPU-only constructor compatibility frozen/checked. Actual trainer/export implementation, verified pretrained checkpoint and measured GPU/serving parity remain unvalidated. No runnable trainer or measured training peak is claimed.",
+  "permission_gate": "Operator must separately authorize training and separately clear/hand over RTX3090. No automatic workload kill, GPU allocation, model swap, campaign launch, live hooks or service/config changes.",
+  "freeze_stage": "FINAL_WORKER_REVIEWS_COMPLETE_BEFORE_ANY_INFERENCE; supersedes preliminary647real staging",
+  "environment": {
+    "cpu_shape_preflight": {
+      "torch": "2.8.0+cpu",
+      "transformers": "5.20.2",
+      "tokenizers": "0.23.3"
+    },
+    "cpu_environment_freeze_sha256": "aae8f4ce6fc93d64c84f1fea8eec9d0c4c79d1f3555e9019193675f4c20f3a4a",
+    "proposed_gpu_build": "torch2.8.0 CUDA12.8 build, same transformers5.20.2/tokenizers0.23.3; dependency/driver compatibility must be validated separately after authorization; not installed or exercised here"
+  },
+  "cohort_manifest_sha256": "f4ecfa9e9946b56a8bff2463f0e277d77578071127c8a4923114256345fff749",
+  "checkpoint_loading": "Verify published full-file SHA first; official AutoModel, trust_remote_code=False, weights_only=True. All encoder keys/shapes must load; only documented unused MLM head/decoder keys are expected. Never ignore missing encoder weights or mismatched sizes.",
+  "serving_candidate_rule": "Comparison replicates are NOT an ensemble. Primary proposed serving candidate is the prespecified real-only joint model at seed17, subject to fresh evaluation and explicit admission; no best-seed selection using held-out scores. Other arms/seeds are reported comparisons, not silently additional required serving backbones. Any changed choice is a separately frozen follow-up.",
+  "admitted_fold_artifact_sha256": "a8a0a1226d6787da87b7443ca75b27333009219f0297de0b1d88b34d34d85a13",
+  "training_strata_artifact_sha256": "5676e4736159240feef3e208a77ffaaf7c9bb6998eda124e94082f383d3f1f2b",
+  "question_policy_sha256": {
+    "cria/prompts/compaction_validate_retrospective.txt": "8d5c5e4fbb202478edabaeb44e0c94d4b447f21816ce82f8784f17e3dc36c9cb",
+    "cria/prompts/steer_dictates_code.txt": "9d9f53e23bf8c2b239c495b85d9fd8adb97d7894eea9143c41a9b1e24722541e"
+  },
+  "policy_change_rule": "Any policy/meaning revision requires a new version and review of affected labels/reservations before inference, not silent recoding of held cases.",
+  "randomness_contract": "Each fit independently resets Python/Torch/CUDA RNGs to the stated seed. Reset Torch RNG once immediately before constructing both new heads in fixed[retrospective,dictation]order; checkpoint encoder weights must load, not be random. For shuffling, one Python random.Random(seed) per fit persists across epochs; shuffle a fresh sorted-ID list each epoch. Save RNG states and actual batch/optimizer-step receipts. Require deterministic algorithms, disable CuDNN benchmarking; an unsupported deterministic operation stops the arm instead of silently changing engines or precision."
+}

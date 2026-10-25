@@ -1,0 +1,67 @@
+{
+  "schema": "prospective-decision-evaluation-v1",
+  "status": "PREPARED_EMPTY_AWAITING_APPROVED_NEW_REAL_TASK_SOURCE",
+  "collection_start_ns": 1792873772398271842,
+  "reservations": {},
+  "exclusions_sha256": "a51630633ff24742c29559cafc8856941bf2a622813eb84d2ac6c6104f14ab11",
+  "exclusion_sources_sha256": {
+    "/home/jesse/.cria/training/decision-qualified-v1/candidates.jsonl": "4a0fb93ac1985bbb50b14b8f4e9243f4be6deb961f196eb9d309bc43f20fce2b",
+    "/home/jesse/src/cria-shepherd/suite/training_data/synthetic_seed.jsonl": "88ca1143ed1256ea9c81d35d25d9fa50cf35541ee8322f959685493f2229ff50",
+    "suite/tasks/ada-handles/prompt.txt": "987f31c5c317ce814b5ccdb5589ff25f2cb0c6f46ac4622466a0b0484e2bdeff",
+    "suite/tasks/cart-billing-go/prompt.txt": "db82d3023ab7e60aba5408c35f9a7e08173099bbfa7366bf2d88421543c3800f",
+    "suite/tasks/feed-pipeline-java/prompt.txt": "f0dba4c6a12d23b10e1c757e6b2a0e1bbca2875b3eff48ed74f9843efcb5c577",
+    "suite/tasks/feed-pipeline-py/prompt.txt": "73b4ad0234dc4979ab899850317659c6d0d8fe10ca25377df170c077e8870484",
+    "suite/tasks/handles-cli-node/prompt.txt": "53a2b258d633a16885eb82342cc86177690b9f1ca7346e16e7bd4ed05e03131e",
+    "suite/tasks/handles-go/prompt.txt": "44fc6d7dc1e229a9dc6a5d85277afc77a7fe37ca2868f3753089e99e65a73158",
+    "suite/tasks/handles-java/prompt.txt": "29162f02d53e28c89d96c66728fc89f122826d79435dde05a737747d2e954a40",
+    "suite/tasks/handles-node/prompt.txt": "b75875a3fecbc334d684847733cfe813ea09d6346ebf5c321c6da94e090138ad",
+    "suite/tasks/handles-php/prompt.txt": "24f3ecedef1cd2c10a65b8f3027da9961386d06766c70c684e4d2389acc8b041",
+    "suite/tasks/handles-ruby/prompt.txt": "8f88ff5cd63ce4370975e9e99547ba1bedfa6f8a99c87e20bf96ac299a239a49",
+    "suite/tasks/handles-rust/prompt.txt": "30bc049993f9d1e8a99c610c04b4079957d0bca6a196eff47f18a573399b0fca",
+    "suite/tasks/missing-tests-py/prompt.txt": "f7bfe1f27e047c24b06c536f84ebe7ee414a9a3e60b6d714176cb32bcf5c375f",
+    "suite/tasks/orders-api-py/prompt.txt": "e7b0e9dbd14ab14b62c22975b8e09457e0b4d13f1cef92fd86340031407f2d5f",
+    "suite/tasks/rust-toml-cli/prompt.txt": "b314adfe452da4b5e928eba0a21352df3e426e9efa81805668aba6650e968f80",
+    "suite/tasks/shipping-rates-py/prompt.txt": "2be75cf7fb2956f7a8f5070995c7734391458a77a37b6d1c65df10a0b997f65b",
+    "suite/tasks/shipping-rates-rb/prompt.txt": "229f34f2415b1958044f805453bf5b4db76c7e92622e3d770fd3a242f2795503",
+    "suite/tasks/sqlite-inventory/prompt.txt": "7d8e8ee96e20b956de1ac7e363aab443c77c543f66723f28a63676d0677d676e",
+    "/home/jesse/.cria/training/decision-qualified-v1/validation/rejected-legacy-root-check.json": "75ee9b2e85d487e797dc2ac0b0e103809c4f944714d7c1cd748b952ed7339a45"
+  },
+  "available_fresh_cases": 0,
+  "available_fresh_groups": 0,
+  "scope": [
+    "retrospective",
+    "dictation"
+  ],
+  "sampling": "Reserve complete novel task/ancestor components BEFORE candidate capture or labels. Collect EVERY consecutive eligible public candidate from each approved session, including failed/aborted/no-fit/missing-input events; no selection by score, label, style, usefulness or error appearance. Missing slots remain accounting events, never fabricated candidates.",
+  "initial_collection_design": {
+    "independent_task_groups_target": 12,
+    "harnesses_target": 2,
+    "programming_languages_target": 4,
+    "note": "Collection objectives, NOT power guarantees or facts about currently available data. Actual class/phenomenon/length/human-language support must be reported; expand as a new preregistered cohort if insufficient, never select favorable rows."
+  },
+  "lineage": "Exclude ALL six known real task families and ALL18 standalone seed groups, including quarantined inputs and inactive seeds. Exact hashes are necessary but insufficient. Two isolated whole-task/ancestor reviews must certify new scenario identity against the bound exclusions. Unknown ancestors or related tasks are held together or quarantined, never declared fresh by a new filename.",
+  "intake_profile": "suite.training_evaluation.screen verifies dedicated whole native JSON candidate slots, full task source, native integer-nanosecond event source, SHA bindings, pre-capture reservations, explicit reviewed ancestry, and all task/group/session/run/raw/input edges. Other source schemas require an explicit complete source adapter; no timestamp inference from mtime or filenames. Whole task text has its own exact-hash exclusion, independent of renamed task/group metadata, and reservations cannot replace the master exclusion baseline.",
+  "intake_limit": "Screen success is ONLY custody/lineage intake eligibility, NOT source authenticity certification, label/privacy admission, fresh gold, representative coverage or permission for inference. Native source/producer/public-channel evidence must be independently checked. No live capture hooks installed.",
+  "within_cohort_graph": "Before labels, union all shared task/parent/session/run/exact-input/near-duplicate edges. Cross-reservation connections become ONE group or quarantine the entire connected group. Never count related reservations as independent tasks.",
+  "labels_privacy": "Separate two blinded complete-input policy reviews and explicit local privacy approval. Teacher output, classifier output and private reasoning are hidden. Disagreement, UNKNOWN, missing evidence, unsupported language or privacy hold stays quarantined. Same-model agreement is not human gold.",
+  "problem_slices": [
+    "original requirements/unmet outcomes versus new repair advice",
+    "attributed past executed/unexecuted actions",
+    "instruction to summary author versus instruction to future coder",
+    "quoted existing code/errors versus prescribed literal replacements/calls/commands",
+    "prescription by reference",
+    "cosmetic/code-format variants and decisive evidence location",
+    "long complete inputs and NO_FIT"
+  ],
+  "locking": "Freeze complete eligible inputs, raw/quarantine accounting, ancestry graph, labels, slice tags, tokenizer fit, classifier/export hashes, score rule and metric code BEFORE first evaluation inference. No TRAIN/DEV/calibration/augmentation use, including the shared encoder. One preregistered evaluation; subsequent iteration requires another fresh cohort.",
+  "report": "Per-head/class confusion, missed PLAN/DICTATES, false blocking, complete-input coverage, NO_FIT, unresolved labels and each requested problem slice; per-task/harness/language/length support. Uncertainty over independent task groups; no independent-row confidence fiction. Report missing slices explicitly.",
+  "permissions": "NO_TRAINING_NO_INFERENCE_NO_GPU_CLEARANCE_NO_PRODUCTION_CHANGES",
+  "exclusion_scope": "Mechanical index covers all738qualified real candidate inputs/their known task/session/run associations and all72seed proposals/18seed groups, including withheld/inactive cases. It is NOT an exhaustive index of unjoined archive traffic, prior public controls, pretraining data or every exposure. Exact whole-task text fingerprints cover all checked-in task templates (including the six represented roots, with original/outer-whitespace forms) and the19legacy native roots; this does not certify more general semantic novelty.",
+  "prior_exposure_review": "Before certifying a reservation, reviewers must inspect existing archive-audit metadata exposure references and disclosed historical replay/control banks, not just this exact-input index. Exposure inventory is nonexhaustive; unresolved earlier ancestry/exposure is a hold, never proof of freshness. No closed-walk index is recreated.",
+  "question_policy_sha256": {
+    "cria/prompts/compaction_validate_retrospective.txt": "8d5c5e4fbb202478edabaeb44e0c94d4b447f21816ce82f8784f17e3dc36c9cb",
+    "cria/prompts/steer_dictates_code.txt": "9d9f53e23bf8c2b239c495b85d9fd8adb97d7894eea9143c41a9b1e24722541e"
+  },
+  "policy_change_rule": "Any policy/meaning revision requires a new version and review of affected labels/reservations before inference, not silent recoding of held cases.",
+  "source_adapter_status": "Dedicated native-string candidate/native-integer-nanosecond profile tested. Existing enveloped question/ISO-timestamp captures require a producer-specific complete-source adapter after the collection source is approved; this is NOT an installed native collector."
+}

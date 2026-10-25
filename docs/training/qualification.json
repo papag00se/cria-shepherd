@@ -1,0 +1,160 @@
+{
+  "schema": "decision-data-qualification-v1",
+  "status": "DATA_QUALIFIED_FOR_LOCAL_EXPERIMENT_FRESH_EVALUATION_EMPTY_EXECUTION_NOT_AUTHORIZED",
+  "local_root": "/home/jesse/.cria/training/decision-qualified-v1",
+  "counts": {
+    "train-real": 514,
+    "train-synthetic": 11,
+    "dev-real": 37,
+    "eval-diagnostic-real": 93
+  },
+  "class_counts": {
+    "train-real": {
+      "dictation/DICTATES": 46,
+      "dictation/DESCRIBES": 18,
+      "retrospective/RETROSPECTIVE": 310,
+      "retrospective/PLAN": 140
+    },
+    "train-synthetic": {
+      "retrospective/RETROSPECTIVE": 4,
+      "retrospective/PLAN": 2,
+      "dictation/DESCRIBES": 3,
+      "dictation/DICTATES": 2
+    },
+    "dev-real": {
+      "dictation/DESCRIBES": 1,
+      "retrospective/RETROSPECTIVE": 24,
+      "retrospective/PLAN": 12
+    },
+    "eval-diagnostic-real": {
+      "dictation/DESCRIBES": 4,
+      "dictation/DICTATES": 13,
+      "retrospective/RETROSPECTIVE": 60,
+      "retrospective/PLAN": 16
+    }
+  },
+  "real_complete_inputs": 738,
+  "primary_reviews": 738,
+  "independent_reviews": 738,
+  "real_admitted": 644,
+  "real_quarantined": 94,
+  "real_disagreements": 82,
+  "disagreement_warning": "Includes unresolved policy scope; never forced into agreement or omitted from readiness limitations. Overlapping hold reasons are not disjoint counts.",
+  "synthetic_admitted_train_only": 11,
+  "human_gold_certification": "NOT_GRANTED",
+  "fresh_evaluation_cases": 0,
+  "fresh_evaluation_groups": 0,
+  "native_fit": {
+    "ettin68_annotation_stage": {
+      "fit": 754,
+      "no_fit": 0,
+      "max_tokens": 2454,
+      "limit": 7999
+    },
+    "comparator_annotation_stage": {
+      "fit": 753,
+      "no_fit": 1,
+      "max_tokens": 2454,
+      "limit": 2048
+    },
+    "same_admitted_cohort": true
+  },
+  "readiness": {
+    "source_custody_two_reviews_partitioned_exports": "COMPLETE_PROVISIONAL_ASSISTANT_LABELS",
+    "problem_focused_diagnostic_contract": "FROZEN20CASES_SUBSET_NOT_FRESH",
+    "prospective_intake_protocol_and_exclusion_index": "PREPARED_AND_REGRESSION_TESTED",
+    "fresh_real_collection_and_adjudication": "BLOCKED_APPROVED_NEW_TASK_SOURCE_NOT_IDENTIFIED",
+    "training_resource_plan": "FROZEN_WITH_PINNED_CHECKPOINT_COMPLETE_NATIVE_FIT_AND_CPU_META_SHAPE_PROOF; no GPU/serving measurement",
+    "trainer_and_export_runtime_validation": "NOT_IMPLEMENTED_OR_VALIDATED",
+    "gpu_handover_and_training_permission": "NOT_GRANTED",
+    "cpu_constructor_environment": "PROVISIONED_CPU_ONLY_AND_VALIDATED_NO_FORWARD_OR_WEIGHTS",
+    "prospective_native_collector_adapter": "SOURCE_NOT_APPROVED; dedicated-slot/native-nanosecond screen tested, actual producer adapter not installed",
+    "production_engine_dependency_design": "UNRESOLVED; production stdlib-only policy remains unchanged; Torch CPU is offline prototype/reference only"
+  },
+  "local_artifacts_sha256": {
+    "/home/jesse/.cria/training/decision-qualified-v1/candidates.jsonl": "4a0fb93ac1985bbb50b14b8f4e9243f4be6deb961f196eb9d309bc43f20fce2b",
+    "/home/jesse/.cria/training/decision-qualified-v1/partition-before-labels.json": "c04cfea5d56350cb9cbf924cc1698a0064696336272e85a508acdaf7cfb9a44a",
+    "/home/jesse/.cria/training/decision-qualified-v1/extension-freeze.json": "1b4c18959d0f4eca629eb6b5104739590052eda113ccf7cca13c958091c5675a",
+    "/home/jesse/.cria/training/decision-qualified-v1/reviewer-main.jsonl": "64b93aef90c4d28253935d01416d53f16b16521e00a00c58d558cc1c147c70f7",
+    "/home/jesse/.cria/training/decision-qualified-v1/reviewer-independent.jsonl": "8622f7a17367ef9a3eadaa84fba1e428ccde0f75495ef02069203c42e008006e",
+    "/home/jesse/.cria/training/decision-qualified-v1/reviewer-assignments.json": "ec46ba790d2e2147156733d2e718c40c9991bea609b77af3b8e920b26840761d",
+    "/home/jesse/.cria/training/decision-qualified-v1/privacy-review.json": "7b8872004678d4e98fb8f53ee5c5ae8bdade29b876e39a27864778766abc7fb0",
+    "/home/jesse/.cria/training/decision-qualified-v1/seed-review-main.jsonl": "242f9b7e83563a156514829a38f93cc7071647d61de4aa4ed6c1bd570dde92f9",
+    "/home/jesse/.cria/training/decision-qualified-v1/calibration-folds-before-inference.json": "59e86bb8c96c43fc1de9accc52237731194ef54490383cc71c0479b15e8d0dc8",
+    "/home/jesse/.cria/training/decision-qualified-v1/source-binding-verification.json": "a9f888eaac152c1c75a5b1a1175c8e58290e45893e97d6bb26921d8dcae0ac59",
+    "/home/jesse/.cria/training/decision-qualified-v1/native-fit.json": "a6df43376796340209d272d24e9721cd145373b2e3425e99c1c93aaf6f02cbd9",
+    "/home/jesse/.cria/training/decision-qualified-v1/native-fit-ettin68.json": "2c0512fc6cd288e2941cef89e989486641b92ec8914f446e1eb7711a0107a141",
+    "/home/jesse/.cria/training/decision-qualified-v1/prospective-exclusions.json": "ff34fbf40aaf98f79080e9867b72d92734092785ed2883c2aaffa899bb65ee9f",
+    "/home/jesse/.cria/training/decision-qualified-v1/packet-custody-hold.json": "9f2321e1ad26d6da43ca6b3a39210c0a61b1d31c224fa031fb5c952203cf4b8c",
+    "/home/jesse/.cria/training/decision-qualified-v1/prepared-final/manifest.json": "2dcd2794c716741a601f40aecfec7a314553e4edcb66714cbd6ea84208afc579",
+    "/home/jesse/.cria/training/decision-qualified-v1/prepared-ettin68-final/manifest.json": "f4ecfa9e9946b56a8bff2463f0e277d77578071127c8a4923114256345fff749",
+    "/home/jesse/.cria/training/decision-qualified-v1/validation/meta-shape-audit.json": "c4095c710d945ac1362318df2abf3515087dfe30427cf3399039e13a31b3aa5d",
+    "/home/jesse/.cria/training/decision-qualified-v1/validation/cpu-environment.freeze.txt": "aae8f4ce6fc93d64c84f1fea8eec9d0c4c79d1f3555e9019193675f4c20f3a4a",
+    "/home/jesse/.cria/training/decision-qualified-v1/superseded-unreleased/status.json": "7738b36b2ef435818c6a7ec382a30e9bab75aa5825e9d7e34395d5bdbd3e5ab1",
+    "/home/jesse/.cria/training/decision-qualified-v1/review-primary-0.jsonl": "19b90882f894086e8d29cb6407fbc099c3d3a20883ba082ce53886f77bbe73a3",
+    "/home/jesse/.cria/training/decision-qualified-v1/review-primary-1.jsonl": "2499b4a0f81e9fbbc70722d5f2a643fee6f11634e60220082ce5d4a040b07e67",
+    "/home/jesse/.cria/training/decision-qualified-v1/review-independent-0.jsonl": "aee29ffd38d9d20794789e99c36b34e7e02ffc7da5529d2bff347b0d9ed2f548",
+    "/home/jesse/.cria/training/decision-qualified-v1/review-independent-1.jsonl": "daea9350a04fd0d41271f0600169abaf965d76b5c382d101bf4e05b065418e0a",
+    "/home/jesse/.cria/training/decision-qualified-v1/validation/snapshot-reextraction.json": "156582c3d2402229f19b750a88eea5b38ace9ff9f4db41c06bad56067185baa7",
+    "/home/jesse/.cria/training/decision-qualified-v1/calibration-folds-admitted-final.json": "a8a0a1226d6787da87b7443ca75b27333009219f0297de0b1d88b34d34d85a13",
+    "/home/jesse/.cria/training/decision-qualified-v1/training-strata-final.json": "5676e4736159240feef3e208a77ffaaf7c9bb6998eda124e94082f383d3f1f2b",
+    "/home/jesse/.cria/training/decision-qualified-v1/validation/rejected-legacy-root-check.json": "75ee9b2e85d487e797dc2ac0b0e103809c4f944714d7c1cd748b952ed7339a45",
+    "/home/jesse/.cria/training/decision-qualified-v1/validation/release-integrity.json": "aa5bcac3a7f5866d75cc1828f763c7c5e749c51a970f13f008cd2688ef89e15b",
+    "/home/jesse/.cria/training/decision-qualified-v1/validation/final-focused.log": "635f3eb19268d40719e9c654544d06f84744f86a3fc1578e5639e80b6889f6da",
+    "/home/jesse/.cria/training/decision-qualified-v1/validation/settled-full-pytest.log": "815e54eaff84115542601a3153ca38ed5eeec238b0d7ccc2eaa4ee04454f4688",
+    "/home/jesse/.cria/training/decision-qualified-v1/validation/settled-full-pytest.exit": "9a271f2a916b0b6ee6cecb2426f0b3206ef074578be55d9bc94f6f3fe3ab86aa",
+    "/home/jesse/.cria/training/decision-qualified-v1/validation/settled-source.json": "94d0c54ec68c6f54fa8471fad335d746100da2233011354c7599d35f3b89f43a",
+    "/home/jesse/.cria/training/decision-qualified-v1/validation/task-root-guard-proof.json": "d51a87cd7954c0ae148b604ef1ca4a30a56685ef46cf9b4d4ea9f18642acba13",
+    "/home/jesse/.cria/training/decision-qualified-v1/validation/fresh-master-exclusion-before.log": "8c09350be4ecf20bb4ce81a4c5a75e93d2640bec8ed797628cd3d021e47d73ed",
+    "/home/jesse/.cria/training/decision-qualified-v1/validation/fresh-blank-lineage-before.log": "4d97e26beb223b28f330d31d8f4594ca81f26b2afd9f7821f9ba2126d0f5f874"
+  },
+  "repository_contract_sha256": {
+    "problem-focus.json": "11e0387ff3b4db012ce5301c4c81b86392b337d57e7b2b6ef684292292f37f97",
+    "fresh-evaluation.json": "5e0b53d9f46c9c1ce9ecbf828642cceefb6511c2264b5883eb3be9117338991e",
+    "resource-plan.json": "09825d97190d99e7a09701aeb6d9e95d1f44b6f64358156279ae5cf55474a50c",
+    "training-recipe.json": "7457cf3d756167516df8ae8c6c39f2111093214825b54ed4d26e4c5c820f7985"
+  },
+  "validation": {
+    "focused": {
+      "passed": 60,
+      "log_sha256": "635f3eb19268d40719e9c654544d06f84744f86a3fc1578e5639e80b6889f6da"
+    },
+    "full_suite": {
+      "exit": 0,
+      "passed": 10986,
+      "skipped": 217,
+      "seconds": 429.02,
+      "log_sha256": "815e54eaff84115542601a3153ca38ed5eeec238b0d7ccc2eaa4ee04454f4688",
+      "source_sha256": {
+        "suite/training_prepare.py": "1227ef01d44d2fb83ffb7d371546e4bc7c3fcc95a9cfbcd86992a35ba47affaf",
+        "suite/training_admit.py": "168bce1812d35c5b4af1b0099d5a65d7ae6ebb6181bcf10f95175207dfadcba6",
+        "suite/training_evaluation.py": "d1df3cddc9585d4275abf4825f40ccb7aff276069c3812c0730875f066ccd340",
+        "tests/test_training_prepare.py": "dc35f7d4b79eea92c877192fa14484740ceb9e749cac7ed0f3baf569c2847ccb",
+        "tests/test_training_admit.py": "c0567225185263b41fca6b0d1022f358e13e12ce48908b26198f63d9d4ddc9be",
+        "tests/test_training_evaluation.py": "413b21f37302db51a6f8d1809aa7c6a0e6fcec570990258795aa980580d81d90"
+      }
+    },
+    "controlled_missing_guard_proof": "task-root-guard-proof.json: same behavior test fails with only task-text edge removed and passes with guard; constructor retained"
+  },
+  "operator_question": "Which approved source of new, unrelated real task sessions should supply the sealed evaluation?",
+  "unchanged": [
+    "94final real quarantines preserved; four final-review corrections incorporated",
+    "original synthetic seed",
+    "raw captures",
+    "campaign results ownership",
+    "production/services/configuration",
+    "plannerOFF",
+    "GPU workload"
+  ],
+  "late_review_correction": {
+    "superseded_staging_admitted": 647,
+    "superseded_staging_quarantined": 91,
+    "final_worker_records_changed": 4,
+    "effect": "Three previously admitted TRAIN inputs now quarantined; fourth was already withheld. No inference/training used staging data. Original staging artifacts remain explicitly marked superseded."
+  },
+  "operative_export_roots": [
+    "/home/jesse/.cria/training/decision-qualified-v1/prepared-final",
+    "/home/jesse/.cria/training/decision-qualified-v1/prepared-ettin68-final"
+  ],
+  "review_completion_gate": "Final source shards were verified after all four native finished notifications. Early full line-count exports (647/91) were unreleased staging, NOT an authoritative finish receipt; final 644/94 is operative."
+}

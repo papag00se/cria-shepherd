@@ -4,6 +4,8 @@ This is an offline data/research workstream, not a production-model integration 
 
 ## Deliverables
 
+- [Final data qualification and grouped evaluation](data-preparation.md), [machine-readable readiness](qualification.json), and [execution/evaluation preparation](execution-readiness.md): completed whole-input reviews, explicit quarantines, matched native-fit exports, and the distinction between prepared intake and an actually collected fresh benchmark.
+- [Frozen first training recipe](training-recipe.json), [resource evidence](resource-plan.json), and [prospective evaluation contract](fresh-evaluation.json): pinned candidate, complete tokenization, CPU-only shape checks and collection gates—not training/GPU permission or deployment evidence.
 - [Archive availability and label-coverage audit](archive-audit.md): authoritative capture/run joins, available inputs, label provenance, representative full-case readings, duplicate/lineage limits and readiness gaps.
 - [Research and backbone comparison](research.md): what the cited work actually supports, what remains untested, and suitable supervised-learning candidates.
 - [Synthetic training design](synthetic-data.md): policy definitions, variation/contrast families, actual seed examples, review status and leakage restrictions.
