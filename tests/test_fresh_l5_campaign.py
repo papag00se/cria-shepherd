@@ -1,11 +1,15 @@
 import hashlib
 import json
 import time
+from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
 from suite import fresh_l5_campaign as campaign, sampling
-from suite.run import capture_manifest, validate_fresh_l5_live_level
+from suite.run import capture_manifest, collect_capture, validate_fresh_l5_live_level
+from cria.receivecapture import Receipt, metadata_path
+from cria import callcapture
 
 
 def candidate(tmp_path, **changes):
@@ -118,3 +122,84 @@ def test_requested_level_five_cannot_override_observed_live_level():
 def test_worklist_rejects_unpinned_revision():
     with pytest.raises(ValueError):
         campaign.worklist("")
+
+
+def received_candidate(tmp_path, *, legacy=False):
+    row = candidate(tmp_path)
+    request = tmp_path / 'calls' / '0001-coder-s1.json'
+    receipt = Receipt(request, request_sha256='a' * 64)
+    receipt.finish()
+    row['capture_snapshot'] = capture_manifest(row['capture_dirs'])
+    if legacy:
+        # Exact shape the old collector emitted for the transport's companion JSON.
+        path = metadata_path(request)
+        entry = {'request': str(path), 'sha256': hashlib.sha256(path.read_bytes()).hexdigest(),
+                 'phase': None, 'seq': 1, 'pending': True}
+        row['capture_snapshot']['entries'] = [
+            entry if e['request'] == str(path) else e
+            for e in row['capture_snapshot']['entries']]
+        if not any(e['request'] == str(path) for e in row['capture_snapshot']['entries']):
+            row['capture_snapshot']['entries'].append(entry)
+    return row, metadata_path(request)
+
+
+def test_real_http_receipt_is_not_a_second_upstream_request(tmp_path):
+    row, receipt = received_candidate(tmp_path)
+    entries = row['capture_snapshot']['entries']
+    assert [Path(e['request']).name for e in entries] == ['0001-coder-s1.json']
+    assert collect_capture(row['capture_dirs'], row['capture_snapshot'])['calls'] == 1
+    assert campaign._valid_capture_evidence(row)
+    assert receipt.is_file()  # Never delete the actual transport evidence to fix the census.
+
+
+def test_legacy_receipt_entry_is_verified_without_mutating_frozen_snapshot(tmp_path):
+    row, _ = received_candidate(tmp_path, legacy=True)
+    frozen = json.dumps(row)
+    assert campaign._valid_capture_evidence(row)
+    assert json.dumps(row) == frozen
+    assert row['calls'] == 1
+    assert row['phases'] == {'coder': 1}
+
+
+def test_legacy_receipt_hash_tampering_still_fails_closed(tmp_path):
+    row, receipt = received_candidate(tmp_path, legacy=True)
+    receipt.write_bytes(receipt.read_bytes() + b' ')
+    assert not campaign._valid_capture_evidence(row)
+
+
+def test_upstream_request_cannot_hide_as_a_legacy_receipt(tmp_path):
+    row, receipt = received_candidate(tmp_path, legacy=True)
+    receipt.write_text(json.dumps({'phase': 'coder-s1', 'body': {'messages': []}}))
+    row['capture_snapshot']['entries'][-1]['sha256'] = hashlib.sha256(receipt.read_bytes()).hexdigest()
+    assert not campaign._valid_capture_evidence(row)
+
+
+def test_legacy_receipt_without_its_primary_request_is_not_evidence(tmp_path):
+    row, receipt = received_candidate(tmp_path, legacy=True)
+    row['capture_snapshot']['entries'] = [e for e in row['capture_snapshot']['entries']
+                                          if e['request'] == str(receipt)]
+    row.update(calls=0, phases={})
+    assert not campaign._valid_capture_evidence(row)
+
+
+def test_pending_real_dotted_phase_and_its_receipt_are_not_hidden(tmp_path):
+    from suite.walk import list_calls
+    rlog = SimpleNamespace(session=str(tmp_path), emit=lambda *args, **kwargs: None)
+    path = Path(callcapture.capture({'messages': []}, rlog, calls_dir=tmp_path,
+                                    phase='custom.json.receive'))
+    Receipt(path, request_sha256='a' * 64).finish()
+    snapshot = capture_manifest([path.parent])
+    assert [e['phase'] for e in snapshot['entries']] == ['custom.json.receive']
+    assert snapshot['entries'][0]['pending'] is True
+    row = {'capture_snapshot': snapshot, 'capture_dirs': [str(path.parent)], 'calls': 0, 'phases': {}}
+    assert campaign._valid_capture_evidence(row)
+    assert [(phase, stem) for _, phase, stem in list_calls(path.parent)] == [
+        ('custom.json.receive', path.with_suffix(''))]
+
+
+def test_all_role_sampling_reads_real_requests_not_legacy_receipts(tmp_path):
+    from suite.l0_campaign import actual_sampling
+    row, _ = received_candidate(tmp_path, legacy=True)
+    knobs = {'temperature': 1.0, 'top_p': 0.95}
+    assert actual_sampling(row['capture_snapshot'], 'cria', knobs) == [
+        {'request': str(tmp_path / 'calls' / '0001-coder-s1.json'), 'fields': knobs}]

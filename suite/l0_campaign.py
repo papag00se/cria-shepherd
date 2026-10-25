@@ -22,10 +22,12 @@ if str(REPO) not in sys.path:
 try:
     from .battery_status import TASKS
     from .sampling_adapter import validate_knobs
+    from .capture_paths import legacy_receive_entry, receive_primary
     from . import fleet_gpu
 except ImportError:
     from battery_status import TASKS
     from sampling_adapter import validate_knobs
+    from capture_paths import legacy_receive_entry, receive_primary
     import fleet_gpu
 
 SUITE = Path(__file__).resolve().parent
@@ -221,8 +223,15 @@ def validate_live(config_path, *, level=0):
 
 def actual_sampling(snapshot, model, knobs, *, coder_only=False):
     actual=[]
-    for entry in snapshot.get('entries',[]):
-        request=json.loads(Path(entry['request']).read_text())
+    entries=snapshot.get('entries',[])
+    declared={Path(entry['request']) for entry in entries}
+    for entry in entries:
+        path=Path(entry['request'])
+        request=json.loads(path.read_text())
+        if receive_primary(path) is not None:
+            if not isinstance(request,dict) or not legacy_receive_entry(entry,request,declared):
+                raise ValueError('invalid transport receipt in sampling evidence')
+            continue
         if coder_only and not str(request.get('phase', '')).startswith('coder-s'):
             continue
         body=request['body']

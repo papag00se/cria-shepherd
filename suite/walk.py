@@ -54,7 +54,7 @@ from pathlib import Path
 # The documented file entrypoint must resolve the same project modules as suite.walk.
 if not __package__:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from cria.receivecapture import metadata_path
+from suite.capture_paths import request_identity, request_paths
 
 CALLS_ROOT = Path.home() / ".cria" / "calls"
 CHUNK_BYTES_DEFAULT = 64_000
@@ -77,7 +77,7 @@ SEGMENT_BYTES_DEFAULT = 250_000
 # ceiling tracks the window (unproven, but the error is safe for smaller readers: a smaller budget).
 # Adjust this one number if a specific reader is remeasured; the oversized flag makes a bad fit loud.
 SEGMENT_BYTES_PER_WINDOW_TOKEN = 1.0
-_CALL_RE = re.compile(r"^(\d{4})-(.+)\.json$")
+
 
 
 def budget_for_reader(context_tokens, bytes_per_token=SEGMENT_BYTES_PER_WINDOW_TOKEN):
@@ -174,14 +174,9 @@ def resolve_capture(arg: str) -> Path:
 def list_calls(cap: Path):
     """(number, phase, stem) for every captured call, in call order."""
     out = []
-    files = sorted(cap.iterdir())
-    # Use the transport producer's exact companion relation, not a phase suffix:
-    # dots and even 'json.receive' are legal phase labels of real requests.
-    receipts = {metadata_path(f) for f in files if _CALL_RE.match(f.name)}
-    for f in files:
-        m = _CALL_RE.match(f.name)
-        if m and not f.name.endswith((".response.json",)) and f not in receipts:
-            out.append((m.group(1), m.group(2), f.with_suffix("")))
+    for f in request_paths(cap):
+        _number, phase = request_identity(f)
+        out.append((f.name.split('-', 1)[0], phase, f.with_suffix("")))
     return out
 
 

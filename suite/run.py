@@ -39,9 +39,11 @@ from pathlib import Path
 
 try:  # importable as suite.run and executable as suite/run.py
     from . import sampling, run_guard
+    from .capture_paths import request_identity, request_paths
 except ImportError:
     import sampling
     import run_guard
+    from capture_paths import request_identity, request_paths
 
 SUITE = Path(__file__).resolve().parent
 RESULTS = SUITE / "results" / "results.jsonl"
@@ -551,18 +553,14 @@ def capture_manifest(session_dirs) -> dict:
     entries = []
     complete = True
     for directory in session_dirs:
-        for request in sorted(Path(directory).glob("[0-9]*-*.json")):
-            if request.name.endswith((".response.json", ".prompt.txt", ".reasoning.txt")):
-                continue
-            match = re.match(r"^(\d+)-(.+?)\.json$", request.name)
-            if not match:
-                continue
+        for request in request_paths(Path(directory)):
+            seq, _phase = request_identity(request)
             response = request.with_name(request.stem + ".response.json")
             try:
                 req = json.loads(request.read_text())
                 phase = req.get("phase")
                 entry = {"request": str(request), "sha256": hashlib.sha256(request.read_bytes()).hexdigest(),
-                         "phase": phase, "seq": int(match.group(1))}
+                         "phase": phase, "seq": seq}
                 if response.is_file():
                     entry["response"] = str(response)
                     entry["response_sha256"] = hashlib.sha256(response.read_bytes()).hexdigest()

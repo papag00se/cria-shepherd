@@ -5,8 +5,10 @@ import argparse, hashlib, json, re
 from pathlib import Path
 try:
     from .run import collect_capture
+    from .capture_paths import legacy_receive_entry, receive_primary, request_identity, request_paths
 except ImportError:
     from run import collect_capture
+    from capture_paths import legacy_receive_entry, receive_primary, request_identity, request_paths
 
 SUITE = Path(__file__).resolve().parent
 RESULTS = SUITE / "results" / "results.jsonl"
@@ -61,21 +63,33 @@ def _valid_capture_evidence(row: dict, *, allow_errors: bool = False) -> bool:
             return False
         completed = []
         named_requests = set()
+        model_entries = []
+        declared = {Path(str(entry.get('request', ''))) for entry in entries if isinstance(entry, dict)}
         for entry in entries:
             if not isinstance(entry, dict):
                 return False
             request = Path(str(entry.get("request", "")))
-            match = re.match(r"^(\d+)-(.+)\.json$", request.name)
             phase = entry.get("phase")
-            if (not request.is_file() or request in named_requests or not match
-                    or type(entry.get("seq")) is not int or int(match.group(1)) != entry["seq"]
-                    or not isinstance(phase, str) or match.group(2) != phase):
+            if not request.is_file():
                 return False
-            named_requests.add(request)
             try:
-                if hashlib.sha256(request.read_bytes()).hexdigest() != entry.get("sha256"):
+                raw = request.read_bytes()
+                if hashlib.sha256(raw).hexdigest() != entry.get("sha256"):
                     return False
-                req = json.loads(request.read_text())
+                req = json.loads(raw)
+                if not isinstance(req, dict):
+                    return False
+                if receive_primary(request) is not None:
+                    if not legacy_receive_entry(entry, req, declared):
+                        return False
+                    continue  # Verified historical transport artifact, never a model call.
+                identity = request_identity(request)
+                if (request in named_requests or identity is None
+                        or type(entry.get("seq")) is not int
+                        or identity != (entry["seq"], phase) or not isinstance(phase, str)):
+                    return False
+                named_requests.add(request)
+                model_entries.append(entry)
                 response = request.with_name(request.stem + ".response.json")
                 if (req.get("phase") != phase
                         or not isinstance(req.get("body"), dict)
@@ -102,14 +116,11 @@ def _valid_capture_evidence(row: dict, *, allow_errors: bool = False) -> bool:
         dirs = _capture_dirs(row)
         if not dirs or not all(directory.is_dir() for directory in dirs):
             return False
-        actual_requests = {p for directory in dirs
-                           for p in directory.glob("[0-9]*-*.json")
-                           if re.match(r"^\d+-.+\.json$", p.name)
-                           and not p.name.endswith((".response.json", ".prompt.txt", ".reasoning.txt"))}
-        expected_responses = {Path(entry["response"]) for entry in entries if entry.get("response")}
+        actual_requests = {p for directory in dirs for p in request_paths(directory)}
+        expected_responses = {Path(entry["response"]) for entry in model_entries if entry.get("response")}
         expected_responses.update(
             request.with_name(request.stem + ".response.json")
-            for entry in entries if entry.get("pending")
+            for entry in model_entries if entry.get("pending")
             for request in [Path(entry["request"])]
             if request.with_name(request.stem + ".response.json").is_file())
         actual_responses = {p for directory in dirs for p in directory.glob("*.response.json")}
@@ -121,7 +132,7 @@ def _valid_capture_evidence(row: dict, *, allow_errors: bool = False) -> bool:
         # the run cutoff. No further request can be laundered through this allowance.
         extras = actual_requests - named_requests
         cutoff = float(row.get("started", 0)) + float(row.get("wall_seconds", 0))
-        late_entries = [entry for entry in entries if entry.get("pending") and
+        late_entries = [entry for entry in model_entries if entry.get("pending") and
                         Path(entry["request"]).with_name(Path(entry["request"]).stem + ".response.json") in actual_responses]
         bounded_followup = False
         if len(extras) == 1 and len(late_entries) == 1 and len(actual_responses - expected_responses) == 1:
@@ -146,7 +157,7 @@ def _valid_capture_evidence(row: dict, *, allow_errors: bool = False) -> bool:
                 bounded_followup = False
         if (not (actual_requests == named_requests or bounded_followup)
                 or actual_responses - expected_responses != ({Path(next(iter(extras)).with_name(next(iter(extras)).stem + ".response.json"))} if bounded_followup else set())
-                or any(str(entry.get("phase", "")).startswith("planner") for entry in entries)):
+                or any(str(entry.get("phase", "")).startswith("planner") for entry in model_entries)):
             return False
         phases = {}
         for _phase, response, _response_obj in completed:
@@ -236,9 +247,7 @@ def _valid_post_stop_response(row: dict, dirs: list[str], responses: list[Path])
         if any(path.stat().st_mtime > cutoff for path in on_time):
             return False
         dirs_paths = [Path(directory) for directory in dirs]
-        requests = {path for directory in dirs_paths for path in directory.glob("[0-9]*-*.json")
-                    if re.match(r"^\d+-.+\.json$", path.name)
-                    and not path.name.endswith((".response.json", ".prompt.txt", ".reasoning.txt"))}
+        requests = {path for directory in dirs_paths for path in request_paths(directory)}
         if requests != {path.with_name(path.name.removesuffix(".response.json") + ".json")
                         for path in responses}:
             return False
