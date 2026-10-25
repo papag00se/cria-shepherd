@@ -1,0 +1,103 @@
+import math
+
+import pytest
+
+from suite.training_run import fit_specs, loss_weights, accumulated_batches, learning_rate_factor, validate_authorization
+
+
+def test_every_seed_and_arm_excludes_the_same_whole_task_across_both_heads():
+    folds = {'folds': [{'calibration_task': 'held-' + id,
+                        'real_training_ids': sorted(set('abc') - {id}),
+                        'real_calibration_ids': [id], 'mixed_arm_synthetic_training_ids': ['s']}
+                       for id in 'abc']}
+    jobs = fit_specs([17, 29, 43], folds, ['a', 'b', 'c'], ['s'])
+    assert len(jobs) == 24
+    for job in jobs:
+        if job['calibration_task']:
+            assert set(job['train_ids']).isdisjoint(job['predict_ids'])
+            assert job['predict_ids'] == [job['calibration_task'].removeprefix('held-')]
+        assert ('s' in job['train_ids']) == (job['arm'] == 'real_plus_11_reviewed_standalone_synthetic')
+
+
+def test_no_training_id_can_appear_in_its_own_calibration_fold():
+    folds = {'folds': [{'calibration_task': 'held', 'real_training_ids': ['a'],
+                        'real_calibration_ids': ['a'], 'mixed_arm_synthetic_training_ids': []}]}
+    with pytest.raises(ValueError, match='fold'):
+        fit_specs([17], folds, ['a'], [])
+
+
+def test_task_family_weights_do_not_turn_tiny_synthetic_groups_into_real_tasks():
+    rows = {'a': {'task': 'large', 'family': 'retrospective'},
+            'b': {'task': 'large', 'family': 'retrospective'},
+            'c': {'task': 'small', 'family': 'dictation'}}
+    weights = loss_weights(['a', 'b', 'c', 's'], rows)
+    assert weights == {'a': 0.75, 'b': 0.75, 'c': 1.5, 's': 1.0}
+    assert sum(weights[k] for k in rows) == len(rows)
+
+
+def test_last_accumulation_uses_actual_examples_without_dropping_or_repeating():
+    batches = accumulated_batches(list(range(34)), 16)
+    assert list(map(len, batches)) == [16, 16, 2]
+    assert [item for batch in batches for item in batch] == list(range(34))
+    assert sum(1 / len(batches[-1]) for _ in batches[-1]) == 1
+
+
+def test_schedule_is_optimizer_step_based_and_reaches_zero():
+    total = 5 * math.ceil(514 / 16)
+    assert total == 165
+    assert learning_rate_factor(0, total) == 0
+    assert learning_rate_factor(17, total) == 1
+    assert learning_rate_factor(total, total) == 0
+
+
+def test_native_pooling_gradients_and_optimizer_ownership():
+    torch = pytest.importorskip('torch')
+    from types import SimpleNamespace
+    from suite.training_run import make_model, optimizer_groups
+
+    class Encoder(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.config = SimpleNamespace(hidden_size=2)
+            self.embedding = torch.nn.Embedding.from_pretrained(torch.tensor([[100., 100.], [1., 0.], [0., 1.]]), freeze=False)
+            self.norm = torch.nn.LayerNorm(2)
+
+        def forward(self, input_ids, attention_mask):
+            return SimpleNamespace(last_hidden_state=self.embedding(input_ids))
+
+    model = make_model(torch, Encoder())
+    with torch.no_grad():
+        model.heads['retrospective'].weight.copy_(torch.eye(2))
+        model.heads['retrospective'].bias.zero_()
+    logits = model(torch.tensor([[1, 2, 0]]), torch.tensor([[1, 1, 0]]), 'retrospective')
+    assert torch.allclose(logits, torch.tensor([[.5, .5]]))
+    torch.nn.functional.cross_entropy(logits, torch.tensor([1])).backward()
+    assert model.heads['retrospective'].weight.grad.abs().sum() > 0
+    assert model.heads['dictation'].weight.grad is None
+    assert model.encoder.embedding.weight.grad[0].abs().sum() == 0
+    groups = optimizer_groups(torch, model, {'heads_lr': .1, 'encoder_lr': .01, 'weight_decay': .02})
+    by_identity = {id(parameter): group for group in groups for parameter in group['params']}
+    assert by_identity[id(model.encoder.norm.weight)]['weight_decay'] == 0
+    assert by_identity[id(model.encoder.norm.bias)]['weight_decay'] == 0
+    assert by_identity[id(model.heads['retrospective'].bias)]['weight_decay'] == 0
+    assert by_identity[id(model.heads['retrospective'].weight)]['lr'] == .1
+    assert by_identity[id(model.encoder.embedding.weight)]['lr'] == .01
+
+
+def test_native_loader_sets_are_preserved_as_structured_receipts():
+    from suite.training_run import loading_receipt
+    native = {'missing_keys': set(), 'unexpected_keys': {'decoder.weight', 'head.norm.weight'},
+              'mismatched_keys': [], 'error_msgs': []}
+    result = loading_receipt(native)
+    assert result == {'missing_keys': [], 'unexpected_keys': ['decoder.weight', 'head.norm.weight'],
+                      'mismatched_keys': [], 'error_msgs': []}
+    assert isinstance(native['missing_keys'], set)
+
+
+def test_gpu_authority_must_be_explicit_and_bound_to_recipe_and_device():
+    auth = {'training_authorized': True, 'gpu_uuid': 'gpu', 'recipe_sha256': 'recipe'}
+    validate_authorization(auth, 'recipe', 'gpu')
+    for field, value in [('training_authorized', False), ('gpu_uuid', 'other'), ('recipe_sha256', 'changed')]:
+        bad = {**auth, field: value}
+        with pytest.raises(ValueError, match='authorization'):
+            validate_authorization(bad, 'recipe', 'gpu')
