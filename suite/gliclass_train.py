@@ -10,7 +10,7 @@ from pathlib import Path
 import random
 import time
 
-from suite.gliclass_probe import load_native, prepare_case
+from suite.gliclass_probe import load_frozen_cohorts, load_native, prepare_case
 from suite.onejev_probe import append, file_sha
 from suite.onejev_train import GPU_UUID, balanced_weights, loss_at_slots, lr_at
 from suite.training_updates import accumulated_update
@@ -97,7 +97,7 @@ def reload_full_fit(torch, snapshot, root):
 def run(root):
     if (root / 'native-training-inputs.jsonl').exists():
         raise ValueError('existing attempt; preserve it and qualify a distinct run')
-    contract = json.loads((root / 'contract.json').read_bytes())
+    contract, rows, _held = load_frozen_cohorts(root)
     for name, digest in contract['input_sha256'].items():
         if file_sha(Path(name)) != digest:
             raise ValueError(f'frozen source changed: {name}')
@@ -111,9 +111,6 @@ def run(root):
     torch.backends.cuda.matmul.allow_tf32 = False
     torch.backends.cudnn.allow_tf32 = False
     torch.backends.cudnn.benchmark = False
-    rows = json.loads((root / 'train-cases.json').read_bytes())
-    if len(rows) != 514 or any(r['partition'] != 'TRAIN' for r in rows):
-        raise ValueError('wrong admitted TRAIN cohort')
     weights = balanced_weights(rows)
     model, pipe, optimizer, loading, inactive = load_for_training(torch, contract['snapshot'])
     append(root / 'events.jsonl', {'event': 'loading', 'loading': loading, 'declared_inactive': inactive,

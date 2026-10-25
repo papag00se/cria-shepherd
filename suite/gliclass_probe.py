@@ -90,6 +90,30 @@ def ort_logits(engine, inputs):
     return output[0]
 
 
+def load_frozen_cohorts(root):
+    """Bind both cohorts to the signed-off producer receipt before any inference."""
+    contract = json.loads((root / 'contract.json').read_bytes())
+    cohorts = []
+    for name, count_key in [('train-cases.json', 'train_count'), ('held-cases.json', 'held_count')]:
+        path = root / name
+        if file_sha(path) != contract['input_sha256'][str(path)]:
+            raise ValueError('frozen admitted cases changed')
+        rows = json.loads(path.read_bytes())
+        count = contract[count_key]
+        if type(count) is not int or count <= 0 or len(rows) != count:
+            raise ValueError('wrong frozen cohort count')
+        if len({r['id'] for r in rows}) != len(rows):
+            raise ValueError('duplicate identities in frozen cohort')
+        cohorts.append(rows)
+    train, held = cohorts
+    if any(r['partition'] != 'TRAIN' for r in train) or any(r['partition'] == 'TRAIN' for r in held):
+        raise ValueError('wrong cohort exposure partition')
+    for key in ['id', 'group_id', 'input_sha256']:
+        if {r[key] for r in train} & {r[key] for r in held}:
+            raise ValueError(f'overlapping cohorts: {key}')
+    return contract, train, held
+
+
 def run(root, onejev_root):
     import numpy as np
     import torch
@@ -97,15 +121,7 @@ def run(root, onejev_root):
     from suite.gliclass_quantize import validate_native_manifest
     manifest = validate_native_manifest(root)
     quantized = json.loads((root / 'quantized.json').read_bytes())
-    source_contract = json.loads((onejev_root / 'contract.json').read_bytes())
-    train = json.loads((onejev_root / 'train-cases.json').read_bytes())
-    held = json.loads((onejev_root / 'held-cases.json').read_bytes())
-    for name in ['train-cases.json', 'held-cases.json']:
-        path = onejev_root / name
-        if file_sha(path) != source_contract['input_sha256'][str(path)]:
-            raise ValueError('frozen admitted cases changed')
-    if len(train) != 514 or len(held) != 130 or {x['id'] for x in train} & {x['id'] for x in held}:
-        raise ValueError('wrong or overlapping cohorts')
+    source_contract, train, held = load_frozen_cohorts(onejev_root)
     for name, expected in quantized['files'].items():
         if file_sha(root / 'int4' / name) != expected['sha256']:
             raise ValueError('INT4 weight bundle changed')
@@ -117,7 +133,8 @@ def run(root, onejev_root):
                 'policy_sha256': source_contract['policy_sha256'],
                 'max_tokens': MAX_TOKENS, 'dtype': 'FP32 activations, INT4 constant matrices and embeddings',
                 'fidelity': {'rtol': 0.0002, 'atol': 0.0002, 'cases': 'frozen native tiny eight plus longest TRAIN input per head'},
-                'quality': 'all 130 historical diagnostics, no label/threshold fitting; not fresh or human gold',
+                'quality': source_contract['evaluation'],
+                'train_count': len(train), 'held_count': len(held),
                 'quarantines_unchanged': True, 'deployed': False}
     (out / 'contract.json').write_text(json.dumps(contract, indent=2) + '\n')
     model, pipe, loading = load_native(manifest['snapshot'])
