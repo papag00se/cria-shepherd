@@ -1,0 +1,311 @@
+{
+  "status": "PROVISIONAL_FITS_AND_CALIBRATION_COMPLETE_NOT_ADMITTED",
+  "recipe_sha256": "7457cf3d756167516df8ae8c6c39f2111093214825b54ed4d26e4c5c820f7985",
+  "trainer_sha256": "2132d2beaeb0b37d8df758b3ad5f707a78ec7c4e70f95e5a54989dc3d579f913",
+  "metric_code_sha256": "901b01de405a96e872d37a26dc0f8036d7d148201135771828e55e139db5cb27",
+  "calibration_result_sha256": "abf5a09522d2e004d21817e71cee1178bf3b871eed46a26df77c6ad76bb10642",
+  "audited_fits": 24,
+  "exact_original_oof_files": 18,
+  "exact_original_final_files": 6,
+  "primary_prespecified_candidate": {
+    "joint_weight_bytes": 136309856,
+    "joint_sha256": "4d09c22d12020ed5525f2d04f8440e57b68024da1a086e4c9254e9b594326a98",
+    "reference_sha256": "53b24c80e224901b7af749fc62db0924f808b75375efe8261cde752dd0055660",
+    "reference_bytes": 272599312,
+    "exact_prior_artifact_match": true,
+    "NOT_DEPLOYMENT_CERTIFIED": "CPU operators/parity/RSS/latency and fresh evaluation unvalidated",
+    "local_directory": "/home/jesse/.cria/training/decision-qualified-v1/execution/references-001/real_only-seed17-final"
+  },
+  "calibration_native_calls": 3084,
+  "fitted_calibration_panels": 12,
+  "fitted_task_groups": 3,
+  "dev_cases_scored": 0,
+  "archive_diagnostic_cases_scored": 0,
+  "fresh_cases": 0,
+  "human_gold_certified": false,
+  "deployment_authorized": false,
+  "observed_training_step_reserved_high_water_bytes": 4043309056,
+  "observed_training_step_host_high_water_bytes": 2374488064,
+  "resource_coverage": "Training-step allocator and host high-water observations only; not full-process/NVML/export/serving peak certification.",
+  "audited_fit_elapsed_seconds": 2372.357725339476,
+  "calibration_results": [
+    {
+      "arm": "real_only",
+      "seed": 17,
+      "family": "dictation",
+      "label_order": [
+        "DESCRIBES",
+        "DICTATES"
+      ],
+      "temperature": 1,
+      "count": 64,
+      "confusion_reviewed_target_by_prediction": [
+        [
+          3,
+          15
+        ],
+        [
+          2,
+          44
+        ]
+      ],
+      "task_macro_nll": 0.48054962239990395
+    },
+    {
+      "arm": "real_only",
+      "seed": 17,
+      "family": "retrospective",
+      "label_order": [
+        "RETROSPECTIVE",
+        "PLAN"
+      ],
+      "temperature": 1,
+      "count": 450,
+      "confusion_reviewed_target_by_prediction": [
+        [
+          299,
+          11
+        ],
+        [
+          132,
+          8
+        ]
+      ],
+      "task_macro_nll": 0.5611095135309494
+    },
+    {
+      "arm": "real_only",
+      "seed": 29,
+      "family": "dictation",
+      "label_order": [
+        "DESCRIBES",
+        "DICTATES"
+      ],
+      "temperature": 2,
+      "count": 64,
+      "confusion_reviewed_target_by_prediction": [
+        [
+          4,
+          14
+        ],
+        [
+          5,
+          41
+        ]
+      ],
+      "task_macro_nll": 0.5383542237964511
+    },
+    {
+      "arm": "real_only",
+      "seed": 29,
+      "family": "retrospective",
+      "label_order": [
+        "RETROSPECTIVE",
+        "PLAN"
+      ],
+      "temperature": 2,
+      "count": 450,
+      "confusion_reviewed_target_by_prediction": [
+        [
+          306,
+          4
+        ],
+        [
+          140,
+          0
+        ]
+      ],
+      "task_macro_nll": 0.5819831227646298
+    },
+    {
+      "arm": "real_only",
+      "seed": 43,
+      "family": "dictation",
+      "label_order": [
+        "DESCRIBES",
+        "DICTATES"
+      ],
+      "temperature": 1,
+      "count": 64,
+      "confusion_reviewed_target_by_prediction": [
+        [
+          4,
+          14
+        ],
+        [
+          3,
+          43
+        ]
+      ],
+      "task_macro_nll": 0.4728109686526247
+    },
+    {
+      "arm": "real_only",
+      "seed": 43,
+      "family": "retrospective",
+      "label_order": [
+        "RETROSPECTIVE",
+        "PLAN"
+      ],
+      "temperature": 1,
+      "count": 450,
+      "confusion_reviewed_target_by_prediction": [
+        [
+          299,
+          11
+        ],
+        [
+          128,
+          12
+        ]
+      ],
+      "task_macro_nll": 0.5210478357082791
+    },
+    {
+      "arm": "real_plus_11_reviewed_standalone_synthetic",
+      "seed": 17,
+      "family": "dictation",
+      "label_order": [
+        "DESCRIBES",
+        "DICTATES"
+      ],
+      "temperature": 2,
+      "count": 64,
+      "confusion_reviewed_target_by_prediction": [
+        [
+          4,
+          14
+        ],
+        [
+          1,
+          45
+        ]
+      ],
+      "task_macro_nll": 0.5008809053517326
+    },
+    {
+      "arm": "real_plus_11_reviewed_standalone_synthetic",
+      "seed": 17,
+      "family": "retrospective",
+      "label_order": [
+        "RETROSPECTIVE",
+        "PLAN"
+      ],
+      "temperature": 1,
+      "count": 450,
+      "confusion_reviewed_target_by_prediction": [
+        [
+          289,
+          21
+        ],
+        [
+          132,
+          8
+        ]
+      ],
+      "task_macro_nll": 0.615975789600676
+    },
+    {
+      "arm": "real_plus_11_reviewed_standalone_synthetic",
+      "seed": 29,
+      "family": "dictation",
+      "label_order": [
+        "DESCRIBES",
+        "DICTATES"
+      ],
+      "temperature": 2,
+      "count": 64,
+      "confusion_reviewed_target_by_prediction": [
+        [
+          7,
+          11
+        ],
+        [
+          10,
+          36
+        ]
+      ],
+      "task_macro_nll": 0.5340135771956346
+    },
+    {
+      "arm": "real_plus_11_reviewed_standalone_synthetic",
+      "seed": 29,
+      "family": "retrospective",
+      "label_order": [
+        "RETROSPECTIVE",
+        "PLAN"
+      ],
+      "temperature": 1,
+      "count": 450,
+      "confusion_reviewed_target_by_prediction": [
+        [
+          304,
+          6
+        ],
+        [
+          139,
+          1
+        ]
+      ],
+      "task_macro_nll": 0.5797233586348106
+    },
+    {
+      "arm": "real_plus_11_reviewed_standalone_synthetic",
+      "seed": 43,
+      "family": "dictation",
+      "label_order": [
+        "DESCRIBES",
+        "DICTATES"
+      ],
+      "temperature": 1,
+      "count": 64,
+      "confusion_reviewed_target_by_prediction": [
+        [
+          4,
+          14
+        ],
+        [
+          6,
+          40
+        ]
+      ],
+      "task_macro_nll": 0.4630153673988624
+    },
+    {
+      "arm": "real_plus_11_reviewed_standalone_synthetic",
+      "seed": 43,
+      "family": "retrospective",
+      "label_order": [
+        "RETROSPECTIVE",
+        "PLAN"
+      ],
+      "temperature": 1,
+      "count": 450,
+      "confusion_reviewed_target_by_prediction": [
+        [
+          309,
+          1
+        ],
+        [
+          137,
+          3
+        ]
+      ],
+      "task_macro_nll": 0.5133782268766105
+    }
+  ],
+  "environment_freeze_sha256": "c54c5087e0a160da1d7ea70dee77b994f077528f6b16fc3967032d2407571f85",
+  "full_pytest": "10998 passed, 220 skipped",
+  "isolated_torch_offline_tests": "53 passed",
+  "remaining_gates": [
+    "Investigate missed PLAN and falsely blocked DESCRIBES outcomes without changing thresholds post hoc.",
+    "Score frozen DEV/archive diagnostics separately; retain source exposure disclosure.",
+    "No fresh benchmark or human gold.",
+    "CPU operator parity/RSS/latency and stdlib serving engine unresolved."
+  ],
+  "disk_apparent_bytes": {
+    "sequential_outputs": 3340330227,
+    "gpu_environment": 7038379699,
+    "cpu_preflight_environment": 1065139287
+  }
+}

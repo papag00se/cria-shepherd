@@ -4,7 +4,7 @@ This is an offline data/research workstream, not a production-model integration 
 
 ## Deliverables
 
-- [Authorized GPU execution](gpu-execution.md): isolated trainer, native receipts, audited reproduction and FP32/reference versus proposed serving-artifact boundaries. The frozen qualification/recipe documents retain their historical pre-authorization state.
+- [Completed first GPU results](gpu-results.md), [machine-readable evidence](gpu-result.json), and [authorized execution](gpu-execution.md): actual fitting, exact audited reproduction, consequential OOF errors and FP32/reference versus proposed serving-artifact boundaries. **Not admitted for deployment.** The frozen qualification/recipe documents retain their historical pre-authorization state.
 
 - [Final data qualification and grouped evaluation](data-preparation.md), [machine-readable readiness](qualification.json), and [execution/evaluation preparation](execution-readiness.md): completed whole-input reviews, explicit quarantines, matched native-fit exports, and the distinction between prepared intake and an actually collected fresh benchmark.
 - [Frozen first training recipe](training-recipe.json), [resource evidence](resource-plan.json), and [prospective evaluation contract](fresh-evaluation.json): pinned candidate, complete tokenization, CPU-only shape checks and collection gates—not training/GPU permission or deployment evidence.
