@@ -65,11 +65,19 @@ def file_sha(path):
     return digest.hexdigest()
 
 
-def run(root, binary):
+def native_request(case, policy_hashes):
+    from qev.schema import SystemOneRequest
+    labels = LABEL_ORDER[case['family']]
+    return SystemOneRequest.model_validate({'state': case['complete_input'], 'questions': {'decision': {
+        'type': 'choice', 'instructions': frozen_policy(case['family'], policy_hashes[case['family']]),
+        'criteria': {label: label for label in labels}}}})
+
+
+def run(root, binary, *, expected_count=24):
     contract = json.loads((root / 'contract.json').read_bytes())
     cases = json.loads((root / 'cases.json').read_bytes())
     artifact = json.loads((root / 'artifacts.json').read_bytes())
-    if len(cases) != 24 or sha((root / 'cases.json').read_bytes()) != contract['cases_sha256']:
+    if len(cases) != expected_count or sha((root / 'cases.json').read_bytes()) != contract['cases_sha256']:
         raise ValueError('frozen bounded cohort changed')
     for family, filename in contract['policy_files'].items():
         if sha(Path(filename).read_bytes()) != contract['policy_sha256'][family]:
@@ -80,7 +88,6 @@ def run(root, binary):
     if (root / 'results.jsonl').exists():
         raise ValueError('existing run; do not duplicate inference')
     from qev.llamacpp import LlamaCppEngine
-    from qev.schema import SystemOneRequest
     from qev.prompt import render_question
 
     with socket.socket() as s:
@@ -130,10 +137,7 @@ def run(root, binary):
             if case['label_id'] != labels.index(case['label']):
                 raise ValueError('frozen label ID differs from source class order')
             current['id'] = case['id']
-            policy = frozen_policy(family, contract['policy_sha256'][family])
-            request = SystemOneRequest.model_validate({'state': case['complete_input'],
-                'questions': {'decision': {'type': 'choice', 'instructions': policy,
-                                          'criteria': {label: label for label in labels}}}})
+            request = native_request(case, contract['policy_sha256'])
             rendered = render_question('decision', request.questions['decision'], style=engine.style)
             prompt = engine._render_prompt(request.state, rendered.suffix)
             tokens = engine._encode(prompt)
@@ -154,7 +158,7 @@ def run(root, binary):
         (root / 'completed.json').write_text(json.dumps({'count': len(cases),
             'reviewed_target_by_prediction': matrices, 'class_order': LABEL_ORDER,
             'not_fresh_evaluation_or_human_gold': True, 'quarantines_unchanged': True,
-            'no_training_or_deployment': True}, indent=2) + '\n')
+            'inference_only': True, 'deployed': False}, indent=2) + '\n')
     finally:
         proc.terminate()
         try:
@@ -169,8 +173,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--root', type=Path, required=True)
     parser.add_argument('--binary', type=Path, required=True)
+    parser.add_argument('--count', type=int, default=24, help='exact frozen cohort size, never a row limit')
     args = parser.parse_args()
-    run(args.root, args.binary)
+    run(args.root, args.binary, expected_count=args.count)
 
 
 if __name__ == '__main__':

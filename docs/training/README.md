@@ -4,10 +4,11 @@ This is an offline data/research workstream, not a production-model integration 
 
 ## Current operator direction
 
-The 68M candidate is rejected as the next model; no further matrix or deployment of it is authorized. Larger candidates are being screened. The operator explicitly permitted a roughly 529 MB OneJev 1.6 0.8B Q4 **experiment only**, not relaxation of production's below-250,000,000-byte weight budget. Its bounded replay is complete and does not establish a usable guard.
+The 68M candidate is rejected as the next model; no further matrix or deployment of it is authorized. Larger candidates are being screened. The operator explicitly permitted a roughly 529 MB OneJev 1.6 0.8B Q4 **experiment only**, not relaxation of production's below-250,000,000-byte weight budget. Its untrained bounded replay is complete and does not establish a usable guard. The operator has now explicitly requested OneJev training on the already approved 3090, followed by GLiClass v4 Edge four-bit testing and, if needed, training when trained OneJev remains insufficient. This work is active; the untrained score is not a verdict on a trained model.
 
 ## Deliverables
 
+- [Active OneJev fine-tune and authorized GLiClass follow-up](onejev-finetuning.md): one frozen full fit, passed native learning check, final trained-Q4 comparison, and conditional next candidate. No deployment.
 - [Completed OneJev Q4 experiment](onejev-q4-experiment.md): native typed-decision interface, published artifact compatibility failure, separately identified clean re-export, 24-case diagnostic results and two FP32 controls. No training or deployment.
 - [Closed 68M mechanical investigation](mistraining-investigation.md): verified learning mechanics and tiny-subset memorization, remaining training-versus-excluded-task gap, and required mechanical preflight before any new matrix. This does not reverse the model rejection.
 - [Completed first GPU results](gpu-results.md), [machine-readable evidence](gpu-result.json), and [authorized execution](gpu-execution.md): actual fitting, exact audited reproduction, consequential OOF errors and FP32/reference versus proposed serving-artifact boundaries. **Not admitted for deployment.** The frozen qualification/recipe documents retain their historical pre-authorization state.
