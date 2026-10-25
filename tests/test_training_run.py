@@ -84,6 +84,38 @@ def test_native_pooling_gradients_and_optimizer_ownership():
     assert by_identity[id(model.encoder.embedding.weight)]['lr'] == .01
 
 
+def test_export_preserves_full_precision_reference_and_integer_buffers():
+    torch = pytest.importorskip('torch')
+    from suite.training_run import export_states
+    class Model(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.encoder = torch.nn.Linear(2, 2)
+            self.heads = torch.nn.Linear(2, 2)
+            self.encoder.register_buffer('positions', torch.tensor([0, 1], dtype=torch.int64))
+    model = Model()
+    reference, serving = export_states(torch, model)
+    assert reference['encoder.weight'].dtype == torch.float32
+    assert serving['encoder.weight'].dtype == torch.float16
+    assert serving['heads.weight'].dtype == torch.float32
+    assert serving['encoder.positions'].dtype == torch.int64
+    assert torch.equal(reference['encoder.weight'], model.encoder.weight)
+    assert model.encoder.weight.dtype == torch.float32
+
+
+def test_rng_receipts_observe_without_consuming_the_sampler_or_torch_rng():
+    torch = pytest.importorskip('torch')
+    import random
+    from suite.training_run import rng_receipt
+    sampler = random.Random(17)
+    cpu, sampling = torch.get_rng_state().clone(), sampler.getstate()
+    receipt = rng_receipt(torch, sampler)
+    assert receipt['torch_cpu'] == cpu.tolist()
+    assert receipt['sampler'] == sampling
+    assert sampler.getstate() == sampling
+    assert torch.equal(torch.get_rng_state(), cpu)
+
+
 def test_native_loader_sets_are_preserved_as_structured_receipts():
     from suite.training_run import loading_receipt
     native = {'missing_keys': set(), 'unexpected_keys': {'decoder.weight', 'head.norm.weight'},
@@ -92,6 +124,34 @@ def test_native_loader_sets_are_preserved_as_structured_receipts():
     assert result == {'missing_keys': [], 'unexpected_keys': ['decoder.weight', 'head.norm.weight'],
                       'mismatched_keys': [], 'error_msgs': []}
     assert isinstance(native['missing_keys'], set)
+
+
+def test_active_question_changes_require_new_label_policy_review(tmp_path):
+    from suite.training_run import verify_question_policies
+    from suite.training_prepare import sha
+    path = tmp_path / 'question.txt'
+    path.write_text('frozen question')
+    policies = {'question.txt': sha(path.read_bytes())}
+    verify_question_policies(tmp_path, policies)
+    path.write_text('different question')
+    with pytest.raises(ValueError, match='question policy'):
+        verify_question_policies(tmp_path, policies)
+
+
+def test_recipe_loader_binds_actual_public_policy_schema(tmp_path):
+    import json
+    from pathlib import Path
+    from suite.training_run import load_recipe
+    recipe_path = Path(__file__).resolve().parents[1] / 'docs/training/training-recipe.json'
+    recipe = load_recipe(recipe_path)
+    changed = json.loads(recipe_path.read_text())
+    first = next(iter(changed['question_policy_sha256']))
+    changed['question_policy_sha256'][first] = '0' * 64
+    new_path = tmp_path / 'recipe.json'
+    new_path.write_text(json.dumps(changed))
+    with pytest.raises(ValueError, match='question policy'):
+        load_recipe(new_path)
+    assert recipe['question_policy_sha256'][first] != '0' * 64
 
 
 def test_gpu_authority_must_be_explicit_and_bound_to_recipe_and_device():

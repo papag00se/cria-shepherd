@@ -105,6 +105,25 @@ def loading_receipt(info):
     return {key: sorted(value) if isinstance(value, set) else value for key, value in info.items()}
 
 
+def export_states(torch, model):
+    """Retain FP32 training reference; half encoder weights are serving-only."""
+    reference, serving = {}, {}
+    for name, tensor in model.state_dict().items():
+        value = tensor.detach().to(device='cpu').contiguous()
+        if value.is_floating_point() and value.dtype != torch.float32:
+            raise ValueError('training master tensor is not FP32')
+        reference[name] = value
+        dtype = torch.float16 if name.startswith('encoder.') and value.is_floating_point() else value.dtype
+        serving[name] = value.to(dtype=dtype).contiguous()
+    return reference, serving
+
+
+def rng_receipt(torch, sampler):
+    return {'python': random.getstate(), 'sampler': sampler.getstate(),
+            'torch_cpu': torch.get_rng_state().tolist(),
+            'torch_cuda': [state.tolist() for state in torch.cuda.get_rng_state_all()]}
+
+
 def make_model(torch, encoder):
     class Joint(torch.nn.Module):
         def __init__(self):
@@ -121,8 +140,20 @@ def make_model(torch, encoder):
     return Joint()
 
 
-def validate_bundle(root, recipe_path):
+def verify_question_policies(repository, policies):
+    for name, digest in policies.items():
+        if sha((repository / name).read_bytes()) != digest:
+            raise ValueError('active question policy changed; freeze a new version and review affected labels')
+
+
+def load_recipe(recipe_path):
     recipe = json.loads(recipe_path.read_bytes())
+    verify_question_policies(Path(__file__).resolve().parent.parent, recipe['question_policy_sha256'])
+    return recipe
+
+
+def validate_bundle(root, recipe_path):
+    recipe = load_recipe(recipe_path)
     card = json.loads((recipe_path.parent / 'qualification.json').read_bytes())
     for name, digest in card['repository_contract_sha256'].items():
         if sha((recipe_path.parent / name).read_bytes()) != digest:
@@ -197,11 +228,19 @@ def run(args):
         if len(ids) != measured[id]['tokens_with_native_special_tokens'] or len(ids) > recipe['native_limit']:
             raise ValueError('native complete tokenization changed or NO_FIT')
         encoded[id] = ids
+    previous = None
+    if args.reference_run:
+        previous = Path(args.reference_run)
+        old = json.loads((previous / 'run.json').read_bytes())
+        complete = json.loads((previous / 'completed.json').read_bytes())
+        if old['recipe_sha256'] != sha(recipe_path.read_bytes()) or old['jobs'] != jobs or complete['fits_completed'] != len(jobs):
+            raise ValueError('reference reproduction requires the complete same frozen experiment')
     output = Path(args.output)
     output.mkdir(mode=0o700, parents=True, exist_ok=False)
     write_json(output / 'run.json', {'recipe_sha256': sha(recipe_path.read_bytes()),
                'trainer_sha256': sha(Path(__file__).read_bytes()), 'authorization': auth,
                'jobs': jobs, 'status': 'RUNNING', 'fresh_evaluation_cases': 0,
+               'exact_audit_reference_reproduction_from': str(previous) if previous else None,
                'deployment_authorized': False})
 
     def event(kind, **fields):
@@ -257,6 +296,7 @@ def run(args):
         rng = random.Random(job['seed'])
         weights = loss_weights(job['train_ids'], strata['real'])
         step = 0
+        write_json(folder / 'initial-rng.json', rng_receipt(torch, rng))
         event('fit_started', fit=job['name'], training_examples=len(job['train_ids']),
               calibration_examples=len(job['predict_ids']), encoder_load=loading_receipt(loading))
         for epoch in range(recipe['epoch_count']):
@@ -288,23 +328,42 @@ def run(args):
                     raise RuntimeError('frozen resource ceiling exceeded; no truncation or recipe substitution')
                 epoch_loss += batch_loss * len(batch)
                 event('optimizer_step', fit=job['name'], epoch=epoch + 1, step=step,
-                      examples=len(batch), weighted_mean_loss=batch_loss, gradient_norm=float(norm),
+                      examples=len(batch), training_ids=batch, weighted_mean_loss=batch_loss, gradient_norm=float(norm),
                       peak_allocated_bytes=allocated, peak_reserved_bytes=reserved, peak_host_rss_bytes=rss)
+            write_json(folder / f'epoch-{epoch + 1}-rng.json', {'state': rng_receipt(torch, rng), 'training_order': ids})
             event('epoch_complete', fit=job['name'], epoch=epoch + 1, examples=len(ids),
                   weighted_mean_loss=epoch_loss / len(ids))
         predictions = predict(model, job['predict_ids'])
         write_json(folder / 'calibration-logits.json', predictions)
+        if previous and job['calibration_task'] is not None:
+            original = previous / job['name']
+            prior_sha = json.loads((original / 'completed.json').read_bytes())['calibration_logits_sha256']
+            if (sha((original / 'calibration-logits.json').read_bytes()) != prior_sha
+                    or sha((folder / 'calibration-logits.json').read_bytes()) != prior_sha):
+                raise ValueError('audited reproduction calibration logits differ; stop rather than select results')
         artifacts = {}
         if job['calibration_task'] is None:
-            state = {name: tensor.detach().to(device='cpu', dtype=torch.float16 if name.startswith('encoder.') else torch.float32).contiguous()
-                     for name, tensor in model.state_dict().items()}
-            save_file(state, str(folder / 'joint.safetensors'))
-            encoder.config.save_pretrained(folder)
-            (folder / 'tokenizer.json').write_bytes((snapshot / 'tokenizer.json').read_bytes())
-            weight_bytes = (folder / 'joint.safetensors').stat().st_size
+            reference, state = export_states(torch, model)
+            reference_folder, serving_folder = folder / 'reference', folder / 'serving'
+            reference_folder.mkdir(mode=0o700)
+            serving_folder.mkdir(mode=0o700)
+            save_file(reference, str(reference_folder / 'master.safetensors'))
+            save_file(state, str(serving_folder / 'joint.safetensors'))
+            encoder.config.save_pretrained(serving_folder)
+            (serving_folder / 'tokenizer.json').write_bytes((snapshot / 'tokenizer.json').read_bytes())
+            serving_sha = sha((serving_folder / 'joint.safetensors').read_bytes())
+            if previous:
+                original = previous / job['name']
+                old_artifact = json.loads((original / 'completed.json').read_bytes())['artifacts']['joint_sha256']
+                if sha((original / 'joint.safetensors').read_bytes()) != old_artifact or serving_sha != old_artifact:
+                    raise ValueError('exact reproduction differs; FP32 reference cannot be paired with earlier model')
+            weight_bytes = (serving_folder / 'joint.safetensors').stat().st_size
             if weight_bytes >= 250000000:
                 raise ValueError('entire proposed joint weight artifact exceeds budget')
-            artifacts = {'joint_weight_bytes': weight_bytes, 'joint_sha256': sha((folder / 'joint.safetensors').read_bytes()),
+            artifacts = {'joint_weight_bytes': weight_bytes, 'joint_sha256': serving_sha,
+                         'reference_sha256': sha((reference_folder / 'master.safetensors').read_bytes()),
+                         'reference_bytes': (reference_folder / 'master.safetensors').stat().st_size,
+                         'exact_prior_artifact_match': True if previous else None,
                          'NOT_DEPLOYMENT_CERTIFIED': 'CPU operators/parity/RSS/latency and fresh evaluation unvalidated'}
         write_json(folder / 'completed.json', {'fit': job, 'optimizer_steps': step,
                    'elapsed_seconds': time.monotonic() - started, 'artifacts': artifacts,
@@ -326,6 +385,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ('root', 'recipe', 'authorization', 'gpu-uuid', 'output'):
         parser.add_argument('--' + name, required=True)
+    parser.add_argument('--reference-run', help='Explicit full audited exact reproduction, not best-seed selection')
     run(parser.parse_args())
 
 

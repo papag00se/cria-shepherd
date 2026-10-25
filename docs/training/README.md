@@ -1,8 +1,10 @@
 # Targeted decision-model training
 
-This is an offline data/research workstream, not a production-model integration or an authorization to train yet. It covers all available models, tasks, programming languages and harnesses, rather than the Ornith/Java replay alone. The live coder, services, campaign and planner setting are unchanged.
+This is an offline data/research workstream, not a production-model integration or deployment authorization. The operator has now explicitly authorized GPU training and clearing the RTX 3090; see [current GPU execution](gpu-execution.md). Its prior model container was stopped as authorized. The separate RTX 3080 workload, cria runtime configuration, campaign and planner setting were left alone. The archive investigation covers all available models, tasks, programming languages and harnesses, rather than the Ornith/Java replay alone.
 
 ## Deliverables
+
+- [Authorized GPU execution](gpu-execution.md): isolated trainer, native receipts, audited reproduction and FP32/reference versus proposed serving-artifact boundaries. The frozen qualification/recipe documents retain their historical pre-authorization state.
 
 - [Final data qualification and grouped evaluation](data-preparation.md), [machine-readable readiness](qualification.json), and [execution/evaluation preparation](execution-readiness.md): completed whole-input reviews, explicit quarantines, matched native-fit exports, and the distinction between prepared intake and an actually collected fresh benchmark.
 - [Frozen first training recipe](training-recipe.json), [resource evidence](resource-plan.json), and [prospective evaluation contract](fresh-evaluation.json): pinned candidate, complete tokenization, CPU-only shape checks and collection gates—not training/GPU permission or deployment evidence.
@@ -43,4 +45,4 @@ Use learning curves over adjudicated training groups and separate real/synthetic
 
 ## RTX 3090 handover
 
-The operator has offered the RTX 3090 for training but explicitly retained control over clearing its current workload. Readiness means the chosen first task, reviewed training export, group split, frozen evaluation, backbone/runtime plan and resource estimate are ready. Notify the operator at that point and wait for explicit handover permission. Do not stop the live GPU process, clear memory, swap a model or start GPU training merely because the hardware is available.
+The operator explicitly granted clearing and training on the RTX 3090 after the frozen provisional experiment was prepared. That permission does not extend to the RTX 3080, production integration, changing datasets or selecting a different serving candidate. Availability alone remains insufficient authority for future GPU handovers. Earlier permission-pending receipts are historical; the operative authorization is recorded separately in the local execution directory.
