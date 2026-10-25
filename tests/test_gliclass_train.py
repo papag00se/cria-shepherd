@@ -25,6 +25,23 @@ def test_only_structurally_inactive_native_scale_is_frozen():
         freeze_architecturally_inactive(model)
 
 
+def test_reset_completion_is_recorded_only_after_successful_native_reload(monkeypatch, tmp_path):
+    import suite.gliclass_train as subject
+    def failed(*args):
+        raise RuntimeError('native checkpoint could not reload')
+    monkeypatch.setattr(subject, 'load_for_training', failed)
+    with pytest.raises(RuntimeError, match='could not reload'):
+        subject.reload_full_fit(None, 'snapshot', tmp_path)
+    assert not (tmp_path / 'events.jsonl').exists()
+    loaded = (object(), object(), object(), {'missing_keys': []}, {})
+    monkeypatch.setattr(subject, 'load_for_training', lambda *args: loaded)
+    assert subject.reload_full_fit(None, 'snapshot', tmp_path) is loaded
+    import json
+    event = json.loads((tmp_path / 'events.jsonl').read_text())
+    assert event['full_fit_reset_to_pretrained'] is True
+    assert event['loading'] == loaded[3]
+
+
 def test_active_calibrator_is_part_of_exact_optimizer_membership():
     from suite.gliclass_train import freeze_architecturally_inactive, trainable_membership
     torch, model = toy()

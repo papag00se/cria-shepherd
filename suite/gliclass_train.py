@@ -87,6 +87,13 @@ def load_for_training(torch, snapshot):
     return model, pipe, optimizer, loading, inactive
 
 
+def reload_full_fit(torch, snapshot, root):
+    loaded = load_for_training(torch, snapshot)
+    append(root / 'events.jsonl', {'event': 'full_fit_reloaded',
+        'full_fit_reset_to_pretrained': True, 'loading': loaded[3]})
+    return loaded
+
+
 def run(root):
     if (root / 'native-training-inputs.jsonl').exists():
         raise ValueError('existing attempt; preserve it and qualify a distinct run')
@@ -141,7 +148,7 @@ def run(root):
     tiny_score = score(torch, model, tiny, root / 'tiny-native-calls.jsonl')
     integrity = {'optimizer_membership_exact': True, 'declared_inactive': inactive,
         'witness_names': {k: v['name'] for k, v in before.items()}, 'witness_changes': changes,
-        'tiny_score': tiny_score, 'full_fit_reset_to_pretrained': True}
+        'tiny_score': tiny_score, 'full_fit_reset_required_before_updates': True}
     (root / 'integrity.json').write_text(json.dumps(integrity, indent=2)+'\n')
     if not all(changes.values()) or tiny_score['matched'] != len(tiny):
         raise ValueError('native learning integrity gate failed; no full fit')
@@ -149,7 +156,7 @@ def run(root):
     del model, pipe, optimizer, before, after
     gc.collect()
     torch.cuda.empty_cache()
-    model, pipe, optimizer, loading, inactive = load_for_training(torch, contract['snapshot'])
+    model, pipe, optimizer, loading, inactive = reload_full_fit(torch, contract['snapshot'], root)
     total = contract['epochs'] * math.ceil(len(rows)/contract['accumulation_rows'])
     started = time.monotonic()
     step = 0

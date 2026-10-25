@@ -94,7 +94,8 @@ def run(root, onejev_root):
     import numpy as np
     import torch
     torch.set_num_threads(6)
-    manifest = json.loads((root / 'download.json').read_bytes())
+    from suite.gliclass_quantize import validate_native_manifest
+    manifest = validate_native_manifest(root)
     quantized = json.loads((root / 'quantized.json').read_bytes())
     source_contract = json.loads((onejev_root / 'contract.json').read_bytes())
     train = json.loads((onejev_root / 'train-cases.json').read_bytes())
@@ -112,7 +113,8 @@ def run(root, onejev_root):
     out.mkdir()
     contract = {'source_contract_sha256': file_sha(onejev_root / 'contract.json'),
                 'cohorts_sha256': {name: file_sha(onejev_root / name) for name in ['train-cases.json', 'held-cases.json']},
-                'source_sha256': file_sha(Path(__file__)), 'policy_sha256': source_contract['policy_sha256'],
+                'source_sha256': file_sha(Path(__file__)), 'native_manifest_sha256': file_sha(root / 'download.json'),
+                'policy_sha256': source_contract['policy_sha256'],
                 'max_tokens': MAX_TOKENS, 'dtype': 'FP32 activations, INT4 constant matrices and embeddings',
                 'fidelity': {'rtol': 0.0002, 'atol': 0.0002, 'cases': 'frozen native tiny eight plus longest TRAIN input per head'},
                 'quality': 'all 130 historical diagnostics, no label/threshold fitting; not fresh or human gold',

@@ -39,16 +39,24 @@ def normalize_linear_layers(model):
     return onnx.version_converter.convert_version(normalized.model, 21)
 
 
+def validate_native_manifest(root):
+    manifest = json.loads((root / 'download.json').read_bytes())
+    snapshot = Path(manifest['snapshot'])
+    for name, expected in manifest['files'].items():
+        path = snapshot / name
+        if path.stat().st_size != expected['bytes'] or file_sha(path) != expected['sha256']:
+            raise ValueError(f'frozen native artifact changed: {name}')
+    return manifest
+
+
 def quantize(root):
+    manifest = validate_native_manifest(root)
     import onnx
     import onnxruntime
     from onnxruntime.quantization.matmul_nbits_quantizer import DefaultWeightOnlyQuantConfig, MatMulNBitsQuantizer
     from onnxruntime.quantization.quant_utils import QuantFormat
-    manifest = json.loads((root / 'download.json').read_bytes())
     source = Path(manifest['snapshot']) / 'onnx/model.onnx'
     expected = manifest['files']['onnx/model.onnx']
-    if file_sha(source) != expected['sha256'] or source.stat().st_size != expected['bytes']:
-        raise ValueError('published FP32 ONNX source changed')
     out = root / 'int4'
     out.mkdir()
     recipe = {'source_sha256': expected['sha256'], 'bits': 4, 'block_size': 128, 'symmetric': True,
