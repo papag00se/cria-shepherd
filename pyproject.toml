@@ -3,15 +3,29 @@ name = "cria-shepherd"
 version = "0.0.1"
 description = "A harness-agnostic service that makes a small local model do real agentic coding."
 requires-python = ">=3.11"          # tomllib
-# Standard-library-first by design. The ONE exception: PyYAML, so a spilled OpenAPI/spec served as
+# Standard-library-first base installation. Its one mandatory exception: PyYAML, so a spilled OpenAPI/spec served as
 # YAML parses into a structure (routes/keys outline, structural find) exactly like the JSON case —
 # stdlib has no YAML parser. PyYAML is pure-Python with an OPTIONAL libyaml C accel and ZERO runtime
 # dependencies (Requires-Dist: none). Still soft-imported in webfetch (degrades to plain text if absent).
 dependencies = ["PyYAML>=6"]
 
+[project.optional-dependencies]
+# The trained CPU classifier ([system1] in cria.toml). Imported ONLY when [system1] enabled = true, so
+# the default install and every disabled service carry none of it. Versions are the ones the shipped
+# bundle was qualified with in its dedicated CPU environment; no torch/transformers at runtime. numpy
+# arrives as onnxruntime's own dependency (the runtime's tensors) and is deliberately left unpinned here.
+system1 = ["onnxruntime==1.31.0", "tokenizers==0.23.3"]
+
 [project.scripts]
 cria = "cria.__main__:main"
 cria-tail = "cria.tail:main"
+
+# A release is the cria package and its actual prompt resources, not local runs or suite data.
+[tool.setuptools.packages.find]
+include = ["cria", "cria.*"]
+
+[tool.setuptools.package-data]
+"cria.prompts" = ["*.txt"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

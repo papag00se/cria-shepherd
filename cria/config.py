@@ -567,6 +567,39 @@ class PlannerConfig:
     max_gather_rounds: int = 12
 
 
+SYSTEM1_DEFAULT_THREADS = 6  # intra-op CPU threads the trained artifact was assessed with
+
+
+@dataclass(frozen=True)
+class System1Config:
+    """The optional trained CPU classifier (``[system1]``) that answers two closed questions
+    in-process: whether a compaction briefing is retrospective, and whether an authored directive
+    dictates code. Disabled by default; when disabled nothing here is imported or loaded.
+
+    ``bundle_dir`` is explicit and required once enabled — cria never searches for an artifact.
+    Config only validates shape; the artifact itself is verified when the service starts
+    (:func:`cria.system1wiring.build`), which refuses to start on a broken bundle or missing
+    dependencies rather than silently running without the classifier."""
+
+    enabled: bool = False
+    bundle_dir: str | None = None
+    threads: int = SYSTEM1_DEFAULT_THREADS
+
+    def __post_init__(self):
+        if type(self.enabled) is not bool:
+            raise ValueError("[system1] enabled must be true or false")
+        if self.bundle_dir is not None and (not isinstance(self.bundle_dir, str) or not self.bundle_dir.strip()):
+            raise ValueError("[system1] bundle_dir must be a non-empty string")
+        if type(self.threads) is not int or self.threads < 1:
+            raise ValueError("[system1] threads must be a positive integer")
+        if self.enabled and self.bundle_dir is None:
+            raise ValueError("[system1] bundle_dir is required when enabled = true")
+
+    @property
+    def bundle_path(self) -> Path | None:
+        return Path(self.bundle_dir).expanduser() if self.bundle_dir is not None else None
+
+
 @dataclass(frozen=True)
 class AssistConfig:
     """Atomic opt-outs for the executable pilots only; other policies are unchanged."""
@@ -593,6 +626,7 @@ class Config:
     safety: SafetyConfig = field(default_factory=SafetyConfig)
     planner: PlannerConfig = field(default_factory=PlannerConfig)
     assists: AssistConfig = field(default_factory=AssistConfig)
+    system1: System1Config = field(default_factory=System1Config)
     # Path to an env file cria loads at startup so it has its secrets (Brave key, provider keys)
     # no matter how it's launched — a systemd service does NOT source a shell `.env`. Values the
     # environment already provides win; a missing file is not an error. See cria/envfile.py.
@@ -644,6 +678,7 @@ class Config:
             ),
             safety=_safety(data.get("safety", {})),
             assists=_assists(data.get("assists", {})),
+            system1=_system1(data.get("system1", {})),
             planner=PlannerConfig(
                 enabled=bool(data.get("planner", {}).get("enabled", False)),
                 max_gather_rounds=int(data.get("planner", {}).get("max_gather_rounds", 12)),
@@ -660,6 +695,12 @@ def _assists(data: dict) -> AssistConfig:
     if not isinstance(disabled, list) or any(not isinstance(x, str) for x in disabled):
         raise ValueError("[assists] disabled must be an array of atomic IDs")
     return AssistConfig(tuple(disabled), profile=data.get("profile", "default"))
+
+
+def _system1(data: dict) -> System1Config:
+    if not isinstance(data, dict) or set(data) - {"enabled", "bundle_dir", "threads"}:
+        raise ValueError("[system1] supports only enabled, bundle_dir and threads")
+    return System1Config(**data)
 
 
 def _read_toml(p: Path) -> dict:

@@ -13,6 +13,7 @@ a localhost/LAN single-user service; the client reads SSE until EOF.
 
 from __future__ import annotations
 
+import functools
 import json
 import os
 import threading
@@ -22,7 +23,7 @@ from dataclasses import dataclass, replace
 from collections.abc import Callable
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import bodykeys, dirguard, handoffdistill, memoryhandoff
+from . import bodykeys, dirguard, handoffdistill, memoryhandoff, system1wiring
 from . import (callcapture, compat, focustrim, groundtruth, massage, modelview, probegate, prompts,
                responses, rumination, selfcompact)
 from . import admission, classify
@@ -428,11 +429,16 @@ def _compaction_transcript(messages: list, files_list: str = "", gate_plan=None,
                                           checks, checks_age)
 
 
-def _handoff_services():
+def _handoff_services(system1=None):
+    """The shared handoff services. ``system1`` (the service's trained classifier, or None) is bound
+    into the briefing validator here so the harness-owned compaction asks the same retrospective
+    question the loop's self-compaction does; without it the validator is the unchanged function."""
+    validate = (validate_compaction_briefing if system1 is None
+                else functools.partial(validate_compaction_briefing, system1=system1))
     return memoryhandoff.EvidenceServices(_drop_harness_frame,
         lambda root: groundtruth.workspace_inventory(root, flavor="briefing"),
         _workspace_listing, _fetch_ground_truth, _briefing_disk_truth,
-        validate_compaction_briefing, _proxy_body, SUMMARIZE_MAX_TOKENS)
+        validate, _proxy_body, SUMMARIZE_MAX_TOKENS)
 
 
 def _handoff_session(server, key):
@@ -682,7 +688,7 @@ def _harden_compaction_reply(comp: dict, body: dict, provider, server, rlog, ses
             raise ValueError("Invalid harness handoff producer settlement")
         settlement.append((reply, ledger, dropped))
     role = server.cfg.routing.roles.get("compactor") or server.cfg.routing.roles.get("reasoner")
-    services = _handoff_services()
+    services = _handoff_services(getattr(server, "system1", None))
     distill = _handoff_distiller(provider, server, rlog)
     if distill is not None:
         # The empty/cut-off briefing retry re-frames the request; it must distill too.
@@ -725,10 +731,18 @@ class CriaServer(ThreadingHTTPServer):
     daemon_threads = True
     allow_reuse_address = True
 
-    def __init__(self, cfg: Config, log: EventLog, upstream: Upstream) -> None:
+    def __init__(self, cfg: Config, log: EventLog, upstream: Upstream, *, system1=None) -> None:
         self.cfg = cfg
         self.log = log
         self.upstream = upstream
+        # The optional trained classifier: ONE immutable runtime for the whole service, built (or the
+        # service refuses to start) before anything binds a socket. ``system1`` is an explicit
+        # injection for callers that already hold a runtime; it is only meaningful when enabled.
+        if system1 is not None and not cfg.system1.enabled:
+            raise ValueError("a System 1 runtime was supplied but [system1] is not enabled")
+        self.system1 = system1 if system1 is not None else system1wiring.build(
+            cfg.system1, log,
+            capture_dir=cfg.logging.capture_dir_path if cfg.logging.capture_calls else None)
         # Routing engages only when configured. With no [roles]/[failover], cria is a plain
         # phase-1 passthrough.
         roles = cfg.routing.roles  # each role = a backend binding + per-request sampling + reasoning.
@@ -852,6 +866,7 @@ class CriaServer(ThreadingHTTPServer):
                     trigger_compaction=cfg.context.trigger_compaction,
                     assists=cfg.routing.assists_enabled,
                     pilot_runtime=self.pilot_runtime,
+                    system1=self.system1,
                     # THE PLANNER IS AN ASSIST, so below level 5 the loop always drives the
                     # synthetic single-item path however `[planner] enabled` is set. This is also
                     # what makes levels 0-4 planner-AGNOSTIC by construction rather than by

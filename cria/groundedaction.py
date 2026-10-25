@@ -11,7 +11,7 @@ from dataclasses import dataclass, field
 from enum import Enum, auto
 from pathlib import Path
 from typing import Callable, Protocol
-from . import bodykeys, callsyntax, dedup, probegate, prompts, refusalledger, selfcompact, shellshape, urlgrounding, verifytools, wsview
+from . import bodykeys, callsyntax, dedup, probegate, prompts, refusalledger, selfcompact, shellshape, system1wiring, urlgrounding, verifytools, wsview
 from .jsontext import extract_json_object, strip_think
 
 _ASK_USER_TURN = "Answer the question above."
@@ -90,6 +90,9 @@ class Inspect(Protocol):
 class ProviderServices:
     summarize: Summarize
     judge_completion: Inspect
+    # The service's optional trained classifier. ``None`` keeps the reasoner-asked question and its
+    # code-shape prefilter exactly as they were.
+    system1: system1wiring.Judge | None = None
 
 @dataclass(frozen=True)
 class AuthorInput:
@@ -439,7 +442,12 @@ class GroundedActions:
         if not out or _NO_DIRECTIVE in out.upper():
             rlog.emit('loop.steer_restate', level='info', kept=False, reason='nothing left')
             return None
-        if self._dictates_code(out, ask, presumed=True, rlog=rlog):
+        try:
+            still_dictates = self._dictates_code(out, ask, presumed=True, rlog=rlog)
+        except system1wiring.Unjudged:
+            rlog.emit('loop.steer_restate', level='info', kept=False, reason='unjudged')
+            return None
+        if still_dictates:
             rlog.emit('loop.steer_restate', level='info', kept=False, reason='still dictates')
             return None
         rlog.emit('loop.steer_restate', level='info', kept=True, chars=len(out))
@@ -505,6 +513,14 @@ class GroundedActions:
         sentence is precisely the shape the trigger is documented as missing (`pytest.register_pytest_mark
         ("live")`, a function that does not exist, sailed through for that reason). The verdict travels
         forward instead of being guessed again (#12)."""
+        if self.providers.system1 is not None:
+            # The trained classifier reads the WHOLE directive. The code-shape prefilter exists only
+            # to decide whether a reasoner call is worth making; it also misses the inline
+            # prescription ("call x.y('z') here"), which is exactly what this question is about. A
+            # runtime that cannot answer raises Unjudged: the caller declines the steer. No reasoner
+            # is asked and no lexical shape stands in for the verdict.
+            return system1wiring.classify(self.providers.system1, 'dictation', directive, rlog,
+                                          seat='dictation') == _DICTATES
         if not presumed and (not _CODE_SHAPED.search(directive)):
             return False
         if ask is None:
@@ -662,9 +678,17 @@ class GroundedActions:
         if denied_field:
             rlog.emit('loop.steer_phantom_field', level='warn', field=denied_field, head=self.facts.clip(directive, 120))
             return (None, 'phantom_field')
-        if self._dictates_code(directive, ask, rlog=rlog):
+        try:
+            dictates = self._dictates_code(directive, ask, rlog=rlog)
+        except system1wiring.Unjudged as unjudged:
+            rlog.emit('loop.steer_dictation_unjudged', level='warn', delivered=False, reason=unjudged.reason, head=self.facts.clip(directive, 120))
+            return (None, 'dictation_unjudged')
+        if dictates:
             invented = self._invented_code_spans(directive, self.facts.observed_code(messages))
-            if invented:
+            # The trained question judges operative dictation versus quotation. A span's presence
+            # in observed code cannot overrule that intent judgment; nor can an empty evidence set
+            # make 'zero invented spans' proof of safety. Keep the legacy reasoner path unchanged.
+            if invented or self.providers.system1 is not None:
                 restated = self._restate_without_code(directive, ask, rlog)
                 if restated is not None and self._invented_code_spans(restated, self.facts.observed_code(messages)):
                     rlog.emit('loop.steer_restate', level='info', kept=False, reason='still invented')

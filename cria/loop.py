@@ -57,7 +57,7 @@ from .classify import JUDGE_MAX_TOKENS, _task_key, latest_user_text
 from . import jsontext, planner, refusalledger, writeproxy
 from .jsontext import extract_json_object, strip_think
 from . import research, researchpolicies, shrinkprotection, assistruntime, completionapproval, completionmeasure, completiondiagnosis, completionconfirmation, runnercontract, repositorychecks, evidencesummary, semanticquery
-from . import contextrestoration, ledgercopies, preamblepolicy, reorientation, steppreparation
+from . import contextrestoration, ledgercopies, preamblepolicy, reorientation, steppreparation, system1wiring
 from .toolstages import policy_log
 from .modulestate import ModuleInput, ModuleState
 from .completionreview import (ReviewInput, ReviewResult, ReviewStatus, ReviewTrigger,
@@ -2457,6 +2457,12 @@ class LoopContext:
     # `satisfaction_check` and `periodic_gate` are 5, though they call the same functions.
     assists: bool = True
     pilot_runtime: assistruntime.AssistRuntime = field(default_factory=assistruntime.AssistRuntime)
+    # The service's optional trained CPU classifier ([system1]) — ONE immutable runtime shared by every
+    # session (it holds no session state). None = every closed question below goes to the reasoner as
+    # before. When set it answers ONLY the compaction briefing's PLAN/RETROSPECTIVE lens and the
+    # authored directive's DICTATES/DESCRIBES question; scope, fidelity and every other judgment stay
+    # with the reasoner. See cria/system1wiring.py.
+    system1: system1wiring.Judge | None = None
 
 
 class _IncompleteCoderTurn(Exception):
@@ -3806,7 +3812,8 @@ class Loop:
                 evidence_blocks=evidence)
             if not validate_compaction_briefing(
                     chat_fn, role, candidate, files=inventory_for_writer, checks=checks_fact,
-                    transcript_blocks=history, task=root_task, rlog=rlog):
+                    transcript_blocks=history, task=root_task, rlog=rlog,
+                    system1=self._ctx.system1):
                 return ""
             # Deterministic existence correction remains a final additive defense. The semantic
             # symbol matcher is deliberately gone: whether compiler output refutes a briefing is a
@@ -3826,7 +3833,7 @@ class Loop:
             if not validate_compaction_briefing(
                     chat_fn, role, candidate, files=inventory_for_writer, checks=checks_fact,
                     transcript_blocks=refold_history, task=root_task, rlog=rlog,
-                    phase="compaction-refold-validate"):
+                    phase="compaction-refold-validate", system1=self._ctx.system1):
                 return ""
             return candidate
 
@@ -4480,7 +4487,8 @@ class Loop:
         item = sess.plan.current()
         step_text = item.text if item is not None else sess.plan.task
         return _stalled_author(sess, body, rlog, self._ctx.reasoner_chat, self._ctx.reasoner_role,
-            sess.workspace_root, condition=condition, outcome=outcome, step_text=step_text)
+            sess.workspace_root, condition=condition, outcome=outcome, step_text=step_text,
+            system1=self._ctx.system1)
 
     def _gate_op(self, body: dict, sess: PlanSession, rlog) -> dict | None:
         """The loop's completion gate — delegates to the shared :func:`guard_gate_op`, passing the
@@ -4582,7 +4590,7 @@ class Loop:
                     action_log=request.action_log, checks=request.checks,
                     participation_facts=request.participation_facts, diagnosis_ask=ask,
                     phase=request.phase, workspace_root=request.workspace_root,
-                    rlog=rlog, messages=messages, sess=sess)
+                    rlog=rlog, messages=messages, sess=sess, system1=self._ctx.system1)
             def persist(record):
                 _dump_verify(self._run_dir(rlog), record.key, record.index, record.total,
                     record.step, record.system, record.user, record.done, record.reason, response=record.raw)
@@ -4928,7 +4936,8 @@ class Loop:
                     progress = _stalled_result(stalled.progress(stalledwork.ProgressInput(
                         truth, sess.gate_stall, _stalled_author(sess, body, rlog,
                             self._ctx.reasoner_chat, self._ctx.reasoner_role,
-                            sess.workspace_root or _extract_cwd(body.get('messages', [])))
+                            sess.workspace_root or _extract_cwd(body.get('messages', [])),
+                            system1=self._ctx.system1)
                             if self._ctx.reasoner_role is not None else None, rlog),
                         _StalledWorkView(sess)))
                     if progress.steer is not None:
@@ -4948,7 +4957,7 @@ class Loop:
             def _author(condition, g, outcome, b, r):
                 return _stalled_author(g, b, r, self._ctx.reasoner_chat, self._ctx.reasoner_role,
                     sess.workspace_root or _extract_cwd(b.get('messages', [])),
-                    condition=condition, outcome=outcome)
+                    condition=condition, outcome=outcome, system1=self._ctx.system1)
             author = _author if self._ctx.reasoner_role is not None else CANNED
             steer = guard_probe_steer(sess, body, rlog, author=author)
         elif not sess.nudge_reason:  # (a gate-fail steer is already parked — don't double-intervene)
@@ -7111,17 +7120,17 @@ def _stalled_result(result):
     return result
 
 
-def _grounded_actions():
+def _grounded_actions(system1=None):
     public = {'guard_ground_truth', 'workspace_inventory'}
     facts = groundedaction.EvidenceServices(**{
         name: globals()[name if name in public else '_' + name]
         for name in groundedaction.EvidenceServices.__annotations__})
     return groundedaction.GroundedActions(facts,
-        groundedaction.ProviderServices(summarize, _judge_completion))
+        groundedaction.ProviderServices(summarize, _judge_completion, system1))
 
 
 def _stalled_author(gs, body, rlog, chat, role, root=None, *, condition='refusal',
-                    outcome=None, truth_text='', step_text=''):
+                    outcome=None, truth_text='', step_text='', system1=None):
     if chat is None:
         return None
     original = getattr(getattr(gs, 'plan', None), 'task', '') or _history_root(body.get('messages', []))[0]
@@ -7140,7 +7149,7 @@ def _stalled_author(gs, body, rlog, chat, role, root=None, *, condition='refusal
     return stalledwork.AuthorServices(original, lambda: getattr(gs, 'last_gate_flag', ''),
         lambda text: _checks_superseded_by_coder_run(body.get('messages', []), text),
         lambda text: _checks_already_visible(body, text), _checks_ran_before,
-        _grounded_actions(), seat, rlog)
+        _grounded_actions(system1), seat, rlog)
 
 
 def _stalled_text(steer):
@@ -7445,7 +7454,7 @@ def _composed_closed_ask(chat_fn, role, rlog, *, phase: str):
 
 def validate_compaction_briefing(chat_fn, role, briefing: str, *, files: str, checks: str,
                                   transcript_blocks: list[str], rlog, task: str = "",
-                                  phase: str = "compaction-validate") -> bool:
+                                  phase: str = "compaction-validate", system1=None) -> bool:
     """Fail-closed, independent judgments before model-made session memory is injected.
 
     One large verdict asked a weak judge to enforce format, task scope, files, checks, uncertainty,
@@ -7454,6 +7463,12 @@ def validate_compaction_briefing(chat_fn, role, briefing: str, *, files: str, ch
     retrospection, task-scope preservation, then evidence fidelity. Every applicable lens must
     return their exact positive verdict. Callers retain verbatim history (self-compaction) or only
     re-derivable appendices (a harness-owned compaction) on any rejection or unavailable answer.
+
+    ``system1`` (the service's trained classifier, when ``[system1]`` is enabled) answers ONLY the
+    first lens — PLAN versus RETROSPECTIVE over the whole briefing. Scope and fidelity still go to the
+    reasoner, whose evidence blocks the classifier cannot read. A classifier that cannot answer
+    rejects the briefing: the same fail-closed exit an unreadable reasoner verdict takes, with no
+    reasoner asked in its place.
     """
     if chat_fn is None or role is None or not briefing.strip():
         if rlog is not None:
@@ -7474,8 +7489,16 @@ def validate_compaction_briefing(chat_fn, role, briefing: str, *, files: str, ch
 
     # Candidate-only on purpose. In the captured false accepts, an obvious "Next step" section was
     # buried behind 12K-32K tokens of history and the judge overlooked the simplest invariant.
-    accepted = judge("retrospective", prompts.load("compaction_validate_retrospective"),
-                     [candidate], "RETROSPECTIVE")
+    if system1 is None:
+        accepted = judge("retrospective", prompts.load("compaction_validate_retrospective"),
+                         [candidate], "RETROSPECTIVE")
+    else:
+        try:
+            answers["retrospective"] = system1wiring.classify(
+                system1, "retrospective", briefing.strip(), rlog, seat=phase)
+        except system1wiring.Unjudged:
+            answers["retrospective"] = "UNJUDGED"
+        accepted = answers["retrospective"] == "RETROSPECTIVE"
     task_fact = (prompts.render("compaction_task_fact", task=task.strip()) if task.strip() else "")
     if accepted and task_fact:
         accepted = judge("scope", prompts.load("compaction_validate_scope"),
@@ -9792,13 +9815,15 @@ def _coder_tools_summary(tools, *, params: bool = True) -> str:
 # A prompt that teaches a weak model to weigh evidence that is never there is the useless-prompting
 # class; removing the leftover is the completion of that decision, not a reversal of it.
 def author_steer(reasoner_chat, reasoner_role, workspace_root, gs, body: dict, rlog, *,
-                 condition: str, outcome=None, truth_text: str = "", step_text: str = "") -> str | None:
+                 condition: str, outcome=None, truth_text: str = "", step_text: str = "",
+                 system1=None) -> str | None:
     owner = gs if gs is not None else GuardState()
     definition = assistruntime.current().stalled_work
     if definition is None:
         return None
     services = _stalled_author(owner, body, rlog, reasoner_chat, reasoner_role, workspace_root,
-        condition=condition, outcome=outcome, truth_text=truth_text, step_text=step_text)
+        condition=condition, outcome=outcome, truth_text=truth_text, step_text=step_text,
+        system1=system1)
     if services is None:
         return None
     return stalledwork._author(services, _StalledWorkView(owner), stalledwork.Trigger(condition),
@@ -10125,16 +10150,16 @@ def _strip_invented_code(directive: str, evidence: str) -> tuple[str, int]:
 _NO_DIRECTIVE = "NO_DIRECTIVE"
 
 
-def _restate_without_code(directive: str, ask, rlog) -> str | None:
-    return _grounded_actions()._restate_without_code(directive, ask, rlog)
+def _restate_without_code(directive: str, ask, rlog, system1=None) -> str | None:
+    return _grounded_actions(system1)._restate_without_code(directive, ask, rlog)
 
 
 def _invented_code_spans(directive: str, evidence: str) -> int:
     return _grounded_actions()._invented_code_spans(directive, evidence)
 
 
-def _dictates_code(directive: str, ask=None, presumed: bool=False, rlog=None) -> bool:
-    return _grounded_actions()._dictates_code(directive, ask, presumed, rlog)
+def _dictates_code(directive: str, ask=None, presumed: bool=False, rlog=None, system1=None) -> bool:
+    return _grounded_actions(system1)._dictates_code(directive, ask, presumed, rlog)
 
 
 # A TRIGGER, deliberately over-firing: its only job is to decide whether one focused question is
@@ -10383,20 +10408,20 @@ def _phantom_system_path(directive: str, workspace_root: str | None) -> str:
 
 
 def _grounded_steer_or_none(directive: str | None, evidence: str, rlog, ask=None,
-                            sess=None, messages=None, workspace_root=None) -> str | None:
+                            sess=None, messages=None, workspace_root=None, system1=None) -> str | None:
     definition = assistruntime.current().stalled_work
     if definition is None:
         return directive
-    return _grounded_actions()._grounded_steer_or_none(directive, evidence, rlog,
+    return _grounded_actions(system1)._grounded_steer_or_none(directive, evidence, rlog,
         ask, sess, messages, workspace_root, vet=definition.actions.vet)
 
 
 def _vet_steer(directive: str | None, evidence: str, rlog, ask=None,
-               sess=None, messages=None, workspace_root=None) -> tuple[str | None, str]:
+               sess=None, messages=None, workspace_root=None, system1=None) -> tuple[str | None, str]:
     definition = assistruntime.current().stalled_work
     if definition is None:
         return directive, ''
-    result = definition.actions.vet(_grounded_actions(), groundedaction.CandidateInput(
+    result = definition.actions.vet(_grounded_actions(system1), groundedaction.CandidateInput(
         directive, evidence, rlog, ask, sess, messages, workspace_root))
     if not isinstance(result, groundedaction.CandidateResult):
         raise TypeError('Stalled action vet must return CandidateResult')
@@ -10552,15 +10577,16 @@ def _field_the_ledger_denies(directive: str, ledger: dict) -> str | None:
 
 
 def author_redirect(reasoner_chat, reasoner_role, workspace_root, step_text: str,
-                    gs: GuardState, outcome, body: dict, rlog) -> str:
+                    gs: GuardState, outcome, body: dict, rlog, system1=None) -> str:
     return author_steer(reasoner_chat, reasoner_role, workspace_root, gs, body, rlog,
-        condition='refusal', outcome=outcome, step_text=step_text) or guard_canned_redirect(gs, outcome)
+        condition='refusal', outcome=outcome, step_text=step_text,
+        system1=system1) or guard_canned_redirect(gs, outcome)
 
 
 def author_thrash_steer(reasoner_chat, reasoner_role, workspace_root, gs, truth: str,
-                        body: dict, rlog) -> str:
+                        body: dict, rlog, system1=None) -> str:
     return author_steer(reasoner_chat, reasoner_role, workspace_root, gs, body, rlog,
-        condition='thrash', truth_text=truth) or truth
+        condition='thrash', truth_text=truth, system1=system1) or truth
 
 
 def _reasoning_of(comp: dict) -> str:
@@ -11253,14 +11279,16 @@ def _verdict_nudge(obj: dict, done: bool, routes: str = "", *,
                    messages: list | None = None, sess=None, task: str = "",
                    action_log: str = "", checks: str = "", participation_facts: str = "",
                    diagnosis_ask=None, phase: str = "negative-diagnosis",
-                   original_task: str | None = None) -> VerdictNudge:
+                   original_task: str | None = None, system1=None) -> VerdictNudge:
     """Build the coder-facing value from a verdict.
 
     Every production caller supplies ``task``. Positive verdicts keep their completion reason;
     negative ones go through the single typed provenance owner. Missing outputs use an independently
     extracted literal root requirement as the action; generated-step callers pass original_task.
     The no-task arm remains only for older private unit-level callers of this helper; no completion
-    path can reach it.
+    path can reach it. ``system1`` is still carried to it by the one live caller that has an app
+    context and a step text which could be empty (the step critic), so no live path can reach this
+    arm and be answered by a different question than the one the service selected.
     """
     reason = str(obj.get("reason", "")).strip()
     fix = _fix_text(obj)
@@ -11295,7 +11323,7 @@ def _verdict_nudge(obj: dict, done: bool, routes: str = "", *,
     # current-diagnostic compatibility guard abstains rather than deleting every proposed fix merely
     # because this caller deliberately has no classifier seat.
     accepted = (_grounded_steer_or_none(fix, evidence, rlog, sess=sess, messages=messages,
-                                        workspace_root=workspace_root)
+                                        workspace_root=workspace_root, system1=system1)
                 if rlog is not None else fix)
     return VerdictNudge(reason, accepted or "")
 

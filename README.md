@@ -57,6 +57,10 @@ python -m cria --config ./cria.toml
 
 The example uses a model server at `http://127.0.0.1:18084` and serves cria on port `18085`. Point your harness at `http://127.0.0.1:18085/v1`. For Codex, follow the [setup and context-window instructions](docs/codex-context-window.md).
 
+### Optional CPU decision classifier
+
+The optional `system1` extra serves a trained GLiClass artifact in-process on CPU for two existing guard questions: whether a briefing contains a forward plan, and whether a directive dictates code or a verbatim command. Other reasoner checks remain independent. It is disabled by default and needs an admitted local model bundle. See [serving and configuration](docs/system1.md) and [training tools and methodology](docs/training/methodology.md).
+
 ### Disable individual registered assists
 
 Use `[assists]` in your TOML configuration to opt out of specific registered policies:

@@ -4,6 +4,7 @@ Each stage has its own types and ordered bindings. The context-local binding is
 immutable selection, not mutable evidence/state. It covers nested recovery and
 retry paths without process-global policy settings or model-visible hints.
 """
+from __future__ import annotations
 from contextlib import contextmanager
 from dataclasses import dataclass, field, fields
 

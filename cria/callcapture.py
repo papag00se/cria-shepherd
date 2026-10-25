@@ -196,6 +196,40 @@ def capture(body: dict, rlog, *, calls_dir, phase: str | None = None, url: str =
         return None
 
 
+def capture_native(request: dict, response: dict, rlog, *, calls_dir, namespace: str, phase: str) -> str | None:
+    """Write one NON-upstream model call (e.g. the in-process CPU classifier) as a single record at
+    ``<calls>/<session>/<namespace>/NNNN-<phase>.json``: ``{"request": …, "response": …}``.
+
+    These are real model calls, but not calls to the upstream server, so they must never look like
+    one: they live in their own sub-directory with their own counter (so they neither shift the
+    upstream ``NNNN`` identity nor get counted by anything that reads the session folder's
+    ``*.response.json``), they emit no ``upstream.dump``, and the request is the native input — not a
+    fabricated chat body. The caller owns the record's fields; this owns only placement.
+    Best-effort like :func:`capture`; returns the path, or ``None`` on failure."""
+    try:
+        session = getattr(rlog, "session", None)
+        turn = getattr(rlog, "_turn", None) or getattr(rlog, "turn", None)
+        sess = session_dirname(session)
+        d = Path(calls_dir).expanduser() / sess / _safe(namespace)
+        d.mkdir(parents=True, exist_ok=True)
+        key = f"{sess}/{_safe(namespace)}"
+        label = re.sub(r"[^A-Za-z0-9._-]+", "-", phase)
+        record = {"iso": datetime.fromtimestamp(time.time(), timezone.utc).isoformat(timespec="milliseconds"),
+                  "session": session, "turn": turn, "namespace": namespace, "phase": phase,
+                  "request": request, "response": response}
+        while True:
+            seq = _next_seq(key, d)
+            path = d / f"{seq:04d}-{label}.json"
+            try:  # exclusive: another process sharing the folder can never be overwritten
+                with open(path, "x", encoding="utf-8") as fh:
+                    fh.write(json.dumps({"seq": seq, **record}, ensure_ascii=False, indent=2, default=str))
+                return str(path)
+            except FileExistsError:
+                continue
+    except (OSError, TypeError, ValueError):
+        return None
+
+
 def capture_response(request_path: str | None, response, rlog=None) -> str | None:
     """Write the model's RESPONSE next to its request capture, at ``NNNN-<phase>.response.json``.
     The request capture records what cria SENT; this records what the model ANSWERED — the raw

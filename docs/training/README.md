@@ -1,6 +1,6 @@
 # Targeted decision-model training
 
-This is an offline data/research workstream, not a production-model integration or deployment authorization. The operator has now explicitly authorized GPU training and clearing the RTX 3090; see [current GPU execution](gpu-execution.md). Its prior model container was stopped as authorized. The separate RTX 3080 workload, cria runtime configuration, campaign and planner setting were left alone. The archive investigation covers all available models, tasks, programming languages and harnesses, rather than the Ornith/Java replay alone.
+This directory records the offline data/research workstream; its historical training receipts are not themselves deployment authorization. On 2026-10-25 the operator separately authorized connecting the trained GLiClass v2 guards and approved optional CPU-only, in-process ONNX Runtime/tokenizers dependencies; see [serving and rollout](../system1.md). The operator has now explicitly authorized GPU training and clearing the RTX 3090; see [current GPU execution](gpu-execution.md). Its prior model container was stopped as authorized. The separate RTX 3080 workload, cria runtime configuration, campaign and planner setting were left alone. The archive investigation covers all available models, tasks, programming languages and harnesses, rather than the Ornith/Java replay alone.
 
 ## Current operator direction
 
@@ -10,6 +10,8 @@ The operator subsequently authorized and completed an [expanded GLiClass v2 fit]
 
 ## Deliverables
 
+- [Training tools and methodology](methodology.md): data admission, blind Pi reviews, frozen pretrained-reset fitting, actual update checks, native export/INT4 quantization and evaluation limitations.
+- [Optional production serving](../system1.md): the separately authorized CPU dependency boundary, two guard seats, fail-closed behavior, configuration and runtime admission.
 - [Completed expanded GLiClass v2 fit](gliclass-expanded-v2.md): 836 training cases (644 real + 192 blind-reviewed synthetic), 64/64 reserved synthetic challenge versus prior 54/64, and explicit training exposure/quantized fidelity evidence.
 - [ornith1.5_9b / Java key-call replay](ornith-java-system1-replay.md): ten exact-source admitted calls from the three key historical sessions; six guard decisions change, but all ten are exposed TRAIN cases and no Java task outcome is established.
 - [Current guard versus trained GLiClass](current-guard-comparison.md): completed paired comparison on the same 130 admitted historical cases, including unsafe approvals, false blocks and precise replay scope. No deployment.

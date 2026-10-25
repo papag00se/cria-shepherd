@@ -15,7 +15,7 @@ import sys
 from dataclasses import replace
 
 from . import __version__, brave
-from . import prompts, receivecapture
+from . import prompts, receivecapture, system1wiring
 from .config import Config
 from .envfile import load_env_file
 from .events import EventLog
@@ -86,7 +86,14 @@ def main(argv: list[str] | None = None) -> int:
         print(f"cria: missing prompt file(s): {', '.join(missing)}", file=sys.stderr)
         return 2
 
-    server = CriaServer(cfg, log, upstream)
+    try:
+        server = CriaServer(cfg, log, upstream)
+    except system1wiring.StartupError as e:
+        # An enabled classifier that cannot load is a startup refusal, never a silent run without it.
+        log.emit("system1.startup_refused", level="error", error=str(e))
+        print(f"cria: {e}", file=sys.stderr)
+        log.close()
+        return 2
 
     # systemd's `restart` sends SIGINT (KillSignal=SIGINT) → KeyboardInterrupt; route SIGTERM (the
     # default) through the same path so the graceful drain runs no matter how cria is stopped.

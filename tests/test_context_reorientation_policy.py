@@ -180,7 +180,10 @@ def test_general_candidate_vet_does_not_replace_reorientation_name_authority():
     # no provider call, workspace read, or legacy policy callback is available.
     facts = SimpleNamespace(merge_fetches=lambda a, b: {}, extract_fetches=lambda m: {},
                             ledger_field_names=lambda ledger: set(), touched_paths=lambda messages: [])
-    providers = Mock(side_effect=AssertionError)
+    # A bare Mock fabricates any newly added optional service (notably system1). Use the real
+    # disabled-by-default service record so this still proves no provider may be called here.
+    providers = groundedaction.ProviderServices(Mock(side_effect=AssertionError),
+                                                Mock(side_effect=AssertionError))
     actions = groundedaction.GroundedActions(facts, providers)
     candidate = groundedaction.CandidateInput('Inspect phantom.py', 'existing.py', Log())
     general = actions.vet(candidate)
@@ -190,4 +193,5 @@ def test_general_candidate_vet_does_not_replace_reorientation_name_authority():
     result = policy.reorient(item)
     assert result.reason == 'ungrounded'
     assert result.message['content'] == '⟦ctx:steer⟧ ' + FALLBACK
-    providers.assert_not_called()
+    providers.summarize.assert_not_called()
+    providers.judge_completion.assert_not_called()
