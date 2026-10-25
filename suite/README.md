@@ -104,6 +104,8 @@ For the restored eight-model planner-off L5 run, use the shared serial driver:
 python suite/l0_campaign.py --level 5 --campaign-id NAME --campaign-revision FULL_HEAD --drive
 ```
 
+An explicitly operator-authorized temporary GPU run uses the [owner-bound lease and automatic restoration procedure](../docs/temporary-fleet-gpu.md). It does not edit canonical RTX3080 profiles; the actual device variation is captured in campaign provenance.
+
 The historical script name remains compatible with L0. L5 cell-scoped canonical role sampling is preserved in external config receipts and restored after each cell; newer operator edits are never overwritten. Fleet validation, isolated installs, protected checkpoint pace and independent-final-judgment gating remain shared with the completed L0 campaign.
 
 Refresh a fresh campaign's score table and row averages with:

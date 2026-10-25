@@ -1,0 +1,67 @@
+--- a/tools/fleet_cli.py
++++ b/tools/fleet_cli.py
+@@ -12,6 +12,7 @@
+ import tomllib
+ import urllib.request
+ from frontend_sync import sync_frontend
++from fleet_gpu import PROFILE_GPU, execution_gpu
+ 
+ ROOT = Path('/home/jesse/.local/share/cria/fleet')
+ CONFIG = Path('/home/jesse/.config/llama-fleet/models.toml')
+@@ -20,7 +21,7 @@
+     ROOT / 'locks/reconciliation-gpu.lock',
+     ROOT / 'locks/model-io.lock',
+ )
+-GPU = 'GPU-393d4998-707c-0ef0-a514-761015477256'
++GPU = PROFILE_GPU
+ FLAG_NAMES = {
+     'alias': '--alias', 'host': '--host', 'port': '--port', 'ctx': '--ctx-size',
+     'n_batch': '--batch-size', 'n_ubatch': '--ubatch-size', 'parallel': '--parallel',
+@@ -84,7 +85,7 @@
+     if any(not p.startswith(str(ROOT) + '/') for p in libraries):
+         raise ValueError('runtime libraries must be operational fleet paths')
+     return {'logical_model': record['logical_model'], 'mode': mode, 'argv': argv,
+-            'env': {'CUDA_VISIBLE_DEVICES': GPU, 'LD_LIBRARY_PATH': cfg['lib_dir'],
++            'env': {'CUDA_VISIBLE_DEVICES': execution_gpu(record['logical_model']), 'LD_LIBRARY_PATH': cfg['lib_dir'],
+                     'PATH': '/usr/bin:/bin', 'HF_HUB_OFFLINE': '1', 'LLAMA_ARG_OFFLINE': '1'},
+             'cwd': str(ROOT), 'roles': record['roles'], 'ctx': cfg['ctx']}
+ 
+--- a/tools/frontend_sync.py
++++ b/tools/frontend_sync.py
+@@ -1,10 +1,10 @@
+-"""Documented Cria restart contract, guarded by a ready matching3080 backend."""
++"""Cria restart contract, guarded by a ready backend on the explicitly selected GPU."""
+ import json
+ import subprocess
+ import time
+ import urllib.request
+ 
+-GPU = 'GPU-393d4998-707c-0ef0-a514-761015477256'
++from fleet_gpu import PROFILE_GPU as GPU, execution_gpu
+ 
+ 
+ def get_json(url):
+@@ -27,11 +27,12 @@
+         raise ValueError('backend identity guard: no Cria restart')
+     if (props.get('default_generation_settings') or {}).get('n_ctx') != context:
+         raise ValueError('backend context guard: no Cria restart')
++    gpu = execution_gpu(model)
+     devices = run(['nvidia-smi', '--query-compute-apps=gpu_uuid,pid,used_memory',
+                    '--format=csv,noheader,nounits'], capture_output=True, text=True, timeout=10)
+-    if devices.returncode or not any(GPU in line and str(expected_pid) == line.split(',')[1].strip()
++    if devices.returncode or not any(gpu in line and str(expected_pid) == line.split(',')[1].strip()
+                                     for line in devices.stdout.splitlines() if ',' in line):
+-        raise ValueError('backend3080 PID guard: no Cria restart')
++        raise ValueError('backend GPU PID guard: no Cria restart')
+     try:
+         old = read('http://127.0.0.1:18085/v1/models')
+     except OSError:
+@@ -46,7 +47,7 @@
+             if card_matches(fresh, model, context):
+                 return {'backend_card': backend, 'actual_context': context, 'frontend_before': old,
+                         'frontend_after': fresh, 'Cria_restarted_after_backend_ready': restart,
+-                        'backend_PID': expected_pid, 'GPU': GPU, 'model_context_sync_verified': True}
++                        'backend_PID': expected_pid, 'GPU': gpu, 'model_context_sync_verified': True}
+         except OSError:
+             pass
+         sleep(1)

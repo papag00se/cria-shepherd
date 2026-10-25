@@ -22,9 +22,11 @@ if str(REPO) not in sys.path:
 try:
     from .battery_status import TASKS
     from .sampling_adapter import validate_knobs
+    from . import fleet_gpu
 except ImportError:
     from battery_status import TASKS
     from sampling_adapter import validate_knobs
+    import fleet_gpu
 
 SUITE = Path(__file__).resolve().parent
 ROOT = Path.home()/'.cria/suite/_campaigns'
@@ -35,7 +37,7 @@ LAUNCHER = Path.home()/'.local/bin/llama-fleet'
 READINESS = FLEET/'restoration-state.json'
 MODELS = ('gemma4_12b','ornith1.5_9b','bonsai2','nemotron-elastic','ling3.0_tiny',
           'phi4','k2_horizon_7b','qwen3.8_9b_distill')
-GPU = 'GPU-393d4998-707c-0ef0-a514-761015477256'
+GPU = fleet_gpu.PROFILE_GPU
 RESULTS = SUITE/'results/results.jsonl'
 POLICY = 'inferred-progress-15m-protected-30m-v1'
 
@@ -172,9 +174,17 @@ def fleet_snapshot(*, level=0):
             sync.get('model_context_sync_verified') is not True):
             raise ValueError('invalid managed switch proof: '+model)
         for p in [entry['native_checks'],*entry.get('supplement_checks',[])]: add(p)
-    return {'assets':assets,'effective_units':effective_units,'roles':roles,'live_config':live_config,
-            'config':config,'known_limits':receipt.get('known_limits'),
-            'phi4_known_limits':receipt['models']['phi4']['known_limits']}
+    snapshot = {'assets':assets,'effective_units':effective_units,'roles':roles,'live_config':live_config,
+                'config':config,'known_limits':receipt.get('known_limits'),
+                'phi4_known_limits':receipt['models']['phi4']['known_limits']}
+    lease = fleet_gpu.read_lease()
+    if lease is not None:
+        installed_helper = FLEET / 'tools/fleet_gpu.py'
+        if installed_helper.read_bytes() != Path(fleet_gpu.__file__).read_bytes():
+            raise ValueError('fleet GPU selection differs from the campaign source')
+        add(fleet_gpu.LEASE_PATH)
+        snapshot['execution_gpu_lease'] = lease
+    return snapshot
 
 
 def validate_live(config_path, *, level=0):
