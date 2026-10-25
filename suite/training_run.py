@@ -124,6 +124,37 @@ def rng_receipt(torch, sampler):
             'torch_cuda': [state.tolist() for state in torch.cuda.get_rng_state_all()]}
 
 
+def training_step(torch, model, optimizer, scheduler, batch, rows, encoded, weights,
+                  gradient_norm_clip, *, device='cuda', observe=None):
+    """The sole accumulated-update path, shared by fitting and integrity probes."""
+    optimizer.zero_grad(set_to_none=True)
+    batch_loss = 0.0
+    for case_id in batch:
+        row = rows[case_id]
+        ids = torch.tensor([encoded[case_id]], dtype=torch.long, device=device)
+        mask = torch.ones_like(ids)
+        with torch.autocast(device, dtype=torch.bfloat16, enabled=device == 'cuda'):
+            logits = model(ids, mask, row['family'])
+            target = torch.tensor([row['label_id']], device=device)
+            loss = torch.nn.functional.cross_entropy(logits, target) * weights[case_id] / len(batch)
+        if not torch.isfinite(loss):
+            raise ValueError('nonfinite training loss')
+        if observe:
+            observe('forward', case_id=case_id, logits=logits.detach().float(), target=row['label_id'])
+        loss.backward()
+        batch_loss += loss.detach().item()
+    if observe:
+        observe('backward', model=model, optimizer=optimizer)
+    norm = torch.nn.utils.clip_grad_norm_(model.parameters(), gradient_norm_clip, error_if_nonfinite=True)
+    learning_rates = [group['lr'] for group in optimizer.param_groups]
+    optimizer.step()
+    scheduler.step()
+    if observe:
+        observe('updated', model=model, optimizer=optimizer)
+    return {'weighted_mean_loss': batch_loss, 'gradient_norm': float(norm),
+            'learning_rates_used': learning_rates}
+
+
 def make_model(torch, encoder):
     class Joint(torch.nn.Module):
         def __init__(self):
@@ -183,6 +214,8 @@ def validate_bundle(root, recipe_path):
 
 def run(args):
     root, recipe_path = Path(args.root), Path(args.recipe)
+    from suite.training_preflight import require_preflight
+    require_preflight(args.integrity_receipt, recipe_path)
     recipe, rows, strata, jobs = validate_bundle(root, recipe_path)
     auth = json.loads(Path(args.authorization).read_bytes())
     validate_authorization(auth, sha(recipe_path.read_bytes()), args.gpu_uuid)
@@ -305,22 +338,9 @@ def run(args):
             rng.shuffle(ids)
             epoch_loss = 0.0
             for batch in accumulated_batches(ids, 16):
-                optimizer.zero_grad(set_to_none=True)
-                batch_loss = 0.0
-                for id in batch:
-                    row = rows[id]
-                    x, mask = input_tensor(id)
-                    with torch.autocast('cuda', dtype=torch.bfloat16):
-                        logits = model(x, mask, row['family'])
-                        target = torch.tensor([row['label_id']], device='cuda')
-                        loss = torch.nn.functional.cross_entropy(logits, target) * weights[id] / len(batch)
-                    if not torch.isfinite(loss):
-                        raise ValueError('nonfinite training loss')
-                    loss.backward()
-                    batch_loss += loss.detach().item()
-                norm = torch.nn.utils.clip_grad_norm_(model.parameters(), recipe['optimizer']['gradient_norm_clip'], error_if_nonfinite=True)
-                optimizer.step()
-                scheduler.step()
+                update = training_step(torch, model, optimizer, scheduler, batch, rows, encoded, weights,
+                                       recipe['optimizer']['gradient_norm_clip'])
+                batch_loss = update['weighted_mean_loss']
                 step += 1
                 allocated, reserved = torch.cuda.max_memory_allocated(), torch.cuda.max_memory_reserved()
                 rss = resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * 1024
@@ -328,8 +348,8 @@ def run(args):
                     raise RuntimeError('frozen resource ceiling exceeded; no truncation or recipe substitution')
                 epoch_loss += batch_loss * len(batch)
                 event('optimizer_step', fit=job['name'], epoch=epoch + 1, step=step,
-                      examples=len(batch), training_ids=batch, weighted_mean_loss=batch_loss, gradient_norm=float(norm),
-                      peak_allocated_bytes=allocated, peak_reserved_bytes=reserved, peak_host_rss_bytes=rss)
+                      examples=len(batch), training_ids=batch, weighted_mean_loss=batch_loss, gradient_norm=update['gradient_norm'],
+                      learning_rates_used=update['learning_rates_used'], peak_allocated_bytes=allocated, peak_reserved_bytes=reserved, peak_host_rss_bytes=rss)
             write_json(folder / f'epoch-{epoch + 1}-rng.json', {'state': rng_receipt(torch, rng), 'training_order': ids})
             event('epoch_complete', fit=job['name'], epoch=epoch + 1, examples=len(ids),
                   weighted_mean_loss=epoch_loss / len(ids))
@@ -385,6 +405,7 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ('root', 'recipe', 'authorization', 'gpu-uuid', 'output'):
         parser.add_argument('--' + name, required=True)
+    parser.add_argument('--integrity-receipt', required=True, help='Qualified native gradient/routing/update/tiny-overfit evidence; not deployment permission')
     parser.add_argument('--reference-run', help='Explicit full audited exact reproduction, not best-seed selection')
     run(parser.parse_args())
 

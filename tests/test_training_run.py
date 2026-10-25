@@ -84,6 +84,47 @@ def test_native_pooling_gradients_and_optimizer_ownership():
     assert by_identity[id(model.encoder.embedding.weight)]['lr'] == .01
 
 
+@pytest.mark.parametrize('size', [1, 3])
+def test_training_step_matches_full_batch_weighted_loss_and_updates(size):
+    torch = pytest.importorskip('torch')
+    import copy
+    from types import SimpleNamespace
+    from suite.training_run import make_model, training_step
+
+    class Encoder(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.config = SimpleNamespace(hidden_size=2)
+            self.embedding = torch.nn.Embedding(5, 2)
+
+        def forward(self, input_ids, attention_mask):
+            return SimpleNamespace(last_hidden_state=self.embedding(input_ids))
+
+    torch.manual_seed(17)
+    actual = make_model(torch, Encoder())
+    expected = copy.deepcopy(actual)
+    ids = list(range(size))
+    rows = {i: {'family': 'dictation' if i % 2 else 'retrospective', 'label_id': i % 2} for i in ids}
+    encoded = {i: [i, i + 1] for i in ids}
+    weights = {i: 1 + .25 * i for i in ids}
+    optimizer = torch.optim.SGD(actual.parameters(), lr=.1)
+    reference_optimizer = torch.optim.SGD(expected.parameters(), lr=.1)
+    scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lambda step: 1)
+    losses = []
+    for i in ids:
+        x = torch.tensor([encoded[i]])
+        logits = expected(x, torch.ones_like(x), rows[i]['family'])
+        losses.append(torch.nn.functional.cross_entropy(logits, torch.tensor([rows[i]['label_id']])) * weights[i])
+    loss = torch.stack(losses).mean()
+    loss.backward()
+    reference_optimizer.step()
+    result = training_step(torch, actual, optimizer, scheduler, ids, rows, encoded, weights, 1e9, device='cpu')
+    assert result['weighted_mean_loss'] == pytest.approx(float(loss.detach()))
+    assert result['learning_rates_used'] == [.1]
+    for name, parameter in actual.named_parameters():
+        assert torch.allclose(parameter, dict(expected.named_parameters())[name], atol=1e-7)
+
+
 def test_export_preserves_full_precision_reference_and_integer_buffers():
     torch = pytest.importorskip('torch')
     from suite.training_run import export_states
