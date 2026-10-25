@@ -1,5 +1,7 @@
 # GLiClass expanded fit v2
 
+**Chronology:** this document records the training/assessment authorization and its results, not the later deployment state. A separately authorized optional CPU deployment and one fresh coding cell are documented in [System 1 serving and coding results](../system1.md#first-fresh-coding-cell-2026-10-25). None of the diagnostic scores below is a coding-usefulness score.
+
 ## Operator authorization and scope
 
 The operator explicitly requests a new GLiClass fit using the admitted real Go, Node and Rust cases alongside the original Java, Python and Ruby training cases, plus at least 100 varied synthetic TRAIN cases that survive independent admission. The operator permits extrapolation from admitted real examples. Train and test; preserve prior results, retain unresolved quarantines, disclose training exposure, and do not deploy. The RTX 3090 remains the approved training device; the RTX 3080 and production services are untouched.
