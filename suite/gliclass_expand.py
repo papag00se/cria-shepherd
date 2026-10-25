@@ -29,15 +29,29 @@ def promote_real_cases(rows, candidates):
     return promoted
 
 
+def blind_id(identity):
+    return 'blind-' + sha(identity.encode('utf-8'))
+
+
+def unblind_reviews(proposals, reviews):
+    """Restore source identities only AFTER the independent review is complete."""
+    mapping = {blind_id(p['id']): p['id'] for p in proposals}
+    if len(mapping) != len(proposals) or set(mapping) != set(reviews):
+        raise ValueError('incomplete or extraneous blind review coverage')
+    if any(identity != r['id'] for identity, r in reviews.items()):
+        raise ValueError('blind review identity mismatch')
+    return {mapping[identity]: dict(r, id=mapping[identity]) for identity, r in reviews.items()}
+
+
 def blind_proposals(proposals):
     """Keep labels, rationales, ancestry and proposal ordering out of review."""
-    return sorted(({'id': p['id'], 'family': p['family'],
+    return sorted(({'id': blind_id(p['id']), 'family': p['family'],
                     'complete_input': p['complete_input'],
                     'input_sha256': sha(canonical_input(p['complete_input']))}
                    for p in proposals), key=lambda p: sha(p['id'].encode()))
 
 
-def admit_proposals(proposals, first, second, batch_partitions, real_cases):
+def admit_proposals(proposals, first, second, batch_partitions, real_cases, *, excluded_input_hashes=()):
     """Return canonical fit rows and held proposals; never majority-vote a hold.
 
     first/second are keyed review records in training_admit.validate_review's
@@ -56,6 +70,7 @@ def admit_proposals(proposals, first, second, batch_partitions, real_cases):
     group_owners = {}
     digests = Counter(sha(canonical_input(p['complete_input'])) for p in proposals)
     real_digests = {r['input_sha256'] for r in real.values()}
+    excluded = set(excluded_input_hashes)
     admitted, quarantine = [], []
     for proposal in proposals:
         identity, family = proposal['id'], proposal['family']
@@ -84,6 +99,8 @@ def admit_proposals(proposals, first, second, batch_partitions, real_cases):
             reasons.append('AUTHOR_REVIEW_DISAGREEMENT')
         if digests[digest] > 1 or digest in real_digests:
             reasons.append('DUPLICATE_COMPLETE_INPUT')
+        if digest in excluded:
+            reasons.append('EXCLUDED_EXISTING_INPUT')
         if reasons:
             quarantine.append({'id': identity, 'family': family, 'input_sha256': digest,
                                'reason': reasons, 'intended_partition': partition})

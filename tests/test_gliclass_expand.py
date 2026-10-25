@@ -25,11 +25,12 @@ def review(p, **changes):
     return r
 
 
-def admit(ps, a=None, b=None, real=()):
+def admit(ps, a=None, b=None, real=(), excluded=()):
     from suite.gliclass_expand import admit_proposals
     a = a if a is not None else {p['id']: review(p) for p in ps}
     b = b if b is not None else copy.deepcopy(a)
-    return admit_proposals(ps, a, b, {'train': 'TRAIN', 'test': 'SYNTHETIC_TEST'}, list(real))
+    return admit_proposals(ps, a, b, {'train': 'TRAIN', 'test': 'SYNTHETIC_TEST'}, list(real),
+                           excluded_input_hashes=excluded)
 
 
 def test_independent_agreement_preserves_reserved_batch_and_native_inputs():
@@ -62,12 +63,37 @@ def test_agreeing_reviewers_do_not_silently_relabel_author_disagreement():
 
 def test_blind_review_packet_has_no_target_rationale_ancestry_or_group_cues():
     from suite.gliclass_expand import blind_proposals
-    ps = [proposal('a'), proposal('b')]
+    ps = [proposal('expand2-author-a-group01-1'), proposal('expand2-test-group02-2')]
     for packet in blind_proposals(ps):
         assert set(packet) == {'id', 'family', 'complete_input', 'input_sha256'}
-        source = next(p for p in ps if p['id'] == packet['id'])
-        assert packet['complete_input'] == source['complete_input']
+        source = next(p for p in ps if p['complete_input'] == packet['complete_input'])
+        assert source['id'] not in packet['id']
+        assert packet['id'].startswith('blind-')
         assert packet['input_sha256'] == sha(canonical_input(source['complete_input']))
+
+
+def test_blind_review_identity_mapping_is_lossless_and_requires_exact_coverage():
+    from suite.gliclass_expand import blind_proposals, unblind_reviews
+    ps = [proposal('expand2-author-group-label-1'), proposal('expand2-test-group-2')]
+    blinded = blind_proposals(ps)
+    reviews = {}
+    for packet in blinded:
+        source = next(p for p in ps if p['complete_input'] == packet['complete_input'])
+        reviews[packet['id']] = dict(review(source), id=packet['id'])
+    restored = unblind_reviews(ps, reviews)
+    assert restored == {p['id']: review(p) for p in ps}
+    assert all(key == r['id'] for key, r in reviews.items())
+    reviews.pop(next(iter(reviews)))
+    with pytest.raises(ValueError, match='blind review coverage'):
+        unblind_reviews(ps, reviews)
+
+
+def test_a_new_identity_cannot_resurrect_an_unresolved_old_input():
+    p = proposal('new-author-identity')
+    digest = sha(canonical_input(p['complete_input']))
+    rows, holds = admit([p], excluded={digest})
+    assert not rows
+    assert 'EXCLUDED_EXISTING_INPUT' in holds[0]['reason']
 
 
 def test_input_hash_or_literal_support_mismatch_stops_admission():
