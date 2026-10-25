@@ -8,6 +8,7 @@ The 68M candidate is rejected as the next model; no further matrix or deployment
 
 ## Deliverables
 
+- [ornith1.5_9b / Java key-call replay](ornith-java-system1-replay.md): ten exact-source admitted calls from the three key historical sessions; six guard decisions change, but all ten are exposed TRAIN cases and no Java task outcome is established.
 - [Current guard versus trained GLiClass](current-guard-comparison.md): completed paired comparison on the same 130 admitted historical cases, including unsafe approvals, false blocks and precise replay scope. No deployment.
 - [GLiClass native INT4 experiment and full fine-tune](gliclass-v4-edge.md): actual sub-budget four-bit bundle, completed frozen fine-tune, native/export fidelity and 99→124/130 diagnostic comparison. No deployment.
 - [Completed OneJev fine-tune and authorized GLiClass follow-up](onejev-finetuning.md): one frozen full fit, passed native learning check, final trained-Q4 comparison, and activated next candidate. No deployment.
