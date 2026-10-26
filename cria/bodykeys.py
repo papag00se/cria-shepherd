@@ -29,6 +29,7 @@ class AnnotationSource(str, Enum):
     DEPENDENCY = 'dependency_annotation'
     INVENTORY = 'inventory'
     GUIDANCE_HISTORY = 'guidance_history'
+    INTERNAL_EVIDENCE = 'internal_evidence'
 
 
 ANNOTATION_SOURCE = 'cria_annotation_source'

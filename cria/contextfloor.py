@@ -694,23 +694,10 @@ def _reduce_tool_outputs(messages: list[dict], msg_budget: int) -> tuple[list[di
     return out, reduced
 
 
-# The harness's environment/instructions preamble — a user-role turn that is NOT the task. Mirrors
-# selfcompact.is_env_context; contextfloor imports nothing (see _PROTECT_MARKERS above) and a test
-# asserts the two stay in sync. Matched by the shape of the TAG NAME rather than by two literal
-# spellings — see the note beside the owner in `selfcompact`.
-_ENV_PREAMBLE = re.compile(
-    r"<\s*([\w.-]*(?:environment|instructions|system|context)[\w.-]*)\s*>"
-    r"[\s\S]*?</\s*\1\s*>", re.I)
-
-
-def _is_env_preamble(m: dict) -> bool:
-    return bool(_ENV_PREAMBLE.search(_msg_text(m)))
-
-
-def _request_user(message: dict) -> bool:
-    """A producer-owned factual annotation is not a new user request."""
-    return (message.get('role') == 'user' and not any(
-        message.get(bodykeys.ANNOTATION_SOURCE) is source for source in bodykeys.AnnotationSource))
+# Compatibility names share actual producer/role authority, never a second
+# text classifier. Root protection uses the same selector as session identity.
+_is_env_preamble = selfcompact.is_env_context
+_request_user = selfcompact.is_user_request
 
 
 def _last_user(messages: list[dict]) -> int:
@@ -733,16 +720,11 @@ def _input_core(messages: list[dict], pinned_task: str) -> list[dict]:
     Do not reserve against the entire historical active span: that would disable
     compaction as history grows. Include paired calls for surviving tool results.
     """
-    task_at = next((i for i, m in enumerate(messages)
-                    if _request_user(m) and pinned_task
-                    and _msg_text(m).strip() == pinned_task.strip()), None)
-    if task_at is None:
-        task_at = next((i for i, m in enumerate(messages)
-                        if _request_user(m) and not _is_env_preamble(m)), -1)
+    roots = set(selfcompact.root_user_indices(messages, pinned_task))
     last_user = _last_user(messages)
     tail = _live_tail(messages)
     keep = {i for i, m in enumerate(messages)
-            if (i <= task_at and m.get("role") == "user") or i in tail or i == last_user
+            if i in roots or i in tail or i == last_user
             or m.get("role") in ("system", "developer") or _has_protect_marker(m)}
     # Reducible evidence is not the irreducible live input the reply room must yield to: counting the
     # restored file text here shrank the reply reserve by the block's size (reviewed on phi4 post-compaction
@@ -802,7 +784,7 @@ def _live_obligations(messages: list[dict]) -> tuple[int, ...]:
 
 def _protected_mask(messages: list[dict], pinned_task: str = "") -> list[bool]:
     """True where a message must NOT be dropped: every system message, the active turn — the last
-    user message through the end of the list — and THE FIRST REAL USER TURN, which is the task.
+    user message through the end of the list — and the authoritative root scope.
 
     THE TASK USED TO BE DROPPABLE, and it was dropped. The active span is "the last user message
     onward", so the task is covered only while nothing follows it — and cria itself injects user-role
@@ -818,25 +800,14 @@ def _protected_mask(messages: list[dict], pinned_task: str = "") -> list[bool]:
     plan-off path the raw task carries no marker for most of a session. This protects it structurally
     instead, with no marker and nothing added to what the model reads.
 
-    The harness's `<environment_context>` preamble is a user turn and is NOT the task, so it is
-    skipped; that is the same distinction selfcompact.is_env_context draws."""
+    Without an exact single-message pin, the whole initial user prelude remains
+    possible task/context. A closed XML tag cannot distinguish a real request
+    from a banner. The identity/history owner makes the same preservation choice."""
     n = len(messages)
-    last_user, first_task = -1, -1
-    wanted = pinned_task.strip()
-    for i, m in enumerate(messages):
-        if _request_user(m):
-            last_user = i
-            # Prefer the task the session actually pinned. Environment banners are harness prose and
-            # cannot be recognized reliably by an ever-growing phrase list. Exact equality is enough:
-            # this is the same verbatim root task the loop extracted from the raw request.
-            if wanted and _msg_text(m).strip() == wanted:
-                first_task = i
-            elif first_task < 0 and not wanted and not _is_env_preamble(m):
-                first_task = i
+    last_user = _last_user(messages)
+    roots = set(selfcompact.root_user_indices(messages, pinned_task))
     active = _active_start(messages, last_user) if last_user >= 0 else -1
-    prot = [False] * n
-    if first_task >= 0:
-        prot[first_task] = True
+    prot = [i in roots for i in range(n)]
     for i, m in enumerate(messages):
         if _historical_annotation(m):
             continue  # relocation cannot promote historical wording into an active request/anchor

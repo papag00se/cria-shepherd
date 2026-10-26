@@ -16,6 +16,7 @@ The fix is not a wider window or a clip: the unbounded record rides as composed 
 floor drops the OLDEST ones with a label, and the task/question/newest actions survive. These tests
 replay the reconstructed A11 sizes through the real ``contextfloor.fit`` at the live window.
 """
+import copy
 import json
 import unittest
 
@@ -62,7 +63,9 @@ class _Capture:
         self.bodies, self.reply = [], reply
 
     def __call__(self, body, rlog):
-        self.bodies.append(json.loads(json.dumps(body, default=str)))
+        # This is the raw pre-floor input. JSON serialization would erase the
+        # producer enum's in-process authority, not copy the body the floor reads.
+        self.bodies.append(copy.deepcopy(body))
         return json.dumps({"choices": [{"message": {"role": "assistant", "content": self.reply},
                                         "finish_reason": "stop"}]}).encode()
 

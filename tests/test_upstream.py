@@ -593,6 +593,9 @@ class OverflowRefitTests(unittest.TestCase):
         # Enough messages that a tighter density visibly trims MORE of them on the refit.
         # Distinct turns keep duplicate folding from erasing the reducible history.
         msgs = [{"role": "user", "content": f"Turn {n}: " + "payload " * 80} for n in range(200)]
+        # These are historical requests after real work began, not 200 equally
+        # authoritative initial user packets. Preserve every original payload.
+        msgs.insert(1, {"role": "assistant", "content": "Inspected the project; work has started."})
         return {"model": "m", "messages": msgs}
 
     def test_overflow_triggers_a_single_refit_retry_that_succeeds(self):

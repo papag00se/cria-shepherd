@@ -31,7 +31,7 @@ from collections import OrderedDict
 from dataclasses import dataclass, field
 from typing import Callable
 
-from . import bodykeys, jsontext, prompts, tokenratio
+from . import bodykeys, jsontext, prompts, selfcompact, tokenratio
 from .content_reduce import est_tokens
 
 MARKER = "⟦ctx:extracted⟧"
@@ -162,8 +162,8 @@ def _extract(group: list[str], chat_fn: Callable, apply_role: Callable[[dict], N
     # One message per block, so the floor can still reduce (and label) an outlier piece.
     body = {"stream": False, "max_tokens": EXTRACT_REPLY_TOKENS, bodykeys.DENSITY_KIND: "summary",
             "messages": [{"role": "system", "content": prompts.load("compaction_extract")},
-                         {"role": "user", "content": prompts.load("composed_evidence_intro")},
-                         *({"role": "user", "content": b} for b in group),
+                         selfcompact.internal_evidence_message(prompts.load("composed_evidence_intro")),
+                         *(selfcompact.internal_evidence_message(b) for b in group),
                          {"role": "user", "content": prompts.load("compaction_extract_ask")}]}
     apply_role(body)
     previous = getattr(rlog, "phase", None)

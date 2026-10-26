@@ -12,12 +12,7 @@ OWN = '# House rules\r\n\r\nRun the local unit tests before reporting success.\r
 FOREIGN = 'An unrelated workspace rule.'
 TASK = 'Implement the requested function. Preserve every existing public entry point.'
 ROOT = '/virtual/workspace'
-VERIFIED_BODY = ('Project instructions (from the repo — follow these):\n'
-                 '# House rules\n\nRun the local unit tests before reporting success.\n\n'
-                 'Working environment — cwd: /virtual/workspace, shell: bash, date: 2026-10-15, timezone: UTC.')
-ENV_BODY = 'Working environment — cwd: /virtual/workspace, shell: bash, date: 2026-10-15, timezone: UTC.'
 FIRST_READS = ['AGENTS.md', 'AGENT.md', 'CLAUDE.md', 'GEMINI.md', 'CONVENTIONS.md']
-ALL_READS = FIRST_READS + ['.cursorrules', '.windsurfrules', '.github/copilot-instructions.md']
 
 
 def preamble(instructions=OWN, root=ROOT, tag='INSTRUCTIONS'):
@@ -44,53 +39,53 @@ class View:
         return self.bodies.get(Path(path).relative_to(ROOT).as_posix())
 
 
-@pytest.mark.parametrize('text,bodies,surveyed,body,provenance,reads', [
-    (preamble(), {'CONVENTIONS.md': OWN}, True, VERIFIED_BODY, 'VERIFIED', FIRST_READS),
-    (preamble(FOREIGN + '\n\n' + OWN), {'CONVENTIONS.md': OWN}, True, VERIFIED_BODY, 'VERIFIED', FIRST_READS),
-    (preamble(FOREIGN), {'CONVENTIONS.md': OWN}, True, ENV_BODY, 'UNVERIFIED', ALL_READS),
-    (preamble(), {}, True, ENV_BODY, 'UNVERIFIED', ALL_READS),
-    (preamble(), {'CONVENTIONS.md': None}, True, ENV_BODY, 'UNVERIFIED', ALL_READS),
-    (preamble(), {'CONVENTIONS.md': OWN}, False, ENV_BODY, 'UNSURVEYED', []),
-    (preamble(tag='user_instructions'), {'CONVENTIONS.md': OWN}, True, VERIFIED_BODY, 'VERIFIED', FIRST_READS),
-    ('<INSTRUCTIONS>' + OWN + '</INSTRUCTIONS>', {'CONVENTIONS.md': OWN}, True, None, 'NO_WORKSPACE', []),
-    ('<environment_details>native shell metadata</environment_details>', {}, True, None, 'NOT_REQUESTED', []),
-    ('<Environment_Context><cwd>/virtual/workspace</cwd></Environment_Context>', {}, True, None, 'NOT_REQUESTED', []),
-    ('<environment_context><cwd>/virtual/workspace</cwd>', {}, True, None, 'NOT_REQUESTED', []),
-    ('<environment_context><sandbox_mode>restricted</sandbox_mode></environment_context>', {}, True, None, 'NOT_REQUESTED', []),
-    (TASK, {}, True, None, 'NOT_REQUESTED', []),
+@pytest.mark.parametrize('text,bodies,surveyed', [
+    (preamble(), {'CONVENTIONS.md': OWN}, True),
+    (preamble(FOREIGN + '\n\n' + OWN), {'CONVENTIONS.md': OWN}, True),
+    (preamble(FOREIGN), {'CONVENTIONS.md': OWN}, True),
+    (preamble(), {}, True),
+    (preamble(), {'CONVENTIONS.md': None}, True),
+    (preamble(), {'CONVENTIONS.md': OWN}, False),
+    (preamble(tag='user_instructions'), {'CONVENTIONS.md': OWN}, True),
+    ('<INSTRUCTIONS>' + OWN + '</INSTRUCTIONS>', {'CONVENTIONS.md': OWN}, True),
+    ('<environment_details>native shell metadata</environment_details>', {}, True),
+    ('<Environment_Context><cwd>/virtual/workspace</cwd></Environment_Context>', {}, True),
+    ('<environment_context><cwd>/virtual/workspace</cwd>', {}, True),
+    ('<environment_context><sandbox_mode>restricted</sandbox_mode></environment_context>', {}, True),
+    (TASK, {}, True),
 ])
-def test_source_parity(text, bodies, surveyed, body, provenance, reads):
-    """Frozen provenance/body oracles survive retirement of the legacy Loop policy."""
+def test_source_parity(text, bodies, surveyed):
+    """File-text provenance never proves that the enclosing user packet is harness-authored.
+
+    The legacy source-parity fixtures include verified, foreign, missing and
+    unsurveyed rules. None authorizes discarding the rest of a user request.
+    """
     view = View(bodies, surveyed)
     original = message(text, provenance='harness', sequence=7)
     workspace = Mock(return_value=view)
     result = policy.reframe(policy.PreambleInput(original, workspace))
-    if provenance in ('VERIFIED', 'UNVERIFIED', 'UNSURVEYED'):
-        workspace.assert_called_once_with(ROOT)
-    else:
-        workspace.assert_not_called()
-    assert result.message == {'role': 'user', 'content': text if body is None else body,
-                              'provenance': 'harness', 'sequence': 7}
-    assert result.instructions.provenance.name == provenance
-    assert view.reads == [Path(ROOT) / name for name in reads]
-    assert result.effect is (policy.Effect.UNCHANGED if body is None else policy.Effect.REFRAMED)
-    if body is None:
-        assert result.message is original
-    assert original['content'] == text
+    workspace.assert_not_called()
+    assert result.message is original
+    assert result.message == {'role': 'user', 'content': text, 'provenance': 'harness', 'sequence': 7}
+    assert result.instructions.provenance is policy.Provenance.NOT_REQUESTED
+    assert view.reads == []
+    assert result.effect is policy.Effect.UNCHANGED
 
 
-def test_verified_part_keeps_literal_file_text_and_excludes_unverified_authority():
+def test_verified_workspace_part_does_not_authorize_dropping_unverified_user_context():
     view = View({'CONVENTIONS.md': OWN})
-    result = policy.reframe(policy.PreambleInput(message(preamble(FOREIGN + '\n' + OWN)), lambda root: view))
-    assert result.instructions.provenance is policy.Provenance.VERIFIED
-    assert result.instructions.filename == 'CONVENTIONS.md'
-    assert OWN.replace('\r', '').strip() in result.message['content']
-    assert FOREIGN not in result.message['content']
-    assert 'cwd: /virtual/workspace' in result.message['content']
-    assert 'shell: bash' in result.message['content']
-    assert 'date: 2026-10-15' in result.message['content']
-    assert 'timezone: UTC' in result.message['content']
-    assert 'sandbox_mode' not in result.message['content']
+    instructions = policy.workspace_instructions(ROOT, FOREIGN + '\n' + OWN, lambda root: view)
+    assert instructions.provenance is policy.Provenance.VERIFIED
+    assert instructions.filename == 'CONVENTIONS.md'
+    assert instructions.text == OWN.strip()
+    assert FOREIGN not in instructions.text
+    assert view.reads == [Path(ROOT) / name for name in FIRST_READS]
+    raw = message(preamble(FOREIGN + '\n' + OWN))
+    result = policy.reframe(policy.PreambleInput(raw, lambda root: view))
+    assert result.message is raw
+    assert FOREIGN in result.message['content']
+    assert OWN in result.message['content']
+    assert '<sandbox_mode>workspace-write</sandbox_mode>' in result.message['content']
     assert view.bodies['CONVENTIONS.md'] == OWN
 
 
@@ -102,9 +97,12 @@ def test_verified_part_keeps_literal_file_text_and_excludes_unverified_authority
 ])
 def test_unknown_unreadable_and_unverified_do_not_assert_absence(bodies, surveyed, expected):
     view = View(bodies, surveyed)
-    result = policy.reframe(policy.PreambleInput(message(preamble()), lambda root: view))
-    assert result.instructions.provenance is expected
-    assert result.instructions.text is None
+    instructions = policy.workspace_instructions(ROOT, OWN, lambda root: view)
+    assert instructions.provenance is expected
+    assert instructions.text is None
+    raw = message(preamble())
+    result = policy.reframe(policy.PreambleInput(raw, lambda root: view))
+    assert result.message is raw
     assert 'Project instructions' not in result.message['content']
     assert 'bash' in result.message['content']
     assert 'does not exist' not in result.message['content']
@@ -117,7 +115,8 @@ def test_no_cwd_or_extractable_fields_keeps_raw_instead_of_destroying_user_direc
     workspace = Mock(side_effect=AssertionError)
     result = policy.reframe(policy.PreambleInput(raw, workspace))
     assert result.message is raw
-    assert result.instructions.provenance is policy.Provenance.NO_WORKSPACE
+    assert result.instructions.provenance is policy.Provenance.NOT_REQUESTED
+    assert policy.workspace_instructions('', OWN, workspace).provenance is policy.Provenance.NO_WORKSPACE
     workspace.assert_not_called()
     ordinary = message('Keep this legitimate user directive. <Context> is a component name.')
     assert policy.reframe(policy.PreambleInput(ordinary, workspace)).message is ordinary
@@ -136,7 +135,9 @@ def test_structured_text_part_body_matches_original_without_changing_other_metad
     raw = message([{'type': 'text', 'text': preamble()}, {'type': 'text', 'text': ''}], trace='same')
     view = View({'CONVENTIONS.md': OWN})
     result = policy.reframe(policy.PreambleInput(raw, lambda root: view))
-    assert result.message == {'role': 'user', 'content': VERIFIED_BODY, 'trace': 'same'}
+    assert result.message is raw
+    assert result.message == {'role': 'user', 'content': raw['content'], 'trace': 'same'}
+    assert view.reads == []
     assert result.message['trace'] == 'same'
     assert isinstance(raw['content'], list)
 
@@ -157,9 +158,10 @@ def test_real_coder_and_reasoner_body_parity(synthetic):
     with patch.object(loop.wsview, 'current', return_value=view):
         actual_coder = coder()
         actual_reasoner = loop._drop_harness_frame(messages)
-    assert actual_reasoner == [message(VERIFIED_BODY), messages[3], messages[4]]
-    assert view.reads == [Path(ROOT) / name for name in FIRST_READS] * 2
-    assert sum(m.get('content') == VERIFIED_BODY for m in actual_coder) == 1
+    assert actual_reasoner == messages[2:]
+    assert view.reads == []
+    assert sum(m == messages[2] for m in actual_coder) == 1
+    assert sum(m == messages[2] for m in actual_reasoner) == 1
     assert actual_coder[0]['role'] == 'system'
     assert not any(m.get('role') == 'developer' for m in actual_coder)
     assert not any(m.get('content') in ('Harness agent frame', 'Harness configured constraint')
@@ -207,27 +209,24 @@ def test_selected_replacement_is_the_only_batch_implementation():
 
 
 def test_no_cached_provenance_across_mutation_task_reset_or_session():
-    raw = message(preamble())
     first = View({'CONVENTIONS.md': OWN})
     other = View({'CONVENTIONS.md': FOREIGN})
-    assert policy.reframe(policy.PreambleInput(raw, lambda root: first)).instructions.provenance is policy.Provenance.VERIFIED
-    assert policy.reframe(policy.PreambleInput(raw, lambda root: other)).instructions.provenance is policy.Provenance.UNVERIFIED
+    assert policy.workspace_instructions(ROOT, OWN, lambda root: first).provenance is policy.Provenance.VERIFIED
+    assert policy.workspace_instructions(ROOT, OWN, lambda root: other).provenance is policy.Provenance.UNVERIFIED
     # A new task/current view needs no private reset: provenance is re-read, not
     # inherited from a previous successful lookup at the very same path.
     first.bodies['CONVENTIONS.md'] = 'Updated project rules'
-    result = policy.reframe(policy.PreambleInput(raw, lambda root: first))
-    assert result.instructions.provenance is policy.Provenance.UNVERIFIED
-    updated = message(preamble('Updated project rules'))
-    assert policy.reframe(policy.PreambleInput(updated, lambda root: first)).instructions.provenance is policy.Provenance.VERIFIED
+    assert policy.workspace_instructions(ROOT, OWN, lambda root: first).provenance is policy.Provenance.UNVERIFIED
+    assert policy.workspace_instructions(ROOT, 'Updated project rules', lambda root: first).provenance is policy.Provenance.VERIFIED
     first.surveyed = False
-    assert policy.reframe(policy.PreambleInput(updated, lambda root: first)).instructions.provenance is policy.Provenance.UNSURVEYED
+    assert policy.workspace_instructions(ROOT, 'Updated project rules', lambda root: first).provenance is policy.Provenance.UNSURVEYED
 
 
 def test_first_matching_file_precedence_and_whitespace_normalization_are_unchanged():
     view = View({'AGENT.md': 'alpha\n beta', 'CONVENTIONS.md': 'gamma'})
-    result = policy.reframe(policy.PreambleInput(message(preamble('prefix alpha   beta gamma')), lambda root: view))
-    assert result.instructions.filename == 'AGENT.md'
-    assert result.instructions.text == 'alpha\n beta'
+    result = policy.workspace_instructions(ROOT, 'prefix alpha   beta gamma', lambda root: view)
+    assert result.filename == 'AGENT.md'
+    assert result.text == 'alpha\n beta'
     assert view.reads == [Path(ROOT) / 'AGENTS.md', Path(ROOT) / 'AGENT.md']
 
 
@@ -239,8 +238,9 @@ def test_harness_handoff_evidence_uses_same_policy_without_owning_compaction_sco
                message('Summarize the prior work.')]
     with patch.object(loop.wsview, 'current', return_value=view):
         actual = server._compaction_messages(history)
-    assert actual == [message(VERIFIED_BODY), history[1], history[2]]
-    assert view.reads == [Path(ROOT) / name for name in FIRST_READS]
+    assert actual == history[:-1]
+    assert sum(m == history[0] for m in actual) == 1
+    assert view.reads == []
     assert actual[-1] is history[-2]
     assert any(m is history[1] for m in actual)
     assert all(m is not history[-1] for m in actual)

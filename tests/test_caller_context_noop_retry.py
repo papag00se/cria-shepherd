@@ -208,8 +208,8 @@ class CallerContextNoopRetryTests(unittest.TestCase):
 
         The composed-evidence path supplies two legal middle evidence messages.  A real server
         context error makes the actual owner learn window/density; normal floor fitting first drops
-        two blocks for the inner refit, then one for the same-role outer retry.  The candidate must
-        not suppress that different final wire.
+        the introduction and two blocks for the inner refit, then the introduction and
+        one block for the same-role outer retry. The candidate must not suppress that different final wire.
         """
         up = self._upstream()
         tr = _Transport("context_refit_empty_then_outer_summary")
@@ -238,9 +238,17 @@ class CallerContextNoopRetryTests(unittest.TestCase):
         self.assertTrue(rlog.named("context.floor_skipped"))
         self.assertTrue(any(event.get("source") == "server-error"
                             for event in rlog.named("context.window")))
-        self.assertEqual([event["turns_dropped"] for event in rlog.named("context.floor")], [2, 1])
+        # The introduction is now producer-owned context, not a fake first USER
+        # request. Its removal counts too; the actual POST/retry count is unchanged.
+        self.assertEqual([event["turns_dropped"] for event in rlog.named("context.floor")], [3, 2])
         self.assertIn("recovered summary", evidence)
         final_bodies = [json.loads(post) for post in tr.posts]
+        inner_text = '\n'.join(m.get('content', '') for m in final_bodies[1]['messages'])
+        outer_text = '\n'.join(m.get('content', '') for m in final_bodies[2]['messages'])
+        for block in blocks:
+            self.assertNotIn(block, inner_text)
+        self.assertNotIn(blocks[0], outer_text)
+        self.assertIn(blocks[1], outer_text)
         self.assertEqual(final_bodies, self._captured_bodies(rlog))
         self.assertTrue(all(body["chat_template_kwargs"]["enable_thinking"] is False
                             for body in final_bodies))

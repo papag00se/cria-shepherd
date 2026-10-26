@@ -1033,8 +1033,8 @@ def _judge_completion(chat_fn, role, system: str, user: str, rlog, *, phase: str
         # evidence is: with a pinned question the leading intro is NOT protected (the question is), so a
         # separate intro would be the oldest turn and the first the floor sheds.
         messages[1:1] = [
-            *([{"role": "user", "content": prompts.load(evidence_intro)}] if evidence_intro else []),
-            *({"role": "user", "content": block} for block in evidence_blocks if block.strip()),
+            *([selfcompact.internal_evidence_message(prompts.load(evidence_intro))] if evidence_intro else []),
+            *(selfcompact.internal_evidence_message(block) for block in evidence_blocks),
         ]
     workspace_known = bool(workspace_root) and wsview.current(workspace_root).surveyed
     inspectable = workspace_known and allow_inspection
@@ -1058,7 +1058,7 @@ def _judge_completion(chat_fn, role, system: str, user: str, rlog, *, phase: str
             # reasonably expects it to be.)
             # Just before the question, AFTER any composed history: the floor sheds oldest first, and the
             # current on-disk files must outlast the older record, not be the first thing it removes.
-            messages.insert(len(messages) - 1, {"role": "user", "content": seeded})
+            messages.insert(len(messages) - 1, selfcompact.internal_evidence_message(seeded))
             rlog.emit("loop.judge_files_seeded", phase=phase, chars=len(seeded))
     inspection_start = len(messages) if evidence_blocks else 2
     rounds = 0
@@ -5207,21 +5207,16 @@ class Loop:
         base = _required_coder_base(raw, tools=body.get("tools"), prior_work=sess.prior_work,
             workspace_root=sess.workspace_root, gate_plan=getattr(sess, "gate_plan", None),
             suspend_cursor=bool(sess.completion_remediation_subject or sess.replan_uncovered), rlog=rlog)
-        # Required authority is a partition, not reducible history rediscovered later.
-        # Preserve the one source index; equal later user packets remain independent turns.
-        task_at = base.task_index + 1 if base.task_index is not None else None
-        root_message = base.messages[task_at] if task_at is not None else None
+        # Root authority is a partition, not reducible history rediscovered later.
+        # Keep ALL initial user packets in original order. Equal later packets
+        # remain independent turns, and markup cannot establish harness origin.
+        root_indices = {i + 1 for i in base.root_indices}
+        root_messages = [message for position, message in enumerate(base.messages) if position in root_indices]
         root_task = _history_root(raw)[0]
-        live, history = [], []
-        for position, message in enumerate(base.messages[1:], start=1):
-            if position == task_at:
-                continue
-            # Harness preambles are user packets; literal markup in tool results
-            # or assistant history must retain its read visibility and call order.
-            is_live = message.get("role") == "user" and selfcompact.is_env_context(message)
-            (live if is_live else history).append(message)
+        history = [message for position, message in enumerate(base.messages[1:], start=1)
+                   if position not in root_indices]
         if self._ctx.self_compact:
-            frame = [base.messages[0], *([root_message] if root_message is not None else []), *live]
+            frame = [base.messages[0], *root_messages]
             history = self._self_compact(history, sess, index, rlog,
                 force=bool(not synthetic and sess.compact_pending), pinned_task=root_task,
                 protected_prefix=True,
@@ -5234,7 +5229,7 @@ class Loop:
                       dropped_calls=focused.report.dropped_calls, dropped_msgs=focused.report.dropped_msgs)
         # Reducers never received these packets, so neither copies nor canonical
         # rolling task publication can duplicate them. All returned context survives.
-        history = [base.messages[0], *([root_message] if root_message is not None else []), *history]
+        history = [base.messages[0], *root_messages, *history]
         workspace = _surveyed_view(sess)
         restore_definition = next(iter(runtime.bindings(contextrestoration.DEFINITION.policy.stage)), None)
         if restore_definition is not None:
@@ -5260,7 +5255,8 @@ class Loop:
             history = ledger_definition.execute(ledgercopies.LedgerCopyInput(history,
                 lambda: _format_fetches(dict(authority.fetches), "PAGES YOU HAVE ALREADY FETCHED",
                     visible=set(), location=False), rlog)).messages
-        current = replace(base, messages=history, task_index=0 if root_message is not None else None)
+        current = replace(base, messages=history, task_index=len(root_messages) - 1 if root_messages else None,
+                          root_indices=tuple(range(len(root_messages))))
         remediation = bool(sess.completion_remediation_subject)
         step_definition = next(iter(runtime.bindings(steppreparation.DEFINITION.policy.stage)), None)
         steps = (steppreparation.StepSelection.opt_in(step_definition)
@@ -5272,10 +5268,6 @@ class Loop:
             history = steps.prepare(steppreparation.StepInput(current, item, sess.summary,
                 index, total, step_artifacts_on_disk, getattr(sess, "last_gate_red", False),
                 self._ctx.planner_enabled, synthetic)).messages
-        preamble = next(iter(runtime.bindings(preamblepolicy.DEFINITION.policy.stage)), None)
-        live = preamblepolicy.reframe_messages(preamblepolicy.BatchInput(live, wsview.current), preamble,
-                                              enabled=runtime.engagement_level >= 4)
-        history = history + live
         reoriented = False
         reorient = next(iter(runtime.bindings(reorientation.DEFINITION.policy.stage)), None)
         if reorient is not None and rewritten:
@@ -5300,6 +5292,10 @@ class Loop:
             framed["messages"] = _ground_coder_view(framed["messages"], workspace_root)
             _note_survey_baseline(sess, workspace_root)
             _note_first_survey_files(sess, workspace_root, raw)
+        # Root identity is a final framing invariant, not an exemption each
+        # cleaner/reducer must implement. Rewrites may erase private work, but
+        # cannot promote a later user turn into the original root partition.
+        framed["messages"] = current.render(framed["messages"])
         if self._ctx.coder_role is not None:
             self._ctx.coder_role.apply(framed, rlog=rlog)
         return framed, reoriented
@@ -5337,22 +5333,19 @@ class Loop:
 
 def session_key(headers, messages: list[dict]) -> str:
     """Correlate the many harness requests of one task. Prefer an explicit session
-    header; else key on the ORIGINAL (first) user message, which is stable across a
-    task's requests even as cria rewrites what it sends the coder.
+    header; else key on the complete initial user prelude, which is stable once
+    assistant/tool work starts, even as cria rewrites what it sends the coder.
 
-    The fallback SKIPS harness env-context preambles (``selfcompact.is_env_context``), keying on the
-    first REAL user message — the same message ``_history_root`` fingerprints. Keying on a
-    stable preamble collided every conversation in a repo onto one ``task:`` key, which made
-    a NEW task look like a compaction-rewrite of the old one (false ``rewritten``) and leaked
-    the old conversation's briefing into it."""
+    The shared root owner retains unproven user banners AND their task. Guessing
+    origin from tags lost real requests; using only the first plain banner made
+    different tasks in one workspace collide. ``_history_root`` reads the same
+    combined text. A later follow-up is history, not a replacement root."""
     if headers is not None:
         sid = headers.get("X-Cria-Session-Id")
         if sid:
             return f"sid:{sid}"
-    for m in messages:
-        if m.get("role") == "user" and not selfcompact.is_env_context(m):
-            return f"task:{_task_key(_content_text(m.get('content')))}"
-    return "task:none"
+    root = selfcompact.root_text(messages)
+    return f"task:{_task_key(root)}" if root is not None else "task:none"
 
 
 def _stable_session(key: str) -> bool:
@@ -5495,21 +5488,17 @@ def _synthetic_plan(task: str, clock=None) -> Plan:
 
 
 def _history_root(messages: list[dict]) -> tuple[str, str]:
-    """``(text, fingerprint)`` of the conversation's ROOT — the first user message that isn't a
-    harness env-context block (the SAME message the ``task:`` fallback ``session_key`` hashes,
-    deliberately). This is the structural identity of a conversation: appending turns never
-    changes it. SOME harnesses replace it on a compaction (the summary becomes the root), which a
+    """``(text, fingerprint)`` of the conversation's ROOT — the complete initial user
+    prelude (the SAME text the ``task:`` fallback ``session_key`` hashes). Once work
+    starts, appending follow-ups never changes it. No user text proves harness origin. SOME harnesses replace it on a compaction (the summary becomes the root), which a
     changed fingerprint under a stable ``sid:`` key detects. Codex does NOT: it keeps every user
     message, this one included, and drops the assistant/tool work — so the fingerprint alone can
     never see a Codex compaction and ``observe_shape`` watches the history LENGTH as well.
     ``task:``-keyed sessions never detect rewrites
     (``_stable_session`` gates it): their key derives from this very root, so a rewritten root
     mints a new key and simply looks like a new session (recorded in docs/port-fidelity-audit.md)."""
-    for m in messages:
-        if m.get("role") == "user" and not selfcompact.is_env_context(m):
-            text = _content_text(m.get("content"))
-            return text, hashlib.sha1(text.encode("utf-8", "replace")).hexdigest()
-    return "", ""
+    text = selfcompact.root_text(messages)
+    return (text, hashlib.sha1(text.encode("utf-8", "replace")).hexdigest()) if text is not None else ("", "")
 
 
 def _rewrite_summary_text(messages: list[dict], root_text: str) -> str:
@@ -7565,14 +7554,11 @@ def summarize(chat_fn, role, system: str, user: str, rlog, *, phase: str = "comp
         nonlocal context_refit_no_change
         messages = [{"role": "system", "content": system}]
         if evidence_blocks:
-            # A composed two-message call has no reducible turn: both its system and active user
-            # message are protected by the context floor.  A small first-user introduction keeps
-            # task protection off the evidence, and the final question remains the active turn.
-            # The blocks between them are facts in their original order, not a per-site clip; only
-            # contextfloor.fit may reduce them, and every reduction it makes is labelled.
-            messages.append({"role": "user", "content": prompts.load(evidence_intro)})
-            messages.extend({"role": "user", "content": block}
-                            for block in evidence_blocks if block and block.strip())
+            # The producer, never the text/position, establishes that these are
+            # internal evidence rather than user requests. Keep every payload
+            # byte; only the shared floor can reduce it, with a visible label.
+            messages.append(selfcompact.internal_evidence_message(prompts.load(evidence_intro)))
+            messages.extend(selfcompact.internal_evidence_message(block) for block in evidence_blocks)
         messages.append({"role": "user", "content": user})
         call = {"stream": False, "max_tokens": max_tokens, "messages": messages}
         if phase.startswith(("self-compact", "compactor", "compaction", "harness-compaction")):

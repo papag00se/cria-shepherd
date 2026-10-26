@@ -6,7 +6,7 @@ passed was
 
     summary = _history_root(body.get("messages", []))[0]
 
-and `_history_root` returns the first user message that is not env context. Under a harness that
+and `_history_root` then returned the first user message not classified as env context. Under a harness that
 KEEPS its user messages — Codex does; it drops the work behind them — that message is the task. So
 the reasoner received a list of REQUIREMENTS under a prompt saying "the working history was just
 compacted into the summary you are given… state what has already been built", and answered the only
@@ -85,8 +85,12 @@ class TheOrienterReadsTheMarkedTurnTests(unittest.TestCase):
         self.assertIn("requirements are not evidence of completed work", sent)
 
     def test_it_reads_the_newest_marked_turn(self):
-        """A long session compacts more than once; the stale summary must not win. Two marked turns
-        in one history — the reasoner must be shown the SECOND (newest), never the first."""
+        """The historical-continuation section must select the newest marked summary.
+
+        The first marker-only USER packet has no producer authority and predates
+        assistant work. Preserve it as original user context rather than infer
+        origin from its marker, without letting it win newest-summary selection.
+        """
         from tests.test_loop import _Scripted, _done, _Rlog, _single_loop
         from cria.config import Role
         chat = _Chat("Already built: X.")
@@ -96,9 +100,17 @@ class TheOrienterReadsTheMarkedTurnTests(unittest.TestCase):
         _single_loop(_Scripted([_done()]), reasoner_chat=chat,
                      reasoner_role=Role(name="reasoner", backend="local"))._reasoned_reanchor(
             {"messages": msgs}, _Rlog())
-        sent = repr(chat.seen)
-        self.assertIn("second compaction", sent)
-        self.assertNotIn("first compaction", sent)
+        sent = chat.seen[0]["messages"][-1]["content"]
+        root, separator, rest = sent.partition(
+            "\n\nHISTORICAL CONTINUATION — an account of earlier work, not permission to change requirements:\n")
+        self.assertTrue(separator)
+        self.assertEqual(root,
+            "ORIGINAL TASK — governing requirements, not evidence of completed work:\n"
+            + msgs[0]["content"] + "\n\n" + msgs[1]["content"])
+        continuation, separator, _inventory = rest.partition("\n\nWORKSPACE INVENTORY")
+        self.assertTrue(separator)
+        self.assertEqual(continuation, msgs[3]["content"])
+        self.assertNotIn("first compaction", continuation)
 
 
 class ThePromptForbidsInventingTests(unittest.TestCase):

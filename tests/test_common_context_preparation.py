@@ -602,7 +602,7 @@ def test_literal_markup_keeps_history_role_read_visibility_and_pairing_at_final_
         body['messages'] += [{'role': 'assistant', 'content': literal},
                              {'role': 'user', 'content': 'Continue from the actual history.'}]
     raw = copy.deepcopy(body)
-    assert selfcompact.is_env_context({'role': literal_role, 'content': literal})
+    assert not selfcompact.is_env_context({'role': literal_role, 'content': literal})
     assert loop._extract_whole_reads(body['messages'], wsview.DirectView(str(tmp_path))) == {'notes.txt'}
     posts = []
     def transport(request, **options):
@@ -638,7 +638,7 @@ def test_literal_markup_keeps_history_role_read_visibility_and_pairing_at_final_
 
 
 @pytest.mark.parametrize('synthetic', [False, True])
-def test_genuine_user_environment_is_protected_from_both_reducers_and_reframed_once(
+def test_initial_user_environment_packet_survives_both_reducers_and_final_post_verbatim_once(
         tmp_path, monkeypatch, synthetic):
     driver, sess, body = setup_driver()
     sess.synthetic = sess.plan_off = synthetic
@@ -675,12 +675,12 @@ def test_genuine_user_environment_is_protected_from_both_reducers_and_reframed_o
     finally:
         wsview.unbind(token)
     assert [kind for kind, _messages in observed] == ['rolling', 'focus']
-    assert all(packet not in messages for _kind, messages in observed)
+    assert all(packet not in messages and raw['messages'][1] not in messages
+               for _kind, messages in observed)
     assert len(posts) == 1
     messages = posts[0]['messages']
-    environment = [m for m in messages if str(m.get('content') or '').startswith('Working environment —')]
-    assert environment == [{'role': 'user', 'content':
-        f'Working environment — cwd: {tmp_path}, shell: fixture-shell.'}]
-    assert packet not in messages
-    assert messages[1] == raw['messages'][1]
+    assert sum(message == packet for message in messages) == 1
+    assert not any(str(m.get('content') or '').startswith('Working environment —') for m in messages)
+    assert sum(message == raw['messages'][1] for message in messages) == 1
+    assert messages.index(packet) < messages.index(raw['messages'][1])
     assert body == raw

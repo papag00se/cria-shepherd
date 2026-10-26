@@ -5,6 +5,7 @@ from io import BytesIO
 
 import pytest
 
+from cria import bodykeys, selfcompact
 from cria.upstream import Upstream, UpstreamError
 
 
@@ -16,12 +17,12 @@ class Log:
 def dense_body():
     return {'model': 'small', 'messages': [
         {'role': 'system', 'content': 'Write a factual briefing, not a plan.'},
-        {'role': 'user', 'content': 'Earlier transcript follows.'},
+        selfcompact.internal_evidence_message('Earlier transcript follows.'),
         # DISTINCT payloads: the wire now folds byte-identical repeats (after the floor), and this
         # test is about the measured refit of a body that genuinely does not fit.
-        *[{'role': 'user', 'content': f'tool {n}: ' + ('00001: 4326.28\n' * 500)}
+        *[selfcompact.internal_evidence_message(f'tool {n}: ' + ('00001: 4326.28\n' * 500))
           for n in range(6)],
-        {'role': 'user', 'content': 'A check exited 1: blank quantity.'},
+        selfcompact.internal_evidence_message('A check exited 1: blank quantity.'),
         {'role': 'user', 'content': 'Write the briefing now.'}]}
 
 
@@ -71,7 +72,12 @@ def test_l0_remains_byte_identical_without_tokenizer_probes():
     body = dense_body()
     with patch.object(upstream, '_tokenize_prompt', create=True) as counter:
         data, _, _ = upstream._prep(body, False, Log())
-    assert json.loads(data) == {**body, 'stream': False}
+    # Private producer hints are consumed even at L0; every API role/payload
+    # byte remains untouched, and no tokenizer/fitting work is introduced.
+    expected = {**body, 'stream': False, 'messages': [
+        {key: value for key, value in message.items() if key != bodykeys.ANNOTATION_SOURCE}
+        for message in body['messages']]}
+    assert json.loads(data) == expected
     counter.assert_not_called()
 
 

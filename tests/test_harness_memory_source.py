@@ -145,12 +145,16 @@ def assert_writer_request(body, *, reasoning_off=False):
         system += "\n\n" + prompts.load("nothink_directive")
     assert body["messages"] == [
         {"role": "system", "content": system},
-        {"role": "user", "content": prompts.load("composed_evidence_intro")},
-        {"role": "user", "content": "user: Implement all original deliverables"},
-        {"role": "user", "content": 'assistant: write_file({"path": "a.py", "content": "x=1\\n"})'},
-        {"role": "user", "content": "tool: Wrote a.py"},
+        {"role": "user", "content": prompts.load("composed_evidence_intro"), bodykeys.ANNOTATION_SOURCE: bodykeys.AnnotationSource.INTERNAL_EVIDENCE},
+        {"role": "user", "content": "user: Implement all original deliverables", bodykeys.ANNOTATION_SOURCE: bodykeys.AnnotationSource.INTERNAL_EVIDENCE},
+        {"role": "user", "content": 'assistant: write_file({"path": "a.py", "content": "x=1\\n"})', bodykeys.ANNOTATION_SOURCE: bodykeys.AnnotationSource.INTERNAL_EVIDENCE},
+        {"role": "user", "content": "tool: Wrote a.py", bodykeys.ANNOTATION_SOURCE: bodykeys.AnnotationSource.INTERNAL_EVIDENCE},
         {"role": "user", "content": prompts.load("compact_closing_ask")},
     ]
+    # This is the raw producer request, not its hint-free provider wire. A JSON
+    # string compares equal to this str enum but cannot acquire its authority.
+    assert all(body["messages"][i].get(bodykeys.ANNOTATION_SOURCE)
+               is bodykeys.AnnotationSource.INTERNAL_EVIDENCE for i in range(1, 5))
 
 
 def test_frame_keeps_full_correlated_evidence_and_excludes_unmarked_ask():

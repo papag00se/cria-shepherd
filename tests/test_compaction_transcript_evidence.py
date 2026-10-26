@@ -10,7 +10,7 @@ validator returned NARROWS, so the harness's whole remembered past was empty.
 import json
 from pathlib import Path
 
-from cria import indicators, probegate, responses, selfcompact, server
+from cria import indicators, probegate, prompts, responses, selfcompact, server
 
 FIX = Path(__file__).parent / "fixtures" / "phi4_java_loop"
 
@@ -40,11 +40,21 @@ def test_the_real_incident_transcript_has_no_empty_turn_and_no_resultless_gate_c
     parts = selfcompact.compaction_request_parts(messages)
     assert all(p.split(":", 1)[1].strip() for p in parts)         # no `role: ` with nothing after it
     assert not any("exec_command(" in p or "mvn -q compile" in p or "ctx:gate" in p for p in parts)
-    assert parts[0].startswith("user: Working environment")          # the real evidence is intact, in order
-    assert parts[1].startswith("user: Fix these three problems in the supplier feed importer")
+    # Reframing unproven USER markup as "Working environment" was retired.
+    # The incident still requires ALL original evidence, not a new prefix that
+    # could pass while losing sandbox/context or the latter task requirements.
+    original = json.loads((FIX / "inbound-e6c63812-responses.json").read_text())
+    user_packets = [item for item in original["input"] if item.get("role") == "user"]
+    assert len(user_packets) == 3  # original environment, task, then excluded compaction ask
+    expected = ["user: " + "".join(part["text"] for part in packet["content"])
+                for packet in user_packets[:2]]
+    assert parts == expected  # complete original environment/task bytes, exactly once and in order
     assert len(parts) == 2
     # the legacy single-string composer reads the same owner
     flat = selfcompact.compaction_request(messages)
+    # Flat composition also appends the writer's closing ask; it is framing,
+    # not a third historical evidence packet.
+    assert flat == "\n".join(expected) + "\n\n" + prompts.load("compact_closing_ask")
     assert "assistant: \n" not in flat and "exec_command(" not in flat
 
 

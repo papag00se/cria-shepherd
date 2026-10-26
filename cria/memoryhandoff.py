@@ -192,7 +192,7 @@ def frame(body: dict, facts: SessionFacts, services: EvidenceServices, *, select
     if services.distill is not None:
         history_count = len(selfcompact.compaction_evidence_messages(evidence, facts.gate_plan))
         middle = services.distill([m["content"] for m in composed[1:-1]], history_count)
-        composed = [composed[0], *({"role": "user", "content": p} for p in middle), composed[-1]]
+        composed = [composed[0], *(selfcompact.internal_evidence_message(p) for p in middle), composed[-1]]
     framed = {**body, "messages": [
         {"role": "system", "content": prompts.load("selfcompact_summary")}, *composed]}
     # The briefing's own room: without it the floor fills the window with evidence and the

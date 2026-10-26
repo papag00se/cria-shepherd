@@ -196,52 +196,52 @@ def msg_digest(m: dict) -> str:
     return " ".join(p for p in parts if p)
 
 
-# A HARNESS PREAMBLE BY THE SHAPE OF ITS TAG, not by two literal spellings. It was
-# `"<environment_context>" in c or "<user_instructions>" in c` — Codex's two, and nobody else's.
-# Cline and Roo send `<environment_details>`; the same idea, a different word.
-#
-# Both consumers get the question wrong in a way that matters. `contextfloor._protected_mask` picks
-# the first NON-preamble user message as the task and protects it — with an unrecognised preamble it
-# protects the banner and leaves the real task droppable, which its own docstring records costing
-# "53 of 1,475 coder prompts shipped with no task in them, in 8 of 22 sessions". And
-# `loop.session_key` keys on the first non-preamble user message: an unrecognised preamble is stable
-# across a whole workspace, so every conversation in one repo collides onto ONE `task:` key — which
-# `session_key`'s own docstring describes as a fixed bug.
-#
-# The kernel is the tag NAME: a harness names its preamble for what it is. cria matches an XML-ish
-# BLOCK — an opening tag whose name carries `environment`, `instructions`, `system` or `context`,
-# and its matching close — which is what every convention observed does.
-#
-# THE CLOSE IS WHAT KEEPS IT SAFE. A task can legitimately mention such a name: "Fix the bug in
-# <Context> so it renders" is a React component, and reading it as a preamble would tell both
-# consumers that this message is NOT the task — the exact damage, from the other direction.
-# Requiring the closing tag means the match is a block a harness wrapped, not a word a coder typed.
-#
-# It is still a bound and cria only claims what it reached (#11b): a harness that names its preamble
-# something else has its first user message read as the task, which is the right default and is
-# exactly what happened before.
-_ENV_PREAMBLE_TAG = re.compile(
-    r"<\s*([\w.-]*(?:environment|instructions|system|context)[\w.-]*)\s*>"
-    r"[\s\S]*?</\s*\1\s*>", re.I)
-
-
 def is_env_context(m: dict) -> bool:
-    """A harness-injected environment/instructions preamble (not the real task) that some
-    harnesses prepend as a user message. cria recognizes the known conventions — e.g. Codex's
-    `<environment_context>` (cwd/shell/date) and `<user_instructions>` blocks; a harness that
-    sends none simply has its FIRST user message treated as the task, which is the right default.
+    """Compatibility predicate for structurally supplied instruction frames only.
 
-    ONE OWNER. This lived in `loop` while `serialize` below picked the first user-role message with
-    no such check, on a comment asserting the harness frame was dropped upstream — which
-    `_drop_harness_frame` does not do: it keeps the preamble. So the task the whole transcript is
-    judged against was the harness's cwd/shell banner, rendered whole, while the real task was
-    treated as ordinary history. loop imports selfcompact and not the reverse, so the owner lives
-    here and loop calls it."""
-    c = m.get("content")
-    if isinstance(c, list):
-        c = " ".join(p.get("text", "") for p in c if isinstance(p, dict))
-    c = c or ""
-    return bool(_ENV_PREAMBLE_TAG.search(c))
+    User markup proves no origin: a request can quote a complete environment or
+    instructions block. Retain that text as possible task/context rather than
+    infer that a harness authored it. Known wire roles need no lexical classifier.
+    """
+    return m.get("role") in ("system", "developer")
+
+
+def is_user_request(message: dict) -> bool:
+    """A producer-owned factual annotation is not a new user request.
+
+    Enum identity is existing producer authority; a JSON string lookalike is not.
+    """
+    return (message.get("role") == "user" and not any(
+        message.get(bodykeys.ANNOTATION_SOURCE) is source for source in bodykeys.AnnotationSource))
+
+
+def root_boundary_index(messages: list[dict]) -> int | None:
+    """First work-role packet in the ORIGINAL sequence, regardless of content."""
+    return next((i for i, message in enumerate(messages)
+                 if message.get("role") in ("assistant", "tool")), None)
+
+
+def root_user_indices(messages: list[dict], pinned_task: str = "") -> tuple[int, ...]:
+    """The shared root scope for identity, history and floor protection.
+
+    An exact single-message pin wins. Otherwise retain ALL initial user context
+    before the first assistant/tool turn, including unproven banners. This also
+    retains an exact joined-prelude pin, and an unmatched pin never licenses
+    discarding possible instructions. Later user follow-ups cannot replace root.
+    Retaining extra context is preferable to losing an indistinguishable task.
+    """
+    if pinned_task:
+        for i, message in enumerate(messages):
+            if is_user_request(message) and _text(message) == pinned_task:
+                return (i,)
+    boundary = root_boundary_index(messages)
+    return tuple(i for i, message in enumerate(messages[:boundary]) if is_user_request(message))
+
+
+def root_text(messages: list[dict]) -> str | None:
+    """Exact initial user packet text, joined in order; None means no root packet."""
+    indices = root_user_indices(messages)
+    return "\n\n".join(_text(messages[i]) for i in indices) if indices else None
 
 
 def serialize(messages: list[dict], defang: bool = False) -> str:
@@ -294,7 +294,7 @@ def serialize_blocks(messages: list[dict], defang: bool = False) -> list[str]:
     # `_drop_harness_frame` does not do, so on any harness that sends an `<environment_context>`
     # banner the north star was cwd/shell/date. Since nothing here is cut (#5), there is nothing
     # for the exemption to grant, and the wrong assumption goes with it rather than being fixed in
-    # place. `is_env_context` remains the one owner of the question for the callers that still ask.
+    # place. Root selection now retains the whole initial user prelude without tag-origin guesses.
     paired = denial.paired_results(messages)
     exec_results = {id(paired[tc.get("id")]) for m in messages if m.get("role") == "assistant"
                     for tc in m.get("tool_calls") or [] if tc.get("id") in paired
@@ -441,7 +441,7 @@ def compaction_request_parts(messages: list[dict], files_list: str = "", gate_pl
     active user request are both protected, so a long transcript is knowingly sent over budget.
     Preserve the same text and order, but carry each historical turn and each authoritative fact as
     its own block.  ``loop.summarize`` and the harness compaction path put these blocks between a
-    small protected introduction and the final protected ask; the one context-floor owner can then
+    small framing introduction and the final protected ask; the one context-floor owner can then
     fit them losslessly-first and label any reduction it must make.  The same blocks are the
     validators' transcript, so writer and judge read one rendering.
     """
@@ -467,19 +467,29 @@ def compaction_ask() -> str:
     return prompts.load("compact_closing_ask")
 
 
+def internal_evidence_message(text: str) -> dict:
+    """Producer-owned historical/factual context, not a USER request.
+
+    Call only at internal composition: literal text (including blank bytes) is
+    untouched. Enum identity is authority; JSON string lookalikes are not.
+    """
+    return {"role": "user", "content": text,
+            bodykeys.ANNOTATION_SOURCE: bodykeys.AnnotationSource.INTERNAL_EVIDENCE}
+
+
 def compaction_request_messages(messages: list[dict], files_list: str = "", gate_plan=None,
                                 checks: str = "", checks_age: int = 0, *,
                                 newer_messages: list[dict] | None = None) -> list[dict]:
     """User-role evidence turns followed by the compaction ask.
 
-    The first small turn is intentionally the first user message, so contextfloor's task protection
-    does not accidentally pin the first (possibly enormous) evidence block.  The final ask remains
-    the active turn.  Everything between is independently reducible by the wire-owned floor.
+    The producer identifies its introduction/evidence explicitly; user-role
+    text alone cannot establish that it is not a request. The final ask remains
+    the actual request. Evidence is independently reducible by the wire-owned floor.
     """
     parts = compaction_request_parts(messages, files_list, gate_plan, checks, checks_age,
                                      newer_messages=newer_messages)
-    return ([{"role": "user", "content": prompts.load("composed_evidence_intro")}] +
-            [{"role": "user", "content": p} for p in parts] +
+    return ([internal_evidence_message(prompts.load("composed_evidence_intro"))] +
+            [internal_evidence_message(p) for p in parts] +
             [{"role": "user", "content": compaction_ask()}])
 
 

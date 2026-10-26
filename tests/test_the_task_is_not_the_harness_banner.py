@@ -8,7 +8,8 @@ task was clipped like ordinary history. `loop` never trusted that assumption: it
 check and applies it at four sites for exactly this reason. Two owners, one of them wrong.
 
 The exemption itself is now gone, because #5 removed every cut and there is nothing left to exempt
-a message FROM. What remains is the question, which several callers still ask, and it has one owner.
+a message FROM. The former lexical answer to the remaining question was also unsafe: a user can quote
+an entire closed block. Root selection now retains the initial user context and task together.
 """
 
 import unittest
@@ -47,13 +48,14 @@ class OneOwnerTests(unittest.TestCase):
         self.assertFalse(hasattr(loop, "_is_env_context"))
         self.assertTrue(callable(selfcompact.is_env_context))
 
-    def test_it_recognises_both_known_conventions(self):
-        self.assertTrue(selfcompact.is_env_context({"content": BANNER}))
-        self.assertTrue(selfcompact.is_env_context({"content": "<user_instructions>x</user_instructions>"}))
+    def test_known_spellings_without_role_authority_do_not_establish_origin(self):
+        self.assertFalse(selfcompact.is_env_context({"content": BANNER}))
+        self.assertFalse(selfcompact.is_env_context({"content": "<user_instructions>x</user_instructions>"}))
         self.assertFalse(selfcompact.is_env_context({"content": TASK}))
+        self.assertTrue(selfcompact.is_env_context({"role": "developer", "content": TASK}))
 
-    def test_it_reads_structured_content_too(self):
-        self.assertTrue(selfcompact.is_env_context(
+    def test_structured_text_parts_do_not_establish_origin_either(self):
+        self.assertFalse(selfcompact.is_env_context(
             {"content": [{"type": "text", "text": BANNER}]}))
 
 

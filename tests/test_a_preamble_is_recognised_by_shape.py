@@ -19,10 +19,9 @@ reproduced with a Cline-shaped preamble:
 `session_key`'s own docstring describes that collision as a fixed bug: a new task looked like a
 compaction-rewrite of the old one, and the old conversation's briefing leaked into it.
 
-The kernel is the tag NAME — a harness names its preamble for what it is — and the CLOSING tag is
-what keeps it safe: "Fix the bug in <Context> so it renders" is a React component in prose, and
-reading it as a preamble would say this message is NOT the task, which is the same damage from the
-other side.
+That shape-based repair was unsafe too: a complete closed block can itself be the request.
+The same collision and task-loss incidents now guard preserving the entire initial user prelude,
+not guessing which packet is a banner. Retaining extra context beats losing a real requirement.
 """
 
 import unittest
@@ -44,13 +43,15 @@ def _u(text):
     return {"role": "user", "content": text}
 
 
-class EveryHarnessPreambleIsRecognisedTests(unittest.TestCase):
-    def test_the_conventions_cria_has_met(self):
+class UnprovenUserPreamblesAreRetainedTests(unittest.TestCase):
+    def test_known_spellings_do_not_prove_harness_origin(self):
         for name, text in (("codex", CODEX), ("codex+agents", CODEX_AGENTS),
                            ("cline/roo", CLINE), ("system banner", ROO)):
             with self.subTest(harness=name):
-                self.assertTrue(selfcompact.is_env_context(_u(text)))
-                self.assertTrue(contextfloor._is_env_preamble(_u(text)))
+                self.assertFalse(selfcompact.is_env_context(_u(text)))
+                self.assertFalse(contextfloor._is_env_preamble(_u(text)))
+                self.assertEqual(loop._history_root([_u(text), _u("the actual task")])[0],
+                                 text + "\n\nthe actual task")
 
     def test_prose_is_never_mistaken_for_one(self):
         """Including prose that names a component whose name carries the same word."""
@@ -60,7 +61,7 @@ class EveryHarnessPreambleIsRecognisedTests(unittest.TestCase):
                 self.assertFalse(contextfloor._is_env_preamble(_u(text)))
 
     def test_the_two_owners_answer_the_same_way(self):
-        """`contextfloor` imports nothing, so the rule is stated twice on purpose — and must agree."""
+        """Both compatibility entry points use the same role authority, never tag guesses."""
         for text in (CODEX, CODEX_AGENTS, CLINE, ROO, *PROSE):
             with self.subTest(text=text[:40]):
                 self.assertEqual(selfcompact.is_env_context(_u(text)),
@@ -85,11 +86,11 @@ class TwoTasksInOneWorkspaceDoNotCollideTests(unittest.TestCase):
 
 
 class TheTaskIsWhatGetsProtectedTests(unittest.TestCase):
-    def test_the_real_task_is_protected_not_the_banner(self):
+    def test_both_initial_context_and_actual_task_are_protected(self):
         msgs = [_u(CLINE), _u("build the shipping module"),
                 {"role": "assistant", "content": "ok"}]
         mask = contextfloor._protected_mask(msgs)
-        self.assertFalse(mask[0], "the harness banner was protected as the task")
+        self.assertTrue(mask[0], "unproven initial user context must not be discarded")
         self.assertTrue(mask[1], "the real task was left droppable")
 
 

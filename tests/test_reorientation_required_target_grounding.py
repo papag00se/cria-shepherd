@@ -5,7 +5,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from cria import assistruntime, loop, prompts, reorientation
+from cria import assistruntime, loop, prompts, reorientation, selfcompact
 from cria.config import Role
 from test_generation_driver_policy import setup_driver
 from test_loop import _Rlog
@@ -22,8 +22,20 @@ def test_saved_required_target_reaches_prepared_coder(synthetic, verdict, accept
     driver, sess, body = setup_driver()
     driver._ctx.reasoner_role = Role(name='reasoner', backend='local')
     sess.synthetic = sess.plan_off = synthetic
+    # This scenario is historical continuation AFTER actual assistant work, not
+    # an initial USER packet whose marker could be mistaken for origin proof.
+    # Keep the saved task/history verbatim; an ordinary paired directory lookup
+    # establishes the work-role boundary without an annotation or synthetic ack.
     body['messages'] = [{'role': 'user', 'content': SAVED['task']},
+                        {'role': 'assistant', 'tool_calls': [{
+                            'id': 'prior-listing', 'type': 'function', 'function': {
+                                'name': 'list_dir', 'arguments': '{"path":"."}'}}]},
+                        {'role': 'tool', 'tool_call_id': 'prior-listing',
+                         'content': 'README.md\npom.xml\nsrc/main\n'},
                         {'role': 'user', 'content': SAVED['summary']}]
+    assert selfcompact.root_user_indices(body['messages']) == (0,)
+    assert loop._history_root(body['messages'])[0] == SAVED['task']
+    monkeypatch.setattr('urllib.request.urlopen', Mock(side_effect=AssertionError('offline fixture')))
     author = Mock(return_value=SAVED['directive'])
     judge = Mock(side_effect=verdict) if isinstance(verdict, Exception) else Mock(return_value=verdict)
     monkeypatch.setattr(loop, 'summarize', author)
@@ -36,6 +48,7 @@ def test_saved_required_target_reaches_prepared_coder(synthetic, verdict, accept
     expected = prompts.render('nudge', reason=SAVED['directive'] if accepted else prompts.load('reanchor'))
     assert framed['messages'][-1]['content'] == expected
     assert any(m.get('content') == SAVED['task'] for m in framed['messages'])
+    author.assert_called_once()
     assert author.call_args.args[3] == prompts.render('reanchor_context',
         task=SAVED['task'], summary=SAVED['summary'], inventory=SAVED['inventory'])
     judge.assert_called_once()
@@ -48,7 +61,52 @@ def test_saved_required_target_reaches_prepared_coder(synthetic, verdict, accept
         {**framed, 'model': 'offline'}, False, _Rlog())
     wire = json.loads(packed)
     assert any(m.get('content') == SAVED['task'] for m in wire['messages'])
+    assert loop._history_root(wire['messages'])[0] == SAVED['task']
     assert wire['messages'][-1]['content'] == expected
+
+
+@pytest.mark.parametrize('synthetic', [False, True])
+def test_unproven_initial_continuation_packet_remains_in_the_complete_root(synthetic, monkeypatch):
+    """Without prior work, marker-shaped USER text cannot exclude itself from root.
+
+    The historical scenario above must not license dropping indistinguishable
+    initial context. Check exact root selection and provider input, not merely
+    whether the final body happens to contain both strings somewhere.
+    """
+    driver, sess, body = setup_driver()
+    driver._ctx.reasoner_role = Role(name='reasoner', backend='local')
+    sess.synthetic = sess.plan_off = synthetic
+    initial = [{'role': 'user', 'content': SAVED['task']},
+               {'role': 'user', 'content': SAVED['summary']}]
+    body['messages'] = initial
+    joined_root = SAVED['task'] + '\n\n' + SAVED['summary']
+    assert selfcompact.root_user_indices(initial) == (0, 1)
+    assert loop._history_root(initial)[0] == joined_root
+    author = Mock(return_value=SAVED['directive'])
+    judge = Mock(return_value='{"grounded": true}')
+    monkeypatch.setattr(loop, 'summarize', author)
+    monkeypatch.setattr(loop, 'ask_closed', judge)
+    monkeypatch.setattr(loop, 'workspace_inventory', lambda *a, **k: SAVED['inventory'])
+    monkeypatch.setattr('urllib.request.urlopen', Mock(side_effect=AssertionError('offline fixture')))
+    with assistruntime.bound(assistruntime.AssistRuntime.select(level=5)):
+        framed, oriented = driver._prepare_coder_context(
+            sess, body, _Rlog(), synthetic=synthetic, rewritten=True)
+    assert oriented
+    author.assert_called_once()
+    context = prompts.render('reanchor_context', task=joined_root,
+                             summary=SAVED['summary'], inventory=SAVED['inventory'])
+    assert author.call_args.args[3] == context
+    judge.assert_called_once()
+    assert context in judge.call_args.kwargs['evidence_blocks']
+    assert judge.call_args.kwargs['retry_off'] is False
+    packed, _, _ = driver._ctx.coder_chat.__self__._prep(
+        {**framed, 'model': 'offline'}, False, _Rlog())
+    wire = json.loads(packed)
+    # The entire initial bundle survives unchanged in its original order; no
+    # whole-root reconstruction may silently discard the marker-bearing packet.
+    assert [m for m in wire['messages'] if m.get('role') == 'user'][:2] == initial
+    assert wire['messages'][-1]['content'] == prompts.render('nudge', reason=SAVED['directive'])
+    assert loop._history_root(body['messages'])[0] == joined_root
 
 
 def request(directive='Verify that audit.txt satisfies the required report.', *, task='Produce audit.txt.', judge=None):

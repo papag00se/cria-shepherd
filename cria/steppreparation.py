@@ -44,7 +44,7 @@ semantics stay with that shared owner. No new view reader or keyword rule.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from enum import Enum
 from typing import Callable, Protocol
 
@@ -83,11 +83,34 @@ class BaseFrame:
     task_index: int | None
     cursor_suspended: bool = False
     workspace_root: str | None = None
+    # Positions in normalized HISTORY, mapped from original packet identity.
+    # Never infer root scope again from survivors of a lossy history transform.
+    root_indices: tuple[int, ...] = ()
+    # The actual ORIGINAL first work role, not a classification of surviving text.
+    root_boundary_role: str | None = None
+
+    def render(self, messages: list[dict] | None = None) -> list[dict]:
+        """Enforce the carried root partition AFTER the entire rewrite pipeline.
+
+        If normalization/reduction removed an actual assistant boundary, keep its
+        empty structural projection before later user history. It represents no
+        action, status or tool result. Never invent an assistant for a native
+        tool boundary; tool grammar/pair validation retains its existing owner.
+        """
+        messages = self.messages if messages is None else messages
+        expected = tuple(i + 1 for i in self.root_indices)  # normalized history excludes system
+        if self.root_boundary_role != "assistant" or selfcompact.root_user_indices(messages) == expected:
+            return messages
+        at = self.root_indices[-1] + 2 if self.root_indices else 1
+        return [*messages[:at], {"role": "assistant", "content": ""}, *messages[at:]]
 
 
 def assemble_base(source: BaseInput) -> BaseFrame:
     """Generic raw-task frame. No optional step detection, facts or instructions."""
     services = source.services
+    raw_roots = {id(source.messages[i]) for i in selfcompact.root_user_indices(source.messages)}
+    boundary = selfcompact.root_boundary_index(source.messages)
+    boundary_role = source.messages[boundary]["role"] if boundary is not None else None
     messages = services.scrub_history(source.messages)
     if source.suspend_cursor:
         messages = [m for m in messages if not services.is_serialized_cursor(m)]
@@ -115,16 +138,20 @@ def assemble_base(source: BaseInput) -> BaseFrame:
               + (f"\n\n{done_block.rstrip()}" if source.prior_work else ""))
     span = ({bodykeys.CALLER_SPAN: {"start": len(coder) + 2 + persona_at, "text": persona}}
             if persona_at >= 0 else {})
-    history, task_index = [], None
+    history, roots = [], []
     for message in messages:
         if message.get("role") in ("system", "developer"):
             continue
+        if id(message) in raw_roots:
+            roots.append(len(history))
         history.append(services.reframe_preamble(message))
-        if task_index is None and message.get("role") == "user" and not selfcompact.is_env_context(message):
-            task_index = len(history) - 1
+    # Map original root identities after role filtering, not a new selection
+    # over normalized survivors. The acknowledgement follows the whole bundle.
+    task_index = roots[-1] if roots else None
     prefix = coder + caller_block + "\n\n" + (f"{hint}\n\n" if hint else "") + done_block
-    return BaseFrame([{"role": "system", "content": system, **span}, *history],
-                     prefix, task_index, source.suspend_cursor, source.workspace_root)
+    base = BaseFrame([{"role": "system", "content": system, **span}, *history],
+                     prefix, task_index, source.suspend_cursor, source.workspace_root, tuple(roots), boundary_role)
+    return replace(base, messages=base.render())
 
 
 def with_directive(base: BaseFrame, prompt: str, acknowledgement: str = "") -> list[dict]:
@@ -140,7 +167,7 @@ def with_directive(base: BaseFrame, prompt: str, acknowledgement: str = "") -> l
         if acknowledgement and index == base.task_index:
             out.append({"role": "assistant", "content": acknowledgement})
     out.append({"role": "user", "content": prompt})
-    return out
+    return base.render(out)
 
 
 class PresentArtifacts(Protocol):

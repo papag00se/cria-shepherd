@@ -17,7 +17,9 @@ caution to do so: "the instruction says we should not make unnecessary changes; 
 necessary". A rule written for a long-lived repo is the worst possible instruction for a weak model
 that has just formed a wrong theory.
 
-The workspace is the `cwd` the preamble already carries, so the check needs no plumbing.
+A matching workspace file establishes only that text's provenance, never the enclosing
+user packet's origin. Keep the original incident and positive workspace-reader controls,
+but assert that public framing abstains and preserves all literal user bytes.
 """
 import tempfile
 import unittest
@@ -35,45 +37,52 @@ def preamble(cwd, instructions):
 
 
 class ForeignDoctrineIsDroppedTests(unittest.TestCase):
+    def assert_literal_user_packet(self, text):
+        packet = {"role": "user", "content": text}
+        before = dict(packet)
+        self.assertEqual(loop.reframe_preamble(packet), before)
+        self.assertEqual(packet, before)
+        self.assertIsNone(loop._reframe_preamble_text(text))  # no claimed reframe/provenance
+
     def test_instructions_from_no_file_in_the_workspace_are_dropped(self):
         with tempfile.TemporaryDirectory() as ws:          # a bare task workspace, as the suite makes
-            out = loop._reframe_preamble_text(preamble(ws, DOCTRINE))
-        self.assertNotIn("band-aids", out or "", "another repo's doctrine was relayed as this repo's")
+            self.assert_literal_user_packet(preamble(ws, DOCTRINE))
+            self.assertIsNone(loop._workspace_instructions(ws, DOCTRINE))
 
     def test_the_environment_fields_survive(self):
-        """Dropping the foreign half must not cost the cwd/shell the coder legitimately needs."""
+        """Abstention must retain the whole environment, not just extracted cwd/shell fields."""
         with tempfile.TemporaryDirectory() as ws:
-            out = loop._reframe_preamble_text(preamble(ws, DOCTRINE))
-        self.assertIn("bash", out or "")
+            self.assert_literal_user_packet(preamble(ws, DOCTRINE))
 
     def test_the_workspace_own_file_is_relayed(self):
         with tempfile.TemporaryDirectory() as ws:
             Path(ws, "AGENTS.md").write_text(OWN)
-            out = loop._reframe_preamble_text(preamble(ws, OWN))
-        self.assertIn("rake", out)
-        self.assertIn("Project instructions", out)
+            self.assert_literal_user_packet(preamble(ws, OWN))
+            self.assertEqual(loop._workspace_instructions(ws, OWN), OWN.strip())
 
     def test_only_the_workspace_part_of_a_concatenated_blob_survives(self):
         """The observed shape: the harness hands over global doctrine AND the repo's own file."""
         with tempfile.TemporaryDirectory() as ws:
             Path(ws, "AGENTS.md").write_text(OWN)
-            out = loop._reframe_preamble_text(preamble(ws, DOCTRINE + "\n\n" + OWN))
-        self.assertIn("rake", out)
-        self.assertNotIn("band-aids", out)
+            combined = DOCTRINE + "\n\n" + OWN
+            self.assert_literal_user_packet(preamble(ws, combined))
+            self.assertEqual(loop._workspace_instructions(ws, combined), OWN.strip())
 
     def test_other_instruction_filenames_count(self):
         for name in ("CLAUDE.md", "CONVENTIONS.md", ".cursorrules"):
             with self.subTest(name=name), tempfile.TemporaryDirectory() as ws:
                 Path(ws, name).write_text(OWN)
-                self.assertIn("rake", loop._reframe_preamble_text(preamble(ws, OWN)) or "")
+                self.assert_literal_user_packet(preamble(ws, OWN))
+                self.assertEqual(loop._workspace_instructions(ws, OWN), OWN.strip())
 
     def test_a_missing_or_unreadable_cwd_drops_rather_than_vouches(self):
-        out = loop._reframe_preamble_text(preamble("/nonexistent/nowhere", DOCTRINE))
-        self.assertNotIn("band-aids", out or "")
+        self.assert_literal_user_packet(preamble("/nonexistent/nowhere", DOCTRINE))
+        self.assertIsNone(loop._workspace_instructions("/nonexistent/nowhere", DOCTRINE))
 
     def test_no_cwd_at_all_drops_the_instructions(self):
         text = f"<INSTRUCTIONS>{DOCTRINE}</INSTRUCTIONS>"
-        self.assertNotIn("band-aids", loop._reframe_preamble_text(text) or "")
+        self.assert_literal_user_packet(text)
+        self.assertIsNone(loop._workspace_instructions("", DOCTRINE))
 
 
 if __name__ == "__main__":

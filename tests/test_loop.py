@@ -92,7 +92,9 @@ class SyntheticFramingTests(unittest.TestCase):
     def test_synthetic_drops_harness_system_and_banner_leads_with_coder_prompt(self):
         # The former server._direct_coder_body framing, now produced by _frame_for_item(synthetic=True):
         # cria's coder_system (+ menu hint) leads, the harness system + cria's own ⟦cria⟧ banner are
-        # dropped, the env-preamble + raw task + work history are kept.
+        # removed as text, the env-preamble + raw task + work history are kept.
+        # Here a real tool turn still marks the boundary after banner removal, so
+        # no empty assistant projection is needed to preserve the original root.
         from cria import prompts
         from cria.toolmenu import cheatsheet
         body = self._body()
@@ -100,7 +102,9 @@ class SyntheticFramingTests(unittest.TestCase):
         hint = cheatsheet(body.get("tools"))
         expected_system = prompts.load("coder_system") + (f"\n\n{hint}" if hint else "")
         self.assertEqual(out[0], {"role": "system", "content": expected_system})     # cria's coder prompt leads
-        self.assertEqual([m["role"] for m in out], ["system", "user", "user", "tool"])  # harness sys + banner dropped
+        self.assertEqual(out[1:], [*body["messages"][1:3], body["messages"][4]])
+        from cria.loop import _history_root
+        self.assertEqual(_history_root(out), _history_root(body["messages"]))
         joined = " ".join(m.get("content") or "" for m in out)
         self.assertIn("--verbose flag", joined)                                       # raw task kept
         self.assertNotIn("You are Codex", joined)                                     # harness system gone
@@ -3389,8 +3393,9 @@ class FrameForItemTests(unittest.TestCase):
         ]
         framed = _frame_for_item(msgs, "Create handler.py with resolve_handle()", "", 1, 7)
         blob = json.dumps(framed)
-        self.assertIn("cwd: ", blob)                   # env context KEPT — reframed to cria's clean voice
-        self.assertNotIn("<environment_context>", blob)     # …no longer the raw harness tags
+        self.assertEqual(framed[1:3], msgs[1:3])           # user context kept byte-for-byte, in order
+        for packet in msgs[1:3]:
+            self.assertEqual(framed.count(packet), 1)       # neither rewritten nor duplicated
         self.assertIn("Prioritize this step", blob)         # step framing = the active priority
         self.assertIn("required tests, documentation, and verification", blob)
         self.assertNotIn("then stop", blob)
@@ -3410,8 +3415,8 @@ class FrameForItemTests(unittest.TestCase):
         # cria owns the system slot when orchestrating: the harness's agent prompt is dropped
         # entirely and cria's own coder system prompt leads — the user's instructions survive.
         from cria.loop import _frame_for_item
-        # Codex sends the user's AGENTS.md folded into the same block as <environment_context>,
-        # so _is_env_context recognizes and preserves it (real capture confirmed this shape).
+        # The historical capture folds instructions into a user environment packet.
+        # Its tags and matching workspace file do not prove the packet's origin.
         msgs = [
             {"role": "system", "content": "You are a coding agent running in the Codex CLI. Plan, apply_patch, finish the whole task."},
             {"role": "developer", "content": "extra harness boilerplate (apps/skills/plugins)"},
@@ -3426,9 +3431,9 @@ class FrameForItemTests(unittest.TestCase):
         blob = json.dumps(framed)
         self.assertNotIn("Codex CLI", blob)                 # harness agent prompt GONE
         self.assertNotIn("harness boilerplate", blob)       # developer boilerplate GONE
-        self.assertNotIn("<INSTRUCTIONS>", blob)            # the raw harness tags GONE (reframed)
-        self.assertIn("Project instructions", blob)         # the USER's own instructions KEPT — cria's voice
-        self.assertIn("my project rules", blob)             # (kept in full)
+        self.assertEqual(framed[1:3], msgs[2:4])             # whole user bundle, exact bytes and order
+        for packet in msgs[2:4]:
+            self.assertEqual(framed.count(packet), 1)        # matching file never authorizes a rewrite
         self.assertIn("Create handler.py", blob)            # the step
         self.assertIn("Build the whole feature", blob)      # the raw task is KEPT as history (the overall goal)
         self.assertEqual(sum(1 for m in framed if m["role"] == "system"), 1)  # exactly one system msg
@@ -3635,12 +3640,11 @@ class SharedGuardTests(unittest.TestCase):
 
 
 def _preamble_with_own_instructions(text=" my project rules "):
-    """A harness preamble whose cwd REALLY holds the instructions it relays.
+    """Historical user-packet fixture backed by a real workspace instruction file.
 
-    cria relays project instructions only when it can find them in a file belonging to the workspace
-    the preamble names (see test_preamble_provenance.py — the ungated version put this repo's own
-    development doctrine inside an unrelated /tmp task and a weak model obeyed it). A test that
-    wants the relay to happen has to describe a workspace where it legitimately should."""
+    Matching file text establishes that text's provenance, not the origin of
+    the enclosing user packet. Its other bytes must still be preserved.
+    """
     ws = tempfile.mkdtemp()
     Path(ws, "AGENTS.md").write_text(text.strip())
     return (f"# AGENTS.md instructions\n<INSTRUCTIONS>{text}</INSTRUCTIONS>\n"
@@ -3648,13 +3652,10 @@ def _preamble_with_own_instructions(text=" my project rules "):
 
 
 class ReframePreambleTests(unittest.TestCase):
-    """The harness env-context/instructions preamble is re-presented in cria's own clean voice
-    (ports codex-local extract_project_instructions), not forwarded as a raw foreign-tag collage."""
+    """User packets stay literal even when their instructions match a real file."""
 
-    # The cwd is REAL and carries the instructions file, because the relay is now provenance-gated:
-    # cria only re-presents instructions it can find in a file belonging to the workspace the
-    # preamble names. See test_preamble_provenance.py for why — the ungated version put this repo's
-    # own doctrine inside an unrelated /tmp task and a weak model obeyed it.
+    # Keep the historical real-workspace fixture: matching instructions are not
+    # authority to remove unverified surroundings, normalize line endings or infer origin.
     def setUp(self):
         self._ws = tempfile.mkdtemp()
         Path(self._ws, "AGENTS.md").write_text("# AGENTS\nNo band-aids.")
@@ -3663,14 +3664,12 @@ class ReframePreambleTests(unittest.TestCase):
                       "  <current_date>2026-07-13</current_date>\n"
                       "  <permission_profile type=\"disabled\"/>\n</environment_context>")
 
-    def test_unwraps_instructions_and_env_dropping_noise(self):
+    def test_matching_workspace_instructions_do_not_authorize_rewriting_the_user_packet(self):
         from cria.loop import reframe_preamble
-        out = reframe_preamble({"role": "user", "content": self._BLOB})["content"]
-        self.assertIn("No band-aids.", out)          # the real instructions survive
-        self.assertIn(f"cwd: {self._ws}", out)       # the useful env fields survive
-        self.assertNotIn("<INSTRUCTIONS>", out)      # foreign tags gone
-        self.assertNotIn("permission_profile", out)  # sandbox/permission noise dropped
-        self.assertNotIn("\r", out)                  # CRLF normalized
+        packet = {"role": "user", "content": self._BLOB}
+        before = dict(packet)
+        self.assertEqual(reframe_preamble(packet), before)  # ALL original bytes, including CRLF and tags
+        self.assertEqual(packet, before)                   # input is not mutated
 
     def test_leaves_the_task_message_untouched(self):
         from cria.loop import reframe_preamble
@@ -4289,9 +4288,9 @@ class UnifiedSteerAuthorTests(unittest.TestCase):
         self.assertNotIn("Codex CLI", u)            # harness agent prompt GONE
         self.assertNotIn("update_plan", u)          # its tool boilerplate GONE
         self.assertNotIn("High-quality plans", u)   # developer boilerplate GONE
-        self.assertNotIn("<INSTRUCTIONS>", u)       # env-context user block REFRAMED, not raw XML
-        self.assertNotIn("<environment_context>", u)
-        self.assertIn("my project rules", u)        # the user's real instructions KEPT (clean voice)
+        root_bundle = body["messages"][2]["content"] + "\n\n" + body["messages"][3]["content"]
+        self.assertEqual(seen["active"].count(root_bundle), 1)  # exact bytes, original order, one root bundle
+        self.assertIn("my project rules", u)        # the user's real instructions KEPT verbatim
         self.assertIn("Ada Handle", u)              # the real task KEPT
         self.assertIn("swagger.json", u)            # the real tool call KEPT
         self.assertIn("HTTP 200", u)                # the real tool result KEPT

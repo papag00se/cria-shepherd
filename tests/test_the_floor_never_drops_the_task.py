@@ -43,11 +43,11 @@ class TheTaskSurvivesTests(unittest.TestCase):
         m = self.mask(msgs)
         self.assertTrue(m[1], "the task was droppable with a steer after it")
 
-    def test_the_harness_banner_is_not_mistaken_for_the_task(self):
+    def test_unproven_banner_and_task_are_both_retained_as_root_context(self):
         msgs = [u(BANNER), u(TASK), a("ok"), u("⟦ctx:steer⟧ go")]
         m = self.mask(msgs)
         self.assertTrue(m[1], "the real task must be the protected one")
-        self.assertFalse(m[0], "the env preamble is not the task")
+        self.assertTrue(m[0], "markup cannot prove this initial user context is disposable")
 
     def test_the_session_pin_beats_an_unrecognised_plain_text_banner(self):
         """The 2026-09-04 harness used this untagged shape; phrase guessing protected it as task."""
@@ -59,9 +59,9 @@ class TheTaskSurvivesTests(unittest.TestCase):
         kept, _ = contextfloor._drop_oldest(msgs, 10, pinned_task=TASK)
         self.assertTrue(any((x.get("content") or "") == TASK for x in kept))
 
-    def test_a_transcript_with_only_a_banner_protects_nothing_extra(self):
+    def test_a_transcript_with_only_an_unproven_banner_keeps_that_possible_task(self):
         msgs = [u(BANNER), a("ok"), u("⟦ctx:steer⟧ go")]
-        self.assertFalse(self.mask(msgs)[0])
+        self.assertTrue(self.mask(msgs)[0])
 
     def test_the_active_span_is_still_protected(self):
         msgs = [u(TASK), a("x"), u("latest"), a("y")]
@@ -79,13 +79,16 @@ class TheTaskSurvivesTests(unittest.TestCase):
 
 
 class TheEnvPredicateStaysInSyncTests(unittest.TestCase):
-    """contextfloor imports nothing by design, so its copy of the tokens is checked against the
-    owner rather than shared — the same convention _PROTECT_MARKERS already uses."""
+    """Compatibility names share role authority, not duplicated lexical guesses."""
 
-    def test_both_recognise_the_same_preambles(self):
+    def test_both_abstain_on_unproven_user_preambles(self):
         for t in (BANNER, "<user_instructions>do x</user_instructions>"):
-            self.assertTrue(contextfloor._is_env_preamble(u(t)), t)
-            self.assertTrue(selfcompact.is_env_context(u(t)), t)
+            self.assertFalse(contextfloor._is_env_preamble(u(t)), t)
+            self.assertFalse(selfcompact.is_env_context(u(t)), t)
+        for role in ("system", "developer"):
+            message = {"role": role, "content": "structured instruction frame"}
+            self.assertTrue(contextfloor._is_env_preamble(message))
+            self.assertTrue(selfcompact.is_env_context(message))
 
     def test_neither_claims_a_real_task_is_a_preamble(self):
         self.assertFalse(contextfloor._is_env_preamble(u(TASK)))

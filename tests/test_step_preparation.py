@@ -79,7 +79,7 @@ FROZEN_REPAIRS = {
 }
 FROZEN_REMEDIATION = "A verified completion-remediation action is active. The ordered-plan cursor is suspended for this turn. Act on the typed missing-file finding in the latest instruction: create that exact task-named file now. Its required contents come only from the exact task requirement and current workspace evidence; do not invent a format or implementation. Do not resume the ordered plan until the write has succeeded."
 FROZEN_HISTORY = [
-    {'role': 'user', 'content': 'Working environment — cwd: /workspace.'},
+    {'role': 'user', 'content': '<environment_context>\n<cwd>/workspace</cwd>\n</environment_context>'},
     {'role': 'user', 'content': 'ORIGINAL TASK: CLI, tests, documentation, and all details.\n' * 100},
     {'role': 'assistant', 'content': 'Quoted prior work is not a current disk fact.'},
     {'role': 'assistant', 'tool_calls': [{'id': 'read', 'type': 'function', 'function': {
@@ -217,12 +217,16 @@ def test_generic_base_is_original_raw_task_frame_without_optional_policy(prior, 
 
 
 def test_empty_and_rootless_histories_keep_original_role_and_prompt_order():
-    for incoming in ([], [{'role': 'assistant', 'content': 'Existing assistant prose'}],
-                     [{'role': 'user', 'content': '<environment_context>env only</environment_context>'}]):
+    # The third historical fixture used to be called rootless solely because of
+    # its tag. It is unproven USER context and now earns the same acknowledgement
+    # as any other initial user packet; the genuinely rootless cases still do not.
+    for incoming, has_root in (([], False), ([{'role': 'assistant', 'content': 'Existing assistant prose'}], False),
+                     ([{'role': 'user', 'content': '<environment_context>env only</environment_context>'}], True)):
         source, data, _ = make(source_messages=incoming, tools=False)
         expected = [
             {'role': 'system', 'content': FROZEN_CODER + '\n\n' + frozen_step()},
             *copy.deepcopy(incoming),
+            *([{'role': 'assistant', 'content': FROZEN_ACK}] if has_root else []),
             {'role': 'user', 'content': frozen_step()},
         ]
         assert sp.StepSelection.opt_in().prepare(source).messages == expected

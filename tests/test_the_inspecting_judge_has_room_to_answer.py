@@ -110,8 +110,10 @@ def test_forced_answer_keeps_the_question_and_current_facts(tmp_path):
     # Exercise the actual serializer after Role.apply, with both role transforms enabled.
     unpinned = {k: v for k, v in seen[-1].items() if k != bodykeys.PINNED_TASK}
     before_raw, _, _ = Upstream("http://unused", context_window=49152)._prep(unpinned, False, Log(), safety_override=1.29)
-    assert not any(question in str(m.get("content", ""))
-                   for m in json.loads(before_raw)["messages"])
+    # Producer-owned evidence is not an initial USER request; the original
+    # question remains root authority even without an additional exact pin.
+    assert any(question in str(m.get("content", ""))
+               for m in json.loads(before_raw)["messages"])
     raw, _, _ = Upstream("http://unused", context_window=49152)._prep(seen[-1], False, Log(), safety_override=1.29)
     wire = json.loads(raw)
     assert bodykeys.PINNED_TASK not in wire

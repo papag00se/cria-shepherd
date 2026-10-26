@@ -8,7 +8,7 @@ measured check compared it with the window alone. The briefing got 959 tokens an
 import json
 from unittest.mock import patch
 
-from cria import assistruntime, bodykeys, tokenratio
+from cria import assistruntime, bodykeys, selfcompact, tokenratio
 from cria.upstream import Upstream
 
 
@@ -24,8 +24,8 @@ class Log:
 def summary_body(n=24, reserve=4000):
     return {'model': 'm', 'max_tokens': reserve, bodykeys.DENSITY_KIND: 'summary', 'messages': [
         {'role': 'system', 'content': 'Write a briefing.'},
-        {'role': 'user', 'content': 'Evidence follows.'},
-        *[{'role': 'user', 'content': f'turn {i}: ' + 'word ' * 120} for i in range(n)],
+        selfcompact.internal_evidence_message('Evidence follows.'),
+        *[selfcompact.internal_evidence_message(f'turn {i}: ' + 'word ' * 120) for i in range(n)],
         {'role': 'user', 'content': 'Write the briefing now.'}]}
 
 
