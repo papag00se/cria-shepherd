@@ -38,6 +38,14 @@ Whole and ranged reads, including the read returned instead of an unread overwri
 
 All consumers use `denial`'s shared pairing and result owners. Missing evidence, an orphan or out-of-order result, multiple results, or an ambiguous reused identifier cannot establish that a call never ran. Positive write claims and supersession require the shared `landed` fact: a later unanswered or uncertain write does not turn a possible replacement into a confirmed one. Histories stored before the protocol remain unknown. A refused write can still return genuine read evidence; the write outcome does not erase the separately verified body.
 
+### Result text is not failure or process status
+
+Focus trimming no longer classifies ordinary result bodies as failed actions from phrases such as “not found” or error-like lines. Native and unknown results remain intact. Lossless folding applies only to canonical paired refusal facts and retains complete bodies, original argument spelling and event order. A successful search matching an error message is still useful evidence, not a dead end.
+
+`resultnotes.exec_envelope` owns the recognized exec header grammar and its payload/record boundaries. It recognizes a closed header only at offset zero, distinguishes terminal, running and status-less results, and leaves unknown shapes opaque. Serialization correlates the complete history before attributing a shell exit; a read, orphan, duplicate or ambiguous result cannot gain an exit status merely by quoting one. Wire representation, historical check settlement and returned-search policies consume that same descriptor, not independent whole-body status scans. Payload LF/CRLF, blank lines and EOF remain data under both values of the retained `preserve_eof` compatibility argument. Proven framing may be removed; payload text that resembles another envelope is not reinterpreted.
+
+This text grammar is a compatibility boundary, not universal transport provenance. An envelope-less shell harness whose program output begins with an exact complete recognized header is indistinguishable here from a framed result. That residual limit is explicitly accepted; typed producer records provide stronger evidence for lowered commands. No wrapper, classifier or fabricated metadata is added to native commands to claim otherwise.
+
 ### Historical writes require file identity and proven completion order
 
 Compaction keeps three outcomes distinct: proven landed, proven unlanded, and unknown. Unknown evidence retains the payload without a refused, current-disk or superseded claim. A later proven whole-file replacement and a later proven partial edit receive different historical wording.
