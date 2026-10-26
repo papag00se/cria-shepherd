@@ -39,8 +39,8 @@ WRITE_EXPORTS = {
     toolwire: '''REFUSED_EXIT_CODE _oversize_command _refusal_command _SENTINEL _SENTINEL_LINE
         _sentinel _shell_call _b64 _RIDE_ALONG_HOST_RESERVE
         _RIDE_ALONG_COMMAND_RESERVE _command_of is_crias_own original_call _read_sentinel GATE_SENTINEL'''.split(),
-    resultnotes: '''_ENVELOPE_OUTPUT_LINE _ENVELOPE_ADVISORY _ENVELOPE_CUT_WARNING _EXIT_CODE
-        _strip_exec_envelope _noted _digest append_note payload_of _workspace_ecosystem probegate_marker_in'''.split(),
+    resultnotes: '''exec_envelope _strip_exec_envelope _noted _digest append_note payload_of
+        _workspace_ecosystem probegate_marker_in'''.split(),
 }
 SOURCE_ALIASES = [(massage, outputpolicies, name) for name in (
     '_extract_leaked', '_fenced_envelope_call', '_echoes_a_draft', '_to_shell', '_reshape_shell', '_log',

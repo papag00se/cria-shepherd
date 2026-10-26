@@ -7,43 +7,80 @@ from __future__ import annotations
 
 import hashlib
 import re
+from typing import NamedTuple
 
 from . import bodykeys, payloadboundary, wsview
 from .toolwire import SECTION_PREFIX
 
-_ENVELOPE_OUTPUT_LINE = re.compile(r"^Output:[ \t]*$", re.M)
+# ONE grammar, at stdout offset zero. No search for an Output/status phrase in a
+# log or file. Optional fields have a fixed order; an unknown field/partial header
+# leaves the entire result opaque. Status-less Chunk/Wall headers are historical
+# framing, NOT evidence of completion. Case/horizontal spacing remain tolerated.
+_EXEC_HEADER = re.compile(
+    r"\A(?:Chunk[ \t]+ID:[ \t]*(?P<chunk>[^\s]+)[ \t]*\r?\n)?"
+    r"(?:Wall[ \t]+time:[ \t]*(?P<wall>\d+(?:\.\d+)?[ \t]*(?:seconds|s))[ \t]*\r?\n)?"
+    r"(?:Process[ \t]+(?:exited[ \t]+with[ \t]+code[ \t]+(?P<exit>\d+)"
+    r"|running[ \t]+with[ \t]+session[ \t]+ID[ \t]+(?P<session>\d+))[ \t]*\r?\n)?"
+    r"(?:Original[ \t]+token[ \t]+count:[ \t]*\d+[ \t]*\r?\n)?"
+    r"Output:[ \t]*(?:\r?\n|\Z)", re.I)
+_ENVELOPE_ADVISORY = re.compile(r"Total output lines: \d+[ \t]*")
+_ENVELOPE_CUT_WARNING = re.compile(r"Warning: truncated output[^\r\n]*")
 
 
-_ENVELOPE_ADVISORY = re.compile(r"^Total output lines: \d+[ \t]*$")
+class ExecEnvelope(NamedTuple):
+    """Character extents in the ORIGINAL result, never a rewritten body.
+
+    payload_start keeps all output, including cut disclosures. record_start skips
+    only the harness's immediate advisory prefix for the positional typed-record
+    reader. Neither extent searches for a record, a later Output, or a status.
+    """
+    payload_start: int
+    record_start: int
+    exit_code: int | None
+    running: bool
+    cut_warning: str
 
 
-_ENVELOPE_CUT_WARNING = re.compile(r"^Warning: truncated output.*$")
+def exec_envelope(content: str) -> ExecEnvelope | None:
+    """Recognize a closed exec header at offset zero; unknown shapes are untouched.
 
-
-_EXIT_CODE = re.compile(r"Process exited with code (\d+)")
+    This recognizes framing only. Call/result correlation and producer declarations
+    remain the callers' authority; a native command's payload never proves a lowering.
+    """
+    match = _EXEC_HEADER.match(content)
+    if not match or not (match["exit"] is not None or match["session"] is not None
+                         or (match["chunk"] and match["wall"])):
+        return None
+    pos = match.end()
+    warnings = []
+    while pos < len(content):
+        nl = content.find("\n", pos)
+        end = nl + 1 if nl >= 0 else len(content)
+        line = content[pos:nl if nl >= 0 else end].removesuffix("\r")
+        if _ENVELOPE_CUT_WARNING.fullmatch(line):
+            warnings.append(content[pos:end])  # exact warning bytes/EOL, never an authored substitute
+        elif not _ENVELOPE_ADVISORY.fullmatch(line):
+            break
+        pos = end
+    return ExecEnvelope(match.end(), pos, int(match["exit"]) if match["exit"] is not None else None,
+                        match["session"] is not None, "".join(warnings))
 
 
 def _strip_exec_envelope(content: str, *, preserve_eof: bool = False) -> str:
-    """The harness exec envelope around a re-presented synthetic-tool result → just the payload.
-    Untouched when the envelope isn't present (a native path, an already-clean or non-exec result)."""
-    if not content:
+    """Display a re-presented tool's payload; unknown/unframed results are untouched.
+
+    ``preserve_eof`` is accepted for caller compatibility only: EOF is data for
+    EVERY result, not just a whole read. Neither value authorizes byte deletion.
+    """
+    envelope = exec_envelope(content)
+    if envelope is None:
         return content
-    m = _ENVELOPE_OUTPUT_LINE.search(content)
-    if not m or "Process exited with code" not in content[:m.start()]:
-        return content
-    # The newline immediately after Output: belongs to framing; subsequent blank lines
-    # in a whole-file payload belong to the file, just like its trailing newlines.
-    lines = content[m.end():].removeprefix("\n").split("\n")
-    kept_warning = ""
-    while lines and (_ENVELOPE_ADVISORY.match(lines[0]) or (not preserve_eof and not lines[0].strip())
-                     or _ENVELOPE_CUT_WARNING.match(lines[0])):
-        line = lines.pop(0)
-        if _ENVELOPE_CUT_WARNING.match(line):
-            kept_warning = line.strip()      # the payload is a piece — say so above it
-    body = "\n".join(lines)
-    if not preserve_eof:
-        body = body.rstrip("\n")
-    return f"{kept_warning}\n{body}" if kept_warning else body
+    # A bare advisory can itself be literal output. Only a real leading cut
+    # disclosure authorizes the display's advisory removal; raw transcript readers
+    # use payload_start and retain the ENTIRE output regardless.
+    body = (envelope.cut_warning + content[envelope.record_start:] if envelope.cut_warning
+            else content[envelope.payload_start:])
+    return body
 
 
 def _noted(m: dict, content: str, note: str) -> dict:

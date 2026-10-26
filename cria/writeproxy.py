@@ -59,8 +59,7 @@ from .toolwire import (
     GATE_SENTINEL)
 
 from .resultnotes import (
-    _ENVELOPE_OUTPUT_LINE, _ENVELOPE_ADVISORY, _ENVELOPE_CUT_WARNING, _EXIT_CODE,
-    _strip_exec_envelope, _noted, _digest, append_note, payload_of, _workspace_ecosystem,
+    exec_envelope, _strip_exec_envelope, _noted, _digest, append_note, payload_of, _workspace_ecosystem,
     probegate_marker_in)
 
 
@@ -178,8 +177,8 @@ def observe_externalization_results(owner, messages) -> None:
         content = message.get('content')
         if not isinstance(content, str):
             continue
-        exit_match = _EXIT_CODE.search(content)
-        if exit_match is not None and int(exit_match.group(1)) != 0:
+        envelope = exec_envelope(content)
+        if envelope is not None and envelope.exit_code not in (None, 0):
             offer.delivery.settle(e.Outcome.FAILED, stored=False)
             continue
         proof = proofs.get(cid)
@@ -1428,12 +1427,12 @@ def _debinarized(content: str) -> str:
     content = content_reduce_mod.strip_ansi(content)
     if not content or not content_reduce_mod.looks_binary(content):
         return content
-    m = _ENVELOPE_OUTPUT_LINE.search(content)
-    if m and "Process exited with code" in content[:m.start()]:
-        head, payload = content[:m.end()], content[m.end():]
+    envelope = exec_envelope(content)
+    if envelope is not None:
+        head, payload = content[:envelope.payload_start], content[envelope.payload_start:]
         if not content_reduce_mod.looks_binary(payload):
             return content
-        return head + "\n" + _binary_fact(payload)
+        return head + _binary_fact(payload)
     return _binary_fact(content)
 
 
@@ -1519,25 +1518,10 @@ def redact_secrets(messages: list[dict], secrets: list[str]) -> list[dict]:
 _REJECTED_PAYLOAD_CHARS = 400
 
 
-# `Output:` with the line ending a pty may have given the harness's own header (LF or CRLF). Locating the offset
-# only — `resultnotes._ENVELOPE_OUTPUT_LINE` (the display strip) is unchanged, and no payload byte is rewritten.
-_ENVELOPE_OUTPUT_LINE_ANY_EOL = re.compile(r"^Output:[ \t]*\r?$", re.M)
-
-
 def _payload_offset(content: str) -> int:
-    """Where the tool's own stdout begins in ``content``: after the harness exec envelope (and the advisory / cut
-    warning lines it may put above the payload), or 0 when no envelope is present."""
-    m = _ENVELOPE_OUTPUT_LINE_ANY_EOL.search(content)
-    if not m or "Process exited with code" not in content[:m.start()]:
-        return 0
-    pos = m.end() + (1 if content[m.end():m.end() + 1] == "\n" else 0)
-    while pos < len(content):
-        nl = content.find("\n", pos)
-        line = content[pos:nl if nl >= 0 else len(content)].removesuffix("\r")   # matching only; offsets stay exact
-        if not (_ENVELOPE_ADVISORY.match(line) or _ENVELOPE_CUT_WARNING.match(line)):
-            break
-        pos = nl + 1 if nl >= 0 else len(content)
-    return pos
+    """The protocol owner's positional record boundary, or stdout offset zero when unframed."""
+    envelope = exec_envelope(content)
+    return envelope.record_start if envelope is not None else 0
 
 
 class _Proof(NamedTuple):
@@ -1840,13 +1824,8 @@ def represent_inbound(messages: list[dict], rlog=None, workspace_root: str | Non
                     view.note_written(write_paths[tid], written[tid])
                 elif tid in edited and not edit_applied:
                     view.note_changed(write_paths[tid])
-            # `preserve_eof` is only HOW THE BYTES ARE DISPLAYED (the harness's final newline kept); it claims nothing.
-            exit_code = _EXIT_CODE.search(content)
-            preserve_eof = (tid in read_whole and outcomes.get(tid) != denial.REFUSED
-                            and (exit_code is None or exit_code.group(1) == "0")
-                            and not note_harness_cuts([m]))
-            if tid in strip_ids:                          # read/nav result → drop the shell envelope
-                out.append({**m, "content": _strip_exec_envelope(content, preserve_eof=preserve_eof)})
+            if tid in strip_ids:                          # read/nav result → drop only proven framing, never EOF
+                out.append({**m, "content": _strip_exec_envelope(content)})
             elif tid in write_paths and tid in landed_ids:  # write/edit SUCCESS
                 rendered = render_edit_echo(write_paths[tid], proof.rep if proof is not None else None)
                 facts = ((proof.rep or {}).get("rm") or "").strip() if proof is not None else ""

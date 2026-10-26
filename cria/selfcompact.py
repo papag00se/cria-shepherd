@@ -32,7 +32,7 @@ from typing import Callable, Protocol
 from .assistcontract import Policy, Reference
 from .memoryeffects import Effect
 
-from . import denial, jsontext, probegate, prompts, toolargs, toolwire
+from . import bodykeys, denial, jsontext, probegate, prompts, resultnotes, shelltool, toolargs, toolwire
 from .content_reduce import clip, est_tokens
 
 # Tunables in TOKENS. TRIGGER is operator-tunable via [context] trigger_compaction; the rest are
@@ -268,8 +268,18 @@ def serialize(messages: list[dict], defang: bool = False) -> str:
     Opt-in, and currently taken only by the steer-author path — the one the 717-call measurement
     covers. The summarizer keeps the verbatim rendering until the same base rate is taken for it
     (#15)."""
+    return "\n".join(serialize_blocks(messages, defang=defang))
+
+
+def serialize_blocks(messages: list[dict], defang: bool = False) -> list[str]:
+    """Independently reducible transcript turns, correlated BEFORE block separation.
+
+    A singleton tool turn cannot establish which tool produced it. Keep canonical
+    call/result authority while composing blocks, without stamping history or
+    inferring origin from anything the result happens to say.
+    """
     if not defang:
-        return "\n".join(f"{m.get('role')}: {msg_digest(m)}" for m in messages)
+        return [f"{m.get('role')}: {msg_digest(m)}" for m in messages]
     # NO LINE NUMBERS. This transcript goes to the steer author, and whatever the author writes goes
     # to the CODER — whose context has no such numbering, because it is cria's private rendering of
     # the author's own view. Numbering the lines invited the author to cite them, and it did:
@@ -285,16 +295,12 @@ def serialize(messages: list[dict], defang: bool = False) -> str:
     # banner the north star was cwd/shell/date. Since nothing here is cut (#5), there is nothing
     # for the exemption to grant, and the wrong assumption goes with it rather than being fixed in
     # place. `is_env_context` remains the one owner of the question for the callers that still ask.
-    return "\n".join(line for m in messages if (line := _defanged_line(m)))
-
-
-# The harness's exec envelope, whose shape is the thing a model copies when it fakes a result.
-# `Process exited with code N` is stripped WITH the rest even though the code itself is kept — the
-# defanged line already states it as `→ exit N`, so leaving the original both duplicates the fact
-# and preserves the exact phrase a model copies when it fabricates a result.
-_ENVELOPE = re.compile(r"(?im)^\s*(?:Chunk ID|Wall time|Original token count|Output)\s*:.*$"
-                       r"|Process exited with code\s+\d+")
-_EXIT = re.compile(r"(?i)Process exited with code\s+(\d+)")
+    paired = denial.paired_results(messages)
+    exec_results = {id(paired[tc.get("id")]) for m in messages if m.get("role") == "assistant"
+                    for tc in m.get("tool_calls") or [] if tc.get("id") in paired
+                    and shelltool.is_shell_tool_name((tc.get("function") or {}).get("name"))}
+    return [line for m in messages
+            if (line := _defanged_line(m, exec_result=id(m) in exec_results))]
 
 
 # THE BOUND IS GONE — this block is history, not an instruction.
@@ -314,7 +320,7 @@ _EXIT = re.compile(r"(?i)Process exited with code\s+(\d+)")
 # when the real switch was a field called WORKERS_ENABLED and the verifier reported "0 thread(s)".
 
 
-def _defanged_line(m: dict) -> str:
+def _defanged_line(m: dict, *, exec_result: bool = False) -> str:
     """One transcript entry as PROSE — the facts a supervisor needs, with no copyable syntax.
 
     NOTHING HERE IS CLIPPED (#5: cria never truncates, and it does not matter that the reader is a
@@ -337,7 +343,6 @@ def _defanged_line(m: dict) -> str:
         # Source-labelled automatic checks are already evidence, not coder speech.
         # Keep their command/output whitespace; the outer composer supplies wire roles.
         return text
-    text = text.strip()
     calls = m.get("tool_calls") or []
     if calls:
         bits = []
@@ -354,53 +359,24 @@ def _defanged_line(m: dict) -> str:
                         else f"the coder called {fn.get('name', '?')}")
         return " / ".join(bits)
     if role == "tool":
-        exit_m = _EXIT.search(text)
-        body = _program_output(text)
-        head = f"→ exit {exit_m.group(1)}" if exit_m else "→ result"
+        body, head = text, "→ result"
+        # A file, fetched page, orphan, or re-presented lowering may quote the
+        # entire exec protocol. Only a paired native exec result admits framing.
+        # The shared protocol owner supplies extent AND status; the body is opaque.
+        if exec_result and denial.proof(m) is None and bodykeys.PAYLOAD_BOUNDARY not in m:
+            envelope = resultnotes.exec_envelope(text)
+            if envelope is not None:
+                if envelope.exit_code is not None:
+                    head = f"→ exit {envelope.exit_code}"
+                body = text[envelope.payload_start:]
         return f"{head}: {body}" if body else head
+    text = text.strip()
     if not text:
         return ""
     who = {"user": "the task/context said", "assistant": "the coder said",
            "system": "the frame said"}.get(role, f"{role} said")
     flat = " ".join(text.split())
     return f"{who}: {flat}"
-
-
-# The harness prints the program's stdout after a line reading `Output:`. Everything past that
-# marker is the program speaking, byte for byte — INCLUDING its blank lines.
-_OUTPUT_MARKER = re.compile(r"(?im)^[ \t]*Output[ \t]*:[ \t]*\n")
-
-
-def _program_output(text: str) -> str:
-    """What the program actually printed, with its own blank lines intact — or the cleaned result
-    when there is no exec envelope to anchor on.
-
-    AN EMPTY LINE IN stdout IS A VALUE. This used to run the envelope regex over the whole result and
-    `.strip()` what was left, which deletes a leading blank line — and a leading blank line is what
-    `puts nil` prints.
-
-    Walked on `shipping-rates-rb x ternary-bonsai` 1787111689, the one probe in the run that answered
-    the question. The coder ran
-    `ruby -e "…; puts c.data[:eu_member]; puts c.name"` and the harness returned:
-
-        Chunk ID: 2abf9d
-        Process exited with code 0
-        Output:
-
-        France
-
-    The blank line before `France` IS the bug: `data` is string-keyed, so `[:eu_member]` is nil. The
-    digest handed to the steer author rendered that whole call as `→ exit 0: France`. The author then
-    reasoned "the country lookup works fine in isolation" — a conclusion the deleted line disproves —
-    and steered the coder at a different bug. The run ended 3/5 with that one untouched.
-
-    Anchored on the marker rather than on the regex, so the program's output is never re-processed:
-    once `Output:` is found, everything after it is passed through and only the envelope's own final
-    newline is dropped."""
-    m = _OUTPUT_MARKER.search(text or "")
-    if m:
-        return (text[m.end():]).rstrip("\n")
-    return _ENVELOPE.sub("", text or "").strip()
 
 
 def _drop_unanswered_gate_calls(messages: list[dict]) -> list[dict]:

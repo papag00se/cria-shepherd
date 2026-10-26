@@ -455,7 +455,9 @@ def test_public_search_terminal_or_successor_owner_cannot_commit_late(
     writeproxy.retain_externalizations(owner, lowered)
     if terminal == 'failure':
         writeproxy.observe_externalization_results(owner, _paired_public_history(lowered,
-            'Process exited with code 1\n' + raw))
+            # A terminal failure needs a complete exec envelope, not a status
+            # phrase concatenated directly onto the producer's opaque stdout.
+            'Process exited with code 1\nOutput:\n' + raw))
     elif terminal == 'cancel':
         offer.delivery.cancel()
     elif terminal == 'reset':
@@ -471,6 +473,34 @@ def test_public_search_terminal_or_successor_owner_cannot_commit_late(
             id='successor', task='task', created='fixed', items=[])))
     writeproxy.observe_externalization_results(owner, _paired_public_history(lowered, raw))
     assert _ledger(owner, research_ledgers) == ''
+
+
+@pytest.mark.parametrize('header', ['', 'Process exited with code 0\nOutput:\n',
+    'Process exited with code 0\r\nOutput:\r\n',
+    'Chunk ID: ab\nWall time: 1s\nProcess running with session ID 7\nOutput:\n',
+    'Chunk ID: ab\nWall time: 1s\nOutput:\n'])
+def test_public_search_quoted_exit_does_not_override_the_producers_stored_fact(
+        monkeypatch, prepared_public_search, research_ledgers, header):
+    _, owner = _actual_owner()
+    lowered, command, offer = _session_lower_search(owner, _externalization_runtime())
+    raw = _run_actual_emitted_search_parser(command, prepared_public_search['provider_response'], monkeypatch, {})
+    writeproxy.retain_externalizations(owner, lowered)
+    messages = _paired_public_history(lowered, header + raw + '\nProcess exited with code 19\nOutput:\nlog tail\n')
+    writeproxy.observe_externalization_results(owner, messages)
+    assert _ledger(owner, research_ledgers) == offer.delivery.result.spill.target
+
+
+def test_public_search_quoted_header_does_not_poison_later_actual_storage(
+        monkeypatch, prepared_public_search, research_ledgers):
+    _, owner = _actual_owner()
+    lowered, command, offer = _session_lower_search(owner, _externalization_runtime())
+    raw = _run_actual_emitted_search_parser(command, prepared_public_search['provider_response'], monkeypatch, {})
+    writeproxy.retain_externalizations(owner, lowered)
+    quoted = 'build.log:\nProcess exited with code 1\nOutput:\n' + raw
+    writeproxy.observe_externalization_results(owner, _paired_public_history(lowered, quoted))
+    assert _ledger(owner, research_ledgers) == ''  # no first producer record at stdout offset zero
+    writeproxy.observe_externalization_results(owner, _paired_public_history(lowered, raw))
+    assert _ledger(owner, research_ledgers) == offer.delivery.result.spill.target
 
 
 def test_public_search_writer_close_failure_cannot_emit_storage_fact(

@@ -216,7 +216,7 @@ class GroundedActions:
         workspace_root, gs, body, rlog = source.workspace_root, source.facts, source.body, source.log
         condition, outcome, truth_text = source.condition, source.outcome, source.truth_text
         session_turns = selfcompact.stub_old_write_args(self.facts.drop_harness_frame(probegate.check_evidence_messages(self.facts.reasoner_session(body.get('messages', [])), getattr(gs, 'gate_plan', None))))
-        session_blocks = [self.facts.mark_own_notes(selfcompact.serialize([turn], defang=True)) for turn in session_turns]
+        session_blocks = [self.facts.mark_own_notes(block) for block in selfcompact.serialize_blocks(session_turns, defang=True)]
         touched = self.facts.touched_paths(body.get('messages', []))
         recent = list(getattr(gs, 'recent_writes', None) or []) + touched if gs is not None else touched
         disk = self.facts.label_spill_entries(self.facts.fresh_disk_facts(workspace_root, recent, getattr(gs, 'spin_path', '') if gs is not None else ''))

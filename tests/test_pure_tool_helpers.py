@@ -292,7 +292,7 @@ def test_payload_boundary_is_authoritative_and_never_recounts_notes():
 
 def test_execution_envelope_removal_keeps_real_payload_and_eof():
     wrapped = 'Chunk ID: abc\nWall time: 0.1 seconds\nProcess exited with code 0\nOutput:\nactual\n'
-    assert resultnotes._strip_exec_envelope(wrapped) == 'actual'
+    assert resultnotes._strip_exec_envelope(wrapped) == 'actual\n'
     assert resultnotes._strip_exec_envelope(wrapped, preserve_eof=True) == 'actual\n'
     assert resultnotes._strip_exec_envelope('actual\n', preserve_eof=True) == 'actual\n'
     assert resultnotes._workspace_ecosystem(None) == ''

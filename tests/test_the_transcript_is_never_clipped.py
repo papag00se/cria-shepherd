@@ -119,7 +119,9 @@ class BothEndsSurviveTests(unittest.TestCase):
         self.assertIn("unresolved import", line)
 
     def test_short_output_is_untouched(self):
-        line = selfcompact._defanged_line(tool_msg("Process exited with code 0\nOutput:\n7 passed"))
+        messages = [call_msg("exec_command", '{"cmd": "pytest -q"}'),
+                    tool_msg("Process exited with code 0\nOutput:\n7 passed")]
+        line = selfcompact.serialize_blocks(messages, defang=True)[-1]
         self.assertEqual(line, "→ exit 0: 7 passed")
 
     def test_three_commands_differing_late_no_longer_collapse(self):
@@ -173,7 +175,10 @@ class TheDefangingItselfStillHoldsTests(unittest.TestCase):
         self.assertIn("the coder called exec_command", line)
 
     def test_the_envelope_is_still_stripped(self):
-        line = selfcompact._defanged_line(tool_msg("Chunk ID: abc\nWall time: 1s\nOutput:\nhi"))
+        messages = [call_msg("exec_command", '{"cmd": "printf hi"}'),
+                    tool_msg("Chunk ID: abc\nWall time: 1s\nOutput:\nhi")]
+        line = selfcompact.serialize_blocks(messages, defang=True)[-1]
+        self.assertEqual(line, "→ result: hi")
         self.assertNotIn("Chunk ID", line)
 
 

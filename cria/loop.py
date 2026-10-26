@@ -8137,8 +8137,9 @@ def _track_own_checks(sess, messages: list[dict]) -> None:
             owns_status = bool(final and shell[final[0]:final[1]].strip() in named
                                and not shell[final[1]:].strip()
                                and not shell[:final[0]].rstrip().endswith("|"))
-            m = selfcompact._EXIT.search(res)
-            code = int(m.group(1)) if m and owns_status else None
+            from .resultnotes import exec_envelope
+            envelope = exec_envelope(res)
+            code = envelope.exit_code if envelope is not None and owns_status else None
             sess.own_check_runs.append((sess.action_seq, named, code))
 
 

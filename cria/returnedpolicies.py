@@ -5,7 +5,7 @@ import re
 
 from . import denial, depsurface, dirguard, probeparse, proberun, prompts
 from .resultnotes import (append_note, probegate_marker_in, _strip_exec_envelope,
-                          _workspace_ecosystem, _noted, _EXIT_CODE)
+                          _workspace_ecosystem, _noted, exec_envelope)
 from .toolargs import parse_args as _parse
 from .assistcontract import Policy, Reference
 from .toolcontracts import (ReturnedResult, ReturnedHistory, ReturnedDefinition, HistoryDefinition,
@@ -405,8 +405,8 @@ def _found_nothing(command: str, content: str) -> bool:
     cmd = command or ''
     if not cmd or not _SEARCH_CMD.search(cmd) or _FILTER_PIPE.search(cmd):
         return False
-    match = _EXIT_CODE.search(content or '')
-    if not match or match.group(1) != '1':
+    envelope = exec_envelope(content or '')
+    if envelope is None or envelope.exit_code != 1:
         return False
     return not _strip_exec_envelope(content or '').strip()
 
@@ -414,8 +414,8 @@ def _found_nothing(command: str, content: str) -> bool:
 def _blind_pipe_failure(command: str, content: str) -> bool:
     if not command or not _FILTER_PIPE.search(command):
         return False
-    match = _EXIT_CODE.search(content)
-    if not match or match.group(1) == '0':
+    envelope = exec_envelope(content)
+    if envelope is None or envelope.exit_code in (None, 0):
         return False
     return _strip_exec_envelope(content).strip() == ''
 

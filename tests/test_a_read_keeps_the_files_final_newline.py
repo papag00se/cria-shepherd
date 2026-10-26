@@ -67,9 +67,9 @@ def test_file_bytes_survive_the_read_envelope(tmp_path, payload):
                              comp["choices"][0]["message"]["tool_calls"][0], envelope)
 
 
-def test_generic_envelope_cleanup_is_unchanged():
+def test_generic_envelope_cleanup_also_preserves_the_outputs_final_newline():
     assert writeproxy._strip_exec_envelope(
-        "Chunk ID: c\nProcess exited with code 0\nOutput:\nlisting\n") == "listing"
+        "Chunk ID: c\nProcess exited with code 0\nOutput:\nlisting\n") == "listing\n"
 
 
 @pytest.mark.parametrize("result", [
