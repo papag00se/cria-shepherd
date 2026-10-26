@@ -1,5 +1,7 @@
+import json
 import unittest
 
+from cria import bodykeys, denial, prompts, toolwire, writeproxy
 from cria.focustrim import trim
 
 
@@ -87,12 +89,46 @@ class FocusTrimTests(unittest.TestCase):
 
 
 def _fail_action(cid, cmd):
-    # A SOFT dead-end lookup (file-not-found, no hard non-zero-exit line). These are the noise the
-    # squash collapses. A HARD failure (non-zero exit carrying a traceback) is exempt — see
-    # HardFailKeptTests — so squash-behavior fixtures must be soft-only.
+    # Historical native lookup diagnostic. Its wording proves neither refusal nor
+    # uselessness; Rule B now preserves it, including when the exit status is unknown.
     return [{"role": "assistant", "tool_calls": [{"id": cid, "type": "function",
              "function": {"name": "exec_command", "arguments": '{"cmd": "%s"}' % cmd}}]},
             {"role": "tool", "tool_call_id": cid, "content": "%s: No such file or directory" % cmd}]
+
+
+def _refused_action(cid, cmd):
+    """A real authored refusal packet, restored through the canonical inbound owner.
+
+    Nothing executes: the producer authors its typed record and the consumer verifies
+    its declared receipt. Multiline evidence deliberately rides beneath the refusal.
+    """
+    args = json.dumps({"cmd": cmd})
+    receipt = denial.receipt_for(cid, "exec_command", args)
+    with denial.receipt_scope(receipt):
+        stdout = denial.mark(f"Refused {cmd}\nObserved source detail for {cid}\nFinal detail for {cid}\n")
+    command = toolwire._sentinel("exec_command", args, receipt) + "\n:"
+    call = toolwire._shell_call(cid, {"name": "exec_command", "parameters": {
+        "type": "object", "properties": {"cmd": {"type": "string"}}}}, command)
+    restored = writeproxy.represent_inbound([
+        {"role": "assistant", "tool_calls": [call]}, _result(cid, stdout)])
+    assert denial.refused_call_ids(restored) == {cid}
+    return restored
+
+
+def _public(messages):
+    return [{k: v for k, v in m.items() if k not in bodykeys.ALL} for m in messages]
+
+
+def _unfold_refusals(messages):
+    """Decode the historical record to compare ALL original events, not selected lines."""
+    prefix = prompts.load("work_log_denied").strip() + "\n"
+    out = []
+    for message in messages:
+        if message.get("role") == "user" and str(message.get("content", "")).startswith(prefix):
+            out.extend(json.loads(message["content"][len(prefix):]))
+        else:
+            out.extend(_public([message]))
+    return out
 
 
 class GateDupCollapseTests(unittest.TestCase):
@@ -114,23 +150,31 @@ class GateDupCollapseTests(unittest.TestCase):
 
 class ErrorSquashTests(unittest.TestCase):
     def test_squashes_a_run_of_distinct_failures_keeping_recent(self):
+        """Distinct-attempt history survives: words no longer authorize its deletion.
+
+        The old soft-error expectation was unsafe. Only proven authored refusals
+        fold now, with complete bodies and call arguments still recoverable.
+        """
+        commands = ["cat a", "cat b", "find c", "ls d", "grep e", "cat f"]
+        native = [{"role": "user", "content": "build it"}]
+        for i, cmd in enumerate(commands):
+            native += _fail_action(f"c{i}", cmd)
+        out, rep = trim(native)
+        self.assertEqual(out, native)
+        self.assertFalse(rep.applied)
+
         msgs = [{"role": "user", "content": "build it"}]
-        for i, cmd in enumerate(["cat a", "cat b", "find c", "ls d", "grep e", "cat f"]):
-            msgs += _fail_action(f"c{i}", cmd)   # 6 DISTINCT failing commands (v1 dup-collapse won't touch)
+        for i, cmd in enumerate(commands):
+            msgs += _refused_action(f"c{i}", cmd)
         out, rep = trim(msgs)
         self.assertEqual(rep.squashed_runs, 1)
-        self.assertEqual(rep.dropped_calls, 4)               # 6 - keep(2) = 4 dropped
-        # exactly the last 2 failing commands survive
-        survived = [tc["function"]["arguments"] for m in out if m.get("role") == "assistant" for tc in m.get("tool_calls", [])]
-        self.assertEqual(len(survived), 2)
-        self.assertIn('grep e', survived[0]); self.assertIn('cat f', survived[1])
-        # the note names what was dropped
-        note = [m for m in out if m.get("role") == "user" and "[removed" in str(m.get("content", ""))]
-        self.assertEqual(len(note), 1)
-        self.assertIn("cat a", note[0]["content"])
-        # no orphaned tool results
+        self.assertEqual(rep.dropped_calls, 4)
+        self.assertEqual(rep.dropped_msgs, 8)
+        self.assertEqual(out[-4:], msgs[-4:])  # the latest two ordinary pairs survive
+        self.assertEqual(_unfold_refusals(out), _public(msgs))
         calls = {tc["id"] for m in out if m.get("role") == "assistant" for tc in m.get("tool_calls", [])}
         res = {m["tool_call_id"] for m in out if m.get("role") == "tool"}
+        self.assertEqual(calls, {"c4", "c5"})
         self.assertEqual(res, calls)
 
     def test_short_run_below_threshold_is_left_alone(self):
@@ -142,24 +186,30 @@ class ErrorSquashTests(unittest.TestCase):
         self.assertIs(out, msgs)                                 # untouched
 
     def test_squashes_across_a_success_keeping_it_in_place(self):
-        # 3 fails, a SUCCESS, then 2 fails — 5 failures total, scattered, NOT consecutive. The stale
-        # failures still collapse (dead ends are noise wherever they sit); the success is preserved.
-        msgs = [{"role": "user", "content": "x"}]
-        msgs += _fail_action("a", "cat a") + _fail_action("b", "cat b") + _fail_action("c", "cat c")
-        msgs += [{"role": "assistant", "tool_calls": [{"id": "ok", "type": "function",
-                  "function": {"name": "exec_command", "arguments": '{"cmd": "ls"}'}}]},
-                 {"role": "tool", "tool_call_id": "ok", "content": "handler.py\ntests"}]
-        msgs += _fail_action("d", "cat d") + _fail_action("e", "cat e")
-        out, rep = trim(msgs)
-        self.assertEqual(rep.squashed_runs, 1)                            # squashed despite the success
-        self.assertEqual(rep.dropped_calls, 3)                           # 5 failures - keep(2)
-        self.assertTrue(any(m.get("tool_call_id") == "ok" for m in out))  # the success is preserved
-        # the two most recent FAILURES survive; the earlier three are gone
-        surviving_fail_ids = [m["tool_call_id"] for m in out if m.get("role") == "tool" and m["tool_call_id"] != "ok"]
-        self.assertEqual(surviving_fail_ids, ["d", "e"])
-        note = [m for m in out if "[removed" in str(m.get("content", ""))]
-        self.assertEqual(len(note), 1)
-        self.assertIn("cat a", note[0]["content"])                        # the scattered dead-ends are named
+        """Intervening success must retain its bytes AND position among earlier facts.
+
+        Native soft-looking results are no longer deletable; genuine refusals fold
+        in place rather than collecting their evidence into one later note.
+        """
+        success = [_asst("ok", "exec_command", '{"cmd": "ls"}'), _result("ok", "handler.py\ntests")]
+        for make_action in (_fail_action, _refused_action):
+            with self.subTest(producer=make_action.__name__):
+                msgs = [{"role": "user", "content": "x"}]
+                msgs += make_action("a", "cat a") + make_action("b", "cat b") + make_action("c", "cat c")
+                msgs += success
+                msgs += make_action("d", "cat d") + make_action("e", "cat e")
+                out, rep = trim(msgs)
+                self.assertEqual(_unfold_refusals(out), _public(msgs))
+                self.assertEqual(next(m for m in out if m.get("tool_call_id") == "ok"), success[1])
+                if make_action is _fail_action:
+                    self.assertEqual(out, msgs)
+                    self.assertFalse(rep.applied)
+                else:
+                    self.assertEqual(rep.squashed_runs, 1)
+                    self.assertEqual(rep.dropped_calls, 3)
+                    self.assertEqual(out[-4:], msgs[-4:])
+                    surviving = [m["tool_call_id"] for m in out if m.get("role") == "tool"]
+                    self.assertEqual(surviving, ["ok", "d", "e"])
 
     def test_gate_probe_is_never_squashed_as_a_failed_action(self):
         # cria's OWN ground-truth gate probe exits non-zero BY DESIGN (a failing check is the signal).
@@ -167,41 +217,46 @@ class ErrorSquashTests(unittest.TestCase):
         from cria.probegate import SECTION_PREFIX as GATE
         gate_out = (f"{GATE}probe-0___\n  File \"./mcp_client.py\", line 14\n"
                     "SyntaxError: ':' expected after dictionary key\nProcess exited with code 1")
-        msgs = [{"role": "user", "content": "x"}]
-        for c in ("a", "b", "c", "d"):                                    # 4 real dead-ends (over threshold)
-            msgs += _fail_action(c, f"cat {c}")
-        msgs += [{"role": "assistant", "tool_calls": [{"id": "gate", "type": "function",
-                  "function": {"name": "exec_command", "arguments": f'{{"cmd": "echo {GATE}probe-0___"}}'}}]},
-                 {"role": "tool", "tool_call_id": "gate", "content": gate_out}]
-        out, rep = trim(msgs)
-        self.assertEqual(rep.squashed_runs, 1)                            # the cat dead-ends still collapse
-        # the gate probe + its ground-truth result survive untouched
-        self.assertTrue(any(m.get("tool_call_id") == "gate" for m in out))
-        surviving = "".join(str(m.get("content", "")) for m in out)
-        self.assertIn("expected after dictionary key", surviving)         # the error is still present
-        # …and the gate is NOT named in the "removed failed attempts" note
-        note = [m for m in out if "[removed" in str(m.get("content", ""))][0]
-        self.assertNotIn(GATE, note["content"])
+        # Native phrase-based deletion is superseded, not gate protection. Exercise
+        # the original native diagnostics AND a genuinely active refusal fold.
+        gate = [_asst("gate", "exec_command", json.dumps({"cmd": f"echo {GATE}probe-0___"})),
+                _result("gate", gate_out)]
+        for make_action in (_fail_action, _refused_action):
+            with self.subTest(producer=make_action.__name__):
+                msgs = [{"role": "user", "content": "x"}]
+                for c in ("a", "b", "c", "d"):
+                    msgs += make_action(c, f"cat {c}")
+                msgs += gate
+                out, rep = trim(msgs)
+                self.assertEqual(rep.squashed_runs, 0 if make_action is _fail_action else 1)
+                self.assertEqual(out[-2:], gate)  # exact call and entire diagnostic, not a substring
+                self.assertEqual(_unfold_refusals(out), _public(msgs))
+                surviving = "".join(str(m.get("content", "")) for m in out)
+                self.assertIn("expected after dictionary key", surviving)
+                for note in out:
+                    if note.get("role") == "user":
+                        self.assertNotIn(GATE, note["content"])
 
     def test_full_command_and_tried_list_are_not_clipped_in_the_note(self):
-        # The squash note names what was tried so the model won't retry it. A model can't recognize a
-        # command that was cut to 60 chars ("python -m pytest tests/really/long/pa…"), nor a Tried:
-        # list cut at 400 — so the full command text of every dropped attempt must appear in full.
+        """Long commands AND multiline answers survive the removal of the old Tried note.
+
+        Its phrase-based deletion was unsafe; its no-clipping incident remains a
+        contract for both native results and the surviving authored-refusal fold.
+        """
         long_paths = [f"tests/really/long/path/that/exceeds/sixty/characters/module_{i}/test_case_{i}.py"
                       for i in range(6)]
-        msgs = [{"role": "user", "content": "x"}]
-        for i, p in enumerate(long_paths):
-            cmd = f"python -m pytest {p}"
-            msgs += [{"role": "assistant", "tool_calls": [{"id": f"c{i}", "type": "function",
-                      "function": {"name": "exec_command", "arguments": '{"cmd": "%s"}' % cmd}}]},
-                     {"role": "tool", "tool_call_id": f"c{i}", "content": "%s: No such file or directory" % cmd}]
-        out, rep = trim(msgs)
-        self.assertEqual(rep.squashed_runs, 1)
-        note = [m for m in out if "[removed" in str(m.get("content", ""))][0]["content"]
-        self.assertNotIn("…", note)                                   # nothing elided
-        # every dropped command appears in full (the 4 oldest of the 6 are dropped)
-        for p in long_paths[:4]:
-            self.assertIn(p, note)
+        for make_action in (_fail_action, _refused_action):
+            with self.subTest(producer=make_action.__name__):
+                msgs = [{"role": "user", "content": "x"}]
+                for i, path in enumerate(long_paths):
+                    msgs += make_action(f"c{i}", f"python -m pytest {path}")
+                out, rep = trim(msgs)
+                self.assertEqual(rep.squashed_runs, 0 if make_action is _fail_action else 1)
+                self.assertEqual(_unfold_refusals(out), _public(msgs))
+                visible = json.dumps(out, ensure_ascii=False)
+                self.assertNotIn("…", visible)
+                for path in long_paths:
+                    self.assertIn(path, visible)
 
 
 class HardFailKeptTests(unittest.TestCase):

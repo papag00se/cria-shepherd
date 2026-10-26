@@ -15,15 +15,12 @@ Two rules, applied in order:
      same command AND same result — collapses, subsuming an exact re-read of a file whose content
      did not change.
 
-  B. SQUASH SOFT ERROR-SPAM — soft-failed actions (an assistant turn with one tool call whose result
-     is a dead-end LOOKUP: file-not-found, command-not-found, a bare "not found" with no explicit
-     success) are collapsed once there are more than `_SPAM_KEEP` of them: the last `_SPAM_KEEP`
-     survive, all EARLIER ones are removed wherever they sit, and one note names everything that was
-     tried. They need NOT be consecutive — a dead-end lookup is noise whether it flails in a spree or
-     is scattered across the session. HARD failures (the tool itself exited non-zero — a failing
-     pytest / build / live-test) are NEVER squashed: their output carries the traceback / assertion /
-     error the coder needs to fix the problem, so every one is kept IN FULL, in place. Successful
-     actions are always kept too.
+  B. FOLD PROVEN REFUSALS — only a call whose unambiguously paired result carries the lowering's
+     authoritative refusal outcome may be folded. Native, successful and unknown results stay in
+     place regardless of their words or exit status. Read observations, typed reports and unapplied
+     edit recovery stay in place too. The last `_SPAM_KEEP` refusals survive as ordinary pairs;
+     earlier pairs are carried WHOLE in a labelled historical record, not replaced with an invented
+     verdict about their usefulness. A refused call can still return useful evidence.
 
 Both drop tool calls and their paired results as UNITS, so no `tool` result is ever orphaned from
 its `assistant` tool_call (the one hard constraint in the OpenAI/Responses message format). Neither
@@ -52,12 +49,13 @@ from .memoryeffects import Effect, MessageEffect
 # folds it into a note that tells the model "don't repeat these". It must survive the squash.
 _GATE_MARKER = probegate.SECTION_PREFIX
 
-# Error-spam squash tuning. Squash only once there are MORE than _SPAM_KEEP SOFT-failed actions (so
-# a couple of dead-end lookups are left alone); the most recent _SPAM_KEEP soft failures always
-# survive (a live dead-end the model is fixing is never removed, even across intervening successes).
-# HARD failures (non-zero exit) are exempt entirely — see _is_hard_failure — never dropped.
+# Rule B keeps recent proven refusals as native pairs and folds older ones only
+# when at least two pairs can be folded. Native/unknown results never qualify.
 _SPAM_KEEP = 2
 
+# Legacy write-outcome classification below is separate from Rule B. Rule B
+# consults neither these body regexes nor the read-tool exemptions: it consumes
+# only the canonical paired refusal outcome and preserves every native result.
 # HARD failures — the tool itself exited non-zero. Unambiguous dead ends.
 _HARD_FAIL_SIGNATURES = [
     re.compile(r"exited with code [1-9]", re.I),   # Codex exec: "Process exited with code 1"
@@ -229,12 +227,6 @@ def _is_gate_probe(tc: dict, result: dict) -> bool:
     return _call_is_gate(tc) or _GATE_MARKER in str(result.get("content") or "")
 
 
-def _first_line(content) -> str:
-    """The first non-empty line of a tool result — what that attempt actually answered."""
-    text = content if isinstance(content, str) else ""
-    return next((ln.strip() for ln in text.splitlines() if ln.strip()), "")
-
-
 def _tried_label(tc: dict) -> str:
     """A short 'exec_command(cat /x)' label for the squash note's list of what was tried."""
     fn = tc.get("function") or {}
@@ -397,31 +389,28 @@ def _repeat_failed(messages: list[dict], call_id: str) -> bool:
 
 
 def _squash_failures(messages: list[dict]) -> tuple[list[dict], TrimReport]:
-    """Rule B — collapse stale SOFT-failed actions (position-independent). Keep the last _SPAM_KEEP
-    soft failures (a live dead-end the model is fixing survives even across intervening successes);
-    remove every earlier soft failure wherever it sits, and replace them with ONE note naming what
-    was tried. HARD failures (non-zero exit — a failing pytest / build / live-test) are NEVER a
-    squash candidate: their output carries the traceback / assertion the coder needs, so they are
-    kept in full, in place. Successful actions are always kept. An 'action' is an assistant turn with
-    one tool call immediately followed by its (failing) result."""
+    """Rule B — losslessly fold older proven refusals, never classify result prose.
+
+    A command's nonzero status does not establish that its output is useless; neither
+    do failure-looking phrases or a quoted exit line. Only the existing refusal and
+    pairing owners can establish that a call did not run. Even then its entire answer
+    survives: refusal bodies may carry genuine evidence. No new tool-name exceptions,
+    native status parser or model judgment is needed.
+    """
+    paired = denial.paired_results(messages)
     failed: list[tuple[int, int, dict]] = []  # (assistant_idx, result_idx, tool_call), in order
     i, n = 0, len(messages)
     while i < n - 1:
         tc = _single_call(messages[i])
         nxt = messages[i + 1]
-        fn = (tc or {}).get("function") or {}
-        if (tc is not None and nxt.get("role") == "tool"
-                and nxt.get("tool_call_id") == tc.get("id")
-                and _is_failure(nxt.get("content"), str(fn.get("name") or ""),
-                                arguments=fn.get("arguments"), landed=denial.landed(nxt))
-                and not _is_hard_failure(nxt.get("content"))  # hard fail carries diagnostics — keep in full
-                # Authored recovery reports can carry exact current file bytes
-                # or repair windows AND a failed-edit status. Preserve the whole
-                # report, not a prose-derived guess at its data extent. This
-                # does not grant success: _failed_write_ids independently reads
-                # the same producer marker and excludes the mutation.
-                and not denial.unlanded(nxt)
-                and not _is_gate_probe(tc, nxt)):  # never squash cria's own ground-truth probe
+        if (tc is not None and paired.get(tc.get("id")) is nxt
+                and denial.refused(nxt)
+                # Keep evidence-bearing/recovery carriers at their native positions.
+                # A damaged observation is UNKNOWN, not permission to fold its bytes.
+                and bodykeys.READ_OBSERVATION not in nxt
+                and bodykeys.RESULT_REPORT not in nxt
+                and bodykeys.PAYLOAD_BOUNDARY not in nxt
+                and not _is_gate_probe(tc, nxt)):
             failed.append((i, i + 1, tc))
             i += 2
         else:
@@ -429,25 +418,27 @@ def _squash_failures(messages: list[dict]) -> tuple[list[dict], TrimReport]:
     if len(failed) - _SPAM_KEEP < 2:
         return messages, TrimReport()  # fewer than 2 stale failures — not worth collapsing to a note
 
-    drop = failed[:-_SPAM_KEEP]  # every failure except the most recent _SPAM_KEEP
+    drop = failed[:-_SPAM_KEEP]
     remove = {idx for a, r, _tc in drop for idx in (a, r)}
-    note_at = drop[-1][0]  # the last removed failure's position → the note sits just before the kept ones
-    # WHAT EACH ATTEMPT RETURNED, not only what was tried. The note named the commands and dropped
-    # every result body, and the attempts are NOT duplicates of one another — one measured squash
-    # folded three different web_fetch URLs into a single "dead-end lookup" group, three distinct
-    # facts about three different pages. Rule 5's fold allowance is for repeated content; this is
-    # not that. The command plus the first line of its own answer is what distinguishes them, and a
-    # first line is a structural boundary rather than a cap.
-    tried = "; ".join(f"{_tried_label(tc)} → {_first_line(messages[r].get('content'))}"
-                      if _first_line(messages[r].get("content")) else _tried_label(tc)
-                      for _a, r, tc in drop)
-    note = prompts.render("trim_error_squash", n=len(drop), tried=tried)  # full list — don't elide squashed attempts
+    # Preserve each complete public call/result, including assistant prose, exact
+    # argument spelling and multiline output. Private producer hints are not prose
+    # and must not leak into the model-facing historical record. The existing label
+    # asserts ONLY the proven fact: these calls did not run, not that their answers
+    # were empty, superseded or worthless. The context floor alone owns any later
+    # pressure-driven reduction of this record.
+    # Fold each pair at its original position. Combining scattered refusals into
+    # one later record would move their evidence across intervening real results.
+    label = prompts.load("work_log_denied").strip()
+    notes = {a: label + "\n" + json.dumps(
+                [{k: v for k, v in messages[idx].items() if k not in bodykeys.ALL} for idx in (a, r)],
+                ensure_ascii=False)
+             for a, r, _tc in drop}
     rep = TrimReport(dropped_calls=len(drop), dropped_msgs=len(drop) * 2, squashed_runs=1)
 
     out: list[dict] = []
     for idx, m in enumerate(messages):
-        if idx == note_at:
-            out.append({"role": "user", "content": note})
+        if idx in notes:
+            out.append({"role": "user", "content": notes[idx]})
         if idx in remove:
             continue
         out.append(m)
@@ -861,7 +852,7 @@ DUPLICATES = FocusDefinition(
            migrated=False), _collapse_duplicates)
 FAILURES = FocusDefinition(
     Policy("focus-soft-failure-history", "coder-focus", 3, family_id="F73",
-           prompts=("trim_error_squash",), services=("paired-tool-history",),
+           prompts=("work_log_denied",), services=("paired-tool-history",),
            hooks=(Reference("cria/loop.py", "Loop._prepare_coder_context"),
                   Reference("cria/loop.py", "Loop._work_item"),
                   Reference("cria/loop.py", "Loop._drive_single_item"),

@@ -71,8 +71,11 @@ def test_shell_family_does_not_gain_file_provenance_from_a_path_or_reader_name(n
         history += action(i, name, f"cat: missing{i}: No such file or directory",
                           arguments={"cmd": f"cat missing{i}", "path": f"missing{i}"})
     out, report = focustrim.trim(history)
-    assert report.dropped_calls == 4 and report.squashed_runs == 1
-    assert len([m for m in out if m.get("role") == "tool"]) == focustrim._SPAM_KEEP
+    # A shell-looking name/path is still not read provenance, but lack of read
+    # provenance is NOT proof of a useless result. The old phrase-deletion
+    # expectation was unsafe: retain every native diagnostic and its pairing.
+    assert out == history and not report.applied
+    assert list(denial.paired_results(out)) == list(map(str, range(6)))
 
 
 @pytest.mark.parametrize("name", ["exec_command", "run_shell_command", "terminal.execute"])
@@ -92,8 +95,12 @@ def test_other_lookup_domains_still_squash_their_genuine_soft_failures(name, arg
     history = []
     for i in range(focustrim._SPAM_KEEP + 4):
         history += action(i, name, f"lookup {i}: not found", arguments={**args, "request": i})
-    _, report = focustrim.trim(history)
-    assert report.dropped_calls == 4 and report.squashed_runs == 1
+    # Search/MCP answers have the same ownership rule as file answers. "not
+    # found" is not a typed refusal and may itself be the requested observation.
+    # This supersedes the old deletion expectation, not the lookup-domain case.
+    out, report = focustrim.trim(history)
+    assert out == history and not report.applied
+    assert list(denial.paired_results(out)) == list(map(str, range(6)))
 
 
 @pytest.mark.parametrize("name", ["create_file", "write_file", "edit_file", "apply_patch", "text_editor", "str_replace_editor"])
@@ -111,11 +118,12 @@ def test_failed_mutations_never_remove_original_successful_file_pair(name, failu
     out, report = focustrim.trim(history)
     assert out[:2] == original and history == before
     assert not any(focustrim.bodykeys.SUPERSEDED_WRITES in m for m in out)
-    assert report.dropped_calls == (4 if failure == "soft" else 0)
-    assert report.dropped_msgs == (8 if failure == "soft" else 0)
-    assert report.squashed_runs == (1 if failure == "soft" else 0)
-    assert [tc["id"] for m in out for tc in m.get("tool_calls", [])] == (
-        ["original", "4", "5"] if failure == "soft" else ["original", *map(str, range(6))])
+    # Preserve the original landed file AND every attempted replacement/result.
+    # The soft variant used to require destructive phrase-based trimming; unknown
+    # native mutation outcomes now survive just like hard diagnostic payloads.
+    assert out == before and not report.applied
+    assert report.dropped_calls == report.dropped_msgs == report.squashed_runs == 0
+    assert [tc["id"] for m in out for tc in m.get("tool_calls", [])] == ["original", *map(str, range(6))]
     # Supersession alone must also reject failed replacements: correctness must
     # not depend on the failure-squash stage removing the dangerous call first.
     solo = focustrim.focus(focustrim.FocusInput(history), (focustrim.SUPERSESSION,))
@@ -142,8 +150,13 @@ def test_mixed_or_mutating_file_family_is_not_read_data(name):
     history = []
     for i in range(focustrim._SPAM_KEEP + 4):
         history += action(i, name, f"mutation {i}: helper not found")
-    _, report = focustrim.trim(history)
-    assert report.dropped_calls == 4 and report.squashed_runs == 1
+    # A mixed/mutating tool does not become a reader, but its untyped report is
+    # not disposable either. The old expectation inferred failure from words;
+    # preserve all bytes without inventing success, refusal or read credit.
+    out, report = focustrim.trim(history)
+    assert out == history and not report.applied
+    assert list(denial.paired_results(out)) == list(map(str, range(6)))
+    assert all(denial.proof(m) is None for m in out if m.get("role") == "tool")
 
 
 @pytest.mark.parametrize("mode,prior", [("no_anchor", 2), ("anchor", 0)])
