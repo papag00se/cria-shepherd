@@ -56,12 +56,12 @@ def test_concise_luna_inputs_remain_byte_identical_and_do_not_bootstrap_other_do
     assert document in linked_documents(WALKING)
 
 
-def test_sol_challenge_survives_the_move_to_analysis():
-    # Preserve the existing short challenge while merging its separate file into its owner.
-    challenge, = re.findall(r'```text\n(.*?)```', ANALYSIS.read_text(), re.DOTALL)
-    assert hashlib.sha256(challenge.encode()).hexdigest() == (
-        'f22b3becc6fd82afc069de019cadff89bf3061cd748f7bfe69a8077f049a6c0f'
-    )
+def test_analysis_does_not_assign_sol_in_the_process_or_its_callers():
+    # The operator chooses the analyst; Luna alone has a fixed model assignment.
+    documents = [WALKING, ANALYSIS, ROOT / 'docs/principles.md',
+                 ROOT / 'docs/cell-loop-prompt.md', ROOT / 'suite/README.md']
+    for document in documents:
+        assert not re.search(r'\bSol\b', document.read_text()), document
 
 
 def test_current_callers_and_walk_links_resolve_without_retired_documents():

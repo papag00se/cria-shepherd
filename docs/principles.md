@@ -132,7 +132,7 @@ Before making claims about model behavior, read at least one counted example end
 
 Regex counts show string occurrence, not behavior. Do not replace reading with `grep -c` or duplicate checks that cria already owns.
 
-A **WALK** follows the complete selected available recorded reasoning chronologically, then maps the whole thought list to the full searchable same-call context, followed by Sol's source-checked challenge and diagnosis. A full-run claim requires all calls' available reasoning; selected-call work must be labeled. Context is investigated through targeted searches and neighborhood reads, not an exhaustive context-read gate. Counts, sampling or summaries cannot replace the selected reasoning. The sole operative process is [walk-prompt.md](walk-prompt.md).
+A **WALK** follows the complete selected available recorded reasoning chronologically, then maps the whole thought list to the full searchable same-call context, followed by source-checked challenge and diagnosis using an operator-selected model. A full-run claim requires all calls' available reasoning; selected-call work must be labeled. Context is investigated through targeted searches and neighborhood reads, not an exhaustive context-read gate. Counts, sampling or summaries cannot replace the selected reasoning. The sole operative process is [walk-prompt.md](walk-prompt.md).
 
 ---
 
