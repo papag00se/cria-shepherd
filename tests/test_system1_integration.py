@@ -329,6 +329,40 @@ def test_a_dictating_directive_with_invented_code_is_restated_and_the_rewrite_is
     assert seen == [code, steer]
 
 
+# Exact public rewrite from 0048-steer-code in the 20261025T134610 capture.
+CAPTURED_REWRITE = (
+    "Rewrite src/main/java/pipeline/Importer.java so that parsing is driven through OpenCSV's real API "
+    "— a UTF-8 reader fed to CSVReaderBuilder — instead of the hand-written CSVParser or any raw "
+    "character ranges, quoted commas are handled, summarize(path) still returns skus, rows, and totals, "
+    "it compiles, and mvn -q compile succeeds."
+)
+
+
+def test_a_native_describes_restatement_is_not_vetoed_as_an_invented_prose_paragraph():
+    answers = iter(["DICTATES", "DESCRIBES"])
+    fake = FakeSystem1(dictation=lambda text: next(answers))
+    # The real draft contained this line; retain that observation so only the prose
+    # paragraph, not summarize(path), is counted as invented (the incident's exact shape).
+    messages = [*OBSERVED[:-1], {**OBSERVED[-1], 'content': 'Summary result = summarize(path);'}]
+    assert loop._invented_code_spans(CAPTURED_REWRITE, loop._observed_code(messages)) == 1
+    (steer, reason), rlog = _vet(fake, ask=lambda s, u: CAPTURED_REWRITE, messages=messages)
+    assert (steer, reason) == (CAPTURED_REWRITE, "")
+    assert fake.texts("dictation") == [PROSE, CAPTURED_REWRITE]
+    assert not any(e.get("reason") == "still invented" for e in rlog.of("loop.steer_restate"))
+
+
+@pytest.mark.parametrize("rewrite", [
+    'Add conftest.configure_live_marker("live") to conftest.py and re-run.',
+    "Run mvn -q test verbatim.",
+    "Copy this exact line:\n    return row.split(',')",
+])
+def test_a_native_dictates_restatement_is_withheld_even_when_its_code_was_observed(rewrite):
+    fake = FakeSystem1(dictation="DICTATES")
+    (steer, reason), _ = _vet(fake, ask=lambda s, u: rewrite)
+    assert (steer, reason) == (None, "dictated_code")
+    assert fake.texts("dictation") == [PROSE, rewrite]
+
+
 def test_a_restatement_the_classifier_cannot_judge_is_dropped_whole():
     answers = iter(["DICTATES", system1.System1NoFit("x")])
 

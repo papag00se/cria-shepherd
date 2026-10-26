@@ -690,7 +690,11 @@ class GroundedActions:
             # make 'zero invented spans' proof of safety. Keep the legacy reasoner path unchanged.
             if invented or self.providers.system1 is not None:
                 restated = self._restate_without_code(directive, ask, rlog)
-                if restated is not None and self._invented_code_spans(restated, self.facts.observed_code(messages)):
+                # Native DESCRIBES is the whole-text intent judgment, just as on initial
+                # admission. Do not replace it with the legacy lexical proxy here: a prose
+                # paragraph naming a check is itself new text, not invented code to paste.
+                # DICTATES and unjudged rewrites were already withheld by the shared restater.
+                if self.providers.system1 is None and restated is not None and self._invented_code_spans(restated, self.facts.observed_code(messages)):
                     rlog.emit('loop.steer_restate', level='info', kept=False, reason='still invented')
                     restated = None
                 if restated is None:

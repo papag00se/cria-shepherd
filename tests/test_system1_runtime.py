@@ -727,6 +727,30 @@ class TestRealNativeParity:
             for got, want in zip(j.logits, r["int4_logits"]):
                 assert abs(got - want) <= 2e-4 + 2e-4 * abs(want), r["id"]
 
+    def test_native_restatement_delivery_and_prescription_controls(self, runtime):
+        from tests.test_system1_integration import CAPTURED_REWRITE, _vet
+
+        original = (
+            "Rewrite src/main/java/pipeline/Importer.java now — delete the hand-written CSVParser "
+            "and every piece of code that works on raw character ranges, drive all parsing through "
+            "OpenCSV's real API (a UTF-8 reader fed to CSVReaderBuilder) so quoted commas are handled, "
+            "keep summarize(path) returning skus, rows, and totals intact, make it compile, then run "
+            "mvn -q compile ."
+        )
+        assert runtime.judge('dictation', {'public_directive': original}) == 'DICTATES'
+        assert runtime.judge('dictation', {'public_directive': CAPTURED_REWRITE}) == 'DESCRIBES'
+        (steer, reason), _ = _vet(runtime, directive=original, ask=lambda s, u: CAPTURED_REWRITE)
+        assert (steer, reason) == (CAPTURED_REWRITE, '')
+        for rewrite in (
+            'Add conftest.configure_live_marker("live") to conftest.py and re-run.',
+            'Run mvn -q test verbatim.',
+            "Copy this exact line:\n    return row.split(',')",
+            'Replace the parser with new CSVParser(new StringReader(line), comma, quote, true, true, true, null, null).',
+        ):
+            assert runtime.judge('dictation', {'public_directive': rewrite}) == 'DICTATES'
+            (steer, reason), _ = _vet(runtime, directive=original, ask=lambda s, u: rewrite)
+            assert (steer, reason) == (None, 'dictated_code')
+
     def test_all_frozen_training_inputs_render_and_tokenise_identically(self, runtime):
         """the 836 training cases, each recorded in both label orders: the served order must be byte/id identical; training also alternated the
         label order (never served), so those rows check the renderer and tokenizer with their own order."""
